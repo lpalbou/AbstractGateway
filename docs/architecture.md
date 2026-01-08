@@ -1,6 +1,6 @@
 # AbstractGateway — Architecture (Living)
 
-> Created: 2026-01-07  
+> Updated: 2026-01-08  
 > Status: implemented (see completed backlog 318)
 
 AbstractGateway is the **deployable control-plane host** for AbstractRuntime runs:
@@ -42,11 +42,11 @@ flowchart LR
 AbstractGateway should be deployable without installing authoring tools (AbstractFlow).
 Workflow loading must therefore be pluggable:
 - core `abstractgateway` depends on `abstractruntime`
-- optional extras can add workflow sources (e.g. VisualFlow JSON via `abstractflow`, or WorkflowBundles/WorkflowArtifact later)
+- default workflow source: **WorkflowBundles (.flow)** containing **VisualFlow JSON** (`manifest.flows`), compiled via `abstractruntime.visualflow_compiler` (no `abstractflow` import)
+- optional extras can add additional workflow sources (e.g. a “directory of VisualFlow JSON files” host wired with authoring-side helpers)
 
 ## Related
 - Backlog 318: `docs/backlog/completed/318-framework-abstractgateway-extract-run-gateway-host.md`
 - ADR‑0018: `docs/adr/0018-durable-run-gateway-and-remote-host-control-plane.md`
 - ADR‑0020: `docs/adr/0020-agent-host-pool-and-orchestrator-placement.md`
-
 

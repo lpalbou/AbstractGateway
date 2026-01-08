@@ -17,7 +17,7 @@ class GatewayService:
 
     config: GatewayHostConfig
     stores: GatewayStores
-    host: VisualFlowGatewayHost
+    host: Any
     runner: GatewayRunner
     auth_policy: GatewayAuthPolicy
 
@@ -36,19 +36,30 @@ def create_default_gateway_service() -> GatewayService:
     cfg = GatewayHostConfig.from_env()
     stores = build_file_stores(base_dir=cfg.data_dir)
 
-    # Workflow source (v0): VisualFlow JSON from flows_dir.
-    source = str(os.getenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "visualflow") or "visualflow").strip().lower()
-    if source != "visualflow":
-        raise RuntimeError(f"Unsupported workflow source: {source}. Supported: visualflow")
+    # Workflow source:
+    # - bundle (default): `.flow` bundles with VisualFlow JSON (compiled via AbstractRuntime; no AbstractFlow import)
+    # - visualflow (optional): load VisualFlow JSON files directly from a directory (host wiring currently uses AbstractFlow extras)
+    source = str(os.getenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle") or "bundle").strip().lower()
+    if source == "bundle":
+        from .hosts.bundle_host import WorkflowBundleGatewayHost
 
-    flows = VisualFlowRegistry(flows_dir=cfg.flows_dir).load()
-    host = VisualFlowGatewayHost(
-        flows_dir=cfg.flows_dir,
-        flows=flows,
-        run_store=stores.run_store,
-        ledger_store=stores.ledger_store,
-        artifact_store=stores.artifact_store,
-    )
+        host = WorkflowBundleGatewayHost.load_from_dir(
+            bundles_dir=cfg.flows_dir,
+            run_store=stores.run_store,
+            ledger_store=stores.ledger_store,
+            artifact_store=stores.artifact_store,
+        )
+    elif source == "visualflow":
+        flows = VisualFlowRegistry(flows_dir=cfg.flows_dir).load()
+        host = VisualFlowGatewayHost(
+            flows_dir=cfg.flows_dir,
+            flows=flows,
+            run_store=stores.run_store,
+            ledger_store=stores.ledger_store,
+            artifact_store=stores.artifact_store,
+        )
+    else:
+        raise RuntimeError(f"Unsupported workflow source: {source}. Supported: bundle|visualflow")
 
     runner_cfg = GatewayRunnerConfig(
         poll_interval_s=float(cfg.poll_interval_s),
@@ -120,5 +131,4 @@ def run_summary(run: Any) -> Dict[str, Any]:
             "details": getattr(waiting, "details", None),
         }
     return out
-
 

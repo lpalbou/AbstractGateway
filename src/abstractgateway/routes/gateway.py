@@ -28,7 +28,11 @@ logger = logging.getLogger(__name__)
 
 
 class StartRunRequest(BaseModel):
-    flow_id: str = Field(..., description="Flow id to start (VisualFlow JSON in flows_dir).")
+    bundle_id: Optional[str] = Field(
+        default=None,
+        description="Bundle id (when workflow source is 'bundle'). Optional if flow_id is already namespaced as 'bundle:flow'.",
+    )
+    flow_id: str = Field(..., description="Workflow id to start (flow id or 'bundle:flow').")
     input_data: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -61,7 +65,12 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
         raise HTTPException(status_code=400, detail="flow_id is required")
 
     try:
-        run_id = svc.host.start_run(flow_id=flow_id, input_data=dict(req.input_data or {}), actor_id="gateway")
+        run_id = svc.host.start_run(
+            flow_id=flow_id,
+            bundle_id=str(req.bundle_id).strip() if isinstance(req.bundle_id, str) and str(req.bundle_id).strip() else None,
+            input_data=dict(req.input_data or {}),
+            actor_id="gateway",
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
     except Exception as e:

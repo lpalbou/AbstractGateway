@@ -82,7 +82,8 @@ class VisualFlowRegistry:
 class VisualFlowGatewayHost:
     """Gateway host that starts/ticks runs from VisualFlow JSON.
 
-    This host is used until WorkflowBundles/WorkflowArtifact remove the need for AbstractFlow at runtime.
+    This host is optional. For dependency-light deployments prefer bundle mode (`.flow` bundles),
+    which compiles VisualFlow via `abstractruntime.visualflow_compiler` without importing `abstractflow`.
     """
 
     def __init__(
@@ -121,7 +122,16 @@ class VisualFlowGatewayHost:
     def artifact_store(self) -> Any:
         return self._artifact_store
 
-    def start_run(self, *, flow_id: str, input_data: Dict[str, Any], actor_id: str = "gateway") -> str:
+    def start_run(
+        self,
+        *,
+        flow_id: str,
+        input_data: Dict[str, Any],
+        actor_id: str = "gateway",
+        bundle_id: Optional[str] = None,
+    ) -> str:
+        # bundle_id is ignored for VisualFlow sources (kept for API compatibility with bundle mode).
+        del bundle_id
         _require_visualflow_deps()
         from abstractflow.visual.executor import create_visual_runner
         from abstractflow.visual.workspace_scoped_tools import WorkspaceScope, build_scoped_tool_executor
@@ -200,5 +210,4 @@ class VisualFlowGatewayHost:
         if wf is None:
             raise KeyError(f"Workflow '{workflow_id}' not registered")
         return (runtime, wf)
-
 
