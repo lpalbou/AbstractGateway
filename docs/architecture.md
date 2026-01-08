@@ -42,7 +42,7 @@ flowchart LR
 AbstractGateway should be deployable without installing authoring tools (AbstractFlow).
 Workflow loading must therefore be pluggable:
 - core `abstractgateway` depends on `abstractruntime`
-- optional extras can add workflow sources (e.g. VisualFlow JSON via `abstractflow`, or FlowBundles later)
+- optional extras can add workflow sources (e.g. VisualFlow JSON via `abstractflow`, or WorkflowBundles/WorkflowArtifact later)
 
 ## Related
 - Backlog 318: `docs/backlog/completed/318-framework-abstractgateway-extract-run-gateway-host.md`

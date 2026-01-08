@@ -82,7 +82,7 @@ class VisualFlowRegistry:
 class VisualFlowGatewayHost:
     """Gateway host that starts/ticks runs from VisualFlow JSON.
 
-    This host is used until FlowBundles/portable IR remove the need for AbstractFlow at runtime.
+    This host is used until WorkflowBundles/WorkflowArtifact remove the need for AbstractFlow at runtime.
     """
 
     def __init__(
