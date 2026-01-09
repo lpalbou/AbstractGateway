@@ -59,6 +59,12 @@ Runtime configuration (env):
   - `passthrough` (default): tool calls enter a durable wait (safest for untrusted hosts)
   - `local`: tool calls execute in the gateway process (dev only)
 
+Run start identifiers (bundle mode):
+- The **bundle** is the portable distribution unit. Clients should primarily identify “what to run” via `bundle_id`.
+- The **flow id** selects *which entrypoint/subflow* within the bundle to start:
+  - If a bundle has a single `manifest.entrypoints[]` item **or** declares `manifest.default_entrypoint`, the gateway can start it with `{bundle_id, input_data}` (no `flow_id`).
+  - If the bundle has multiple entrypoints and no `default_entrypoint`, clients must specify `flow_id` (or pass a fully-qualified workflow id like `bundle:flow`).
+
 ## Related
 - Backlog 318: `docs/backlog/completed/318-framework-abstractgateway-extract-run-gateway-host.md`
 - ADR‑0018: `docs/adr/0018-durable-run-gateway-and-remote-host-control-plane.md`

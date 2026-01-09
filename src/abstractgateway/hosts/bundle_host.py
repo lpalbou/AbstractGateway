@@ -25,6 +25,17 @@ def _coerce_namespaced_id(*, bundle_id: Optional[str], flow_id: str, default_bun
 
     bid = str(bundle_id or "").strip() if isinstance(bundle_id, str) else ""
     if bid:
+        # If the caller passed a fully-qualified id (bundle:flow), allow it as-is so
+        # clients can safely send both {bundle_id, flow_id} without producing a
+        # double-namespace like "bundle:bundle:flow".
+        if ":" in fid:
+            prefix = fid.split(":", 1)[0].strip()
+            if prefix == bid:
+                return fid
+            raise ValueError(
+                f"flow_id '{fid}' is already namespaced, but bundle_id '{bid}' was also provided; "
+                "omit bundle_id or pass a non-namespaced flow_id"
+            )
         return _namespace(bid, fid)
 
     # Allow passing a fully-qualified id as flow_id.
@@ -302,7 +313,12 @@ class WorkflowBundleGatewayHost:
         # Optional AbstractCore integration for LLM_CALL + TOOL_CALLS.
         if needs_llm or needs_tools:
             try:
-                from abstractruntime.integrations.abstractcore.tool_executor import AbstractCoreToolExecutor, PassthroughToolExecutor
+                from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
+                from abstractruntime.integrations.abstractcore.tool_executor import (
+                    AbstractCoreToolExecutor,
+                    MappingToolExecutor,
+                    PassthroughToolExecutor,
+                )
             except Exception as e:  # pragma: no cover
                 raise WorkflowBundleError(
                     "This bundle requires LLM/tool execution, but AbstractRuntime was installed "
@@ -312,7 +328,9 @@ class WorkflowBundleGatewayHost:
 
             tool_mode = str(_env("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
             if tool_mode == "local":
-                tool_executor: Any = AbstractCoreToolExecutor()
+                # Dev-only: execute the default tool map in-process without relying on the
+                # AbstractCore global registry (which is typically empty in gateway mode).
+                tool_executor: Any = MappingToolExecutor(build_default_tool_map())
             else:
                 # Default safe mode: do not execute tools in-process; enter a durable wait instead.
                 tool_executor = PassthroughToolExecutor(mode="approval_required")
@@ -533,9 +551,42 @@ class WorkflowBundleGatewayHost:
         actor_id: str = "gateway",
         bundle_id: Optional[str] = None,
     ) -> str:
-        workflow_id = _coerce_namespaced_id(
-            bundle_id=bundle_id, flow_id=flow_id, default_bundle_id=self._default_bundle_id
-        )
+        fid = str(flow_id or "").strip()
+        bid = str(bundle_id or "").strip() if isinstance(bundle_id, str) else ""
+        bundle_id_clean = bid or None
+
+        if not fid:
+            # Default entrypoint selection for the common case:
+            # start {bundle_id, input_data} without needing flow_id.
+            selected_bundle_id = bundle_id_clean or self._default_bundle_id
+            if not selected_bundle_id:
+                raise ValueError(
+                    "flow_id is required when multiple bundles are loaded; "
+                    "provide bundle_id (or pass flow_id as 'bundle:flow')"
+                )
+            bundle = self.bundles.get(str(selected_bundle_id))
+            if bundle is None:
+                raise KeyError(f"Bundle '{selected_bundle_id}' not found")
+            entrypoints = list(getattr(bundle.manifest, "entrypoints", None) or [])
+            default_ep = str(getattr(bundle.manifest, "default_entrypoint", "") or "").strip()
+            if len(entrypoints) == 1:
+                ep_fid = str(getattr(entrypoints[0], "flow_id", "") or "").strip()
+            elif default_ep:
+                ep_fid = default_ep
+            else:
+                raise ValueError(
+                    f"Bundle '{selected_bundle_id}' has {len(entrypoints)} entrypoints; "
+                    "specify flow_id to select which entrypoint to start "
+                    "(or set manifest.default_entrypoint)"
+                )
+            if not ep_fid:
+                raise ValueError(f"Bundle '{selected_bundle_id}' entrypoint flow_id is empty")
+            workflow_id = _namespace(str(selected_bundle_id), ep_fid)
+        else:
+            workflow_id = _coerce_namespaced_id(
+                bundle_id=bundle_id_clean, flow_id=fid, default_bundle_id=self._default_bundle_id
+            )
+
         spec = self.specs.get(workflow_id)
         if spec is None:
             raise KeyError(f"Workflow '{workflow_id}' not found")

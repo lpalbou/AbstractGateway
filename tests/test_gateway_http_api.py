@@ -258,7 +258,8 @@ def test_gateway_start_wait_resume_completes(tmp_path: Path, monkeypatch: pytest
 def test_gateway_bundle_namespaces_subflows_and_rewrites_references(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
-    bundle_id, root_id, _child_id = _write_subflow_bundle(bundles_dir=bundles_dir)    token = "t"
+    bundle_id, root_id, _child_id = _write_subflow_bundle(bundles_dir=bundles_dir)
+    token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
