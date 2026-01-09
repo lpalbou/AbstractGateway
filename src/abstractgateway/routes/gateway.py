@@ -19,6 +19,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from abstractruntime.storage.commands import CommandRecord
+from abstractruntime.storage.base import QueryableRunStore
+from abstractruntime.core.models import RunStatus
 
 from ..service import get_gateway_service, run_summary
 
@@ -316,6 +318,37 @@ async def get_run(run_id: str) -> Dict[str, Any]:
     return run_summary(run)
 
 
+@router.get("/runs")
+async def list_runs(
+    limit: int = Query(50, ge=1, le=500, description="Maximum number of runs (most recent first)."),
+    status: Optional[str] = Query(None, description="Optional status filter: running|waiting|completed|failed|cancelled"),
+    workflow_id: Optional[str] = Query(None, description="Optional workflow id filter (e.g. bundle:flow)"),
+) -> Dict[str, Any]:
+    """List recent runs (summary only; never returns full run.vars)."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+
+    if not isinstance(rs, QueryableRunStore):
+        raise HTTPException(status_code=400, detail="Run store does not support listing runs")
+
+    status_enum: Optional[RunStatus] = None
+    if isinstance(status, str) and status.strip():
+        s = status.strip().lower()
+        try:
+            status_enum = RunStatus(s)  # type: ignore[arg-type]
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid status (expected: running|waiting|completed|failed|cancelled)")
+
+    wid = str(workflow_id).strip() if isinstance(workflow_id, str) and workflow_id.strip() else None
+
+    try:
+        runs = rs.list_runs(status=status_enum, workflow_id=wid, limit=int(limit))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
+
+    return {"items": [run_summary(r) for r in (runs or [])]}
+
+
 @router.get("/runs/{run_id}/input_data")
 async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     """Return a best-effort view of the original start inputs for a run.
@@ -434,6 +467,72 @@ async def stream_ledger(
                 await asyncio.sleep(0.25)
 
     return StreamingResponse(_gen(), media_type="text/event-stream")
+
+
+@router.get("/discovery/tools")
+async def discovery_tools() -> Dict[str, Any]:
+    """List available tool specs for thin clients (best-effort).
+
+    Notes:
+    - This is meant as UI help for constructing `input_data.tools` allowlists.
+    - Tool execution mode may still vary by deployment (local vs passthrough).
+    """
+    try:
+        from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
+
+        specs = list_default_tool_specs()
+    except Exception as e:
+        return {"items": [], "error": str(e)}
+
+    items: list[Dict[str, Any]] = []
+    for s in specs:
+        if isinstance(s, dict):
+            name = s.get("name")
+            if isinstance(name, str) and name.strip():
+                items.append(dict(s))
+    return {"items": items}
+
+
+@router.get("/discovery/providers")
+async def discovery_providers(include_models: bool = Query(False, description="Include model lists (may be slow).")) -> Dict[str, Any]:
+    """List available providers (and optionally their models) for UI helper dropdowns."""
+    try:
+        from abstractcore.providers.registry import get_all_providers_with_models
+
+        providers = get_all_providers_with_models(include_models=bool(include_models))
+    except Exception as e:
+        return {"items": [], "error": str(e)}
+
+    items: list[Dict[str, Any]] = []
+    if isinstance(providers, list):
+        for p in providers:
+            if isinstance(p, dict):
+                name = p.get("name")
+                if isinstance(name, str) and name.strip():
+                    items.append(dict(p))
+
+    items.sort(key=lambda x: str(x.get("name") or ""))
+    return {"items": items}
+
+
+@router.get("/discovery/providers/{provider_name}/models")
+async def discovery_provider_models(provider_name: str) -> Dict[str, Any]:
+    """List available models for a provider (best-effort; may require provider connectivity)."""
+    prov = str(provider_name or "").strip()
+    if not prov:
+        raise HTTPException(status_code=400, detail="provider_name is required")
+
+    try:
+        from abstractcore.providers.registry import get_available_models_for_provider
+
+        models = get_available_models_for_provider(prov)
+        if not isinstance(models, list):
+            models = []
+        out = [str(m) for m in models if isinstance(m, str) and str(m).strip()]
+        out.sort()
+        return {"provider": prov, "models": out}
+    except Exception as e:
+        return {"provider": prov, "models": [], "error": str(e)}
 
 
 @router.post("/commands", response_model=SubmitCommandResponse)
