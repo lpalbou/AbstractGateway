@@ -44,7 +44,9 @@ export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles-or-flow"
 
 # Security (recommended)
 export ABSTRACTGATEWAY_AUTH_TOKEN="your-token"
-export ABSTRACTGATEWAY_ALLOWED_ORIGINS="*"
+# Allow your browser app Origin(s). Wildcard ports are supported (dev convenience).
+# Example (LAN dev): "http://localhost:*,http://127.0.0.1:*,http://192.168.1.188:*"
+export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
 
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
@@ -88,4 +90,3 @@ For backwards-compatible clients, you can also pass a namespaced id as `flow_id`
 ## Docs
 - Architecture: `docs/architecture.md` (framework) and `abstractgateway/docs/architecture.md` (this package)
 - Deployment: `docs/guide/deployment.md`
-

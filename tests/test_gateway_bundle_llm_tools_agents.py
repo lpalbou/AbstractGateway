@@ -776,3 +776,20 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
         assert flow_payload.get("flow_id") == flow_id
         assert flow_payload.get("workflow_id") == f"{bundle_id}:{flow_id}"
         assert isinstance(flow_payload.get("flow"), dict)
+
+        # Attach UX helper: input_data endpoint returns only entrypoint pin ids (bundle mode).
+        rstart = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {"request": "hi", "max_iterations": 7, "extra": "ignored"}},
+            headers=headers,
+        )
+        assert rstart.status_code == 200, rstart.text
+        run_id = rstart.json()["run_id"]
+
+        rin = client.get(f"/api/gateway/runs/{run_id}/input_data", headers=headers)
+        assert rin.status_code == 200, rin.text
+        payload = rin.json()
+        assert payload.get("bundle_id") == bundle_id
+        assert payload.get("flow_id") == flow_id
+        assert payload.get("workflow_id") == f"{bundle_id}:{flow_id}"
+        assert payload.get("input_data") == {"request": "hi", "max_iterations": 7}

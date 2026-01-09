@@ -143,6 +143,20 @@ def _extract_node_index_from_visualflow(raw: Any) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def _parse_namespaced_workflow_id(workflow_id: str) -> Optional[tuple[str, str]]:
+    s = str(workflow_id or "").strip()
+    if not s:
+        return None
+    if ":" not in s:
+        return None
+    a, b = s.split(":", 1)
+    a = a.strip()
+    b = b.strip()
+    if not a or not b:
+        return None
+    return (a, b)
+
+
 @router.get("/bundles")
 async def list_bundles() -> Dict[str, Any]:
     svc = get_gateway_service()
@@ -300,6 +314,73 @@ async def get_run(run_id: str) -> Dict[str, Any]:
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     return run_summary(run)
+
+
+@router.get("/runs/{run_id}/input_data")
+async def get_run_input_data(run_id: str) -> Dict[str, Any]:
+    """Return a best-effort view of the original start inputs for a run.
+
+    Security note:
+    - This endpoint is protected by the same gateway auth layer as other read endpoints.
+    - We avoid returning full `run.vars`; when possible (bundle mode), we filter to the entrypoint pin ids.
+    """
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    try:
+        run = rs.load(str(run_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+    workflow_id = getattr(run, "workflow_id", None)
+    vars_obj = getattr(run, "vars", None)
+    if not isinstance(vars_obj, dict):
+        vars_obj = {}
+
+    bundle_id: Optional[str] = None
+    flow_id: Optional[str] = None
+    pin_ids: list[str] = []
+
+    parsed = _parse_namespaced_workflow_id(str(workflow_id or ""))
+    if parsed is not None:
+        bundle_id, flow_id = parsed
+
+        host = getattr(svc, "host", None)
+        bundles = getattr(host, "bundles", None)
+        if isinstance(bundles, dict):
+            bundle = bundles.get(bundle_id)
+            if bundle is not None:
+                try:
+                    rel = bundle.manifest.flow_path_for(flow_id)
+                    raw = bundle.read_json(rel) if isinstance(rel, str) and rel.strip() else None
+                    pins = _extract_entrypoint_inputs_from_visualflow(raw)
+                    pin_ids = [str(p.get("id")) for p in pins if isinstance(p, dict) and isinstance(p.get("id"), str)]
+                    if pin_ids:
+                        allowed = set(pin_ids)
+                        filtered = {k: v for k, v in vars_obj.items() if isinstance(k, str) and k in allowed}
+                        return {
+                            "run_id": str(getattr(run, "run_id", run_id)),
+                            "workflow_id": str(workflow_id or ""),
+                            "bundle_id": bundle_id,
+                            "flow_id": flow_id,
+                            "pin_ids": pin_ids,
+                            "input_data": filtered,
+                        }
+                except Exception:
+                    # Fall back to generic filtering below.
+                    pin_ids = []
+
+    # Fallback: exclude private namespaces (e.g. _runtime/_temp).
+    filtered2 = {k: v for k, v in vars_obj.items() if isinstance(k, str) and not k.startswith("_")}
+    return {
+        "run_id": str(getattr(run, "run_id", run_id)),
+        "workflow_id": str(workflow_id or ""),
+        "bundle_id": bundle_id,
+        "flow_id": flow_id,
+        "pin_ids": pin_ids,
+        "input_data": filtered2,
+    }
 
 
 @router.get("/runs/{run_id}/ledger")
