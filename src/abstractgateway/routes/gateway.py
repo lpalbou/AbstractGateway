@@ -35,7 +35,8 @@ class StartRunRequest(BaseModel):
     flow_id: Optional[str] = Field(
         default=None,
         description=(
-            "Workflow id to start (flow id or 'bundle:flow'). Optional when bundle_id is provided and the bundle has a single entrypoint."
+            "Workflow id to start (flow id or 'bundle:flow'). Optional when bundle_id is provided and the bundle has a single entrypoint "
+            "or declares manifest.default_entrypoint."
         ),
     )
     input_data: Dict[str, Any] = Field(default_factory=dict)

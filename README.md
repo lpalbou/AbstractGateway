@@ -65,19 +65,27 @@ abstractflow bundle pack /path/to/root.json --out /path/to/bundles/my.flow --flo
 
 ## Starting a run (bundle mode)
 
-The stable way is to pass `bundle_id` + `flow_id`:
+If the bundle has a **single entrypoint** (or declares `manifest.default_entrypoint`), you can start it with just `bundle_id` + `input_data`:
 
 ```bash
 curl -sS -X POST "http://localhost:8080/api/gateway/runs/start" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-token" \
-  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{}}'
+  -d '{"bundle_id":"my-bundle","input_data":{"request":"Hello"}}'
 ```
 
-For backwards-compatible clients, you can also pass a namespaced id as `flow_id` (`"my-bundle:ac-echo"`).
+If the bundle exposes **multiple entrypoints** and has no default, you must select one with `flow_id`:
+
+```bash
+curl -sS -X POST "http://localhost:8080/api/gateway/runs/start" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-token" \
+  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"request":"Hello"}}'
+```
+
+For backwards-compatible clients, you can also pass a namespaced id as `flow_id` (`"my-bundle:ac-echo"`) without sending `bundle_id`.
 
 ## Docs
 - Architecture: `docs/architecture.md` (framework) and `abstractgateway/docs/architecture.md` (this package)
 - Deployment: `docs/guide/deployment.md`
-
 
