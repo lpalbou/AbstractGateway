@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from abstractruntime import Runtime, WorkflowRegistry, WorkflowSpec
 from abstractruntime.visualflow_compiler import compile_visualflow
@@ -109,6 +110,114 @@ def _namespace_visualflow_raw(
     return out
 
 
+def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
+    v = os.getenv(name)
+    if v is not None and str(v).strip():
+        return v
+    if fallback:
+        v2 = os.getenv(fallback)
+        if v2 is not None and str(v2).strip():
+            return v2
+    return None
+
+
+def _node_type_from_raw(n: Any) -> str:
+    if not isinstance(n, dict):
+        return ""
+    t = n.get("type")
+    return t.value if hasattr(t, "value") else str(t or "")
+
+
+def _scan_flows_for_llm_defaults(flows_by_id: Dict[str, Dict[str, Any]]) -> Optional[Tuple[str, str]]:
+    """Return a best-effort (provider, model) pair from VisualFlow node configs."""
+    for raw in (flows_by_id or {}).values():
+        nodes = raw.get("nodes")
+        if not isinstance(nodes, list):
+            continue
+        for n in nodes:
+            t = _node_type_from_raw(n)
+            data = n.get("data") if isinstance(n, dict) else None
+            if not isinstance(data, dict):
+                data = {}
+
+            if t == "llm_call":
+                cfg = data.get("effectConfig")
+                cfg = cfg if isinstance(cfg, dict) else {}
+                provider = cfg.get("provider")
+                model = cfg.get("model")
+                if isinstance(provider, str) and provider.strip() and isinstance(model, str) and model.strip():
+                    return (provider.strip().lower(), model.strip())
+
+            if t == "agent":
+                cfg = data.get("agentConfig")
+                cfg = cfg if isinstance(cfg, dict) else {}
+                provider = cfg.get("provider")
+                model = cfg.get("model")
+                if isinstance(provider, str) and provider.strip() and isinstance(model, str) and model.strip():
+                    return (provider.strip().lower(), model.strip())
+
+    return None
+
+
+def _flow_uses_llm(raw: Dict[str, Any]) -> bool:
+    nodes = raw.get("nodes")
+    if not isinstance(nodes, list):
+        return False
+    for n in nodes:
+        t = _node_type_from_raw(n)
+        if t in {"llm_call", "agent"}:
+            return True
+    return False
+
+
+def _flow_uses_tools(raw: Dict[str, Any]) -> bool:
+    nodes = raw.get("nodes")
+    if not isinstance(nodes, list):
+        return False
+    for n in nodes:
+        t = _node_type_from_raw(n)
+        if t in {"tool_calls", "agent"}:
+            return True
+    return False
+
+
+def _collect_agent_nodes(raw: Dict[str, Any]) -> list[tuple[str, Dict[str, Any]]]:
+    nodes = raw.get("nodes")
+    if not isinstance(nodes, list):
+        return []
+    out: list[tuple[str, Dict[str, Any]]] = []
+    for n in nodes:
+        if _node_type_from_raw(n) != "agent":
+            continue
+        if not isinstance(n, dict):
+            continue
+        node_id = str(n.get("id") or "").strip()
+        if not node_id:
+            continue
+        data = n.get("data")
+        data = data if isinstance(data, dict) else {}
+        cfg0 = data.get("agentConfig")
+        cfg = dict(cfg0) if isinstance(cfg0, dict) else {}
+        out.append((node_id, cfg))
+    return out
+
+
+def _visual_event_listener_workflow_id(*, flow_id: str, node_id: str) -> str:
+    # Local copy of the canonical id scheme (kept simple and deterministic).
+    import re
+
+    safe_re = re.compile(r"[^a-zA-Z0-9_-]+")
+
+    def _sanitize(v: str) -> str:
+        s = str(v or "").strip()
+        if not s:
+            return "unknown"
+        s = safe_re.sub("_", s)
+        return s or "unknown"
+
+    return f"visual_event_listener_{_sanitize(flow_id)}_{_sanitize(node_id)}"
+
+
 @dataclass(frozen=True)
 class WorkflowBundleGatewayHost:
     """Gateway host that starts/ticks runs from WorkflowBundles (no AbstractFlow import).
@@ -122,6 +231,7 @@ class WorkflowBundleGatewayHost:
     runtime: Runtime
     workflow_registry: WorkflowRegistry
     specs: Dict[str, WorkflowSpec]
+    event_listener_specs_by_root: Dict[str, list[str]]
     _default_bundle_id: Optional[str]
 
     @staticmethod
@@ -158,6 +268,7 @@ class WorkflowBundleGatewayHost:
         # Build runtime + registry and register all workflow specs.
         wf_reg: WorkflowRegistry = WorkflowRegistry()
         specs: Dict[str, WorkflowSpec] = {}
+        flows_by_namespaced_id: Dict[str, Dict[str, Any]] = {}
 
         for bid, b in bundles.items():
             man = b.manifest
@@ -177,6 +288,7 @@ class WorkflowBundleGatewayHost:
                     flow_id=flow_id,
                     id_map=id_map,
                 )
+                flows_by_namespaced_id[str(namespaced_raw.get("id") or _namespace(bid, flow_id))] = namespaced_raw
                 try:
                     spec = compile_visualflow(namespaced_raw)
                 except Exception as e:
@@ -184,18 +296,220 @@ class WorkflowBundleGatewayHost:
                 wf_reg.register(spec)
                 specs[str(spec.workflow_id)] = spec
 
-        runtime = Runtime(
-            run_store=run_store,
-            ledger_store=ledger_store,
-            workflow_registry=wf_reg,
-            artifact_store=artifact_store,
-        )
+        needs_llm = any(_flow_uses_llm(raw) for raw in flows_by_namespaced_id.values())
+        needs_tools = any(_flow_uses_tools(raw) for raw in flows_by_namespaced_id.values())
+
+        # Optional AbstractCore integration for LLM_CALL + TOOL_CALLS.
+        if needs_llm or needs_tools:
+            try:
+                from abstractruntime.integrations.abstractcore.tool_executor import AbstractCoreToolExecutor, PassthroughToolExecutor
+            except Exception as e:  # pragma: no cover
+                raise WorkflowBundleError(
+                    "This bundle requires LLM/tool execution, but AbstractRuntime was installed "
+                    "without AbstractCore integration. Install `abstractruntime[abstractcore]` "
+                    "(and ensure `abstractcore` is importable)."
+                ) from e
+
+            tool_mode = str(_env("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
+            if tool_mode == "local":
+                tool_executor: Any = AbstractCoreToolExecutor()
+            else:
+                # Default safe mode: do not execute tools in-process; enter a durable wait instead.
+                tool_executor = PassthroughToolExecutor(mode="approval_required")
+
+            if needs_llm:
+                try:
+                    from abstractruntime.integrations.abstractcore.factory import create_local_runtime
+                except Exception as e:  # pragma: no cover
+                    raise WorkflowBundleError(
+                        "LLM nodes require AbstractRuntime AbstractCore integration. "
+                        "Install `abstractruntime[abstractcore]`."
+                    ) from e
+
+                provider = _env("ABSTRACTGATEWAY_PROVIDER") or _env("ABSTRACTFLOW_PROVIDER") or ""
+                model = _env("ABSTRACTGATEWAY_MODEL") or _env("ABSTRACTFLOW_MODEL") or ""
+                provider = provider.strip().lower()
+                model = model.strip()
+
+                if not provider or not model:
+                    detected = _scan_flows_for_llm_defaults(flows_by_namespaced_id)
+                    if detected is not None:
+                        provider, model = detected
+
+                if not provider or not model:
+                    raise WorkflowBundleError(
+                        "Bundle contains LLM nodes but no default provider/model is configured. "
+                        "Set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL (or ensure the flow JSON "
+                        "includes provider/model on at least one llm_call/agent node)."
+                    )
+
+                runtime = create_local_runtime(
+                    provider=provider,
+                    model=model,
+                    run_store=run_store,
+                    ledger_store=ledger_store,
+                    artifact_store=artifact_store,
+                    tool_executor=tool_executor,
+                )
+                runtime.set_workflow_registry(wf_reg)
+            else:
+                # Tools-only runtime: avoid constructing an LLM client.
+                from abstractruntime.core.models import EffectType
+                from abstractruntime.integrations.abstractcore.effect_handlers import make_tool_calls_handler
+
+                runtime = Runtime(
+                    run_store=run_store,
+                    ledger_store=ledger_store,
+                    workflow_registry=wf_reg,
+                    artifact_store=artifact_store,
+                    effect_handlers={
+                        EffectType.TOOL_CALLS: make_tool_calls_handler(tools=tool_executor),
+                    },
+                )
+        else:
+            runtime = Runtime(
+                run_store=run_store,
+                ledger_store=ledger_store,
+                workflow_registry=wf_reg,
+                artifact_store=artifact_store,
+            )
+
+        # Register derived workflows required by VisualFlow semantics:
+        # - per-Agent-node ReAct subworkflows
+        # - per-OnEvent-node listener workflows (Blueprint-style)
+        event_listener_specs_by_root: Dict[str, list[str]] = {}
+
+        agent_pairs: list[tuple[str, Dict[str, Any]]] = []
+        for flow_id, raw in flows_by_namespaced_id.items():
+            for node_id, cfg in _collect_agent_nodes(raw):
+                agent_pairs.append((flow_id, {"node_id": node_id, "cfg": cfg}))
+
+        if agent_pairs:
+            try:
+                from abstractagent.adapters.react_runtime import create_react_workflow
+                from abstractagent.logic.react import ReActLogic
+            except Exception as e:  # pragma: no cover
+                raise WorkflowBundleError(
+                    "Bundle contains Visual Agent nodes, but AbstractAgent is not installed/importable. "
+                    "Install `abstractagent` to execute Agent nodes."
+                ) from e
+
+            from abstractcore.tools import ToolDefinition
+
+            try:
+                from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
+            except Exception as e:  # pragma: no cover
+                raise WorkflowBundleError(
+                    "Visual Agent nodes require AbstractCore tool schemas (abstractruntime[abstractcore])."
+                ) from e
+
+            def _tool_defs_from_specs(specs0: list[dict[str, Any]]) -> list[ToolDefinition]:
+                out: list[ToolDefinition] = []
+                for s in specs0:
+                    if not isinstance(s, dict):
+                        continue
+                    name = s.get("name")
+                    if not isinstance(name, str) or not name.strip():
+                        continue
+                    desc = s.get("description")
+                    params = s.get("parameters")
+                    out.append(
+                        ToolDefinition(
+                            name=name.strip(),
+                            description=str(desc or ""),
+                            parameters=dict(params) if isinstance(params, dict) else {},
+                        )
+                    )
+                return out
+
+            def _normalize_tool_names(raw_tools: Any) -> list[str]:
+                if not isinstance(raw_tools, list):
+                    return []
+                out: list[str] = []
+                for t in raw_tools:
+                    if isinstance(t, str) and t.strip():
+                        out.append(t.strip())
+                return out
+
+            all_tool_defs = _tool_defs_from_specs(list_default_tool_specs())
+            # Schema-only builtins (executed as runtime effects by AbstractAgent adapters).
+            try:
+                from abstractagent.logic.builtins import (  # type: ignore
+                    ASK_USER_TOOL,
+                    COMPACT_MEMORY_TOOL,
+                    INSPECT_VARS_TOOL,
+                    RECALL_MEMORY_TOOL,
+                    REMEMBER_TOOL,
+                )
+
+                builtin_defs = [ASK_USER_TOOL, RECALL_MEMORY_TOOL, INSPECT_VARS_TOOL, REMEMBER_TOOL, COMPACT_MEMORY_TOOL]
+                seen_names = {t.name for t in all_tool_defs if getattr(t, "name", None)}
+                for t in builtin_defs:
+                    if getattr(t, "name", None) and t.name not in seen_names:
+                        all_tool_defs.append(t)
+                        seen_names.add(t.name)
+            except Exception:
+                pass
+
+            logic = ReActLogic(tools=all_tool_defs)
+
+            from abstractruntime.visualflow_compiler.visual.agent_ids import visual_react_workflow_id
+
+            for flow_id, meta in agent_pairs:
+                node_id = str(meta.get("node_id") or "").strip()
+                cfg = meta.get("cfg") if isinstance(meta.get("cfg"), dict) else {}
+                cfg2 = dict(cfg) if isinstance(cfg, dict) else {}
+                workflow_id_raw = cfg2.get("_react_workflow_id")
+                react_workflow_id = (
+                    workflow_id_raw.strip()
+                    if isinstance(workflow_id_raw, str) and workflow_id_raw.strip()
+                    else visual_react_workflow_id(flow_id=flow_id, node_id=node_id)
+                )
+                tools_selected = _normalize_tool_names(cfg2.get("tools"))
+                spec = create_react_workflow(
+                    logic=logic,
+                    workflow_id=react_workflow_id,
+                    provider=None,
+                    model=None,
+                    allowed_tools=tools_selected,
+                )
+                wf_reg.register(spec)
+                specs[str(spec.workflow_id)] = spec
+
+        # Custom event listeners ("On Event" nodes) are compiled into dedicated listener workflows.
+        for flow_id, raw in flows_by_namespaced_id.items():
+            nodes = raw.get("nodes")
+            if not isinstance(nodes, list):
+                continue
+            for n in nodes:
+                if _node_type_from_raw(n) != "on_event":
+                    continue
+                if not isinstance(n, dict):
+                    continue
+                node_id = str(n.get("id") or "").strip()
+                if not node_id:
+                    continue
+                listener_wid = _visual_event_listener_workflow_id(flow_id=flow_id, node_id=node_id)
+
+                # Derive a listener workflow with entryNode = on_event node.
+                derived: Dict[str, Any] = dict(raw)
+                derived["id"] = listener_wid
+                derived["entryNode"] = node_id
+                try:
+                    spec = compile_visualflow(derived)
+                except Exception as e:
+                    raise WorkflowBundleError(f"Failed compiling On Event listener '{listener_wid}': {e}") from e
+                wf_reg.register(spec)
+                specs[str(spec.workflow_id)] = spec
+                event_listener_specs_by_root.setdefault(flow_id, []).append(str(spec.workflow_id))
+
         return WorkflowBundleGatewayHost(
             bundles_dir=base,
             bundles=bundles,
             runtime=runtime,
             workflow_registry=wf_reg,
             specs=specs,
+            event_listener_specs_by_root=event_listener_specs_by_root,
             _default_bundle_id=default_bundle_id,
         )
 
@@ -225,7 +539,28 @@ class WorkflowBundleGatewayHost:
         spec = self.specs.get(workflow_id)
         if spec is None:
             raise KeyError(f"Workflow '{workflow_id}' not found")
-        return str(self.runtime.start(workflow=spec, vars=dict(input_data or {}), actor_id=actor_id))
+        run_id = str(self.runtime.start(workflow=spec, vars=dict(input_data or {}), actor_id=actor_id))
+
+        # Start session-scoped event listener workflows (best-effort).
+        listener_ids = self.event_listener_specs_by_root.get(workflow_id) or []
+        for wid in listener_ids:
+            listener_spec = self.specs.get(wid)
+            if listener_spec is None:
+                continue
+            try:
+                child_run_id = self.runtime.start(
+                    workflow=listener_spec,
+                    vars={},
+                    session_id=run_id,
+                    parent_run_id=run_id,
+                    actor_id=actor_id,
+                )
+                # Advance to the first WAIT_EVENT.
+                self.runtime.tick(workflow=listener_spec, run_id=child_run_id, max_steps=10)
+            except Exception:
+                continue
+
+        return run_id
 
     def runtime_and_workflow_for_run(self, run_id: str) -> tuple[Runtime, Any]:
         run = self.run_store.load(str(run_id))

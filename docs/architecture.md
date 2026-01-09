@@ -45,8 +45,21 @@ Workflow loading must therefore be pluggable:
 - default workflow source: **WorkflowBundles (.flow)** containing **VisualFlow JSON** (`manifest.flows`), compiled via `abstractruntime.visualflow_compiler` (no `abstractflow` import)
 - optional extras can add additional workflow sources (e.g. a “directory of VisualFlow JSON files” host wired with authoring-side helpers)
 
+Bundle-mode execution wiring:
+- VisualFlow is compiled via `abstractruntime.visualflow_compiler` (single semantics engine).
+- LLM/tool workflows are supported by wiring `abstractruntime.integrations.abstractcore`:
+  - `LLM_CALL` handler (AbstractCore-backed)
+  - `TOOL_CALLS` handler (host-configured tool executor)
+- Visual Agent nodes are supported by registering deterministic per-node ReAct workflows (requires `abstractagent`).
+- Visual “On Event” nodes are supported by compiling derived listener workflows and starting them as child runs in the same session.
+
+Runtime configuration (env):
+- `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: default provider/model for bundle-mode runs that contain LLM nodes.
+- `ABSTRACTGATEWAY_TOOL_MODE`:
+  - `passthrough` (default): tool calls enter a durable wait (safest for untrusted hosts)
+  - `local`: tool calls execute in the gateway process (dev only)
+
 ## Related
 - Backlog 318: `docs/backlog/completed/318-framework-abstractgateway-extract-run-gateway-host.md`
 - ADR‑0018: `docs/adr/0018-durable-run-gateway-and-remote-host-control-plane.md`
 - ADR‑0020: `docs/adr/0020-agent-host-pool-and-orchestrator-placement.md`
-
