@@ -346,7 +346,24 @@ async def list_runs(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
 
-    return {"items": [run_summary(r) for r in (runs or [])]}
+    ledger_store = getattr(getattr(svc, "host", None), "ledger_store", None)
+    items: list[Dict[str, Any]] = []
+    for r in (runs or []):
+        item = run_summary(r)
+        rid = str(item.get("run_id") or getattr(r, "run_id", "") or "").strip()
+        if rid and ledger_store is not None:
+            try:
+                count_fn = getattr(ledger_store, "count", None)
+                if callable(count_fn):
+                    item["ledger_len"] = int(count_fn(rid))
+                else:
+                    records = ledger_store.list(rid)
+                    item["ledger_len"] = int(len(records) if isinstance(records, list) else 0)
+            except Exception:
+                item["ledger_len"] = None
+        items.append(item)
+
+    return {"items": items}
 
 
 @router.get("/runs/{run_id}/input_data")

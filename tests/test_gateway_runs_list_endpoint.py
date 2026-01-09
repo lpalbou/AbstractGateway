@@ -120,10 +120,12 @@ def test_list_runs_includes_recent_runs_and_filters(tmp_path: Path, monkeypatch:
         listed = client.get("/api/gateway/runs?limit=25", headers=headers)
         assert listed.status_code == 200, listed.text
         items = listed.json().get("items") or []
-        assert any(i.get("run_id") == run_id for i in items)
+        match = next((i for i in items if i.get("run_id") == run_id), None)
+        assert match is not None
+        assert isinstance(match.get("ledger_len"), int)
+        assert match.get("ledger_len") >= 1
 
         filtered = client.get("/api/gateway/runs?limit=25&status=completed", headers=headers)
         assert filtered.status_code == 200, filtered.text
         items2 = filtered.json().get("items") or []
         assert any(i.get("run_id") == run_id and i.get("status") == "completed" for i in items2)
-
