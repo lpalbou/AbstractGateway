@@ -113,6 +113,23 @@ class GenerateRunSummaryResponse(BaseModel):
     summary: str
 
 
+class RunChatRequest(BaseModel):
+    provider: str = Field(default="lmstudio", description="AbstractCore provider name.")
+    model: str = Field(default="qwen/qwen3-next-80b", description="Model id/name.")
+    include_subruns: bool = Field(default=True, description="Include child/subworkflow runs in the chat context.")
+    messages: list[Dict[str, Any]] = Field(default_factory=list, description="Chat messages (role/content).")
+    persist: bool = Field(default=False, description="If true, persist the Q/A to the parent run ledger as abstract.chat.")
+
+
+class RunChatResponse(BaseModel):
+    ok: bool
+    run_id: str
+    provider: str
+    model: str
+    generated_at: str
+    answer: str
+
+
 def _require_bundle_host(svc: Any) -> Any:
     host = getattr(svc, "host", None)
     bundles = getattr(host, "bundles", None)
@@ -1127,6 +1144,49 @@ def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]
     return text
 
 
+def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], messages: list[Dict[str, Any]]) -> str:
+    """Generate a read-only chat response grounded in a run ledger (patchable in tests)."""
+    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
+
+    system = (
+        "You are AbstractObserver Chat.\n"
+        "You are given:\n"
+        "- RUN_CONTEXT: a JSON object derived from an append-only workflow ledger (parent + subruns).\n"
+        "- CHAT_MESSAGES: a short chat history.\n\n"
+        "Your job:\n"
+        "- Answer the user's latest question using ONLY facts from RUN_CONTEXT.\n"
+        "- If RUN_CONTEXT does not contain enough information, say you don't know.\n"
+        "- You may provide a best-effort guess, but label it explicitly as a guess.\n"
+        "- Be concise, structured, and do not paste large raw payloads.\n"
+        "- If the run appears failed, explain the likely reason.\n"
+        "- Do not suggest running tools (this chat is read-only).\n"
+    )
+
+    ctx = json.dumps(context, ensure_ascii=False, indent=2)
+    prompt_msgs: list[Dict[str, str]] = [{"role": "user", "content": "RUN_CONTEXT:\n" + _clamp_text(ctx, max_len=180_000)}]
+
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = m.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        prompt_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
+
+    llm = LocalAbstractCoreLLMClient(provider=str(provider), model=str(model))
+    res = llm.generate(
+        prompt="",
+        messages=prompt_msgs,
+        system_prompt=system,
+        params={"temperature": 0.2, "max_output_tokens": 900},
+    )
+    text = str(res.get("content") or "").strip()
+    return text
+
+
 @router.get("/bundles")
 async def list_bundles() -> Dict[str, Any]:
     svc = get_gateway_service()
@@ -1408,6 +1468,7 @@ async def list_runs(
     status: Optional[str] = Query(None, description="Optional status filter: running|waiting|completed|failed|cancelled"),
     workflow_id: Optional[str] = Query(None, description="Optional workflow id filter (e.g. bundle:flow)"),
     session_id: Optional[str] = Query(None, description="Optional session id filter (durable run.session_id)."),
+    root_only: bool = Query(False, description="If true, return only root/parent runs (parent_run_id is empty)."),
 ) -> Dict[str, Any]:
     """List recent runs (summary only; never returns full run.vars)."""
     svc = get_gateway_service()
@@ -1429,13 +1490,16 @@ async def list_runs(
     filter_internal = wid is None
 
     try:
-        internal_limit = 10_000 if sid else int(limit)
+        internal_limit = 10_000 if (sid or bool(root_only)) else int(limit)
         runs = rs.list_runs(status=status_enum, workflow_id=wid, limit=internal_limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
 
     if sid:
         runs = [r for r in (runs or []) if str(getattr(r, "session_id", "") or "").strip() == sid]
+
+    if bool(root_only):
+        runs = [r for r in (runs or []) if not str(getattr(r, "parent_run_id", "") or "").strip()]
 
     ledger_store = getattr(getattr(svc, "host", None), "ledger_store", None)
     items: list[Dict[str, Any]] = []
@@ -1720,6 +1784,225 @@ async def generate_run_summary(run_id: str, req: GenerateRunSummaryRequest) -> G
         model=model,
         generated_at=generated_at,
         summary=summary_text,
+    )
+
+
+@router.post("/runs/{run_id}/chat", response_model=RunChatResponse)
+async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
+    """Generate a read-only chat answer grounded in the durable ledger (optionally persisted)."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    include_subruns = bool(req.include_subruns)
+    run_ids = _list_descendant_run_ids(rs, rid) if include_subruns else [rid]
+
+    ledgers: Dict[str, list[Dict[str, Any]]] = {}
+    for r2 in run_ids:
+        try:
+            ledger = svc.host.ledger_store.list(str(r2))
+            ledgers[str(r2)] = ledger if isinstance(ledger, list) else []
+        except Exception:
+            ledgers[str(r2)] = []
+
+    def _slim_text(value: Any, *, max_len: int) -> str:
+        return _clamp_text(str(value or ""), max_len=max_len)
+
+    def _slim_json(value: Any, *, max_len: int) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return _slim_text(value, max_len=max_len)
+        try:
+            return _clamp_text(json.dumps(value, ensure_ascii=False, indent=2), max_len=max_len)
+        except Exception:
+            return _slim_text(value, max_len=max_len)
+
+    def _extract_llm_prompt(payload: Any) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        p = payload.get("prompt")
+        if isinstance(p, str) and p.strip():
+            return p.strip()
+        msgs = payload.get("messages")
+        if isinstance(msgs, list):
+            for m in reversed(msgs):
+                if not isinstance(m, dict):
+                    continue
+                if str(m.get("role") or "") != "user":
+                    continue
+                c = m.get("content")
+                if isinstance(c, str) and c.strip():
+                    return c.strip()
+        return ""
+
+    def _slim_ledger_record(rec: Any) -> Dict[str, Any]:
+        if not isinstance(rec, dict):
+            return {}
+        eff = rec.get("effect") if isinstance(rec.get("effect"), dict) else {}
+        eff_type = str(eff.get("type") or "").strip()
+        payload = eff.get("payload") if isinstance(eff.get("payload"), dict) else {}
+        result = rec.get("result")
+        node_id = str(rec.get("node_id") or "").strip() or None
+        ts = str(rec.get("ended_at") or rec.get("started_at") or "").strip() or None
+        out: Dict[str, Any] = {
+            "ts": ts,
+            "node_id": node_id,
+            "status": str(rec.get("status") or "").strip() or None,
+            "effect_type": eff_type or None,
+            "error": _slim_text(rec.get("error"), max_len=400) if rec.get("error") else None,
+        }
+
+        if eff_type == "llm_call":
+            prompt = _extract_llm_prompt(payload)
+            content = ""
+            usage = None
+            if isinstance(result, dict):
+                content = str(result.get("content") or result.get("response") or "").strip()
+                usage = result.get("usage") or result.get("token_usage")
+            elif isinstance(result, str):
+                content = result.strip()
+            out["llm"] = {
+                "provider": str(payload.get("provider") or "").strip() or None,
+                "model": str(payload.get("model") or "").strip() or None,
+                "prompt": _slim_text(prompt, max_len=2400),
+                "response": _slim_text(content, max_len=2400),
+                "missing_response": not bool(content),
+                "usage": usage if isinstance(usage, dict) else None,
+            }
+            return out
+
+        if eff_type == "tool_calls":
+            calls_raw = payload.get("tool_calls")
+            calls = calls_raw if isinstance(calls_raw, list) else []
+            results = []
+            if isinstance(result, dict) and isinstance(result.get("results"), list):
+                results = [r for r in result.get("results") if isinstance(r, dict)]
+            out["tools"] = {
+                "tool_calls": [
+                    {
+                        "name": str(c.get("name") or "").strip() or None,
+                        "call_id": str(c.get("call_id") or c.get("id") or "").strip() or None,
+                        "arguments": c.get("arguments") if isinstance(c.get("arguments"), dict) else {},
+                    }
+                    for c in calls[:20]
+                    if isinstance(c, dict)
+                ],
+                "results": [
+                    {
+                        "call_id": str(r.get("call_id") or r.get("id") or "").strip() or None,
+                        "success": r.get("success") if isinstance(r.get("success"), bool) else None,
+                        "error": _slim_text(r.get("error"), max_len=800) if r.get("error") else None,
+                        "output": _slim_json(r.get("output"), max_len=4000) if r.get("output") is not None else None,
+                    }
+                    for r in results[:20]
+                ],
+            }
+            return out
+
+        if eff_type == "emit_event":
+            out["event"] = {
+                "name": str(payload.get("name") or "").strip() or None,
+                "payload": _slim_json(payload.get("payload"), max_len=4000) if payload.get("payload") is not None else None,
+            }
+            return out
+
+        if isinstance(payload, dict) and payload:
+            out["payload"] = _slim_json(payload, max_len=1500)
+        if result is not None:
+            out["result"] = _slim_json(result, max_len=1500)
+        return out
+
+    def _ledger_excerpt(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+        if not items:
+            return []
+        if len(items) <= 120:
+            return [_slim_ledger_record(x) for x in items if isinstance(x, dict)]
+        head = items[:30]
+        tail = items[-90:]
+        merged = head + tail
+        return [_slim_ledger_record(x) for x in merged if isinstance(x, dict)]
+
+    ledger_excerpt_by_run: Dict[str, Any] = {k: _ledger_excerpt(v or []) for k, v in ledgers.items()}
+
+    per_run: Dict[str, Any] = {k: _extract_digest_from_ledger(v) for k, v in ledgers.items()}
+    overall: Dict[str, Any] = _extract_digest_from_ledger([x for v in ledgers.values() for x in (v or [])])
+
+    request_text: Optional[str] = None
+    try:
+        rv = getattr(run, "vars", None)
+        if isinstance(rv, dict):
+            req2 = rv.get("request")
+            if isinstance(req2, str) and req2.strip():
+                request_text = req2.strip()
+    except Exception:
+        request_text = None
+
+    status_str = getattr(getattr(run, "status", None), "value", None) or str(getattr(run, "status", "") or "")
+    context: Dict[str, Any] = {
+        "run_id": rid,
+        "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+        "status": str(status_str or ""),
+        "request": request_text,
+        "overall": overall,
+        "per_run": per_run,
+        # Best-effort: include a compact excerpt of the ledger for grounding (keeps the JSON valid under clamping).
+        "ledger_len_by_run": {k: len(v or []) for k, v in ledgers.items()},
+        "ledger_excerpt_by_run": ledger_excerpt_by_run,
+    }
+
+    provider = str(req.provider or "lmstudio").strip() or "lmstudio"
+    model = str(req.model or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+    messages = list(req.messages or [])
+
+    try:
+        answer_text = await asyncio.to_thread(_generate_chat_text, provider=provider, model=model, context=context, messages=messages)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to generate chat answer: {e}")
+
+    generated_at = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+
+    if bool(req.persist):
+        # Persist a single Q/A exchange (last user message + assistant answer).
+        question: str = ""
+        for m in reversed(messages):
+            if isinstance(m, dict) and str(m.get("role") or "") == "user":
+                c = m.get("content")
+                if isinstance(c, str) and c.strip():
+                    question = c.strip()
+                    break
+        payload = {
+            "generated_at": generated_at,
+            "provider": provider,
+            "model": model,
+            "question": question,
+            "answer": answer_text,
+            "source": {"run_id": rid, "include_subruns": include_subruns},
+        }
+        try:
+            eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.chat", "scope": "run", "run_id": rid, "payload": payload})
+            rec = StepRecord.start(run=run, node_id="observer", effect=eff, idempotency_key=f"observer:chat:{generated_at}")
+            rec.finish_success({"emitted": True, "name": "abstract.chat", "payload": payload})
+            svc.host.ledger_store.append(rec)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to persist chat: {e}")
+
+    return RunChatResponse(
+        ok=True,
+        run_id=rid,
+        provider=provider,
+        model=model,
+        generated_at=generated_at,
+        answer=answer_text,
     )
 
 

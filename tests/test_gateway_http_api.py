@@ -362,3 +362,62 @@ def test_gateway_generate_run_summary_appends_to_ledger(tmp_path: Path, monkeypa
         payload = summaries[-1]["effect"]["payload"].get("payload")
         assert isinstance(payload, dict)
         assert str(payload.get("text") or "").startswith("success")
+
+
+def test_gateway_run_chat_can_persist_to_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_generate_chat_text", lambda **_kwargs: "answer\n- ok")
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {"request": "do the thing"}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        run_id = r.json()["run_id"]
+
+        chat = client.post(
+            f"/api/gateway/runs/{run_id}/chat",
+            json={"messages": [{"role": "user", "content": "What happened?"}], "persist": True},
+            headers=headers,
+        )
+        assert chat.status_code == 200, chat.text
+        body = chat.json()
+        assert body.get("ok") is True
+        assert body.get("run_id") == run_id
+        assert str(body.get("answer") or "").startswith("answer")
+
+        ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=500", headers=headers)
+        assert ledger.status_code == 200, ledger.text
+        items = ledger.json().get("items") or []
+
+        chats = [
+            i
+            for i in items
+            if isinstance(i, dict)
+            and isinstance(i.get("effect"), dict)
+            and i["effect"].get("type") == "emit_event"
+            and isinstance(i["effect"].get("payload"), dict)
+            and i["effect"]["payload"].get("name") == "abstract.chat"
+        ]
+        assert chats, "Expected an abstract.chat emit_event appended to the ledger"
+        payload = chats[-1]["effect"]["payload"].get("payload")
+        assert isinstance(payload, dict)
+        assert str(payload.get("answer") or "").startswith("answer")

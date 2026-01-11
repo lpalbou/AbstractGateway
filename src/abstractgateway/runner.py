@@ -137,6 +137,50 @@ class GatewayRunner:
             pass
         self._release_singleton_lock()
 
+    def emit_event(
+        self,
+        *,
+        name: str,
+        payload: Any,
+        session_id: str,
+        scope: str = "session",
+        workflow_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        event_id: Optional[str] = None,
+        emitted_at: Optional[str] = None,
+        client_id: Optional[str] = None,
+    ) -> None:
+        """Emit an external event into the runtime (resume matching WAIT_EVENT runs).
+
+        This is a thin wrapper around the internal emit_event command handling so
+        integrations (Telegram bridge, webhooks, etc.) don't need to know the
+        command-store format.
+        """
+
+        name2 = str(name or "").strip()
+        if not name2:
+            raise ValueError("name is required")
+        sid = str(session_id or "").strip()
+        if not sid:
+            raise ValueError("session_id is required")
+
+        body: Dict[str, Any] = {
+            "name": name2,
+            "scope": str(scope or "session").strip().lower() or "session",
+            "session_id": sid,
+            "payload": payload,
+        }
+        if isinstance(workflow_id, str) and workflow_id.strip():
+            body["workflow_id"] = workflow_id.strip()
+        if isinstance(run_id, str) and run_id.strip():
+            body["run_id"] = run_id.strip()
+        if isinstance(event_id, str) and event_id.strip():
+            body["event_id"] = event_id.strip()
+        if isinstance(emitted_at, str) and emitted_at.strip():
+            body["emitted_at"] = emitted_at.strip()
+
+        self._apply_emit_event(body, default_session_id=sid, client_id=client_id)
+
     def _acquire_singleton_lock(self) -> bool:
         """Best-effort process singleton lock (prevents multi-worker double ticking)."""
         try:
@@ -425,5 +469,4 @@ class GatewayRunner:
                 payload={"sub_run_id": child_run_id, "output": child_output},
                 max_steps=0,
             )
-
 

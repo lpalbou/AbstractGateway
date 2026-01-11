@@ -22,6 +22,10 @@ dependencies = [
 visualflow = [
   "abstractflow>=0.3.0",
 ]
+telegram = [
+  # Enables Telegram tools + TDLib wrapper via AbstractRuntime's AbstractCore integration.
+  "AbstractRuntime[abstractcore]>=0.4.0",
+]
 dev = [
   "pytest>=7.0.0",
   "httpx>=0.27.0",
@@ -35,5 +39,4 @@ abstractgateway = "abstractgateway.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/abstractgateway"]
-
 

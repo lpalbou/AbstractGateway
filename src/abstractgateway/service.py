@@ -20,6 +20,7 @@ class GatewayService:
     host: Any
     runner: GatewayRunner
     auth_policy: GatewayAuthPolicy
+    telegram_bridge: Optional[Any] = None
 
 
 _service: Optional[GatewayService] = None
@@ -72,12 +73,39 @@ def create_default_gateway_service() -> GatewayService:
     runner = GatewayRunner(base_dir=stores.base_dir, host=host, config=runner_cfg, enable=bool(cfg.runner_enabled))
 
     policy = load_gateway_auth_policy_from_env()
-    return GatewayService(config=cfg, stores=stores, host=host, runner=runner, auth_policy=policy)
+
+    telegram_bridge = None
+    enabled_raw = os.getenv("ABSTRACT_TELEGRAM_BRIDGE")
+    if enabled_raw is not None and str(enabled_raw).strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from .integrations.telegram_bridge import TelegramBridge, TelegramBridgeConfig
+        except Exception as e:
+            raise RuntimeError(
+                "Telegram bridge is enabled (ABSTRACT_TELEGRAM_BRIDGE=1) but the optional Telegram dependencies are not installed. "
+                "Install with: `pip install \"abstractgateway[telegram]\"`"
+            ) from e
+
+        tcfg = TelegramBridgeConfig.from_env(base_dir=cfg.data_dir)
+        if not tcfg.flow_id:
+            raise RuntimeError("ABSTRACT_TELEGRAM_FLOW_ID is required when ABSTRACT_TELEGRAM_BRIDGE=1")
+        telegram_bridge = TelegramBridge(config=tcfg, host=host, runner=runner, artifact_store=stores.artifact_store)
+
+    return GatewayService(
+        config=cfg,
+        stores=stores,
+        host=host,
+        runner=runner,
+        auth_policy=policy,
+        telegram_bridge=telegram_bridge,
+    )
 
 
 def start_gateway_runner() -> None:
     svc = get_gateway_service()
     svc.runner.start()
+    bridge = getattr(svc, "telegram_bridge", None)
+    if bridge is not None:
+        bridge.start()
 
 
 def stop_gateway_runner() -> None:
@@ -85,6 +113,12 @@ def stop_gateway_runner() -> None:
     if _service is None:
         return
     try:
+        try:
+            bridge = getattr(_service, "telegram_bridge", None)
+            if bridge is not None:
+                bridge.stop()
+        except Exception:
+            pass
         _service.runner.stop()
     finally:
         _service = None

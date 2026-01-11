@@ -12,6 +12,9 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
     serve.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
 
+    tg = sub.add_parser("telegram-auth", help="One-time TDLib authentication bootstrap for Telegram Secret Chats (E2EE)")
+    tg.add_argument("--timeout-s", type=float, default=120.0, help="Max seconds to wait for TDLib authorization (default: 120)")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
@@ -25,8 +28,56 @@ def main(argv: list[str] | None = None) -> None:
         )
         return
 
+    if args.cmd == "telegram-auth":
+        # This command is intentionally interactive. It is meant to be run once to
+        # create the TDLib session under ABSTRACT_TELEGRAM_DB_DIR.
+        import getpass
+
+        try:
+            from abstractcore.tools.telegram_tdlib import TdlibClient, TdlibConfig
+        except Exception as e:
+            raise SystemExit(
+                "TDLib bootstrap requires the optional Telegram dependencies. "
+                "Install with: `pip install \"abstractgateway[telegram]\"` "
+                f"(import failed: {e})"
+            )
+
+        try:
+            base_cfg = TdlibConfig.from_env()
+        except Exception as e:
+            raise SystemExit(f"Missing/invalid Telegram env config: {e}")
+
+        code = input("Telegram login code (leave blank if not needed): ").strip() or None
+        pw = getpass.getpass("Telegram 2FA password (leave blank if none): ").strip() or None
+
+        cfg = TdlibConfig(
+            api_id=base_cfg.api_id,
+            api_hash=base_cfg.api_hash,
+            phone=base_cfg.phone,
+            database_directory=base_cfg.database_directory,
+            files_directory=base_cfg.files_directory,
+            database_encryption_key=base_cfg.database_encryption_key,
+            use_secret_chats=base_cfg.use_secret_chats,
+            login_code=code or base_cfg.login_code,
+            two_factor_password=pw or base_cfg.two_factor_password,
+        )
+
+        client = TdlibClient(config=cfg)
+        client.start()
+        try:
+            ok = client.wait_until_ready(timeout_s=float(args.timeout_s))
+            if not ok:
+                err = client.last_error or "Timed out waiting for TDLib authorization"
+                raise SystemExit(err)
+            print("TDLib authorization: OK (session stored in TDLib database directory).")
+        finally:
+            try:
+                client.stop()
+            except Exception:
+                pass
+        return
+
     raise SystemExit(2)
 
 if __name__ == "__main__":
     main()
-
