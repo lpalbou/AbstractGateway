@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -238,6 +240,8 @@ class WorkflowBundleGatewayHost:
     """
 
     bundles_dir: Path
+    data_dir: Path
+    dynamic_flows_dir: Path
     bundles: Dict[str, WorkflowBundle]
     runtime: Runtime
     workflow_registry: WorkflowRegistry
@@ -246,9 +250,70 @@ class WorkflowBundleGatewayHost:
     _default_bundle_id: Optional[str]
 
     @staticmethod
+    def _dynamic_flow_filename(workflow_id: str) -> str:
+        safe_re = re.compile(r"[^a-zA-Z0-9._-]+")
+        s = safe_re.sub("_", str(workflow_id or "").strip())
+        if not s or s in {".", ".."}:
+            s = "workflow"
+        return f"{s}.json"
+
+    def _dynamic_flow_path(self, workflow_id: str) -> Path:
+        return Path(self.dynamic_flows_dir) / self._dynamic_flow_filename(workflow_id)
+
+    def register_dynamic_visualflow(self, raw: Dict[str, Any], *, persist: bool = True) -> str:
+        """Register a VisualFlow JSON object as a dynamic workflow (durable in data_dir).
+
+        This is used for gateway-generated wrapper workflows (e.g. scheduled runs).
+        """
+        if not isinstance(raw, dict):
+            raise TypeError("Dynamic VisualFlow must be an object")
+        wid = str(raw.get("id") or "").strip()
+        if not wid:
+            raise ValueError("Dynamic VisualFlow missing required 'id'")
+
+        spec = compile_visualflow(raw)
+        self.workflow_registry.register(spec)
+        self.specs[str(spec.workflow_id)] = spec
+
+        if persist:
+            try:
+                Path(self.dynamic_flows_dir).mkdir(parents=True, exist_ok=True)
+                p = self._dynamic_flow_path(str(spec.workflow_id))
+                p.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as e:
+                raise RuntimeError(f"Failed to persist dynamic VisualFlow: {e}") from e
+
+        return str(spec.workflow_id)
+
+    def _try_register_dynamic_workflow_from_disk(self, workflow_id: str) -> Optional[WorkflowSpec]:
+        wid = str(workflow_id or "").strip()
+        if not wid:
+            return None
+        p = self._dynamic_flow_path(wid)
+        if not p.exists() or not p.is_file():
+            return None
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        try:
+            spec = compile_visualflow(raw)
+        except Exception:
+            return None
+        try:
+            self.workflow_registry.register(spec)
+            self.specs[str(spec.workflow_id)] = spec
+        except Exception:
+            return None
+        return spec
+
+    @staticmethod
     def load_from_dir(
         *,
         bundles_dir: Path,
+        data_dir: Path,
         run_store: Any,
         ledger_store: Any,
         artifact_store: Any,
@@ -275,6 +340,14 @@ class WorkflowBundleGatewayHost:
             raise FileNotFoundError(f"No bundles found in {base} (expected *.flow)")
 
         default_bundle_id = next(iter(bundles.keys())) if len(bundles) == 1 else None
+
+        data_root = Path(data_dir).expanduser().resolve()
+        dynamic_dir = data_root / "dynamic_flows"
+        try:
+            dynamic_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Best-effort: dynamic workflows are optional.
+            pass
 
         # Build runtime + registry and register all workflow specs.
         wf_reg: WorkflowRegistry = WorkflowRegistry()
@@ -306,6 +379,32 @@ class WorkflowBundleGatewayHost:
                     raise WorkflowBundleError(f"Failed compiling VisualFlow '{bid}:{flow_id}': {e}") from e
                 wf_reg.register(spec)
                 specs[str(spec.workflow_id)] = spec
+
+        # Load dynamic flows persisted in data_dir (e.g. scheduled wrapper flows).
+        try:
+            for p in sorted(dynamic_dir.glob("*.json")):
+                if not p.is_file():
+                    continue
+                try:
+                    raw = json.loads(p.read_text(encoding="utf-8"))
+                except Exception as e:
+                    logger.warning("Failed to read dynamic flow %s: %s", p, e)
+                    continue
+                if not isinstance(raw, dict):
+                    continue
+                try:
+                    spec = compile_visualflow(raw)
+                except Exception as e:
+                    logger.warning("Failed compiling dynamic flow %s: %s", p, e)
+                    continue
+                try:
+                    wf_reg.register(spec)
+                    specs[str(spec.workflow_id)] = spec
+                except Exception as e:
+                    logger.warning("Failed registering dynamic flow %s: %s", p, e)
+                    continue
+        except Exception:
+            pass
 
         needs_llm = any(_flow_uses_llm(raw) for raw in flows_by_namespaced_id.values())
         needs_tools = any(_flow_uses_tools(raw) for raw in flows_by_namespaced_id.values())
@@ -523,6 +622,8 @@ class WorkflowBundleGatewayHost:
 
         return WorkflowBundleGatewayHost(
             bundles_dir=base,
+            data_dir=data_root,
+            dynamic_flows_dir=dynamic_dir,
             bundles=bundles,
             runtime=runtime,
             workflow_registry=wf_reg,
@@ -550,6 +651,7 @@ class WorkflowBundleGatewayHost:
         input_data: Dict[str, Any],
         actor_id: str = "gateway",
         bundle_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> str:
         fid = str(flow_id or "").strip()
         bid = str(bundle_id or "").strip() if isinstance(bundle_id, str) else ""
@@ -590,7 +692,21 @@ class WorkflowBundleGatewayHost:
         spec = self.specs.get(workflow_id)
         if spec is None:
             raise KeyError(f"Workflow '{workflow_id}' not found")
-        run_id = str(self.runtime.start(workflow=spec, vars=dict(input_data or {}), actor_id=actor_id))
+        sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
+        run_id = str(self.runtime.start(workflow=spec, vars=dict(input_data or {}), actor_id=actor_id, session_id=sid))
+
+        # Default session_id to the root run_id for durable session-scoped behavior
+        # (matches VisualSessionRunner semantics).
+        effective_session_id = sid
+        if effective_session_id is None:
+            try:
+                state = self.runtime.get_state(run_id)
+                if not getattr(state, "session_id", None):
+                    state.session_id = run_id  # type: ignore[attr-defined]
+                    self.runtime.run_store.save(state)
+                effective_session_id = str(getattr(state, "session_id", None) or run_id).strip() or run_id
+            except Exception:
+                effective_session_id = run_id
 
         # Start session-scoped event listener workflows (best-effort).
         listener_ids = self.event_listener_specs_by_root.get(workflow_id) or []
@@ -602,7 +718,7 @@ class WorkflowBundleGatewayHost:
                 child_run_id = self.runtime.start(
                     workflow=listener_spec,
                     vars={},
-                    session_id=run_id,
+                    session_id=effective_session_id,
                     parent_run_id=run_id,
                     actor_id=actor_id,
                 )
@@ -621,6 +737,8 @@ class WorkflowBundleGatewayHost:
         if not isinstance(workflow_id, str) or not workflow_id:
             raise ValueError(f"Run '{run_id}' missing workflow_id")
         spec = self.specs.get(workflow_id)
+        if spec is None:
+            spec = self._try_register_dynamic_workflow_from_disk(workflow_id)
         if spec is None:
             raise KeyError(f"Workflow '{workflow_id}' not registered")
         return (self.runtime, spec)

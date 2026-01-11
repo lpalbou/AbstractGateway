@@ -45,6 +45,7 @@ def create_default_gateway_service() -> GatewayService:
 
         host = WorkflowBundleGatewayHost.load_from_dir(
             bundles_dir=cfg.flows_dir,
+            data_dir=cfg.data_dir,
             run_store=stores.run_store,
             ledger_store=stores.ledger_store,
             artifact_store=stores.artifact_store,
@@ -101,6 +102,8 @@ def run_summary(run: Any) -> Dict[str, Any]:
         "current_node": getattr(run, "current_node", None),
         "created_at": getattr(run, "created_at", None),
         "updated_at": getattr(run, "updated_at", None),
+        "actor_id": getattr(run, "actor_id", None),
+        "session_id": getattr(run, "session_id", None),
         "parent_run_id": getattr(run, "parent_run_id", None),
         "error": getattr(run, "error", None),
         # Best-effort pause metadata. We intentionally do not return full run.vars over HTTP.
@@ -131,4 +134,3 @@ def run_summary(run: Any) -> Dict[str, Any]:
             "details": getattr(waiting, "details", None),
         }
     return out
-

@@ -129,6 +129,7 @@ class VisualFlowGatewayHost:
         input_data: Dict[str, Any],
         actor_id: str = "gateway",
         bundle_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> str:
         # bundle_id is ignored for VisualFlow sources (kept for API compatibility with bundle mode).
         del bundle_id
@@ -155,7 +156,8 @@ class VisualFlowGatewayHost:
             artifact_store=self._artifact_store,
             tool_executor=tool_executor,
         )
-        return str(vis_runner.start(data, actor_id=actor_id))
+        sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
+        return str(vis_runner.start(data, actor_id=actor_id, session_id=sid))
 
     def runtime_and_workflow_for_run(self, run_id: str) -> tuple[Runtime, Any]:
         """Return (runtime, workflow_spec) for the given run, ensuring derived VisualFlow workflows are registered."""
@@ -210,4 +212,3 @@ class VisualFlowGatewayHost:
         if wf is None:
             raise KeyError(f"Workflow '{workflow_id}' not registered")
         return (runtime, wf)
-

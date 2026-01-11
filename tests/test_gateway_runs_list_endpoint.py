@@ -129,3 +129,88 @@ def test_list_runs_includes_recent_runs_and_filters(tmp_path: Path, monkeypatch:
         assert filtered.status_code == 200, filtered.text
         items2 = filtered.json().get("items") or []
         assert any(i.get("run_id") == run_id and i.get("status") == "completed" for i in items2)
+
+
+def test_list_runs_filters_internal_memory_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-runs", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        start = client.post("/api/gateway/runs/start", headers=headers, json={"bundle_id": "bundle-runs", "flow_id": "root", "input_data": {}})
+        assert start.status_code == 200, start.text
+        run_id = start.json()["run_id"]
+
+        def _is_completed():
+            rr = client.get(f"/api/gateway/runs/{run_id}", headers=headers)
+            assert rr.status_code == 200, rr.text
+            return rr.json().get("status") == "completed"
+
+        _wait_until(_is_completed, timeout_s=5.0, poll_s=0.05)
+
+        # Inject internal runtime bookkeeping runs that would otherwise pollute the /runs list.
+        from abstractgateway.service import get_gateway_service
+        from abstractruntime.core.models import RunState, RunStatus
+
+        svc = get_gateway_service()
+        rs = svc.host.run_store
+
+        internal_vars = {
+            "context": {"task": "", "messages": []},
+            "scratchpad": {},
+            "_runtime": {"memory_spans": []},
+            "_temp": {},
+            "_limits": {},
+        }
+        rs.save(
+            RunState(
+                run_id="global_memory",
+                workflow_id="__global_memory__",
+                status=RunStatus.COMPLETED,
+                current_node="done",
+                vars=dict(internal_vars),
+                waiting=None,
+                output={"messages": []},
+                error=None,
+                created_at="9999-01-01T00:00:00+00:00",
+                updated_at="9999-01-01T00:00:00+00:00",
+                actor_id=None,
+                session_id=None,
+                parent_run_id=None,
+            )
+        )
+        rs.save(
+            RunState(
+                run_id="session_memory_sess_1",
+                workflow_id="__session_memory__",
+                status=RunStatus.COMPLETED,
+                current_node="done",
+                vars=dict(internal_vars),
+                waiting=None,
+                output={"messages": []},
+                error=None,
+                created_at="9999-01-01T00:00:01+00:00",
+                updated_at="9999-01-01T00:00:01+00:00",
+                actor_id=None,
+                session_id="sess_1",
+                parent_run_id=None,
+            )
+        )
+
+        listed = client.get("/api/gateway/runs?limit=50", headers=headers)
+        assert listed.status_code == 200, listed.text
+        items = listed.json().get("items") or []
+        assert any(i.get("run_id") == run_id for i in items)
+        assert all(not str(i.get("workflow_id") or "").startswith("__") for i in items)

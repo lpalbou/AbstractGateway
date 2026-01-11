@@ -307,3 +307,58 @@ def test_gateway_bundle_namespaces_subflows_and_rewrites_references(tmp_path: Pa
         payload = started[0]["effect"].get("payload") if isinstance(started[0].get("effect"), dict) else {}
         assert isinstance(payload, dict)
         assert payload.get("workflow_id") == f"{bundle_id}:child"
+
+
+def test_gateway_generate_run_summary_appends_to_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_generate_summary_text", lambda **_kwargs: "success\n- summary generated")
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {"request": "do the thing"}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        run_id = r.json()["run_id"]
+
+        gen = client.post(f"/api/gateway/runs/{run_id}/summary", json={}, headers=headers)
+        assert gen.status_code == 200, gen.text
+        body = gen.json()
+        assert body.get("ok") is True
+        assert body.get("run_id") == run_id
+        assert "summary" in body
+
+        ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=500", headers=headers)
+        assert ledger.status_code == 200, ledger.text
+        items = ledger.json().get("items") or []
+
+        summaries = [
+            i
+            for i in items
+            if isinstance(i, dict)
+            and isinstance(i.get("effect"), dict)
+            and i["effect"].get("type") == "emit_event"
+            and isinstance(i["effect"].get("payload"), dict)
+            and i["effect"]["payload"].get("name") == "abstract.summary"
+        ]
+        assert summaries, "Expected an abstract.summary emit_event appended to the ledger"
+        payload = summaries[-1]["effect"]["payload"].get("payload")
+        assert isinstance(payload, dict)
+        assert str(payload.get("text") or "").startswith("success")

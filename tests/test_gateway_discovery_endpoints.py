@@ -117,3 +117,56 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
         assert models.json().get("provider") == "lmstudio"
         assert models.json().get("models") == ["m1", "m2"]
 
+
+def test_discovery_model_capabilities(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractcore.architectures import detection
+
+    monkeypatch.setattr(detection, "get_model_capabilities", lambda _name: {"max_tokens": 123, "max_output_tokens": 45})
+
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        r = client.get("/api/gateway/discovery/models/capabilities?model_name=qwen3-next-80b", headers=headers)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("model") == "qwen3-next-80b"
+        caps = body.get("capabilities") or {}
+        assert caps.get("max_tokens") == 123
+
+
+def test_files_search_and_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+
+    ws = tmp_path / "workspace"
+    (ws / "src").mkdir(parents=True, exist_ok=True)
+    (ws / "src" / "alpha.py").write_text("print('alpha')\n", encoding="utf-8")
+    (ws / "notes.txt").write_text("hello\nworld\n", encoding="utf-8")
+    (ws / ".abstractignore").write_text("ignored.txt\n", encoding="utf-8")
+    (ws / "ignored.txt").write_text("secret\n", encoding="utf-8")
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+
+    with client:
+        r = client.get("/api/gateway/files/search?query=alpha&limit=10", headers=headers)
+        assert r.status_code == 200, r.text
+        items = r.json().get("items") or []
+        paths = {it.get("path") for it in items if isinstance(it, dict)}
+        assert "src/alpha.py" in paths
+
+        r2 = client.get("/api/gateway/files/search?query=ignored", headers=headers)
+        assert r2.status_code == 200, r2.text
+        items2 = r2.json().get("items") or []
+        paths2 = {it.get("path") for it in items2 if isinstance(it, dict)}
+        assert "ignored.txt" not in paths2
+
+        rr = client.get("/api/gateway/files/read?path=src/alpha.py", headers=headers)
+        assert rr.status_code == 200, rr.text
+        body = rr.json()
+        assert body.get("path") == "src/alpha.py"
+        assert "print('alpha')" in (body.get("content") or "")
+
+        rr_ignored = client.get("/api/gateway/files/read?path=ignored.txt", headers=headers)
+        assert rr_ignored.status_code == 200, rr_ignored.text
+        assert "ignored by .abstractignore" in (rr_ignored.json().get("content") or "")
+
+        rr2 = client.get("/api/gateway/files/read?path=../outside.txt", headers=headers)
+        assert rr2.status_code == 403, rr2.text
