@@ -1159,7 +1159,7 @@ def _extract_digest_from_ledger(ledger: list[Dict[str, Any]]) -> Dict[str, Any]:
                         "signature": _tool_signature(name, args),
                         "success": bool(ok) if isinstance(ok, bool) else None,
                         "error": _clamp_text(str(err), max_len=500) if err else None,
-                        "output": _clamp_text(_format_output_preview(out), max_len=1200) if out is not None else None,
+                        "output": _clamp_text(_format_output_preview(out), max_len=50000) if out is not None else None,
                         "toolset": toolset or None,
                     }
                 )
@@ -2310,7 +2310,7 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
                         "call_id": str(r.get("call_id") or r.get("id") or "").strip() or None,
                         "success": r.get("success") if isinstance(r.get("success"), bool) else None,
                         "error": _slim_text(r.get("error"), max_len=800) if r.get("error") else None,
-                        "output": _slim_json(r.get("output"), max_len=4000) if r.get("output") is not None else None,
+                        "output": _slim_json(r.get("output"), max_len=50000) if r.get("output") is not None else None,
                     }
                     for r in results[:20]
                 ],

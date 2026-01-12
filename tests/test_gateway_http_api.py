@@ -375,9 +375,7 @@ def test_gateway_bundle_namespaces_subflows_and_rewrites_references(tmp_path: Pa
 
         ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=200", headers=headers)
         assert ledger.status_code == 200, ledger.text
-        items = ledger.json().get("items") or []
-
-        # Ensure the START_SUBWORKFLOW effect used the namespaced workflow id (host rewrite).
+        items = ledger.json().get("items") or []        # Ensure the START_SUBWORKFLOW effect used the namespaced workflow id (host rewrite).
         started = [
             i
             for i in items
