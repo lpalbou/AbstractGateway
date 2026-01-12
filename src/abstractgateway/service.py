@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .config import GatewayHostConfig
+from .embeddings_config import resolve_embedding_config
 from .hosts.visualflow_host import VisualFlowGatewayHost, VisualFlowRegistry
 from .runner import GatewayRunner, GatewayRunnerConfig
 from .security import GatewayAuthPolicy, load_gateway_auth_policy_from_env
@@ -20,6 +22,9 @@ class GatewayService:
     host: Any
     runner: GatewayRunner
     auth_policy: GatewayAuthPolicy
+    embedding_provider: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embeddings_client: Optional[Any] = None
     telegram_bridge: Optional[Any] = None
 
 
@@ -74,6 +79,22 @@ def create_default_gateway_service() -> GatewayService:
 
     policy = load_gateway_auth_policy_from_env()
 
+    embedding_provider: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embeddings_client: Optional[Any] = None
+    try:
+        embedding_provider, embedding_model = resolve_embedding_config(base_dir=stores.base_dir)
+        from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient
+
+        embeddings_client = AbstractCoreEmbeddingsClient(
+            provider=embedding_provider,
+            model=embedding_model,
+            manager_kwargs={"cache_dir": Path(stores.base_dir) / "abstractcore" / "embeddings"},
+        )
+    except Exception:
+        # Embeddings are optional: the gateway may run without AbstractCore embedding deps.
+        embeddings_client = None
+
     telegram_bridge = None
     enabled_raw = os.getenv("ABSTRACT_TELEGRAM_BRIDGE")
     if enabled_raw is not None and str(enabled_raw).strip().lower() in {"1", "true", "yes", "on"}:
@@ -96,6 +117,9 @@ def create_default_gateway_service() -> GatewayService:
         host=host,
         runner=runner,
         auth_policy=policy,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+        embeddings_client=embeddings_client,
         telegram_bridge=telegram_bridge,
     )
 

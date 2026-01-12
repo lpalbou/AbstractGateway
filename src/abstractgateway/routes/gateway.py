@@ -121,6 +121,26 @@ class GenerateRunSummaryResponse(BaseModel):
     summary: str
 
 
+class EmbeddingsRequest(BaseModel):
+    input: Any = Field(..., description="Text or list of texts to embed (OpenAI-compatible field name).")
+    provider: Optional[str] = Field(default=None, description="Optional provider override (must match gateway embedding config).")
+    model: Optional[str] = Field(default=None, description="Optional model override (must match gateway embedding config).")
+
+
+class EmbeddingItem(BaseModel):
+    object: str = Field(default="embedding")
+    index: int
+    embedding: list[float]
+
+
+class EmbeddingsResponse(BaseModel):
+    object: str = Field(default="list")
+    provider: str
+    model: str
+    dimension: int
+    data: list[EmbeddingItem]
+
+
 class RunChatRequest(BaseModel):
     provider: str = Field(default="lmstudio", description="AbstractCore provider name.")
     model: str = Field(default="qwen/qwen3-next-80b", description="Model id/name.")
@@ -146,6 +166,18 @@ class RunChatResponse(BaseModel):
     model: str
     generated_at: str
     answer: str
+
+
+class ArtifactListItem(BaseModel):
+    artifact_id: str
+    content_type: Optional[str] = None
+    size_bytes: Optional[int] = None
+    created_at: Optional[str] = None
+    tags: Dict[str, str] = Field(default_factory=dict)
+
+
+class ArtifactListResponse(BaseModel):
+    items: list[ArtifactListItem] = Field(default_factory=list)
 
 
 def _require_bundle_host(svc: Any) -> Any:
@@ -1837,6 +1869,161 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     }
 
 
+@router.get("/runs/{run_id}/artifacts", response_model=ArtifactListResponse)
+async def list_run_artifacts(
+    run_id: str,
+    limit: int = Query(200, ge=1, le=2000, description="Maximum number of artifacts (most recent first)."),
+) -> ArtifactListResponse:
+    """List artifacts associated with a run (read-only, v0)."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    try:
+        run = rs.load(str(run_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    list_fn = getattr(store, "list_by_run", None)
+    if not callable(list_fn):
+        raise HTTPException(status_code=400, detail="Artifact store does not support listing by run")
+
+    try:
+        items0 = list_fn(str(run_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list artifacts: {e}")
+
+    rows: list[ArtifactListItem] = []
+    for m in items0 or []:
+        try:
+            artifact_id = str(getattr(m, "artifact_id", "") or "").strip()
+            if not artifact_id:
+                continue
+            rows.append(
+                ArtifactListItem(
+                    artifact_id=artifact_id,
+                    content_type=getattr(m, "content_type", None),
+                    size_bytes=getattr(m, "size_bytes", None),
+                    created_at=getattr(m, "created_at", None),
+                    tags=dict(getattr(m, "tags", None) or {}) if isinstance(getattr(m, "tags", None), dict) else {},
+                )
+            )
+        except Exception:
+            continue
+
+    rows.sort(key=lambda r: str(r.created_at or ""), reverse=True)
+    return ArtifactListResponse(items=rows[: int(limit)])
+
+
+@router.get("/runs/{run_id}/artifacts/{artifact_id}")
+async def get_run_artifact_metadata(run_id: str, artifact_id: str) -> Dict[str, Any]:
+    """Return artifact metadata without downloading content (read-only, v0)."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    try:
+        run = rs.load(str(run_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    meta_fn = getattr(store, "get_metadata", None)
+    if not callable(meta_fn):
+        raise HTTPException(status_code=400, detail="Artifact store does not support metadata reads")
+
+    try:
+        meta = meta_fn(str(artifact_id))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid artifact id: {e}")
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+
+    rid = str(getattr(meta, "run_id", "") or "").strip()
+    if rid != str(run_id):
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+
+    to_dict = getattr(meta, "to_dict", None)
+    out = to_dict() if callable(to_dict) else {}
+    if not isinstance(out, dict):
+        out = {}
+    return out
+
+
+@router.get("/runs/{run_id}/artifacts/{artifact_id}/content")
+async def download_run_artifact_content(run_id: str, artifact_id: str) -> StreamingResponse:
+    """Download artifact bytes (streaming best-effort)."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    try:
+        run = rs.load(str(run_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    meta_fn = getattr(store, "get_metadata", None)
+    if not callable(meta_fn):
+        raise HTTPException(status_code=400, detail="Artifact store does not support metadata reads")
+
+    try:
+        meta = meta_fn(str(artifact_id))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid artifact id: {e}")
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+
+    rid = str(getattr(meta, "run_id", "") or "").strip()
+    if rid != str(run_id):
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+
+    content_type = str(getattr(meta, "content_type", None) or "application/octet-stream")
+
+    # Best-effort streaming for file-backed stores.
+    content_path = None
+    try:
+        path_fn = getattr(store, "_content_path", None)
+        if callable(path_fn):
+            content_path = path_fn(str(artifact_id))
+    except Exception:
+        content_path = None
+
+    if content_path is not None:
+        try:
+            path = Path(content_path)
+            if not path.exists():
+                raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to resolve artifact content path: {e}")
+
+        def _iterfile():
+            with open(path, "rb") as f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        return StreamingResponse(_iterfile(), media_type=content_type)
+
+    # Fallback: load into memory (portable but not streaming).
+    load_fn = getattr(store, "load", None)
+    if not callable(load_fn):
+        raise HTTPException(status_code=400, detail="Artifact store does not support content reads")
+    artifact = load_fn(str(artifact_id))
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+
+    def _single_chunk():
+        yield getattr(artifact, "content", b"") or b""
+
+    return StreamingResponse(_single_chunk(), media_type=content_type)
+
+
 @router.get("/runs/{run_id}/ledger")
 async def get_ledger(
     run_id: str,
@@ -2309,6 +2496,65 @@ async def discovery_model_capabilities(model_name: str = Query(..., description=
         return {"model": name, "capabilities": caps}
     except Exception as e:
         return {"model": name, "capabilities": {}, "error": str(e)}
+
+
+@router.post("/embeddings", response_model=EmbeddingsResponse)
+async def embeddings(req: EmbeddingsRequest) -> EmbeddingsResponse:
+    """Generate embeddings for text inputs using the gateway-wide embedding model.
+
+    Contract:
+    - Single embedding space per gateway instance (provider+model are stable).
+    - Request overrides are rejected unless they match the configured provider/model.
+    """
+    svc = get_gateway_service()
+    client = getattr(svc, "embeddings_client", None)
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Embeddings are not available (missing AbstractCore embedding integration). "
+                "Install `abstractruntime[abstractcore]` and ensure an embedding provider/model is configured."
+            ),
+        )
+
+    configured_provider = str(getattr(svc, "embedding_provider", "") or getattr(client, "provider", "") or "").strip().lower()
+    configured_model = str(getattr(svc, "embedding_model", "") or getattr(client, "model", "") or "").strip()
+
+    req_provider = str(req.provider or "").strip().lower() if isinstance(req.provider, str) else ""
+    req_model = str(req.model or "").strip() if isinstance(req.model, str) else ""
+
+    if req_provider and configured_provider and req_provider != configured_provider:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Embedding provider is fixed for this gateway instance (expected '{configured_provider}', got '{req_provider}')",
+        )
+    if req_model and configured_model and req_model != configured_model:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Embedding model is fixed for this gateway instance (expected '{configured_model}', got '{req_model}')",
+        )
+
+    raw = req.input
+    if isinstance(raw, list):
+        texts = [str(x or "") for x in raw]
+    else:
+        texts = [str(raw or "")]
+
+    if not texts:
+        return EmbeddingsResponse(provider=configured_provider, model=configured_model, dimension=0, data=[])
+
+    try:
+        result = client.embed_texts(texts)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}") from e
+
+    data = [EmbeddingItem(index=i, embedding=list(vec)) for i, vec in enumerate(result.embeddings)]
+    return EmbeddingsResponse(
+        provider=str(result.provider),
+        model=str(result.model),
+        dimension=int(result.dimension or 0),
+        data=data,
+    )
 
 
 @router.get("/files/search")

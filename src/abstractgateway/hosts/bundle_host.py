@@ -255,6 +255,17 @@ def _flow_uses_tools(raw: Dict[str, Any]) -> bool:
     return False
 
 
+def _flow_uses_memory_kg(raw: Dict[str, Any]) -> bool:
+    nodes = raw.get("nodes")
+    if not isinstance(nodes, list):
+        return False
+    for n in nodes:
+        t = _node_type_from_raw(n)
+        if t in {"memory_kg_assert", "memory_kg_query"}:
+            return True
+    return False
+
+
 def _collect_agent_nodes(raw: Dict[str, Any]) -> list[tuple[str, Dict[str, Any]]]:
     nodes = raw.get("nodes")
     if not isinstance(nodes, list):
@@ -484,6 +495,52 @@ class WorkflowBundleGatewayHost:
 
         needs_llm = any(_flow_uses_llm(raw) for raw in flows_by_namespaced_id.values())
         needs_tools = any(_flow_uses_tools(raw) for raw in flows_by_namespaced_id.values())
+        needs_memory_kg = any(_flow_uses_memory_kg(raw) for raw in flows_by_namespaced_id.values())
+
+        extra_effect_handlers: Dict[Any, Any] = {}
+        if needs_memory_kg:
+            try:
+                from abstractmemory import InMemoryTripleStore, LanceDBTripleStore
+                from abstractruntime.integrations.abstractmemory.effect_handlers import build_memory_kg_effect_handlers
+                from abstractruntime.storage.artifacts import utc_now_iso
+            except Exception as e:  # pragma: no cover
+                raise WorkflowBundleError(
+                    "Bundle uses memory_kg_* nodes but AbstractMemory integration is not available. "
+                    "Install `abstractmemory` (and optionally `abstractmemory[lancedb]`)."
+                ) from e
+
+            embedder = None
+            try:
+                from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient
+                from abstractgateway.embeddings_config import resolve_embedding_config
+
+                emb_provider, emb_model = resolve_embedding_config(base_dir=Path(data_root))
+                emb_client = AbstractCoreEmbeddingsClient(
+                    provider=str(emb_provider).strip().lower(),
+                    model=str(emb_model).strip(),
+                    manager_kwargs={"cache_dir": Path(data_root) / "abstractcore" / "embeddings"},
+                )
+
+                class _Embedder:
+                    def __init__(self, client: Any) -> None:
+                        self._client = client
+
+                    def embed_texts(self, texts):
+                        return self._client.embed_texts(texts).embeddings
+
+                embedder = _Embedder(emb_client)
+            except Exception:
+                embedder = None
+
+            store_obj: Any = None
+            try:
+                store_path = Path(data_root) / "abstractmemory" / "kg"
+                store_path.parent.mkdir(parents=True, exist_ok=True)
+                store_obj = LanceDBTripleStore(store_path, embedder=embedder)
+            except Exception:
+                store_obj = InMemoryTripleStore(embedder=embedder)
+
+            extra_effect_handlers = build_memory_kg_effect_handlers(store=store_obj, run_store=run_store, now_iso=utc_now_iso)
 
         # Optional AbstractCore integration for LLM_CALL + TOOL_CALLS.
         if needs_llm or needs_tools:
@@ -543,6 +600,7 @@ class WorkflowBundleGatewayHost:
                     ledger_store=ledger_store,
                     artifact_store=artifact_store,
                     tool_executor=tool_executor,
+                    extra_effect_handlers=extra_effect_handlers,
                 )
                 runtime.set_workflow_registry(wf_reg)
             else:
@@ -557,6 +615,7 @@ class WorkflowBundleGatewayHost:
                     artifact_store=artifact_store,
                     effect_handlers={
                         EffectType.TOOL_CALLS: make_tool_calls_handler(tools=tool_executor),
+                        **extra_effect_handlers,
                     },
                 )
         else:
