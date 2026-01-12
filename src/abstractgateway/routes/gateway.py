@@ -38,6 +38,10 @@ class StartRunRequest(BaseModel):
         default=None,
         description="Bundle id (when workflow source is 'bundle'). Optional if flow_id is already namespaced as 'bundle:flow'.",
     )
+    bundle_version: Optional[str] = Field(
+        default=None,
+        description="Optional bundle version to run. If omitted, defaults to the latest loaded version for the selected bundle_id.",
+    )
     flow_id: Optional[str] = Field(
         default=None,
         description=(
@@ -58,6 +62,10 @@ class StartRunResponse(BaseModel):
 
 class ScheduleRunRequest(BaseModel):
     bundle_id: str = Field(..., description="Target bundle id to execute.")
+    bundle_version: Optional[str] = Field(
+        default=None,
+        description="Optional bundle version to run. If omitted, defaults to the latest loaded version for the selected bundle_id.",
+    )
     flow_id: str = Field(..., description="Target entry flow id (or namespaced bundle:flow).")
     input_data: Dict[str, Any] = Field(default_factory=dict, description="Target flow input payload.")
 
@@ -119,6 +127,16 @@ class RunChatRequest(BaseModel):
     include_subruns: bool = Field(default=True, description="Include child/subworkflow runs in the chat context.")
     messages: list[Dict[str, Any]] = Field(default_factory=list, description="Chat messages (role/content).")
     persist: bool = Field(default=False, description="If true, persist the Q/A to the parent run ledger as abstract.chat.")
+
+
+class LedgerBatchRun(BaseModel):
+    run_id: str
+    after: int = Field(default=0, ge=0)
+
+
+class LedgerBatchRequest(BaseModel):
+    runs: list[LedgerBatchRun] = Field(default_factory=list)
+    limit: int = Field(default=200, ge=1, le=2000)
 
 
 class RunChatResponse(BaseModel):
@@ -716,6 +734,53 @@ def _parse_namespaced_workflow_id(workflow_id: str) -> Optional[tuple[str, str]]
     return (a, b)
 
 
+def _split_bundle_ref(raw: str) -> tuple[str, Optional[str]]:
+    s = str(raw or "").strip()
+    if not s:
+        return ("", None)
+    if "@" not in s:
+        return (s, None)
+    a, b = s.split("@", 1)
+    a = a.strip()
+    b = b.strip()
+    if not a:
+        return ("", None)
+    if not b:
+        return (a, None)
+    return (a, b)
+
+
+def _resolve_bundle_from_host(*, host: Any, bundle_id: str, bundle_version: Optional[str]) -> tuple[str, Any]:
+    """Return (selected_bundle_version, bundle) for a bundle_id (+ optional bundle_version)."""
+    bundles0 = getattr(host, "bundles", None)
+    if not isinstance(bundles0, dict):
+        raise HTTPException(status_code=400, detail="Bundle workflow source is not enabled on this gateway")
+    latest0 = getattr(host, "latest_bundle_versions", None)
+    latest = latest0 if isinstance(latest0, dict) else {}
+
+    bid_base, bid_ver = _split_bundle_ref(str(bundle_id or ""))
+    if not bid_base:
+        raise HTTPException(status_code=400, detail="bundle_id is required")
+
+    req_ver = str(bundle_version or "").strip() if isinstance(bundle_version, str) and str(bundle_version).strip() else ""
+    if bid_ver and req_ver and bid_ver != req_ver:
+        raise HTTPException(status_code=400, detail="bundle_version conflicts with bundle_id (bundle_id already includes '@version')")
+
+    versions = bundles0.get(bid_base)
+    if not isinstance(versions, dict) or not versions:
+        raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}' not found")
+
+    selected_ver = req_ver or bid_ver or str(latest.get(bid_base) or "").strip()
+    if not selected_ver:
+        raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}' has no versions loaded")
+
+    bundle = versions.get(selected_ver)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}@{selected_ver}' not found")
+
+    return (selected_ver, bundle)
+
+
 def _workspace_root() -> Path:
     raw = str(os.getenv("ABSTRACTGATEWAY_WORKSPACE_DIR", "") or "").strip()
     base = Path(raw).expanduser() if raw else Path.cwd()
@@ -1188,43 +1253,80 @@ def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], m
 
 
 @router.get("/bundles")
-async def list_bundles() -> Dict[str, Any]:
+async def list_bundles(all_versions: bool = Query(default=False, description="If true, return one item per bundle version.")) -> Dict[str, Any]:
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
 
     items: list[Dict[str, Any]] = []
-    bundles = getattr(host, "bundles", {}) or {}
-    for bid, b in bundles.items():
-        man = getattr(b, "manifest", None)
-        if man is None:
+    bundles_by_id = getattr(host, "bundles", {}) or {}
+    latest0 = getattr(host, "latest_bundle_versions", None)
+    latest = latest0 if isinstance(latest0, dict) else {}
+
+    for bid, versions in (bundles_by_id or {}).items():
+        if not isinstance(versions, dict) or not versions:
             continue
-        entrypoints = getattr(man, "entrypoints", None) or []
-        eps: list[Dict[str, Any]] = []
-        for ep in entrypoints:
-            eps.append(
+
+        selected_versions: list[str]
+        if all_versions:
+            selected_versions = [str(v) for v in versions.keys() if isinstance(v, str)]
+        else:
+            v0 = latest.get(str(bid))
+            v = str(v0).strip() if isinstance(v0, str) and str(v0).strip() else ""
+            if not v:
+                # Best-effort fallback.
+                v = sorted([str(x) for x in versions.keys() if isinstance(x, str)])[-1]
+            selected_versions = [v]
+
+        for ver in selected_versions:
+            b = versions.get(ver)
+            man = getattr(b, "manifest", None) if b is not None else None
+            if man is None:
+                continue
+            entrypoints = getattr(man, "entrypoints", None) or []
+            eps: list[Dict[str, Any]] = []
+            for ep in entrypoints:
+                eps.append(
+                    {
+                        "flow_id": getattr(ep, "flow_id", None),
+                        "name": getattr(ep, "name", None),
+                        "description": getattr(ep, "description", "") or "",
+                        "interfaces": list(getattr(ep, "interfaces", None) or []),
+                    }
+                )
+            items.append(
                 {
-                    "flow_id": getattr(ep, "flow_id", None),
-                    "name": getattr(ep, "name", None),
-                    "description": getattr(ep, "description", "") or "",
-                    "interfaces": list(getattr(ep, "interfaces", None) or []),
+                    "bundle_id": str(bid),
+                    "bundle_version": getattr(man, "bundle_version", ver),
+                    "bundle_ref": f"{bid}@{getattr(man, 'bundle_version', ver)}",
+                    "created_at": getattr(man, "created_at", ""),
+                    "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
+                    "entrypoints": eps,
                 }
             )
-        items.append(
-            {
-                "bundle_id": str(bid),
-                "bundle_version": getattr(man, "bundle_version", "0.0.0"),
-                "created_at": getattr(man, "created_at", ""),
-                "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
-                "entrypoints": eps,
-            }
-        )
 
     items.sort(key=lambda x: str(x.get("bundle_id") or ""))
     return {"items": items, "default_bundle_id": getattr(host, "_default_bundle_id", None)}
 
 
+@router.post("/bundles/reload")
+async def reload_bundles() -> Dict[str, Any]:
+    """Reload bundle directory (best-effort; intended for local dev)."""
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+
+    reload_fn = getattr(host, "reload_bundles_from_disk", None)
+    if not callable(reload_fn):
+        raise HTTPException(status_code=400, detail="Bundle reload is not supported on this gateway host")
+    try:
+        return dict(reload_fn() or {})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reload bundles: {e}")
+
+
 @router.get("/bundles/{bundle_id}")
-async def get_bundle(bundle_id: str) -> Dict[str, Any]:
+async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to latest).")) -> Dict[str, Any]:
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
 
@@ -1232,10 +1334,8 @@ async def get_bundle(bundle_id: str) -> Dict[str, Any]:
     if not bid:
         raise HTTPException(status_code=400, detail="bundle_id is required")
 
-    bundles = getattr(host, "bundles", {}) or {}
-    bundle = bundles.get(bid)
-    if bundle is None:
-        raise HTTPException(status_code=404, detail=f"Bundle '{bid}' not found")
+    selected_ver, bundle = _resolve_bundle_from_host(host=host, bundle_id=bid, bundle_version=bundle_version)
+    bid_base, _bid_ver = _split_bundle_ref(bid)
 
     man = bundle.manifest
     entrypoints_out: list[Dict[str, Any]] = []
@@ -1246,7 +1346,7 @@ async def get_bundle(bundle_id: str) -> Dict[str, Any]:
         entrypoints_out.append(
             {
                 "flow_id": fid,
-                "workflow_id": f"{bid}:{fid}" if fid else None,
+                "workflow_id": f"{bid_base}@{selected_ver}:{fid}" if fid else None,
                 "name": getattr(ep, "name", None),
                 "description": str(getattr(ep, "description", "") or ""),
                 "interfaces": list(getattr(ep, "interfaces", None) or []),
@@ -1257,8 +1357,9 @@ async def get_bundle(bundle_id: str) -> Dict[str, Any]:
 
     flow_ids = sorted([str(k) for k in (man.flows or {}).keys() if isinstance(k, str) and k.strip()])
     return {
-        "bundle_id": str(man.bundle_id),
-        "bundle_version": str(man.bundle_version or "0.0.0"),
+        "bundle_id": str(bid_base),
+        "bundle_version": str(selected_ver),
+        "bundle_ref": f"{bid_base}@{selected_ver}",
         "created_at": str(man.created_at or ""),
         "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
         "entrypoints": entrypoints_out,
@@ -1268,7 +1369,11 @@ async def get_bundle(bundle_id: str) -> Dict[str, Any]:
 
 
 @router.get("/bundles/{bundle_id}/flows/{flow_id}")
-async def get_bundle_flow(bundle_id: str, flow_id: str) -> Dict[str, Any]:
+async def get_bundle_flow(
+    bundle_id: str,
+    flow_id: str,
+    bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to latest)."),
+) -> Dict[str, Any]:
     """Return a VisualFlow JSON from a bundle (best-effort; intended for thin clients)."""
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
@@ -1276,6 +1381,8 @@ async def get_bundle_flow(bundle_id: str, flow_id: str) -> Dict[str, Any]:
     bid = str(bundle_id or "").strip()
     if not bid:
         raise HTTPException(status_code=400, detail="bundle_id is required")
+
+    bid_base, bid_ver = _split_bundle_ref(bid)
 
     fid = str(flow_id or "").strip()
     if not fid:
@@ -1285,26 +1392,80 @@ async def get_bundle_flow(bundle_id: str, flow_id: str) -> Dict[str, Any]:
     if ":" in fid:
         parsed = fid.split(":", 1)
         if len(parsed) == 2 and parsed[0] and parsed[1]:
-            if parsed[0] != bid:
+            prefix_base, prefix_ver = _split_bundle_ref(parsed[0])
+            if prefix_base != bid_base:
                 raise HTTPException(status_code=400, detail="flow_id bundle prefix does not match bundle_id")
+            if prefix_ver and bundle_version and prefix_ver != bundle_version:
+                raise HTTPException(status_code=400, detail="flow_id version does not match bundle_version")
+            if prefix_ver and bid_ver and prefix_ver != bid_ver:
+                raise HTTPException(status_code=400, detail="flow_id version does not match bundle_id")
+            if bid_ver and bundle_version and bid_ver != bundle_version:
+                raise HTTPException(status_code=400, detail="bundle_id version does not match bundle_version")
+            bundle_version = prefix_ver or bundle_version or bid_ver
             fid = parsed[1].strip()
         else:
             raise HTTPException(status_code=400, detail="Invalid flow_id")
+    elif bid_ver and bundle_version and bid_ver != bundle_version:
+        raise HTTPException(status_code=400, detail="bundle_id version does not match bundle_version")
 
-    bundles = getattr(host, "bundles", {}) or {}
-    bundle = bundles.get(bid)
-    if bundle is None:
-        raise HTTPException(status_code=404, detail=f"Bundle '{bid}' not found")
+    selected_ver, bundle = _resolve_bundle_from_host(host=host, bundle_id=bid_base, bundle_version=bundle_version or bid_ver)
 
     rel = bundle.manifest.flow_path_for(fid)
     if not isinstance(rel, str) or not rel.strip():
-        raise HTTPException(status_code=404, detail=f"Flow '{fid}' not found in bundle '{bid}'")
+        raise HTTPException(status_code=404, detail=f"Flow '{fid}' not found in bundle '{bid_base}@{selected_ver}'")
 
     raw = bundle.read_json(rel)
     if not isinstance(raw, dict):
         raise HTTPException(status_code=500, detail="Flow JSON is invalid")
 
-    return {"bundle_id": bid, "flow_id": fid, "workflow_id": f"{bid}:{fid}", "flow": raw}
+    return {
+        "bundle_id": bid_base,
+        "bundle_version": selected_ver,
+        "bundle_ref": f"{bid_base}@{selected_ver}",
+        "flow_id": fid,
+        "workflow_id": f"{bid_base}@{selected_ver}:{fid}",
+        "flow": raw,
+    }
+
+
+@router.get("/workflows/{workflow_id}/flow")
+async def get_workflow_flow(workflow_id: str) -> Dict[str, Any]:
+    """Return a VisualFlow JSON by workflow_id.
+
+    Supports gateway-generated dynamic workflows (e.g. scheduled wrapper flows) and, as a
+    convenience, bundle workflows in the form `bundle_id:flow_id`.
+    """
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+
+    wid = str(workflow_id or "").strip()
+    if not wid:
+        raise HTTPException(status_code=400, detail="workflow_id is required")
+
+    dyn_path_fn = getattr(host, "_dynamic_flow_path", None)
+    dyn_path = dyn_path_fn(wid) if callable(dyn_path_fn) else None
+    if dyn_path is not None:
+        try:
+            p = Path(dyn_path)
+            if p.exists() and p.is_file():
+                raw = json.loads(p.read_text(encoding="utf-8"))
+                if not isinstance(raw, dict):
+                    raise HTTPException(status_code=500, detail="Dynamic flow JSON is invalid")
+                return {"workflow_id": wid, "flow": raw, "source": "dynamic"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read dynamic flow: {e}")
+
+    parsed = wid.split(":", 1)
+    if len(parsed) == 2 and parsed[0] and parsed[1]:
+        bid_ref, fid = parsed[0].strip(), parsed[1].strip()
+        bid_base, bid_ver = _split_bundle_ref(bid_ref)
+        bundles = getattr(host, "bundles", {}) or {}
+        if isinstance(bundles, dict) and bid_base in bundles:
+            return await get_bundle_flow(bid_base, fid, bundle_version=bid_ver)
+
+    raise HTTPException(status_code=404, detail=f"Workflow '{wid}' not found")
 
 
 @router.post("/runs/start", response_model=StartRunResponse)
@@ -1314,6 +1475,9 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
 
     flow_id = str(req.flow_id or "").strip()
     bundle_id = str(req.bundle_id).strip() if isinstance(req.bundle_id, str) and str(req.bundle_id).strip() else None
+    bundle_version = (
+        str(req.bundle_version).strip() if isinstance(req.bundle_version, str) and str(req.bundle_version).strip() else None
+    )
     if not flow_id and not bundle_id:
         raise HTTPException(status_code=400, detail="flow_id is required (or provide bundle_id to start a bundle entrypoint)")
 
@@ -1322,6 +1486,7 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
         run_id = svc.host.start_run(
             flow_id=flow_id,
             bundle_id=bundle_id,
+            bundle_version=bundle_version,
             input_data=dict(req.input_data or {}),
             actor_id="gateway",
             session_id=session_id,
@@ -1350,23 +1515,45 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
     if host is None or not callable(getattr(host, "register_dynamic_visualflow", None)):
         raise HTTPException(status_code=400, detail="Dynamic workflow registration is not supported on this gateway host")
 
-    bundle_id = str(req.bundle_id or "").strip()
+    bundle_id_ref = str(req.bundle_id or "").strip()
     flow_id_raw = str(req.flow_id or "").strip()
-    if not bundle_id or not flow_id_raw:
+    if not bundle_id_ref or not flow_id_raw:
         raise HTTPException(status_code=400, detail="bundle_id and flow_id are required")
 
-    # Normalize target workflow id (bundle:flow).
+    bundle_id_base, bundle_id_ver = _split_bundle_ref(bundle_id_ref)
+    if not bundle_id_base:
+        raise HTTPException(status_code=400, detail="bundle_id is required")
+
+    requested_ver = str(req.bundle_version or "").strip() if isinstance(req.bundle_version, str) and str(req.bundle_version).strip() else ""
+    if bundle_id_ver and requested_ver and bundle_id_ver != requested_ver:
+        raise HTTPException(status_code=400, detail="bundle_version conflicts with bundle_id (bundle_id already includes '@version')")
+
+    latest0 = getattr(host, "latest_bundle_versions", None)
+    latest = latest0 if isinstance(latest0, dict) else {}
+
+    # Normalize target workflow id (bundle@ver:flow).
     if ":" in flow_id_raw:
         parsed = _parse_namespaced_workflow_id(flow_id_raw)
         if not parsed:
             raise HTTPException(status_code=400, detail="Invalid flow_id")
-        if parsed[0] != bundle_id:
+        prefix_base, prefix_ver = _split_bundle_ref(parsed[0])
+        if prefix_base != bundle_id_base:
             raise HTTPException(status_code=400, detail="flow_id bundle prefix does not match bundle_id")
-        target_workflow_id = f"{parsed[0]}:{parsed[1]}"
+        if prefix_ver and requested_ver and prefix_ver != requested_ver:
+            raise HTTPException(status_code=400, detail="flow_id version does not match bundle_version")
+        if prefix_ver and bundle_id_ver and prefix_ver != bundle_id_ver:
+            raise HTTPException(status_code=400, detail="flow_id version does not match bundle_id")
+        selected_ver = prefix_ver or requested_ver or bundle_id_ver or str(latest.get(bundle_id_base) or "").strip()
+        if not selected_ver:
+            raise HTTPException(status_code=404, detail=f"Bundle '{bundle_id_base}' has no versions loaded")
         target_flow_id = parsed[1]
+        target_workflow_id = f"{bundle_id_base}@{selected_ver}:{target_flow_id}"
     else:
-        target_workflow_id = f"{bundle_id}:{flow_id_raw}"
         target_flow_id = flow_id_raw
+        selected_ver = requested_ver or bundle_id_ver or str(latest.get(bundle_id_base) or "").strip()
+        if not selected_ver:
+            raise HTTPException(status_code=404, detail=f"Bundle '{bundle_id_base}' has no versions loaded")
+        target_workflow_id = f"{bundle_id_base}@{selected_ver}:{target_flow_id}"
 
     specs = getattr(host, "specs", None)
     if not isinstance(specs, dict) or target_workflow_id not in specs:
@@ -1421,7 +1608,9 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
     schedule_meta: Dict[str, Any] = {
         "kind": "scheduled_run",
         "target_workflow_id": target_workflow_id,
-        "target_bundle_id": bundle_id,
+        "target_bundle_id": bundle_id_base,
+        "target_bundle_version": selected_ver,
+        "target_bundle_ref": f"{bundle_id_base}@{selected_ver}",
         "target_flow_id": target_flow_id,
         "start_at": start_at_iso,
         "interval": interval_opt,
@@ -1557,6 +1746,8 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
         schedule = meta.get("schedule") if isinstance(meta, dict) else None
         if isinstance(schedule, dict):
             tb = schedule.get("target_bundle_id")
+            tbv = schedule.get("target_bundle_version")
+            tbr = schedule.get("target_bundle_ref")
             tf = schedule.get("target_flow_id")
             if isinstance(tb, str) and tb.strip() and isinstance(tf, str) and tf.strip():
                 bundle_id2 = tb.strip()
@@ -1565,28 +1756,30 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
 
                 # Best-effort pin filtering for the target flow.
                 host = getattr(svc, "host", None)
-                bundles = getattr(host, "bundles", None)
-                if isinstance(bundles, dict):
-                    bundle = bundles.get(bundle_id2)
-                    if bundle is not None:
-                        try:
-                            rel = bundle.manifest.flow_path_for(flow_id2)
-                            raw = bundle.read_json(rel) if isinstance(rel, str) and rel.strip() else None
-                            pins = _extract_entrypoint_inputs_from_visualflow(raw)
-                            pin_ids = [str(p.get("id")) for p in pins if isinstance(p, dict) and isinstance(p.get("id"), str)]
-                            if pin_ids:
-                                allowed = set(pin_ids)
-                                filtered = {k: v for k, v in target_vars.items() if isinstance(k, str) and k in allowed}
-                                return {
-                                    "run_id": str(getattr(run, "run_id", run_id)),
-                                    "workflow_id": str(workflow_id or ""),
-                                    "bundle_id": bundle_id2,
-                                    "flow_id": flow_id2,
-                                    "pin_ids": pin_ids,
-                                    "input_data": filtered,
-                                }
-                        except Exception:
-                            pass
+                try:
+                    selected_ver, bundle = _resolve_bundle_from_host(
+                        host=host,
+                        bundle_id=str(tbr or bundle_id2),
+                        bundle_version=str(tbv).strip() if isinstance(tbv, str) and str(tbv).strip() else None,
+                    )
+                    rel = bundle.manifest.flow_path_for(flow_id2)
+                    raw = bundle.read_json(rel) if isinstance(rel, str) and rel.strip() else None
+                    pins = _extract_entrypoint_inputs_from_visualflow(raw)
+                    pin_ids = [str(p.get("id")) for p in pins if isinstance(p, dict) and isinstance(p.get("id"), str)]
+                    if pin_ids:
+                        allowed = set(pin_ids)
+                        filtered = {k: v for k, v in target_vars.items() if isinstance(k, str) and k in allowed}
+                        return {
+                            "run_id": str(getattr(run, "run_id", run_id)),
+                            "workflow_id": str(workflow_id or ""),
+                            "bundle_id": bundle_id2,
+                            "bundle_version": selected_ver,
+                            "flow_id": flow_id2,
+                            "pin_ids": pin_ids,
+                            "input_data": filtered,
+                        }
+                except Exception:
+                    pass
 
                 # Fallback: return the raw target vars.
                 return {
@@ -1609,29 +1802,28 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
         bundle_id, flow_id = parsed
 
         host = getattr(svc, "host", None)
-        bundles = getattr(host, "bundles", None)
-        if isinstance(bundles, dict):
-            bundle = bundles.get(bundle_id)
-            if bundle is not None:
-                try:
-                    rel = bundle.manifest.flow_path_for(flow_id)
-                    raw = bundle.read_json(rel) if isinstance(rel, str) and rel.strip() else None
-                    pins = _extract_entrypoint_inputs_from_visualflow(raw)
-                    pin_ids = [str(p.get("id")) for p in pins if isinstance(p, dict) and isinstance(p.get("id"), str)]
-                    if pin_ids:
-                        allowed = set(pin_ids)
-                        filtered = {k: v for k, v in vars_obj.items() if isinstance(k, str) and k in allowed}
-                        return {
-                            "run_id": str(getattr(run, "run_id", run_id)),
-                            "workflow_id": str(workflow_id or ""),
-                            "bundle_id": bundle_id,
-                            "flow_id": flow_id,
-                            "pin_ids": pin_ids,
-                            "input_data": filtered,
-                        }
-                except Exception:
-                    # Fall back to generic filtering below.
-                    pin_ids = []
+        try:
+            selected_ver, bundle = _resolve_bundle_from_host(host=host, bundle_id=str(bundle_id), bundle_version=None)
+            rel = bundle.manifest.flow_path_for(flow_id)
+            raw = bundle.read_json(rel) if isinstance(rel, str) and rel.strip() else None
+            pins = _extract_entrypoint_inputs_from_visualflow(raw)
+            pin_ids = [str(p.get("id")) for p in pins if isinstance(p, dict) and isinstance(p.get("id"), str)]
+            if pin_ids:
+                allowed = set(pin_ids)
+                filtered = {k: v for k, v in vars_obj.items() if isinstance(k, str) and k in allowed}
+                bid_base, _bid_ver = _split_bundle_ref(str(bundle_id))
+                return {
+                    "run_id": str(getattr(run, "run_id", run_id)),
+                    "workflow_id": str(workflow_id or ""),
+                    "bundle_id": bid_base,
+                    "bundle_version": selected_ver,
+                    "flow_id": flow_id,
+                    "pin_ids": pin_ids,
+                    "input_data": filtered,
+                }
+        except Exception:
+            # Fall back to generic filtering below.
+            pin_ids = []
 
     # Fallback: exclude private namespaces (e.g. _runtime/_temp).
     filtered2 = {k: v for k, v in vars_obj.items() if isinstance(k, str) and not k.startswith("_")}
@@ -1659,6 +1851,35 @@ async def get_ledger(
     items = ledger[a : a + int(limit)]
     next_after = a + len(items)
     return {"items": items, "next_after": next_after}
+
+
+@router.post("/runs/ledger/batch")
+async def get_ledger_batch(req: LedgerBatchRequest) -> Dict[str, Any]:
+    """Fetch incremental ledger pages for multiple runs in a single request.
+
+    This exists to reduce client→gateway request fanout when observing runs with many subflows.
+    """
+    svc = get_gateway_service()
+    limit = int(req.limit or 200)
+    out: Dict[str, Any] = {}
+
+    for it in req.runs or []:
+        rid = str(getattr(it, "run_id", "") or "").strip()
+        if not rid:
+            continue
+        after = int(getattr(it, "after", 0) or 0)
+        if after < 0:
+            after = 0
+
+        ledger = svc.host.ledger_store.list(rid)
+        if not isinstance(ledger, list):
+            ledger = []
+
+        items = ledger[after : after + limit]
+        next_after = after + len(items)
+        out[rid] = {"items": items, "next_after": next_after}
+
+    return {"runs": out}
 
 
 @router.get("/runs/{run_id}/ledger/stream")

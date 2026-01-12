@@ -255,6 +255,88 @@ def test_gateway_start_wait_resume_completes(tmp_path: Path, monkeypatch: pytest
         assert any(isinstance(i, dict) and i.get("status") == "completed" for i in items)
 
 
+def test_gateway_ledger_batch_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r1 = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {}},
+            headers=headers,
+        )
+        assert r1.status_code == 200, r1.text
+        run_id_1 = r1.json()["run_id"]
+
+        r2 = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {}},
+            headers=headers,
+        )
+        assert r2.status_code == 200, r2.text
+        run_id_2 = r2.json()["run_id"]
+
+        def _has_wait(rid: str) -> bool:
+            rr = client.get(f"/api/gateway/runs/{rid}", headers=headers)
+            assert rr.status_code == 200, rr.text
+            w = rr.json().get("waiting")
+            return isinstance(w, dict) and bool(w.get("wait_key"))
+
+        _wait_until(lambda: _has_wait(run_id_1), timeout_s=10.0, poll_s=0.1)
+        _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)
+
+        batch = client.post(
+            "/api/gateway/runs/ledger/batch",
+            json={
+                "limit": 200,
+                "runs": [
+                    {"run_id": run_id_1, "after": 0},
+                    {"run_id": run_id_2, "after": 0},
+                ],
+            },
+            headers=headers,
+        )
+        assert batch.status_code == 200, batch.text
+        body = batch.json()
+        runs = body.get("runs") or {}
+        assert run_id_1 in runs
+        assert run_id_2 in runs
+        assert (runs[run_id_1].get("items") or []) != []
+        assert (runs[run_id_2].get("items") or []) != []
+
+        after_1 = int(runs[run_id_1].get("next_after") or 0)
+        after_2 = int(runs[run_id_2].get("next_after") or 0)
+        batch2 = client.post(
+            "/api/gateway/runs/ledger/batch",
+            json={
+                "limit": 200,
+                "runs": [
+                    {"run_id": run_id_1, "after": after_1},
+                    {"run_id": run_id_2, "after": after_2},
+                ],
+            },
+            headers=headers,
+        )
+        assert batch2.status_code == 200, batch2.text
+        body2 = batch2.json()
+        runs2 = body2.get("runs") or {}
+        assert (runs2.get(run_id_1, {}).get("items") or []) == []
+        assert (runs2.get(run_id_2, {}).get("items") or []) == []
+
+
 def test_gateway_bundle_namespaces_subflows_and_rewrites_references(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
@@ -306,7 +388,7 @@ def test_gateway_bundle_namespaces_subflows_and_rewrites_references(tmp_path: Pa
         assert started, "Expected a start_subworkflow effect in the ledger"
         payload = started[0]["effect"].get("payload") if isinstance(started[0].get("effect"), dict) else {}
         assert isinstance(payload, dict)
-        assert payload.get("workflow_id") == f"{bundle_id}:child"
+        assert payload.get("workflow_id") == f"{bundle_id}@0.0.0:child"
 
 
 def test_gateway_generate_run_summary_appends_to_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

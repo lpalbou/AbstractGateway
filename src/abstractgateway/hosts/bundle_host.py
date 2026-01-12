@@ -4,7 +4,8 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -18,6 +19,66 @@ logger = logging.getLogger(__name__)
 
 def _namespace(bundle_id: str, flow_id: str) -> str:
     return f"{bundle_id}:{flow_id}"
+
+
+def _bundle_ref(bundle_id: str, bundle_version: str) -> str:
+    bid = str(bundle_id or "").strip()
+    bv = str(bundle_version or "").strip()
+    if not bid:
+        raise ValueError("bundle_id is required")
+    if not bv:
+        raise ValueError("bundle_version is required")
+    return f"{bid}@{bv}"
+
+
+def _split_bundle_ref(raw: str) -> tuple[str, Optional[str]]:
+    s = str(raw or "").strip()
+    if not s:
+        return ("", None)
+    if "@" not in s:
+        return (s, None)
+    a, b = s.split("@", 1)
+    a = a.strip()
+    b = b.strip()
+    if not a:
+        return ("", None)
+    if not b:
+        return (a, None)
+    return (a, b)
+
+
+def _try_parse_semver(v: str) -> Optional[tuple[int, int, int]]:
+    s = str(v or "").strip()
+    if not s:
+        return None
+    parts = [p.strip() for p in s.split(".")]
+    if not parts or any(not p for p in parts):
+        return None
+    nums: list[int] = []
+    for p in parts:
+        if not p.isdigit():
+            return None
+        nums.append(int(p))
+    while len(nums) < 3:
+        nums.append(0)
+    return (nums[0], nums[1], nums[2])
+
+
+def _pick_latest_version(versions: Dict[str, WorkflowBundle]) -> str:
+    items = [(str(k), v) for k, v in (versions or {}).items() if isinstance(k, str)]
+    if not items:
+        return "0.0.0"
+
+    if all(_try_parse_semver(ver) is not None for ver, _ in items):
+        return max(items, key=lambda x: _try_parse_semver(x[0]) or (0, 0, 0))[0]
+
+    # Fallback when versions are not semver-like: prefer newest created_at.
+    def _key(x: tuple[str, WorkflowBundle]) -> tuple[str, str]:
+        ver, b = x
+        created = str(getattr(getattr(b, "manifest", None), "created_at", "") or "")
+        return (created, ver)
+
+    return max(items, key=_key)[0]
 
 
 def _coerce_namespaced_id(*, bundle_id: Optional[str], flow_id: str, default_bundle_id: Optional[str]) -> str:
@@ -231,7 +292,7 @@ def _visual_event_listener_workflow_id(*, flow_id: str, node_id: str) -> str:
     return f"visual_event_listener_{_sanitize(flow_id)}_{_sanitize(node_id)}"
 
 
-@dataclass(frozen=True)
+@dataclass
 class WorkflowBundleGatewayHost:
     """Gateway host that starts/ticks runs from WorkflowBundles (no AbstractFlow import).
 
@@ -242,12 +303,16 @@ class WorkflowBundleGatewayHost:
     bundles_dir: Path
     data_dir: Path
     dynamic_flows_dir: Path
-    bundles: Dict[str, WorkflowBundle]
+    # bundle_id -> bundle_version -> WorkflowBundle
+    bundles: Dict[str, Dict[str, WorkflowBundle]]
+    # bundle_id -> latest bundle_version
+    latest_bundle_versions: Dict[str, str]
     runtime: Runtime
     workflow_registry: WorkflowRegistry
     specs: Dict[str, WorkflowSpec]
     event_listener_specs_by_root: Dict[str, list[str]]
     _default_bundle_id: Optional[str]
+    _lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
 
     @staticmethod
     def _dynamic_flow_filename(workflow_id: str) -> str:
@@ -328,18 +393,27 @@ class WorkflowBundleGatewayHost:
         else:
             bundle_paths = sorted([p for p in base.glob("*.flow") if p.is_file()])
 
-        bundles: Dict[str, WorkflowBundle] = {}
+        bundles_by_id: Dict[str, Dict[str, WorkflowBundle]] = {}
         for p in bundle_paths:
             try:
                 b = open_workflow_bundle(p)
-                bundles[str(b.manifest.bundle_id)] = b
+                bid = str(getattr(getattr(b, "manifest", None), "bundle_id", "") or "").strip()
+                bver = str(getattr(getattr(b, "manifest", None), "bundle_version", "0.0.0") or "0.0.0").strip() or "0.0.0"
+                if not bid:
+                    raise WorkflowBundleError(f"Bundle '{p}' has empty bundle_id")
+                versions = bundles_by_id.setdefault(bid, {})
+                if bver in versions:
+                    logger.warning("Duplicate bundle version '%s@%s' at %s; keeping first", bid, bver, p)
+                    continue
+                versions[bver] = b
             except Exception as e:
                 logger.warning("Failed to load bundle %s: %s", p, e)
 
-        if not bundles:
+        if not bundles_by_id:
             raise FileNotFoundError(f"No bundles found in {base} (expected *.flow)")
 
-        default_bundle_id = next(iter(bundles.keys())) if len(bundles) == 1 else None
+        default_bundle_id = next(iter(bundles_by_id.keys())) if len(bundles_by_id) == 1 else None
+        latest_versions: Dict[str, str] = {bid: _pick_latest_version(versions) for bid, versions in bundles_by_id.items()}
 
         data_root = Path(data_dir).expanduser().resolve()
         dynamic_dir = data_root / "dynamic_flows"
@@ -354,31 +428,33 @@ class WorkflowBundleGatewayHost:
         specs: Dict[str, WorkflowSpec] = {}
         flows_by_namespaced_id: Dict[str, Dict[str, Any]] = {}
 
-        for bid, b in bundles.items():
-            man = b.manifest
-            if not man.flows:
-                raise WorkflowBundleError(f"Bundle '{bid}' has no flows (manifest.flows is empty)")
+        for bid, versions in bundles_by_id.items():
+            for bver, b in versions.items():
+                bundle_ref = _bundle_ref(bid, bver)
+                man = b.manifest
+                if not man.flows:
+                    raise WorkflowBundleError(f"Bundle '{bid}@{bver}' has no flows (manifest.flows is empty)")
 
-            flow_ids = set(man.flows.keys())
-            id_map = {flow_id: _namespace(bid, flow_id) for flow_id in flow_ids}
+                flow_ids = set(man.flows.keys())
+                id_map = {flow_id: _namespace(bundle_ref, flow_id) for flow_id in flow_ids}
 
-            for flow_id, rel in man.flows.items():
-                raw = b.read_json(rel)
-                if not isinstance(raw, dict):
-                    raise WorkflowBundleError(f"VisualFlow JSON for '{bid}:{flow_id}' must be an object")
-                namespaced_raw = _namespace_visualflow_raw(
-                    raw=raw,
-                    bundle_id=bid,
-                    flow_id=flow_id,
-                    id_map=id_map,
-                )
-                flows_by_namespaced_id[str(namespaced_raw.get("id") or _namespace(bid, flow_id))] = namespaced_raw
-                try:
-                    spec = compile_visualflow(namespaced_raw)
-                except Exception as e:
-                    raise WorkflowBundleError(f"Failed compiling VisualFlow '{bid}:{flow_id}': {e}") from e
-                wf_reg.register(spec)
-                specs[str(spec.workflow_id)] = spec
+                for flow_id, rel in man.flows.items():
+                    raw = b.read_json(rel)
+                    if not isinstance(raw, dict):
+                        raise WorkflowBundleError(f"VisualFlow JSON for '{bid}@{bver}:{flow_id}' must be an object")
+                    namespaced_raw = _namespace_visualflow_raw(
+                        raw=raw,
+                        bundle_id=bundle_ref,
+                        flow_id=flow_id,
+                        id_map=id_map,
+                    )
+                    flows_by_namespaced_id[str(namespaced_raw.get("id") or _namespace(bundle_ref, flow_id))] = namespaced_raw
+                    try:
+                        spec = compile_visualflow(namespaced_raw)
+                    except Exception as e:
+                        raise WorkflowBundleError(f"Failed compiling VisualFlow '{bid}@{bver}:{flow_id}': {e}") from e
+                    wf_reg.register(spec)
+                    specs[str(spec.workflow_id)] = spec
 
         # Load dynamic flows persisted in data_dir (e.g. scheduled wrapper flows).
         try:
@@ -624,7 +700,8 @@ class WorkflowBundleGatewayHost:
             bundles_dir=base,
             data_dir=data_root,
             dynamic_flows_dir=dynamic_dir,
-            bundles=bundles,
+            bundles=bundles_by_id,
+            latest_bundle_versions=latest_versions,
             runtime=runtime,
             workflow_registry=wf_reg,
             specs=specs,
@@ -644,6 +721,33 @@ class WorkflowBundleGatewayHost:
     def artifact_store(self) -> Any:
         return self.runtime.artifact_store
 
+    def reload_bundles_from_disk(self) -> Dict[str, Any]:
+        """Reload bundles/specs from bundles_dir (best-effort, intended for dev).
+
+        Notes:
+        - This rebuilds the in-memory registry and swaps host internals in-place so the
+          runner can keep using the same host object.
+        - Dynamic flows persisted in `data_dir/dynamic_flows` are reloaded as part of
+          the rebuild.
+        """
+        new_host = WorkflowBundleGatewayHost.load_from_dir(
+            bundles_dir=self.bundles_dir,
+            data_dir=self.data_dir,
+            run_store=self.run_store,
+            ledger_store=self.ledger_store,
+            artifact_store=self.artifact_store,
+        )
+        with self._lock:
+            self.bundles = new_host.bundles
+            self.latest_bundle_versions = new_host.latest_bundle_versions
+            self.runtime = new_host.runtime
+            self.workflow_registry = new_host.workflow_registry
+            self.specs = new_host.specs
+            self.event_listener_specs_by_root = new_host.event_listener_specs_by_root
+            self._default_bundle_id = new_host._default_bundle_id
+        bundle_ids = sorted([str(k) for k in (self.bundles or {}).keys() if isinstance(k, str)])
+        return {"ok": True, "bundle_ids": bundle_ids, "count": len(bundle_ids)}
+
     def start_run(
         self,
         *,
@@ -651,43 +755,97 @@ class WorkflowBundleGatewayHost:
         input_data: Dict[str, Any],
         actor_id: str = "gateway",
         bundle_id: Optional[str] = None,
+        bundle_version: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> str:
-        fid = str(flow_id or "").strip()
-        bid = str(bundle_id or "").strip() if isinstance(bundle_id, str) else ""
-        bundle_id_clean = bid or None
+        fid_raw = str(flow_id or "").strip()
 
-        if not fid:
-            # Default entrypoint selection for the common case:
-            # start {bundle_id, input_data} without needing flow_id.
-            selected_bundle_id = bundle_id_clean or self._default_bundle_id
+        bid_raw = str(bundle_id or "").strip() if isinstance(bundle_id, str) else ""
+        bid_base, bid_ver = _split_bundle_ref(bid_raw)
+
+        bver_raw = str(bundle_version or "").strip() if isinstance(bundle_version, str) else ""
+        if bid_ver and bver_raw and bid_ver != bver_raw:
+            raise ValueError("bundle_version conflicts with bundle_id (bundle_id already includes '@version')")
+
+        # Effective requested version (may still be None; default to latest per bundle_id).
+        requested_ver = bver_raw or bid_ver
+
+        def _get_bundle(*, bundle_id2: str, bundle_version2: Optional[str]) -> tuple[str, WorkflowBundle]:
+            bid2 = str(bundle_id2 or "").strip()
+            if not bid2:
+                raise ValueError("bundle_id is required")
+            versions = self.bundles.get(bid2)
+            if not isinstance(versions, dict) or not versions:
+                raise KeyError(f"Bundle '{bid2}' not found")
+            ver2 = str(bundle_version2 or "").strip() if isinstance(bundle_version2, str) and str(bundle_version2).strip() else ""
+            if not ver2:
+                ver2 = str(self.latest_bundle_versions.get(bid2) or "").strip()
+            if not ver2:
+                raise KeyError(f"Bundle '{bid2}' has no versions loaded")
+            bundle2 = versions.get(ver2)
+            if bundle2 is None:
+                raise KeyError(f"Bundle '{bid2}@{ver2}' not found")
+            return (ver2, bundle2)
+
+        # Default entrypoint selection for the common case:
+        # start {bundle_id, input_data} without needing flow_id.
+        if not fid_raw:
+            selected_bundle_id = bid_base or (str(self._default_bundle_id or "").strip() if self._default_bundle_id else "")
             if not selected_bundle_id:
                 raise ValueError(
                     "flow_id is required when multiple bundles are loaded; "
                     "provide bundle_id (or pass flow_id as 'bundle:flow')"
                 )
-            bundle = self.bundles.get(str(selected_bundle_id))
-            if bundle is None:
-                raise KeyError(f"Bundle '{selected_bundle_id}' not found")
-            entrypoints = list(getattr(bundle.manifest, "entrypoints", None) or [])
-            default_ep = str(getattr(bundle.manifest, "default_entrypoint", "") or "").strip()
+            selected_ver, bundle2 = _get_bundle(bundle_id2=selected_bundle_id, bundle_version2=requested_ver)
+            entrypoints = list(getattr(bundle2.manifest, "entrypoints", None) or [])
+            default_ep = str(getattr(bundle2.manifest, "default_entrypoint", "") or "").strip()
             if len(entrypoints) == 1:
                 ep_fid = str(getattr(entrypoints[0], "flow_id", "") or "").strip()
             elif default_ep:
                 ep_fid = default_ep
             else:
                 raise ValueError(
-                    f"Bundle '{selected_bundle_id}' has {len(entrypoints)} entrypoints; "
+                    f"Bundle '{selected_bundle_id}@{selected_ver}' has {len(entrypoints)} entrypoints; "
                     "specify flow_id to select which entrypoint to start "
                     "(or set manifest.default_entrypoint)"
                 )
             if not ep_fid:
-                raise ValueError(f"Bundle '{selected_bundle_id}' entrypoint flow_id is empty")
-            workflow_id = _namespace(str(selected_bundle_id), ep_fid)
+                raise ValueError(f"Bundle '{selected_bundle_id}@{selected_ver}' entrypoint flow_id is empty")
+            workflow_id = _namespace(_bundle_ref(selected_bundle_id, selected_ver), ep_fid)
         else:
-            workflow_id = _coerce_namespaced_id(
-                bundle_id=bundle_id_clean, flow_id=fid, default_bundle_id=self._default_bundle_id
-            )
+            # Allow passing fully qualified flow_id:
+            # - bundle:flow (defaults to latest version)
+            # - bundle@ver:flow (exact)
+            if ":" in fid_raw:
+                prefix, inner = fid_raw.split(":", 1)
+                prefix_base, prefix_ver = _split_bundle_ref(prefix)
+                # Dynamic workflows often use ':' in their ids (e.g. scheduled:uuid).
+                # Only treat this as a bundle namespace when the prefix matches a loaded bundle id.
+                if prefix_base and prefix_base in self.bundles:
+                    if bid_base and prefix_base and bid_base != prefix_base:
+                        raise ValueError("flow_id bundle prefix does not match bundle_id")
+                    if prefix_ver and requested_ver and prefix_ver != requested_ver:
+                        raise ValueError("flow_id version does not match bundle_version")
+                    selected_bundle_id = prefix_base or bid_base
+                    if not selected_bundle_id:
+                        raise ValueError("bundle_id is required")
+                    selected_ver, _bundle2 = _get_bundle(
+                        bundle_id2=selected_bundle_id,
+                        bundle_version2=prefix_ver or requested_ver,
+                    )
+                    workflow_id = _namespace(_bundle_ref(selected_bundle_id, selected_ver), inner.strip())
+                else:
+                    if bid_base or requested_ver:
+                        raise ValueError(
+                            f"flow_id '{fid_raw}' is already namespaced, but bundle_id/bundle_version was also provided"
+                        )
+                    workflow_id = fid_raw
+            else:
+                selected_bundle_id = bid_base or (str(self._default_bundle_id or "").strip() if self._default_bundle_id else "")
+                if not selected_bundle_id:
+                    raise ValueError("bundle_id is required when multiple bundles are loaded (or pass flow_id as 'bundle:flow')")
+                selected_ver, _bundle2 = _get_bundle(bundle_id2=selected_bundle_id, bundle_version2=requested_ver)
+                workflow_id = _namespace(_bundle_ref(selected_bundle_id, selected_ver), fid_raw)
 
         spec = self.specs.get(workflow_id)
         if spec is None:
@@ -737,6 +895,16 @@ class WorkflowBundleGatewayHost:
         if not isinstance(workflow_id, str) or not workflow_id:
             raise ValueError(f"Run '{run_id}' missing workflow_id")
         spec = self.specs.get(workflow_id)
+        if spec is None and ":" in workflow_id:
+            # Backward compatibility: older runs may store workflow_id as "bundle:flow"
+            # (without bundle_version). Best-effort map to the latest loaded version.
+            prefix, fid = workflow_id.split(":", 1)
+            prefix_base, prefix_ver = _split_bundle_ref(prefix)
+            if prefix_base and not prefix_ver:
+                latest = str(self.latest_bundle_versions.get(prefix_base) or "").strip()
+                if latest:
+                    workflow_id2 = _namespace(_bundle_ref(prefix_base, latest), fid.strip())
+                    spec = self.specs.get(workflow_id2)
         if spec is None:
             spec = self._try_register_dynamic_workflow_from_disk(workflow_id)
         if spec is None:

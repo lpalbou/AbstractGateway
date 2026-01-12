@@ -258,7 +258,7 @@ def test_gateway_bundle_agent_node_starts_react_subworkflow(tmp_path: Path, monk
         # Ensure the START_SUBWORKFLOW references the derived agent workflow id (namespaced).
         from abstractruntime.visualflow_compiler.visual.agent_ids import visual_react_workflow_id
 
-        expected_child = visual_react_workflow_id(flow_id=f"{bundle_id}:{root_id}", node_id=agent_node_id)
+        expected_child = visual_react_workflow_id(flow_id=f"{bundle_id}@0.0.0:{root_id}", node_id=agent_node_id)
         started = [
             i
             for i in items
@@ -529,7 +529,7 @@ def test_gateway_bundle_start_defaults_to_entrypoint_when_flow_id_omitted(tmp_pa
             rr = client.get(f"/api/gateway/runs/{run_id}", headers=headers)
             assert rr.status_code == 200, rr.text
             body = rr.json()
-            return body.get("status") == "completed" and body.get("workflow_id") == f"{bundle_id}:{flow_id}"
+            return body.get("status") == "completed" and body.get("workflow_id") == f"{bundle_id}@0.0.0:{flow_id}"
 
         _wait_until(_is_completed, timeout_s=10.0, poll_s=0.1)
 
@@ -681,7 +681,7 @@ def test_gateway_bundle_start_uses_default_entrypoint_when_multiple_entrypoints(
         rr = client.get(f"/api/gateway/runs/{run_id}", headers=headers)
         assert rr.status_code == 200, rr.text
         run = rr.json()
-        assert run.get("workflow_id") == f"{bundle_id}:root2"
+        assert run.get("workflow_id") == f"{bundle_id}@0.0.0:root2"
 
         rb = client.get(f"/api/gateway/bundles/{bundle_id}", headers=headers)
         assert rb.status_code == 200, rb.text
@@ -757,7 +757,7 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
         assert isinstance(eps, list) and eps
         ep0 = eps[0]
         assert ep0.get("flow_id") == flow_id
-        assert ep0.get("workflow_id") == f"{bundle_id}:{flow_id}"
+        assert ep0.get("workflow_id") == f"{bundle_id}@0.0.0:{flow_id}"
         inputs = ep0.get("inputs")
         assert isinstance(inputs, list)
         # Ensure exec pin is omitted and defaults are surfaced.
@@ -774,7 +774,7 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
         flow_payload = rf.json()
         assert flow_payload.get("bundle_id") == bundle_id
         assert flow_payload.get("flow_id") == flow_id
-        assert flow_payload.get("workflow_id") == f"{bundle_id}:{flow_id}"
+        assert flow_payload.get("workflow_id") == f"{bundle_id}@0.0.0:{flow_id}"
         assert isinstance(flow_payload.get("flow"), dict)
 
         # Attach UX helper: input_data endpoint returns only entrypoint pin ids (bundle mode).
@@ -791,5 +791,5 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
         payload = rin.json()
         assert payload.get("bundle_id") == bundle_id
         assert payload.get("flow_id") == flow_id
-        assert payload.get("workflow_id") == f"{bundle_id}:{flow_id}"
+        assert payload.get("workflow_id") == f"{bundle_id}@0.0.0:{flow_id}"
         assert payload.get("input_data") == {"request": "hi", "max_iterations": 7}
