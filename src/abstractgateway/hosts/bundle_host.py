@@ -500,7 +500,7 @@ class WorkflowBundleGatewayHost:
         extra_effect_handlers: Dict[Any, Any] = {}
         if needs_memory_kg:
             try:
-                from abstractmemory import InMemoryTripleStore, LanceDBTripleStore
+                from abstractmemory import LanceDBTripleStore
                 from abstractruntime.integrations.abstractmemory.effect_handlers import build_memory_kg_effect_handlers
                 from abstractruntime.storage.artifacts import utc_now_iso
             except Exception as e:  # pragma: no cover
@@ -532,13 +532,15 @@ class WorkflowBundleGatewayHost:
             except Exception:
                 embedder = None
 
-            store_obj: Any = None
             try:
                 store_path = Path(data_root) / "abstractmemory" / "kg"
                 store_path.parent.mkdir(parents=True, exist_ok=True)
                 store_obj = LanceDBTripleStore(store_path, embedder=embedder)
-            except Exception:
-                store_obj = InMemoryTripleStore(embedder=embedder)
+            except Exception as e:
+                raise WorkflowBundleError(
+                    "Bundle uses memory_kg_* nodes, which require a LanceDB-backed store. "
+                    "Install `lancedb` and ensure the gateway runs under the same environment."
+                ) from e
 
             extra_effect_handlers = build_memory_kg_effect_handlers(store=store_obj, run_store=run_store, now_iso=utc_now_iso)
 
