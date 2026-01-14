@@ -462,11 +462,20 @@ class GatewayRunner:
             if _is_pause_wait(wait, run_id=str(getattr(r, "run_id", "") or "")):
                 continue
             runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
+            payload: Dict[str, Any] = {"sub_run_id": child_run_id, "output": child_output}
+            try:
+                include_traces = bool(details.get("include_traces") or details.get("includeTraces"))
+            except Exception:
+                include_traces = False
+            if include_traces:
+                try:
+                    payload["node_traces"] = runtime.get_node_traces(child_run_id) or {}
+                except Exception:
+                    payload["node_traces"] = {}
             runtime.resume(
                 workflow=wf,
                 run_id=r.run_id,
                 wait_key=getattr(wait, "wait_key", None),
-                payload={"sub_run_id": child_run_id, "output": child_output},
+                payload=payload,
                 max_steps=0,
             )
-

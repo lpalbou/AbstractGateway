@@ -428,7 +428,6 @@ def test_gateway_generate_run_summary_appends_to_ledger(tmp_path: Path, monkeypa
         ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=500", headers=headers)
         assert ledger.status_code == 200, ledger.text
         items = ledger.json().get("items") or []
-
         summaries = [
             i
             for i in items

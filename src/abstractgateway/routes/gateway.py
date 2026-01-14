@@ -10,9 +10,11 @@ This is intentionally replay-first:
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -26,6 +28,7 @@ from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunStore
 from abstractruntime.core.models import Effect, EffectType, RunStatus, StepRecord
 
+from .. import host_metrics
 from ..service import get_gateway_service, run_summary
 
 
@@ -80,6 +83,14 @@ class ScheduleRunRequest(BaseModel):
     repeat_count: Optional[int] = Field(
         default=None,
         description="Optional number of executions. If omitted and interval is set, repeats forever.",
+    )
+    repeat_until: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional termination time (ISO 8601). When provided with interval and repeat_count is omitted, "
+            "the gateway derives a repeat_count so the schedule runs up to (and including) the last execution "
+            "at or before this timestamp."
+        ),
     )
     share_context: bool = Field(
         default=True,
@@ -1610,6 +1621,67 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
     if repeat_count is not None and repeat_count > 1 and not interval_opt:
         raise HTTPException(status_code=400, detail="repeat_count > 1 requires interval")
 
+    repeat_until_raw = str(req.repeat_until).strip() if isinstance(req.repeat_until, str) and str(req.repeat_until).strip() else None
+    if repeat_until_raw and repeat_count is not None:
+        raise HTTPException(status_code=400, detail="repeat_until cannot be combined with repeat_count")
+    if repeat_until_raw and not interval_opt:
+        raise HTTPException(status_code=400, detail="repeat_until requires interval")
+
+    def _parse_iso_datetime_utc(s: str) -> datetime.datetime:
+        v = str(s or "").strip()
+        if not v:
+            raise ValueError("empty datetime")
+        v2 = v.replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(v2)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.astimezone(datetime.timezone.utc)
+
+    def _parse_interval_seconds(s: str) -> int:
+        v = str(s or "").strip().lower()
+        m = re.match(r"^(\d+)\s*([smhd])$", v)
+        if not m:
+            raise ValueError("invalid interval (expected like '15m', '1h', '2d')")
+        n = int(m.group(1))
+        unit = m.group(2)
+        if n <= 0:
+            raise ValueError("invalid interval (must be >= 1)")
+        if unit == "s":
+            mul = 1
+        elif unit == "m":
+            mul = 60
+        elif unit == "h":
+            mul = 3600
+        else:
+            mul = 86400  # 'd'
+        return n * mul
+
+    if repeat_until_raw and repeat_count is None and interval_opt:
+        try:
+            until_dt = _parse_iso_datetime_utc(repeat_until_raw)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid repeat_until: {e}")
+
+        # For "now", approximate start as request time in UTC (good enough for UX).
+        try:
+            start_dt = datetime.datetime.now(tz=datetime.timezone.utc) if start_at_iso is None else _parse_iso_datetime_utc(start_at_iso)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid start_at: {e}")
+
+        if until_dt < start_dt:
+            raise HTTPException(status_code=400, detail="repeat_until must be >= start_at")
+        try:
+            interval_s = _parse_interval_seconds(interval_opt)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid interval: {e}")
+
+        # Inclusive: include the execution at start_dt, then every interval_s while <= until_dt.
+        span_s = int((until_dt - start_dt).total_seconds())
+        derived = 1 + max(0, span_s // interval_s)
+        if derived > 10_000:
+            raise HTTPException(status_code=400, detail="repeat_until implies too many executions (max 10000)")
+        repeat_count = int(derived)
+
     # If interval is set and repeat_count omitted, repeat forever.
     if interval_opt and repeat_count == 1:
         # Treat as a one-shot; interval isn't needed.
@@ -1647,6 +1719,7 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
         "start_at": start_at_iso,
         "interval": interval_opt,
         "repeat_count": repeat_count,
+        "repeat_until": repeat_until_raw,
         "share_context": share_context,
         "session_prefix": session_prefix,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
@@ -2496,6 +2569,11 @@ async def discovery_model_capabilities(model_name: str = Query(..., description=
         return {"model": name, "capabilities": caps}
     except Exception as e:
         return {"model": name, "capabilities": {}, "error": str(e)}
+
+
+@router.get("/host/metrics/gpu")
+async def host_gpu_metrics() -> Dict[str, Any]:
+    return host_metrics.get_host_gpu_metrics()
 
 
 @router.post("/embeddings", response_model=EmbeddingsResponse)
