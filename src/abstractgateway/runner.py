@@ -11,8 +11,10 @@ Key properties (v0):
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -21,7 +23,8 @@ from typing import Any, Dict, Optional, Protocol
 
 from abstractruntime import JsonFileCommandCursorStore, JsonlCommandStore, Runtime
 from abstractruntime.core.event_keys import build_event_wait_key
-from abstractruntime.core.models import RunStatus, WaitReason
+from abstractruntime.core.models import Effect, EffectType, RunStatus, WaitReason
+from abstractruntime.scheduler.scheduler import utc_now_iso
 from abstractruntime.storage.commands import CommandRecord
 
 
@@ -259,8 +262,6 @@ class GatewayRunner:
         list_due = getattr(self.run_store, "list_due_wait_until", None)
         if callable(list_due):
             try:
-                from abstractruntime.scheduler.scheduler import utc_now_iso
-
                 due = list_due(now_iso=utc_now_iso(), limit=int(self._cfg.run_scan_limit))
             except Exception:
                 due = []
@@ -300,7 +301,7 @@ class GatewayRunner:
 
     def _apply_command(self, rec: CommandRecord) -> None:
         typ = str(rec.type or "").strip().lower()
-        if typ not in {"pause", "resume", "cancel", "emit_event"}:
+        if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory"}:
             raise ValueError(f"Unknown command type '{typ}'")
 
         payload = dict(rec.payload or {})
@@ -324,6 +325,14 @@ class GatewayRunner:
         # emit_event: host-side signal -> resume matching WAIT_EVENT runs
         if typ == "emit_event":
             self._apply_emit_event(payload, default_session_id=run_id, client_id=rec.client_id)
+            return
+
+        if typ == "update_schedule":
+            self._apply_update_schedule(payload, run_id=run_id, command_id=str(rec.command_id), client_id=rec.client_id)
+            return
+
+        if typ == "compact_memory":
+            self._apply_compact_memory(payload, run_id=run_id, command_id=str(rec.command_id), client_id=rec.client_id)
             return
 
     def _apply_run_control(self, typ: str, *, run_id: str, payload: Dict[str, Any], apply_to_tree: bool) -> None:
@@ -440,6 +449,12 @@ class GatewayRunner:
 
         state = runtime.tick(workflow=wf, run_id=run_id, max_steps=int(self._cfg.tick_max_steps or 100))
 
+        # Auto-compaction for scheduled workflows (best-effort).
+        try:
+            self._maybe_auto_compact(state)
+        except Exception:
+            pass
+
         # If this run completed, it may unblock a parent WAITING(SUBWORKFLOW).
         if getattr(state, "status", None) == RunStatus.COMPLETED:
             try:
@@ -479,3 +494,404 @@ class GatewayRunner:
                 payload=payload,
                 max_steps=0,
             )
+
+    # ---------------------------------------------------------------------
+    # Scheduled workflow commands
+    # ---------------------------------------------------------------------
+
+    _INTERVAL_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)\s*$", re.IGNORECASE)
+    _UNIT_SECONDS: Dict[str, float] = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+
+    def _is_scheduled_parent_run(self, run: Any) -> bool:
+        wid = getattr(run, "workflow_id", None)
+        if isinstance(wid, str) and wid.startswith("scheduled:"):
+            return True
+        vars_obj = getattr(run, "vars", None)
+        meta = vars_obj.get("_meta") if isinstance(vars_obj, dict) else None
+        schedule = meta.get("schedule") if isinstance(meta, dict) else None
+        if isinstance(schedule, dict) and schedule.get("kind") == "scheduled_run":
+            return True
+        return False
+
+    def _scheduled_parent_is_recurrent(self, run: Any) -> bool:
+        vars_obj = getattr(run, "vars", None)
+        meta = vars_obj.get("_meta") if isinstance(vars_obj, dict) else None
+        schedule = meta.get("schedule") if isinstance(meta, dict) else None
+        if not isinstance(schedule, dict):
+            return False
+        interval = schedule.get("interval")
+        return isinstance(interval, str) and interval.strip() != ""
+
+    def _find_scheduled_root(self, run: Any) -> Optional[Any]:
+        """Return the scheduled parent run (root) for a run tree, if any."""
+        cur = run
+        seen: set[str] = set()
+        while True:
+            rid = getattr(cur, "run_id", None)
+            if isinstance(rid, str) and rid:
+                if rid in seen:
+                    break
+                seen.add(rid)
+            parent_id = getattr(cur, "parent_run_id", None)
+            if not isinstance(parent_id, str) or not parent_id.strip():
+                return cur if self._is_scheduled_parent_run(cur) else None
+            parent = self.run_store.load(parent_id.strip())
+            if parent is None:
+                return None
+            cur = parent
+        return None
+
+    def _parse_interval_seconds(self, raw: str) -> Optional[float]:
+        s = str(raw or "").strip()
+        if not s:
+            return None
+        m = self._INTERVAL_RE.match(s)
+        if not m:
+            # ISO timestamps are accepted by on_schedule but are one-shot; treat as non-interval.
+            return None
+        amount = float(m.group(1))
+        unit = str(m.group(2)).lower()
+        return float(amount) * float(self._UNIT_SECONDS.get(unit, 1.0))
+
+    def _mutate_schedule_interval_in_visualflow(self, raw: Dict[str, Any], *, interval: str) -> bool:
+        nodes = raw.get("nodes")
+        if not isinstance(nodes, list):
+            return False
+        changed = False
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            if str(n.get("id") or "") != "wait_interval":
+                continue
+            data = n.get("data")
+            if not isinstance(data, dict):
+                data = {}
+                n["data"] = data
+            event_cfg = data.get("eventConfig")
+            if not isinstance(event_cfg, dict):
+                event_cfg = {}
+                data["eventConfig"] = event_cfg
+            event_cfg["schedule"] = str(interval)
+            changed = True
+        return changed
+
+    def _apply_update_schedule(
+        self, payload: Dict[str, Any], *, run_id: str, command_id: str, client_id: Optional[str]
+    ) -> None:
+        del client_id
+        raw_interval = payload.get("interval")
+        if raw_interval is None:
+            raw_interval = payload.get("schedule")
+        interval = str(raw_interval or "").strip()
+        if not interval:
+            raise ValueError("update_schedule requires payload.interval")
+
+        # Validate interval is a relative duration (not an ISO timestamp).
+        interval_s = self._parse_interval_seconds(interval)
+        if interval_s is None or interval_s <= 0:
+            raise ValueError("update_schedule interval must be a relative duration like '20m', '1h', '0.5s'")
+
+        parent = self.run_store.load(run_id)
+        if parent is None:
+            raise KeyError(f"Run '{run_id}' not found")
+        if not self._is_scheduled_parent_run(parent):
+            raise ValueError("update_schedule is only supported for scheduled parent runs")
+        if not self._scheduled_parent_is_recurrent(parent):
+            raise ValueError("update_schedule requires a recurrent scheduled run (interval must be set)")
+
+        workflow_id = getattr(parent, "workflow_id", None)
+        if not isinstance(workflow_id, str) or not workflow_id.strip():
+            raise ValueError("Scheduled run missing workflow_id")
+
+        # Update durable schedule metadata on the run (for UI).
+        vars_obj = getattr(parent, "vars", None)
+        if not isinstance(vars_obj, dict):
+            vars_obj = {}
+            parent.vars = vars_obj  # type: ignore[attr-defined]
+        meta = vars_obj.get("_meta")
+        if not isinstance(meta, dict):
+            meta = {}
+            vars_obj["_meta"] = meta
+        sched = meta.get("schedule")
+        if not isinstance(sched, dict):
+            sched = {}
+            meta["schedule"] = sched
+        sched["interval"] = interval
+        sched["updated_at"] = utc_now_iso()
+        parent.updated_at = utc_now_iso()
+        self.run_store.save(parent)
+
+        # Update the persisted dynamic wrapper flow + registry entry (wait_interval node).
+        load_raw = getattr(self._host, "load_dynamic_visualflow", None)
+        upsert = getattr(self._host, "upsert_dynamic_visualflow", None)
+        if not callable(load_raw) or not callable(upsert):
+            raise RuntimeError("Host does not support editing dynamic workflows (load_dynamic_visualflow/upsert_dynamic_visualflow)")
+        raw_flow = load_raw(workflow_id)
+        if raw_flow is None:
+            raise RuntimeError(f"Dynamic wrapper flow not found on disk for workflow_id={workflow_id}")
+        if not self._mutate_schedule_interval_in_visualflow(raw_flow, interval=interval):
+            raise RuntimeError("Failed to locate wait_interval node in scheduled wrapper flow")
+
+        # Re-register so subsequent ticks use the updated spec.
+        upsert(raw_flow, persist=True)
+
+        # Optional: if currently blocked on the interval wait, recompute the concrete until timestamp.
+        apply_immediately = payload.get("apply_immediately")
+        apply_immediately_flag = True if apply_immediately is None else bool(apply_immediately)
+        waiting = getattr(parent, "waiting", None)
+        if (
+            apply_immediately_flag
+            and getattr(parent, "status", None) == RunStatus.WAITING
+            and waiting is not None
+            and getattr(waiting, "reason", None) == WaitReason.UNTIL
+            and str(getattr(parent, "current_node", "") or "") == "wait_interval"
+        ):
+            now = datetime.datetime.now(datetime.timezone.utc)
+            until = (now + datetime.timedelta(seconds=float(interval_s))).isoformat()
+            waiting.until = until  # type: ignore[attr-defined]
+            parent.updated_at = utc_now_iso()
+            self.run_store.save(parent)
+
+        # Best-effort observability marker.
+        try:
+            runtime_ns = vars_obj.get("_runtime")
+            if not isinstance(runtime_ns, dict):
+                runtime_ns = {}
+                vars_obj["_runtime"] = runtime_ns
+            runtime_ns["last_schedule_update"] = {"command_id": command_id, "interval": interval, "updated_at": utc_now_iso()}
+            self.run_store.save(parent)
+        except Exception:
+            pass
+
+    def _resolve_compaction_target_run_id(self, root_run_id: str) -> Optional[str]:
+        """Pick the best-effort run_id whose vars contain context.messages to compact."""
+
+        def _has_messages(r: Any) -> bool:
+            vars_obj = getattr(r, "vars", None)
+            ctx = vars_obj.get("context") if isinstance(vars_obj, dict) else None
+            msgs = ctx.get("messages") if isinstance(ctx, dict) else None
+            return isinstance(msgs, list) and len(msgs) > 0
+
+        cur = self.run_store.load(root_run_id)
+        if cur is None:
+            return None
+        if _has_messages(cur):
+            return str(getattr(cur, "run_id"))
+
+        # Prefer following active SUBWORKFLOW wait chains (deepest active run).
+        seen: set[str] = set()
+        while True:
+            rid = str(getattr(cur, "run_id", "") or "")
+            if not rid or rid in seen:
+                break
+            seen.add(rid)
+            waiting = getattr(cur, "waiting", None)
+            details = getattr(waiting, "details", None) if waiting is not None else None
+            sub_id = details.get("sub_run_id") if isinstance(details, dict) else None
+            if not isinstance(sub_id, str) or not sub_id.strip():
+                break
+            nxt = self.run_store.load(sub_id.strip())
+            if nxt is None:
+                break
+            cur = nxt
+            if _has_messages(cur):
+                return str(getattr(cur, "run_id"))
+
+        # Fallback: compact most recent descendant that has messages (best-effort).
+        list_children = getattr(self.run_store, "list_children", None)
+        if not callable(list_children):
+            return None
+        try:
+            children = list_children(parent_run_id=root_run_id) or []
+        except Exception:
+            children = []
+        if not children:
+            return None
+
+        def _ts(r: Any) -> str:
+            return str(getattr(r, "updated_at", None) or getattr(r, "created_at", None) or "")
+
+        for child in sorted(children, key=_ts, reverse=True):
+            cid = getattr(child, "run_id", None)
+            if not isinstance(cid, str) or not cid:
+                continue
+            target = self._resolve_compaction_target_run_id(cid)
+            if target:
+                return target
+        return None
+
+    def _apply_compact_memory(
+        self, payload: Dict[str, Any], *, run_id: str, command_id: str, client_id: Optional[str]
+    ) -> None:
+        del client_id
+        parent = self.run_store.load(run_id)
+        if parent is None:
+            raise KeyError(f"Run '{run_id}' not found")
+        if not self._is_scheduled_parent_run(parent):
+            raise ValueError("compact_memory is only supported for scheduled parent runs")
+
+        target_run_id = payload.get("target_run_id") or payload.get("targetRunId")
+        if isinstance(target_run_id, str) and target_run_id.strip():
+            target_id = target_run_id.strip()
+        else:
+            target_id = self._resolve_compaction_target_run_id(run_id) or ""
+        if not target_id:
+            raise RuntimeError("No compactable run found (no context.messages in the scheduled run tree)")
+
+        target = self.run_store.load(target_id)
+        if target is None:
+            raise KeyError(f"Target run '{target_id}' not found")
+
+        # Build effect payload.
+        preserve_recent_raw = payload.get("preserve_recent")
+        if preserve_recent_raw is None:
+            preserve_recent_raw = payload.get("preserveRecent")
+        try:
+            preserve_recent = int(preserve_recent_raw) if preserve_recent_raw is not None else 6
+        except Exception:
+            preserve_recent = 6
+        if preserve_recent < 0:
+            preserve_recent = 0
+        compression_mode = str(payload.get("compression_mode") or payload.get("compressionMode") or "standard").strip().lower()
+        if compression_mode not in {"light", "standard", "heavy"}:
+            compression_mode = "standard"
+        focus = payload.get("focus")
+        focus_text = str(focus).strip() if isinstance(focus, str) and focus.strip() else None
+
+        eff_payload: Dict[str, Any] = {
+            "preserve_recent": preserve_recent,
+            "compression_mode": compression_mode,
+        }
+        if focus_text is not None:
+            eff_payload["focus"] = focus_text
+
+        # Execute the memory_compact effect as an out-of-band action on the target run.
+        runtime = Runtime(run_store=self.run_store, ledger_store=self.ledger_store, artifact_store=self.artifact_store)
+        # Enable subworkflow lookups in MEMORY_COMPACT (it spawns a small LLM sub-run).
+        try:
+            runtime.set_workflow_registry(getattr(self._host, "workflow_registry", None))
+        except Exception:
+            pass
+
+        eff = Effect(type=EffectType.MEMORY_COMPACT, payload=eff_payload, result_key="_temp.command.compact_memory")
+        idem = f"command:compact_memory:{command_id}"
+        outcome = runtime._execute_effect_with_retry(  # type: ignore[attr-defined]
+            run=target,
+            node_id="compact_memory",
+            effect=eff,
+            idempotency_key=idem,
+            default_next_node=None,
+        )
+
+        # MEMORY_COMPACT mutates run.vars but only saves when targeting a different run. When compacting
+        # the target itself out-of-band, explicitly persist the updated checkpoint.
+        try:
+            target.updated_at = utc_now_iso()
+            self.run_store.save(target)
+        except Exception:
+            pass
+
+        if getattr(outcome, "status", None) == "failed":
+            raise RuntimeError(getattr(outcome, "error", None) or "compact_memory failed")
+
+    # ---------------------------------------------------------------------
+    # Auto-compaction for scheduled workflows
+    # ---------------------------------------------------------------------
+
+    def _maybe_auto_compact(self, run: Any) -> None:
+        """Auto-compact scheduled workflows when nearing context limits (best-effort)."""
+        root = self._find_scheduled_root(run)
+        if root is None or not self._scheduled_parent_is_recurrent(root):
+            return
+
+        vars_obj = getattr(run, "vars", None)
+        if not isinstance(vars_obj, dict):
+            return
+        ctx = vars_obj.get("context")
+        msgs = ctx.get("messages") if isinstance(ctx, dict) else None
+        if not isinstance(msgs, list) or len(msgs) < 12:
+            return
+
+        limits = vars_obj.get("_limits")
+        if not isinstance(limits, dict):
+            return
+        used = limits.get("estimated_tokens_used")
+        if used is None or isinstance(used, bool):
+            return
+        try:
+            used_i = int(used)
+        except Exception:
+            return
+        if used_i <= 0:
+            return
+
+        budget = limits.get("max_input_tokens")
+        if budget is None:
+            budget = limits.get("max_tokens")
+        try:
+            budget_i = int(budget) if budget is not None else 0
+        except Exception:
+            budget_i = 0
+        if budget_i <= 0:
+            return
+
+        pct = used_i / float(budget_i)
+        if pct < 0.9:
+            return
+
+        runtime_ns = vars_obj.get("_runtime")
+        if not isinstance(runtime_ns, dict):
+            runtime_ns = {}
+            vars_obj["_runtime"] = runtime_ns
+        auto = runtime_ns.get("auto_compact")
+        if not isinstance(auto, dict):
+            auto = {}
+            runtime_ns["auto_compact"] = auto
+        last_used = auto.get("last_trigger_tokens_used")
+        try:
+            last_used_i = int(last_used) if last_used is not None else -1
+        except Exception:
+            last_used_i = -1
+        if used_i <= last_used_i:
+            return
+
+        # Record guard before running to avoid thrash if compaction fails.
+        auto["last_trigger_tokens_used"] = used_i
+        auto["last_triggered_at"] = utc_now_iso()
+        try:
+            self.run_store.save(run)
+        except Exception:
+            pass
+
+        runtime = Runtime(run_store=self.run_store, ledger_store=self.ledger_store, artifact_store=self.artifact_store)
+        try:
+            runtime.set_workflow_registry(getattr(self._host, "workflow_registry", None))
+        except Exception:
+            pass
+
+        eff = Effect(
+            type=EffectType.MEMORY_COMPACT,
+            payload={"preserve_recent": 6, "compression_mode": "standard", "focus": None},
+            result_key="_temp.runtime.auto_compact",
+        )
+        idem = f"runtime:auto_compact:{utc_now_iso()}:{used_i}"
+        outcome = runtime._execute_effect_with_retry(  # type: ignore[attr-defined]
+            run=run,
+            node_id="auto_compact",
+            effect=eff,
+            idempotency_key=idem,
+            default_next_node=None,
+        )
+        try:
+            run.updated_at = utc_now_iso()
+            self.run_store.save(run)
+        except Exception:
+            pass
+        if getattr(outcome, "status", None) == "failed":
+            # Best-effort: record the error for debuggability but do not fail ticking.
+            try:
+                auto["last_error"] = getattr(outcome, "error", None)
+                auto["last_error_at"] = utc_now_iso()
+                self.run_store.save(run)
+            except Exception:
+                pass

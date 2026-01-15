@@ -170,6 +170,11 @@ def run_summary(run: Any) -> Dict[str, Any]:
         "paused_at": None,
         "resumed_at": None,
         "waiting": None,
+        # Best-effort schedule metadata (only for scheduled parent runs).
+        "is_scheduled": False,
+        "schedule": None,
+        # Best-effort limits metadata (for UX, not for enforcing).
+        "limits": None,
     }
     try:
         vars_obj = getattr(run, "vars", None)
@@ -180,6 +185,59 @@ def run_summary(run: Any) -> Dict[str, Any]:
             out["pause_reason"] = control.get("pause_reason")
             out["paused_at"] = control.get("paused_at")
             out["resumed_at"] = control.get("resumed_at")
+    except Exception:
+        pass
+
+    # Schedule + limits are safe, small subsets for UI. Never return full run.vars.
+    try:
+        vars_obj = getattr(run, "vars", None)
+        if isinstance(vars_obj, dict):
+            meta = vars_obj.get("_meta")
+            schedule = meta.get("schedule") if isinstance(meta, dict) else None
+            if isinstance(schedule, dict) and schedule.get("kind") == "scheduled_run":
+                out["is_scheduled"] = True
+                out["schedule"] = {
+                    "kind": "scheduled_run",
+                    "interval": schedule.get("interval"),
+                    "repeat_count": schedule.get("repeat_count"),
+                    "repeat_until": schedule.get("repeat_until"),
+                    "start_at": schedule.get("start_at"),
+                    "share_context": schedule.get("share_context"),
+                    "target_workflow_id": schedule.get("target_workflow_id"),
+                    "target_bundle_ref": schedule.get("target_bundle_ref"),
+                    "target_flow_id": schedule.get("target_flow_id"),
+                    "created_at": schedule.get("created_at"),
+                    "updated_at": schedule.get("updated_at"),
+                }
+            else:
+                wid = getattr(run, "workflow_id", None)
+                if isinstance(wid, str) and wid.startswith("scheduled:"):
+                    out["is_scheduled"] = True
+
+            limits = vars_obj.get("_limits")
+            if isinstance(limits, dict):
+                used = limits.get("estimated_tokens_used")
+                max_tokens = limits.get("max_tokens")
+                max_input = limits.get("max_input_tokens")
+                warn_pct = limits.get("warn_tokens_pct")
+                budget = max_input if max_input is not None else max_tokens
+                pct = None
+                try:
+                    used_i = int(used) if used is not None and not isinstance(used, bool) else None
+                    budget_i = int(budget) if budget is not None and not isinstance(budget, bool) else None
+                    if used_i is not None and budget_i is not None and budget_i > 0:
+                        pct = float(used_i) / float(budget_i)
+                except Exception:
+                    pct = None
+                out["limits"] = {
+                    "tokens": {
+                        "estimated_used": used,
+                        "max_tokens": max_tokens,
+                        "max_input_tokens": max_input,
+                        "pct": pct,
+                        "warn_tokens_pct": warn_pct,
+                    }
+                }
     except Exception:
         pass
     if waiting is not None:

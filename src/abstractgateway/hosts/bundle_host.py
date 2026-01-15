@@ -336,6 +336,20 @@ class WorkflowBundleGatewayHost:
     def _dynamic_flow_path(self, workflow_id: str) -> Path:
         return Path(self.dynamic_flows_dir) / self._dynamic_flow_filename(workflow_id)
 
+    def load_dynamic_visualflow(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+        """Load a persisted dynamic VisualFlow JSON from disk (best-effort)."""
+        wid = str(workflow_id or "").strip()
+        if not wid:
+            return None
+        p = self._dynamic_flow_path(wid)
+        if not p.exists() or not p.is_file():
+            return None
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return raw if isinstance(raw, dict) else None
+
     def register_dynamic_visualflow(self, raw: Dict[str, Any], *, persist: bool = True) -> str:
         """Register a VisualFlow JSON object as a dynamic workflow (durable in data_dir).
 
@@ -358,6 +372,46 @@ class WorkflowBundleGatewayHost:
                 p.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
             except Exception as e:
                 raise RuntimeError(f"Failed to persist dynamic VisualFlow: {e}") from e
+
+        return str(spec.workflow_id)
+
+    def upsert_dynamic_visualflow(self, raw: Dict[str, Any], *, persist: bool = True) -> str:
+        """Register or replace a dynamic VisualFlow JSON object (durable in data_dir).
+
+        This is used for gateway-generated wrapper workflows that must be edited in-place
+        (e.g. rescheduling a recurrent job without killing the parent run).
+        """
+        if not isinstance(raw, dict):
+            raise TypeError("Dynamic VisualFlow must be an object")
+        wid = str(raw.get("id") or "").strip()
+        if not wid:
+            raise ValueError("Dynamic VisualFlow missing required 'id'")
+
+        spec = compile_visualflow(raw)
+        with self._lock:
+            try:
+                existing = self.workflow_registry.get(spec.workflow_id)
+            except Exception:
+                existing = None
+            if existing is not None:
+                try:
+                    self.workflow_registry.unregister(spec.workflow_id)
+                except Exception:
+                    pass
+            try:
+                self.workflow_registry.register(spec)
+            except Exception as e:
+                raise RuntimeError(f"Failed to register workflow '{spec.workflow_id}': {e}") from e
+
+            self.specs[str(spec.workflow_id)] = spec
+
+            if persist:
+                try:
+                    Path(self.dynamic_flows_dir).mkdir(parents=True, exist_ok=True)
+                    p = self._dynamic_flow_path(str(spec.workflow_id))
+                    p.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception as e:
+                    raise RuntimeError(f"Failed to persist dynamic VisualFlow: {e}") from e
 
         return str(spec.workflow_id)
 

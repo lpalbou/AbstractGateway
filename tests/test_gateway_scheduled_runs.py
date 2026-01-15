@@ -279,3 +279,87 @@ def test_gateway_workflow_flow_endpoint_returns_scheduled_wrapper(tmp_path: Path
         assert flow.get("id") == workflow_id
         assert isinstance(flow.get("nodes"), list) and flow["nodes"]
         assert isinstance(flow.get("edges"), list) and flow["edges"]
+
+
+def test_gateway_scheduled_run_can_reschedule_interval_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    bundle_id, flow_id = _write_simple_end_bundle(bundles_dir=bundles_dir)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/runs/schedule",
+            json={
+                "bundle_id": bundle_id,
+                "flow_id": flow_id,
+                "input_data": {"request": "hello"},
+                "start_at": "now",
+                "interval": "10s",
+                "repeat_count": 2,
+            },
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        parent_run_id = r.json()["run_id"]
+
+        # Wait for the schedule to reach its interval wait (after the first child execution).
+        def _waiting_on_interval():
+            rr = client.get(f"/api/gateway/runs/{parent_run_id}", headers=headers)
+            assert rr.status_code == 200, rr.text
+            body = rr.json()
+            waiting = body.get("waiting") or {}
+            return (
+                body.get("status") == "waiting"
+                and body.get("current_node") == "wait_interval"
+                and isinstance(waiting, dict)
+                and waiting.get("reason") == "until"
+            )
+
+        _wait_until(_waiting_on_interval, timeout_s=10.0, poll_s=0.1)
+
+        cmd = client.post(
+            "/api/gateway/commands",
+            json={
+                "command_id": "cmd-resched-1",
+                "run_id": parent_run_id,
+                "type": "update_schedule",
+                "payload": {"interval": "0.1s", "apply_immediately": True},
+            },
+            headers=headers,
+        )
+        assert cmd.status_code == 200, cmd.text
+
+        def _completed():
+            rr = client.get(f"/api/gateway/runs/{parent_run_id}", headers=headers)
+            assert rr.status_code == 200, rr.text
+            return rr.json().get("status") == "completed"
+
+        _wait_until(_completed, timeout_s=10.0, poll_s=0.1)
+
+        # Verify the persisted wrapper updated.
+        dyn = runtime_dir / "dynamic_flows"
+        assert dyn.exists()
+        files = list(dyn.glob("*.json"))
+        assert len(files) == 1
+        raw = json.loads(files[0].read_text(encoding="utf-8"))
+        nodes = raw.get("nodes") if isinstance(raw, dict) else None
+        assert isinstance(nodes, list) and nodes
+        wait_interval = next((n for n in nodes if isinstance(n, dict) and n.get("id") == "wait_interval"), None)
+        assert isinstance(wait_interval, dict)
+        data = wait_interval.get("data")
+        assert isinstance(data, dict)
+        event_cfg = data.get("eventConfig")
+        assert isinstance(event_cfg, dict)
+        assert event_cfg.get("schedule") == "0.1s"

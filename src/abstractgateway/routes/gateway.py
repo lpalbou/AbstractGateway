@@ -105,7 +105,7 @@ class ScheduleRunRequest(BaseModel):
 class SubmitCommandRequest(BaseModel):
     command_id: str = Field(..., description="Client-supplied idempotency key (UUID recommended).")
     run_id: str = Field(..., description="Target run id (or session id for emit_event).")
-    type: str = Field(..., description="pause|resume|cancel|emit_event")
+    type: str = Field(..., description="pause|resume|cancel|emit_event|update_schedule|compact_memory")
     payload: Dict[str, Any] = Field(default_factory=dict)
     ts: Optional[str] = Field(default=None, description="ISO timestamp (optional).")
     client_id: Optional[str] = None
@@ -2711,8 +2711,11 @@ async def files_read(
 async def submit_command(req: SubmitCommandRequest) -> SubmitCommandResponse:
     svc = get_gateway_service()
     typ = str(req.type or "").strip()
-    if typ not in {"pause", "resume", "cancel", "emit_event"}:
-        raise HTTPException(status_code=400, detail="type must be one of pause|resume|cancel|emit_event")
+    if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory"}:
+        raise HTTPException(
+            status_code=400,
+            detail="type must be one of pause|resume|cancel|emit_event|update_schedule|compact_memory",
+        )
 
     record = CommandRecord(
         command_id=str(req.command_id),
