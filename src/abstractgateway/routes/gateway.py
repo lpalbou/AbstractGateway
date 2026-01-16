@@ -1526,11 +1526,22 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
 
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
+        input_data = dict(req.input_data or {})
+        # Default workspace_root behavior (cross-client):
+        # - If omitted, create a per-run workspace under the gateway data_dir.
+        # - Clients can still override by explicitly setting input_data["workspace_root"].
+        raw_ws = input_data.get("workspace_root")
+        if not (isinstance(raw_ws, str) and raw_ws.strip()):
+            base = Path(svc.config.data_dir) / "workspaces"
+            base.mkdir(parents=True, exist_ok=True)
+            ws_dir = base / uuid.uuid4().hex
+            ws_dir.mkdir(parents=True, exist_ok=True)
+            input_data["workspace_root"] = str(ws_dir)
         run_id = svc.host.start_run(
             flow_id=flow_id,
             bundle_id=bundle_id,
             bundle_version=bundle_version,
-            input_data=dict(req.input_data or {}),
+            input_data=input_data,
             actor_id="gateway",
             session_id=session_id,
         )
