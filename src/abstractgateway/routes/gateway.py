@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import hashlib
 import json
 import logging
+import mimetypes
 import os
 import re
 import time
@@ -26,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunStore
-from abstractruntime.core.models import Effect, EffectType, RunStatus, StepRecord
+from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord
 
 from .. import host_metrics
 from ..service import get_gateway_service, run_summary
@@ -189,6 +191,16 @@ class ArtifactListItem(BaseModel):
 
 class ArtifactListResponse(BaseModel):
     items: list[ArtifactListItem] = Field(default_factory=list)
+
+
+class AttachmentIngestRequest(BaseModel):
+    session_id: str = Field(..., description="Session id (attachments are stored under the session memory owner run).")
+    path: str = Field(..., description="Workspace-relative path (preferred) or absolute path under workspace root.")
+    filename: Optional[str] = Field(default=None, description="Optional filename override (defaults to basename of path).")
+    content_type: Optional[str] = Field(
+        default=None,
+        description="Optional content type override (defaults to best-effort guess from filename).",
+    )
 
 
 def _require_bundle_host(svc: Any) -> Any:
@@ -831,6 +843,22 @@ def _workspace_root() -> Path:
         return base.resolve()
     except Exception:
         return base
+
+
+_DEFAULT_SESSION_MEMORY_RUN_PREFIX = "session_memory_"
+_SAFE_RUN_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _session_memory_run_id(session_id: str) -> str:
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise ValueError("session_id is required")
+    if _SAFE_RUN_ID_PATTERN.match(sid):
+        rid = f"{_DEFAULT_SESSION_MEMORY_RUN_PREFIX}{sid}"
+        if _SAFE_RUN_ID_PATTERN.match(rid):
+            return rid
+    digest = hashlib.sha256(sid.encode("utf-8")).hexdigest()[:32]
+    return f"{_DEFAULT_SESSION_MEMORY_RUN_PREFIX}sha_{digest}"
 
 
 _FILE_INDEX_CACHE: dict[str, Any] = {"base": "", "built_at": 0.0, "paths": []}
@@ -2753,6 +2781,145 @@ async def files_read(
         rel = str(resolved)
 
     return {"path": rel, "content": content}
+
+
+@router.post("/attachments/ingest")
+async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
+    """Ingest a workspace file as an artifact-backed attachment.
+
+    This is a write path for attachments that preserves durability:
+    - bytes are stored in ArtifactStore
+    - run/ledger state stores only JSON-safe artifact refs
+
+    Attachments are stored under the session memory owner run id so they can be
+    listed/downloaded via the existing run-scoped Artifact API.
+    """
+    svc = get_gateway_service()
+
+    sid = str(req.session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    base = _workspace_root()
+    resolved = _resolve_workspace_path(base=base, raw_path=str(req.path or ""))
+
+    try:
+        from abstractcore.tools.abstractignore import AbstractIgnore
+
+        ignore = AbstractIgnore.for_path(base)
+        if ignore.is_ignored(resolved, is_dir=False):
+            raise HTTPException(status_code=403, detail="File is ignored by .abstractignore policy")
+    except HTTPException:
+        raise
+    except Exception:
+        # Best-effort; do not block ingestion if ignore policy fails to load.
+        pass
+
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    if not resolved.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    try:
+        max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip()
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
+        if max_bytes <= 0:
+            max_bytes = 25 * 1024 * 1024
+    except Exception:
+        max_bytes = 25 * 1024 * 1024
+
+    try:
+        size = int(resolved.stat().st_size)
+    except Exception:
+        size = -1
+    if size >= 0 and size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Attachment too large ({size} bytes > {max_bytes} bytes)")
+
+    try:
+        content = resolved.read_bytes()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+
+    filename = str(req.filename or "").strip() or resolved.name
+    content_type = str(req.content_type or "").strip().lower()
+    if not content_type:
+        guessed, _enc = mimetypes.guess_type(filename)
+        content_type = str(guessed or "application/octet-stream")
+
+    try:
+        rel = resolved.relative_to(base).as_posix()
+    except Exception:
+        rel = str(resolved)
+
+    try:
+        rid = _session_memory_run_id(sid)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Ensure the session memory owner run exists so the artifact API can enforce run scoping.
+    rs = svc.host.run_store
+    try:
+        existing = rs.load(str(rid))
+    except Exception:
+        existing = None
+    if existing is None:
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        run = RunState(
+            run_id=str(rid),
+            workflow_id="__session_memory__",
+            status=RunStatus.COMPLETED,
+            current_node="done",
+            vars={
+                "context": {"task": "", "messages": []},
+                "scratchpad": {},
+                "_runtime": {"memory_spans": []},
+                "_temp": {},
+                "_limits": {},
+            },
+            waiting=None,
+            output={"messages": []},
+            error=None,
+            created_at=now_iso,
+            updated_at=now_iso,
+            actor_id=None,
+            session_id=sid,
+            parent_run_id=None,
+        )
+        try:
+            rs.save(run)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    store_fn = getattr(store, "store", None)
+    if not callable(store_fn):
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    tags: Dict[str, str] = {
+        "kind": "attachment",
+        "source": "workspace",
+        "path": str(rel),
+        "filename": str(filename),
+        "session_id": sid,
+    }
+    try:
+        meta = store_fn(bytes(content), content_type=str(content_type), run_id=str(rid), tags=tags)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store attachment artifact: {e}")
+
+    to_dict = getattr(meta, "to_dict", None)
+    meta_dict = to_dict() if callable(to_dict) else {}
+    if not isinstance(meta_dict, dict):
+        meta_dict = {}
+
+    attachment_ref: Dict[str, Any] = {
+        "$artifact": str(getattr(meta, "artifact_id", "") or ""),
+        "filename": filename,
+        "content_type": content_type,
+        "source_path": rel,
+    }
+
+    return {"ok": True, "run_id": str(rid), "attachment": attachment_ref, "metadata": meta_dict}
 
 
 @router.post("/commands", response_model=SubmitCommandResponse)

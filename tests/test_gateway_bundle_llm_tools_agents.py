@@ -64,8 +64,9 @@ def _stub_runtime_effect_handlers(monkeypatch: pytest.MonkeyPatch) -> None:
             }
         )
 
-    def _build_effect_handlers(*, llm, tools):
+    def _build_effect_handlers(*, llm, tools, artifact_store=None):
         del llm
+        del artifact_store
         return {
             EffectType.LLM_CALL: _llm_stub,
             EffectType.TOOL_CALLS: make_tool_calls_handler(tools=tools),
