@@ -579,6 +579,7 @@ class GatewayRunner:
         self, payload: Dict[str, Any], *, run_id: str, command_id: str, client_id: Optional[str]
     ) -> None:
         del client_id
+        requested_run_id = str(run_id or "").strip()
         raw_interval = payload.get("interval")
         if raw_interval is None:
             raw_interval = payload.get("schedule")
@@ -595,7 +596,11 @@ class GatewayRunner:
         if parent is None:
             raise KeyError(f"Run '{run_id}' not found")
         if not self._is_scheduled_parent_run(parent):
-            raise ValueError("update_schedule is only supported for scheduled parent runs")
+            root = self._find_scheduled_root(parent)
+            if root is None:
+                raise ValueError("update_schedule is only supported for scheduled runs (or runs inside a scheduled run tree)")
+            parent = root
+            run_id = str(getattr(parent, "run_id", run_id))
         if not self._scheduled_parent_is_recurrent(parent):
             raise ValueError("update_schedule requires a recurrent scheduled run (interval must be set)")
 
@@ -658,7 +663,13 @@ class GatewayRunner:
             if not isinstance(runtime_ns, dict):
                 runtime_ns = {}
                 vars_obj["_runtime"] = runtime_ns
-            runtime_ns["last_schedule_update"] = {"command_id": command_id, "interval": interval, "updated_at": utc_now_iso()}
+            runtime_ns["last_schedule_update"] = {
+                "command_id": command_id,
+                "interval": interval,
+                "updated_at": utc_now_iso(),
+                "requested_run_id": requested_run_id,
+                "scheduled_root_run_id": str(run_id),
+            }
             self.run_store.save(parent)
         except Exception:
             pass
@@ -724,11 +735,16 @@ class GatewayRunner:
         self, payload: Dict[str, Any], *, run_id: str, command_id: str, client_id: Optional[str]
     ) -> None:
         del client_id
+        requested_run_id = str(run_id or "").strip()
         parent = self.run_store.load(run_id)
         if parent is None:
             raise KeyError(f"Run '{run_id}' not found")
         if not self._is_scheduled_parent_run(parent):
-            raise ValueError("compact_memory is only supported for scheduled parent runs")
+            root = self._find_scheduled_root(parent)
+            if root is None:
+                raise ValueError("compact_memory is only supported for scheduled runs (or runs inside a scheduled run tree)")
+            parent = root
+            run_id = str(getattr(parent, "run_id", run_id))
 
         target_run_id = payload.get("target_run_id") or payload.get("targetRunId")
         if isinstance(target_run_id, str) and target_run_id.strip():
@@ -793,6 +809,28 @@ class GatewayRunner:
 
         if getattr(outcome, "status", None) == "failed":
             raise RuntimeError(getattr(outcome, "error", None) or "compact_memory failed")
+
+        # Best-effort observability marker (on the scheduled parent/root run).
+        try:
+            vars_obj = getattr(parent, "vars", None)
+            if not isinstance(vars_obj, dict):
+                vars_obj = {}
+                parent.vars = vars_obj  # type: ignore[attr-defined]
+            runtime_ns = vars_obj.get("_runtime")
+            if not isinstance(runtime_ns, dict):
+                runtime_ns = {}
+                vars_obj["_runtime"] = runtime_ns
+            runtime_ns["last_compact_memory"] = {
+                "command_id": command_id,
+                "updated_at": utc_now_iso(),
+                "requested_run_id": requested_run_id,
+                "scheduled_root_run_id": str(run_id),
+                "target_run_id": str(target_id),
+            }
+            parent.updated_at = utc_now_iso()
+            self.run_store.save(parent)
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------------
     # Auto-compaction for scheduled workflows

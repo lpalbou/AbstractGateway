@@ -329,11 +329,20 @@ def test_gateway_scheduled_run_can_reschedule_interval_in_place(tmp_path: Path, 
 
         _wait_until(_waiting_on_interval, timeout_s=10.0, poll_s=0.1)
 
+        # Send the update_schedule command to a child run id; the runner resolves the scheduled root.
+        runs = client.get(f"/api/gateway/runs?limit=200&session_id={parent_run_id}", headers=headers)
+        assert runs.status_code == 200, runs.text
+        items = runs.json().get("items") or []
+        children = [x for x in items if isinstance(x, dict) and x.get("parent_run_id") == parent_run_id]
+        assert children
+        child_run_id = children[0].get("run_id")
+        assert isinstance(child_run_id, str) and child_run_id
+
         cmd = client.post(
             "/api/gateway/commands",
             json={
                 "command_id": "cmd-resched-1",
-                "run_id": parent_run_id,
+                "run_id": child_run_id,
                 "type": "update_schedule",
                 "payload": {"interval": "0.1s", "apply_immediately": True},
             },
