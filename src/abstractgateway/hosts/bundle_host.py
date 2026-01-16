@@ -572,7 +572,11 @@ class WorkflowBundleGatewayHost:
                 emb_client = AbstractCoreEmbeddingsClient(
                     provider=str(emb_provider).strip().lower(),
                     model=str(emb_model).strip(),
-                    manager_kwargs={"cache_dir": Path(data_root) / "abstractcore" / "embeddings"},
+                    manager_kwargs={
+                        "cache_dir": Path(data_root) / "abstractcore" / "embeddings",
+                        # Embeddings must be trustworthy for semantic retrieval; do not return zero vectors on failure.
+                        "strict": True,
+                    },
                 )
 
                 class _Embedder:

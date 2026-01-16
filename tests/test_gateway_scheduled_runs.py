@@ -95,7 +95,7 @@ def test_gateway_scheduled_run_repeats_n_times(tmp_path: Path, monkeypatch: pyte
             json={
                 "bundle_id": bundle_id,
                 "flow_id": flow_id,
-                "input_data": {"request": "hello"},
+                "input_data": {"prompt": "hello"},
                 "start_at": "now",
                 "interval": "0.1s",
                 "repeat_count": 2,
@@ -144,7 +144,7 @@ def test_gateway_scheduled_run_can_isolate_sessions(tmp_path: Path, monkeypatch:
             json={
                 "bundle_id": bundle_id,
                 "flow_id": flow_id,
-                "input_data": {"request": "hello"},
+                "input_data": {"prompt": "hello"},
                 "start_at": "now",
                 "interval": "0.1s",
                 "repeat_count": 2,
@@ -201,7 +201,7 @@ def test_gateway_scheduled_run_survives_restart(tmp_path: Path, monkeypatch: pyt
             json={
                 "bundle_id": bundle_id,
                 "flow_id": flow_id,
-                "input_data": {"request": "hello"},
+                "input_data": {"prompt": "hello"},
                 "start_at": start_at,
             },
             headers=headers,
@@ -255,7 +255,7 @@ def test_gateway_workflow_flow_endpoint_returns_scheduled_wrapper(tmp_path: Path
             json={
                 "bundle_id": bundle_id,
                 "flow_id": flow_id,
-                "input_data": {"request": "hello"},
+                "input_data": {"prompt": "hello"},
                 "start_at": "now",
                 "interval": "0.1s",
                 "repeat_count": 1,
@@ -304,7 +304,7 @@ def test_gateway_scheduled_run_can_reschedule_interval_in_place(tmp_path: Path, 
             json={
                 "bundle_id": bundle_id,
                 "flow_id": flow_id,
-                "input_data": {"request": "hello"},
+                "input_data": {"prompt": "hello"},
                 "start_at": "now",
                 "interval": "10s",
                 "repeat_count": 2,

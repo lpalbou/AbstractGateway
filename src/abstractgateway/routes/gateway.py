@@ -1235,7 +1235,7 @@ def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]
         "- Then 3-8 short bullets: key actions, important files/commands/URLs, and any issues.\n"
         "- Mention relevant tool/LLM activity (counts + notable calls); do not paste huge payloads.\n"
         "- If any LLM call has `missing_response=true`, flag it as a likely runtime/model issue.\n"
-        "- Mention the original request.\n"
+        "- Mention the original prompt.\n"
         "- If the run failed, include the likely reason.\n"
         "- Keep it compact and factual; do not invent actions.\n"
     )
@@ -1740,10 +1740,10 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
         **({"session_prefix": session_prefix} if isinstance(session_prefix, str) and session_prefix.strip() else {}),
         "_meta": {"schedule": schedule_meta},
     }
-    # Best-effort: lift a common request string to the parent run for UX/digest.
-    req_text = input_data.get("request")
-    if isinstance(req_text, str) and req_text.strip():
-        wrapper_vars["request"] = req_text.strip()
+    # Best-effort: lift a common prompt string to the parent run for UX/digest.
+    prompt_text = input_data.get("prompt")
+    if isinstance(prompt_text, str) and prompt_text.strip():
+        wrapper_vars["prompt"] = prompt_text.strip()
 
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
@@ -2220,22 +2220,22 @@ async def generate_run_summary(run_id: str, req: GenerateRunSummaryRequest) -> G
     per_run: Dict[str, Any] = {k: _extract_digest_from_ledger(v) for k, v in ledgers.items()}
     overall: Dict[str, Any] = _extract_digest_from_ledger([x for v in ledgers.values() for x in (v or [])])
 
-    request_text: Optional[str] = None
+    prompt_text: Optional[str] = None
     try:
         rv = getattr(run, "vars", None)
         if isinstance(rv, dict):
-            req2 = rv.get("request")
-            if isinstance(req2, str) and req2.strip():
-                request_text = req2.strip()
+            p2 = rv.get("prompt")
+            if isinstance(p2, str) and p2.strip():
+                prompt_text = p2.strip()
     except Exception:
-        request_text = None
+        prompt_text = None
 
     status_str = getattr(getattr(run, "status", None), "value", None) or str(getattr(run, "status", "") or "")
     context: Dict[str, Any] = {
         "run_id": rid,
         "workflow_id": str(getattr(run, "workflow_id", "") or ""),
         "status": str(status_str or ""),
-        "request": request_text,
+        "prompt": prompt_text,
         "overall": overall,
         "per_run": per_run,
     }
@@ -2429,22 +2429,22 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
     per_run: Dict[str, Any] = {k: _extract_digest_from_ledger(v) for k, v in ledgers.items()}
     overall: Dict[str, Any] = _extract_digest_from_ledger([x for v in ledgers.values() for x in (v or [])])
 
-    request_text: Optional[str] = None
+    prompt_text: Optional[str] = None
     try:
         rv = getattr(run, "vars", None)
         if isinstance(rv, dict):
-            req2 = rv.get("request")
-            if isinstance(req2, str) and req2.strip():
-                request_text = req2.strip()
+            p2 = rv.get("prompt")
+            if isinstance(p2, str) and p2.strip():
+                prompt_text = p2.strip()
     except Exception:
-        request_text = None
+        prompt_text = None
 
     status_str = getattr(getattr(run, "status", None), "value", None) or str(getattr(run, "status", "") or "")
     context: Dict[str, Any] = {
         "run_id": rid,
         "workflow_id": str(getattr(run, "workflow_id", "") or ""),
         "status": str(status_str or ""),
-        "request": request_text,
+        "prompt": prompt_text,
         "overall": overall,
         "per_run": per_run,
         # Best-effort: include a compact excerpt of the ledger for grounding (keeps the JSON valid under clamping).
@@ -2644,6 +2644,43 @@ async def embeddings(req: EmbeddingsRequest) -> EmbeddingsResponse:
         dimension=int(result.dimension or 0),
         data=data,
     )
+
+
+@router.get("/embeddings/config")
+async def embeddings_config() -> Dict[str, Any]:
+    """Return the gateway-wide embedding configuration (singleton per instance)."""
+    svc = get_gateway_service()
+    client = getattr(svc, "embeddings_client", None)
+
+    configured_provider = str(getattr(svc, "embedding_provider", "") or getattr(client, "provider", "") or "").strip().lower()
+    configured_model = str(getattr(svc, "embedding_model", "") or getattr(client, "model", "") or "").strip()
+
+    out: Dict[str, Any] = {
+        "ok": client is not None,
+        "provider": configured_provider,
+        "model": configured_model,
+        "dimension": 0,
+    }
+
+    if client is None:
+        out["error"] = (
+            "Embeddings are not available (missing AbstractCore embedding integration). "
+            "Install `abstractruntime[abstractcore]` and configure ABSTRACTGATEWAY_EMBEDDING_PROVIDER/MODEL."
+        )
+        return out
+
+    # Best-effort dimension probe (do not fail the endpoint).
+    try:
+        result = client.embed_texts(["dimension probe"])
+        dim = int(getattr(result, "dimension", 0) or 0)
+        if not dim:
+            emb = getattr(result, "embeddings", None)
+            if isinstance(emb, list) and emb and isinstance(emb[0], list):
+                dim = len(emb[0])
+        out["dimension"] = dim
+    except Exception as e:
+        out["error"] = str(e)
+    return out
 
 
 @router.get("/files/search")

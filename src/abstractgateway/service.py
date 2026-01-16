@@ -89,7 +89,11 @@ def create_default_gateway_service() -> GatewayService:
         embeddings_client = AbstractCoreEmbeddingsClient(
             provider=embedding_provider,
             model=embedding_model,
-            manager_kwargs={"cache_dir": Path(stores.base_dir) / "abstractcore" / "embeddings"},
+            manager_kwargs={
+                "cache_dir": Path(stores.base_dir) / "abstractcore" / "embeddings",
+                # Embeddings must be trustworthy for semantic retrieval; do not return zero vectors on failure.
+                "strict": True,
+            },
         )
     except Exception:
         # Embeddings are optional: the gateway may run without AbstractCore embedding deps.

@@ -73,7 +73,7 @@ If the bundle has a **single entrypoint** (or declares `manifest.default_entrypo
 curl -sS -X POST "http://localhost:8080/api/gateway/runs/start" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-token" \
-  -d '{"bundle_id":"my-bundle","input_data":{"request":"Hello"}}'
+  -d '{"bundle_id":"my-bundle","input_data":{"prompt":"Hello"}}'
 ```
 
 If the bundle exposes **multiple entrypoints** and has no default, you must select one with `flow_id`:
@@ -82,7 +82,7 @@ If the bundle exposes **multiple entrypoints** and has no default, you must sele
 curl -sS -X POST "http://localhost:8080/api/gateway/runs/start" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-token" \
-  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"request":"Hello"}}'
+  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Hello"}}'
 ```
 
 For backwards-compatible clients, you can also pass a namespaced id as `flow_id` (`"my-bundle:ac-echo"`) without sending `bundle_id`.

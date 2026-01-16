@@ -437,7 +437,7 @@ def test_gateway_bundle_tool_calls_local_executes(tmp_path: Path, monkeypatch: p
     with TestClient(app) as client:
         r = client.post(
             "/api/gateway/runs/start",
-            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {}},
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {"workspace_root": str(sandbox_dir)}},
             headers=headers,
         )
         assert r.status_code == 200, r.text
@@ -711,7 +711,7 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
                     "inputs": [],
                     "outputs": [
                         {"id": "exec-out", "label": "", "type": "execution"},
-                        {"id": "request", "label": "request", "type": "string"},
+                        {"id": "prompt", "label": "prompt", "type": "string"},
                         {"id": "max_iterations", "label": "max_iterations", "type": "number"},
                     ],
                     "pinDefaults": {"max_iterations": 5},
@@ -761,7 +761,7 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
         inputs = ep0.get("inputs")
         assert isinstance(inputs, list)
         # Ensure exec pin is omitted and defaults are surfaced.
-        assert any(isinstance(x, dict) and x.get("id") == "request" for x in inputs)
+        assert any(isinstance(x, dict) and x.get("id") == "prompt" for x in inputs)
         max_it = next((x for x in inputs if isinstance(x, dict) and x.get("id") == "max_iterations"), None)
         assert isinstance(max_it, dict)
         assert max_it.get("default") == 5
@@ -780,7 +780,7 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
         # Attach UX helper: input_data endpoint returns only entrypoint pin ids (bundle mode).
         rstart = client.post(
             "/api/gateway/runs/start",
-            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {"request": "hi", "max_iterations": 7, "extra": "ignored"}},
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {"prompt": "hi", "max_iterations": 7, "extra": "ignored"}},
             headers=headers,
         )
         assert rstart.status_code == 200, rstart.text
@@ -792,4 +792,4 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
         assert payload.get("bundle_id") == bundle_id
         assert payload.get("flow_id") == flow_id
         assert payload.get("workflow_id") == f"{bundle_id}@0.0.0:{flow_id}"
-        assert payload.get("input_data") == {"request": "hi", "max_iterations": 7}
+        assert payload.get("input_data") == {"prompt": "hi", "max_iterations": 7}
