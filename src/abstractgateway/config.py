@@ -56,6 +56,8 @@ class GatewayHostConfig:
 
     data_dir: Path
     flows_dir: Path
+    store_backend: str = "file"  # file|sqlite
+    db_path: Optional[Path] = None
 
     runner_enabled: bool = True
     poll_interval_s: float = 0.25
@@ -71,6 +73,9 @@ class GatewayHostConfig:
         data_dir_raw = _env("ABSTRACTGATEWAY_DATA_DIR", "ABSTRACTFLOW_RUNTIME_DIR") or "./runtime"
         flows_dir_raw = _env("ABSTRACTGATEWAY_FLOWS_DIR", "ABSTRACTFLOW_FLOWS_DIR") or "./flows"
 
+        store_backend = str(_env("ABSTRACTGATEWAY_STORE_BACKEND") or "file").strip().lower() or "file"
+        db_path_raw = _env("ABSTRACTGATEWAY_DB_PATH")
+
         enabled_raw = _env("ABSTRACTGATEWAY_RUNNER", "ABSTRACTFLOW_GATEWAY_RUNNER") or "1"
         runner_enabled = _as_bool(enabled_raw, True)
 
@@ -83,6 +88,8 @@ class GatewayHostConfig:
         return GatewayHostConfig(
             data_dir=Path(data_dir_raw).expanduser().resolve(),
             flows_dir=Path(flows_dir_raw).expanduser().resolve(),
+            store_backend=store_backend,
+            db_path=Path(db_path_raw).expanduser().resolve() if db_path_raw else None,
             runner_enabled=bool(runner_enabled),
             poll_interval_s=float(poll_s),
             command_batch_limit=max(1, int(batch)),
@@ -90,5 +97,4 @@ class GatewayHostConfig:
             tick_workers=max(1, int(tick_workers)),
             run_scan_limit=max(1, int(scan)),
         )
-
 

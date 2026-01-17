@@ -10,7 +10,7 @@ from .embeddings_config import resolve_embedding_config
 from .hosts.visualflow_host import VisualFlowGatewayHost, VisualFlowRegistry
 from .runner import GatewayRunner, GatewayRunnerConfig
 from .security import GatewayAuthPolicy, load_gateway_auth_policy_from_env
-from .stores import GatewayStores, build_file_stores
+from .stores import GatewayStores, build_file_stores, build_sqlite_stores
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,13 @@ def get_gateway_service() -> GatewayService:
 
 def create_default_gateway_service() -> GatewayService:
     cfg = GatewayHostConfig.from_env()
-    stores = build_file_stores(base_dir=cfg.data_dir)
+    backend = str(getattr(cfg, "store_backend", "file") or "file").strip().lower() or "file"
+    if backend == "file":
+        stores = build_file_stores(base_dir=cfg.data_dir)
+    elif backend == "sqlite":
+        stores = build_sqlite_stores(base_dir=cfg.data_dir, db_path=getattr(cfg, "db_path", None))
+    else:
+        raise RuntimeError(f"Unsupported store backend: {backend}. Supported: file|sqlite")
 
     # Workflow source:
     # - bundle (default): `.flow` bundles with VisualFlow JSON (compiled via AbstractRuntime; no AbstractFlow import)
@@ -75,7 +81,14 @@ def create_default_gateway_service() -> GatewayService:
         tick_workers=int(cfg.tick_workers),
         run_scan_limit=int(cfg.run_scan_limit),
     )
-    runner = GatewayRunner(base_dir=stores.base_dir, host=host, config=runner_cfg, enable=bool(cfg.runner_enabled))
+    runner = GatewayRunner(
+        base_dir=stores.base_dir,
+        host=host,
+        config=runner_cfg,
+        enable=bool(cfg.runner_enabled),
+        command_store=stores.command_store,
+        cursor_store=stores.command_cursor_store,
+    )
 
     policy = load_gateway_auth_policy_from_env()
 

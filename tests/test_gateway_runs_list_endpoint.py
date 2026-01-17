@@ -214,3 +214,43 @@ def test_list_runs_filters_internal_memory_runs(tmp_path: Path, monkeypatch: pyt
         items = listed.json().get("items") or []
         assert any(i.get("run_id") == run_id for i in items)
         assert all(not str(i.get("workflow_id") or "").startswith("__") for i in items)
+
+
+def test_list_runs_with_sqlite_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-runs", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", "sqlite")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        start = client.post("/api/gateway/runs/start", headers=headers, json={"bundle_id": "bundle-runs", "flow_id": "root", "input_data": {}})
+        assert start.status_code == 200, start.text
+        run_id = start.json()["run_id"]
+
+        def _is_completed():
+            rr = client.get(f"/api/gateway/runs/{run_id}", headers=headers)
+            assert rr.status_code == 200, rr.text
+            return rr.json().get("status") == "completed"
+
+        _wait_until(_is_completed, timeout_s=5.0, poll_s=0.05)
+
+        listed = client.get("/api/gateway/runs?limit=25", headers=headers)
+        assert listed.status_code == 200, listed.text
+        items = listed.json().get("items") or []
+        match = next((i for i in items if i.get("run_id") == run_id), None)
+        assert match is not None
+        assert match.get("status") == "completed"
+        assert isinstance(match.get("ledger_len"), int)
+        assert match.get("ledger_len") >= 1

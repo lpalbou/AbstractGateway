@@ -21,11 +21,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol
 
-from abstractruntime import JsonFileCommandCursorStore, JsonlCommandStore, Runtime
+from abstractruntime import Runtime
 from abstractruntime.core.event_keys import build_event_wait_key
 from abstractruntime.core.models import Effect, EffectType, RunStatus, WaitReason
 from abstractruntime.scheduler.scheduler import utc_now_iso
-from abstractruntime.storage.commands import CommandRecord
+from abstractruntime.storage.commands import (
+    CommandCursorStore,
+    CommandRecord,
+    CommandStore,
+    JsonFileCommandCursorStore,
+    JsonlCommandStore,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -77,14 +83,18 @@ class GatewayRunner:
         host: GatewayHost,
         config: Optional[GatewayRunnerConfig] = None,
         enable: bool = True,
+        command_store: CommandStore | None = None,
+        cursor_store: CommandCursorStore | None = None,
     ) -> None:
         self._base_dir = Path(base_dir)
         self._host = host
         self._cfg = config or GatewayRunnerConfig()
         self._enable = bool(enable)
 
-        self._command_store = JsonlCommandStore(self._base_dir)
-        self._cursor_store = JsonFileCommandCursorStore(self._base_dir / "commands_cursor.json")
+        self._command_store: CommandStore = command_store or JsonlCommandStore(self._base_dir)
+        self._cursor_store: CommandCursorStore = cursor_store or JsonFileCommandCursorStore(
+            self._base_dir / "commands_cursor.json"
+        )
 
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -100,7 +110,7 @@ class GatewayRunner:
         return self._enable
 
     @property
-    def command_store(self) -> JsonlCommandStore:
+    def command_store(self) -> CommandStore:
         return self._command_store
 
     @property

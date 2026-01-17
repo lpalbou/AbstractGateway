@@ -15,6 +15,21 @@ def main(argv: list[str] | None = None) -> None:
     tg = sub.add_parser("telegram-auth", help="One-time TDLib authentication bootstrap for Telegram Secret Chats (E2EE)")
     tg.add_argument("--timeout-s", type=float, default=120.0, help="Max seconds to wait for TDLib authorization (default: 120)")
 
+    mig = sub.add_parser("migrate", help="Migrate durable stores between backends (best-effort)")
+    mig.add_argument("--from", dest="src", default="file", choices=["file"], help="Source backend (default: file)")
+    mig.add_argument("--to", dest="dst", default="sqlite", choices=["sqlite"], help="Destination backend (default: sqlite)")
+    mig.add_argument(
+        "--data-dir",
+        default=None,
+        help="Source data dir (defaults to ABSTRACTGATEWAY_DATA_DIR or ./runtime)",
+    )
+    mig.add_argument(
+        "--db-path",
+        default=None,
+        help="Destination sqlite file path (defaults to <data-dir>/gateway.sqlite3)",
+    )
+    mig.add_argument("--overwrite", action="store_true", help="Overwrite destination DB if it exists")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
@@ -75,6 +90,25 @@ def main(argv: list[str] | None = None) -> None:
                 client.stop()
             except Exception:
                 pass
+        return
+
+    if args.cmd == "migrate":
+        from pathlib import Path
+
+        from .migrate import migrate_file_to_sqlite
+
+        data_dir = Path(str(args.data_dir or "")).expanduser().resolve() if args.data_dir else None
+        if data_dir is None:
+            import os
+
+            data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime")).expanduser().resolve()
+        db_path = Path(str(args.db_path or "")).expanduser().resolve() if args.db_path else (data_dir / "gateway.sqlite3")
+
+        if str(args.src).strip().lower() != "file" or str(args.dst).strip().lower() != "sqlite":
+            raise SystemExit("Only --from=file --to=sqlite is supported in v0")
+
+        migrate_file_to_sqlite(base_dir=data_dir, db_path=db_path, overwrite=bool(args.overwrite))
+        print(f"Migrated file stores from {data_dir} to sqlite DB {db_path}")
         return
 
     raise SystemExit(2)
