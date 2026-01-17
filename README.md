@@ -20,10 +20,18 @@ Endpoints:
 
 ## Install
 
-### Default (bundle mode)
+### Runner-only (no HTTP stack)
 
 ```bash
 pip install abstractgateway
+```
+
+This installs the durable gateway host + runner loop, but **not** the FastAPI/Uvicorn HTTP server dependencies.
+
+### HTTP API/SSE server
+
+```bash
+pip install "abstractgateway[http]"
 ```
 
 Bundle mode executes **WorkflowBundles** (`.flow`) via **WorkflowArtifacts** without importing `abstractflow`.
@@ -35,8 +43,11 @@ pip install "abstractgateway[visualflow]"
 ```
 
 This mode depends on the **AbstractFlow compiler library** (`abstractflow`) to interpret VisualFlow JSON (it does **not** require the AbstractFlow web UI/app).
+If you want to serve this host over HTTP, install: `pip install "abstractgateway[http,visualflow]"`.
 
 ## Run
+
+To run the HTTP API/SSE server, ensure you installed `abstractgateway[http]`.
 
 ```bash
 export ABSTRACTGATEWAY_DATA_DIR="./runtime"
@@ -78,6 +89,20 @@ Notes:
 - `ABSTRACTGATEWAY_ALLOWED_ORIGINS` is **CORS** (browser policy). It can list multiple origins like:
   - `http://localhost:*,http://127.0.0.1:*,http://192.168.1.188:*`
   - This does **not** control which IPs the server listens on; it only controls which browser Origins can call the API.
+
+## Split API vs runner (recommended for upgrades)
+
+By default, `abstractgateway serve` starts the HTTP API **and** the background runner loop in the same process.
+
+To restart the HTTP API without pausing durable execution, run them as two processes sharing the same `ABSTRACTGATEWAY_DATA_DIR`:
+
+```bash
+# Process 1 (runner worker, no HTTP deps needed):
+abstractgateway runner
+
+# Process 2 (HTTP API only):
+abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
+```
 
 ## Creating a `.flow` bundle (authoring)
 

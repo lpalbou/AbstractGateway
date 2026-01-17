@@ -38,6 +38,16 @@ flowchart LR
   Runtime --> Stores
 ```
 
+## Split-process deployment (API vs runner)
+
+In production-like deployments, it is useful to restart the HTTP API without pausing durable execution.
+
+AbstractGateway supports running the API and the runner as separate processes that share the same durable stores:
+- `abstractgateway runner` runs the long-lived tick loop (no HTTP stack).
+- `abstractgateway serve --no-runner ...` runs the HTTP API without starting the runner in-process.
+
+The `gateway_runner.lock` file under `ABSTRACTGATEWAY_DATA_DIR` remains the safety net to prevent multiple runner processes from ticking the same runs concurrently.
+
 ## Scope and packaging
 AbstractGateway should be deployable without installing authoring tools (AbstractFlow).
 Workflow loading must therefore be pluggable:

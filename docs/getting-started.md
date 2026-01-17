@@ -11,7 +11,9 @@ This document covers:
 
 ## Prerequisites
 
-- Python environment with `abstractgateway` installed.
+- Python environment with:
+  - `abstractgateway` (runner + durable gateway host), and
+  - `abstractgateway[http]` if you want to run the HTTP/SSE server (`abstractgateway serve`).
 - A bundles directory containing `*.flow` bundles (recommended).
 - If you run workflows that use LLM nodes:
   - a provider reachable by AbstractCore (e.g. LMStudio).
@@ -38,6 +40,20 @@ export ABSTRACTGATEWAY_MODEL="qwen/qwen3-next-80b"
 export ABSTRACTGATEWAY_TOOL_MODE="passthrough"
 
 abstractgateway serve --host 127.0.0.1 --port 8081
+```
+
+### Split API vs runner (recommended for upgrades)
+
+By default, `abstractgateway serve` starts the HTTP API **and** the runner loop in the same process.
+
+To restart the HTTP API without pausing durable execution, run two processes sharing the same `ABSTRACTGATEWAY_DATA_DIR`:
+
+```bash
+# Process 1 (runner worker, no HTTP deps needed):
+abstractgateway runner
+
+# Process 2 (HTTP API only):
+abstractgateway serve --no-runner --host 127.0.0.1 --port 8081
 ```
 
 ### `--host` vs `ABSTRACTGATEWAY_ALLOWED_ORIGINS` (common confusion)
