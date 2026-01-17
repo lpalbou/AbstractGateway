@@ -170,3 +170,39 @@ def test_files_search_and_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
         rr2 = client.get("/api/gateway/files/read?path=../outside.txt", headers=headers)
         assert rr2.status_code == 403, rr2.text
+
+
+def test_files_search_and_read_support_mounts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+
+    ws = tmp_path / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "src").mkdir(parents=True, exist_ok=True)
+    (ws / "src" / "alpha.py").write_text("print('alpha')\n", encoding="utf-8")
+
+    notes = tmp_path / "notes"
+    notes.mkdir(parents=True, exist_ok=True)
+    (notes / "todo.md").write_text("hello from notes\n", encoding="utf-8")
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_MOUNTS", f"notes={notes}\n")
+
+    with client:
+        r = client.get("/api/gateway/files/search?query=todo&limit=20", headers=headers)
+        assert r.status_code == 200, r.text
+        items = r.json().get("items") or []
+        paths = {it.get("path") for it in items if isinstance(it, dict)}
+        assert "notes/todo.md" in paths
+
+        rr = client.get("/api/gateway/files/read?path=notes/todo.md", headers=headers)
+        assert rr.status_code == 200, rr.text
+        body = rr.json()
+        assert body.get("path") == "notes/todo.md"
+        assert "hello from notes" in (body.get("content") or "")
+
+        rr_abs = client.get(f"/api/gateway/files/read?path={notes / 'todo.md'}", headers=headers)
+        assert rr_abs.status_code == 200, rr_abs.text
+        assert rr_abs.json().get("path") == "notes/todo.md"
+
+        rr_trav = client.get("/api/gateway/files/read?path=notes/../src/alpha.py", headers=headers)
+        assert rr_trav.status_code == 403, rr_trav.text

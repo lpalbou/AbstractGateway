@@ -845,6 +845,71 @@ def _workspace_root() -> Path:
         return base
 
 
+_MOUNT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
+_WORKSPACE_MOUNTS_CACHE: dict[str, Any] = {"raw": None, "mounts": {}}
+
+
+def _workspace_mounts() -> Dict[str, Path]:
+    """Return configured workspace mounts (best-effort).
+
+    Env:
+      ABSTRACTGATEWAY_WORKSPACE_MOUNTS
+
+    Format (v0): newline-separated `name=/abs/path` entries.
+    """
+    global _WORKSPACE_MOUNTS_CACHE
+    raw = str(os.getenv("ABSTRACTGATEWAY_WORKSPACE_MOUNTS", "") or "")
+    cached_raw = _WORKSPACE_MOUNTS_CACHE.get("raw")
+    cached_mounts = _WORKSPACE_MOUNTS_CACHE.get("mounts")
+    if raw == cached_raw and isinstance(cached_mounts, dict):
+        out0: Dict[str, Path] = {}
+        for k, v in cached_mounts.items():
+            if isinstance(k, str) and k and isinstance(v, Path):
+                out0[k] = v
+        return out0
+
+    out: Dict[str, Path] = {}
+    for ln in raw.splitlines():
+        line = str(ln or "").strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            logger.warning("workspace_mounts: invalid line (expected name=/abs/path): %s", line)
+            continue
+        name, path = line.split("=", 1)
+        name = name.strip()
+        path = path.strip()
+        if not name or not _MOUNT_NAME_RE.match(name):
+            logger.warning("workspace_mounts: invalid mount name: %s", name)
+            continue
+        if not path:
+            logger.warning("workspace_mounts: missing path for mount '%s'", name)
+            continue
+        try:
+            p = Path(path).expanduser()
+            if not p.is_absolute():
+                logger.warning("workspace_mounts: mount '%s' path must be absolute: %s", name, path)
+                continue
+            resolved = p.resolve()
+        except Exception:
+            logger.warning("workspace_mounts: mount '%s' path invalid: %s", name, path)
+            continue
+        try:
+            if not resolved.exists():
+                logger.warning("workspace_mounts: mount '%s' path does not exist: %s", name, str(resolved))
+                continue
+            if not resolved.is_dir():
+                logger.warning("workspace_mounts: mount '%s' path is not a directory: %s", name, str(resolved))
+                continue
+        except Exception:
+            logger.warning("workspace_mounts: mount '%s' path not accessible: %s", name, str(resolved))
+            continue
+        out[name] = resolved
+
+    _WORKSPACE_MOUNTS_CACHE = {"raw": raw, "mounts": dict(out)}
+    return dict(out)
+
+
 _DEFAULT_SESSION_MEMORY_RUN_PREFIX = "session_memory_"
 _SAFE_RUN_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -861,7 +926,7 @@ def _session_memory_run_id(session_id: str) -> str:
     return f"{_DEFAULT_SESSION_MEMORY_RUN_PREFIX}sha_{digest}"
 
 
-_FILE_INDEX_CACHE: dict[str, Any] = {"base": "", "built_at": 0.0, "paths": []}
+_FILE_INDEX_CACHE: dict[str, Any] = {"key": "", "built_at": 0.0, "paths": []}
 _TOOL_SPECS_CACHE: dict[str, Any] = {"built_at": 0.0, "specs": {}}
 
 
@@ -927,30 +992,181 @@ def _build_file_index(*, base: Path, max_files: int) -> list[str]:
     return out
 
 
-def _get_file_index(*, base: Path, ttl_s: float = 30.0, max_files: int = 50000) -> list[str]:
+def _build_file_index_for_root(*, root: Path, mount: Optional[str], max_files: int) -> list[str]:
+    """Build a file index for a single root, yielding virtual paths (best-effort)."""
+    try:
+        from abstractcore.tools.abstractignore import AbstractIgnore
+
+        ignore = AbstractIgnore.for_path(root)
+    except Exception:
+        ignore = None
+
+    out: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        cur = Path(dirpath)
+
+        kept: list[str] = []
+        for d in dirnames:
+            p = cur / d
+            try:
+                if ignore is not None and ignore.is_ignored(p, is_dir=True):
+                    continue
+            except Exception:
+                pass
+            kept.append(d)
+        dirnames[:] = kept
+
+        for fn in filenames:
+            p = cur / fn
+            try:
+                if ignore is not None and ignore.is_ignored(p, is_dir=False):
+                    continue
+            except Exception:
+                pass
+            try:
+                rel = p.resolve().relative_to(root).as_posix()
+            except Exception:
+                continue
+            if not rel:
+                continue
+            if mount:
+                out.append(f"{mount}/{rel}")
+            else:
+                out.append(rel)
+            if len(out) >= int(max_files):
+                return out
+    return out
+
+
+def _get_file_index(*, base: Path, mounts: Dict[str, Path], ttl_s: float = 30.0, max_files: int = 50000) -> list[str]:
     global _FILE_INDEX_CACHE
     now = time.time()
-    cached_base = str(_FILE_INDEX_CACHE.get("base") or "")
+    mounts_key = "\n".join([f"{k}={mounts[k]}" for k in sorted(mounts.keys())])
+    key = f"{str(base)}\n{mounts_key}"
+    cached_key = str(_FILE_INDEX_CACHE.get("key") or "")
     built_at = float(_FILE_INDEX_CACHE.get("built_at") or 0.0)
     cached_paths = _FILE_INDEX_CACHE.get("paths") if isinstance(_FILE_INDEX_CACHE.get("paths"), list) else []
-    if cached_base == str(base) and cached_paths and (now - built_at) < ttl_s:
+    if cached_key == key and cached_paths and (now - built_at) < ttl_s:
         return list(cached_paths)
-    paths = _build_file_index(base=base, max_files=max_files)
-    _FILE_INDEX_CACHE = {"base": str(base), "built_at": now, "paths": paths}
-    return paths
 
+    out: list[str] = []
+    remaining = int(max_files)
 
-def _resolve_workspace_path(*, base: Path, raw_path: str) -> Path:
-    p_raw = str(raw_path or "").strip()
-    if not p_raw:
-        raise HTTPException(status_code=400, detail="path is required")
-    p = Path(p_raw).expanduser()
-    resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
+    # Primary root (no prefix for backward compatibility).
     try:
-        resolved.relative_to(base)
+        base_paths = _build_file_index_for_root(root=base, mount=None, max_files=remaining)
     except Exception:
-        raise HTTPException(status_code=403, detail="path is outside workspace root")
-    return resolved
+        base_paths = []
+    out.extend(base_paths)
+    remaining -= len(base_paths)
+
+    # Mounts (prefixed as `<mount>/<relpath>`).
+    for name in sorted(mounts.keys()):
+        if remaining <= 0:
+            break
+        root = mounts.get(name)
+        if not isinstance(root, Path):
+            continue
+        try:
+            items = _build_file_index_for_root(root=root, mount=name, max_files=remaining)
+        except Exception:
+            items = []
+        out.extend(items)
+        remaining -= len(items)
+
+    _FILE_INDEX_CACHE = {"key": key, "built_at": now, "paths": out}
+    return out
+
+
+def _resolve_workspace_path(*, base: Path, mounts: Dict[str, Path], raw_path: str) -> tuple[Path, str, Optional[str], Path]:
+    """Resolve a user-supplied path against the primary workspace root + mounts.
+
+    Accepts:
+    - virtual paths (preferred): `docs/readme.md` or `mount/path/to/file.md`
+    - absolute paths: allowed only if under base or a mount root
+
+    Returns:
+        (resolved_path, virtual_path_normalized, mount_name_or_none, root_used)
+    """
+    p_raw0 = str(raw_path or "").strip()
+    if not p_raw0:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    p_raw = p_raw0.replace("\\", "/")
+    p = Path(p_raw).expanduser()
+
+    if p.is_absolute():
+        try:
+            resolved = p.resolve()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid absolute path")
+
+        # Prefer the most specific root (longest path) that contains the resolved path.
+        candidates: list[tuple[int, Optional[str], Path]] = []
+        try:
+            resolved.relative_to(base)
+            candidates.append((len(str(base)), None, base))
+        except Exception:
+            pass
+        for name, root in (mounts or {}).items():
+            if not isinstance(root, Path):
+                continue
+            try:
+                resolved.relative_to(root)
+                candidates.append((len(str(root)), str(name), root))
+            except Exception:
+                continue
+        if not candidates:
+            raise HTTPException(status_code=403, detail="path is outside workspace roots")
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        _len, mount, root = candidates[0]
+        try:
+            rel = resolved.relative_to(root).as_posix()
+        except Exception:
+            rel = ""
+        if mount:
+            virt = f"{mount}/{rel}" if rel else str(mount)
+        else:
+            virt = rel
+        return resolved, virt, mount, root
+
+    # Virtual path (relative): interpret first segment as a mount name when prefixed like `mount/...`.
+    virt_raw = p_raw.strip()
+    while virt_raw.startswith("./"):
+        virt_raw = virt_raw[2:]
+
+    parts = [seg for seg in virt_raw.split("/") if seg not in ("", ".")]
+    mount: Optional[str] = None
+    root = base
+    rel_part = virt_raw
+
+    # Require `mount/...` (at least one `/`) to avoid collisions with root-level filenames.
+    if len(parts) >= 2:
+        candidate = parts[0]
+        if candidate in (mounts or {}):
+            mount = candidate
+            root = mounts[candidate]
+            rel_part = "/".join(parts[1:])
+
+    try:
+        resolved = (root / Path(rel_part)).resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid path")
+    try:
+        resolved.relative_to(root)
+    except Exception:
+        raise HTTPException(status_code=403, detail="path escapes workspace root")
+
+    try:
+        rel_norm = resolved.relative_to(root).as_posix()
+    except Exception:
+        rel_norm = Path(rel_part).as_posix()
+    if mount:
+        virt_norm = f"{mount}/{rel_norm}" if rel_norm else str(mount)
+    else:
+        virt_norm = rel_norm
+
+    return resolved, virt_norm, mount, root
 
 
 def _clamp_text(text: str, *, max_len: int) -> str:
@@ -2728,10 +2944,11 @@ async def files_search(
         return {"items": []}
 
     base = _workspace_root()
+    mounts = _workspace_mounts()
 
     try:
         # Index build can be slow on large workspaces; keep async endpoints responsive.
-        paths = await asyncio.to_thread(_get_file_index, base=base)
+        paths = await asyncio.to_thread(_get_file_index, base=base, mounts=mounts)
     except Exception as e:
         return {"items": [], "error": str(e)}
 
@@ -2751,7 +2968,15 @@ async def files_search(
         scored.append((score, len(s), s))
 
     scored.sort(key=lambda x: (x[0], x[1], x[2]))
-    out = [{"path": s} for _, _, s in scored[: int(limit)]]
+    out: list[Dict[str, Any]] = []
+    mount_names = set(mounts.keys())
+    for _score, _len, s in scored[: int(limit)]:
+        item: Dict[str, Any] = {"path": s}
+        if "/" in s:
+            head = s.split("/", 1)[0]
+            if head in mount_names:
+                item["mount"] = head
+        out.append(item)
     return {"items": out}
 
 
@@ -2766,7 +2991,8 @@ async def files_read(
     Uses the same implementation as AbstractCore's `read_file` tool (including `.abstractignore`).
     """
     base = _workspace_root()
-    resolved = _resolve_workspace_path(base=base, raw_path=path)
+    mounts = _workspace_mounts()
+    resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
 
     try:
         from abstractcore.tools.common_tools import read_file
@@ -2775,12 +3001,14 @@ async def files_read(
     except Exception as e:
         content = f"Error: Failed to read '{resolved}': {e}"
 
-    try:
-        rel = resolved.relative_to(base).as_posix()
-    except Exception:
-        rel = str(resolved)
+    out_path = str(virt) if isinstance(virt, str) and virt.strip() else None
+    if not out_path:
+        try:
+            out_path = resolved.relative_to(root).as_posix()
+        except Exception:
+            out_path = str(resolved)
 
-    return {"path": rel, "content": content}
+    return {"path": out_path, "content": content}
 
 
 @router.post("/attachments/ingest")
@@ -2801,12 +3029,13 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="session_id is required")
 
     base = _workspace_root()
-    resolved = _resolve_workspace_path(base=base, raw_path=str(req.path or ""))
+    mounts = _workspace_mounts()
+    resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=str(req.path or ""))
 
     try:
         from abstractcore.tools.abstractignore import AbstractIgnore
 
-        ignore = AbstractIgnore.for_path(base)
+        ignore = AbstractIgnore.for_path(root)
         if ignore.is_ignored(resolved, is_dir=False):
             raise HTTPException(status_code=403, detail="File is ignored by .abstractignore policy")
     except HTTPException:
@@ -2846,10 +3075,7 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
         guessed, _enc = mimetypes.guess_type(filename)
         content_type = str(guessed or "application/octet-stream")
 
-    try:
-        rel = resolved.relative_to(base).as_posix()
-    except Exception:
-        rel = str(resolved)
+    rel = str(virt) if isinstance(virt, str) and virt.strip() else str(resolved)
 
     try:
         rid = _session_memory_run_id(sid)
