@@ -201,6 +201,10 @@ class AttachmentIngestRequest(BaseModel):
         default=None,
         description="Optional content type override (defaults to best-effort guess from filename).",
     )
+    workspace_root: Optional[str] = Field(default=None, description="Optional workspace root override (enables custom scopes).")
+    workspace_access_mode: Optional[str] = Field(default=None, description="Workspace access mode (workspace_only|workspace_or_allowed).")
+    workspace_allowed_paths: Optional[str] = Field(default=None, description="Newline-separated allowed root directories (mounted).")
+    workspace_ignored_paths: Optional[str] = Field(default=None, description="Newline-separated ignored paths (blocked).")
 
 
 def _require_bundle_host(svc: Any) -> Any:
@@ -838,7 +842,17 @@ def _resolve_bundle_from_host(*, host: Any, bundle_id: str, bundle_version: Opti
 
 def _workspace_root() -> Path:
     raw = str(os.getenv("ABSTRACTGATEWAY_WORKSPACE_DIR", "") or "").strip()
-    base = Path(raw).expanduser() if raw else Path.cwd()
+    if not raw:
+        # Default to a stable repo root instead of whatever directory the server was launched from.
+        # This improves @file search latency and keeps gateway behavior consistent across clients.
+        try:
+            from abstractruntime.integrations.abstractcore.workspace_scoped_tools import resolve_workspace_base_dir
+
+            base = resolve_workspace_base_dir()
+        except Exception:
+            base = Path.cwd()
+    else:
+        base = Path(raw).expanduser()
     try:
         return base.resolve()
     except Exception:
@@ -908,6 +922,133 @@ def _workspace_mounts() -> Dict[str, Path]:
 
     _WORKSPACE_MOUNTS_CACHE = {"raw": raw, "mounts": dict(out)}
     return dict(out)
+
+
+def _parse_lines_or_json_list(raw: Optional[str]) -> list[str]:
+    """Parse a newline-separated string or a JSON array of strings (best-effort)."""
+    if raw is None:
+        return []
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if isinstance(x, str) and str(x).strip()]
+        except Exception:
+            pass
+    lines = [ln.strip() for ln in text.splitlines()]
+    return [ln for ln in lines if ln]
+
+
+def _is_under_path(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _slug_mount_name(raw: str) -> str:
+    s = str(raw or "").strip().lower()
+    if not s:
+        return "mount"
+    s = re.sub(r"[^a-z0-9_-]+", "_", s)
+    s = s.strip("_")
+    if not s:
+        return "mount"
+    return s[:32]
+
+
+def _mounts_from_allowed_paths(*, allowed_dirs: list[Path], used_names: set[str]) -> Dict[str, Path]:
+    out: Dict[str, Path] = {}
+    for p in allowed_dirs:
+        try:
+            resolved = p.resolve()
+        except Exception:
+            resolved = p
+        base = _slug_mount_name(resolved.name)
+        name = base
+        if name in used_names:
+            digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:8]
+            trim = max(1, 32 - (1 + len(digest)))
+            name = f"{base[:trim]}_{digest}"
+        # Final disambiguation if needed.
+        i = 2
+        while name in used_names:
+            suffix = f"_{i}"
+            trim = max(1, 32 - len(suffix))
+            name = f"{base[:trim]}{suffix}"
+            i += 1
+        used_names.add(name)
+        out[name] = resolved
+    return out
+
+
+def _workspace_scope_from_request(
+    *,
+    workspace_root: Optional[str],
+    workspace_access_mode: Optional[str],
+    workspace_allowed_paths: Optional[str],
+    workspace_ignored_paths: Optional[str],
+) -> tuple[Path, Dict[str, Path], tuple[Path, ...]]:
+    """Return (base_root, mounts, ignored_abs) for workspace file endpoints."""
+    base_default = _workspace_root()
+
+    raw_root = str(workspace_root or "").strip()
+    if raw_root:
+        p = Path(raw_root).expanduser()
+        if not p.is_absolute():
+            p = base_default / p
+        try:
+            base = p.resolve()
+        except Exception:
+            base = p
+    else:
+        base = base_default
+
+    mode = str(workspace_access_mode or "").strip().lower()
+    allow_extra_roots = mode == "workspace_or_allowed"
+
+    allowed_raw = _parse_lines_or_json_list(workspace_allowed_paths)
+    allowed_dirs: list[Path] = []
+    if allow_extra_roots:
+        for item in allowed_raw:
+            s = str(item or "").strip()
+            if not s:
+                continue
+            p = Path(s).expanduser()
+            if not p.is_absolute():
+                p = base / p
+            try:
+                resolved = p.resolve()
+            except Exception:
+                resolved = p
+            try:
+                if resolved.exists() and resolved.is_dir() and not _is_under_path(resolved, base):
+                    allowed_dirs.append(resolved)
+            except Exception:
+                continue
+
+    ignored_raw = _parse_lines_or_json_list(workspace_ignored_paths)
+    ignored_abs: list[Path] = []
+    for item in ignored_raw:
+        s = str(item or "").strip()
+        if not s:
+            continue
+        p = Path(s).expanduser()
+        if not p.is_absolute():
+            p = base / p
+        try:
+            resolved = p.resolve()
+        except Exception:
+            resolved = p
+        ignored_abs.append(resolved)
+
+    used = set()
+    mounts = _mounts_from_allowed_paths(allowed_dirs=allowed_dirs, used_names=used)
+    return base, mounts, tuple(ignored_abs)
 
 
 _DEFAULT_SESSION_MEMORY_RUN_PREFIX = "session_memory_"
@@ -992,8 +1133,16 @@ def _build_file_index(*, base: Path, max_files: int) -> list[str]:
     return out
 
 
-def _build_file_index_for_root(*, root: Path, mount: Optional[str], max_files: int) -> list[str]:
-    """Build a file index for a single root, yielding virtual paths (best-effort)."""
+def _build_file_index_for_root(
+    *, root: Path, mount: Optional[str], max_files: int, blocked: tuple[Path, ...] = ()
+) -> list[str]:
+    """Build a file index for a single root, yielding virtual paths (best-effort).
+
+    Performance note:
+    This function runs on every cold cache rebuild for `/files/search`. Avoid per-path
+    `.resolve()` calls inside the hot loop; `os.walk(root)` already yields absolute paths
+    rooted under `root` (which itself is resolved by callers).
+    """
     try:
         from abstractcore.tools.abstractignore import AbstractIgnore
 
@@ -1001,13 +1150,43 @@ def _build_file_index_for_root(*, root: Path, mount: Optional[str], max_files: i
     except Exception:
         ignore = None
 
+    try:
+        root_abs = root.resolve()
+    except Exception:
+        root_abs = root
+
+    blocked_paths: tuple[Path, ...] = ()
+    if blocked:
+        resolved_blocked: list[Path] = []
+        for b in blocked:
+            if not isinstance(b, Path):
+                continue
+            try:
+                resolved_blocked.append(b.resolve())
+            except Exception:
+                resolved_blocked.append(b)
+        blocked_paths = tuple(resolved_blocked)
+
+    def _is_under_fast(child: Path, parent: Path) -> bool:
+        try:
+            child.relative_to(parent)
+            return True
+        except Exception:
+            return False
     out: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in os.walk(root_abs):
         cur = Path(dirpath)
+        if blocked_paths:
+            if any(cur == b or _is_under_fast(cur, b) for b in blocked_paths):
+                dirnames[:] = []
+                continue
 
         kept: list[str] = []
         for d in dirnames:
             p = cur / d
+            if blocked_paths:
+                if any(p == b or _is_under_fast(p, b) for b in blocked_paths):
+                    continue
             try:
                 if ignore is not None and ignore.is_ignored(p, is_dir=True):
                     continue
@@ -1018,13 +1197,16 @@ def _build_file_index_for_root(*, root: Path, mount: Optional[str], max_files: i
 
         for fn in filenames:
             p = cur / fn
+            if blocked_paths:
+                if any(p == b or _is_under_fast(p, b) for b in blocked_paths):
+                    continue
             try:
                 if ignore is not None and ignore.is_ignored(p, is_dir=False):
                     continue
             except Exception:
                 pass
             try:
-                rel = p.resolve().relative_to(root).as_posix()
+                rel = p.relative_to(root_abs).as_posix()
             except Exception:
                 continue
             if not rel:
@@ -1038,11 +1220,34 @@ def _build_file_index_for_root(*, root: Path, mount: Optional[str], max_files: i
     return out
 
 
-def _get_file_index(*, base: Path, mounts: Dict[str, Path], ttl_s: float = 30.0, max_files: int = 50000) -> list[str]:
+def _get_file_index(
+    *,
+    base: Path,
+    mounts: Dict[str, Path],
+    blocked: tuple[Path, ...] = (),
+    ttl_s: float = 30.0,
+    max_files: int = 50000,
+) -> list[str]:
     global _FILE_INDEX_CACHE
     now = time.time()
+
+    # Allow coarse tuning for large workspaces (typing latency in @file search).
+    try:
+        ttl_env = str(os.getenv("ABSTRACTGATEWAY_FILE_INDEX_TTL_S", "") or "").strip()
+        if ttl_env:
+            ttl_s = max(1.0, float(ttl_env))
+    except Exception:
+        pass
+    try:
+        max_env = str(os.getenv("ABSTRACTGATEWAY_FILE_INDEX_MAX_FILES", "") or "").strip()
+        if max_env:
+            max_files = max(1000, int(max_env))
+    except Exception:
+        pass
+
     mounts_key = "\n".join([f"{k}={mounts[k]}" for k in sorted(mounts.keys())])
-    key = f"{str(base)}\n{mounts_key}"
+    blocked_key = "\n".join(sorted([str(p) for p in (blocked or ())]))
+    key = f"{str(base)}\n{mounts_key}\nblocked={blocked_key}"
     cached_key = str(_FILE_INDEX_CACHE.get("key") or "")
     built_at = float(_FILE_INDEX_CACHE.get("built_at") or 0.0)
     cached_paths = _FILE_INDEX_CACHE.get("paths") if isinstance(_FILE_INDEX_CACHE.get("paths"), list) else []
@@ -1054,7 +1259,7 @@ def _get_file_index(*, base: Path, mounts: Dict[str, Path], ttl_s: float = 30.0,
 
     # Primary root (no prefix for backward compatibility).
     try:
-        base_paths = _build_file_index_for_root(root=base, mount=None, max_files=remaining)
+        base_paths = _build_file_index_for_root(root=base, mount=None, max_files=remaining, blocked=tuple(blocked or ()))
     except Exception:
         base_paths = []
     out.extend(base_paths)
@@ -1068,7 +1273,7 @@ def _get_file_index(*, base: Path, mounts: Dict[str, Path], ttl_s: float = 30.0,
         if not isinstance(root, Path):
             continue
         try:
-            items = _build_file_index_for_root(root=root, mount=name, max_files=remaining)
+            items = _build_file_index_for_root(root=root, mount=name, max_files=remaining, blocked=tuple(blocked or ()))
         except Exception:
             items = []
         out.extend(items)
@@ -2931,6 +3136,10 @@ async def embeddings_config() -> Dict[str, Any]:
 async def files_search(
     query: str = Query(..., description="Case-insensitive substring match on file path/name."),
     limit: int = Query(20, ge=1, le=200),
+    workspace_root: Optional[str] = Query(None, description="Optional workspace root override for this search."),
+    workspace_access_mode: Optional[str] = Query(None, description="Workspace access mode (workspace_only|workspace_or_allowed)."),
+    workspace_allowed_paths: Optional[str] = Query(None, description="Newline-separated allowed root directories (mounted for search)."),
+    workspace_ignored_paths: Optional[str] = Query(None, description="Newline-separated ignored paths (prunes search)."),
 ) -> Dict[str, Any]:
     """Search workspace files for @file mentions (best-effort).
 
@@ -2943,12 +3152,25 @@ async def files_search(
     if not q:
         return {"items": []}
 
-    base = _workspace_root()
-    mounts = _workspace_mounts()
+    use_scope = any(
+        bool(str(v or "").strip())
+        for v in (workspace_root, workspace_access_mode, workspace_allowed_paths, workspace_ignored_paths)
+    )
+    if use_scope:
+        base, mounts, ignored_abs = _workspace_scope_from_request(
+            workspace_root=workspace_root,
+            workspace_access_mode=workspace_access_mode,
+            workspace_allowed_paths=workspace_allowed_paths,
+            workspace_ignored_paths=workspace_ignored_paths,
+        )
+    else:
+        base = _workspace_root()
+        mounts = _workspace_mounts()
+        ignored_abs = ()
 
     try:
         # Index build can be slow on large workspaces; keep async endpoints responsive.
-        paths = await asyncio.to_thread(_get_file_index, base=base, mounts=mounts)
+        paths = await asyncio.to_thread(_get_file_index, base=base, mounts=mounts, blocked=tuple(ignored_abs))
     except Exception as e:
         return {"items": [], "error": str(e)}
 
@@ -2985,14 +3207,38 @@ async def files_read(
     path: str = Query(..., description="Workspace-relative path (preferred) or absolute path under workspace root."),
     start_line: int = Query(1, ge=1),
     end_line: Optional[int] = Query(None, ge=1),
+    workspace_root: Optional[str] = Query(None, description="Optional workspace root override for this read."),
+    workspace_access_mode: Optional[str] = Query(None, description="Workspace access mode (workspace_only|workspace_or_allowed)."),
+    workspace_allowed_paths: Optional[str] = Query(None, description="Newline-separated allowed root directories (mounted for reads)."),
+    workspace_ignored_paths: Optional[str] = Query(None, description="Newline-separated ignored paths (blocked)."),
 ) -> Dict[str, Any]:
     """Read a workspace file for @file mentions (best-effort).
 
     Uses the same implementation as AbstractCore's `read_file` tool (including `.abstractignore`).
     """
-    base = _workspace_root()
-    mounts = _workspace_mounts()
+    use_scope = any(
+        bool(str(v or "").strip())
+        for v in (workspace_root, workspace_access_mode, workspace_allowed_paths, workspace_ignored_paths)
+    )
+    if use_scope:
+        base, mounts, ignored_abs = _workspace_scope_from_request(
+            workspace_root=workspace_root,
+            workspace_access_mode=workspace_access_mode,
+            workspace_allowed_paths=workspace_allowed_paths,
+            workspace_ignored_paths=workspace_ignored_paths,
+        )
+    else:
+        base = _workspace_root()
+        mounts = _workspace_mounts()
+        ignored_abs = ()
     resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
+    if ignored_abs:
+        try:
+            resolved2 = resolved.resolve()
+        except Exception:
+            resolved2 = resolved
+        if any(_is_under_path(resolved2, p) or resolved2 == p for p in ignored_abs):
+            raise HTTPException(status_code=403, detail="File is blocked by workspace_ignored_paths policy")
 
     try:
         from abstractcore.tools.common_tools import read_file
@@ -3028,9 +3274,30 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
     if not sid:
         raise HTTPException(status_code=400, detail="session_id is required")
 
-    base = _workspace_root()
-    mounts = _workspace_mounts()
+    use_scope = any(
+        bool(str(v or "").strip())
+        for v in (req.workspace_root, req.workspace_access_mode, req.workspace_allowed_paths, req.workspace_ignored_paths)
+    )
+    if use_scope:
+        base, mounts, ignored_abs = _workspace_scope_from_request(
+            workspace_root=req.workspace_root,
+            workspace_access_mode=req.workspace_access_mode,
+            workspace_allowed_paths=req.workspace_allowed_paths,
+            workspace_ignored_paths=req.workspace_ignored_paths,
+        )
+    else:
+        base = _workspace_root()
+        mounts = _workspace_mounts()
+        ignored_abs = ()
+
     resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=str(req.path or ""))
+    if ignored_abs:
+        try:
+            resolved2 = resolved.resolve()
+        except Exception:
+            resolved2 = resolved
+        if any(_is_under_path(resolved2, p) or resolved2 == p for p in ignored_abs):
+            raise HTTPException(status_code=403, detail="File is blocked by workspace_ignored_paths policy")
 
     try:
         from abstractcore.tools.abstractignore import AbstractIgnore

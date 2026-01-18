@@ -674,7 +674,11 @@ class WorkflowBundleGatewayHost:
                     workflow_registry=wf_reg,
                     artifact_store=artifact_store,
                     effect_handlers={
-                        EffectType.TOOL_CALLS: make_tool_calls_handler(tools=tool_executor),
+                        EffectType.TOOL_CALLS: make_tool_calls_handler(
+                            tools=tool_executor,
+                            artifact_store=artifact_store,
+                            run_store=run_store,
+                        ),
                         **extra_effect_handlers,
                     },
                 )

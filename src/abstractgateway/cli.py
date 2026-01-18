@@ -11,7 +11,7 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     serve = sub.add_parser("serve", help="Run the AbstractGateway HTTP/SSE server")
-    serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    serve.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     serve.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
     serve.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
     serve.add_argument(
