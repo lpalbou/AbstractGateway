@@ -17,6 +17,7 @@ import logging
 import mimetypes
 import os
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -1067,7 +1068,97 @@ def _session_memory_run_id(session_id: str) -> str:
     return f"{_DEFAULT_SESSION_MEMORY_RUN_PREFIX}sha_{digest}"
 
 
+def _ensure_session_memory_owner_run_exists(*, run_store: Any, session_id: str) -> str:
+    """Ensure the internal session memory owner run exists (best-effort, durable)."""
+    sid = str(session_id or "").strip()
+    rid = _session_memory_run_id(sid)
+    try:
+        existing = run_store.load(str(rid))
+    except Exception:
+        existing = None
+    if existing is not None:
+        return str(rid)
+
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    run = RunState(
+        run_id=str(rid),
+        workflow_id="__session_memory__",
+        status=RunStatus.COMPLETED,
+        current_node="done",
+        vars={
+            "context": {"task": "", "messages": []},
+            "scratchpad": {},
+            "_runtime": {"memory_spans": []},
+            "_temp": {},
+            "_limits": {},
+        },
+        waiting=None,
+        output={"messages": []},
+        error=None,
+        created_at=now_iso,
+        updated_at=now_iso,
+        actor_id=None,
+        session_id=sid,
+        parent_run_id=None,
+    )
+    run_store.save(run)
+    return str(rid)
+
+
+def _load_or_create_session_memory_owner_run(*, run_store: Any, run_id: str) -> Optional[RunState]:
+    """Load a run; for `session_memory_*` ids, create a placeholder owner run when missing."""
+    rid = str(run_id or "").strip()
+    if not rid:
+        return None
+
+    try:
+        existing = run_store.load(rid)
+    except Exception:
+        existing = None
+    if existing is not None:
+        return existing
+
+    if not rid.startswith(_DEFAULT_SESSION_MEMORY_RUN_PREFIX):
+        return None
+    if not _SAFE_RUN_ID_PATTERN.match(rid):
+        return None
+
+    suffix = rid[len(_DEFAULT_SESSION_MEMORY_RUN_PREFIX) :]
+    session_id: Optional[str] = None
+    if suffix and not suffix.startswith("sha_"):
+        session_id = suffix
+
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    run = RunState(
+        run_id=rid,
+        workflow_id="__session_memory__",
+        status=RunStatus.COMPLETED,
+        current_node="done",
+        vars={
+            "context": {"task": "", "messages": []},
+            "scratchpad": {},
+            "_runtime": {"memory_spans": []},
+            "_temp": {},
+            "_limits": {},
+        },
+        waiting=None,
+        output={"messages": []},
+        error=None,
+        created_at=now_iso,
+        updated_at=now_iso,
+        actor_id=None,
+        session_id=session_id,
+        parent_run_id=None,
+    )
+    try:
+        run_store.save(run)
+    except Exception:
+        return None
+    return run
+
+
 _FILE_INDEX_CACHE: dict[str, Any] = {"key": "", "built_at": 0.0, "paths": []}
+_FILE_INDEX_BUILD_LOCK = threading.Lock()
 _TOOL_SPECS_CACHE: dict[str, Any] = {"built_at": 0.0, "specs": {}}
 
 
@@ -1254,33 +1345,41 @@ def _get_file_index(
     if cached_key == key and cached_paths and (now - built_at) < ttl_s:
         return list(cached_paths)
 
-    out: list[str] = []
-    remaining = int(max_files)
+    # Coalesce concurrent cold-cache rebuilds (typing can trigger multiple overlapping calls).
+    with _FILE_INDEX_BUILD_LOCK:
+        cached_key = str(_FILE_INDEX_CACHE.get("key") or "")
+        built_at = float(_FILE_INDEX_CACHE.get("built_at") or 0.0)
+        cached_paths = _FILE_INDEX_CACHE.get("paths") if isinstance(_FILE_INDEX_CACHE.get("paths"), list) else []
+        if cached_key == key and cached_paths and (now - built_at) < ttl_s:
+            return list(cached_paths)
 
-    # Primary root (no prefix for backward compatibility).
-    try:
-        base_paths = _build_file_index_for_root(root=base, mount=None, max_files=remaining, blocked=tuple(blocked or ()))
-    except Exception:
-        base_paths = []
-    out.extend(base_paths)
-    remaining -= len(base_paths)
+        out: list[str] = []
+        remaining = int(max_files)
 
-    # Mounts (prefixed as `<mount>/<relpath>`).
-    for name in sorted(mounts.keys()):
-        if remaining <= 0:
-            break
-        root = mounts.get(name)
-        if not isinstance(root, Path):
-            continue
+        # Primary root (no prefix for backward compatibility).
         try:
-            items = _build_file_index_for_root(root=root, mount=name, max_files=remaining, blocked=tuple(blocked or ()))
+            base_paths = _build_file_index_for_root(root=base, mount=None, max_files=remaining, blocked=tuple(blocked or ()))
         except Exception:
-            items = []
-        out.extend(items)
-        remaining -= len(items)
+            base_paths = []
+        out.extend(base_paths)
+        remaining -= len(base_paths)
 
-    _FILE_INDEX_CACHE = {"key": key, "built_at": now, "paths": out}
-    return out
+        # Mounts (prefixed as `<mount>/<relpath>`).
+        for name in sorted(mounts.keys()):
+            if remaining <= 0:
+                break
+            root = mounts.get(name)
+            if not isinstance(root, Path):
+                continue
+            try:
+                items = _build_file_index_for_root(root=root, mount=name, max_files=remaining, blocked=tuple(blocked or ()))
+            except Exception:
+                items = []
+            out.extend(items)
+            remaining -= len(items)
+
+        _FILE_INDEX_CACHE = {"key": key, "built_at": now, "paths": out}
+        return out
 
 
 def _resolve_workspace_path(*, base: Path, mounts: Dict[str, Path], raw_path: str) -> tuple[Path, str, Optional[str], Path]:
@@ -1986,6 +2085,15 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
             ws_dir = base / uuid.uuid4().hex
             ws_dir.mkdir(parents=True, exist_ok=True)
             input_data["workspace_root"] = str(ws_dir)
+
+        # Ensure the session attachment store exists early so clients can list/preview
+        # session-scoped artifacts even before any attachments are ingested.
+        if session_id:
+            try:
+                _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=session_id)
+            except Exception as e:
+                logger.warning("Failed to ensure session memory owner run exists", extra={"error": str(e)})
+
         run_id = svc.host.start_run(
             flow_id=flow_id,
             bundle_id=bundle_id,
@@ -2196,6 +2304,11 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
 
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
+        if session_id:
+            try:
+                _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=session_id)
+            except Exception as e:
+                logger.warning("Failed to ensure session memory owner run exists (schedule)", extra={"error": str(e)})
         run_id = host.start_run(flow_id=scheduled_workflow_id, bundle_id=None, input_data=wrapper_vars, actor_id="gateway", session_id=session_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start scheduled run: {e}")
@@ -2415,6 +2528,10 @@ async def list_run_artifacts(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run is None:
+        # Internal session-memory runs are created lazily; for UX, create a placeholder
+        # when the client asks for session artifacts before any attachments exist.
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=str(run_id))
+    if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
     store = getattr(getattr(svc, "stores", None), "artifact_store", None)
@@ -2459,6 +2576,8 @@ async def get_run_artifact_metadata(run_id: str, artifact_id: str) -> Dict[str, 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=str(run_id))
+    if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
     store = getattr(getattr(svc, "stores", None), "artifact_store", None)
@@ -2493,6 +2612,8 @@ async def download_run_artifact_content(run_id: str, artifact_id: str) -> Stream
         run = rs.load(str(run_id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=str(run_id))
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
@@ -2610,10 +2731,26 @@ async def stream_ledger(
 ) -> StreamingResponse:
     svc = get_gateway_service()
     run_id2 = str(run_id)
+    rs = svc.host.run_store
+
+    # Fail fast: streaming a non-existent run should not hold open a keep-alive connection forever.
+    try:
+        run0 = rs.load(run_id2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run0 is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id2}' not found")
+
+    def _is_terminal(status_any: Any) -> bool:
+        s = getattr(status_any, "value", None) or str(status_any or "")
+        s = str(s).strip().lower()
+        return s in {"completed", "failed", "cancelled"}
 
     async def _gen():
         cursor = int(after or 0)
         last_emit = asyncio.get_event_loop().time()
+        last_status_check = last_emit
+        terminal = _is_terminal(getattr(run0, "status", None))
         while True:
             ledger = svc.host.ledger_store.list(run_id2)
             if not isinstance(ledger, list):
@@ -2631,6 +2768,25 @@ async def stream_ledger(
                     last_emit = asyncio.get_event_loop().time()
             else:
                 now = asyncio.get_event_loop().time()
+
+                # When the run is terminal and we've streamed all known records, close the stream
+                # so clients can finalize their UI state (don't hang forever on keep-alives).
+                if terminal:
+                    payload = json.dumps({"run_id": run_id2, "cursor": cursor, "status": "terminal"}, ensure_ascii=False)
+                    yield b"event: done\n"
+                    yield f"data: {payload}\n\n".encode("utf-8")
+                    break
+
+                # Poll run status while idle (best-effort, bounded).
+                if (now - last_status_check) >= 0.75:
+                    last_status_check = now
+                    try:
+                        cur_run = rs.load(run_id2)
+                        terminal = _is_terminal(getattr(cur_run, "status", None))
+                    except Exception:
+                        # If status lookup fails, keep streaming keep-alives.
+                        terminal = False
+
                 if (now - last_emit) >= float(heartbeat_s):
                     yield b": keep-alive\n\n"
                     last_emit = now
@@ -3346,44 +3502,11 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
 
     rel = str(virt) if isinstance(virt, str) and virt.strip() else str(resolved)
 
-    try:
-        rid = _session_memory_run_id(sid)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # Ensure the session memory owner run exists so the artifact API can enforce run scoping.
     rs = svc.host.run_store
     try:
-        existing = rs.load(str(rid))
-    except Exception:
-        existing = None
-    if existing is None:
-        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        run = RunState(
-            run_id=str(rid),
-            workflow_id="__session_memory__",
-            status=RunStatus.COMPLETED,
-            current_node="done",
-            vars={
-                "context": {"task": "", "messages": []},
-                "scratchpad": {},
-                "_runtime": {"memory_spans": []},
-                "_temp": {},
-                "_limits": {},
-            },
-            waiting=None,
-            output={"messages": []},
-            error=None,
-            created_at=now_iso,
-            updated_at=now_iso,
-            actor_id=None,
-            session_id=sid,
-            parent_run_id=None,
-        )
-        try:
-            rs.save(run)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
+        rid = _ensure_session_memory_owner_run_exists(run_store=rs, session_id=sid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
 
     store = getattr(getattr(svc, "stores", None), "artifact_store", None)
     store_fn = getattr(store, "store", None)
