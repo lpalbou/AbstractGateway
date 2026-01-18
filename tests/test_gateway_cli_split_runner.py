@@ -43,9 +43,11 @@ def test_cli_runner_forces_runner_env_and_calls_start_stop(monkeypatch: pytest.M
     calls: list[str] = []
 
     def _start() -> None:
+        assert os.environ.get("ABSTRACTGATEWAY_RUNNER") == "1"
         calls.append("start")
 
     def _stop() -> None:
+        assert os.environ.get("ABSTRACTGATEWAY_RUNNER") == "1"
         calls.append("stop")
 
     monkeypatch.setattr(gateway_service, "start_gateway_runner", _start)
@@ -70,7 +72,8 @@ def test_cli_runner_forces_runner_env_and_calls_start_stop(monkeypatch: pytest.M
     monkeypatch.delenv("ABSTRACTGATEWAY_RUNNER", raising=False)
     gateway_cli.main(["runner"])
 
-    assert os.environ.get("ABSTRACTGATEWAY_RUNNER") == "1"
+    # CLI sets the env var for the process while running, but restores it on exit.
+    assert os.environ.get("ABSTRACTGATEWAY_RUNNER") is None
     assert calls == ["start", "stop"]
 
 
@@ -85,4 +88,3 @@ def test_runner_module_does_not_import_fastapi() -> None:
         timeout=15,
     )
     assert proc.stdout.strip() == "False"
-

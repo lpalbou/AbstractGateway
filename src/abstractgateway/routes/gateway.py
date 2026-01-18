@@ -3069,6 +3069,8 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
 
+    sha256 = hashlib.sha256(bytes(content)).hexdigest()
+
     filename = str(req.filename or "").strip() or resolved.name
     content_type = str(req.content_type or "").strip().lower()
     if not content_type:
@@ -3127,6 +3129,7 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
         "path": str(rel),
         "filename": str(filename),
         "session_id": sid,
+        "sha256": sha256,
     }
     try:
         meta = store_fn(bytes(content), content_type=str(content_type), run_id=str(rid), tags=tags)
@@ -3143,6 +3146,7 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
         "filename": filename,
         "content_type": content_type,
         "source_path": rel,
+        "sha256": sha256,
     }
 
     return {"ok": True, "run_id": str(rid), "attachment": attachment_ref, "metadata": meta_dict}

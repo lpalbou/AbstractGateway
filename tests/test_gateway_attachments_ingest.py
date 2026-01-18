@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from pathlib import Path
@@ -87,6 +88,9 @@ def test_gateway_attachments_ingest_creates_session_scoped_artifact(tmp_path: Pa
         assert isinstance(attachment, dict)
         artifact_id = attachment.get("$artifact")
         assert isinstance(artifact_id, str) and artifact_id.strip()
+        sha256 = attachment.get("sha256")
+        assert isinstance(sha256, str) and sha256.strip()
+        assert sha256 == hashlib.sha256(b"hello\nworld\n").hexdigest()
 
         # The run-scoped artifact API can now list and download this attachment.
         r2 = client.get("/api/gateway/runs/session_memory_s1/artifacts", headers=headers)

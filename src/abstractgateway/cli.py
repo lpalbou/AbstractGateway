@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
+        prev_runner_env = os.environ.get("ABSTRACTGATEWAY_RUNNER")
         if bool(getattr(args, "no_runner", False)):
             # Override env for this process: do not start the background runner loop in the HTTP API process.
             os.environ["ABSTRACTGATEWAY_RUNNER"] = "0"
@@ -56,16 +57,23 @@ def main(argv: list[str] | None = None) -> None:
                 f"(import failed: {e})"
             )
 
-        uvicorn.run(
-            "abstractgateway.app:app",
-            host=str(args.host),
-            port=int(args.port),
-            reload=bool(args.reload),
-        )
+        try:
+            uvicorn.run(
+                "abstractgateway.app:app",
+                host=str(args.host),
+                port=int(args.port),
+                reload=bool(args.reload),
+            )
+        finally:
+            if prev_runner_env is None:
+                os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
+            else:
+                os.environ["ABSTRACTGATEWAY_RUNNER"] = prev_runner_env
         return
 
     if args.cmd == "runner":
         # Force runner enabled for this process.
+        prev_runner_env = os.environ.get("ABSTRACTGATEWAY_RUNNER")
         os.environ["ABSTRACTGATEWAY_RUNNER"] = "1"
 
         from .service import start_gateway_runner, stop_gateway_runner
@@ -88,6 +96,10 @@ def main(argv: list[str] | None = None) -> None:
                 stop.wait(0.5)
         finally:
             stop_gateway_runner()
+            if prev_runner_env is None:
+                os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
+            else:
+                os.environ["ABSTRACTGATEWAY_RUNNER"] = prev_runner_env
         return
 
     if args.cmd == "telegram-auth":
