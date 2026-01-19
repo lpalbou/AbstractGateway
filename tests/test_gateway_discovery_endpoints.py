@@ -151,6 +151,9 @@ def test_files_search_and_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         items = r.json().get("items") or []
         paths = {it.get("path") for it in items if isinstance(it, dict)}
         assert "src/alpha.py" in paths
+        alpha = next((it for it in items if isinstance(it, dict) and it.get("path") == "src/alpha.py"), None)
+        assert isinstance(alpha, dict)
+        assert alpha.get("size_bytes") == len("print('alpha')\n".encode("utf-8"))
 
         r2 = client.get("/api/gateway/files/search?query=ignored", headers=headers)
         assert r2.status_code == 200, r2.text
@@ -193,6 +196,9 @@ def test_files_search_and_read_support_mounts(tmp_path: Path, monkeypatch: pytes
         items = r.json().get("items") or []
         paths = {it.get("path") for it in items if isinstance(it, dict)}
         assert "notes/todo.md" in paths
+        todo = next((it for it in items if isinstance(it, dict) and it.get("path") == "notes/todo.md"), None)
+        assert isinstance(todo, dict)
+        assert todo.get("size_bytes") == len("hello from notes\n".encode("utf-8"))
 
         rr = client.get("/api/gateway/files/read?path=notes/todo.md", headers=headers)
         assert rr.status_code == 200, rr.text

@@ -23,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -3354,6 +3354,13 @@ async def files_search(
             head = s.split("/", 1)[0]
             if head in mount_names:
                 item["mount"] = head
+        try:
+            resolved, _virt, _m, _root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=s)
+            st = resolved.stat()
+            item["size_bytes"] = int(getattr(st, "st_size", 0) or 0)
+        except Exception:
+            # Best-effort: files may disappear between index build and search.
+            pass
         out.append(item)
     return {"items": out}
 
@@ -3536,6 +3543,92 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
         "filename": filename,
         "content_type": content_type,
         "source_path": rel,
+        "sha256": sha256,
+    }
+
+    return {"ok": True, "run_id": str(rid), "attachment": attachment_ref, "metadata": meta_dict}
+
+
+@router.post("/attachments/upload")
+async def attachments_upload(
+    session_id: str = Form(..., description="Session id (attachments are stored under the session memory owner run)."),
+    file: UploadFile = File(..., description="File to upload."),
+    filename: Optional[str] = Form(None, description="Optional filename override (defaults to uploaded filename)."),
+    content_type: Optional[str] = Form(
+        None,
+        description="Optional content type override (defaults to uploaded content_type or best-effort guess).",
+    ),
+) -> Dict[str, Any]:
+    """Upload bytes as an artifact-backed attachment.
+
+    This endpoint exists primarily for browser clients (drag & drop) where
+    local file paths are not accessible to the UI.
+    """
+    svc = get_gateway_service()
+
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    try:
+        max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip()
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
+        if max_bytes <= 0:
+            max_bytes = 25 * 1024 * 1024
+    except Exception:
+        max_bytes = 25 * 1024 * 1024
+
+    try:
+        content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read upload: {e}")
+
+    size = len(content or b"")
+    if size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Attachment too large ({size} bytes > {max_bytes} bytes)")
+
+    sha256 = hashlib.sha256(bytes(content or b"")).hexdigest()
+
+    filename_final = str(filename or "").strip() or str(getattr(file, "filename", "") or "").strip() or "upload.bin"
+    content_type_final = str(content_type or "").strip().lower() or str(getattr(file, "content_type", "") or "").strip().lower()
+    if not content_type_final:
+        guessed, _enc = mimetypes.guess_type(filename_final)
+        content_type_final = str(guessed or "application/octet-stream")
+
+    rs = svc.host.run_store
+    try:
+        rid = _ensure_session_memory_owner_run_exists(run_store=rs, session_id=sid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    store_fn = getattr(store, "store", None)
+    if not callable(store_fn):
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    tags: Dict[str, str] = {
+        "kind": "attachment",
+        "source": "upload",
+        "path": str(filename_final),
+        "filename": str(filename_final),
+        "session_id": sid,
+        "sha256": sha256,
+    }
+    try:
+        meta = store_fn(bytes(content or b""), content_type=str(content_type_final), run_id=str(rid), tags=tags)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store attachment artifact: {e}")
+
+    to_dict = getattr(meta, "to_dict", None)
+    meta_dict = to_dict() if callable(to_dict) else {}
+    if not isinstance(meta_dict, dict):
+        meta_dict = {}
+
+    attachment_ref: Dict[str, Any] = {
+        "$artifact": str(getattr(meta, "artifact_id", "") or ""),
+        "filename": filename_final,
+        "content_type": content_type_final,
+        "source_path": filename_final,
         "sha256": sha256,
     }
 
