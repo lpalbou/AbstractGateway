@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from abstractruntime import Runtime, WorkflowRegistry, WorkflowSpec
+from abstractruntime import Runtime, WorkflowRegistry, WorkflowSpec, persist_workflow_snapshot
 from abstractruntime.visualflow_compiler import compile_visualflow
 from abstractruntime.workflow_bundle import WorkflowBundle, WorkflowBundleError, open_workflow_bundle
 
@@ -996,6 +996,45 @@ class WorkflowBundleGatewayHost:
                 effective_session_id = str(getattr(state, "session_id", None) or run_id).strip() or run_id
             except Exception:
                 effective_session_id = run_id
+
+        # Persist a workflow snapshot for reproducible replay (best-effort).
+        try:
+            if ":" in workflow_id:
+                prefix, inner = workflow_id.split(":", 1)
+                bid_base, bid_ver2 = _split_bundle_ref(prefix)
+                if bid_base and bid_ver2:
+                    versions = self.bundles.get(bid_base)
+                    bundle2 = versions.get(bid_ver2) if isinstance(versions, dict) else None
+                    if bundle2 is not None:
+                        bundle_ref = _bundle_ref(bid_base, bid_ver2)
+                        man = bundle2.manifest
+                        flow_ids = set(man.flows.keys()) if isinstance(getattr(man, "flows", None), dict) else set()
+                        id_map = {fid: _namespace(bundle_ref, fid) for fid in flow_ids if isinstance(fid, str) and fid.strip()}
+                        rel = man.flow_path_for(inner) if hasattr(man, "flow_path_for") else None
+                        raw = bundle2.read_json(rel) if isinstance(rel, str) and rel.strip() else None
+                        if isinstance(raw, dict):
+                            namespaced_raw = _namespace_visualflow_raw(
+                                raw=raw,
+                                bundle_id=bundle_ref,
+                                flow_id=inner,
+                                id_map=id_map,
+                            )
+                            snapshot = {
+                                "kind": "visualflow_json",
+                                "bundle_ref": bundle_ref,
+                                "flow_id": str(inner),
+                                "visualflow": namespaced_raw,
+                            }
+                            persist_workflow_snapshot(
+                                run_store=self.run_store,
+                                artifact_store=self.artifact_store,
+                                run_id=str(run_id),
+                                workflow_id=str(workflow_id),
+                                snapshot=snapshot,
+                                format="visualflow_json",
+                            )
+        except Exception:
+            pass
 
         # Start session-scoped event listener workflows (best-effort).
         listener_ids = self.event_listener_specs_by_root.get(workflow_id) or []

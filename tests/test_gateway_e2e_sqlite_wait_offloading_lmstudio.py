@@ -202,6 +202,20 @@ def test_gateway_sqlite_wait_index_offloading_dedupe_lmstudio(tmp_path: Path, mo
         _wait_until(lambda: _run_completed(client, run_id1), timeout_s=120.0, poll_s=0.1)
         assert _wait_index_absent(run_id1)
 
+        # RunHistoryBundle: single-call history + workflow snapshot reference.
+        hb1 = client.get(
+            f"/api/gateway/runs/{run_id1}/history_bundle",
+            headers=headers,
+            params={"include_subruns": "false", "include_session": "false", "ledger_mode": "tail", "ledger_max_items": 50},
+        )
+        assert hb1.status_code == 200, hb1.text
+        b1 = hb1.json()
+        assert b1.get("version") == 1
+        ws1 = b1.get("workflow_snapshot")
+        assert isinstance(ws1, dict)
+        assert str(ws1.get("artifact_id") or "").strip()
+        assert str(ws1.get("sha256") or "").strip()
+
         r2 = client.post(
             "/api/gateway/runs/start",
             json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {"workspace_root": str(sandbox_dir)}},
@@ -211,6 +225,19 @@ def test_gateway_sqlite_wait_index_offloading_dedupe_lmstudio(tmp_path: Path, mo
         run_id2 = r2.json()["run_id"]
 
         _wait_until(lambda: _run_completed(client, run_id2), timeout_s=120.0, poll_s=0.1)
+
+        hb2 = client.get(
+            f"/api/gateway/runs/{run_id2}/history_bundle",
+            headers=headers,
+            params={"include_subruns": "false", "include_session": "false", "ledger_mode": "tail", "ledger_max_items": 50},
+        )
+        assert hb2.status_code == 200, hb2.text
+        b2 = hb2.json()
+        assert b2.get("version") == 1
+        ws2 = b2.get("workflow_snapshot")
+        assert isinstance(ws2, dict)
+        assert str(ws2.get("artifact_id") or "").strip()
+        assert str(ws2.get("sha256") or "").strip()
 
     # Offloading assertions: sqlite records must not inline the big content.
     assert db_path.exists()

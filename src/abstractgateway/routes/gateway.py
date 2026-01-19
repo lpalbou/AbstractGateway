@@ -2518,6 +2518,61 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     }
 
 
+@router.get("/runs/{run_id}/history_bundle")
+async def get_run_history_bundle(
+    run_id: str,
+    include_subruns: bool = Query(True, description="Include descendant runs (subworkflows) in the bundle."),
+    include_session: bool = Query(False, description="Include a best-effort session turn list (root runs)."),
+    session_turn_limit: int = Query(200, ge=1, le=500, description="Max session turns to include when include_session=true."),
+    ledger_mode: str = Query("tail", description="Ledger export mode: tail|full."),
+    ledger_max_items: int = Query(2000, ge=0, le=20000, description="Max ledger items per run when ledger_mode=tail (0 disables tailing)."),
+) -> Dict[str, Any]:
+    """Return a versioned RunHistoryBundle (runtime-owned contract).
+
+    Intended for thin clients to render/replay without stitching multiple endpoints.
+    """
+    svc = get_gateway_service()
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        from abstractruntime import export_run_history_bundle
+    except Exception as e:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"RunHistoryBundle export is unavailable: {e}")
+
+    mode = str(ledger_mode or "tail").strip().lower()
+    if mode not in {"tail", "full"}:
+        raise HTTPException(status_code=400, detail="ledger_mode must be 'tail' or 'full'")
+    max_items = int(ledger_max_items)
+    if mode == "tail" and max_items <= 0:
+        mode = "full"
+        max_items = 0
+
+    try:
+        store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+        bundle = export_run_history_bundle(
+            run_id=rid,
+            run_store=svc.host.run_store,
+            ledger_store=svc.host.ledger_store,
+            artifact_store=store,
+            include_subruns=bool(include_subruns),
+            include_session=bool(include_session),
+            session_turn_limit=int(session_turn_limit),
+            ledger_mode=mode,
+            ledger_max_items=max_items,
+        )
+        if not isinstance(bundle, dict):
+            raise RuntimeError("export_run_history_bundle returned non-dict")
+        return bundle
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export history bundle: {e}")
+
+
 @router.get("/runs/{run_id}/artifacts", response_model=ArtifactListResponse)
 async def list_run_artifacts(
     run_id: str,

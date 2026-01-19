@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from abstractruntime import Runtime
+from abstractruntime import Runtime, persist_workflow_snapshot
 
 
 logger = logging.getLogger(__name__)
@@ -157,7 +157,33 @@ class VisualFlowGatewayHost:
             tool_executor=tool_executor,
         )
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
-        return str(vis_runner.start(data, actor_id=actor_id, session_id=sid))
+        run_id = str(vis_runner.start(data, actor_id=actor_id, session_id=sid))
+
+        # Persist a workflow snapshot for reproducible replay (best-effort).
+        try:
+            flow_dict = None
+            try:
+                to_dump = getattr(visual_flow, "model_dump", None)
+                if callable(to_dump):
+                    flow_dict = to_dump()
+                else:
+                    flow_dict = dict(visual_flow) if isinstance(visual_flow, dict) else None
+            except Exception:
+                flow_dict = None
+            if isinstance(flow_dict, dict):
+                snapshot = {"kind": "visualflow_json", "flow_id": fid, "visualflow": flow_dict}
+                persist_workflow_snapshot(
+                    run_store=self._run_store,
+                    artifact_store=self._artifact_store,
+                    run_id=str(run_id),
+                    workflow_id=str(fid),
+                    snapshot=snapshot,
+                    format="visualflow_json",
+                )
+        except Exception:
+            pass
+
+        return run_id
 
     def runtime_and_workflow_for_run(self, run_id: str) -> tuple[Runtime, Any]:
         """Return (runtime, workflow_spec) for the given run, ensuring derived VisualFlow workflows are registered."""
