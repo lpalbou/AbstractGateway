@@ -1393,6 +1393,9 @@ def _resolve_workspace_path(*, base: Path, mounts: Dict[str, Path], raw_path: st
         (resolved_path, virtual_path_normalized, mount_name_or_none, root_used)
     """
     p_raw0 = str(raw_path or "").strip()
+    # Tolerate "@path" handles (used by attachments and some clients).
+    if p_raw0.startswith("@"):
+        p_raw0 = p_raw0[1:].lstrip()
     if not p_raw0:
         raise HTTPException(status_code=400, detail="path is required")
 
@@ -3409,6 +3412,67 @@ async def files_read(
         content = read_file(str(resolved), start_line=start_line, end_line=end_line)
     except Exception as e:
         content = f"Error: Failed to read '{resolved}': {e}"
+
+    out_path = str(virt) if isinstance(virt, str) and virt.strip() else None
+    if not out_path:
+        try:
+            out_path = resolved.relative_to(root).as_posix()
+        except Exception:
+            out_path = str(resolved)
+
+    return {"path": out_path, "content": content}
+
+
+@router.get("/files/skim")
+async def files_skim(
+    path: str = Query(..., description="Workspace-relative path (preferred) or absolute path under workspace root."),
+    target_percent: float = Query(8.0, ge=1.0, le=25.0, description="Percent of lines to sample (default 8)."),
+    head_lines: int = Query(25, ge=0, le=500, description="Max lines sampled from the start (default 25)."),
+    tail_lines: int = Query(25, ge=0, le=500, description="Max lines sampled from the end (default 25)."),
+    workspace_root: Optional[str] = Query(None, description="Optional workspace root override for this skim."),
+    workspace_access_mode: Optional[str] = Query(None, description="Workspace access mode (workspace_only|workspace_or_allowed)."),
+    workspace_allowed_paths: Optional[str] = Query(None, description="Newline-separated allowed root directories (mounted for reads)."),
+    workspace_ignored_paths: Optional[str] = Query(None, description="Newline-separated ignored paths (blocked)."),
+) -> Dict[str, Any]:
+    """Skim a workspace file for @file mentions (best-effort).
+
+    Uses the same implementation as AbstractCore's `skim_files` tool (including `.abstractignore`).
+    """
+    use_scope = any(
+        bool(str(v or "").strip())
+        for v in (workspace_root, workspace_access_mode, workspace_allowed_paths, workspace_ignored_paths)
+    )
+    if use_scope:
+        base, mounts, ignored_abs = _workspace_scope_from_request(
+            workspace_root=workspace_root,
+            workspace_access_mode=workspace_access_mode,
+            workspace_allowed_paths=workspace_allowed_paths,
+            workspace_ignored_paths=workspace_ignored_paths,
+        )
+    else:
+        base = _workspace_root()
+        mounts = _workspace_mounts()
+        ignored_abs = ()
+    resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
+    if ignored_abs:
+        try:
+            resolved2 = resolved.resolve()
+        except Exception:
+            resolved2 = resolved
+        if any(_is_under_path(resolved2, p) or resolved2 == p for p in ignored_abs):
+            raise HTTPException(status_code=403, detail="File is blocked by workspace_ignored_paths policy")
+
+    try:
+        from abstractcore.tools.common_tools import skim_files
+
+        content = skim_files(
+            [str(resolved)],
+            target_percent=target_percent,
+            head_lines=head_lines,
+            tail_lines=tail_lines,
+        )
+    except Exception as e:
+        content = f"Error: Failed to skim '{resolved}': {e}"
 
     out_path = str(virt) if isinstance(virt, str) and virt.strip() else None
     if not out_path:

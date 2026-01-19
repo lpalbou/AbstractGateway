@@ -103,6 +103,39 @@ def test_gateway_attachments_ingest_creates_session_scoped_artifact(tmp_path: Pa
         assert b"hello" in r3.content
 
 
+def test_gateway_attachments_ingest_accepts_at_prefixed_virtual_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-attachments-at", flow_id="root")
+
+    ws = tmp_path / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "notes.txt").write_text("hello\nworld\n", encoding="utf-8")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/attachments/ingest",
+            json={"session_id": "s3", "path": "@notes.txt"},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        attachment = body.get("attachment") or {}
+        assert isinstance(attachment, dict)
+        assert attachment.get("source_path") == "notes.txt"
+
+
 def test_gateway_attachments_ingest_accepts_mount_virtual_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"

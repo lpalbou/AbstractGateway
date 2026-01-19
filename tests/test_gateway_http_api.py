@@ -294,9 +294,7 @@ def test_gateway_ledger_batch_endpoint(tmp_path: Path, monkeypatch: pytest.Monke
             assert rr.status_code == 200, rr.text
             w = rr.json().get("waiting")
             return isinstance(w, dict) and bool(w.get("wait_key"))        _wait_until(lambda: _has_wait(run_id_1), timeout_s=10.0, poll_s=0.1)
-        _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)
-
-        batch = client.post(
+        _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)        batch = client.post(
             "/api/gateway/runs/ledger/batch",
             json={
                 "limit": 200,
