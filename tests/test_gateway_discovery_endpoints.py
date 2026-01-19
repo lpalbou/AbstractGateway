@@ -100,7 +100,7 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
         assert tools.status_code == 200, tools.text
         tool_items = tools.json().get("items") or []
         tool_names = {t.get("name") for t in tool_items if isinstance(t, dict)}
-        assert {"list_files", "read_file", "write_file", "execute_command"} <= tool_names
+        assert {"list_files", "skim_folders", "read_file", "write_file", "execute_command"} <= tool_names
 
         providers = client.get("/api/gateway/discovery/providers?include_models=false", headers=headers)
         assert providers.status_code == 200, providers.text
