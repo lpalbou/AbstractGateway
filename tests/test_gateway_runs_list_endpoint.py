@@ -254,3 +254,70 @@ def test_list_runs_with_sqlite_backend(tmp_path: Path, monkeypatch: pytest.Monke
         assert match.get("status") == "completed"
         assert isinstance(match.get("ledger_len"), int)
         assert match.get("ledger_len") >= 1
+
+
+def test_list_runs_include_metrics_with_sqlite_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-runs", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", "sqlite")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        start = client.post("/api/gateway/runs/start", headers=headers, json={"bundle_id": "bundle-runs", "flow_id": "root", "input_data": {}})
+        assert start.status_code == 200, start.text
+        run_id = start.json()["run_id"]
+
+        def _is_completed():
+            rr = client.get(f"/api/gateway/runs/{run_id}", headers=headers)
+            assert rr.status_code == 200, rr.text
+            return rr.json().get("status") == "completed"
+
+        _wait_until(_is_completed, timeout_s=5.0, poll_s=0.05)
+
+        # Inject synthetic completed llm/tool ledger records so /runs?include_metrics can surface counts.
+        from abstractgateway.service import get_gateway_service
+        from abstractruntime.core.models import StepRecord, StepStatus
+
+        svc = get_gateway_service()
+        ledger = svc.host.ledger_store
+        ledger.append(
+            StepRecord(
+                run_id=run_id,
+                step_id="m1",
+                node_id="n",
+                status=StepStatus.COMPLETED,
+                effect={"type": "llm_call", "payload": {}, "result_key": "_tmp"},
+                result={"usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12}},
+            )
+        )
+        ledger.append(
+            StepRecord(
+                run_id=run_id,
+                step_id="t1",
+                node_id="n",
+                status=StepStatus.COMPLETED,
+                effect={"type": "tool_calls", "payload": {"tool_calls": [{"name": "a"}, {"name": "b"}]}, "result_key": "_tmp"},
+                result={},
+            )
+        )
+
+        listed = client.get("/api/gateway/runs?limit=25&include_metrics=true&include_ledger_len=false", headers=headers)
+        assert listed.status_code == 200, listed.text
+        items = listed.json().get("items") or []
+        match = next((i for i in items if i.get("run_id") == run_id), None)
+        assert match is not None
+        assert match.get("llm_calls") == 1
+        assert match.get("tool_calls") == 2
+        assert match.get("tokens_total") == 12

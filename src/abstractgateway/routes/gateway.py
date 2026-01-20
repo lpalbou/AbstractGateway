@@ -28,7 +28,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from abstractruntime.storage.commands import CommandRecord
-from abstractruntime.storage.base import QueryableRunStore
+from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore
 from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord
 
 from .. import host_metrics
@@ -2339,6 +2339,8 @@ async def list_runs(
     workflow_id: Optional[str] = Query(None, description="Optional workflow id filter (e.g. bundle:flow)"),
     session_id: Optional[str] = Query(None, description="Optional session id filter (durable run.session_id)."),
     root_only: bool = Query(False, description="If true, return only root/parent runs (parent_run_id is empty)."),
+    include_ledger_len: bool = Query(True, description="If true, include ledger_len (may be slow for file-backed ledgers)."),
+    include_metrics: bool = Query(False, description="If true, include best-effort llm/tool counts (aggregated across child runs)."),
 ) -> Dict[str, Any]:
     """List recent runs (summary only; never returns full run.vars)."""
     svc = get_gateway_service()
@@ -2359,29 +2361,213 @@ async def list_runs(
     sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
     filter_internal = wid is None
 
-    try:
-        internal_limit = 10_000 if (sid or bool(root_only)) else int(limit)
-        runs = rs.list_runs(status=status_enum, workflow_id=wid, limit=internal_limit)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
-
-    if sid:
-        runs = [r for r in (runs or []) if str(getattr(r, "session_id", "") or "").strip() == sid]
-
-    if bool(root_only):
-        runs = [r for r in (runs or []) if not str(getattr(r, "parent_run_id", "") or "").strip()]
-
     ledger_store = getattr(getattr(svc, "host", None), "ledger_store", None)
+
+    def _summary_from_index_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        status0 = str(row.get("status") or "").strip()
+        out: Dict[str, Any] = {
+            "run_id": row.get("run_id"),
+            "workflow_id": row.get("workflow_id"),
+            "status": status0,
+            "current_node": None,
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+            "actor_id": row.get("actor_id"),
+            "session_id": row.get("session_id"),
+            "parent_run_id": row.get("parent_run_id"),
+            "error": None,
+            "paused": False,
+            "pause_reason": None,
+            "paused_at": None,
+            "resumed_at": None,
+            "waiting": None,
+            "is_scheduled": False,
+            "schedule": None,
+            "limits": None,
+        }
+        if status0 == "waiting":
+            reason = str(row.get("wait_reason") or "").strip()
+            until = str(row.get("wait_until") or "").strip()
+            if reason:
+                out["waiting"] = {"reason": reason, **({"until": until} if until else {})}
+        return out
+
     items: list[Dict[str, Any]] = []
-    for r in (runs or []):
-        if filter_internal:
-            wf_id = getattr(r, "workflow_id", None)
-            if isinstance(wf_id, str) and wf_id.startswith("__"):
-                # Internal runtime bookkeeping runs (e.g. __global_memory__/__session_memory__).
+    used_index = False
+    runs_all_for_metrics: Optional[List[Any]] = None
+    if isinstance(rs, QueryableRunIndexStore):
+        try:
+            # Overfetch a bit to account for filtering internal runs or malformed rows.
+            internal_limit = max(200, int(limit) * 5) if (bool(root_only) or sid or filter_internal) else int(limit)
+            rows = rs.list_run_index(status=status_enum, workflow_id=wid, session_id=sid, root_only=bool(root_only), limit=internal_limit)
+            for row in rows or []:
+                wf_id = str(row.get("workflow_id") or "").strip()
+                if filter_internal and wf_id.startswith("__"):
+                    continue
+                if bool(root_only) and str(row.get("parent_run_id") or "").strip():
+                    continue
+                items.append(_summary_from_index_row(row))
+                if len(items) >= int(limit):
+                    break
+            used_index = True
+        except Exception:
+            items = []
+            used_index = False
+
+    if not used_index:
+        try:
+            internal_limit = max(200, int(limit) * 5) if (sid or bool(root_only)) else int(limit)
+            runs = rs.list_runs(status=status_enum, workflow_id=wid, limit=internal_limit)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
+
+        runs_all = list(runs or [])
+        runs_all_for_metrics = runs_all
+        if sid:
+            runs_all = [r for r in runs_all if str(getattr(r, "session_id", "") or "").strip() == sid]
+
+        def _parent_id(run_obj: Any) -> str:
+            return str(getattr(run_obj, "parent_run_id", "") or "").strip()
+
+        runs_root = [r for r in runs_all if not _parent_id(r)] if bool(root_only) else runs_all
+
+        for r in runs_root:
+            if filter_internal:
+                wf_id = getattr(r, "workflow_id", None)
+                if isinstance(wf_id, str) and wf_id.startswith("__"):
+                    continue
+            items.append(run_summary(r))
+            if len(items) >= int(limit):
+                break
+
+    if bool(include_metrics):
+        run_ids = [str(it.get("run_id") or "").strip() for it in items if str(it.get("run_id") or "").strip()]
+        metrics_many = getattr(ledger_store, "metrics_many", None) if ledger_store is not None else None
+        metrics: Dict[str, Any] = {}
+        if callable(metrics_many):
+            try:
+                raw = metrics_many(run_ids)
+                metrics = raw if isinstance(raw, dict) else {}
+            except Exception:
+                metrics = {}
+        if not metrics and runs_all_for_metrics is not None:
+            # Fallback: derive per-run metrics from runtime-owned traces when a ledger metrics API isn't available.
+            def _rid(run_obj: Any) -> str:
+                return str(getattr(run_obj, "run_id", "") or "").strip()
+
+            def _parent_id(run_obj: Any) -> str:
+                return str(getattr(run_obj, "parent_run_id", "") or "").strip()
+
+            def _extract_run_trace_metrics(run_obj: Any) -> tuple[int, int, int]:
+                steps_done = 0
+                llm_calls = 0
+                tool_calls = 0
+                try:
+                    vars_obj = getattr(run_obj, "vars", None)
+                    runtime_ns = vars_obj.get("_runtime") if isinstance(vars_obj, dict) else None
+                    traces = runtime_ns.get("node_traces") if isinstance(runtime_ns, dict) else None
+                    if not isinstance(traces, dict):
+                        return (0, 0, 0)
+                    for node_trace in traces.values():
+                        steps = node_trace.get("steps") if isinstance(node_trace, dict) else None
+                        if not isinstance(steps, list):
+                            continue
+                        for s in steps:
+                            if not isinstance(s, dict):
+                                continue
+                            st = str(s.get("status") or "").strip()
+                            if st != "completed":
+                                continue
+                            steps_done += 1
+                            eff = s.get("effect") if isinstance(s.get("effect"), dict) else None
+                            eff_type = str((eff or {}).get("type") or "").strip()
+                            if eff_type == "llm_call":
+                                llm_calls += 1
+                                continue
+                            if eff_type == "tool_calls":
+                                payload = eff.get("payload") if isinstance(eff, dict) and isinstance(eff.get("payload"), dict) else None
+                                calls = payload.get("tool_calls") if isinstance(payload, dict) else None
+                                if isinstance(calls, list):
+                                    tool_calls += len([c for c in calls if c is not None])
+                except Exception:
+                    return (0, 0, 0)
+                return (int(steps_done), int(llm_calls), int(tool_calls))
+
+            metrics_self: Dict[str, tuple[int, int, int]] = {}
+            children_by_parent: Dict[str, list[str]] = {}
+            for r in runs_all_for_metrics:
+                rid0 = _rid(r)
+                if not rid0:
+                    continue
+                metrics_self[rid0] = _extract_run_trace_metrics(r)
+                pid = _parent_id(r)
+                if pid:
+                    children_by_parent.setdefault(pid, []).append(rid0)
+
+            def _aggregate(root_id: str) -> tuple[int, int, int]:
+                if not root_id:
+                    return (0, 0, 0)
+                steps = 0
+                llm = 0
+                tools = 0
+                from collections import deque
+
+                queue = deque([root_id])
+                seen: set[str] = set()
+                while queue and len(seen) < 5000:
+                    rid0 = str(queue.popleft() or "").strip()
+                    if not rid0 or rid0 in seen:
+                        continue
+                    seen.add(rid0)
+                    s, l, t = metrics_self.get(rid0, (0, 0, 0))
+                    steps += int(s)
+                    llm += int(l)
+                    tools += int(t)
+                    for cid in children_by_parent.get(rid0, []):
+                        if cid not in seen:
+                            queue.append(cid)
+                return (int(steps), int(llm), int(tools))
+
+            for item in items:
+                rid = str(item.get("run_id") or "").strip()
+                if not rid:
+                    continue
+                s, l, t = _aggregate(rid)
+                metrics[rid] = {"steps": s, "llm_calls": l, "tool_calls": t}
+        for item in items:
+            rid = str(item.get("run_id") or "").strip()
+            m = metrics.get(rid) if rid else None
+            if isinstance(m, dict):
+                item["steps"] = m.get("steps")
+                item["llm_calls"] = m.get("llm_calls")
+                item["tool_calls"] = m.get("tool_calls")
+                item["tokens_total"] = m.get("tokens_total")
+            else:
+                item.setdefault("steps", None)
+                item.setdefault("llm_calls", None)
+                item.setdefault("tool_calls", None)
+                item.setdefault("tokens_total", None)
+
+    if bool(include_ledger_len) and ledger_store is not None:
+        run_ids = [str(it.get("run_id") or "").strip() for it in items if str(it.get("run_id") or "").strip()]
+        counts: Dict[str, Any] = {}
+        try:
+            count_many = getattr(ledger_store, "count_many", None)
+            if callable(count_many):
+                raw = count_many(run_ids)
+                counts = raw if isinstance(raw, dict) else {}
+        except Exception:
+            counts = {}
+        for item in items:
+            rid = str(item.get("run_id") or "").strip()
+            if not rid:
                 continue
-        item = run_summary(r)
-        rid = str(item.get("run_id") or getattr(r, "run_id", "") or "").strip()
-        if rid and ledger_store is not None:
+            if rid in counts:
+                try:
+                    item["ledger_len"] = int(counts.get(rid) or 0)
+                except Exception:
+                    item["ledger_len"] = None
+                continue
             try:
                 count_fn = getattr(ledger_store, "count", None)
                 if callable(count_fn):
@@ -2391,9 +2577,6 @@ async def list_runs(
                     item["ledger_len"] = int(len(records) if isinstance(records, list) else 0)
             except Exception:
                 item["ledger_len"] = None
-        items.append(item)
-        if len(items) >= int(limit):
-            break
 
     return {"items": items}
 
