@@ -182,6 +182,51 @@ class RunChatResponse(BaseModel):
     answer: str
 
 
+class KGQueryRequest(BaseModel):
+    run_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional run id used to resolve scope owner ids when owner_id/session_id are omitted. "
+            "If scope=all, run_id enables querying run+session+global."
+        ),
+    )
+    session_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional session id used to resolve the session memory owner id. "
+            "If scope=all and run_id is missing/unresolvable, session_id enables querying session+global."
+        ),
+    )
+    scope: str = Field(default="session", description="run|session|global|all")
+    owner_id: Optional[str] = Field(
+        default=None,
+        description="Optional explicit owner_id override (bypasses run/session/global owner resolution).",
+    )
+
+    subject: Optional[str] = Field(default=None)
+    predicate: Optional[str] = Field(default=None)
+    object: Optional[str] = Field(default=None)
+
+    since: Optional[str] = Field(default=None, description="observed_at >= since (ISO 8601 string compare)")
+    until: Optional[str] = Field(default=None, description="observed_at <= until (ISO 8601 string compare)")
+    active_at: Optional[str] = Field(default=None, description="valid_from/valid_until window intersection")
+
+    query_text: Optional[str] = Field(default=None, description="Optional semantic query (requires embedder configured on the store).")
+    min_score: Optional[float] = Field(default=None, description="Semantic similarity threshold (0..1).")
+
+    limit: int = Field(default=500, ge=1, le=10_000)
+    order: str = Field(default="desc", description="asc|desc (observed_at for non-semantic queries)")
+
+
+class KGQueryResponse(BaseModel):
+    ok: bool = Field(default=True)
+    scope: str
+    owner_id: Optional[str] = None
+    count: int = 0
+    items: list[Dict[str, Any]] = Field(default_factory=list)
+    warnings: Optional[list[str]] = None
+
+
 class ArtifactListItem(BaseModel):
     artifact_id: str
     content_type: Optional[str] = None
@@ -3341,6 +3386,194 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
         model=model,
         generated_at=generated_at,
         answer=answer_text,
+    )
+
+
+@router.post("/kg/query", response_model=KGQueryResponse)
+async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
+    """Query the persisted AbstractMemory KG store (ground truth), scoped to run/session/global."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+
+    scope = str(getattr(req, "scope", "") or "session").strip().lower() or "session"
+    if scope not in {"run", "session", "global", "all"}:
+        raise HTTPException(status_code=400, detail="scope must be one of run|session|global|all")
+
+    rid = getattr(req, "run_id", None)
+    rid = rid.strip() if isinstance(rid, str) and rid.strip() else None
+    sid = getattr(req, "session_id", None)
+    sid = sid.strip() if isinstance(sid, str) and sid.strip() else None
+    owner_override = getattr(req, "owner_id", None)
+    owner_override = owner_override.strip() if isinstance(owner_override, str) and owner_override.strip() else None
+
+    if scope == "all" and owner_override:
+        raise HTTPException(status_code=400, detail="owner_id is not supported when scope=all")
+
+    store_path = Path(svc.stores.base_dir) / "abstractmemory" / "kg"
+    if not store_path.exists():
+        return KGQueryResponse(
+            ok=True,
+            scope=scope,
+            owner_id=None,
+            count=0,
+            items=[],
+            warnings=[f"KG store does not exist at {store_path} (no persisted assertions yet)."],
+        )
+
+    try:
+        from abstractmemory import LanceDBTripleStore, TripleQuery  # type: ignore
+    except Exception as e:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"AbstractMemory is not available: {e}")
+
+    try:
+        from abstractruntime.integrations.abstractmemory.effect_handlers import resolve_scope_owner_id  # type: ignore
+    except Exception as e:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"AbstractRuntime AbstractMemory integration is not available: {e}")
+
+    items: list[Dict[str, Any]] = []
+    warnings: list[str] = []
+    resolved_owner_id: Optional[str] = None
+    run: Optional[RunState] = None
+
+    def _require_run(run_id: str) -> RunState:
+        try:
+            loaded = rs.load(run_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+        if loaded is None:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        return loaded
+
+    _SAFE_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+    def _session_owner_id(session_id: str) -> str:
+        sid2 = str(session_id or "").strip()
+        if not sid2:
+            raise HTTPException(status_code=400, detail="session_id must be a non-empty string")
+        if _SAFE_RUN_ID_RE.match(sid2):
+            oid = f"session_memory_{sid2}"
+            if _SAFE_RUN_ID_RE.match(oid):
+                return oid
+        digest = hashlib.sha256(sid2.encode("utf-8")).hexdigest()[:32]
+        return f"session_memory_sha_{digest}"
+
+    def _global_owner_id() -> str:
+        raw = os.environ.get("ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID")
+        rid2 = str(raw or "").strip()
+        if rid2 and _SAFE_RUN_ID_RE.match(rid2):
+            return rid2
+        return "global_memory"
+
+    def _query_scope(*, store: Any, scope_label: str, owner_id: str) -> list[Dict[str, Any]]:
+        q = TripleQuery(
+            subject=req.subject,
+            predicate=req.predicate,
+            object=req.object,
+            scope=scope_label,
+            owner_id=owner_id,
+            since=req.since,
+            until=req.until,
+            active_at=req.active_at,
+            query_text=req.query_text,
+            min_score=req.min_score,
+            limit=int(req.limit),
+            order=str(req.order or "desc"),
+        )
+        out: list[Dict[str, Any]] = []
+        for row in store.query(q):
+            to_dict = getattr(row, "to_dict", None)
+            if callable(to_dict):
+                d = to_dict()
+                if isinstance(d, dict):
+                    out.append(d)
+        return out
+
+    store = None
+    try:
+        store = LanceDBTripleStore(store_path)
+
+        if scope == "all":
+            owners: list[tuple[str, str]] = []
+            if rid:
+                try:
+                    run = _require_run(rid)
+                except HTTPException as e:
+                    if int(getattr(e, "status_code", 0) or 0) == 404 and sid:
+                        warnings.append(f"Run '{rid}' not found; querying session+global only for session_id='{sid}'")
+                    else:
+                        raise
+                else:
+                    owners.append(("run", resolve_scope_owner_id(run, scope="run", run_store=rs)))
+                    owners.append(("session", resolve_scope_owner_id(run, scope="session", run_store=rs)))
+                    owners.append(("global", resolve_scope_owner_id(run, scope="global", run_store=rs)))
+
+            if not owners:
+                if not sid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="run_id or session_id is required when scope=all",
+                    )
+                owners.append(("session", _session_owner_id(sid)))
+                owners.append(("global", _global_owner_id()))
+                warnings.append("run scope omitted (no run_id available)")
+
+            for label, oid in owners:
+                try:
+                    items.extend(_query_scope(store=store, scope_label=label, owner_id=oid))
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    warnings.append(f"{label}: {e}")
+        else:
+            try:
+                if owner_override:
+                    resolved_owner_id = owner_override
+                elif scope == "global":
+                    resolved_owner_id = _global_owner_id()
+                elif scope == "run":
+                    if not rid:
+                        raise HTTPException(status_code=400, detail="run_id is required for scope=run (or provide owner_id)")
+                    resolved_owner_id = rid
+                elif scope == "session":
+                    if sid:
+                        resolved_owner_id = _session_owner_id(sid)
+                    else:
+                        if not rid:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="run_id or session_id is required for scope=session (or provide owner_id)",
+                            )
+                        run = _require_run(rid)
+                        resolved_owner_id = resolve_scope_owner_id(run, scope="session", run_store=rs)
+                else:
+                    raise HTTPException(status_code=400, detail=f"Unsupported scope: {scope}")
+
+                items = _query_scope(store=store, scope_label=scope, owner_id=resolved_owner_id)
+            except HTTPException:
+                raise
+            except Exception as e:
+                warnings.append(str(e))
+                items = []
+
+    finally:
+        try:
+            if store is not None:
+                store.close()
+        except Exception:
+            pass
+
+    # Deterministic ordering for callers (especially scope=all).
+    reverse = str(getattr(req, "order", "desc") or "desc").strip().lower() != "asc"
+    items.sort(key=lambda d: str(d.get("observed_at") or ""), reverse=reverse)
+    items = items[: max(1, min(int(req.limit), 10_000))]
+
+    return KGQueryResponse(
+        ok=True,
+        scope=scope,
+        owner_id=resolved_owner_id if scope != "all" else None,
+        count=len(items),
+        items=items,
+        warnings=warnings or None,
     )
 
 
