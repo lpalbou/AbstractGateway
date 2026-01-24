@@ -214,7 +214,12 @@ class KGQueryRequest(BaseModel):
     query_text: Optional[str] = Field(default=None, description="Optional semantic query (requires embedder configured on the store).")
     min_score: Optional[float] = Field(default=None, description="Semantic similarity threshold (0..1).")
 
-    limit: int = Field(default=500, ge=1, le=10_000)
+    all_owners: bool = Field(
+        default=False,
+        description="If true, query across all owner_ids within the selected scope(s) (debug/audit).",
+    )
+
+    limit: int = Field(default=500, ge=-1, le=10_000, description="Max results; 0 or -1 means unlimited (debug/audit).")
     order: str = Field(default="desc", description="asc|desc (observed_at for non-semantic queries)")
 
 
@@ -988,113 +993,133 @@ def _parse_lines_or_json_list(raw: Optional[str]) -> list[str]:
     return [ln for ln in lines if ln]
 
 
-def _is_under_path(child: Path, parent: Path) -> bool:
+def _server_workspace_policy_public() -> Dict[str, Any]:
+    mounts = _workspace_mounts()
     try:
-        child.resolve().relative_to(parent.resolve())
-        return True
+        max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip()
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
+        if max_bytes <= 0:
+            max_bytes = 25 * 1024 * 1024
     except Exception:
-        return False
+        max_bytes = 25 * 1024 * 1024
+
+    return {
+        "target": "server",
+        # Do not expose absolute server paths to thin clients.
+        "mounts": sorted([{"name": name} for name in mounts.keys()], key=lambda x: x["name"]),
+        "max_attachment_bytes": int(max_bytes),
+    }
 
 
-def _slug_mount_name(raw: str) -> str:
-    s = str(raw or "").strip().lower()
-    if not s:
-        return "mount"
-    s = re.sub(r"[^a-z0-9_-]+", "_", s)
-    s = s.strip("_")
-    if not s:
-        return "mount"
-    return s[:32]
+def _parse_any_string_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        out: list[str] = []
+        for x in raw:
+            if isinstance(x, str) and x.strip():
+                out.append(x.strip())
+        return out
+    if isinstance(raw, str):
+        return _parse_lines_or_json_list(raw)
+    return []
 
 
-def _mounts_from_allowed_paths(*, allowed_dirs: list[Path], used_names: set[str]) -> Dict[str, Path]:
-    out: Dict[str, Path] = {}
-    for p in allowed_dirs:
+def _resolve_user_path(raw: str, *, base: Path) -> Path:
+    p = Path(str(raw or "").strip()).expanduser()
+    if not p.is_absolute():
+        p = base / p
+    try:
+        return p.resolve()
+    except Exception:
+        return p
+
+
+def _is_under_allowed_roots(p: Path, allowed_roots: list[Path]) -> bool:
+    try:
+        rp = p.resolve()
+    except Exception:
+        rp = p
+    for root in allowed_roots:
         try:
-            resolved = p.resolve()
+            rr = root.resolve()
         except Exception:
-            resolved = p
-        base = _slug_mount_name(resolved.name)
-        name = base
-        if name in used_names:
-            digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:8]
-            trim = max(1, 32 - (1 + len(digest)))
-            name = f"{base[:trim]}_{digest}"
-        # Final disambiguation if needed.
-        i = 2
-        while name in used_names:
-            suffix = f"_{i}"
-            trim = max(1, 32 - len(suffix))
-            name = f"{base[:trim]}{suffix}"
-            i += 1
-        used_names.add(name)
-        out[name] = resolved
-    return out
-
-
-def _workspace_scope_from_request(
-    *,
-    workspace_root: Optional[str],
-    workspace_access_mode: Optional[str],
-    workspace_allowed_paths: Optional[str],
-    workspace_ignored_paths: Optional[str],
-) -> tuple[Path, Dict[str, Path], tuple[Path, ...]]:
-    """Return (base_root, mounts, ignored_abs) for workspace file endpoints."""
-    base_default = _workspace_root()
-
-    raw_root = str(workspace_root or "").strip()
-    if raw_root:
-        p = Path(raw_root).expanduser()
-        if not p.is_absolute():
-            p = base_default / p
+            rr = root
         try:
-            base = p.resolve()
+            rp.relative_to(rr)
+            return True
         except Exception:
-            base = p
-    else:
-        base = base_default
+            continue
+    return False
 
-    mode = str(workspace_access_mode or "").strip().lower()
-    allow_extra_roots = mode == "workspace_or_allowed"
 
-    allowed_raw = _parse_lines_or_json_list(workspace_allowed_paths)
-    allowed_dirs: list[Path] = []
-    if allow_extra_roots:
-        for item in allowed_raw:
+def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Clamp client-provided run workspace knobs to the operator policy.
+
+    Goal: prevent thin clients from expanding server filesystem access via run vars.
+    """
+    base = _workspace_root()
+    mounts = _workspace_mounts()
+    allowed_roots = [base] + list(mounts.values())
+
+    # workspace_root: allow only under operator roots (workspace root + mounts).
+    raw_wr = input_data.get("workspace_root")
+    if isinstance(raw_wr, str) and raw_wr.strip():
+        resolved = _resolve_user_path(raw_wr, base=base)
+        if _is_under_allowed_roots(resolved, allowed_roots):
+            input_data["workspace_root"] = str(resolved)
+        else:
+            # Reject unsafe override.
+            input_data.pop("workspace_root", None)
+
+    # workspace_access_mode: forbid "all_except_ignored" (can escape to arbitrary abs paths).
+    raw_mode = input_data.get("workspace_access_mode")
+    if raw_mode is None:
+        raw_mode = input_data.get("workspaceAccessMode")
+    if raw_mode is not None:
+        mode = str(raw_mode or "").strip().lower()
+        if mode == "all_except_ignored":
+            mode = "workspace_only"
+        if mode in {"workspace_only", "workspace_or_allowed"}:
+            input_data["workspace_access_mode"] = mode
+        else:
+            input_data.pop("workspace_access_mode", None)
+        input_data.pop("workspaceAccessMode", None)
+
+    # workspace_allowed_paths: allow only operator roots (workspace root + mounts).
+    raw_allowed = input_data.get("workspace_allowed_paths")
+    if raw_allowed is None:
+        raw_allowed = input_data.get("workspaceAllowedPaths")
+    if raw_allowed is not None:
+        allowed_items = _parse_any_string_list(raw_allowed)
+        kept: list[str] = []
+        for item in allowed_items:
             s = str(item or "").strip()
             if not s:
                 continue
-            p = Path(s).expanduser()
-            if not p.is_absolute():
-                p = base / p
-            try:
-                resolved = p.resolve()
-            except Exception:
-                resolved = p
-            try:
-                if resolved.exists() and resolved.is_dir() and not _is_under_path(resolved, base):
-                    allowed_dirs.append(resolved)
-            except Exception:
-                continue
+            resolved = _resolve_user_path(s, base=base)
+            if _is_under_allowed_roots(resolved, allowed_roots):
+                kept.append(str(resolved))
+        if kept:
+            # Preserve shape (list vs newline string) for UI friendliness.
+            input_data["workspace_allowed_paths"] = kept if isinstance(raw_allowed, list) else "\n".join(kept)
+        else:
+            input_data.pop("workspace_allowed_paths", None)
+        input_data.pop("workspaceAllowedPaths", None)
 
-    ignored_raw = _parse_lines_or_json_list(workspace_ignored_paths)
-    ignored_abs: list[Path] = []
-    for item in ignored_raw:
-        s = str(item or "").strip()
-        if not s:
-            continue
-        p = Path(s).expanduser()
-        if not p.is_absolute():
-            p = base / p
-        try:
-            resolved = p.resolve()
-        except Exception:
-            resolved = p
-        ignored_abs.append(resolved)
+    # workspace_ignored_paths: denylist only; accept but normalize to newline-separated string for stability.
+    raw_ignored = input_data.get("workspace_ignored_paths")
+    if raw_ignored is None:
+        raw_ignored = input_data.get("workspaceIgnoredPaths")
+    if raw_ignored is not None:
+        ignored_items = _parse_any_string_list(raw_ignored)
+        if ignored_items:
+            input_data["workspace_ignored_paths"] = "\n".join(ignored_items)
+        else:
+            input_data.pop("workspace_ignored_paths", None)
+        input_data.pop("workspaceIgnoredPaths", None)
 
-    used = set()
-    mounts = _mounts_from_allowed_paths(allowed_dirs=allowed_dirs, used_names=used)
-    return base, mounts, tuple(ignored_abs)
+    return input_data
 
 
 _DEFAULT_SESSION_MEMORY_RUN_PREFIX = "session_memory_"
@@ -2123,9 +2148,10 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = dict(req.input_data or {})
+        input_data = _sanitize_run_workspace_policy(input_data)
         # Default workspace_root behavior (cross-client):
         # - If omitted, create a per-run workspace under the gateway data_dir.
-        # - Clients can still override by explicitly setting input_data["workspace_root"].
+        # - Clients may override only within the operator-configured server workspace roots.
         raw_ws = input_data.get("workspace_root")
         if not (isinstance(raw_ws, str) and raw_ws.strip()):
             base = Path(svc.config.data_dir) / "workspaces"
@@ -3405,9 +3431,12 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
     sid = sid.strip() if isinstance(sid, str) and sid.strip() else None
     owner_override = getattr(req, "owner_id", None)
     owner_override = owner_override.strip() if isinstance(owner_override, str) and owner_override.strip() else None
+    all_owners = bool(getattr(req, "all_owners", False))
 
     if scope == "all" and owner_override:
         raise HTTPException(status_code=400, detail="owner_id is not supported when scope=all")
+    if owner_override and all_owners:
+        raise HTTPException(status_code=400, detail="all_owners cannot be combined with owner_id")
 
     store_path = Path(svc.stores.base_dir) / "abstractmemory" / "kg"
     if not store_path.exists():
@@ -3464,7 +3493,7 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
             return rid2
         return "global_memory"
 
-    def _query_scope(*, store: Any, scope_label: str, owner_id: str) -> list[Dict[str, Any]]:
+    def _query_scope(*, store: Any, scope_label: str, owner_id: Optional[str]) -> list[Dict[str, Any]]:
         q = TripleQuery(
             subject=req.subject,
             predicate=req.predicate,
@@ -3493,62 +3522,74 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
         store = LanceDBTripleStore(store_path)
 
         if scope == "all":
-            owners: list[tuple[str, str]] = []
-            if rid:
-                try:
-                    run = _require_run(rid)
-                except HTTPException as e:
-                    if int(getattr(e, "status_code", 0) or 0) == 404 and sid:
-                        warnings.append(f"Run '{rid}' not found; querying session+global only for session_id='{sid}'")
-                    else:
+            if all_owners:
+                for label in ("run", "session", "global"):
+                    try:
+                        items.extend(_query_scope(store=store, scope_label=label, owner_id=None))
+                    except HTTPException:
                         raise
-                else:
-                    owners.append(("run", resolve_scope_owner_id(run, scope="run", run_store=rs)))
-                    owners.append(("session", resolve_scope_owner_id(run, scope="session", run_store=rs)))
-                    owners.append(("global", resolve_scope_owner_id(run, scope="global", run_store=rs)))
+                    except Exception as e:
+                        warnings.append(f"{label}: {e}")
+            else:
+                owners: list[tuple[str, str]] = []
+                if rid:
+                    try:
+                        run = _require_run(rid)
+                    except HTTPException as e:
+                        if int(getattr(e, "status_code", 0) or 0) == 404 and sid:
+                            warnings.append(f"Run '{rid}' not found; querying session+global only for session_id='{sid}'")
+                        else:
+                            raise
+                    else:
+                        owners.append(("run", resolve_scope_owner_id(run, scope="run", run_store=rs)))
+                        owners.append(("session", resolve_scope_owner_id(run, scope="session", run_store=rs)))
+                        owners.append(("global", resolve_scope_owner_id(run, scope="global", run_store=rs)))
 
-            if not owners:
-                if not sid:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="run_id or session_id is required when scope=all",
-                    )
-                owners.append(("session", _session_owner_id(sid)))
-                owners.append(("global", _global_owner_id()))
-                warnings.append("run scope omitted (no run_id available)")
+                if not owners:
+                    if not sid:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="run_id or session_id is required when scope=all (or set all_owners=true)",
+                        )
+                    owners.append(("session", _session_owner_id(sid)))
+                    owners.append(("global", _global_owner_id()))
+                    warnings.append("run scope omitted (no run_id available)")
 
-            for label, oid in owners:
-                try:
-                    items.extend(_query_scope(store=store, scope_label=label, owner_id=oid))
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    warnings.append(f"{label}: {e}")
+                for label, oid in owners:
+                    try:
+                        items.extend(_query_scope(store=store, scope_label=label, owner_id=oid))
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        warnings.append(f"{label}: {e}")
         else:
             try:
-                if owner_override:
-                    resolved_owner_id = owner_override
-                elif scope == "global":
-                    resolved_owner_id = _global_owner_id()
-                elif scope == "run":
-                    if not rid:
-                        raise HTTPException(status_code=400, detail="run_id is required for scope=run (or provide owner_id)")
-                    resolved_owner_id = rid
-                elif scope == "session":
-                    if sid:
-                        resolved_owner_id = _session_owner_id(sid)
-                    else:
-                        if not rid:
-                            raise HTTPException(
-                                status_code=400,
-                                detail="run_id or session_id is required for scope=session (or provide owner_id)",
-                            )
-                        run = _require_run(rid)
-                        resolved_owner_id = resolve_scope_owner_id(run, scope="session", run_store=rs)
+                if all_owners:
+                    resolved_owner_id = None
                 else:
-                    raise HTTPException(status_code=400, detail=f"Unsupported scope: {scope}")
+                    if owner_override:
+                        resolved_owner_id = owner_override
+                    elif scope == "global":
+                        resolved_owner_id = _global_owner_id()
+                    elif scope == "run":
+                        if not rid:
+                            raise HTTPException(status_code=400, detail="run_id is required for scope=run (or provide owner_id)")
+                        resolved_owner_id = rid
+                    elif scope == "session":
+                        if sid:
+                            resolved_owner_id = _session_owner_id(sid)
+                        else:
+                            if not rid:
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail="run_id or session_id is required for scope=session (or provide owner_id)",
+                                )
+                            run = _require_run(rid)
+                            resolved_owner_id = resolve_scope_owner_id(run, scope="session", run_store=rs)
+                    else:
+                        raise HTTPException(status_code=400, detail=f"Unsupported scope: {scope}")
 
-                items = _query_scope(store=store, scope_label=scope, owner_id=resolved_owner_id)
+                items = _query_scope(store=store, scope_label=scope, owner_id=None if all_owners else resolved_owner_id)
             except HTTPException:
                 raise
             except Exception as e:
@@ -3565,12 +3606,14 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
     # Deterministic ordering for callers (especially scope=all).
     reverse = str(getattr(req, "order", "desc") or "desc").strip().lower() != "asc"
     items.sort(key=lambda d: str(d.get("observed_at") or ""), reverse=reverse)
-    items = items[: max(1, min(int(req.limit), 10_000))]
+    limit_value = int(getattr(req, "limit", 0) or 0)
+    if limit_value > 0:
+        items = items[: max(1, min(limit_value, 10_000))]
 
     return KGQueryResponse(
         ok=True,
         scope=scope,
-        owner_id=resolved_owner_id if scope != "all" else None,
+        owner_id=resolved_owner_id if scope != "all" and not all_owners else None,
         count=len(items),
         items=items,
         warnings=warnings or None,
@@ -3762,6 +3805,12 @@ async def embeddings_config() -> Dict[str, Any]:
     return out
 
 
+@router.get("/workspace/policy")
+async def workspace_policy() -> Dict[str, Any]:
+    """Return the operator-configured server workspace policy (read-only, safe for thin clients)."""
+    return {"ok": True, "policy": _server_workspace_policy_public()}
+
+
 @router.get("/files/search")
 async def files_search(
     query: str = Query(..., description="Case-insensitive substring match on file path/name."),
@@ -3782,21 +3831,11 @@ async def files_search(
     if not q:
         return {"items": []}
 
-    use_scope = any(
-        bool(str(v or "").strip())
-        for v in (workspace_root, workspace_access_mode, workspace_allowed_paths, workspace_ignored_paths)
-    )
-    if use_scope:
-        base, mounts, ignored_abs = _workspace_scope_from_request(
-            workspace_root=workspace_root,
-            workspace_access_mode=workspace_access_mode,
-            workspace_allowed_paths=workspace_allowed_paths,
-            workspace_ignored_paths=workspace_ignored_paths,
-        )
-    else:
-        base = _workspace_root()
-        mounts = _workspace_mounts()
-        ignored_abs = ()
+    # SECURITY: server filesystem access is operator-controlled. Thin clients must not be able
+    # to expand the server scope at runtime via `workspace_*` request params.
+    base = _workspace_root()
+    mounts = _workspace_mounts()
+    ignored_abs = ()
 
     try:
         # Index build can be slow on large workspaces; keep async endpoints responsive.
@@ -3853,29 +3892,11 @@ async def files_read(
 
     Uses the same implementation as AbstractCore's `read_file` tool (including `.abstractignore`).
     """
-    use_scope = any(
-        bool(str(v or "").strip())
-        for v in (workspace_root, workspace_access_mode, workspace_allowed_paths, workspace_ignored_paths)
-    )
-    if use_scope:
-        base, mounts, ignored_abs = _workspace_scope_from_request(
-            workspace_root=workspace_root,
-            workspace_access_mode=workspace_access_mode,
-            workspace_allowed_paths=workspace_allowed_paths,
-            workspace_ignored_paths=workspace_ignored_paths,
-        )
-    else:
-        base = _workspace_root()
-        mounts = _workspace_mounts()
-        ignored_abs = ()
+    # SECURITY: server filesystem access is operator-controlled. Thin clients must not be able
+    # to expand the server scope at runtime via `workspace_*` request params.
+    base = _workspace_root()
+    mounts = _workspace_mounts()
     resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
-    if ignored_abs:
-        try:
-            resolved2 = resolved.resolve()
-        except Exception:
-            resolved2 = resolved
-        if any(_is_under_path(resolved2, p) or resolved2 == p for p in ignored_abs):
-            raise HTTPException(status_code=403, detail="File is blocked by workspace_ignored_paths policy")
 
     try:
         from abstractcore.tools.common_tools import read_file
@@ -3909,29 +3930,11 @@ async def files_skim(
 
     Uses the same implementation as AbstractCore's `skim_files` tool (including `.abstractignore`).
     """
-    use_scope = any(
-        bool(str(v or "").strip())
-        for v in (workspace_root, workspace_access_mode, workspace_allowed_paths, workspace_ignored_paths)
-    )
-    if use_scope:
-        base, mounts, ignored_abs = _workspace_scope_from_request(
-            workspace_root=workspace_root,
-            workspace_access_mode=workspace_access_mode,
-            workspace_allowed_paths=workspace_allowed_paths,
-            workspace_ignored_paths=workspace_ignored_paths,
-        )
-    else:
-        base = _workspace_root()
-        mounts = _workspace_mounts()
-        ignored_abs = ()
+    # SECURITY: server filesystem access is operator-controlled. Thin clients must not be able
+    # to expand the server scope at runtime via `workspace_*` request params.
+    base = _workspace_root()
+    mounts = _workspace_mounts()
     resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
-    if ignored_abs:
-        try:
-            resolved2 = resolved.resolve()
-        except Exception:
-            resolved2 = resolved
-        if any(_is_under_path(resolved2, p) or resolved2 == p for p in ignored_abs):
-            raise HTTPException(status_code=403, detail="File is blocked by workspace_ignored_paths policy")
 
     try:
         from abstractcore.tools.common_tools import skim_files
@@ -3972,30 +3975,12 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
     if not sid:
         raise HTTPException(status_code=400, detail="session_id is required")
 
-    use_scope = any(
-        bool(str(v or "").strip())
-        for v in (req.workspace_root, req.workspace_access_mode, req.workspace_allowed_paths, req.workspace_ignored_paths)
-    )
-    if use_scope:
-        base, mounts, ignored_abs = _workspace_scope_from_request(
-            workspace_root=req.workspace_root,
-            workspace_access_mode=req.workspace_access_mode,
-            workspace_allowed_paths=req.workspace_allowed_paths,
-            workspace_ignored_paths=req.workspace_ignored_paths,
-        )
-    else:
-        base = _workspace_root()
-        mounts = _workspace_mounts()
-        ignored_abs = ()
+    # SECURITY: server filesystem access is operator-controlled. Thin clients must not be able
+    # to expand the server scope at runtime via `workspace_*` request fields.
+    base = _workspace_root()
+    mounts = _workspace_mounts()
 
     resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=str(req.path or ""))
-    if ignored_abs:
-        try:
-            resolved2 = resolved.resolve()
-        except Exception:
-            resolved2 = resolved
-        if any(_is_under_path(resolved2, p) or resolved2 == p for p in ignored_abs):
-            raise HTTPException(status_code=403, detail="File is blocked by workspace_ignored_paths policy")
 
     try:
         from abstractcore.tools.abstractignore import AbstractIgnore
@@ -4057,6 +4042,7 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
 
     tags: Dict[str, str] = {
         "kind": "attachment",
+        "target": "server",
         "source": "workspace",
         "path": str(rel),
         "filename": str(filename),
@@ -4075,6 +4061,7 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
 
     attachment_ref: Dict[str, Any] = {
         "$artifact": str(getattr(meta, "artifact_id", "") or ""),
+        "target": "server",
         "filename": filename,
         "content_type": content_type,
         "source_path": rel,
@@ -4141,10 +4128,14 @@ async def attachments_upload(
     if not callable(store_fn):
         raise HTTPException(status_code=500, detail="Artifact store is not available")
 
+    # Prefix client uploads to avoid collisions with server workspace virtual paths.
+    handle = f"client:{filename_final}"
+
     tags: Dict[str, str] = {
         "kind": "attachment",
+        "target": "client",
         "source": "upload",
-        "path": str(filename_final),
+        "path": str(handle),
         "filename": str(filename_final),
         "session_id": sid,
         "sha256": sha256,
@@ -4161,9 +4152,10 @@ async def attachments_upload(
 
     attachment_ref: Dict[str, Any] = {
         "$artifact": str(getattr(meta, "artifact_id", "") or ""),
+        "target": "client",
         "filename": filename_final,
         "content_type": content_type_final,
-        "source_path": filename_final,
+        "source_path": handle,
         "sha256": sha256,
     }
 

@@ -94,6 +94,8 @@ def test_gateway_attachments_upload_creates_session_scoped_artifact(tmp_path: Pa
         assert isinstance(attachment, dict)
         artifact_id = attachment.get("$artifact")
         assert isinstance(artifact_id, str) and artifact_id.strip()
+        assert attachment.get("target") == "client"
+        assert attachment.get("source_path") == "client:notes.txt"
         sha256 = attachment.get("sha256")
         assert isinstance(sha256, str) and sha256.strip()
         assert sha256 == hashlib.sha256(payload).hexdigest()
@@ -101,9 +103,13 @@ def test_gateway_attachments_upload_creates_session_scoped_artifact(tmp_path: Pa
         r2 = client.get("/api/gateway/runs/session_memory_s1/artifacts", headers=headers)
         assert r2.status_code == 200, r2.text
         items = r2.json().get("items") or []
-        assert any(isinstance(it, dict) and it.get("artifact_id") == artifact_id for it in items)
+        found = next((it for it in items if isinstance(it, dict) and it.get("artifact_id") == artifact_id), None)
+        assert isinstance(found, dict)
+        tags = found.get("tags") or {}
+        assert isinstance(tags, dict)
+        assert tags.get("target") == "client"
+        assert tags.get("path") == "client:notes.txt"
 
         r3 = client.get(f"/api/gateway/runs/session_memory_s1/artifacts/{artifact_id}/content", headers=headers)
         assert r3.status_code == 200, r3.text
         assert b"hello" in r3.content
-

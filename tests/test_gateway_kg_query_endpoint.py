@@ -156,7 +156,7 @@ def test_gateway_kg_query_endpoint_returns_persisted_triples(tmp_path: Path, mon
 
         q1 = client.post(
             "/api/gateway/kg/query",
-            json={"run_id": run_id, "scope": "session", "limit": 50},
+            json={"run_id": run_id, "scope": "session", "limit": 0},
             headers=headers,
         )
         assert q1.status_code == 200, q1.text
@@ -174,7 +174,7 @@ def test_gateway_kg_query_endpoint_returns_persisted_triples(tmp_path: Path, mon
 
         q2 = client.post(
             "/api/gateway/kg/query",
-            json={"run_id": run_id, "scope": "all", "limit": 50},
+            json={"run_id": run_id, "scope": "all", "limit": 0},
             headers=headers,
         )
         assert q2.status_code == 200, q2.text
@@ -215,7 +215,7 @@ def test_gateway_kg_query_supports_session_id_without_run_id(tmp_path: Path, mon
 
         q = client.post(
             "/api/gateway/kg/query",
-            json={"session_id": "sess-xyz", "scope": "session", "limit": 50},
+            json={"session_id": "sess-xyz", "scope": "session", "limit": 0},
             headers=headers,
         )
         assert q.status_code == 200, q.text
@@ -263,7 +263,7 @@ def test_gateway_kg_query_scope_all_works_with_session_id_only(tmp_path: Path, m
 
         q = client.post(
             "/api/gateway/kg/query",
-            json={"session_id": "sess-xyz", "scope": "all", "limit": 50},
+            json={"session_id": "sess-xyz", "scope": "all", "limit": 0},
             headers=headers,
         )
         assert q.status_code == 200, q.text
@@ -275,3 +275,89 @@ def test_gateway_kg_query_scope_all_works_with_session_id_only(tmp_path: Path, m
         assert "global" in scopes
         warnings = body.get("warnings") or []
         assert any(isinstance(w, str) and "run scope omitted" in w for w in warnings)
+
+
+def test_gateway_kg_query_all_owners_session_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    try:
+        import lancedb  # type: ignore  # noqa: F401
+    except Exception:
+        pytest.skip("lancedb is not installed")
+
+    from abstractmemory import LanceDBTripleStore, TripleAssertion
+
+    client, headers, runtime_dir = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        store_path = runtime_dir / "abstractmemory" / "kg"
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+        store = LanceDBTripleStore(store_path)
+        try:
+            store.add(
+                [
+                    TripleAssertion(subject="ex:a", predicate="rdf:type", object="schema:thing", scope="session", owner_id="session_memory_s1"),
+                    TripleAssertion(subject="ex:b", predicate="rdf:type", object="schema:thing", scope="session", owner_id="session_memory_s2"),
+                ]
+            )
+        finally:
+            store.close()
+
+        q = client.post(
+            "/api/gateway/kg/query",
+            json={"scope": "session", "all_owners": True, "limit": 0},
+            headers=headers,
+        )
+        assert q.status_code == 200, q.text
+        body = q.json()
+        assert body.get("scope") == "session"
+        assert body.get("owner_id") is None
+        items = body.get("items") or []
+        owners = {i.get("owner_id") for i in items if isinstance(i, dict)}
+        assert "session_memory_s1" in owners
+        assert "session_memory_s2" in owners
+
+
+def test_gateway_kg_query_all_owners_all_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    try:
+        import lancedb  # type: ignore  # noqa: F401
+    except Exception:
+        pytest.skip("lancedb is not installed")
+
+    from abstractmemory import LanceDBTripleStore, TripleAssertion
+
+    client, headers, runtime_dir = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        store_path = runtime_dir / "abstractmemory" / "kg"
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+        store = LanceDBTripleStore(store_path)
+        try:
+            store.add(
+                [
+                    TripleAssertion(subject="ex:run", predicate="rdf:type", object="schema:thing", scope="run", owner_id="run-1"),
+                    TripleAssertion(subject="ex:sess", predicate="rdf:type", object="schema:thing", scope="session", owner_id="session_memory_s1"),
+                    TripleAssertion(subject="ex:glob", predicate="rdf:type", object="schema:thing", scope="global", owner_id="global_memory"),
+                ]
+            )
+        finally:
+            store.close()
+
+        q = client.post(
+            "/api/gateway/kg/query",
+            json={"scope": "all", "all_owners": True, "limit": 0},
+            headers=headers,
+        )
+        assert q.status_code == 200, q.text
+        body = q.json()
+        assert body.get("scope") == "all"
+        items = body.get("items") or []
+        scopes = {i.get("scope") for i in items if isinstance(i, dict)}
+        assert {"run", "session", "global"} <= scopes
+
+
+def test_gateway_kg_query_rejects_all_owners_with_owner_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers, _ = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        q = client.post(
+            "/api/gateway/kg/query",
+            json={"scope": "session", "owner_id": "o1", "all_owners": True, "limit": 1},
+            headers=headers,
+        )
+        assert q.status_code == 400, q.text

@@ -88,6 +88,7 @@ def test_gateway_attachments_ingest_creates_session_scoped_artifact(tmp_path: Pa
         assert isinstance(attachment, dict)
         artifact_id = attachment.get("$artifact")
         assert isinstance(artifact_id, str) and artifact_id.strip()
+        assert attachment.get("target") == "server"
         sha256 = attachment.get("sha256")
         assert isinstance(sha256, str) and sha256.strip()
         assert sha256 == hashlib.sha256(b"hello\nworld\n").hexdigest()
@@ -96,7 +97,12 @@ def test_gateway_attachments_ingest_creates_session_scoped_artifact(tmp_path: Pa
         r2 = client.get("/api/gateway/runs/session_memory_s1/artifacts", headers=headers)
         assert r2.status_code == 200, r2.text
         items = r2.json().get("items") or []
-        assert any(isinstance(it, dict) and it.get("artifact_id") == artifact_id for it in items)
+        found = next((it for it in items if isinstance(it, dict) and it.get("artifact_id") == artifact_id), None)
+        assert isinstance(found, dict)
+        tags = found.get("tags") or {}
+        assert isinstance(tags, dict)
+        assert tags.get("target") == "server"
+        assert tags.get("path") == "notes.txt"
 
         r3 = client.get(f"/api/gateway/runs/session_memory_s1/artifacts/{artifact_id}/content", headers=headers)
         assert r3.status_code == 200, r3.text
@@ -134,6 +140,7 @@ def test_gateway_attachments_ingest_accepts_at_prefixed_virtual_paths(tmp_path: 
         attachment = body.get("attachment") or {}
         assert isinstance(attachment, dict)
         assert attachment.get("source_path") == "notes.txt"
+        assert attachment.get("target") == "server"
 
 
 def test_gateway_attachments_ingest_accepts_mount_virtual_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -169,6 +176,7 @@ def test_gateway_attachments_ingest_accepts_mount_virtual_paths(tmp_path: Path, 
         body = r.json()
         attachment = body.get("attachment") or {}
         assert attachment.get("source_path") == "notes/todo.md"
+        assert attachment.get("target") == "server"
 
         r2 = client.post(
             "/api/gateway/attachments/ingest",

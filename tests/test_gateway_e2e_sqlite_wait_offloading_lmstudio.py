@@ -76,6 +76,7 @@ def test_gateway_sqlite_wait_index_offloading_dedupe_lmstudio(tmp_path: Path, mo
     monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", "sqlite")
     monkeypatch.setenv("ABSTRACTGATEWAY_DB_PATH", str(db_path))
     monkeypatch.setenv("ABSTRACTGATEWAY_TOOL_MODE", "local")
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(tmp_path))
     monkeypatch.setenv("ABSTRACTRUNTIME_MAX_INLINE_BYTES", "1024")
 
     base_url = os.environ.get("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")

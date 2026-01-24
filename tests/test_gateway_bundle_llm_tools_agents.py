@@ -432,6 +432,7 @@ def test_gateway_bundle_tool_calls_local_executes(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
     monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
     monkeypatch.setenv("ABSTRACTGATEWAY_TOOL_MODE", "local")
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(tmp_path))
 
     from abstractgateway.app import app
 

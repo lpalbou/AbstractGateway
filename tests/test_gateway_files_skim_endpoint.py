@@ -80,11 +80,12 @@ def test_files_skim_endpoint_returns_gist(tmp_path: Path, monkeypatch: pytest.Mo
     doc = workspace / "demo.md"
     doc.write_text("# Title\n\nIntro sentence.\n\n## Section\nBody.\n\nEND.\n", encoding="utf-8")
 
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(workspace))
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
         r = client.get(
             "/api/gateway/files/skim",
-            params={"path": "demo.md", "workspace_root": str(workspace), "target_percent": 8.0},
+            params={"path": "demo.md", "target_percent": 8.0},
             headers=headers,
         )
         assert r.status_code == 200, r.text
@@ -94,4 +95,3 @@ def test_files_skim_endpoint_returns_gist(tmp_path: Path, monkeypatch: pytest.Mo
         assert isinstance(content, str)
         assert "File:" in content
         assert "1:" in content
-

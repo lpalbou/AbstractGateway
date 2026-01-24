@@ -293,8 +293,12 @@ def test_gateway_ledger_batch_endpoint(tmp_path: Path, monkeypatch: pytest.Monke
             rr = client.get(f"/api/gateway/runs/{rid}", headers=headers)
             assert rr.status_code == 200, rr.text
             w = rr.json().get("waiting")
-            return isinstance(w, dict) and bool(w.get("wait_key"))        _wait_until(lambda: _has_wait(run_id_1), timeout_s=10.0, poll_s=0.1)
-        _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)        batch = client.post(
+            return isinstance(w, dict) and bool(w.get("wait_key"))
+
+        _wait_until(lambda: _has_wait(run_id_1), timeout_s=10.0, poll_s=0.1)
+        _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)
+
+        batch = client.post(
             "/api/gateway/runs/ledger/batch",
             json={
                 "limit": 200,
@@ -371,7 +375,9 @@ def test_gateway_bundle_namespaces_subflows_and_rewrites_references(tmp_path: Pa
 
         ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=200", headers=headers)
         assert ledger.status_code == 200, ledger.text
-        items = ledger.json().get("items") or []        # Ensure the START_SUBWORKFLOW effect used the namespaced workflow id (host rewrite).
+        items = ledger.json().get("items") or []
+
+        # Ensure the START_SUBWORKFLOW effect used the namespaced workflow id (host rewrite).
         started = [
             i
             for i in items
