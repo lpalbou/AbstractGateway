@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from pathlib import Path
@@ -361,3 +362,63 @@ def test_gateway_kg_query_rejects_all_owners_with_owner_id(tmp_path: Path, monke
             headers=headers,
         )
         assert q.status_code == 400, q.text
+
+
+def test_gateway_kg_query_supports_query_text_when_embedder_available(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    try:
+        import lancedb  # type: ignore  # noqa: F401
+    except Exception:
+        pytest.skip("lancedb is not installed")
+
+    from abstractgateway.service import GatewayService, get_gateway_service
+    from abstractmemory import LanceDBTripleStore, TripleAssertion
+
+    class _StubEmbedder:
+        def embed_texts(self, texts):  # type: ignore[no-untyped-def]
+            out = []
+            for t in texts:
+                raw = hashlib.sha256(str(t or "").encode("utf-8")).digest()
+                out.append([b / 255.0 for b in raw[:8]])
+            return out
+
+    embedder = _StubEmbedder()
+
+    client, headers, runtime_dir = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        store_path = runtime_dir / "abstractmemory" / "kg"
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+        store = LanceDBTripleStore(store_path, embedder=embedder)
+        try:
+            store.add(
+                [
+                    TripleAssertion(
+                        subject="ex:person-laurent",
+                        predicate="skos:definition",
+                        object="laurent is a person",
+                        scope="session",
+                        owner_id="session_memory_sess-xyz",
+                        observed_at="2026-01-21T00:00:00+00:00",
+                    )
+                ]
+            )
+        finally:
+            store.close()
+
+        svc = get_gateway_service()
+        svc2 = GatewayService(**{**svc.__dict__, "embeddings_client": embedder})
+        import abstractgateway.routes.gateway as routes_gateway
+
+        monkeypatch.setattr(routes_gateway, "get_gateway_service", lambda: svc2)
+
+        q = client.post(
+            "/api/gateway/kg/query",
+            json={"session_id": "sess-xyz", "scope": "session", "query_text": "laurent", "limit": 10},
+            headers=headers,
+        )
+        assert q.status_code == 200, q.text
+        body = q.json()
+        assert body.get("scope") == "session"
+        items = body.get("items") or []
+        assert any(isinstance(i, dict) and i.get("subject") == "ex:person-laurent" for i in items)
+        warnings = body.get("warnings") or []
+        assert not any(isinstance(w, str) and "embedder" in w.lower() for w in warnings)

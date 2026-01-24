@@ -33,6 +33,7 @@ from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus,
 
 from .. import host_metrics
 from ..service import get_gateway_service, run_summary
+from ..workflow_deprecations import WorkflowDeprecatedError
 
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
@@ -118,6 +119,14 @@ class SubmitCommandResponse(BaseModel):
     accepted: bool
     duplicate: bool
     seq: int
+
+
+class DeprecateWorkflowRequest(BaseModel):
+    flow_id: Optional[str] = Field(
+        default=None,
+        description="Optional entrypoint flow_id to deprecate (default: all entrypoints for the bundle).",
+    )
+    reason: Optional[str] = Field(default=None, description="Optional reason to record for operators.")
 
 
 class GenerateRunSummaryRequest(BaseModel):
@@ -1917,9 +1926,13 @@ def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], m
 
 
 @router.get("/bundles")
-async def list_bundles(all_versions: bool = Query(default=False, description="If true, return one item per bundle version.")) -> Dict[str, Any]:
+async def list_bundles(
+    all_versions: bool = Query(default=False, description="If true, return one item per bundle version."),
+    include_deprecated: bool = Query(default=False, description="If true, include deprecated entrypoints in discovery."),
+) -> Dict[str, Any]:
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    dep_store = getattr(host, "deprecation_store", None)
 
     items: list[Dict[str, Any]] = []
     bundles_by_id = getattr(host, "bundles", {}) or {}
@@ -1949,14 +1962,26 @@ async def list_bundles(all_versions: bool = Query(default=False, description="If
             entrypoints = getattr(man, "entrypoints", None) or []
             eps: list[Dict[str, Any]] = []
             for ep in entrypoints:
+                fid = str(getattr(ep, "flow_id", "") or "").strip()
+                if not fid:
+                    continue
+                rec = dep_store.get_record(bundle_id=str(bid), flow_id=fid) if dep_store is not None else None
+                deprecated = rec is not None
+                if deprecated and not include_deprecated:
+                    continue
                 eps.append(
                     {
-                        "flow_id": getattr(ep, "flow_id", None),
+                        "flow_id": fid,
                         "name": getattr(ep, "name", None),
                         "description": getattr(ep, "description", "") or "",
                         "interfaces": list(getattr(ep, "interfaces", None) or []),
+                        "deprecated": bool(deprecated),
+                        "deprecated_at": (str(rec.get("deprecated_at") or "").strip() if isinstance(rec, dict) else "") or None,
+                        "deprecated_reason": (str(rec.get("reason") or "").strip() if isinstance(rec, dict) else "") or None,
                     }
                 )
+            if not eps:
+                continue
             items.append(
                 {
                     "bundle_id": str(bid),
@@ -1969,7 +1994,12 @@ async def list_bundles(all_versions: bool = Query(default=False, description="If
             )
 
     items.sort(key=lambda x: str(x.get("bundle_id") or ""))
-    return {"items": items, "default_bundle_id": getattr(host, "_default_bundle_id", None)}
+    default_bundle_id = getattr(host, "_default_bundle_id", None)
+    if not include_deprecated and isinstance(default_bundle_id, str) and default_bundle_id.strip():
+        visible = {str(it.get("bundle_id") or "").strip() for it in items}
+        if default_bundle_id.strip() not in visible:
+            default_bundle_id = None
+    return {"items": items, "default_bundle_id": default_bundle_id}
 
 
 @router.post("/bundles/reload")
@@ -2127,10 +2157,62 @@ async def remove_bundle(
     }
 
 
+@router.post("/bundles/{bundle_id}/deprecate")
+async def deprecate_bundle(bundle_id: str, req: DeprecateWorkflowRequest) -> Dict[str, Any]:
+    """Mark a bundle entrypoint (or entire bundle) as deprecated.
+
+    Deprecated workflows are excluded from discovery by default and cannot be launched.
+    """
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+
+    bid = str(bundle_id or "").strip()
+    if not bid:
+        raise HTTPException(status_code=400, detail="bundle_id is required")
+
+    versions = getattr(host, "bundles", {}).get(bid)
+    if not isinstance(versions, dict) or not versions:
+        raise HTTPException(status_code=404, detail=f"Bundle '{bid}' not found")
+
+    fid = str(getattr(req, "flow_id", "") or "").strip()
+    if fid:
+        latest0 = getattr(host, "latest_bundle_versions", None)
+        latest = latest0 if isinstance(latest0, dict) else {}
+        ver = str(latest.get(bid) or "").strip() or sorted([str(x) for x in versions.keys() if isinstance(x, str)])[-1]
+        bundle = versions.get(ver)
+        entrypoints = list(getattr(getattr(bundle, "manifest", None), "entrypoints", None) or []) if bundle is not None else []
+        if fid not in {str(getattr(ep, "flow_id", "") or "").strip() for ep in entrypoints}:
+            raise HTTPException(status_code=404, detail=f"Entrypoint '{bid}:{fid}' not found")
+
+    dep = getattr(host, "deprecation_store", None)
+    if dep is None:
+        raise HTTPException(status_code=400, detail="Deprecations are not supported on this gateway host")
+    rec = dep.set_deprecated(bundle_id=bid, flow_id=fid or None, reason=str(getattr(req, "reason", "") or "").strip() or None)
+    return {"ok": True, **(rec or {})}
+
+
+@router.post("/bundles/{bundle_id}/undeprecate")
+async def undeprecate_bundle(bundle_id: str, req: DeprecateWorkflowRequest) -> Dict[str, Any]:
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+
+    bid = str(bundle_id or "").strip()
+    if not bid:
+        raise HTTPException(status_code=400, detail="bundle_id is required")
+
+    dep = getattr(host, "deprecation_store", None)
+    if dep is None:
+        raise HTTPException(status_code=400, detail="Deprecations are not supported on this gateway host")
+    fid = str(getattr(req, "flow_id", "") or "").strip()
+    removed = bool(dep.clear_deprecated(bundle_id=bid, flow_id=fid or None))
+    return {"ok": True, "bundle_id": bid, "flow_id": fid or "*", "removed": removed}
+
+
 @router.get("/bundles/{bundle_id}")
 async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to latest).")) -> Dict[str, Any]:
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    dep_store = getattr(host, "deprecation_store", None)
 
     bid = str(bundle_id or "").strip()
     if not bid:
@@ -2145,6 +2227,8 @@ async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(defau
         fid = str(getattr(ep, "flow_id", "") or "").strip()
         rel = man.flow_path_for(fid) if fid else None
         raw = bundle.read_json(rel) if isinstance(rel, str) and rel.strip() else None
+        dep_rec = dep_store.get_record(bundle_id=bid_base, flow_id=fid) if dep_store is not None and fid else None
+        deprecated = dep_rec is not None
         entrypoints_out.append(
             {
                 "flow_id": fid,
@@ -2154,6 +2238,9 @@ async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(defau
                 "interfaces": list(getattr(ep, "interfaces", None) or []),
                 "inputs": _extract_entrypoint_inputs_from_visualflow(raw),
                 "node_index": _extract_node_index_from_visualflow(raw),
+                "deprecated": bool(deprecated),
+                "deprecated_at": (str(dep_rec.get("deprecated_at") or "").strip() if isinstance(dep_rec, dict) else "") or None,
+                "deprecated_reason": (str(dep_rec.get("reason") or "").strip() if isinstance(dep_rec, dict) else "") or None,
             }
         )
 
@@ -2314,6 +2401,8 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
             actor_id="gateway",
             session_id=session_id,
         )
+    except WorkflowDeprecatedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except KeyError:
         # Best-effort error message: in bundle mode, KeyError can refer to either a bundle or a flow.
         msg = f"Flow '{flow_id}' not found" if flow_id else "Bundle not found"
@@ -2377,6 +2466,22 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
         if not selected_ver:
             raise HTTPException(status_code=404, detail=f"Bundle '{bundle_id_base}' has no versions loaded")
         target_workflow_id = f"{bundle_id_base}@{selected_ver}:{target_flow_id}"
+
+    # Prevent scheduling deprecated target workflows (host-side enforcement also blocks child launches).
+    try:
+        dep_store = getattr(host, "deprecation_store", None)
+        if dep_store is not None and dep_store.is_deprecated(bundle_id=bundle_id_base, flow_id=target_flow_id):
+            rec = dep_store.get_record(bundle_id=bundle_id_base, flow_id=target_flow_id) or {}
+            reason = str(rec.get("reason") or "").strip()
+            msg = f"Workflow '{bundle_id_base}:{target_flow_id}' is deprecated"
+            if reason:
+                msg = f"{msg}: {reason}"
+            raise HTTPException(status_code=409, detail=msg)
+    except HTTPException:
+        raise
+    except Exception:
+        # Best-effort: deprecation is a gateway-owned policy; do not fail scheduling if the store is unreadable.
+        pass
 
     specs = getattr(host, "specs", None)
     if not isinstance(specs, dict) or target_workflow_id not in specs:
@@ -3657,7 +3762,8 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
 
     store = None
     try:
-        store = LanceDBTripleStore(store_path)
+        embedder = getattr(svc, "embeddings_client", None)
+        store = LanceDBTripleStore(store_path, embedder=embedder)
 
         if scope == "all":
             if all_owners:

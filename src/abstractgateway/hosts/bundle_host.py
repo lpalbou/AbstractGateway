@@ -13,6 +13,8 @@ from abstractruntime import Runtime, WorkflowRegistry, WorkflowSpec, persist_wor
 from abstractruntime.visualflow_compiler import compile_visualflow
 from abstractruntime.workflow_bundle import WorkflowBundle, WorkflowBundleError, open_workflow_bundle
 
+from ..workflow_deprecations import WorkflowDeprecatedError, WorkflowDeprecationStore
+
 
 logger = logging.getLogger(__name__)
 
@@ -314,6 +316,7 @@ class WorkflowBundleGatewayHost:
     bundles_dir: Path
     data_dir: Path
     dynamic_flows_dir: Path
+    deprecation_store: WorkflowDeprecationStore
     # bundle_id -> bundle_version -> WorkflowBundle
     bundles: Dict[str, Dict[str, WorkflowBundle]]
     # bundle_id -> latest bundle_version
@@ -481,6 +484,7 @@ class WorkflowBundleGatewayHost:
         latest_versions: Dict[str, str] = {bid: _pick_latest_version(versions) for bid, versions in bundles_by_id.items()}
 
         data_root = Path(data_dir).expanduser().resolve()
+        dep_store = WorkflowDeprecationStore(path=data_root / "workflow_deprecations.json")
         dynamic_dir = data_root / "dynamic_flows"
         try:
             dynamic_dir.mkdir(parents=True, exist_ok=True)
@@ -831,6 +835,7 @@ class WorkflowBundleGatewayHost:
             bundles_dir=base,
             data_dir=data_root,
             dynamic_flows_dir=dynamic_dir,
+            deprecation_store=dep_store,
             bundles=bundles_by_id,
             latest_bundle_versions=latest_versions,
             runtime=runtime,
@@ -876,6 +881,7 @@ class WorkflowBundleGatewayHost:
             self.specs = new_host.specs
             self.event_listener_specs_by_root = new_host.event_listener_specs_by_root
             self._default_bundle_id = new_host._default_bundle_id
+            self.deprecation_store = new_host.deprecation_store
         bundle_ids = sorted([str(k) for k in (self.bundles or {}).keys() if isinstance(k, str)])
         return {"ok": True, "bundle_ids": bundle_ids, "count": len(bundle_ids)}
 
@@ -977,6 +983,17 @@ class WorkflowBundleGatewayHost:
                     raise ValueError("bundle_id is required when multiple bundles are loaded (or pass flow_id as 'bundle:flow')")
                 selected_ver, _bundle2 = _get_bundle(bundle_id2=selected_bundle_id, bundle_version2=requested_ver)
                 workflow_id = _namespace(_bundle_ref(selected_bundle_id, selected_ver), fid_raw)
+
+        # Enforce workflow deprecations (bundle-owned entry workflows).
+        # This must live in the host so scheduled child launches are also blocked.
+        if ":" in workflow_id:
+            prefix, inner = workflow_id.split(":", 1)
+            dep_bid, _dep_ver = _split_bundle_ref(prefix)
+            dep_flow = inner.strip()
+            if dep_bid and dep_flow and dep_bid in self.bundles:
+                rec = self.deprecation_store.get_record(bundle_id=dep_bid, flow_id=dep_flow)
+                if rec is not None:
+                    raise WorkflowDeprecatedError(bundle_id=dep_bid, flow_id=dep_flow, record=rec)
 
         spec = self.specs.get(workflow_id)
         if spec is None:
