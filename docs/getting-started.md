@@ -138,6 +138,23 @@ curl -sS -H "Authorization: Bearer dev-token" \
   "http://127.0.0.1:8081/api/gateway/bundles"
 ```
 
+Upload/install a `.flow` bundle (thin-client friendly):
+
+```bash
+curl -sS -H "Authorization: Bearer dev-token" \
+  -F "file=@./flows/bundles/my-bundle@0.1.0.flow" \
+  -F "overwrite=false" \
+  -F "reload=true" \
+  "http://127.0.0.1:8081/api/gateway/bundles/upload"
+```
+
+Remove/uninstall a bundle version:
+
+```bash
+curl -sS -X DELETE -H "Authorization: Bearer dev-token" \
+  "http://127.0.0.1:8081/api/gateway/bundles/my-bundle?bundle_version=0.1.0"
+```
+
 List runs:
 
 ```bash

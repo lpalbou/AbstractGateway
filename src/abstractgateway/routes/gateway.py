@@ -1989,6 +1989,144 @@ async def reload_bundles() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to reload bundles: {e}")
 
 
+@router.post("/bundles/upload")
+async def upload_bundle(
+    file: UploadFile = File(..., description="WorkflowBundle (.flow) to install."),
+    overwrite: bool = Form(False, description="If true, overwrite an existing bundle_id@version."),
+    reload: bool = Form(True, description="If true, reload bundles after install (best-effort; dev-friendly)."),
+) -> Dict[str, Any]:
+    """Upload and install a WorkflowBundle into the gateway's bundles_dir.
+
+    This is intended for thin clients where the UI cannot write into the server's filesystem.
+    """
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+
+    try:
+        max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_BUNDLE_BYTES", "") or "").strip()
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 75 * 1024 * 1024
+        if max_bytes <= 0:
+            max_bytes = 75 * 1024 * 1024
+    except Exception:
+        max_bytes = 75 * 1024 * 1024
+
+    try:
+        content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read upload: {e}")
+
+    size = len(content or b"")
+    if size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Bundle too large ({size} bytes > {max_bytes} bytes)")
+
+    try:
+        from abstractruntime.workflow_bundle import WorkflowBundleRegistry, WorkflowBundleRegistryError
+
+        reg = WorkflowBundleRegistry(getattr(host, "bundles_dir", None))
+        installed = reg.install_bytes(
+            bytes(content or b""),
+            filename_hint=str(getattr(file, "filename", "") or "upload.flow"),
+            overwrite=bool(overwrite),
+        )
+    except WorkflowBundleRegistryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed installing bundle: {e}")
+
+    gateway_reloaded = False
+    gateway_reload_error: Optional[str] = None
+    if bool(reload):
+        reload_fn = getattr(host, "reload_bundles_from_disk", None)
+        if not callable(reload_fn):
+            gateway_reload_error = "Bundle reload is not supported on this gateway host"
+        else:
+            try:
+                reload_fn()
+                gateway_reloaded = True
+            except Exception as e:
+                gateway_reload_error = str(e)
+
+    man = installed.manifest
+    eps: list[Dict[str, Any]] = []
+    for ep in list(getattr(man, "entrypoints", None) or []):
+        eps.append(
+            {
+                "flow_id": getattr(ep, "flow_id", None),
+                "name": getattr(ep, "name", None),
+                "description": str(getattr(ep, "description", "") or ""),
+                "interfaces": list(getattr(ep, "interfaces", None) or []),
+            }
+        )
+
+    return {
+        "ok": True,
+        "bundle_id": str(installed.bundle_id),
+        "bundle_version": str(installed.bundle_version),
+        "bundle_ref": str(installed.bundle_ref),
+        "sha256": str(installed.sha256 or ""),
+        "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
+        "entrypoints": eps,
+        "gateway_reloaded": bool(gateway_reloaded),
+        "gateway_reload_error": gateway_reload_error,
+    }
+
+
+@router.delete("/bundles/{bundle_id}")
+async def remove_bundle(
+    bundle_id: str,
+    bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to removing all versions)."),
+    reload: bool = Query(default=True, description="If true, reload bundles after removal (best-effort; dev-friendly)."),
+) -> Dict[str, Any]:
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+
+    bid_raw = str(bundle_id or "").strip()
+    if not bid_raw:
+        raise HTTPException(status_code=400, detail="bundle_id is required")
+    bid_base, bid_ver = _split_bundle_ref(bid_raw)
+    if bid_ver and bundle_version and bid_ver != bundle_version:
+        raise HTTPException(status_code=400, detail="bundle_id version does not match bundle_version")
+
+    target_ver = str(bundle_version or "").strip() if isinstance(bundle_version, str) and str(bundle_version).strip() else bid_ver
+    bundle_ref = f"{bid_base}@{target_ver}" if target_ver else bid_base
+
+    try:
+        from abstractruntime.workflow_bundle import WorkflowBundleRegistry, WorkflowBundleRegistryError
+
+        reg = WorkflowBundleRegistry(getattr(host, "bundles_dir", None))
+        removed = int(reg.remove(bundle_ref))
+    except WorkflowBundleRegistryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed removing bundle: {e}")
+
+    if removed <= 0:
+        raise HTTPException(status_code=404, detail=f"Bundle '{bundle_ref}' not found")
+
+    gateway_reloaded = False
+    gateway_reload_error: Optional[str] = None
+    if bool(reload):
+        reload_fn = getattr(host, "reload_bundles_from_disk", None)
+        if not callable(reload_fn):
+            gateway_reload_error = "Bundle reload is not supported on this gateway host"
+        else:
+            try:
+                reload_fn()
+                gateway_reloaded = True
+            except Exception as e:
+                gateway_reload_error = str(e)
+
+    return {
+        "ok": True,
+        "bundle_ref": str(bundle_ref),
+        "removed": int(removed),
+        "gateway_reloaded": bool(gateway_reloaded),
+        "gateway_reload_error": gateway_reload_error,
+    }
+
+
 @router.get("/bundles/{bundle_id}")
 async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to latest).")) -> Dict[str, Any]:
     svc = get_gateway_service()
@@ -3608,7 +3746,7 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
     items.sort(key=lambda d: str(d.get("observed_at") or ""), reverse=reverse)
     limit_value = int(getattr(req, "limit", 0) or 0)
     if limit_value > 0:
-        items = items[: max(1, min(limit_value, 10_000))]
+        items = items[: max(1, limit_value)]
 
     return KGQueryResponse(
         ok=True,

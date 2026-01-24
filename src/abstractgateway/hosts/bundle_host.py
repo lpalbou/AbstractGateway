@@ -475,7 +475,7 @@ class WorkflowBundleGatewayHost:
                 logger.warning("Failed to load bundle %s: %s", p, e)
 
         if not bundles_by_id:
-            raise FileNotFoundError(f"No bundles found in {base} (expected *.flow)")
+            logger.warning("No bundles found in %s (expected *.flow). Starting gateway with zero loaded bundles.", base)
 
         default_bundle_id = next(iter(bundles_by_id.keys())) if len(bundles_by_id) == 1 else None
         latest_versions: Dict[str, str] = {bid: _pick_latest_version(versions) for bid, versions in bundles_by_id.items()}
