@@ -71,7 +71,12 @@ class GatewayHostConfig:
         # NOTE: We intentionally use ABSTRACTGATEWAY_* as the canonical namespace.
         # For a transition period, we accept legacy ABSTRACTFLOW_* names as fallbacks.
         data_dir_raw = _env("ABSTRACTGATEWAY_DATA_DIR", "ABSTRACTFLOW_RUNTIME_DIR") or "./runtime"
-        flows_dir_raw = _env("ABSTRACTGATEWAY_FLOWS_DIR", "ABSTRACTFLOW_FLOWS_DIR") or "./flows"
+        flows_dir_raw = (
+            _env("ABSTRACTGATEWAY_FLOWS_DIR")
+            or _env("ABSTRACTFRAMEWORK_WORKFLOWS_DIR")
+            or _env("ABSTRACTFLOW_FLOWS_DIR")
+            or "./flows"
+        )
 
         store_backend = str(_env("ABSTRACTGATEWAY_STORE_BACKEND") or "file").strip().lower() or "file"
         db_path_raw = _env("ABSTRACTGATEWAY_DB_PATH")
@@ -97,4 +102,3 @@ class GatewayHostConfig:
             tick_workers=max(1, int(tick_workers)),
             run_scan_limit=max(1, int(scan)),
         )
-
