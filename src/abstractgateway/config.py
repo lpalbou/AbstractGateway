@@ -63,7 +63,7 @@ class GatewayHostConfig:
     poll_interval_s: float = 0.25
     command_batch_limit: int = 200
     tick_max_steps: int = 100
-    tick_workers: int = 2
+    tick_workers: int = 4
     run_scan_limit: int = 200
 
     @staticmethod
@@ -85,7 +85,7 @@ class GatewayHostConfig:
         runner_enabled = _as_bool(enabled_raw, True)
 
         poll_s = _as_float(_env("ABSTRACTGATEWAY_POLL_S", "ABSTRACTFLOW_GATEWAY_POLL_S"), 0.25)
-        tick_workers = _as_int(_env("ABSTRACTGATEWAY_TICK_WORKERS", "ABSTRACTFLOW_GATEWAY_TICK_WORKERS"), 2)
+        tick_workers = _as_int(_env("ABSTRACTGATEWAY_TICK_WORKERS", "ABSTRACTFLOW_GATEWAY_TICK_WORKERS"), 4)
         tick_steps = _as_int(_env("ABSTRACTGATEWAY_TICK_MAX_STEPS", "ABSTRACTFLOW_GATEWAY_TICK_MAX_STEPS"), 100)
         batch = _as_int(_env("ABSTRACTGATEWAY_COMMAND_BATCH_LIMIT", "ABSTRACTFLOW_GATEWAY_COMMAND_BATCH_LIMIT"), 200)
         scan = _as_int(_env("ABSTRACTGATEWAY_RUN_SCAN_LIMIT", "ABSTRACTFLOW_GATEWAY_RUN_SCAN_LIMIT"), 200)

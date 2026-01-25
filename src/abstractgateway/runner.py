@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional, Protocol
 
 from abstractruntime import Runtime
 from abstractruntime.core.event_keys import build_event_wait_key
-from abstractruntime.core.models import Effect, EffectType, RunStatus, WaitReason
+from abstractruntime.core.models import Effect, EffectType, RunStatus, StepRecord, WaitReason
 from abstractruntime.scheduler.scheduler import utc_now_iso
 from abstractruntime.storage.commands import (
     CommandCursorStore,
@@ -69,7 +69,7 @@ class GatewayRunnerConfig:
     poll_interval_s: float = 0.25
     command_batch_limit: int = 200
     tick_max_steps: int = 100
-    tick_workers: int = 2
+    tick_workers: int = 4
     run_scan_limit: int = 200
 
 
@@ -457,7 +457,40 @@ class GatewayRunner:
             logger.debug("GatewayRunner: cannot build runtime for %s: %s", run_id, e)
             return
 
-        state = runtime.tick(workflow=wf, run_id=run_id, max_steps=int(self._cfg.tick_max_steps or 100))
+        try:
+            state = runtime.tick(workflow=wf, run_id=run_id, max_steps=int(self._cfg.tick_max_steps or 100))
+        except Exception as e:
+            # Never leave runs stuck in RUNNING due to an unhandled exception.
+            #
+            # Rationale: VisualFlow node planning can raise (e.g. missing optional deps),
+            # and effects can raise before the runtime has a chance to persist status.
+            # In gateway mode, a stuck RUNNING run can deadlock parents waiting on
+            # SUBWORKFLOW completion (KG ingest).
+            logger.exception("GatewayRunner: tick failed for %s", run_id)
+            err = f"{type(e).__name__}: {e}"
+            try:
+                latest = runtime.run_store.load(run_id)
+                if latest is None:
+                    return
+                if getattr(latest, "status", None) == RunStatus.RUNNING:
+                    latest.status = RunStatus.FAILED
+                    latest.error = err
+                    latest.updated_at = utc_now_iso()
+                    runtime.run_store.save(latest)
+                    try:
+                        rec = StepRecord.start(
+                            run=latest,
+                            node_id=str(getattr(latest, "current_node", None) or "runtime"),
+                            effect=None,
+                            idempotency_key=f"system:tick_exception:{run_id}",
+                        )
+                        rec.finish_failure(err)
+                        self.ledger_store.append(rec)
+                    except Exception:
+                        pass
+                state = latest
+            except Exception:
+                return
 
         # Auto-compaction for scheduled workflows (best-effort).
         try:
@@ -466,9 +499,25 @@ class GatewayRunner:
             pass
 
         # If this run completed, it may unblock a parent WAITING(SUBWORKFLOW).
-        if getattr(state, "status", None) == RunStatus.COMPLETED:
+        if getattr(state, "status", None) in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
             try:
-                self._resume_subworkflow_parents(child_run_id=run_id, child_output=state.output or {})
+                child_out_raw: Any = getattr(state, "output", None)
+                child_out: Dict[str, Any]
+                if isinstance(child_out_raw, dict):
+                    child_out = dict(child_out_raw)
+                else:
+                    child_out = {"result": child_out_raw}
+
+                if getattr(state, "status", None) != RunStatus.COMPLETED:
+                    # Preserve a stable shape so visual subflow nodes can proceed.
+                    child_out.setdefault("success", False)
+                    if getattr(state, "status", None) == RunStatus.CANCELLED:
+                        child_out.setdefault("cancelled", True)
+                    err = getattr(state, "error", None)
+                    if isinstance(err, str) and err.strip():
+                        child_out.setdefault("error", err.strip())
+
+                self._resume_subworkflow_parents(child_run_id=run_id, child_output=child_out)
             except Exception:
                 pass
 

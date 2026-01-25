@@ -111,3 +111,71 @@ def test_gateway_runner_resumes_subworkflow_parent_with_node_traces(tmp_path: Pa
     assert isinstance(traces, dict)
     assert traces.get("child_node", {}).get("steps"), "expected child node traces to be propagated"
 
+
+def test_gateway_runner_marks_child_failed_and_resumes_parent(tmp_path: Path) -> None:
+    run_store = InMemoryRunStore()
+    ledger_store = InMemoryLedgerStore()
+
+    runtime = Runtime(
+        run_store=run_store,
+        ledger_store=ledger_store,
+        effect_handlers=build_effect_handlers(llm=_StubLLM(), tools=_StubTools()),
+    )
+
+    def child_node(_run, _ctx) -> StepPlan:
+        raise RuntimeError("boom")
+
+    child = WorkflowSpec(workflow_id="child_fail", entry_node="child_node", nodes={"child_node": child_node})
+
+    def start(run, ctx) -> StepPlan:
+        return StepPlan(
+            node_id="start",
+            effect=Effect(
+                type=EffectType.START_SUBWORKFLOW,
+                payload={
+                    "workflow_id": "child_fail",
+                    "vars": {},
+                    "async": True,
+                    "wait": True,
+                },
+                result_key="sub",
+            ),
+            next_node="done",
+        )
+
+    def done(run, ctx) -> StepPlan:
+        return StepPlan(node_id="done", complete_output={"sub": run.vars.get("sub")})
+
+    parent = WorkflowSpec(workflow_id="parent_fail", entry_node="start", nodes={"start": start, "done": done})
+
+    registry: Dict[str, WorkflowSpec] = {"parent_fail": parent, "child_fail": child}
+    runtime.set_workflow_registry(registry)
+
+    parent_run_id = runtime.start(workflow=parent, vars={})
+    parent_state = runtime.tick(workflow=parent, run_id=parent_run_id, max_steps=5)
+
+    assert parent_state.status == RunStatus.WAITING
+    assert parent_state.waiting is not None
+    assert parent_state.waiting.reason == WaitReason.SUBWORKFLOW
+
+    child_run_id = parent_state.waiting.details.get("sub_run_id")
+    assert isinstance(child_run_id, str) and child_run_id
+
+    host = _Host(runtime=runtime, registry=registry, run_store=run_store, ledger_store=ledger_store)
+    runner = GatewayRunner(base_dir=tmp_path, host=host)
+
+    runner._tick_run(child_run_id)
+
+    child_state = runtime.get_state(child_run_id)
+    assert child_state.status == RunStatus.FAILED
+    assert "boom" in str(child_state.error or "")
+
+    resumed_parent = runtime.get_state(parent_run_id)
+    assert resumed_parent.status == RunStatus.RUNNING
+
+    sub = resumed_parent.vars.get("sub")
+    assert isinstance(sub, dict)
+    assert sub.get("sub_run_id") == child_run_id
+    output = sub.get("output")
+    assert isinstance(output, dict)
+    assert output.get("success") is False

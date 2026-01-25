@@ -153,3 +153,67 @@ def test_sanitize_run_workspace_policy_rejects_outside_root(tmp_path: Path, monk
     assert "workspace_root" not in sanitized
     assert sanitized.get("workspace_access_mode") == "workspace_only"
     assert "workspace_allowed_paths" not in sanitized
+
+
+def test_server_file_endpoints_honor_client_scope_overrides_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = tmp_path / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "inside.txt").write_text("inside\n", encoding="utf-8")
+
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True, exist_ok=True)
+    secret = outside / "secret.txt"
+    secret.write_text("secret\n", encoding="utf-8")
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "1")
+
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        r1 = client.get(
+            "/api/gateway/files/search",
+            params={"query": "secret", "limit": 20, "workspace_root": str(outside)},
+            headers=headers,
+        )
+        assert r1.status_code == 200, r1.text
+        items = r1.json().get("items") or []
+        paths = {it.get("path") for it in items if isinstance(it, dict)}
+        assert "secret.txt" in paths
+
+        r2 = client.get(
+            "/api/gateway/files/read",
+            params={"path": str(secret), "workspace_root": str(outside)},
+            headers=headers,
+        )
+        assert r2.status_code == 200, r2.text
+        assert "secret" in str((r2.json() or {}).get("content") or "")
+
+        r3 = client.post(
+            "/api/gateway/attachments/ingest",
+            json={"session_id": "s1", "path": str(secret), "workspace_root": str(outside)},
+            headers=headers,
+        )
+        assert r3.status_code == 200, r3.text
+
+
+def test_sanitize_run_workspace_policy_accepts_outside_root_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = tmp_path / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "1")
+
+    from abstractgateway.routes.gateway import _sanitize_run_workspace_policy
+
+    sanitized = _sanitize_run_workspace_policy(
+        {
+            "workspace_root": str(outside),
+            "workspace_access_mode": "all_except_ignored",
+            "workspace_allowed_paths": [str(outside)],
+        }
+    )
+    assert sanitized.get("workspace_root") == str(outside)
+    assert sanitized.get("workspace_access_mode") == "all_except_ignored"
+    assert str(outside) in str(sanitized.get("workspace_allowed_paths") or "")

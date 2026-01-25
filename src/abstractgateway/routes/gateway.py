@@ -1017,7 +1017,83 @@ def _server_workspace_policy_public() -> Dict[str, Any]:
         # Do not expose absolute server paths to thin clients.
         "mounts": sorted([{"name": name} for name in mounts.keys()], key=lambda x: x["name"]),
         "max_attachment_bytes": int(max_bytes),
+        "client_workspace_scope_overrides": bool(_client_workspace_scope_overrides_enabled()),
+        "allowed_access_modes": ["workspace_only", "workspace_or_allowed"]
+        + (["all_except_ignored"] if _client_workspace_scope_overrides_enabled() else []),
     }
+
+
+def _flag_enabled(value: Any) -> bool:
+    s = str(value or "").strip().lower()
+    return s in {"1", "true", "yes", "on"}
+
+
+def _client_workspace_scope_overrides_enabled() -> bool:
+    """Whether to honor client-provided workspace_* scoping knobs for server filesystem access.
+
+    Security note:
+    In non-local tool mode, the gateway treats web clients as "thin" clients and clamps
+    workspace scope to operator-controlled roots. When running tools locally (dev mode),
+    it is useful to allow the UI to drive workspace scoping directly.
+    """
+    if _flag_enabled(os.getenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE")):
+        return True
+    if _flag_enabled(os.getenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE")):
+        return True
+    tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "").strip().lower()
+    return tool_mode == "local"
+
+
+_VALID_WORKSPACE_ACCESS_MODES: set[str] = {"workspace_only", "workspace_or_allowed", "all_except_ignored"}
+
+
+def _normalize_workspace_access_mode(raw: Any) -> str:
+    mode = str(raw or "").strip().lower()
+    if mode in _VALID_WORKSPACE_ACCESS_MODES:
+        return mode
+    return "workspace_only"
+
+
+def _slug_mount_name(name: str) -> str:
+    """Stable mount name (<= 32 chars, lower-case, [a-z0-9_-])."""
+    raw = str(name or "").strip().lower()
+    if not raw:
+        return "mount"
+    out: list[str] = []
+    prev_dash = False
+    for ch in raw:
+        if "a" <= ch <= "z" or "0" <= ch <= "9" or ch in {"_", "-"}:
+            out.append(ch)
+            prev_dash = ch == "-"
+            continue
+        if not prev_dash:
+            out.append("-")
+            prev_dash = True
+    s = "".join(out).strip("-")
+    if not s:
+        return "mount"
+    return s[:32]
+
+
+def _mounts_from_allowed_paths(*, allowed_dirs: list[Path], used_names: set[str]) -> Dict[str, Path]:
+    """Build deterministic {mount_name -> root} for allowed roots outside workspace_root."""
+    out: Dict[str, Path] = {}
+    for d in allowed_dirs:
+        if not isinstance(d, Path):
+            continue
+        try:
+            resolved = d.resolve()
+        except Exception:
+            resolved = d
+        base = _slug_mount_name(getattr(resolved, "name", "") or "mount")
+        name = base
+        i = 2
+        while name in used_names:
+            name = f"{base}-{i}"
+            i += 1
+        used_names.add(name)
+        out[name] = resolved
+    return out
 
 
 def _parse_any_string_list(raw: Any) -> list[str]:
@@ -1067,18 +1143,20 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
 
     Goal: prevent thin clients from expanding server filesystem access via run vars.
     """
+    allow_overrides = _client_workspace_scope_overrides_enabled()
     base = _workspace_root()
     mounts = _workspace_mounts()
     allowed_roots = [base] + list(mounts.values())
+    root_for_rel = base
 
     # workspace_root: allow only under operator roots (workspace root + mounts).
     raw_wr = input_data.get("workspace_root")
     if isinstance(raw_wr, str) and raw_wr.strip():
         resolved = _resolve_user_path(raw_wr, base=base)
-        if _is_under_allowed_roots(resolved, allowed_roots):
+        if allow_overrides or _is_under_allowed_roots(resolved, allowed_roots):
             input_data["workspace_root"] = str(resolved)
+            root_for_rel = resolved
         else:
-            # Reject unsafe override.
             input_data.pop("workspace_root", None)
 
     # workspace_access_mode: forbid "all_except_ignored" (can escape to arbitrary abs paths).
@@ -1086,10 +1164,10 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
     if raw_mode is None:
         raw_mode = input_data.get("workspaceAccessMode")
     if raw_mode is not None:
-        mode = str(raw_mode or "").strip().lower()
-        if mode == "all_except_ignored":
+        mode = _normalize_workspace_access_mode(raw_mode)
+        if not allow_overrides and mode == "all_except_ignored":
             mode = "workspace_only"
-        if mode in {"workspace_only", "workspace_or_allowed"}:
+        if mode in _VALID_WORKSPACE_ACCESS_MODES:
             input_data["workspace_access_mode"] = mode
         else:
             input_data.pop("workspace_access_mode", None)
@@ -1106,8 +1184,8 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
             s = str(item or "").strip()
             if not s:
                 continue
-            resolved = _resolve_user_path(s, base=base)
-            if _is_under_allowed_roots(resolved, allowed_roots):
+            resolved = _resolve_user_path(s, base=root_for_rel)
+            if allow_overrides or _is_under_allowed_roots(resolved, allowed_roots):
                 kept.append(str(resolved))
         if kept:
             # Preserve shape (list vs newline string) for UI friendliness.
@@ -1129,6 +1207,64 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
         input_data.pop("workspaceIgnoredPaths", None)
 
     return input_data
+
+
+def _effective_workspace_scope(
+    *,
+    default_base: Path,
+    workspace_root: Optional[str],
+    workspace_access_mode: Optional[str],
+    workspace_allowed_paths: Optional[str],
+    workspace_ignored_paths: Optional[str],
+) -> tuple[Path, Dict[str, Path], tuple[Path, ...], str]:
+    """Compute the effective (base, mounts, blocked_paths, access_mode) for file endpoints."""
+    base = default_base
+    raw_wr = str(workspace_root or "").strip()
+    if raw_wr:
+        base = _resolve_user_path(raw_wr, base=default_base)
+
+    access_mode = _normalize_workspace_access_mode(workspace_access_mode)
+    allowed_raw = _parse_lines_or_json_list(workspace_allowed_paths)
+    ignored_raw = _parse_lines_or_json_list(workspace_ignored_paths)
+
+    blocked: list[Path] = []
+    for item in ignored_raw:
+        try:
+            blocked.append(_resolve_user_path(item, base=base))
+        except Exception:
+            continue
+
+    mounts: Dict[str, Path] = {}
+    used_names: set[str] = set()
+
+    # In scoped mode, do not automatically include operator mounts; the client can add extra
+    # roots via workspace_allowed_paths (workspace_or_allowed) or absolute paths (all_except_ignored).
+    if access_mode == "workspace_or_allowed" and allowed_raw:
+        allowed_abs: list[Path] = []
+        for item in allowed_raw:
+            try:
+                p = _resolve_user_path(item, base=base)
+            except Exception:
+                continue
+            try:
+                if not p.exists() or not p.is_dir():
+                    continue
+            except Exception:
+                continue
+            # Only mount roots outside the base; inside-base directories are already searchable.
+            try:
+                if p.resolve().is_relative_to(base.resolve()):  # type: ignore[attr-defined]
+                    continue
+            except Exception:
+                try:
+                    p.resolve().relative_to(base.resolve())
+                    continue
+                except Exception:
+                    pass
+            allowed_abs.append(p)
+        mounts = _mounts_from_allowed_paths(allowed_dirs=allowed_abs, used_names=used_names)
+
+    return base, mounts, tuple(blocked), access_mode
 
 
 _DEFAULT_SESSION_MEMORY_RUN_PREFIX = "session_memory_"
@@ -4075,15 +4211,27 @@ async def files_search(
     if not q:
         return {"items": []}
 
-    # SECURITY: server filesystem access is operator-controlled. Thin clients must not be able
-    # to expand the server scope at runtime via `workspace_*` request params.
-    base = _workspace_root()
-    mounts = _workspace_mounts()
-    ignored_abs = ()
+    base_default = _workspace_root()
+    mounts_default = _workspace_mounts()
+    base = base_default
+    mounts = mounts_default
+    blocked: tuple[Path, ...] = ()
+
+    if _client_workspace_scope_overrides_enabled():
+        # Opt-in scoped search: allow the UI to drive workspace_* for local/dev flows.
+        has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
+        if has_scope:
+            base, mounts, blocked, _mode = _effective_workspace_scope(
+                default_base=base_default,
+                workspace_root=workspace_root,
+                workspace_access_mode=workspace_access_mode,
+                workspace_allowed_paths=workspace_allowed_paths,
+                workspace_ignored_paths=workspace_ignored_paths,
+            )
 
     try:
         # Index build can be slow on large workspaces; keep async endpoints responsive.
-        paths = await asyncio.to_thread(_get_file_index, base=base, mounts=mounts, blocked=tuple(ignored_abs))
+        paths = await asyncio.to_thread(_get_file_index, base=base, mounts=mounts, blocked=blocked)
     except Exception as e:
         return {"items": [], "error": str(e)}
 
@@ -4136,11 +4284,43 @@ async def files_read(
 
     Uses the same implementation as AbstractCore's `read_file` tool (including `.abstractignore`).
     """
-    # SECURITY: server filesystem access is operator-controlled. Thin clients must not be able
-    # to expand the server scope at runtime via `workspace_*` request params.
-    base = _workspace_root()
-    mounts = _workspace_mounts()
-    resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
+    base_default = _workspace_root()
+    mounts_default = _workspace_mounts()
+    base = base_default
+    mounts = mounts_default
+    blocked: tuple[Path, ...] = ()
+    mode = "workspace_only"
+
+    if _client_workspace_scope_overrides_enabled():
+        has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
+        if has_scope:
+            base, mounts, blocked, mode = _effective_workspace_scope(
+                default_base=base_default,
+                workspace_root=workspace_root,
+                workspace_access_mode=workspace_access_mode,
+                workspace_allowed_paths=workspace_allowed_paths,
+                workspace_ignored_paths=workspace_ignored_paths,
+            )
+
+    if mode == "all_except_ignored":
+        p_raw = str(path or "").strip()
+        if p_raw.startswith("@"):
+            p_raw = p_raw[1:].lstrip()
+        p2 = Path(p_raw).expanduser()
+        if p2.is_absolute():
+            try:
+                resolved = p2.resolve()
+            except Exception:
+                raise HTTPException(status_code=400, detail="invalid absolute path")
+            virt = str(resolved)
+            root = resolved.parent
+        else:
+            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts={}, raw_path=p_raw)
+    else:
+        resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
+
+    if blocked and _is_under_allowed_roots(resolved, list(blocked)):
+        raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
 
     try:
         from abstractcore.tools.common_tools import read_file
@@ -4174,11 +4354,43 @@ async def files_skim(
 
     Uses the same implementation as AbstractCore's `skim_files` tool (including `.abstractignore`).
     """
-    # SECURITY: server filesystem access is operator-controlled. Thin clients must not be able
-    # to expand the server scope at runtime via `workspace_*` request params.
-    base = _workspace_root()
-    mounts = _workspace_mounts()
-    resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
+    base_default = _workspace_root()
+    mounts_default = _workspace_mounts()
+    base = base_default
+    mounts = mounts_default
+    blocked: tuple[Path, ...] = ()
+    mode = "workspace_only"
+
+    if _client_workspace_scope_overrides_enabled():
+        has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
+        if has_scope:
+            base, mounts, blocked, mode = _effective_workspace_scope(
+                default_base=base_default,
+                workspace_root=workspace_root,
+                workspace_access_mode=workspace_access_mode,
+                workspace_allowed_paths=workspace_allowed_paths,
+                workspace_ignored_paths=workspace_ignored_paths,
+            )
+
+    if mode == "all_except_ignored":
+        p_raw = str(path or "").strip()
+        if p_raw.startswith("@"):
+            p_raw = p_raw[1:].lstrip()
+        p2 = Path(p_raw).expanduser()
+        if p2.is_absolute():
+            try:
+                resolved = p2.resolve()
+            except Exception:
+                raise HTTPException(status_code=400, detail="invalid absolute path")
+            virt = str(resolved)
+            root = resolved.parent
+        else:
+            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts={}, raw_path=p_raw)
+    else:
+        resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
+
+    if blocked and _is_under_allowed_roots(resolved, list(blocked)):
+        raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
 
     try:
         from abstractcore.tools.common_tools import skim_files
@@ -4219,12 +4431,49 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
     if not sid:
         raise HTTPException(status_code=400, detail="session_id is required")
 
-    # SECURITY: server filesystem access is operator-controlled. Thin clients must not be able
-    # to expand the server scope at runtime via `workspace_*` request fields.
-    base = _workspace_root()
-    mounts = _workspace_mounts()
+    base_default = _workspace_root()
+    mounts_default = _workspace_mounts()
+    base = base_default
+    mounts = mounts_default
+    blocked: tuple[Path, ...] = ()
+    mode = "workspace_only"
 
-    resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=str(req.path or ""))
+    if _client_workspace_scope_overrides_enabled():
+        has_scope = bool(
+            str(req.workspace_root or "").strip()
+            or str(req.workspace_access_mode or "").strip()
+            or str(req.workspace_allowed_paths or "").strip()
+            or str(req.workspace_ignored_paths or "").strip()
+        )
+        if has_scope:
+            base, mounts, blocked, mode = _effective_workspace_scope(
+                default_base=base_default,
+                workspace_root=req.workspace_root,
+                workspace_access_mode=req.workspace_access_mode,
+                workspace_allowed_paths=req.workspace_allowed_paths,
+                workspace_ignored_paths=req.workspace_ignored_paths,
+            )
+
+    raw_path = str(req.path or "")
+    if mode == "all_except_ignored":
+        p_raw = raw_path.strip()
+        if p_raw.startswith("@"):
+            p_raw = p_raw[1:].lstrip()
+        p2 = Path(p_raw).expanduser()
+        if p2.is_absolute():
+            try:
+                resolved = p2.resolve()
+            except Exception:
+                raise HTTPException(status_code=400, detail="invalid absolute path")
+            virt = str(resolved)
+            root = resolved.parent
+        else:
+            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts={}, raw_path=p_raw)
+    else:
+        resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=raw_path)
+
+    if blocked and _is_under_allowed_roots(resolved, list(blocked)):
+        raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
 
     try:
         from abstractcore.tools.abstractignore import AbstractIgnore
