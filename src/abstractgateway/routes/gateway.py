@@ -4092,6 +4092,456 @@ async def discovery_model_capabilities(model_name: str = Query(..., description=
         return {"model": name, "capabilities": {}, "error": str(e)}
 
 
+# ---------------------------------------------------------------------------
+# Prompt cache control plane (gateway-local, provider-dependent)
+# ---------------------------------------------------------------------------
+
+class _GatewayPromptCacheTarget(BaseModel):
+    provider: str = Field(..., description="AbstractCore provider name (e.g. mlx, huggingface, openai)")
+    model: str = Field(..., description="Model id/name")
+
+
+class _GatewayPromptCacheSetRequest(_GatewayPromptCacheTarget):
+    key: str = Field(..., description="Prompt cache key to create/select")
+    make_default: bool = Field(default=True, description="Set this key as default on the provider instance")
+    ttl_s: Optional[float] = Field(default=None, description="Optional in-process TTL (seconds) for this key")
+
+
+class _GatewayPromptCacheUpdateRequest(_GatewayPromptCacheTarget):
+    key: str = Field(..., description="Prompt cache key to update/append into")
+    prompt: Optional[str] = Field(default=None, description="Raw prompt text (treated as a user message for chat templates)")
+    messages: Optional[list[Dict[str, Any]]] = Field(default=None, description="Optional message list to append (provider-dependent)")
+    system_prompt: Optional[str] = Field(default=None, description="Optional system prompt to append")
+    tools: Optional[list[Dict[str, Any]]] = Field(default=None, description="Optional tool definitions to append")
+    add_generation_prompt: bool = Field(default=False, description="If true, append an assistant preamble (backend-dependent)")
+    ttl_s: Optional[float] = Field(default=None, description="Optional TTL update (seconds)")
+
+
+class _GatewayPromptCacheForkRequest(_GatewayPromptCacheTarget):
+    from_key: str = Field(..., description="Source prompt cache key")
+    to_key: str = Field(..., description="Destination prompt cache key")
+    make_default: bool = Field(default=False, description="Set the new key as default on the provider instance")
+    ttl_s: Optional[float] = Field(default=None, description="Optional TTL for the new key (seconds)")
+
+
+class _GatewayPromptCacheClearRequest(_GatewayPromptCacheTarget):
+    key: Optional[str] = Field(default=None, description="If omitted, clears all in-process caches for this provider/model worker")
+
+
+class _GatewayPromptCachePrepareModulesRequest(_GatewayPromptCacheTarget):
+    namespace: str = Field(description="Namespace used as a stable prefix for derived keys (e.g. tenant_id:model_id)")
+    modules: list[Dict[str, Any]] = Field(description="Ordered list of cache modules (see abstractcore.providers.base.PromptCacheModule)")
+    make_default: bool = Field(default=False, description="Set the final derived key as default")
+    ttl_s: Optional[float] = Field(default=None, description="Optional TTL for derived keys (seconds)")
+    version: int = Field(default=1, description="Hash version for key derivation (bump on formatting changes)")
+
+
+class _GatewayPromptCacheSaveRequest(_GatewayPromptCacheTarget):
+    name: str = Field(..., description="Cache filename label (no extension; stored under the gateway data dir)")
+    key: str = Field(..., description="In-memory prompt cache key to save")
+    q8: bool = Field(default=False, description="If true and supported, quantize cache before saving (smaller, lossy)")
+
+
+class _GatewayPromptCacheLoadRequest(_GatewayPromptCacheTarget):
+    name: str = Field(..., description="Cache filename label to load (no extension; stored under the gateway data dir)")
+    key: Optional[str] = Field(default=None, description="Destination in-memory key (defaults to a new generated key)")
+    make_default: bool = Field(default=False, description="Set the loaded key as the provider default key")
+    clear_existing: bool = Field(default=False, description="If true, clear all in-process caches before loading")
+
+
+def _gateway_runtime_llm_client() -> tuple[Optional[Any], Optional[str]]:
+    svc = get_gateway_service()
+    host = getattr(svc, "host", None)
+    runtime = getattr(host, "runtime", None)
+    if runtime is None:
+        return None, "Gateway host does not expose a shared runtime (prompt caching is unavailable in this mode)."
+    llm_client = getattr(runtime, "_abstractcore_llm_client", None)
+    if llm_client is None:
+        return None, "Gateway runtime has no in-process AbstractCore LLM client (no local KV cache state to manage)."
+    return llm_client, None
+
+
+def _gateway_prompt_cache_dir(*, provider: str, model: str) -> Path:
+    svc = get_gateway_service()
+    base = Path(getattr(getattr(svc, "stores", None), "base_dir", Path("."))).expanduser().resolve()
+    prov = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(provider or "").strip().lower()) or "provider"
+    model_label = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(model or "").strip().replace("/", "__")) or "model"
+    # Keep path segments bounded to avoid filesystem issues.
+    prov = prov[:80]
+    model_label = model_label[:120]
+    out = base / "prompt_cache" / prov / model_label
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _safe_cache_label(label: str) -> str:
+    raw = str(label or "").strip()
+    if not raw:
+        raise ValueError("name is required")
+    # Disallow path traversal and normalize to a conservative filename.
+    raw = raw.replace("\\", "/").split("/", 1)[0]
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", raw).strip("._") or "cache"
+    return safe[:120]
+
+
+def _is_mlx_provider(obj: Any) -> bool:
+    try:
+        prov = str(getattr(obj, "provider", "") or "").strip().lower()
+        if prov == "mlx":
+            return True
+    except Exception:
+        pass
+    return obj is not None and obj.__class__.__name__.lower().startswith("mlx")
+
+
+@router.get("/prompt_cache/stats")
+async def prompt_cache_stats(
+    provider: str = Query(..., description="AbstractCore provider name"),
+    model: str = Query(..., description="Model id/name"),
+) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        return {"supported": False, "error": err}
+
+    try:
+        getter = getattr(llm_client, "get_provider_instance", None)
+        if not callable(getter):
+            return {"supported": False, "error": "Runtime LLM client does not expose provider instances"}
+        prov = getter(provider=provider, model=model)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    if prov is None:
+        return {"supported": False, "error": "Provider instance not available"}
+
+    try:
+        supported = bool(getattr(prov, "supports_prompt_cache", lambda: False)())
+    except Exception:
+        supported = False
+    if not supported:
+        return {"supported": False, "error": "Provider does not support prompt cache control in this deployment"}
+
+    try:
+        stats = getattr(prov, "get_prompt_cache_stats")() if hasattr(prov, "get_prompt_cache_stats") else {}
+        return {"supported": True, "stats": stats}
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+
+@router.post("/prompt_cache/set")
+async def prompt_cache_set(req: _GatewayPromptCacheSetRequest) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        return {"supported": False, "error": err}
+    try:
+        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
+        return {"supported": False, "error": "Provider does not support prompt cache control"}
+    if not hasattr(prov, "prompt_cache_set"):
+        return {"supported": False, "error": "Provider does not expose prompt cache API"}
+    try:
+        ok = prov.prompt_cache_set(req.key, make_default=bool(req.make_default), ttl_s=req.ttl_s)
+        return {"supported": True, "ok": bool(ok)}
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+
+@router.post("/prompt_cache/update")
+async def prompt_cache_update(req: _GatewayPromptCacheUpdateRequest) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        return {"supported": False, "error": err}
+    try:
+        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
+        return {"supported": False, "error": "Provider does not support prompt cache control"}
+    if not hasattr(prov, "prompt_cache_update"):
+        return {"supported": False, "error": "Provider does not expose prompt cache API"}
+    try:
+        ok = prov.prompt_cache_update(
+            req.key,
+            prompt=str(req.prompt or ""),
+            messages=req.messages,
+            system_prompt=req.system_prompt,
+            tools=req.tools,
+            add_generation_prompt=bool(req.add_generation_prompt),
+            ttl_s=req.ttl_s,
+        )
+        return {"supported": True, "ok": bool(ok)}
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+
+@router.post("/prompt_cache/fork")
+async def prompt_cache_fork(req: _GatewayPromptCacheForkRequest) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        return {"supported": False, "error": err}
+    try:
+        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
+        return {"supported": False, "error": "Provider does not support prompt cache control"}
+    if not hasattr(prov, "prompt_cache_fork"):
+        return {"supported": False, "error": "Provider does not expose prompt cache API"}
+    try:
+        ok = prov.prompt_cache_fork(req.from_key, req.to_key, make_default=bool(req.make_default), ttl_s=req.ttl_s)
+        return {"supported": True, "ok": bool(ok)}
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+
+@router.post("/prompt_cache/clear")
+async def prompt_cache_clear(req: _GatewayPromptCacheClearRequest) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        return {"supported": False, "error": err}
+    try:
+        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
+        return {"supported": False, "error": "Provider does not support prompt cache control"}
+    if not hasattr(prov, "prompt_cache_clear"):
+        return {"supported": False, "error": "Provider does not expose prompt cache API"}
+    try:
+        ok = prov.prompt_cache_clear(req.key)
+        return {"supported": True, "ok": bool(ok)}
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+
+@router.post("/prompt_cache/prepare_modules")
+async def prompt_cache_prepare_modules(req: _GatewayPromptCachePrepareModulesRequest) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        return {"supported": False, "error": err}
+    try:
+        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
+        return {"supported": False, "error": "Provider does not support prompt cache control"}
+    if not hasattr(prov, "prompt_cache_prepare_modules"):
+        return {"supported": False, "error": "Provider does not expose prompt cache module API"}
+    try:
+        result = prov.prompt_cache_prepare_modules(
+            namespace=req.namespace,
+            modules=req.modules,
+            make_default=bool(req.make_default),
+            ttl_s=req.ttl_s,
+            version=int(req.version),
+        )
+        return result if isinstance(result, dict) else {"supported": True, "result": result}
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+
+@router.get("/prompt_cache/saved")
+async def prompt_cache_saved(
+    provider: str = Query(..., description="AbstractCore provider name"),
+    model: str = Query(..., description="Model id/name"),
+) -> Dict[str, Any]:
+    """List saved prompt/KV caches stored on the gateway host (provider-dependent)."""
+    try:
+        base = _gateway_prompt_cache_dir(provider=provider, model=model)
+    except Exception as e:
+        return {"items": [], "error": str(e)}
+
+    items: list[Dict[str, Any]] = []
+    try:
+        for meta_path in sorted(base.glob("*.meta.json")):
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+            name = meta_path.name.replace(".meta.json", "")
+            items.append(
+                {
+                    "name": name,
+                    "provider": meta.get("provider") or provider,
+                    "model": meta.get("model") or model,
+                    "saved_at": meta.get("saved_at"),
+                    "token_count": meta.get("token_count"),
+                    "key": meta.get("key"),
+                    "meta": meta,
+                }
+            )
+    except Exception as e:
+        return {"items": [], "error": str(e)}
+
+    items.sort(key=lambda d: str(d.get("saved_at") or d.get("name") or ""), reverse=True)
+    return {"items": items}
+
+
+@router.post("/prompt_cache/save")
+async def prompt_cache_save(req: _GatewayPromptCacheSaveRequest) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        return {"supported": False, "error": err}
+    try:
+        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
+        return {"supported": False, "error": "Provider does not support prompt cache control"}
+    if not _is_mlx_provider(prov):
+        return {"supported": False, "error": "Cache save is only supported for MLX KV caches in this release"}
+
+    try:
+        from mlx_lm.models.cache import save_prompt_cache
+    except Exception:
+        return {"supported": False, "error": "MLX cache save requires mlx-lm (install: `pip install abstractcore[mlx]`)"}  # noqa: E501
+
+    try:
+        name = _safe_cache_label(req.name)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    cache_dir = _gateway_prompt_cache_dir(provider=req.provider, model=req.model)
+    filename = cache_dir / f"{name}.safetensors"
+    meta_path = cache_dir / f"{name}.meta.json"
+
+    key = str(req.key or "").strip()
+    if not key:
+        return {"supported": False, "error": "key is required"}
+
+    try:
+        store = getattr(prov, "_prompt_cache_store", None)
+        cache_obj = store.get(key) if store is not None and hasattr(store, "get") else None
+    except Exception:
+        cache_obj = None
+
+    if cache_obj is None:
+        return {"supported": False, "error": f"No in-memory cache found for key '{key}'"}
+
+    meta: Dict[str, Any] = {
+        "schema": "abstractgateway-prompt-cache/v1",
+        "provider": str(req.provider),
+        "model": str(getattr(prov, "model", req.model)),
+        "saved_at": datetime.datetime.now().astimezone().isoformat(),
+        "key": key,
+    }
+    try:
+        tok_fn = getattr(prov, "_prompt_cache_backend_token_count", None)
+        if callable(tok_fn):
+            tok = tok_fn(cache_obj)
+            if isinstance(tok, int) and tok >= 0:
+                meta["token_count"] = tok
+    except Exception:
+        pass
+
+    cache_to_save = cache_obj
+    if bool(req.q8):
+        try:
+            cache_to_save = [layer.to_quantized(group_size=64, bits=8) for layer in cache_obj]
+            meta["quantized"] = "q8"
+        except Exception as e:
+            # Best-effort: fall back to full-precision save (do not lose the cache).
+            meta["quantized"] = "q8_failed"
+            meta["quantize_error"] = str(e)
+            cache_to_save = cache_obj
+
+    try:
+        save_prompt_cache(str(filename), cache_to_save, metadata=meta)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    return {"supported": True, "ok": True, "name": name, "path": str(filename), "meta": meta}
+
+
+@router.post("/prompt_cache/load")
+async def prompt_cache_load(req: _GatewayPromptCacheLoadRequest) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        return {"supported": False, "error": err}
+    try:
+        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
+        return {"supported": False, "error": "Provider does not support prompt cache control"}
+    if not _is_mlx_provider(prov):
+        return {"supported": False, "error": "Cache load is only supported for MLX KV caches in this release"}
+
+    try:
+        from mlx_lm.models.cache import load_prompt_cache
+    except Exception:
+        return {"supported": False, "error": "MLX cache load requires mlx-lm (install: `pip install abstractcore[mlx]`)"}  # noqa: E501
+
+    try:
+        name = _safe_cache_label(req.name)
+    except Exception as e:
+        return {"supported": False, "error": str(e)}
+
+    cache_dir = _gateway_prompt_cache_dir(provider=req.provider, model=req.model)
+    filename = cache_dir / f"{name}.safetensors"
+    if not filename.exists():
+        return {"supported": False, "error": f"Cache not found: {name}"}
+
+    try:
+        loaded_cache, meta = load_prompt_cache(str(filename), return_metadata=True)
+    except Exception as e:
+        return {"supported": False, "error": f"Failed to load cache: {e}"}
+
+    required_model = None
+    if isinstance(meta, dict):
+        required_model = meta.get("model") or meta.get("model_id")
+    current_model = str(getattr(prov, "model", req.model))
+    if isinstance(required_model, str) and required_model.strip() and required_model.strip() != current_model:
+        return {
+            "supported": False,
+            "error": "Prompt cache model mismatch",
+            "required_model": required_model.strip(),
+            "current_model": current_model,
+        }
+
+    if bool(req.clear_existing):
+        try:
+            prov.prompt_cache_clear(None)
+        except Exception:
+            pass
+
+    key = str(req.key or "").strip() or f"loaded:{uuid.uuid4().hex[:12]}"
+    try:
+        # Best-effort: allocate a key (ensures default_key wiring is consistent).
+        prov.prompt_cache_set(key, make_default=bool(req.make_default))
+    except Exception:
+        pass
+
+    try:
+        store = getattr(prov, "_prompt_cache_store", None)
+        if store is None or not hasattr(store, "set"):
+            return {"supported": False, "error": "Provider does not expose an in-process cache store"}
+        store.set(
+            key,
+            loaded_cache,
+            meta={"backend": "mlx", "loaded_from": str(filename), **(meta if isinstance(meta, dict) else {})},
+        )
+        if bool(req.make_default):
+            try:
+                setattr(prov, "_default_prompt_cache_key", key)
+            except Exception:
+                pass
+    except Exception as e:
+        return {"supported": False, "error": f"Failed to install cache into provider: {e}"}
+
+    return {"supported": True, "ok": True, "key": key, "meta": meta if isinstance(meta, dict) else {}}
+
+
 @router.get("/host/metrics/gpu")
 async def host_gpu_metrics() -> Dict[str, Any]:
     return host_metrics.get_host_gpu_metrics()

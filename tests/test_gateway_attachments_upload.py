@@ -77,7 +77,9 @@ def test_gateway_attachments_upload_creates_session_scoped_artifact(tmp_path: Pa
     from abstractgateway.app import app
 
     headers = {"Authorization": f"Bearer {token}"}
-    payload = b"hello\nworld\n"
+    # Regression: security middleware must not apply its small default write-body cap (256KB)
+    # to multipart uploads. Use a payload >256KB to catch 413 regressions.
+    payload = b"a" * 300_000
     with TestClient(app) as client:
         r = client.post(
             "/api/gateway/attachments/upload",
@@ -112,4 +114,4 @@ def test_gateway_attachments_upload_creates_session_scoped_artifact(tmp_path: Pa
 
         r3 = client.get(f"/api/gateway/runs/session_memory_s1/artifacts/{artifact_id}/content", headers=headers)
         assert r3.status_code == 200, r3.text
-        assert b"hello" in r3.content
+        assert r3.content == payload

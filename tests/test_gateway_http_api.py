@@ -258,7 +258,8 @@ def test_gateway_start_wait_resume_completes(tmp_path: Path, monkeypatch: pytest
 def test_gateway_ledger_batch_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
-    bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)    token = "t"
+    bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
+    token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
@@ -294,7 +295,9 @@ def test_gateway_ledger_batch_endpoint(tmp_path: Path, monkeypatch: pytest.Monke
             return isinstance(w, dict) and bool(w.get("wait_key"))
 
         _wait_until(lambda: _has_wait(run_id_1), timeout_s=10.0, poll_s=0.1)
-        _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)        batch = client.post(
+        _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)
+
+        batch = client.post(
             "/api/gateway/runs/ledger/batch",
             json={
                 "limit": 200,

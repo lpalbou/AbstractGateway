@@ -119,7 +119,23 @@ def test_runner_process_keeps_ticking_while_api_restarts(tmp_path: Path, monkeyp
     )
     try:
         lock_path = runtime_dir / "gateway_runner.lock"
-        _wait_until(lambda: lock_path.exists(), timeout_s=5.0, poll_s=0.05)
+        # Runner startup can involve VisualFlow compilation + imports; allow a wider window so this
+        # integration test is not flaky on slower machines.
+        start = time.time()
+        while time.time() - start < 15.0:
+            if lock_path.exists():
+                break
+            rc = proc.poll()
+            if rc is not None:
+                out = ""
+                try:
+                    out = proc.stdout.read() if proc.stdout is not None else ""
+                except Exception:
+                    out = ""
+                raise AssertionError(f"runner exited before acquiring lock (rc={rc})\n{out}")
+            time.sleep(0.05)
+        else:
+            raise AssertionError("timeout waiting for runner lock file")
 
         # API mode: runner disabled for this process (simulates API-only container).
         monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")

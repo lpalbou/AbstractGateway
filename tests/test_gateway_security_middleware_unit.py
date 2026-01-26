@@ -22,6 +22,18 @@ def _make_app(*, policy: GatewayAuthPolicy) -> FastAPI:
     async def post_commands(payload: dict):
         return {"ok": True, "payload": payload}
 
+    @app.post("/api/gateway/attachments/upload")
+    async def upload_attachment(request: Request):
+        # The security middleware enforces body limits based on content-length; this endpoint just
+        # confirms the request reached the app.
+        body = await request.body()
+        return {"ok": True, "size": len(body)}
+
+    @app.post("/api/gateway/bundles/upload")
+    async def upload_bundle(request: Request):
+        body = await request.body()
+        return {"ok": True, "size": len(body)}
+
     @app.get("/api/gateway/slow")
     async def slow():
         # Used by concurrency limit tests: keeps the request open while still yielding the event loop.
@@ -134,4 +146,81 @@ def test_concurrency_limit_returns_429_for_overload() -> None:
 
     asyncio.run(_run())
 
+
+def test_write_body_limit_rejects_large_payloads() -> None:
+    app = _make_app(
+        policy=GatewayAuthPolicy(
+            enabled=True,
+            tokens=("t",),
+            max_body_bytes=2_000,
+            max_upload_body_bytes=50_000,
+        )
+    )
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer t"}
+        big = {"x": "a" * 10_000}
+        r = client.post("/api/gateway/commands", json=big, headers=headers)
+        assert r.status_code == 413
+
+
+def test_upload_uses_upload_body_limit_for_attachments() -> None:
+    app = _make_app(
+        policy=GatewayAuthPolicy(
+            enabled=True,
+            tokens=("t",),
+            max_body_bytes=2_000,
+            max_upload_body_bytes=100_000,
+        )
+    )
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer t"}
+        payload = b"x" * 20_000
+        r = client.post(
+            "/api/gateway/attachments/upload",
+            files={"file": ("notes.txt", payload, "text/plain")},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
+
+
+def test_upload_uses_upload_body_limit_for_bundles() -> None:
+    app = _make_app(
+        policy=GatewayAuthPolicy(
+            enabled=True,
+            tokens=("t",),
+            max_body_bytes=2_000,
+            max_upload_body_bytes=100_000,
+        )
+    )
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer t"}
+        payload = b"x" * 20_000
+        r = client.post(
+            "/api/gateway/bundles/upload",
+            files={"file": ("bundle.flow", payload, "application/octet-stream")},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
+
+
+def test_upload_body_limit_rejects_when_exceeded() -> None:
+    app = _make_app(
+        policy=GatewayAuthPolicy(
+            enabled=True,
+            tokens=("t",),
+            max_body_bytes=2_000,
+            max_upload_body_bytes=10_000,
+        )
+    )
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer t"}
+        payload = b"x" * 20_000
+        r = client.post(
+            "/api/gateway/attachments/upload",
+            files={"file": ("notes.txt", payload, "text/plain")},
+            headers=headers,
+        )
+        assert r.status_code == 413
 

@@ -91,6 +91,12 @@ class GatewayAuthPolicy:
 
     # Abuse resistance
     max_body_bytes: int = 256_000
+    # Upload endpoints can legitimately exceed `max_body_bytes` (multipart). 0 means "auto"
+    # (derived from the explicit endpoint caps).
+    max_upload_body_bytes: int = 0
+    # Endpoint caps (mirrors /attachments/upload and /bundles/upload defaults).
+    max_attachment_bytes: int = 25 * 1024 * 1024
+    max_bundle_bytes: int = 75 * 1024 * 1024
     max_concurrency: int = 64
     max_sse_connections: int = 32
 
@@ -114,6 +120,9 @@ def load_gateway_auth_policy_from_env() -> GatewayAuthPolicy:
     - ABSTRACTGATEWAY_DEV_READ_NO_AUTH=1|0 (loopback only)
     - ABSTRACTGATEWAY_ALLOWED_ORIGINS (comma-separated; supports '*' suffix wildcard)
     - ABSTRACTGATEWAY_MAX_BODY_BYTES
+    - ABSTRACTGATEWAY_MAX_UPLOAD_BODY_BYTES
+    - ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES
+    - ABSTRACTGATEWAY_MAX_BUNDLE_BYTES
     - ABSTRACTGATEWAY_MAX_CONCURRENCY
     - ABSTRACTGATEWAY_MAX_SSE
     - ABSTRACTGATEWAY_LOCKOUT_AFTER
@@ -168,6 +177,17 @@ def load_gateway_auth_policy_from_env() -> GatewayAuthPolicy:
             return default
 
     max_body = _as_int("ABSTRACTGATEWAY_MAX_BODY_BYTES", "ABSTRACTFLOW_GATEWAY_MAX_BODY_BYTES", 256_000)
+    max_upload_body = _as_int("ABSTRACTGATEWAY_MAX_UPLOAD_BODY_BYTES", "ABSTRACTFLOW_GATEWAY_MAX_UPLOAD_BODY_BYTES", 0)
+    max_attach = _as_int(
+        "ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES",
+        "ABSTRACTFLOW_GATEWAY_MAX_ATTACHMENT_BYTES",
+        25 * 1024 * 1024,
+    )
+    max_bundle = _as_int(
+        "ABSTRACTGATEWAY_MAX_BUNDLE_BYTES",
+        "ABSTRACTFLOW_GATEWAY_MAX_BUNDLE_BYTES",
+        75 * 1024 * 1024,
+    )
     max_conc = _as_int("ABSTRACTGATEWAY_MAX_CONCURRENCY", "ABSTRACTFLOW_GATEWAY_MAX_CONCURRENCY", 64)
     max_sse = _as_int("ABSTRACTGATEWAY_MAX_SSE", "ABSTRACTFLOW_GATEWAY_MAX_SSE", 32)
     lockout_after = _as_int("ABSTRACTGATEWAY_LOCKOUT_AFTER", "ABSTRACTFLOW_GATEWAY_LOCKOUT_AFTER", 5)
@@ -183,6 +203,9 @@ def load_gateway_auth_policy_from_env() -> GatewayAuthPolicy:
         dev_allow_unauthenticated_reads_on_loopback=bool(dev_read_no_auth),
         allowed_origins=tuple(allowed_origins),
         max_body_bytes=max(0, int(max_body)),
+        max_upload_body_bytes=max(0, int(max_upload_body)),
+        max_attachment_bytes=max(1, int(max_attach)) if int(max_attach) > 0 else 25 * 1024 * 1024,
+        max_bundle_bytes=max(1, int(max_bundle)) if int(max_bundle) > 0 else 75 * 1024 * 1024,
         max_concurrency=max(1, int(max_conc)),
         max_sse_connections=max(1, int(max_sse)),
         lockout_after_failures=max(1, int(lockout_after)),
@@ -436,20 +459,43 @@ class GatewaySecurityMiddleware:
                 return
             self._lockouts.record_success(ip)
 
+        def _upload_kind(path: str) -> str:
+            p = str(path or "").rstrip("/")
+            if p.endswith("/attachments/upload"):
+                return "attachments"
+            if p.endswith("/bundles/upload"):
+                return "bundles"
+            return ""
+
         # Body size limits (for mutating endpoints).
         buffered_body: Optional[bytes] = None
-        if is_write and self._policy.max_body_bytes > 0:
+        max_body_bytes = int(self._policy.max_body_bytes)
+        upload_kind = _upload_kind(path)
+        if upload_kind:
+            # Multipart requests include boundary + part headers in `Content-Length`.
+            # This overhead is typically tiny (KBs), but we allow a conservative cushion so the
+            # security layer cannot reject a valid upload that is still within the endpoint's
+            # per-file cap (e.g. 25MB for /attachments/upload).
+            overhead = 2 * 1024 * 1024
+            endpoint_cap = (
+                int(self._policy.max_attachment_bytes) if upload_kind == "attachments" else int(self._policy.max_bundle_bytes)
+            )
+            max_body_bytes = max(0, int(endpoint_cap) + int(overhead))
+            if int(self._policy.max_upload_body_bytes) > 0:
+                max_body_bytes = min(max_body_bytes, int(self._policy.max_upload_body_bytes))
+
+        if is_write and max_body_bytes > 0:
             cl = self._header(scope, "content-length")
             if cl is not None:
                 try:
-                    if int(cl) > int(self._policy.max_body_bytes):
+                    if int(cl) > int(max_body_bytes):
                         await self._reject(send, status=413, detail="Payload Too Large")
                         return
                 except Exception:
                     pass
             else:
                 # No content-length: buffer up to limit+1, then replay.
-                limit = int(self._policy.max_body_bytes)
+                limit = int(max_body_bytes)
                 chunks: list[bytes] = []
                 size = 0
                 more = True
@@ -500,5 +546,3 @@ class GatewaySecurityMiddleware:
                 sem.release()
             except Exception:
                 pass
-
-
