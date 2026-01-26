@@ -4194,6 +4194,18 @@ def _is_mlx_provider(obj: Any) -> bool:
     return obj is not None and obj.__class__.__name__.lower().startswith("mlx")
 
 
+def _is_huggingface_gguf_provider(obj: Any) -> bool:
+    """Return True for the local HuggingFace GGUF/llama.cpp provider (in-process KV state)."""
+    try:
+        prov = str(getattr(obj, "provider", "") or "").strip().lower()
+        if prov != "huggingface":
+            return False
+        model_type = str(getattr(obj, "model_type", "") or "").strip().lower()
+        return model_type == "gguf"
+    except Exception:
+        return False
+
+
 @router.get("/prompt_cache/stats")
 async def prompt_cache_stats(
     provider: str = Query(..., description="AbstractCore provider name"),
@@ -4396,13 +4408,8 @@ async def prompt_cache_save(req: _GatewayPromptCacheSaveRequest) -> Dict[str, An
 
     if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
         return {"supported": False, "error": "Provider does not support prompt cache control"}
-    if not _is_mlx_provider(prov):
-        return {"supported": False, "error": "Cache save is only supported for MLX KV caches in this release"}
-
-    try:
-        from mlx_lm.models.cache import save_prompt_cache
-    except Exception:
-        return {"supported": False, "error": "MLX cache save requires mlx-lm (install: `pip install abstractcore[mlx]`)"}  # noqa: E501
+    if not (_is_mlx_provider(prov) or _is_huggingface_gguf_provider(prov)):
+        return {"supported": False, "error": "Cache save is only supported for in-process providers (mlx, huggingface/gguf) in this release"}  # noqa: E501
 
     try:
         name = _safe_cache_label(req.name)
@@ -4433,31 +4440,120 @@ async def prompt_cache_save(req: _GatewayPromptCacheSaveRequest) -> Dict[str, An
         "saved_at": datetime.datetime.now().astimezone().isoformat(),
         "key": key,
     }
-    try:
-        tok_fn = getattr(prov, "_prompt_cache_backend_token_count", None)
-        if callable(tok_fn):
-            tok = tok_fn(cache_obj)
-            if isinstance(tok, int) and tok >= 0:
-                meta["token_count"] = tok
-    except Exception:
-        pass
 
-    cache_to_save = cache_obj
-    if bool(req.q8):
+    if _is_mlx_provider(prov):
         try:
-            cache_to_save = [layer.to_quantized(group_size=64, bits=8) for layer in cache_obj]
-            meta["quantized"] = "q8"
-        except Exception as e:
-            # Best-effort: fall back to full-precision save (do not lose the cache).
-            meta["quantized"] = "q8_failed"
-            meta["quantize_error"] = str(e)
-            cache_to_save = cache_obj
+            from mlx_lm.models.cache import save_prompt_cache
+        except Exception:
+            return {"supported": False, "error": "MLX cache save requires mlx-lm (install: `pip install abstractcore[mlx]`)"}  # noqa: E501
 
-    try:
-        save_prompt_cache(str(filename), cache_to_save, metadata=meta)
-        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
+        try:
+            tok_fn = getattr(prov, "_prompt_cache_backend_token_count", None)
+            if callable(tok_fn):
+                tok = tok_fn(cache_obj)
+                if isinstance(tok, int) and tok >= 0:
+                    meta["token_count"] = tok
+        except Exception:
+            pass
+
+        cache_to_save = cache_obj
+        if bool(req.q8):
+            try:
+                cache_to_save = [layer.to_quantized(group_size=64, bits=8) for layer in cache_obj]
+                meta["quantized"] = "q8"
+            except Exception as e:
+                # Best-effort: fall back to full-precision save (do not lose the cache).
+                meta["quantized"] = "q8_failed"
+                meta["quantize_error"] = str(e)
+                cache_to_save = cache_obj
+
+        try:
+            save_prompt_cache(str(filename), cache_to_save, metadata=meta)
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            return {"supported": False, "error": str(e)}
+
+    else:
+        # HuggingFace GGUF/llama.cpp: serialize LlamaRAMCache state to safetensors (gateway-local).
+        try:
+            import numpy as np
+            from safetensors.numpy import save_file as _save_safetensors_numpy
+        except Exception as e:
+            return {"supported": False, "error": f"HF cache save requires numpy+safetensors: {e}"}
+
+        try:
+            from llama_cpp.llama_cache import LlamaRAMCache
+        except Exception as e:
+            return {"supported": False, "error": f"HF cache save requires llama-cpp-python: {e}"}
+
+        if not isinstance(cache_obj, LlamaRAMCache):
+            return {"supported": False, "error": "HF cache save expects llama_cpp.llama_cache.LlamaRAMCache"}
+
+        cache_state = getattr(cache_obj, "cache_state", None)
+        if not hasattr(cache_state, "items"):
+            return {"supported": False, "error": "HF cache object has no cache_state mapping to serialize"}
+
+        # Best-effort token count: max n_tokens across cached states.
+        token_count = None
+        try:
+            n_tokens_list = [int(getattr(st, "n_tokens", 0) or 0) for st in cache_state.values()]
+            token_count = max(n_tokens_list) if n_tokens_list else 0
+            if token_count >= 0:
+                meta["token_count"] = token_count
+        except Exception:
+            pass
+
+        cap = int(getattr(cache_obj, "capacity_bytes", 0) or 0)
+        if cap > 0:
+            meta["capacity_bytes"] = cap
+        if bool(req.q8):
+            meta["quantized"] = "unsupported"
+
+        tensors: Dict[str, Any] = {}
+        tensors["cache_capacity_bytes"] = np.asarray([cap], dtype=np.int64)
+        tensors["cache_num_entries"] = np.asarray([len(cache_state)], dtype=np.int64)
+
+        def _as_int(x: Any, *, default: int = 0) -> int:
+            try:
+                return int(x)
+            except Exception:
+                return default
+
+        for idx, (_k, st) in enumerate(cache_state.items()):
+            input_ids = getattr(st, "input_ids", None)
+            scores = getattr(st, "scores", None)
+            llama_state = getattr(st, "llama_state", None)
+            if input_ids is None or scores is None or llama_state is None:
+                continue
+
+            tensors[f"state.{idx}.input_ids"] = np.asarray(input_ids, dtype=np.int32)
+            tensors[f"state.{idx}.scores"] = np.asarray(scores, dtype=np.float32)
+            tensors[f"state.{idx}.n_tokens"] = np.asarray([_as_int(getattr(st, "n_tokens", 0))], dtype=np.int64)
+            tensors[f"state.{idx}.seed"] = np.asarray([_as_int(getattr(st, "seed", 0))], dtype=np.int64)
+
+            raw = bytes(llama_state)
+            tensors[f"state.{idx}.llama_state"] = np.frombuffer(raw, dtype=np.uint8)
+            tensors[f"state.{idx}.llama_state_size"] = np.asarray(
+                [_as_int(getattr(st, "llama_state_size", len(raw)), default=len(raw))],
+                dtype=np.int64,
+            )
+
+        try:
+            file_meta = {
+                "schema": str(meta.get("schema") or ""),
+                "provider": str(meta.get("provider") or ""),
+                "model": str(meta.get("model") or ""),
+                "saved_at": str(meta.get("saved_at") or ""),
+                "key": str(meta.get("key") or ""),
+            }
+            if isinstance(meta.get("token_count"), int):
+                file_meta["token_count"] = str(int(meta["token_count"]))
+            if isinstance(meta.get("capacity_bytes"), int):
+                file_meta["capacity_bytes"] = str(int(meta["capacity_bytes"]))
+            _save_safetensors_numpy(tensors, str(filename), metadata=file_meta)
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            return {"supported": False, "error": str(e)}
 
     return {"supported": True, "ok": True, "name": name, "path": str(filename), "meta": meta}
 
@@ -4474,13 +4570,8 @@ async def prompt_cache_load(req: _GatewayPromptCacheLoadRequest) -> Dict[str, An
 
     if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
         return {"supported": False, "error": "Provider does not support prompt cache control"}
-    if not _is_mlx_provider(prov):
-        return {"supported": False, "error": "Cache load is only supported for MLX KV caches in this release"}
-
-    try:
-        from mlx_lm.models.cache import load_prompt_cache
-    except Exception:
-        return {"supported": False, "error": "MLX cache load requires mlx-lm (install: `pip install abstractcore[mlx]`)"}  # noqa: E501
+    if not (_is_mlx_provider(prov) or _is_huggingface_gguf_provider(prov)):
+        return {"supported": False, "error": "Cache load is only supported for in-process providers (mlx, huggingface/gguf) in this release"}  # noqa: E501
 
     try:
         name = _safe_cache_label(req.name)
@@ -4489,13 +4580,102 @@ async def prompt_cache_load(req: _GatewayPromptCacheLoadRequest) -> Dict[str, An
 
     cache_dir = _gateway_prompt_cache_dir(provider=req.provider, model=req.model)
     filename = cache_dir / f"{name}.safetensors"
+    meta_path = cache_dir / f"{name}.meta.json"
     if not filename.exists():
         return {"supported": False, "error": f"Cache not found: {name}"}
 
-    try:
-        loaded_cache, meta = load_prompt_cache(str(filename), return_metadata=True)
-    except Exception as e:
-        return {"supported": False, "error": f"Failed to load cache: {e}"}
+    loaded_cache = None
+    meta: Dict[str, Any] = {}
+    if _is_mlx_provider(prov):
+        try:
+            from mlx_lm.models.cache import load_prompt_cache
+        except Exception:
+            return {"supported": False, "error": "MLX cache load requires mlx-lm (install: `pip install abstractcore[mlx]`)"}  # noqa: E501
+
+        try:
+            loaded_cache, meta = load_prompt_cache(str(filename), return_metadata=True)
+        except Exception as e:
+            return {"supported": False, "error": f"Failed to load cache: {e}"}
+    else:
+        # HuggingFace GGUF/llama.cpp: deserialize LlamaRAMCache state from safetensors.
+        try:
+            from safetensors import safe_open as _safe_open
+            import numpy as np
+        except Exception as e:
+            return {"supported": False, "error": f"HF cache load requires numpy+safetensors: {e}"}
+
+        try:
+            from llama_cpp.llama_cache import LlamaRAMCache
+            from llama_cpp.llama import LlamaState
+        except Exception as e:
+            return {"supported": False, "error": f"HF cache load requires llama-cpp-python: {e}"}
+
+        # Best-effort: read JSON meta sidecar if present (used for listing + model lock).
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+
+        tensors: Dict[str, Any] = {}
+        file_meta: Dict[str, str] = {}
+        try:
+            with _safe_open(str(filename), framework="numpy") as f:
+                file_meta = dict(f.metadata() or {})
+                for k in f.keys():
+                    tensors[k] = f.get_tensor(k)
+        except Exception as e:
+            return {"supported": False, "error": f"Failed to load cache: {e}"}
+
+        # Merge in-file metadata (prefer explicit meta.json when available).
+        if not meta and isinstance(file_meta, dict) and file_meta:
+            meta = dict(file_meta)
+
+        cap = 0
+        try:
+            cap_t = tensors.get("cache_capacity_bytes")
+            if cap_t is not None:
+                cap = int(np.asarray(cap_t).reshape(-1)[0])
+        except Exception:
+            cap = 0
+        if cap <= 0:
+            cap = 512 << 20
+
+        loaded_cache = LlamaRAMCache(capacity_bytes=int(cap))
+
+        # Reconstruct cache entries.
+        idxs = set()
+        for k in tensors.keys():
+            if k.startswith("state.") and ".input_ids" in k:
+                try:
+                    idxs.add(int(k.split(".")[1]))
+                except Exception:
+                    continue
+        for idx in sorted(idxs):
+            try:
+                input_ids = np.asarray(tensors[f"state.{idx}.input_ids"], dtype=np.int32)
+                scores = np.asarray(tensors[f"state.{idx}.scores"], dtype=np.float32)
+                n_tokens = int(np.asarray(tensors[f"state.{idx}.n_tokens"]).reshape(-1)[0])
+                seed = int(np.asarray(tensors[f"state.{idx}.seed"]).reshape(-1)[0])
+                llama_state_arr = np.asarray(tensors[f"state.{idx}.llama_state"], dtype=np.uint8)
+                llama_state_size = int(np.asarray(tensors[f"state.{idx}.llama_state_size"]).reshape(-1)[0])
+            except Exception:
+                continue
+
+            llama_state_bytes = llama_state_arr.tobytes()
+            if llama_state_size != len(llama_state_bytes):
+                llama_state_size = len(llama_state_bytes)
+
+            st = LlamaState(
+                input_ids=input_ids.astype(np.intc, copy=False),
+                scores=scores.astype(np.single, copy=False),
+                n_tokens=n_tokens,
+                llama_state=llama_state_bytes,
+                llama_state_size=llama_state_size,
+                seed=seed,
+            )
+            key_tokens = tuple(int(x) for x in st.input_ids[: st.n_tokens].tolist())
+            loaded_cache[key_tokens] = st
 
     required_model = None
     if isinstance(meta, dict):
@@ -4529,8 +4709,19 @@ async def prompt_cache_load(req: _GatewayPromptCacheLoadRequest) -> Dict[str, An
         store.set(
             key,
             loaded_cache,
-            meta={"backend": "mlx", "loaded_from": str(filename), **(meta if isinstance(meta, dict) else {})},
+            meta={
+                "backend": "mlx" if _is_mlx_provider(prov) else "llama_cpp",
+                "loaded_from": str(filename),
+                **(meta if isinstance(meta, dict) else {}),
+            },
         )
+        # Best-effort: activate this cache on the running llama instance (HF only).
+        if _is_huggingface_gguf_provider(prov):
+            try:
+                if getattr(prov, "llm", None) is not None and hasattr(prov.llm, "set_cache"):
+                    prov.llm.set_cache(loaded_cache)
+            except Exception:
+                pass
         if bool(req.make_default):
             try:
                 setattr(prov, "_default_prompt_cache_key", key)
