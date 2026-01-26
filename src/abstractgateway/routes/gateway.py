@@ -1694,10 +1694,18 @@ def _resolve_workspace_path(*, base: Path, mounts: Dict[str, Path], raw_path: st
 def _clamp_text(text: str, *, max_len: int) -> str:
     s = str(text or "")
     if max_len <= 0:
+        #[WARNING:TRUNCATION] explicit hard clamp (callers must treat as lossy)
+        logger.warning("clamp_text invoked with max_len<=0; dropping content")
         return ""
     if len(s) <= max_len:
         return s
-    return f"{s[: max(0, max_len - 1)]}…"
+    #[WARNING:TRUNCATION] bounded clamp for LLM-visible text
+    marker = "… (truncated)"
+    keep = max(0, int(max_len) - len(marker))
+    if keep <= 0:
+        # If the budget is too small to carry content, still carry the explicit marker.
+        return marker[: max(0, int(max_len))].rstrip()
+    return s[:keep].rstrip() + marker
 
 
 def _extract_digest_from_ledger(ledger: list[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2012,7 +2020,7 @@ def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]
         prompt="",
         messages=[{"role": "user", "content": _clamp_text(user, max_len=180_000)}],
         system_prompt=system,
-        params={"temperature": 0.2, "max_output_tokens": 700},
+        params={"temperature": 0.2},
     )
     text = str(res.get("content") or "").strip()
     return text
@@ -2055,7 +2063,7 @@ def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], m
         prompt="",
         messages=prompt_msgs,
         system_prompt=system,
-        params={"temperature": 0.2, "max_output_tokens": 900},
+        params={"temperature": 0.2},
     )
     text = str(res.get("content") or "").strip()
     return text
