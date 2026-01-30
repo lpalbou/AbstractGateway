@@ -39,6 +39,43 @@ from ..workflow_deprecations import WorkflowDeprecatedError
 router = APIRouter(prefix="/gateway", tags=["gateway"])
 logger = logging.getLogger(__name__)
 
+_CAP_REGISTRY = None
+_CAP_REGISTRY_LOCK = threading.Lock()
+
+
+class _GatewayCapabilityOwner:
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+
+
+def _get_gateway_capability_registry():
+    """Return a process-wide capability registry (lazy, best-effort).
+
+    This keeps gateway deployments dependency-light while allowing operators to
+    install optional modality packages (e.g. abstractvoice) in the same env.
+    """
+    global _CAP_REGISTRY
+    with _CAP_REGISTRY_LOCK:
+        if _CAP_REGISTRY is not None:
+            return _CAP_REGISTRY
+
+        try:
+            from abstractcore.capabilities.registry import CapabilityRegistry
+        except Exception as e:  # pragma: no cover
+            raise HTTPException(status_code=400, detail=f"AbstractCore capabilities are not available: {e}")
+
+        cfg: Dict[str, Any] = {}
+        lang = str(os.getenv("ABSTRACTGATEWAY_VOICE_LANGUAGE", "") or "").strip()
+        if lang:
+            cfg["voice_language"] = lang
+        allow_downloads_raw = str(os.getenv("ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS", "") or "").strip().lower()
+        if allow_downloads_raw:
+            cfg["voice_allow_downloads"] = allow_downloads_raw in {"1", "true", "yes", "y", "on"}
+
+        owner = _GatewayCapabilityOwner(cfg)
+        _CAP_REGISTRY = CapabilityRegistry(owner)
+        return _CAP_REGISTRY
+
 
 class StartRunRequest(BaseModel):
     bundle_id: Optional[str] = Field(
@@ -3802,6 +3839,230 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
     )
 
 
+class VoiceTTSRequest(BaseModel):
+    text: str = Field(..., description="Text to synthesize.")
+    voice: Optional[str] = Field(default=None, description="Optional voice selector (backend-specific).")
+    format: str = Field(default="wav", description="Audio container/codec (wav|mp3, backend-dependent).")
+    request_id: Optional[str] = Field(default=None, description="Optional idempotency key (UUID recommended).")
+
+
+class VoiceTTSResponse(BaseModel):
+    ok: bool = Field(default=True)
+    run_id: str
+    request_id: str
+    audio_artifact: Dict[str, Any]
+
+
+@router.post("/runs/{run_id}/voice/tts", response_model=VoiceTTSResponse)
+async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
+    """Deterministic TTS: store audio as artifact + emit a durable ledger event."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    text = str(getattr(req, "text", "") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    voice = getattr(req, "voice", None)
+    fmt = str(getattr(req, "format", "wav") or "wav").strip().lower()
+
+    try:
+        from abstractcore.capabilities.errors import CapabilityUnavailableError
+
+        reg = _get_gateway_capability_registry()
+        audio_ref = reg.voice.tts(
+            text,
+            voice=str(voice) if isinstance(voice, str) and voice.strip() else None,
+            format=fmt,
+            artifact_store=store,
+            run_id=str(getattr(run, "run_id", rid)),
+            tags={"request_id": request_id, "session_id": str(getattr(run, "session_id", "") or "")},
+            metadata={"request_id": request_id, "text": text, "voice": voice, "format": fmt},
+        )
+    except CapabilityUnavailableError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
+
+    if not isinstance(audio_ref, dict) or not isinstance(audio_ref.get("$artifact"), str) or not audio_ref.get("$artifact"):
+        raise HTTPException(status_code=500, detail="TTS backend returned an invalid artifact ref")
+
+    payload = {
+        "run_id": str(getattr(run, "run_id", rid)),
+        "request_id": request_id,
+        "text": text,
+        "voice": voice,
+        "format": fmt,
+        "audio_artifact": audio_ref,
+    }
+
+    try:
+        eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.voice.tts", "scope": "run", "run_id": str(getattr(run, "run_id", rid)), "payload": payload})
+        rec = StepRecord.start(run=run, node_id="gateway", effect=eff, idempotency_key=f"gateway:voice_tts:{request_id}")
+        rec.finish_success({"emitted": True, "name": "abstract.voice.tts", "payload": payload})
+        svc.host.ledger_store.append(rec)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to persist TTS event: {e}")
+
+    return VoiceTTSResponse(ok=True, run_id=str(getattr(run, "run_id", rid)), request_id=request_id, audio_artifact=audio_ref)
+
+
+class AudioTranscribeRequest(BaseModel):
+    audio_artifact: Dict[str, Any] = Field(..., description="Audio artifact ref dict like {'$artifact': '...'} (from /attachments/*).")
+    language: Optional[str] = Field(default=None, description="Optional language hint (backend-specific).")
+    request_id: Optional[str] = Field(default=None, description="Optional idempotency key (UUID recommended).")
+
+
+class AudioTranscribeResponse(BaseModel):
+    ok: bool = Field(default=True)
+    run_id: str
+    request_id: str
+    text: str
+    transcript_artifact: Dict[str, Any]
+
+
+@router.post("/runs/{run_id}/audio/transcribe", response_model=AudioTranscribeResponse)
+async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTranscribeResponse:
+    """Deterministic STT: transcribe an uploaded audio artifact into text + artifact + ledger event."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    audio_ref = getattr(req, "audio_artifact", None)
+    if not (isinstance(audio_ref, dict) and isinstance(audio_ref.get("$artifact"), str) and audio_ref.get("$artifact")):
+        raise HTTPException(status_code=400, detail="audio_artifact must be an artifact ref dict like {'$artifact': '...'}")
+
+    audio_artifact_id = str(audio_ref.get("$artifact") or "").strip()
+    try:
+        meta_in = store.get_metadata(audio_artifact_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load audio artifact metadata: {e}")
+    if meta_in is None:
+        raise HTTPException(status_code=404, detail="audio_artifact not found")
+
+    expected_run_id = str(getattr(run, "run_id", rid))
+    if meta_in.run_id and str(meta_in.run_id) != expected_run_id:
+        # Do not leak cross-run artifact existence to callers.
+        raise HTTPException(status_code=404, detail="audio_artifact not found")
+
+    content_type_in = str(getattr(meta_in, "content_type", "") or "")
+    if content_type_in and not content_type_in.startswith("audio/") and content_type_in != "application/octet-stream":
+        raise HTTPException(status_code=400, detail=f"audio_artifact must be audio/* (got '{content_type_in}')")
+
+    language = getattr(req, "language", None)
+
+    try:
+        from abstractcore.capabilities.errors import CapabilityUnavailableError
+
+        reg = _get_gateway_capability_registry()
+        text = reg.audio.transcribe(audio_ref, language=str(language) if isinstance(language, str) and language.strip() else None, artifact_store=store)
+        text = str(text or "")
+    except CapabilityUnavailableError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"STT failed: {e}")
+
+    # Store transcript as an artifact (durable; avoids inlining large strings in ledger-only mode).
+    store_fn = getattr(store, "store", None)
+    if not callable(store_fn):
+        raise HTTPException(status_code=500, detail="Artifact store does not support storing bytes")
+
+    transcript_bytes = str(text).encode("utf-8")
+    sha256 = hashlib.sha256(transcript_bytes).hexdigest()
+    tags: Dict[str, str] = {
+        "kind": "derived_text",
+        "modality": "audio",
+        "task": "stt",
+        "request_id": request_id,
+        "sha256": sha256,
+        "session_id": str(getattr(run, "session_id", "") or ""),
+        "source_audio_artifact": str(audio_ref.get("$artifact")),
+    }
+    try:
+        meta = store_fn(
+            transcript_bytes,
+            content_type="text/plain; charset=utf-8",
+            run_id=str(getattr(run, "run_id", rid)),
+            tags=tags,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store transcript artifact: {e}")
+
+    artifact_id = str(getattr(meta, "artifact_id", "") or "") if meta is not None else ""
+    if not artifact_id:
+        artifact_id = str(meta.get("artifact_id", "") or "") if isinstance(meta, dict) else ""
+    if not artifact_id:
+        raise HTTPException(status_code=500, detail="Artifact store did not return an artifact_id for transcript")
+
+    transcript_ref: Dict[str, Any] = {
+        "$artifact": artifact_id,
+        "content_type": "text/plain; charset=utf-8",
+        "filename": "transcript.txt",
+        "sha256": sha256,
+        "size_bytes": len(transcript_bytes),
+    }
+
+    payload = {
+        "run_id": str(getattr(run, "run_id", rid)),
+        "request_id": request_id,
+        "audio_artifact": audio_ref,
+        "language": language,
+        "text": text,
+        "transcript_artifact": transcript_ref,
+    }
+
+    try:
+        eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.audio.transcript", "scope": "run", "run_id": str(getattr(run, "run_id", rid)), "payload": payload})
+        rec = StepRecord.start(run=run, node_id="gateway", effect=eff, idempotency_key=f"gateway:audio_transcribe:{request_id}")
+        rec.finish_success({"emitted": True, "name": "abstract.audio.transcript", "payload": payload})
+        svc.host.ledger_store.append(rec)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to persist transcript event: {e}")
+
+    return AudioTranscribeResponse(ok=True, run_id=str(getattr(run, "run_id", rid)), request_id=request_id, text=text, transcript_artifact=transcript_ref)
+
+
 @router.post("/kg/query", response_model=KGQueryResponse)
 async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
     """Query the persisted AbstractMemory KG store (ground truth), scoped to run/session/global."""
@@ -4030,6 +4291,21 @@ async def discovery_tools() -> Dict[str, Any]:
             if isinstance(name, str) and name.strip():
                 items.append(dict(s))
     return {"items": items}
+
+
+@router.get("/discovery/capabilities")
+async def discovery_capabilities() -> Dict[str, Any]:
+    """List installed AbstractCore capability plugins (voice/audio/vision) for thin clients."""
+    try:
+        reg = _get_gateway_capability_registry()
+        status = reg.status()
+        if isinstance(status, dict):
+            return status
+        return {"capabilities": {}, "error": "Capability registry returned non-dict status"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"capabilities": {}, "error": str(e)}
 
 
 @router.get("/discovery/providers")

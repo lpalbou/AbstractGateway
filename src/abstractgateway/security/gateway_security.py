@@ -488,8 +488,13 @@ class GatewaySecurityMiddleware:
             cl = self._header(scope, "content-length")
             if cl is not None:
                 try:
-                    if int(cl) > int(max_body_bytes):
-                        await self._reject(send, status=413, detail="Payload Too Large")
+                    content_length = int(cl)
+                    if content_length > int(max_body_bytes):
+                        await self._reject(
+                            send,
+                            status=413,
+                            detail=f"Payload Too Large ({content_length} bytes > {int(max_body_bytes)} bytes)",
+                        )
                         return
                 except Exception:
                     pass
@@ -509,7 +514,7 @@ class GatewaySecurityMiddleware:
                         chunks.append(body)
                         size += len(body)
                         if size > limit:
-                            await self._reject(send, status=413, detail="Payload Too Large")
+                            await self._reject(send, status=413, detail=f"Payload Too Large ({size} bytes > {limit} bytes)")
                             return
                 buffered_body = b"".join(chunks)
 
