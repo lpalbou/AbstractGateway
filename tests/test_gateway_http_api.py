@@ -295,9 +295,7 @@ def test_gateway_ledger_batch_endpoint(tmp_path: Path, monkeypatch: pytest.Monke
             return isinstance(w, dict) and bool(w.get("wait_key"))
 
         _wait_until(lambda: _has_wait(run_id_1), timeout_s=10.0, poll_s=0.1)
-        _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)
-
-        batch = client.post(
+        _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)        batch = client.post(
             "/api/gateway/runs/ledger/batch",
             json={
                 "limit": 200,
@@ -407,7 +405,8 @@ def test_gateway_generate_run_summary_appends_to_ledger(tmp_path: Path, monkeypa
     from abstractgateway.app import app
     import abstractgateway.routes.gateway as gateway_routes
 
-    monkeypatch.setattr(gateway_routes, "_generate_summary_text", lambda **_kwargs: "success\n- summary generated")    headers = {"Authorization": f"Bearer {token}"}
+    monkeypatch.setattr(gateway_routes, "_generate_summary_text", lambda **_kwargs: "success\n- summary generated")
+    headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
         r = client.post(
             "/api/gateway/runs/start",

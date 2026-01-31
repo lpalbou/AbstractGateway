@@ -16,12 +16,14 @@ import json
 import logging
 import mimetypes
 import os
+import platform
 import re
+import sys
 import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -4366,6 +4368,1070 @@ async def discovery_model_capabilities(model_name: str = Query(..., description=
         return {"model": name, "capabilities": caps}
     except Exception as e:
         return {"model": name, "capabilities": {}, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Bug reports (structured Markdown, gateway-local)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_BUG_REPORT_TEMPLATE_MD = """# Bug: {{TITLE}}
+
+> Created: {{CREATED_AT}}
+> Bug ID: {{BUG_ID}}
+> Session ID: {{SESSION_ID}}
+> Session memory run ID: {{SESSION_MEMORY_RUN_ID}}
+> Relevant run ID: {{ACTIVE_RUN_ID}}
+> Workflow ID: {{WORKFLOW_ID}}
+
+## User Description
+{{USER_DESCRIPTION}}
+
+## Impact
+- Who is affected?
+- How bad is it? (data loss, wrong answer, UX friction, security risk, etc)
+
+## Steps to Reproduce
+1.
+2.
+
+## Expected Behavior
+
+## Actual Behavior
+
+## Reproducibility
+- [ ] always
+- [ ] often
+- [ ] sometimes
+- [ ] once
+- [ ] unable to reproduce yet
+
+## Severity
+- [ ] blocker
+- [ ] major
+- [ ] minor
+- [ ] polish
+
+## Workaround
+(if any)
+
+## Attachments (session-scoped)
+{{SESSION_ATTACHMENTS}}
+
+## How to Replay / Debug (durable)
+- List runs by session: `GET /api/gateway/runs?session_id={{SESSION_ID}}`
+- History bundle for the most relevant run (recommended):
+  - `GET /api/gateway/runs/{{REPLAY_RUN_ID}}/history_bundle?include_session=true&include_subruns=true`
+  - If `REPLAY_RUN_ID` is a placeholder, pick a run id from the session run list.
+- Session attachments are stored as artifacts under the session memory run:
+  - `GET /api/gateway/runs/{{SESSION_MEMORY_RUN_ID}}/artifacts`
+
+## Environment
+- Client: {{CLIENT}}
+- Client version: {{CLIENT_VERSION}}
+- Browser UA: {{USER_AGENT}}
+- Page URL: {{URL}}
+- Provider/model: {{PROVIDER}} / {{MODEL}}
+- Agent template: {{TEMPLATE}}
+- Gateway version: {{GATEWAY_VERSION}}
+- Server: {{SERVER_INFO}}
+- Python: {{PYTHON_VERSION}}
+
+## Extra Context (JSON)
+{{CONTEXT_JSON}}
+
+## Notes / Hypotheses
+
+## Backlog Translation (optional)
+- Proposed backlog title:
+- Proposed package(s):
+- Acceptance criteria:
+"""
+
+
+class BugReportCreateRequest(BaseModel):
+    session_id: str = Field(..., description="Session id to correlate durable context (runs + attachments).")
+    description: str = Field(..., description="Free-form user description of the bug.")
+
+    active_run_id: Optional[str] = Field(default=None, description="Best-effort active run id at report time.")
+    workflow_id: Optional[str] = Field(default=None, description="Best-effort workflow id.")
+
+    client: Optional[str] = Field(default=None, description="Client name (e.g. 'abstractcode-web').")
+    client_version: Optional[str] = Field(default=None, description="Client version/build label (best-effort).")
+    user_agent: Optional[str] = Field(default=None, description="Browser user agent (best-effort).")
+    url: Optional[str] = Field(default=None, description="Client page URL (best-effort).")
+
+    provider: Optional[str] = Field(default=None, description="Provider used for the run (best-effort).")
+    model: Optional[str] = Field(default=None, description="Model used for the run (best-effort).")
+    template: Optional[str] = Field(default=None, description="Agent/workflow template id (best-effort).")
+
+    context: Dict[str, Any] = Field(default_factory=dict, description="Optional additional client context (JSON).")
+
+
+class BugReportCreateResponse(BaseModel):
+    ok: bool = True
+    filename: str
+    path: str
+    template_path: str
+    created_at: str
+    session_id: str
+    session_memory_run_id: str
+    active_run_id: Optional[str] = None
+
+
+def _gateway_bug_reports_dir() -> Path:
+    svc = get_gateway_service()
+    base = Path(getattr(getattr(svc, "stores", None), "base_dir", Path("."))).expanduser().resolve()
+    out = base / "bug_reports"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _ensure_bug_report_template(*, bug_dir: Path) -> Path:
+    bug_dir.mkdir(parents=True, exist_ok=True)
+    path = bug_dir / "template.md"
+    if path.exists():
+        return path
+    try:
+        with open(path, "x", encoding="utf-8") as f:
+            f.write(_DEFAULT_BUG_REPORT_TEMPLATE_MD)
+    except FileExistsError:
+        pass
+    return path
+
+
+def _bug_report_title(description: str) -> str:
+    first = str(description or "").strip().splitlines()[0].strip()
+    title = first or "Bug report"
+    title = re.sub(r"\s+", " ", title).strip()
+    return title[:120] if len(title) > 120 else title
+
+
+def _bug_report_slug(description: str) -> str:
+    first = str(description or "").strip().splitlines()[0].strip().lower()
+    if first.startswith("/bug"):
+        first = first[len("/bug") :].strip()
+    slug = re.sub(r"[^a-z0-9]+", "-", first).strip("-")
+    slug = slug or "bug"
+    slug = slug[:80].strip("-") or "bug"
+    return slug
+
+
+def _indent_markdown_literal(text: str) -> str:
+    """Indent as a Markdown code block to avoid accidental rendering/injection."""
+    s = str(text or "")
+    if not s.strip():
+        return "    (empty)"
+    lines = s.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return "\n".join([f"    {ln}" for ln in lines])
+
+
+def _format_session_attachments_md(*, session_memory_run_id: str) -> str:
+    svc = get_gateway_service()
+    rid = str(session_memory_run_id or "").strip()
+    if not rid:
+        return "(none)"
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    list_fn = getattr(store, "list_by_run", None)
+    if not callable(list_fn):
+        return "(artifact store unavailable)"
+
+    try:
+        items = list_fn(rid)
+    except Exception as e:
+        return f"(failed to list artifacts: {e})"
+
+    attachments: list[Any] = []
+    for meta in items or []:
+        tags = getattr(meta, "tags", None)
+        if isinstance(tags, dict) and str(tags.get("kind") or "").strip() == "attachment":
+            attachments.append(meta)
+
+    if not attachments:
+        return "(none)"
+
+    def _key(m: Any) -> str:
+        return str(getattr(m, "created_at", "") or "")
+
+    attachments.sort(key=_key, reverse=True)
+
+    lines: list[str] = []
+    for meta in attachments[:50]:
+        tags = getattr(meta, "tags", None)
+        tags = tags if isinstance(tags, dict) else {}
+        handle = str(tags.get("path") or tags.get("source_path") or tags.get("filename") or "").strip()
+        target = str(tags.get("target") or "").strip()
+        sha = str(tags.get("sha256") or "").strip()
+        aid = str(getattr(meta, "artifact_id", "") or "").strip()
+        size = getattr(meta, "size_bytes", None)
+        size_s = f"{int(size)} B" if isinstance(size, int) and size >= 0 else ""
+
+        bits: list[str] = []
+        if target:
+            bits.append(f"target={target}")
+        if aid:
+            bits.append(f"id={aid}")
+        if sha:
+            bits.append(f"sha={sha[:8]}…")
+        if size_s:
+            bits.append(size_s)
+
+        label = handle or aid or "(attachment)"
+        suffix = f" ({', '.join(bits)})" if bits else ""
+        lines.append(f"- @{label}{suffix}")
+
+    if len(attachments) > 50:
+        lines.append(f"- …and {len(attachments) - 50} more")
+
+    return "\n".join(lines)
+
+
+@router.post("/bugs/report")
+async def bugs_report(req: BugReportCreateRequest) -> BugReportCreateResponse:
+    svc = get_gateway_service()
+
+    sid = str(req.session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    desc = str(req.description or "")
+    if not desc.strip():
+        raise HTTPException(status_code=400, detail="description is required")
+    if len(desc) > 20_000:
+        raise HTTPException(status_code=413, detail="description is too large (max 20,000 chars)")
+
+    bug_dir = _gateway_bug_reports_dir()
+    template_path = _ensure_bug_report_template(bug_dir=bug_dir)
+
+    try:
+        template_md = template_path.read_text(encoding="utf-8")
+    except Exception:
+        template_md = _DEFAULT_BUG_REPORT_TEMPLATE_MD
+
+    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    today = created_at[:10]
+    slug = _bug_report_slug(desc)
+    title = _bug_report_title(desc)
+    bug_id = str(uuid.uuid4())
+
+    # Ensure the session memory owner run exists so attachments can be listed deterministically.
+    try:
+        session_memory_run_id = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ensure session memory run: {e}")
+
+    attachments_md = _format_session_attachments_md(session_memory_run_id=session_memory_run_id)
+
+    active_run_id = str(req.active_run_id or "").strip() or ""
+    replay_run_id = active_run_id or "<RUN_ID>"
+    workflow_id = str(req.workflow_id or "").strip() or ""
+    client = str(req.client or "").strip() or ""
+    client_version = str(req.client_version or "").strip() or ""
+    user_agent = str(req.user_agent or "").strip() or ""
+    url = str(req.url or "").strip() or ""
+    provider = str(req.provider or "").strip() or ""
+    model = str(req.model or "").strip() or ""
+    template = str(req.template or "").strip() or ""
+
+    # Server context (safe subset; do not include secrets).
+    try:
+        server_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
+    except Exception:
+        server_info = platform.platform()
+    python_version = str(sys.version.split()[0] if sys.version else "").strip()
+    try:
+        from abstractgateway import __version__ as gateway_version
+    except Exception:
+        gateway_version = ""
+
+    ctx_obj: Dict[str, Any] = {
+        "active_run_id": active_run_id or None,
+        "workflow_id": workflow_id or None,
+        "provider": provider or None,
+        "model": model or None,
+        "template": template or None,
+        "client": client or None,
+        "client_version": client_version or None,
+        "url": url or None,
+        "user_agent": user_agent or None,
+        "session_memory_run_id": session_memory_run_id,
+        "created_at": created_at,
+        "bug_id": bug_id,
+        "client_context": req.context if isinstance(req.context, dict) else {},
+    }
+    # Keep the JSON payload bounded; include only what fits.
+    try:
+        ctx_json = json.dumps(ctx_obj, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception:
+        ctx_json = "{}"
+    if len(ctx_json) > 80_000:
+        ctx_json = ctx_json[:80_000] + "\n…(truncated)…\n"
+    context_block = f"```json\n{ctx_json}\n```"
+
+    replacements: Dict[str, str] = {
+        "TITLE": title,
+        "BUG_ID": bug_id,
+        "CREATED_AT": created_at,
+        "SESSION_ID": sid,
+        "SESSION_MEMORY_RUN_ID": session_memory_run_id,
+        "ACTIVE_RUN_ID": active_run_id,
+        "REPLAY_RUN_ID": replay_run_id,
+        "WORKFLOW_ID": workflow_id,
+        "USER_DESCRIPTION": _indent_markdown_literal(desc),
+        "SESSION_ATTACHMENTS": attachments_md,
+        "CLIENT": client,
+        "CLIENT_VERSION": client_version,
+        "USER_AGENT": user_agent,
+        "URL": url,
+        "PROVIDER": provider,
+        "MODEL": model,
+        "TEMPLATE": template,
+        "GATEWAY_VERSION": gateway_version,
+        "SERVER_INFO": server_info,
+        "PYTHON_VERSION": python_version,
+        "CONTEXT_JSON": context_block,
+    }
+
+    out_md = str(template_md)
+    for k, v in replacements.items():
+        out_md = out_md.replace(f"{{{{{k}}}}}", str(v))
+    if not out_md.endswith("\n"):
+        out_md += "\n"
+
+    base = f"{today}_{slug}"
+    filename = ""
+    path = None
+    for i in range(0, 1000):
+        name = f"{base}.md" if i == 0 else f"{base}_{i + 1}.md"
+        candidate = bug_dir / name
+        try:
+            with open(candidate, "x", encoding="utf-8") as f:
+                f.write(out_md)
+            filename = name
+            path = candidate
+            break
+        except FileExistsError:
+            continue
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to write bug report: {e}")
+
+    if not filename or path is None:
+        raise HTTPException(status_code=409, detail="Could not allocate a unique bug report filename")
+
+    # Do not leak absolute paths; return a stable path relative to the gateway data dir.
+    rel_path = f"bug_reports/{filename}"
+    return BugReportCreateResponse(
+        ok=True,
+        filename=filename,
+        path=rel_path,
+        template_path="bug_reports/template.md",
+        created_at=created_at,
+        session_id=sid,
+        session_memory_run_id=session_memory_run_id,
+        active_run_id=active_run_id or None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Feature requests (structured Markdown, gateway-local)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_FEATURE_REQUEST_TEMPLATE_MD = """# Feature: {{TITLE}}
+
+> Created: {{CREATED_AT}}
+> Feature ID: {{FEATURE_ID}}
+> Session ID: {{SESSION_ID}}
+> Session memory run ID: {{SESSION_MEMORY_RUN_ID}}
+> Relevant run ID: {{ACTIVE_RUN_ID}}
+> Workflow ID: {{WORKFLOW_ID}}
+
+## User Request
+{{USER_DESCRIPTION}}
+
+## Problem / Motivation
+- What is painful today?
+- Who needs this and why now?
+
+## Proposed Solution
+- What should the system do?
+- Any UX expectations?
+
+## Acceptance Criteria
+- [ ] (clear, testable outcomes)
+
+## Scope
+### Included
+- 
+
+### Excluded
+- 
+
+## Priority
+- [ ] P0 (blocker)
+- [ ] P1 (important)
+- [ ] P2 (nice-to-have)
+
+## Attachments (session-scoped)
+{{SESSION_ATTACHMENTS}}
+
+## Context / Replay (durable)
+- List runs by session: `GET /api/gateway/runs?session_id={{SESSION_ID}}`
+- History bundle for the most relevant run (recommended):
+  - `GET /api/gateway/runs/{{REPLAY_RUN_ID}}/history_bundle?include_session=true&include_subruns=true`
+  - If `REPLAY_RUN_ID` is a placeholder, pick a run id from the session run list.
+- Session attachments are stored as artifacts under the session memory run:
+  - `GET /api/gateway/runs/{{SESSION_MEMORY_RUN_ID}}/artifacts`
+
+## Environment
+- Client: {{CLIENT}}
+- Client version: {{CLIENT_VERSION}}
+- Browser UA: {{USER_AGENT}}
+- Page URL: {{URL}}
+- Provider/model: {{PROVIDER}} / {{MODEL}}
+- Agent template: {{TEMPLATE}}
+- Gateway version: {{GATEWAY_VERSION}}
+- Server: {{SERVER_INFO}}
+- Python: {{PYTHON_VERSION}}
+
+## Extra Context (JSON)
+{{CONTEXT_JSON}}
+
+## Notes / Backlog Translation (optional)
+- Proposed backlog title:
+- Proposed package(s):
+- Acceptance criteria:
+"""
+
+
+class FeatureReportCreateRequest(BaseModel):
+    session_id: str = Field(..., description="Session id to correlate durable context (runs + attachments).")
+    description: str = Field(..., description="Free-form user description of the requested feature.")
+
+    active_run_id: Optional[str] = Field(default=None, description="Best-effort relevant run id at report time.")
+    workflow_id: Optional[str] = Field(default=None, description="Best-effort workflow id.")
+
+    client: Optional[str] = Field(default=None, description="Client name (e.g. 'abstractcode-web').")
+    client_version: Optional[str] = Field(default=None, description="Client version/build label (best-effort).")
+    user_agent: Optional[str] = Field(default=None, description="Browser user agent (best-effort).")
+    url: Optional[str] = Field(default=None, description="Client page URL (best-effort).")
+
+    provider: Optional[str] = Field(default=None, description="Provider used for the run (best-effort).")
+    model: Optional[str] = Field(default=None, description="Model used for the run (best-effort).")
+    template: Optional[str] = Field(default=None, description="Agent/workflow template id (best-effort).")
+
+    context: Dict[str, Any] = Field(default_factory=dict, description="Optional additional client context (JSON).")
+
+
+class FeatureReportCreateResponse(BaseModel):
+    ok: bool = True
+    filename: str
+    path: str
+    template_path: str
+    created_at: str
+    session_id: str
+    session_memory_run_id: str
+    active_run_id: Optional[str] = None
+
+
+class ReportInboxItem(BaseModel):
+    report_type: str  # "bug" | "feature"
+    filename: str
+    relpath: str
+    title: str
+    created_at: str = ""
+    session_id: str = ""
+    workflow_id: str = ""
+    active_run_id: str = ""
+    decision_id: str = ""
+    triage_status: str = ""  # pending|approved|deferred|rejected
+
+
+class ReportInboxListResponse(BaseModel):
+    items: List[ReportInboxItem] = Field(default_factory=list)
+
+
+class ReportContentResponse(BaseModel):
+    report_type: str
+    filename: str
+    relpath: str
+    content: str
+
+
+class TriageDecisionSummary(BaseModel):
+    decision_id: str
+    report_type: str
+    report_relpath: str
+    status: str
+    created_at: str = ""
+    updated_at: str = ""
+    defer_until: str = ""
+    missing_fields: List[str] = Field(default_factory=list)
+    duplicates: List[Dict[str, Any]] = Field(default_factory=list)
+    draft_relpath: str = ""
+
+
+class TriageDecisionListResponse(BaseModel):
+    decisions: List[TriageDecisionSummary] = Field(default_factory=list)
+
+
+class TriageRunRequest(BaseModel):
+    write_drafts: bool = False
+    enable_llm: bool = False
+
+
+class TriageRunResponse(BaseModel):
+    ok: bool = True
+    reports: int
+    updated_decisions: int
+    decisions_dir: str
+    drafts_written: List[str] = Field(default_factory=list)
+
+
+class TriageDecisionApplyRequest(BaseModel):
+    action: str = Field(description="approve|reject|defer")
+    defer_days: Optional[int] = Field(default=None, description="If action=defer, number of days to defer (optional).")
+
+
+class BacklogItemSummary(BaseModel):
+    kind: str  # planned|completed|proposed|recurrent
+    filename: str
+    item_id: int
+    package: str
+    title: str
+    summary: str = ""
+    parsed: bool = True
+
+
+class BacklogListResponse(BaseModel):
+    items: List[BacklogItemSummary] = Field(default_factory=list)
+
+
+class BacklogContentResponse(BaseModel):
+    kind: str
+    filename: str
+    content: str
+
+
+def _gateway_feature_requests_dir() -> Path:
+    svc = get_gateway_service()
+    base = Path(getattr(getattr(svc, "stores", None), "base_dir", Path("."))).expanduser().resolve()
+    out = base / "feature_requests"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _ensure_feature_request_template(*, feature_dir: Path) -> Path:
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    path = feature_dir / "template.md"
+    if path.exists():
+        return path
+    try:
+        with open(path, "x", encoding="utf-8") as f:
+            f.write(_DEFAULT_FEATURE_REQUEST_TEMPLATE_MD)
+    except FileExistsError:
+        pass
+    return path
+
+
+def _feature_request_title(description: str) -> str:
+    first = str(description or "").strip().splitlines()[0].strip()
+    title = first or "Feature request"
+    title = re.sub(r"\s+", " ", title).strip()
+    if title.lower().startswith("/feature"):
+        title = title[len("/feature") :].strip() or "Feature request"
+    return title[:120] if len(title) > 120 else title
+
+
+def _feature_request_slug(description: str) -> str:
+    first = str(description or "").strip().splitlines()[0].strip().lower()
+    if first.startswith("/feature"):
+        first = first[len("/feature") :].strip()
+    slug = re.sub(r"[^a-z0-9]+", "-", first).strip("-")
+    slug = slug or "feature"
+    slug = slug[:80].strip("-") or "feature"
+    return slug
+
+
+@router.post("/features/report")
+async def features_report(req: FeatureReportCreateRequest) -> FeatureReportCreateResponse:
+    svc = get_gateway_service()
+
+    sid = str(req.session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    desc = str(req.description or "")
+    if not desc.strip():
+        raise HTTPException(status_code=400, detail="description is required")
+    if len(desc) > 20_000:
+        raise HTTPException(status_code=413, detail="description is too large (max 20,000 chars)")
+
+    feature_dir = _gateway_feature_requests_dir()
+    template_path = _ensure_feature_request_template(feature_dir=feature_dir)
+
+    try:
+        template_md = template_path.read_text(encoding="utf-8")
+    except Exception:
+        template_md = _DEFAULT_FEATURE_REQUEST_TEMPLATE_MD
+
+    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    today = created_at[:10]
+    slug = _feature_request_slug(desc)
+    title = _feature_request_title(desc)
+    feature_id = str(uuid.uuid4())
+
+    # Ensure the session memory owner run exists so attachments can be listed deterministically.
+    try:
+        session_memory_run_id = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to ensure session memory run: {e}")
+
+    attachments_md = _format_session_attachments_md(session_memory_run_id=session_memory_run_id)
+
+    active_run_id = str(req.active_run_id or "").strip() or ""
+    replay_run_id = active_run_id or "<RUN_ID>"
+    workflow_id = str(req.workflow_id or "").strip() or ""
+    client = str(req.client or "").strip() or ""
+    client_version = str(req.client_version or "").strip() or ""
+    user_agent = str(req.user_agent or "").strip() or ""
+    url = str(req.url or "").strip() or ""
+    provider = str(req.provider or "").strip() or ""
+    model = str(req.model or "").strip() or ""
+    template = str(req.template or "").strip() or ""
+
+    # Server context (safe subset; do not include secrets).
+    try:
+        server_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
+    except Exception:
+        server_info = platform.platform()
+    python_version = str(sys.version.split()[0] if sys.version else "").strip()
+    try:
+        from abstractgateway import __version__ as gateway_version
+    except Exception:
+        gateway_version = ""
+
+    ctx_obj: Dict[str, Any] = {
+        "active_run_id": active_run_id or None,
+        "workflow_id": workflow_id or None,
+        "provider": provider or None,
+        "model": model or None,
+        "template": template or None,
+        "client": client or None,
+        "client_version": client_version or None,
+        "url": url or None,
+        "user_agent": user_agent or None,
+        "session_memory_run_id": session_memory_run_id,
+        "created_at": created_at,
+        "feature_id": feature_id,
+        "client_context": req.context if isinstance(req.context, dict) else {},
+    }
+    # Keep the JSON payload bounded; include only what fits.
+    try:
+        ctx_json = json.dumps(ctx_obj, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception:
+        ctx_json = "{}"
+    if len(ctx_json) > 80_000:
+        ctx_json = ctx_json[:80_000] + "\n…(truncated)…\n"
+    context_block = f"```json\n{ctx_json}\n```"
+
+    replacements: Dict[str, str] = {
+        "TITLE": title,
+        "FEATURE_ID": feature_id,
+        "CREATED_AT": created_at,
+        "SESSION_ID": sid,
+        "SESSION_MEMORY_RUN_ID": session_memory_run_id,
+        "ACTIVE_RUN_ID": active_run_id,
+        "REPLAY_RUN_ID": replay_run_id,
+        "WORKFLOW_ID": workflow_id,
+        "USER_DESCRIPTION": _indent_markdown_literal(desc),
+        "SESSION_ATTACHMENTS": attachments_md,
+        "CLIENT": client,
+        "CLIENT_VERSION": client_version,
+        "USER_AGENT": user_agent,
+        "URL": url,
+        "PROVIDER": provider,
+        "MODEL": model,
+        "TEMPLATE": template,
+        "GATEWAY_VERSION": gateway_version,
+        "SERVER_INFO": server_info,
+        "PYTHON_VERSION": python_version,
+        "CONTEXT_JSON": context_block,
+    }
+
+    out_md = str(template_md)
+    for k, v in replacements.items():
+        out_md = out_md.replace(f"{{{{{k}}}}}", str(v))
+    if not out_md.endswith("\n"):
+        out_md += "\n"
+
+    base = f"{today}_{slug}"
+    filename = ""
+    path = None
+    for i in range(0, 1000):
+        name = f"{base}.md" if i == 0 else f"{base}_{i + 1}.md"
+        candidate = feature_dir / name
+        try:
+            with open(candidate, "x", encoding="utf-8") as f:
+                f.write(out_md)
+            filename = name
+            path = candidate
+            break
+        except FileExistsError:
+            continue
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to write feature request: {e}")
+
+    if not filename or path is None:
+        raise HTTPException(status_code=409, detail="Could not allocate a unique feature request filename")
+
+    # Do not leak absolute paths; return a stable path relative to the gateway data dir.
+    rel_path = f"feature_requests/{filename}"
+    return FeatureReportCreateResponse(
+        ok=True,
+        filename=filename,
+        path=rel_path,
+        template_path="feature_requests/template.md",
+        created_at=created_at,
+        session_id=sid,
+        session_memory_run_id=session_memory_run_id,
+        active_run_id=active_run_id or None,
+    )
+
+#
+# ---------------------------------------------------------------------------
+# Report inbox + triage (gateway-local)
+# ---------------------------------------------------------------------------
+
+_SAFE_INBOX_FILENAME_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}_.+\.md$")
+_SAFE_DECISION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{6,80}$")
+
+
+def _safe_inbox_filename(name: str) -> Optional[str]:
+    raw = str(name or "").strip()
+    if not raw or "/" in raw or "\\" in raw:
+        return None
+    if raw == "template.md":
+        return None
+    if not raw.lower().endswith(".md"):
+        return None
+    if not _SAFE_INBOX_FILENAME_RE.match(raw):
+        # Best-effort: still allow simple safe names for older files.
+        if re.fullmatch(r"[a-zA-Z0-9._-]{1,180}\.md", raw):
+            return raw
+        return None
+    return raw
+
+
+def _safe_decision_id(value: str) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if not _SAFE_DECISION_ID_RE.match(raw):
+        return None
+    return raw
+
+
+def _read_text_bounded(path: Path, *, max_chars: int = 300_000) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+    if len(text) > int(max_chars):
+        text = text[: int(max_chars)] + "\n…(truncated)…\n"
+    return text
+
+
+def _gateway_base_dir() -> Path:
+    svc = get_gateway_service()
+    return Path(getattr(getattr(svc, "stores", None), "base_dir", Path("."))).expanduser().resolve()
+
+
+def _triage_repo_root_from_env() -> Optional[Path]:
+    raw = str(os.getenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT") or os.getenv("ABSTRACT_TRIAGE_REPO_ROOT") or "").strip()
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser().resolve()
+    except Exception:
+        return None
+
+
+def _decision_to_summary(decision: Any) -> TriageDecisionSummary:
+    duplicates: list[Any] = []
+    raw_dups = getattr(decision, "duplicates", None)
+    if isinstance(raw_dups, list):
+        for d in raw_dups:
+            if hasattr(d, "__dict__"):
+                duplicates.append(dict(d.__dict__))
+            elif isinstance(d, dict):
+                duplicates.append(dict(d))
+
+    missing = getattr(decision, "missing_fields", None)
+    missing2 = [str(m).strip() for m in missing if isinstance(m, str) and m.strip()] if isinstance(missing, list) else []
+
+    return TriageDecisionSummary(
+        decision_id=str(getattr(decision, "decision_id", "") or "").strip(),
+        report_type=str(getattr(decision, "report_type", "") or "").strip(),
+        report_relpath=str(getattr(decision, "report_relpath", "") or "").strip(),
+        status=str(getattr(decision, "status", "") or "").strip(),
+        created_at=str(getattr(decision, "created_at", "") or "").strip(),
+        updated_at=str(getattr(decision, "updated_at", "") or "").strip(),
+        defer_until=str(getattr(decision, "defer_until", "") or "").strip(),
+        missing_fields=missing2,
+        duplicates=[d for d in duplicates if isinstance(d, dict)],
+        draft_relpath=str(getattr(decision, "draft_relpath", "") or "").strip(),
+    )
+
+
+def _list_report_inbox_items(*, report_type: str, report_dir: Path, gateway_base_dir: Path) -> List[ReportInboxItem]:
+    try:
+        from ..maintenance.report_parser import parse_report_file  # type: ignore
+        from ..maintenance.triage_queue import decision_id_for_report, decisions_dir, load_decision  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Maintenance modules unavailable: {e}")
+
+    qdir = decisions_dir(gateway_data_dir=gateway_base_dir)
+
+    out: List[ReportInboxItem] = []
+    for p in sorted(report_dir.glob("*.md")):
+        safe = _safe_inbox_filename(p.name)
+        if safe is None:
+            continue
+        relpath = f"{'bug_reports' if report_type == 'bug' else 'feature_requests'}/{safe}"
+        try:
+            rec = parse_report_file(p)
+        except Exception:
+            continue
+
+        did = decision_id_for_report(report_relpath=relpath)
+        decision = load_decision(dir_path=qdir, decision_id=did)
+        status = str(getattr(decision, "status", "") or "").strip() if decision is not None else ""
+
+        out.append(
+            ReportInboxItem(
+                report_type=report_type,
+                filename=safe,
+                relpath=relpath,
+                title=str(getattr(rec.header, "title", "") or "").strip() or safe,
+                created_at=str(getattr(rec.header, "created_at", "") or "").strip(),
+                session_id=str(getattr(rec.header, "session_id", "") or "").strip(),
+                workflow_id=str(getattr(rec.header, "workflow_id", "") or "").strip(),
+                active_run_id=str(getattr(rec.header, "active_run_id", "") or "").strip(),
+                decision_id=str(did),
+                triage_status=status,
+            )
+        )
+    return out
+
+
+@router.get("/reports/bugs", response_model=ReportInboxListResponse)
+async def list_bug_reports() -> ReportInboxListResponse:
+    base = _gateway_base_dir()
+    bug_dir = _gateway_bug_reports_dir()
+    items = _list_report_inbox_items(report_type="bug", report_dir=bug_dir, gateway_base_dir=base)
+    items.sort(key=lambda i: (str(i.created_at or ""), i.filename), reverse=True)
+    return ReportInboxListResponse(items=items)
+
+
+@router.get("/reports/features", response_model=ReportInboxListResponse)
+async def list_feature_requests() -> ReportInboxListResponse:
+    base = _gateway_base_dir()
+    feature_dir = _gateway_feature_requests_dir()
+    items = _list_report_inbox_items(report_type="feature", report_dir=feature_dir, gateway_base_dir=base)
+    items.sort(key=lambda i: (str(i.created_at or ""), i.filename), reverse=True)
+    return ReportInboxListResponse(items=items)
+
+
+@router.get("/reports/bugs/{filename}/content", response_model=ReportContentResponse)
+async def get_bug_report_content(filename: str) -> ReportContentResponse:
+    safe = _safe_inbox_filename(filename)
+    if safe is None:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    bug_dir = _gateway_bug_reports_dir()
+    path = bug_dir / safe
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Bug report not found")
+    content = _read_text_bounded(path, max_chars=400_000)
+    return ReportContentResponse(report_type="bug", filename=safe, relpath=f"bug_reports/{safe}", content=content)
+
+
+@router.get("/reports/features/{filename}/content", response_model=ReportContentResponse)
+async def get_feature_request_content(filename: str) -> ReportContentResponse:
+    safe = _safe_inbox_filename(filename)
+    if safe is None:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    feature_dir = _gateway_feature_requests_dir()
+    path = feature_dir / safe
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Feature request not found")
+    content = _read_text_bounded(path, max_chars=400_000)
+    return ReportContentResponse(report_type="feature", filename=safe, relpath=f"feature_requests/{safe}", content=content)
+
+
+@router.post("/triage/run", response_model=TriageRunResponse)
+async def triage_run(req: TriageRunRequest) -> TriageRunResponse:
+    try:
+        from ..maintenance.triage import triage_reports  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Triage unavailable: {e}")
+
+    base = _gateway_base_dir()
+    repo_root = _triage_repo_root_from_env()
+
+    out = triage_reports(
+        gateway_data_dir=base,
+        repo_root=repo_root,
+        write_drafts=bool(req.write_drafts) and repo_root is not None,
+        enable_llm=bool(req.enable_llm),
+    )
+    return TriageRunResponse(
+        ok=True,
+        reports=int(out.get("reports") or 0),
+        updated_decisions=int(out.get("updated_decisions") or 0),
+        decisions_dir=str(out.get("decisions_dir") or ""),
+        drafts_written=list(out.get("drafts_written") or []),
+    )
+
+
+@router.get("/triage/decisions", response_model=TriageDecisionListResponse)
+async def triage_list_decisions(
+    status: str = Query(default="", description="Optional filter: pending|approved|deferred|rejected"),
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> TriageDecisionListResponse:
+    try:
+        from ..maintenance.triage_queue import decisions_dir, iter_decisions  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Triage unavailable: {e}")
+
+    base = _gateway_base_dir()
+    qdir = decisions_dir(gateway_data_dir=base)
+    decisions = iter_decisions(qdir)
+
+    wanted = str(status or "").strip().lower()
+    if wanted:
+        decisions = [d for d in decisions if str(getattr(d, "status", "") or "").strip().lower() == wanted]
+
+    # Sort newest first.
+    def _key(d: Any) -> Tuple[str, str]:
+        return (str(getattr(d, "updated_at", "") or ""), str(getattr(d, "created_at", "") or ""))
+
+    decisions.sort(key=_key, reverse=True)
+    decisions = decisions[: int(limit)]
+
+    return TriageDecisionListResponse(decisions=[_decision_to_summary(d) for d in decisions])
+
+
+@router.post("/triage/decisions/{decision_id}/apply", response_model=TriageDecisionSummary)
+async def triage_apply_decision(decision_id: str, req: TriageDecisionApplyRequest) -> TriageDecisionSummary:
+    safe = _safe_decision_id(decision_id)
+    if safe is None:
+        raise HTTPException(status_code=400, detail="Invalid decision_id")
+
+    try:
+        from ..maintenance.triage import apply_decision_action  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Triage unavailable: {e}")
+
+    base = _gateway_base_dir()
+    repo_root = _triage_repo_root_from_env()
+    decision, err = apply_decision_action(
+        gateway_data_dir=base,
+        decision_id=safe,
+        action=str(req.action or ""),
+        repo_root=repo_root,
+        defer_days=req.defer_days,
+    )
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    if decision is None:
+        raise HTTPException(status_code=404, detail="Decision not found")
+    return _decision_to_summary(decision)
+
+
+@router.get("/backlog/{kind}", response_model=BacklogListResponse)
+async def backlog_list(kind: str) -> BacklogListResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    k = str(kind or "").strip().lower()
+    if k not in {"planned", "completed", "proposed", "recurrent"}:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind (planned|completed|proposed|recurrent)")
+
+    try:
+        from ..maintenance.backlog_parser import iter_backlog_items  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backlog parser unavailable: {e}")
+
+    dir_path = repo_root / "docs" / "backlog" / k
+    parsed_items = list(iter_backlog_items(dir_path, kind=k))
+    parsed_items.sort(key=lambda i: int(getattr(i, "item_id", 0)), reverse=True)
+
+    parsed_names = {item.path.name for item in parsed_items}
+    raw_files = sorted([p for p in dir_path.glob("*.md")], key=lambda p: p.name)
+
+    out: List[BacklogItemSummary] = []
+    for item in parsed_items[:500]:
+        out.append(
+            BacklogItemSummary(
+                kind=k,
+                filename=item.path.name,
+                item_id=int(item.item_id),
+                package=str(item.package),
+                title=str(item.title),
+                summary=str(item.summary or ""),
+                parsed=True,
+            )
+        )
+
+    # Best-effort: include unparsed items so the UI can still browse them.
+    for p in raw_files:
+        if p.name in parsed_names:
+            continue
+        out.append(
+            BacklogItemSummary(
+                kind=k,
+                filename=p.name,
+                item_id=0,
+                package="",
+                title=p.name,
+                summary="",
+                parsed=False,
+            )
+        )
+        if len(out) >= 800:
+            break
+    return BacklogListResponse(items=out)
+
+
+@router.get("/backlog/{kind}/{filename}/content", response_model=BacklogContentResponse)
+async def backlog_content(kind: str, filename: str) -> BacklogContentResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    k = str(kind or "").strip().lower()
+    if k not in {"planned", "completed", "proposed", "recurrent"}:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind (planned|completed|proposed|recurrent)")
+
+    raw = str(filename or "").strip()
+    if not raw or "/" in raw or "\\" in raw or not raw.lower().endswith(".md"):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not re.fullmatch(r"[a-zA-Z0-9._-]{1,220}\.md", raw):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    dir_path = repo_root / "docs" / "backlog" / k
+    path = (dir_path / raw).resolve()
+    # Ensure path is inside the backlog dir.
+    try:
+        path.relative_to(dir_path.resolve())
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backlog item not found")
+
+    content = _read_text_bounded(path, max_chars=500_000)
+    return BacklogContentResponse(kind=k, filename=raw, content=content)
 
 
 # ---------------------------------------------------------------------------

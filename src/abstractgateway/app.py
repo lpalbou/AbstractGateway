@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import gateway_router
+from .routes import gateway_router, triage_router
 from .security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_env
 
 
@@ -47,10 +47,10 @@ app.add_middleware(
 )
 
 app.include_router(gateway_router, prefix="/api")
+app.include_router(triage_router, prefix="/api")
 
 
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "service": "abstractgateway"}
-
 

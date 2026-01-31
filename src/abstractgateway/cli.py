@@ -4,6 +4,7 @@ import argparse
 import os
 import signal
 import threading
+import json
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -39,6 +40,38 @@ def main(argv: list[str] | None = None) -> None:
         help="Destination sqlite file path (defaults to <data-dir>/gateway.sqlite3)",
     )
     mig.add_argument("--overwrite", action="store_true", help="Overwrite destination DB if it exists")
+
+    triage = sub.add_parser("triage-reports", help="Triage /bug and /feature reports (decision queue + optional backlog drafts)")
+    triage.add_argument(
+        "--data-dir",
+        default=None,
+        help="Gateway data dir (defaults to ABSTRACTGATEWAY_DATA_DIR or ./runtime/gateway)",
+    )
+    triage.add_argument(
+        "--repo-root",
+        default=None,
+        help="Repo root containing docs/backlog (auto-detected from CWD if omitted)",
+    )
+    triage.add_argument("--write-drafts", action="store_true", help="Write backlog drafts into docs/backlog/proposed/")
+    triage.add_argument("--llm", action="store_true", help="Enable optional LLM assist (env/config required)")
+    triage.add_argument("--action-base-url", default=None, help="Base URL for triage action links (e.g., https://<host>)")
+    triage.add_argument("--print-actions", action="store_true", help="Print approve/defer/reject action links for pending decisions")
+    triage.add_argument("--notify", action="store_true", help="Send a notification (Telegram/email) when pending decisions exist")
+    triage.add_argument("--json", action="store_true", help="Emit machine-readable JSON output")
+
+    triage_apply = sub.add_parser("triage-apply", help="Apply a triage decision action (approve/reject/defer)")
+    triage_apply.add_argument("decision_id", help="Decision id (stable hash) under <data_dir>/triage_queue/")
+    triage_apply.add_argument("action", choices=["approve", "reject", "defer"], help="Action to apply")
+    triage_apply.add_argument(
+        "--data-dir",
+        default=None,
+        help="Gateway data dir (defaults to ABSTRACTGATEWAY_DATA_DIR or ./runtime/gateway)",
+    )
+    triage_apply.add_argument(
+        "--repo-root",
+        default=None,
+        help="Repo root containing docs/backlog (auto-detected from CWD if omitted)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -166,6 +199,110 @@ def main(argv: list[str] | None = None) -> None:
 
         migrate_file_to_sqlite(base_dir=data_dir, db_path=db_path, overwrite=bool(args.overwrite))
         print(f"Migrated file stores from {data_dir} to sqlite DB {db_path}")
+        return
+
+    if args.cmd == "triage-reports":
+        from pathlib import Path
+
+        from .maintenance.action_tokens import build_action_links
+        from .maintenance.notifier import send_email_notification, send_telegram_notification
+        from .maintenance.triage import triage_reports
+        from .maintenance.triage_queue import decisions_dir, iter_decisions
+
+        data_dir = Path(str(args.data_dir or "")).expanduser().resolve() if args.data_dir else None
+        if data_dir is None:
+            data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser().resolve()
+
+        repo_root = Path(str(args.repo_root)).expanduser().resolve() if args.repo_root else None
+
+        out = triage_reports(
+            gateway_data_dir=data_dir,
+            repo_root=repo_root,
+            write_drafts=bool(args.write_drafts),
+            enable_llm=bool(args.llm),
+        )
+        pending = []
+        qdir = decisions_dir(gateway_data_dir=data_dir)
+        pending = [d for d in iter_decisions(qdir) if d.status == "pending"]
+
+        if (bool(args.print_actions) or bool(args.notify)) and args.action_base_url:
+            secret = os.getenv("ABSTRACTGATEWAY_TRIAGE_ACTION_SECRET") or os.getenv("ABSTRACT_TRIAGE_ACTION_SECRET") or ""
+            secret = str(secret).strip()
+            if secret:
+                out["pending_decisions"] = len(pending)
+                out["action_links"] = {}
+                for d in pending[:25]:
+                    out["action_links"][d.decision_id] = build_action_links(
+                        decision_id=d.decision_id,
+                        base_url=str(args.action_base_url),
+                        secret=secret,
+                    )
+            else:
+                out["action_links_error"] = "Missing TRIAGE_ACTION_SECRET (links disabled)"
+
+        if bool(args.notify) and pending:
+            # Compose a compact, actionable digest.
+            lines = [f"Triage: {len(pending)} pending report decisions"]
+            for d in pending[:10]:
+                lines.append(f"- {d.decision_id}: {d.report_relpath}")
+                if d.missing_fields:
+                    lines.append(f"  missing: {', '.join(d.missing_fields[:3])}")
+                links = (out.get("action_links") or {}).get(d.decision_id) if isinstance(out.get("action_links"), dict) else None
+                if isinstance(links, dict) and links:
+                    lines.append(f"  approve: {links.get('approve')}")
+                    lines.append(f"  defer 1d: {links.get('defer_1d')}")
+                    lines.append(f"  defer 7d: {links.get('defer_7d')}")
+                    lines.append(f"  reject: {links.get('reject')}")
+                else:
+                    lines.append(f"  approve: abstractgateway triage-apply {d.decision_id} approve")
+                    lines.append(f"  reject: abstractgateway triage-apply {d.decision_id} reject")
+                    lines.append(f"  defer:  ABSTRACT_TRIAGE_DEFER_DAYS=7 abstractgateway triage-apply {d.decision_id} defer")
+            body = "\n".join(lines).strip() + "\n"
+            # Telegram first (short), then email (full).
+            ok_tg, err_tg = send_telegram_notification(text=body[:3500])
+            ok_em, err_em = send_email_notification(subject=f"[AbstractFramework] Triage pending ({len(pending)})", body_text=body)
+            out["notify"] = {
+                "telegram": {"ok": ok_tg, "error": err_tg},
+                "email": {"ok": ok_em, "error": err_em},
+            }
+        if bool(args.json):
+            print(json.dumps(out, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"Reports scanned: {out.get('reports')}")
+            print(f"Decision queue: {out.get('decisions_dir')}")
+            if out.get("drafts_written"):
+                print("Drafts written:")
+                for p in out["drafts_written"]:
+                    print(f"  - {p}")
+            if out.get("action_links"):
+                print("Action links (pending):")
+                for did, links in list(out["action_links"].items())[:10]:
+                    print(f"  - {did}:")
+                    for k, v in links.items():
+                        print(f"      {k}: {v}")
+        return
+
+    if args.cmd == "triage-apply":
+        from pathlib import Path
+
+        from .maintenance.triage import apply_decision_action
+
+        data_dir = Path(str(args.data_dir or "")).expanduser().resolve() if args.data_dir else None
+        if data_dir is None:
+            data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser().resolve()
+        repo_root = Path(str(args.repo_root)).expanduser().resolve() if args.repo_root else None
+
+        decision, err = apply_decision_action(
+            gateway_data_dir=data_dir,
+            decision_id=str(args.decision_id),
+            action=str(args.action),
+            repo_root=repo_root,
+        )
+        if err:
+            raise SystemExit(err)
+        if decision is None:
+            raise SystemExit("No decision updated")
+        print(f"Updated decision {decision.decision_id}: status={decision.status} draft={decision.draft_relpath or '(none)'}")
         return
 
     raise SystemExit(2)
