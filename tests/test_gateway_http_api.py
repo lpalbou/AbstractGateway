@@ -407,9 +407,7 @@ def test_gateway_generate_run_summary_appends_to_ledger(tmp_path: Path, monkeypa
     from abstractgateway.app import app
     import abstractgateway.routes.gateway as gateway_routes
 
-    monkeypatch.setattr(gateway_routes, "_generate_summary_text", lambda **_kwargs: "success\n- summary generated")
-
-    headers = {"Authorization": f"Bearer {token}"}
+    monkeypatch.setattr(gateway_routes, "_generate_summary_text", lambda **_kwargs: "success\n- summary generated")    headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
         r = client.post(
             "/api/gateway/runs/start",
