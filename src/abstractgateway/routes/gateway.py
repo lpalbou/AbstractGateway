@@ -18,6 +18,7 @@ import mimetypes
 import os
 import platform
 import re
+import shutil
 import sys
 import threading
 import time
@@ -34,7 +35,7 @@ from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunSto
 from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord
 
 from .. import host_metrics
-from ..service import get_gateway_service, run_summary
+from ..service import backlog_exec_runner_status, get_gateway_service, run_summary
 from ..workflow_deprecations import WorkflowDeprecatedError
 
 
@@ -4912,6 +4913,154 @@ class BacklogContentResponse(BaseModel):
     content: str
 
 
+class BacklogTemplateResponse(BaseModel):
+    ok: bool = True
+    relpath: str
+    sha256: str
+    content: str
+
+
+class BacklogMoveRequest(BaseModel):
+    from_kind: str = Field(..., description="Source backlog kind (planned|proposed|recurrent|completed|deprecated|trash).")
+    to_kind: str = Field(..., description="Destination backlog kind (planned|proposed|recurrent|completed|deprecated|trash).")
+    filename: str = Field(..., description="Backlog filename (must be a safe .md filename).")
+
+
+class BacklogMoveResponse(BaseModel):
+    ok: bool = True
+    from_kind: str
+    to_kind: str
+    filename: str
+    from_relpath: str
+    to_relpath: str
+
+
+class BacklogUpdateRequest(BaseModel):
+    content: str = Field(..., description="New Markdown content to write.")
+    expected_sha256: Optional[str] = Field(
+        default=None,
+        description="Optional optimistic concurrency guard: if provided, must match the current file sha256.",
+    )
+
+
+class BacklogUpdateResponse(BaseModel):
+    ok: bool = True
+    kind: str
+    filename: str
+    sha256: str
+    bytes_written: int
+
+
+class BacklogCreateRequest(BaseModel):
+    kind: str = Field(..., description="Backlog kind to create in (planned|proposed|recurrent).")
+    package: str = Field(..., description="Package scope (e.g. framework, abstractruntime, abstractgateway).")
+    title: str = Field(..., description="Backlog title.")
+    summary: Optional[str] = Field(default=None, description="Optional 1-paragraph summary.")
+    content: Optional[str] = Field(
+        default=None,
+        description="Optional full Markdown content override (placeholders {ID}/{Package}/{Title} will be filled if present).",
+    )
+
+
+class BacklogCreateResponse(BaseModel):
+    ok: bool = True
+    kind: str
+    filename: str
+    relpath: str
+    item_id: int
+    sha256: str
+
+
+class BacklogExecuteResponse(BaseModel):
+    ok: bool = True
+    request_id: str
+    request_relpath: str
+    prompt: str
+
+
+class BacklogAssistRequest(BaseModel):
+    kind: str = Field(..., description="Target backlog kind (planned|proposed|recurrent).")
+    package: str = Field(..., description="Target package (best-effort).")
+    title: str = Field(..., description="Working title (best-effort).")
+    summary: Optional[str] = Field(default=None, description="Working summary (best-effort).")
+    draft_markdown: Optional[str] = Field(default=None, description="Current draft markdown (optional).")
+    messages: List[Dict[str, Any]] = Field(default_factory=list, description="Chat messages: {role, content}.")
+    provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
+    model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
+
+
+class BacklogAssistResponse(BaseModel):
+    ok: bool = True
+    reply: str
+    draft_markdown: str = ""
+
+
+class BacklogExecConfigResponse(BaseModel):
+    ok: bool = True
+    runner_enabled: bool
+    runner_alive: bool = False
+    runner_error: Optional[str] = None
+    can_execute: bool
+    executor: str
+    notify: bool = False
+    codex_bin: Optional[str] = None
+    codex_model: Optional[str] = None
+    codex_available: Optional[bool] = None
+
+
+class BacklogExecRequestSummary(BaseModel):
+    request_id: str
+    status: str
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    backlog_relpath: Optional[str] = None
+    backlog_kind: Optional[str] = None
+    backlog_filename: Optional[str] = None
+    target_agent: Optional[str] = None
+    executor_type: Optional[str] = None
+    ok: Optional[bool] = None
+    exit_code: Optional[int] = None
+    error: Optional[str] = None
+    run_dir_relpath: Optional[str] = None
+    last_message: Optional[str] = None
+
+
+class BacklogExecRequestListResponse(BaseModel):
+    ok: bool = True
+    requests: List[BacklogExecRequestSummary] = Field(default_factory=list)
+
+
+class BacklogExecRequestDetailResponse(BaseModel):
+    ok: bool = True
+    request_id: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BacklogExecLogTailResponse(BaseModel):
+    ok: bool = True
+    request_id: str
+    name: str
+    bytes: int = 0
+    truncated: bool = False
+    content: str = ""
+
+
+class BacklogAttachmentStored(BaseModel):
+    filename: str
+    relpath: str
+    bytes: int
+    sha256: str
+
+
+class BacklogAttachmentUploadResponse(BaseModel):
+    ok: bool = True
+    kind: str
+    filename: str
+    item_id: int
+    stored: BacklogAttachmentStored
+
+
 def _gateway_feature_requests_dir() -> Path:
     svc = get_gateway_service()
     base = Path(getattr(getattr(svc, "stores", None), "base_dir", Path("."))).expanduser().resolve()
@@ -5141,6 +5290,24 @@ def _read_text_bounded(path: Path, *, max_chars: int = 300_000) -> str:
     return text
 
 
+def _sha256_hex_text(text: str) -> str:
+    try:
+        h = hashlib.sha256()
+        h.update(str(text or "").encode("utf-8", errors="ignore"))
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
+def _load_json_bounded(path: Path, *, max_chars: int = 1_200_000) -> Dict[str, Any]:
+    raw = _read_text_bounded(path, max_chars=max_chars)
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
 def _gateway_base_dir() -> Path:
     svc = get_gateway_service()
     return Path(getattr(getattr(svc, "stores", None), "base_dir", Path("."))).expanduser().resolve()
@@ -5348,6 +5515,266 @@ async def triage_apply_decision(decision_id: str, req: TriageDecisionApplyReques
     return _decision_to_summary(decision)
 
 
+@router.get("/backlog/template", response_model=BacklogTemplateResponse)
+async def backlog_template() -> BacklogTemplateResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    template_md = _read_backlog_template(repo_root)
+    sha = _sha256_hex_text(template_md)
+    return BacklogTemplateResponse(relpath="docs/backlog/template.md", sha256=sha, content=template_md)
+
+
+@router.get("/backlog/exec/config", response_model=BacklogExecConfigResponse)
+async def backlog_exec_config() -> BacklogExecConfigResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    try:
+        from ..maintenance.backlog_exec_runner import BacklogExecRunnerConfig, _resolve_executor  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backlog exec runner unavailable: {e}")
+
+    cfg = BacklogExecRunnerConfig.from_env()
+    runner = backlog_exec_runner_status()
+    runner_alive = bool(runner.get("alive") is True)
+    runner_error = str(runner.get("error") or "").strip() or None
+    can_execute = bool(cfg.enabled) and runner_alive and _resolve_executor(cfg) is not None
+
+    codex_available: Optional[bool] = None
+    codex_bin: Optional[str] = None
+    codex_model: Optional[str] = None
+    if str(cfg.executor or "").strip().lower() in {"codex", "codex_cli", "codex-cli"}:
+        codex_bin = str(cfg.codex_bin or "").strip() or "codex"
+        try:
+            from ..maintenance.backlog_exec_runner import normalize_codex_model_id  # type: ignore
+        except Exception:
+            normalize_codex_model_id = None  # type: ignore
+
+        raw_model = str(cfg.codex_model or "").strip() or "gpt-5.2"
+        if callable(normalize_codex_model_id):
+            try:
+                codex_model = str(normalize_codex_model_id(raw_model))
+            except Exception:
+                codex_model = raw_model
+        else:
+            codex_model = raw_model
+        try:
+            codex_available = bool(shutil.which(codex_bin))
+        except Exception:
+            codex_available = None
+        if codex_available is False:
+            can_execute = False
+
+    return BacklogExecConfigResponse(
+        runner_enabled=bool(cfg.enabled),
+        runner_alive=bool(runner_alive),
+        runner_error=runner_error,
+        can_execute=bool(can_execute),
+        executor=str(cfg.executor or "none").strip().lower() or "none",
+        notify=bool(cfg.notify),
+        codex_bin=codex_bin,
+        codex_model=codex_model,
+        codex_available=codex_available,
+    )
+
+
+def _exec_request_summary(req: Dict[str, Any], *, request_id: str) -> BacklogExecRequestSummary:
+    status = str(req.get("status") or "").strip() or "unknown"
+    created_at = str(req.get("created_at") or "").strip() or None
+    started_at = str(req.get("started_at") or "").strip() or None
+    finished_at = str(req.get("finished_at") or "").strip() or None
+
+    backlog = req.get("backlog") if isinstance(req.get("backlog"), dict) else {}
+    backlog_rel = str(backlog.get("relpath") or "").strip() or None
+    backlog_kind = str(backlog.get("kind") or "").strip() or None
+    backlog_filename = str(backlog.get("filename") or "").strip() or None
+
+    target_agent = str(req.get("target_agent") or "").strip() or None
+    executor_info = req.get("executor") if isinstance(req.get("executor"), dict) else {}
+    executor_type = str(executor_info.get("type") or "").strip() or None
+
+    result = req.get("result") if isinstance(req.get("result"), dict) else {}
+    ok_val = result.get("ok")
+    ok: Optional[bool] = bool(ok_val) if isinstance(ok_val, bool) else None
+    exit_code_raw = result.get("exit_code")
+    try:
+        exit_code = int(exit_code_raw) if exit_code_raw is not None else None
+    except Exception:
+        exit_code = None
+    error = str(result.get("error") or "").strip() or None
+    run_dir_relpath = str(req.get("run_dir_relpath") or "").strip() or None
+    last_msg = str(result.get("last_message") or "").strip()
+    last_msg = last_msg[:1200] if last_msg else ""
+
+    return BacklogExecRequestSummary(
+        request_id=request_id,
+        status=status,
+        created_at=created_at,
+        started_at=started_at,
+        finished_at=finished_at,
+        backlog_relpath=backlog_rel,
+        backlog_kind=backlog_kind,
+        backlog_filename=backlog_filename,
+        target_agent=target_agent,
+        executor_type=executor_type,
+        ok=ok,
+        exit_code=exit_code,
+        error=error,
+        run_dir_relpath=run_dir_relpath,
+        last_message=last_msg or None,
+    )
+
+
+@router.get("/backlog/exec/requests", response_model=BacklogExecRequestListResponse)
+async def backlog_exec_requests(
+    status: str = Query(default="", description="Optional comma-separated statuses (queued|running|completed|failed)."),
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> BacklogExecRequestListResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    base = _gateway_base_dir()
+    qdir = (base / "backlog_exec_queue").resolve()
+    if not qdir.exists():
+        return BacklogExecRequestListResponse(requests=[])
+
+    wanted_raw = [s.strip().lower() for s in str(status or "").split(",") if s.strip()]
+    wanted = set(wanted_raw)
+
+    paths = list(qdir.glob("*.json"))
+    try:
+        paths.sort(key=lambda p: float(p.stat().st_mtime), reverse=True)
+    except Exception:
+        paths.sort(key=lambda p: p.name, reverse=True)
+
+    items: list[Tuple[str, BacklogExecRequestSummary]] = []
+    scanned = 0
+    for p in paths:
+        scanned += 1
+        if scanned > 5000:
+            break
+        try:
+            p.relative_to(qdir)
+        except Exception:
+            continue
+        req = _load_json_bounded(p)
+        rid = str(req.get("request_id") or p.stem).strip().lower()
+        rid = _safe_backlog_exec_request_id(rid) or ""
+        if not rid:
+            continue
+        summary = _exec_request_summary(req, request_id=rid)
+        if wanted and summary.status.strip().lower() not in wanted:
+            continue
+        key = summary.created_at or summary.started_at or summary.finished_at or ""
+        items.append((key, summary))
+        if len(items) >= int(limit):
+            break
+
+    # Newest first (best-effort, ISO timestamps sort lexicographically).
+    items.sort(key=lambda t: t[0], reverse=True)
+    out = [s for _, s in items[: int(limit)]]
+    return BacklogExecRequestListResponse(requests=out)
+
+
+@router.get("/backlog/exec/requests/{request_id}", response_model=BacklogExecRequestDetailResponse)
+async def backlog_exec_request_detail(
+    request_id: str,
+    include_prompt: bool = Query(default=False, description="Include the queued prompt (may be large)."),
+) -> BacklogExecRequestDetailResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    rid = _safe_backlog_exec_request_id(request_id)
+    if rid is None:
+        raise HTTPException(status_code=400, detail="Invalid request_id")
+
+    base = _gateway_base_dir()
+    qdir = (base / "backlog_exec_queue").resolve()
+    path = (qdir / f"{rid}.json").resolve()
+    try:
+        path.relative_to(qdir)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    req = _load_json_bounded(path)
+    if not include_prompt and "prompt" in req:
+        req = dict(req)
+        req.pop("prompt", None)
+
+    return BacklogExecRequestDetailResponse(request_id=rid, payload=req)
+
+
+@router.get("/backlog/exec/requests/{request_id}/logs/tail", response_model=BacklogExecLogTailResponse)
+async def backlog_exec_log_tail(
+    request_id: str,
+    name: str = Query(default="events", description="Log name: events|stderr|last_message"),
+    max_bytes: int = Query(default=80_000, ge=1024, le=400_000, description="Tail size in bytes (bounded)."),
+) -> BacklogExecLogTailResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    rid = _safe_backlog_exec_request_id(request_id)
+    if rid is None:
+        raise HTTPException(status_code=400, detail="Invalid request_id")
+
+    nm = str(name or "").strip().lower()
+    file_name = None
+    if nm in {"events", "event", "jsonl"}:
+        nm = "events"
+        file_name = "codex_events.jsonl"
+    elif nm in {"stderr", "err"}:
+        nm = "stderr"
+        file_name = "codex_stderr.log"
+    elif nm in {"last_message", "last", "message"}:
+        nm = "last_message"
+        file_name = "codex_last_message.txt"
+    else:
+        raise HTTPException(status_code=400, detail="Invalid log name (events|stderr|last_message)")
+
+    base = _gateway_base_dir()
+    run_dir = (base / "backlog_exec_runs" / rid).resolve()
+    try:
+        run_dir.relative_to((base / "backlog_exec_runs").resolve())
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid run dir")
+
+    path = (run_dir / file_name).resolve()
+    try:
+        path.relative_to(run_dir)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid log path")
+
+    if not path.exists():
+        return BacklogExecLogTailResponse(request_id=rid, name=nm, bytes=0, truncated=False, content="")
+
+    data = b""
+    truncated = False
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = int(f.tell() or 0)
+            start = max(0, size - int(max_bytes))
+            truncated = start > 0
+            f.seek(start, os.SEEK_SET)
+            data = f.read(int(max_bytes))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read log: {e}")
+
+    try:
+        text = data.decode("utf-8", errors="replace")
+    except Exception:
+        text = ""
+    return BacklogExecLogTailResponse(request_id=rid, name=nm, bytes=len(data), truncated=bool(truncated), content=text)
+
+
 @router.get("/backlog/{kind}", response_model=BacklogListResponse)
 async def backlog_list(kind: str) -> BacklogListResponse:
     repo_root = _triage_repo_root_from_env()
@@ -5355,8 +5782,8 @@ async def backlog_list(kind: str) -> BacklogListResponse:
         raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
 
     k = str(kind or "").strip().lower()
-    if k not in {"planned", "completed", "proposed", "recurrent"}:
-        raise HTTPException(status_code=400, detail="Invalid backlog kind (planned|completed|proposed|recurrent)")
+    if k not in {"planned", "completed", "proposed", "recurrent", "deprecated", "trash"}:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind (planned|completed|proposed|recurrent|deprecated|trash)")
 
     try:
         from ..maintenance.backlog_parser import iter_backlog_items  # type: ignore
@@ -5364,11 +5791,16 @@ async def backlog_list(kind: str) -> BacklogListResponse:
         raise HTTPException(status_code=500, detail=f"Backlog parser unavailable: {e}")
 
     dir_path = repo_root / "docs" / "backlog" / k
+    if not dir_path.exists():
+        return BacklogListResponse(items=[])
     parsed_items = list(iter_backlog_items(dir_path, kind=k))
     parsed_items.sort(key=lambda i: int(getattr(i, "item_id", 0)), reverse=True)
 
     parsed_names = {item.path.name for item in parsed_items}
-    raw_files = sorted([p for p in dir_path.glob("*.md")], key=lambda p: p.name)
+    raw_files = sorted(
+        [p for p in dir_path.glob("*.md") if p.name.lower() not in {"readme.md"}],
+        key=lambda p: p.name,
+    )
 
     out: List[BacklogItemSummary] = []
     for item in parsed_items[:500]:
@@ -5411,8 +5843,8 @@ async def backlog_content(kind: str, filename: str) -> BacklogContentResponse:
         raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
 
     k = str(kind or "").strip().lower()
-    if k not in {"planned", "completed", "proposed", "recurrent"}:
-        raise HTTPException(status_code=400, detail="Invalid backlog kind (planned|completed|proposed|recurrent)")
+    if k not in {"planned", "completed", "proposed", "recurrent", "deprecated", "trash"}:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind (planned|completed|proposed|recurrent|deprecated|trash)")
 
     raw = str(filename or "").strip()
     if not raw or "/" in raw or "\\" in raw or not raw.lower().endswith(".md"):
@@ -5432,6 +5864,634 @@ async def backlog_content(kind: str, filename: str) -> BacklogContentResponse:
 
     content = _read_text_bounded(path, max_chars=500_000)
     return BacklogContentResponse(kind=k, filename=raw, content=content)
+
+
+_BACKLOG_KINDS = {"planned", "completed", "proposed", "recurrent", "deprecated", "trash"}
+_BACKLOG_WRITE_KINDS = {"planned", "proposed", "recurrent", "completed", "deprecated", "trash"}
+_BACKLOG_CREATE_KINDS = {"planned", "proposed", "recurrent"}
+
+
+def _safe_backlog_kind(value: str) -> Optional[str]:
+    k = str(value or "").strip().lower()
+    if not k or k not in _BACKLOG_KINDS:
+        return None
+    return k
+
+
+def _safe_backlog_package(value: str) -> Optional[str]:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{1,60}", raw):
+        return None
+    return raw
+
+
+def _slug_kebab(value: str) -> str:
+    s = str(value or "").strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    s = s[:80].strip("-") or "item"
+    return s
+
+
+def _backlog_dir_for(repo_root: Path, kind: str) -> Path:
+    return (repo_root / "docs" / "backlog" / kind).resolve()
+
+
+def _safe_backlog_filename(value: str) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw or "/" in raw or "\\" in raw:
+        return None
+    if not raw.lower().endswith(".md"):
+        return None
+    if not re.fullmatch(r"[a-zA-Z0-9._-]{1,220}\.md", raw):
+        return None
+    return raw
+
+
+def _safe_backlog_exec_request_id(value: str) -> Optional[str]:
+    rid = str(value or "").strip().lower()
+    if not rid:
+        return None
+    if not re.fullmatch(r"[a-f0-9]{8,64}", rid):
+        return None
+    return rid
+
+
+def _sanitize_backlog_asset_filename(value: str) -> str:
+    """Sanitize an attachment filename to a safe on-disk name (no path traversal)."""
+    raw = str(value or "").strip()
+    # Drop any path components (best-effort).
+    name = Path(raw).name if raw else ""
+    name = name.strip()
+    if not name:
+        return "attachment"
+    # Replace unsafe characters with underscores.
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    name = re.sub(r"_+", "_", name)
+    name = name.strip("._-") or "attachment"
+
+    if len(name) > 200:
+        stem, ext = os.path.splitext(name)
+        ext = ext[:20]
+        keep = max(1, 200 - len(ext))
+        name = stem[:keep] + ext
+        name = name.strip("._-") or "attachment"
+    return name
+
+
+def _read_backlog_template(repo_root: Path) -> str:
+    path = (repo_root / "docs" / "backlog" / "template.md").resolve()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backlog template not found (docs/backlog/template.md)")
+    return _read_text_bounded(path, max_chars=250_000)
+
+
+def _render_backlog_markdown(
+    *,
+    template_md: str,
+    item_id: int,
+    package: str,
+    title: str,
+    summary: str,
+    created_at: str,
+    content_override: Optional[str] = None,
+) -> str:
+    pid = f"{int(item_id):03d}"
+    header = f"# {pid}-{package}: {title}".strip()
+
+    base = str(content_override or "").strip() or str(template_md or "")
+    out = base
+    out = out.replace("{ID}", pid).replace("{Package}", package).replace("{Title}", title)
+
+    # Force the first H1 to match our id/pkg/title (best-effort).
+    lines = out.splitlines()
+    replaced_h1 = False
+    for i, raw in enumerate(lines):
+        if raw.strip().startswith("# "):
+            lines[i] = header
+            replaced_h1 = True
+            break
+        if raw.strip():
+            break
+    if not replaced_h1:
+        lines.insert(0, header)
+        lines.insert(1, "")
+    out = "\n".join(lines)
+
+    # Ensure Created line is present and correct (best-effort).
+    lines = out.splitlines()
+    created_line = f"> Created: {created_at}".strip()
+    found_created = False
+    for i, raw in enumerate(lines[:40]):
+        if raw.strip().lower().startswith("> created:"):
+            lines[i] = created_line
+            found_created = True
+            break
+    if not found_created:
+        # Insert after header (and an optional blank line).
+        insert_at = 1
+        if len(lines) > 1 and not lines[1].strip():
+            insert_at = 2
+        lines.insert(insert_at, created_line)
+        lines.insert(insert_at + 1, "")
+    out = "\n".join(lines)
+
+    if summary.strip():
+        # Best-effort: replace placeholder summary line after "## Summary".
+        lines = out.splitlines()
+        for i, raw in enumerate(lines):
+            if raw.strip().lower() == "## summary":
+                # Find the next non-empty line.
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                placeholder = lines[j] if j < len(lines) else ""
+                if placeholder.strip().lower().startswith("one paragraph describing"):
+                    lines[j] = summary.strip()
+                else:
+                    lines.insert(i + 1, summary.strip())
+                    lines.insert(i + 2, "")
+                break
+        out = "\n".join(lines)
+
+    if not out.endswith("\n"):
+        out += "\n"
+    return out
+
+
+_DEFAULT_BACKLOG_EXEC_PROMPT_PREFIX = (
+    "please investigate docs/architecture.md and continue with the various package {package_name}/docs/architecture.md . "
+    "also check our docs/adr/ to understand the main decisions taken for our abstract framework and you can check "
+    "docs/backlog/completed/ to understand what was done. note however that the code itself in each package remains the ultimate "
+    "source of truth. when you are given a task : either follow or create a docs/backlog/planned/ task item (use the same formalism "
+    "for both the filename and content), implement it while thinking of the long term consequences of your choices to inform on the best "
+    "possible trajectory to create clean, simple and efficient code. when the code is implemented, test the new features and if there are "
+    "errors, engage in a loop of reasoning, fix, test until everything work following the A/B/C tests (docs/adr/0019-testing-strategy-and-levels.md). "
+    "when all tests pass, then you can move the task to docs/backlog/completed/ and write your report at the end. Once you are familiar enough "
+    "with our framework and its different package, i would like you to work on the following task."
+)
+
+
+def _generate_backlog_assist_json(
+    *,
+    provider: str,
+    model: str,
+    template_md: str,
+    kind: str,
+    package: str,
+    title: str,
+    summary: str,
+    draft_md: str,
+    messages: list[Dict[str, Any]],
+) -> Dict[str, str]:
+    """Generate a backlog-authoring assistant response (patchable in tests)."""
+    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
+
+    system = (
+        "You are AbstractFramework Backlog Assistant.\n"
+        "You help a human author a single backlog item that is clear, testable, and aligned with the framework conventions.\n\n"
+        "Rules:\n"
+        "- Always return ONLY valid JSON (no markdown fences).\n"
+        '- JSON schema: {"reply": string, "draft_markdown": string}.\n'
+        "- reply: ask for missing info or confirm decisions.\n"
+        "- draft_markdown: when you have enough info, output a full backlog item markdown following BACKLOG_TEMPLATE.\n"
+        "- Keep dependencies minimal; prefer permissive licensed deps (MIT/Apache/BSD).\n"
+        "- Include ADR-0019 testing commands in the draft.\n"
+        "- Do not include secrets.\n"
+    )
+
+    intro = json.dumps(
+        {
+            "kind": kind,
+            "package": package,
+            "title": title,
+            "summary": summary,
+            "backlog_template": _clamp_text(template_md, max_len=120_000),
+            "current_draft_markdown": _clamp_text(draft_md, max_len=120_000),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+    prompt_msgs: list[Dict[str, str]] = [{"role": "user", "content": "CONTEXT:\n" + _clamp_text(intro, max_len=180_000)}]
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = m.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        prompt_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
+
+    llm = LocalAbstractCoreLLMClient(provider=str(provider), model=str(model))
+    res = llm.generate(prompt="", messages=prompt_msgs, system_prompt=system, params={"temperature": 0.2})
+    raw = str(res.get("content") or "").strip()
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return {"reply": raw, "draft_markdown": ""}
+    if not isinstance(obj, dict):
+        return {"reply": raw, "draft_markdown": ""}
+    reply = str(obj.get("reply") or "").strip() or raw
+    draft = str(obj.get("draft_markdown") or "").strip()
+    if len(draft) > 400_000:
+        draft = draft[:400_000] + "\n…(truncated)…\n"
+    return {"reply": reply, "draft_markdown": draft}
+
+
+@router.post("/backlog/move", response_model=BacklogMoveResponse)
+async def backlog_move(req: BacklogMoveRequest) -> BacklogMoveResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    from_kind = _safe_backlog_kind(req.from_kind)
+    to_kind = _safe_backlog_kind(req.to_kind)
+    if from_kind is None or to_kind is None:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind")
+    if from_kind not in _BACKLOG_WRITE_KINDS or to_kind not in _BACKLOG_WRITE_KINDS:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind")
+
+    filename = _safe_backlog_filename(req.filename)
+    if filename is None:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    from_dir = _backlog_dir_for(repo_root, from_kind)
+    to_dir = _backlog_dir_for(repo_root, to_kind)
+    from_path = (from_dir / filename).resolve()
+    to_path = (to_dir / filename).resolve()
+    try:
+        from_path.relative_to(from_dir)
+        to_path.relative_to(to_dir)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not from_path.exists():
+        raise HTTPException(status_code=404, detail="Backlog item not found")
+    to_dir.mkdir(parents=True, exist_ok=True)
+    if to_path.exists():
+        raise HTTPException(status_code=409, detail="Destination file already exists")
+    try:
+        from_path.rename(to_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to move backlog item: {e}")
+
+    return BacklogMoveResponse(
+        from_kind=from_kind,
+        to_kind=to_kind,
+        filename=filename,
+        from_relpath=f"docs/backlog/{from_kind}/{filename}",
+        to_relpath=f"docs/backlog/{to_kind}/{filename}",
+    )
+
+
+@router.post("/backlog/{kind}/{filename}/update", response_model=BacklogUpdateResponse)
+async def backlog_update(kind: str, filename: str, req: BacklogUpdateRequest) -> BacklogUpdateResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    k = _safe_backlog_kind(kind)
+    if k is None or k not in _BACKLOG_WRITE_KINDS:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind")
+
+    safe_name = _safe_backlog_filename(filename)
+    if safe_name is None:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    dir_path = _backlog_dir_for(repo_root, k)
+    path = (dir_path / safe_name).resolve()
+    try:
+        path.relative_to(dir_path)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backlog item not found")
+
+    current = _read_text_bounded(path, max_chars=1_200_000)
+    if req.expected_sha256:
+        want = str(req.expected_sha256 or "").strip().lower()
+        got = _sha256_hex_text(current)
+        if want and got and want != got:
+            raise HTTPException(status_code=409, detail="Backlog item changed (sha mismatch)")
+
+    new_content = str(req.content or "")
+    if len(new_content) > 1_200_000:
+        raise HTTPException(status_code=400, detail="Content too large")
+    if not new_content.endswith("\n"):
+        new_content += "\n"
+    try:
+        path.write_text(new_content, encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write backlog item: {e}")
+
+    sha = _sha256_hex_text(new_content)
+    return BacklogUpdateResponse(kind=k, filename=safe_name, sha256=sha, bytes_written=len(new_content.encode("utf-8", errors="ignore")))
+
+
+@router.post("/backlog/{kind}/{filename}/attachments/upload", response_model=BacklogAttachmentUploadResponse)
+async def backlog_upload_attachment(
+    kind: str,
+    filename: str,
+    file: UploadFile = File(..., description="Attachment (e.g. screenshot, diagram)."),
+    overwrite: bool = Form(False, description="If true, overwrite an existing attachment with the same name."),
+) -> BacklogAttachmentUploadResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    k = _safe_backlog_kind(kind)
+    if k is None or k not in _BACKLOG_WRITE_KINDS:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind")
+
+    safe = _safe_backlog_filename(filename)
+    if safe is None:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    dir_path = _backlog_dir_for(repo_root, k)
+    backlog_path = (dir_path / safe).resolve()
+    try:
+        backlog_path.relative_to(dir_path)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not backlog_path.exists():
+        raise HTTPException(status_code=404, detail="Backlog item not found")
+
+    m = re.match(r"^(\d{3})-", safe)
+    if not m:
+        raise HTTPException(status_code=400, detail="Backlog filename must start with '<id>-' to attach files")
+    pid = m.group(1)
+    item_id = int(pid)
+
+    try:
+        max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_BACKLOG_ATTACHMENT_BYTES", "") or "").strip()
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 15 * 1024 * 1024
+        if max_bytes <= 0:
+            max_bytes = 15 * 1024 * 1024
+    except Exception:
+        max_bytes = 15 * 1024 * 1024
+
+    try:
+        content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read upload: {e}")
+
+    size = len(content or b"")
+    if size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Attachment too large ({size} bytes > {max_bytes} bytes)")
+
+    base_name = _sanitize_backlog_asset_filename(getattr(file, "filename", "") or "attachment")
+
+    assets_root = (repo_root / "docs" / "backlog" / "assets").resolve()
+    assets_dir = (assets_root / pid).resolve()
+    try:
+        assets_dir.relative_to(assets_root)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Invalid assets dir")
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = (assets_dir / base_name).resolve()
+    try:
+        dest.relative_to(assets_dir)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid attachment path")
+
+    if dest.exists() and not overwrite:
+        stem, ext = os.path.splitext(base_name)
+        for i in range(2, 2000):
+            candidate = (assets_dir / f"{stem}-{i}{ext}").resolve()
+            try:
+                candidate.relative_to(assets_dir)
+            except Exception:
+                continue
+            if not candidate.exists():
+                dest = candidate
+                base_name = candidate.name
+                break
+        if dest.exists():
+            raise HTTPException(status_code=409, detail="Attachment filename collision")
+
+    try:
+        mode = "wb" if overwrite else "xb"
+        with open(dest, mode) as f:
+            f.write(content or b"")
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="Attachment already exists")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write attachment: {e}")
+
+    sha = hashlib.sha256(content or b"").hexdigest()
+    relpath = f"docs/backlog/assets/{pid}/{base_name}"
+    return BacklogAttachmentUploadResponse(
+        kind=k,
+        filename=safe,
+        item_id=item_id,
+        stored=BacklogAttachmentStored(filename=base_name, relpath=relpath, bytes=size, sha256=sha),
+    )
+
+
+@router.post("/backlog/create", response_model=BacklogCreateResponse)
+async def backlog_create(req: BacklogCreateRequest) -> BacklogCreateResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    k = _safe_backlog_kind(req.kind)
+    if k is None or k not in _BACKLOG_CREATE_KINDS:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind for create (planned|proposed|recurrent)")
+
+    pkg = _safe_backlog_package(req.package)
+    if pkg is None:
+        raise HTTPException(status_code=400, detail="Invalid package")
+    title = str(req.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+    summary = str(req.summary or "").strip()
+
+    template_md = _read_backlog_template(repo_root)
+
+    backlog_root = (repo_root / "docs" / "backlog").resolve()
+    dir_path = (backlog_root / k).resolve()
+    dir_path.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from ..maintenance.draft_generator import BacklogIdAllocator  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backlog id allocator unavailable: {e}")
+
+    allocator = BacklogIdAllocator.from_backlog_root(backlog_root)
+    created_at = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+
+    last_err: Optional[str] = None
+    for _ in range(0, 200):
+        item_id = allocator.allocate()
+        slug = _slug_kebab(title)
+        filename = f"{item_id:03d}-{pkg}-{slug}.md"
+        safe = _safe_backlog_filename(filename)
+        if safe is None:
+            last_err = "Failed to generate a safe filename"
+            continue
+        path = (dir_path / safe).resolve()
+        try:
+            path.relative_to(dir_path)
+        except Exception:
+            last_err = "Invalid path"
+            continue
+        if path.exists():
+            last_err = "Filename collision"
+            continue
+
+        md = _render_backlog_markdown(
+            template_md=template_md,
+            item_id=item_id,
+            package=pkg,
+            title=title,
+            summary=summary,
+            created_at=created_at,
+            content_override=req.content,
+        )
+        try:
+            with open(path, "x", encoding="utf-8") as f:
+                f.write(md)
+        except FileExistsError:
+            last_err = "Filename collision"
+            continue
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create backlog item: {e}")
+
+        sha = _sha256_hex_text(md)
+        return BacklogCreateResponse(
+            kind=k,
+            filename=safe,
+            relpath=f"docs/backlog/{k}/{safe}",
+            item_id=int(item_id),
+            sha256=sha,
+        )
+
+    raise HTTPException(status_code=409, detail=last_err or "Could not allocate a unique backlog filename")
+
+
+@router.post("/backlog/{kind}/{filename}/execute", response_model=BacklogExecuteResponse)
+async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    k = _safe_backlog_kind(kind)
+    if k is None:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind")
+    safe = _safe_backlog_filename(filename)
+    if safe is None:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    dir_path = _backlog_dir_for(repo_root, k)
+    path = (dir_path / safe).resolve()
+    try:
+        path.relative_to(dir_path)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backlog item not found")
+
+    content = _read_text_bounded(path, max_chars=500_000)
+    prompt = _DEFAULT_BACKLOG_EXEC_PROMPT_PREFIX + "\n\nBacklog item:\n\n" + content
+
+    base = _gateway_base_dir()
+    qdir = (base / "backlog_exec_queue").resolve()
+    qdir.mkdir(parents=True, exist_ok=True)
+    request_id = uuid.uuid4().hex[:16]
+    qpath = (qdir / f"{request_id}.json").resolve()
+    try:
+        qpath.relative_to(qdir)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Invalid queue path")
+
+    target_agent = "codex:gpt-5.2"
+    try:
+        from ..maintenance.backlog_exec_runner import BacklogExecRunnerConfig, normalize_codex_model_id  # type: ignore
+
+        cfg = BacklogExecRunnerConfig.from_env()
+        ex = str(getattr(cfg, "executor", "") or "").strip().lower()
+        if ex in {"codex", "codex_cli", "codex-cli"}:
+            target_agent = f"codex:{normalize_codex_model_id(getattr(cfg, 'codex_model', 'gpt-5.2'))}"
+    except Exception:
+        pass
+
+    payload = {
+        "created_at": datetime.datetime.now().astimezone().isoformat(),
+        "request_id": request_id,
+        "status": "queued",
+        "backlog": {"kind": k, "filename": safe, "relpath": f"docs/backlog/{k}/{safe}"},
+        "target_agent": target_agent,
+        "prompt": prompt,
+    }
+    try:
+        with open(qpath, "x", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.write("\n")
+    except FileExistsError:
+        # Extremely unlikely; retry once.
+        request_id = uuid.uuid4().hex[:16]
+        qpath = (qdir / f"{request_id}.json").resolve()
+        with open(qpath, "x", encoding="utf-8") as f:
+            payload["request_id"] = request_id
+            json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.write("\n")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue execution request: {e}")
+
+    return BacklogExecuteResponse(ok=True, request_id=request_id, request_relpath=f"backlog_exec_queue/{request_id}.json", prompt=prompt)
+
+
+@router.post("/backlog/assist", response_model=BacklogAssistResponse)
+async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    k = _safe_backlog_kind(req.kind)
+    if k is None or k not in _BACKLOG_CREATE_KINDS:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind for assist (planned|proposed|recurrent)")
+
+    pkg = _safe_backlog_package(req.package)
+    if pkg is None:
+        raise HTTPException(status_code=400, detail="Invalid package")
+    title = str(req.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+
+    summary = str(req.summary or "").strip()
+    draft_md = str(req.draft_markdown or "")
+    if len(draft_md) > 500_000:
+        draft_md = draft_md[:500_000] + "\n…(truncated)…\n"
+
+    template_md = _read_backlog_template(repo_root)
+
+    # Defaults follow gateway provider/model env config.
+    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
+    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+
+    try:
+        out = await asyncio.to_thread(
+            _generate_backlog_assist_json,
+            provider=provider,
+            model=model,
+            template_md=template_md,
+            kind=k,
+            package=pkg,
+            title=title,
+            summary=summary,
+            draft_md=draft_md,
+            messages=req.messages or [],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Backlog assist failed: {e}")
+
+    reply = str(out.get("reply") or "").strip()
+    draft = str(out.get("draft_markdown") or "").strip()
+    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft)
 
 
 # ---------------------------------------------------------------------------

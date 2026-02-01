@@ -16,7 +16,10 @@ def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
 
 
 def _telegram_chat_id() -> Optional[int]:
-    raw = _env("ABSTRACT_TRIAGE_TELEGRAM_CHAT_ID", "ABSTRACTGATEWAY_TRIAGE_TELEGRAM_CHAT_ID")
+    raw = (
+        _env("ABSTRACT_BACKLOG_TELEGRAM_CHAT_ID", "ABSTRACTGATEWAY_BACKLOG_TELEGRAM_CHAT_ID")
+        or _env("ABSTRACT_TRIAGE_TELEGRAM_CHAT_ID", "ABSTRACTGATEWAY_TRIAGE_TELEGRAM_CHAT_ID")
+    )
     if not raw:
         return None
     try:
@@ -48,7 +51,11 @@ def send_telegram_notification(*, text: str) -> Tuple[bool, Optional[str]]:
 
 
 def _email_recipients() -> List[str]:
-    raw = _env("ABSTRACT_TRIAGE_EMAIL_TO", "ABSTRACTGATEWAY_TRIAGE_EMAIL_TO") or ""
+    raw = (
+        _env("ABSTRACT_BACKLOG_EMAIL_TO", "ABSTRACTGATEWAY_BACKLOG_EMAIL_TO")
+        or _env("ABSTRACT_TRIAGE_EMAIL_TO", "ABSTRACTGATEWAY_TRIAGE_EMAIL_TO")
+        or ""
+    )
     parts = [p.strip() for p in raw.replace(";", ",").split(",") if p.strip()]
     return parts
 
@@ -58,9 +65,21 @@ def send_email_notification(*, subject: str, body_text: str) -> Tuple[bool, Opti
     if not to:
         return False, "Missing EMAIL_TO recipients"
 
-    smtp_host = _env("ABSTRACT_TRIAGE_EMAIL_SMTP_HOST", "ABSTRACTGATEWAY_TRIAGE_EMAIL_SMTP_HOST") or ""
-    username = _env("ABSTRACT_TRIAGE_EMAIL_USERNAME", "ABSTRACTGATEWAY_TRIAGE_EMAIL_USERNAME") or ""
-    password_env_var = _env("ABSTRACT_TRIAGE_EMAIL_PASSWORD_ENV_VAR", "ABSTRACTGATEWAY_TRIAGE_EMAIL_PASSWORD_ENV_VAR") or "EMAIL_PASSWORD"
+    smtp_host = (
+        _env("ABSTRACT_BACKLOG_EMAIL_SMTP_HOST", "ABSTRACTGATEWAY_BACKLOG_EMAIL_SMTP_HOST")
+        or _env("ABSTRACT_TRIAGE_EMAIL_SMTP_HOST", "ABSTRACTGATEWAY_TRIAGE_EMAIL_SMTP_HOST")
+        or ""
+    )
+    username = (
+        _env("ABSTRACT_BACKLOG_EMAIL_USERNAME", "ABSTRACTGATEWAY_BACKLOG_EMAIL_USERNAME")
+        or _env("ABSTRACT_TRIAGE_EMAIL_USERNAME", "ABSTRACTGATEWAY_TRIAGE_EMAIL_USERNAME")
+        or ""
+    )
+    password_env_var = (
+        _env("ABSTRACT_BACKLOG_EMAIL_PASSWORD_ENV_VAR", "ABSTRACTGATEWAY_BACKLOG_EMAIL_PASSWORD_ENV_VAR")
+        or _env("ABSTRACT_TRIAGE_EMAIL_PASSWORD_ENV_VAR", "ABSTRACTGATEWAY_TRIAGE_EMAIL_PASSWORD_ENV_VAR")
+        or "EMAIL_PASSWORD"
+    )
 
     if not smtp_host or not username:
         return False, "Missing SMTP host/username (set ABSTRACT_TRIAGE_EMAIL_SMTP_HOST/USERNAME)"
@@ -87,4 +106,3 @@ def send_email_notification(*, subject: str, body_text: str) -> Tuple[bool, Opti
         return True, None
     err = out.get("error") if isinstance(out, dict) else None
     return False, str(err or "Email send failed")
-

@@ -29,6 +29,33 @@ class GatewayService:
 
 
 _service: Optional[GatewayService] = None
+_backlog_exec_runner: Optional[Any] = None
+_backlog_exec_runner_error: Optional[str] = None
+
+
+def backlog_exec_runner_status() -> Dict[str, Any]:
+    runner = _backlog_exec_runner
+    alive = False
+    last_error: Optional[str] = None
+    try:
+        if runner is not None and hasattr(runner, "is_running"):
+            alive = bool(runner.is_running())
+        elif runner is not None and hasattr(runner, "_thread"):
+            t = getattr(runner, "_thread", None)
+            alive = bool(t is not None and getattr(t, "is_alive", lambda: False)())
+    except Exception:
+        alive = False
+
+    try:
+        if runner is not None and hasattr(runner, "last_error"):
+            last_error = runner.last_error()
+    except Exception:
+        last_error = None
+
+    if _backlog_exec_runner_error:
+        last_error = _backlog_exec_runner_error
+
+    return {"alive": bool(alive), "error": (str(last_error) if last_error else "") or None}
 
 
 def get_gateway_service() -> GatewayService:
@@ -144,13 +171,31 @@ def create_default_gateway_service() -> GatewayService:
 def start_gateway_runner() -> None:
     svc = get_gateway_service()
     svc.runner.start()
+    # Optional: backlog execution runner (consumes backlog_exec_queue and executes requests).
+    global _backlog_exec_runner, _backlog_exec_runner_error
+    try:
+        if _backlog_exec_runner is None:
+            from .maintenance.backlog_exec_runner import BacklogExecRunner, BacklogExecRunnerConfig
+
+            cfg = BacklogExecRunnerConfig.from_env()
+            if cfg.enabled:
+                _backlog_exec_runner = BacklogExecRunner(gateway_data_dir=svc.stores.base_dir, cfg=cfg)
+                _backlog_exec_runner.start()
+                _backlog_exec_runner_error = None
+    except Exception as e:
+        # Best-effort: never break the gateway runner start if maintenance runner fails.
+        _backlog_exec_runner = None
+        try:
+            _backlog_exec_runner_error = str(e)
+        except Exception:
+            pass
     bridge = getattr(svc, "telegram_bridge", None)
     if bridge is not None:
         bridge.start()
 
 
 def stop_gateway_runner() -> None:
-    global _service
+    global _service, _backlog_exec_runner, _backlog_exec_runner_error
     if _service is None:
         return
     try:
@@ -160,6 +205,13 @@ def stop_gateway_runner() -> None:
                 bridge.stop()
         except Exception:
             pass
+        try:
+            if _backlog_exec_runner is not None:
+                _backlog_exec_runner.stop()
+        except Exception:
+            pass
+        _backlog_exec_runner = None
+        _backlog_exec_runner_error = None
         _service.runner.stop()
     finally:
         _service = None

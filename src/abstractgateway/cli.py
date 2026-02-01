@@ -73,6 +73,18 @@ def main(argv: list[str] | None = None) -> None:
         help="Repo root containing docs/backlog (auto-detected from CWD if omitted)",
     )
 
+    be = sub.add_parser("backlog-exec-runner", help="Run backlog execution runner (consumes backlog_exec_queue)")
+    be.add_argument(
+        "--data-dir",
+        default=None,
+        help="Gateway data dir (defaults to ABSTRACTGATEWAY_DATA_DIR or ./runtime/gateway)",
+    )
+    be.add_argument(
+        "--repo-root",
+        default=None,
+        help="Repo root containing docs/backlog (defaults to ABSTRACTGATEWAY_TRIAGE_REPO_ROOT or CWD)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
@@ -280,6 +292,53 @@ def main(argv: list[str] | None = None) -> None:
                     print(f"  - {did}:")
                     for k, v in links.items():
                         print(f"      {k}: {v}")
+        return
+
+    if args.cmd == "backlog-exec-runner":
+        from pathlib import Path
+
+        from .maintenance.backlog_exec_runner import BacklogExecRunner, BacklogExecRunnerConfig
+
+        data_dir = Path(str(args.data_dir or "")).expanduser().resolve() if args.data_dir else None
+        if data_dir is None:
+            data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser().resolve()
+
+        repo_root = Path(str(args.repo_root)).expanduser().resolve() if args.repo_root else None
+        if repo_root is None:
+            rr = os.getenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT") or os.getenv("ABSTRACT_TRIAGE_REPO_ROOT") or ""
+            repo_root = Path(rr).expanduser().resolve() if rr.strip() else Path.cwd().expanduser().resolve()
+        os.environ["ABSTRACTGATEWAY_TRIAGE_REPO_ROOT"] = str(repo_root)
+
+        cfg = BacklogExecRunnerConfig.from_env()
+        cfg = BacklogExecRunnerConfig(
+            enabled=True,
+            poll_interval_s=cfg.poll_interval_s,
+            executor=cfg.executor,
+            notify=cfg.notify,
+            codex_bin=cfg.codex_bin,
+            codex_model=cfg.codex_model,
+            codex_sandbox=cfg.codex_sandbox,
+            codex_approvals=cfg.codex_approvals,
+        )
+
+        stop = threading.Event()
+
+        def _handle(_signum, _frame) -> None:  # pragma: no cover
+            stop.set()
+
+        try:
+            signal.signal(signal.SIGINT, _handle)
+            signal.signal(signal.SIGTERM, _handle)
+        except Exception:
+            pass
+
+        runner = BacklogExecRunner(gateway_data_dir=data_dir, cfg=cfg)
+        runner.start()
+        try:
+            while not stop.is_set():
+                stop.wait(0.5)
+        finally:
+            runner.stop()
         return
 
     if args.cmd == "triage-apply":

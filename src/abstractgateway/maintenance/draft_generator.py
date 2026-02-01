@@ -43,7 +43,19 @@ class BacklogIdAllocator:
         planned = backlog_root / "planned"
         completed = backlog_root / "completed"
         proposed = backlog_root / "proposed"
-        max_id = max_backlog_id([(planned, "planned"), (completed, "completed"), (proposed, "proposed")])
+        recurrent = backlog_root / "recurrent"
+        deprecated = backlog_root / "deprecated"
+        trash = backlog_root / "trash"
+        max_id = max_backlog_id(
+            [
+                (planned, "planned"),
+                (completed, "completed"),
+                (proposed, "proposed"),
+                (recurrent, "recurrent"),
+                (deprecated, "deprecated"),
+                (trash, "trash"),
+            ]
+        )
         return cls(next_id=max_id + 1)
 
     def allocate(self) -> int:
@@ -187,4 +199,3 @@ def write_backlog_draft(
         rel = str(path)
     decision.draft_relpath = rel
     return path, item_id
-
