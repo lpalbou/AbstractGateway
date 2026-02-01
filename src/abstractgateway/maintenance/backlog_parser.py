@@ -8,6 +8,11 @@ from typing import Iterable, List, Optional, Tuple
 
 _H1_RE = re.compile(r"^#\s+(?P<id>\d+)-(?P<pkg>[^:]+)\s*:\s*(?P<title>.+?)\s*$")
 _H2_RE = re.compile(r"^##\s+(?P<name>.+?)\s*$")
+_META_TYPE_RE = re.compile(r"^>\s*type\s*:\s*(?P<type>[a-zA-Z0-9_-]+)\s*$", re.IGNORECASE)
+_TITLE_TYPE_RE = re.compile(r"^\[(?P<type>bug|feature|task)\]\s*(?P<rest>.*)$", re.IGNORECASE)
+_META_SOURCE_REPORT_RELPATH_RE = re.compile(r"^>\s*source\s+report\s+relpath\s*:\s*(?P<relpath>.+?)\s*$", re.IGNORECASE)
+_META_SOURCE_REPORT_ID_RE = re.compile(r"^>\s*source\s+report\s+id\s*:\s*(?P<id>.+?)\s*$", re.IGNORECASE)
+_INFER_SOURCE_REPORT_RELPATH_RE = re.compile(r"(?P<relpath>(?:bug_reports|feature_requests)/[A-Za-z0-9._-]{1,220}\.md)")
 
 
 @dataclass(frozen=True)
@@ -17,7 +22,10 @@ class BacklogItem:
     item_id: int
     package: str
     title: str
+    task_type: str = "task"  # bug|feature|task
     summary: str = ""
+    source_report_relpath: str = ""
+    source_report_id: str = ""
 
     def ref(self) -> str:
         return str(self.path)
@@ -49,6 +57,47 @@ def _parse_summary(text: str) -> str:
     return "\n".join(acc).strip()
 
 
+def _normalize_task_type(raw: str) -> Optional[str]:
+    t = str(raw or "").strip().lower()
+    if t in {"bug", "feature", "task"}:
+        return t
+    return None
+
+
+def _parse_task_type(text: str, title: str) -> Tuple[str, str]:
+    """Return (task_type, normalized_title)."""
+    meta_type: Optional[str] = None
+    for raw in text.splitlines()[:80]:
+        line = raw.strip()
+        if not line:
+            continue
+        m = _META_TYPE_RE.match(line)
+        if not m:
+            continue
+        meta_type = _normalize_task_type(m.group("type"))
+        if meta_type:
+            break
+
+    title_str = str(title or "").strip()
+    m2 = _TITLE_TYPE_RE.match(title_str)
+    if m2:
+        prefix_type = _normalize_task_type(m2.group("type"))
+        rest = str(m2.group("rest") or "").strip()
+        if not meta_type and prefix_type:
+            meta_type = prefix_type
+        title_str = rest or title_str
+
+    # Best-effort inference for legacy items (before typed backlog was introduced).
+    if not meta_type:
+        lowered = text.lower()
+        if "bug_reports/" in lowered:
+            meta_type = "bug"
+        elif "feature_requests/" in lowered:
+            meta_type = "feature"
+
+    return (meta_type or "task"), title_str
+
+
 def parse_backlog_item(path: Path, *, kind: str) -> Optional[BacklogItem]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -74,9 +123,45 @@ def parse_backlog_item(path: Path, *, kind: str) -> Optional[BacklogItem]:
         return None
 
     pkg = str(m.group("pkg") or "").strip().lower()
-    title = str(m.group("title") or "").strip()
+    raw_title = str(m.group("title") or "").strip()
+    task_type, title = _parse_task_type(text, raw_title)
     summary = _parse_summary(text)
-    return BacklogItem(kind=kind, path=path, item_id=item_id, package=pkg, title=title, summary=summary)
+
+    source_report_relpath = ""
+    source_report_id = ""
+    lines = text.splitlines()
+    for raw in lines[:120]:
+        line = raw.strip()
+        if not line or not line.startswith(">"):
+            continue
+        m_sr = _META_SOURCE_REPORT_RELPATH_RE.match(line)
+        if m_sr:
+            source_report_relpath = str(m_sr.group("relpath") or "").strip()
+            continue
+        m_id = _META_SOURCE_REPORT_ID_RE.match(line)
+        if m_id:
+            source_report_id = str(m_id.group("id") or "").strip()
+            continue
+
+    if not source_report_relpath:
+        # Best-effort legacy inference: older drafts stored an absolute path in "Source report",
+        # which still contains the stable folder+filename segment.
+        hay = "\n".join(lines[:300])
+        m_inf = _INFER_SOURCE_REPORT_RELPATH_RE.search(hay)
+        if m_inf:
+            source_report_relpath = str(m_inf.group("relpath") or "").strip()
+
+    return BacklogItem(
+        kind=kind,
+        path=path,
+        item_id=item_id,
+        package=pkg,
+        title=title,
+        task_type=task_type,
+        summary=summary,
+        source_report_relpath=source_report_relpath,
+        source_report_id=source_report_id,
+    )
 
 
 def iter_backlog_items(dir_path: Path, *, kind: str) -> Iterable[BacklogItem]:
@@ -97,4 +182,3 @@ def max_backlog_id(dirs: List[Tuple[Path, str]]) -> int:
             if item.item_id > max_id:
                 max_id = item.item_id
     return max_id
-

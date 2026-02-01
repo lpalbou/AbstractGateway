@@ -64,6 +64,7 @@ abstractgateway serve --no-runner --host 127.0.0.1 --port 8081
   - You cannot pass multiple hosts; if you need multiple binds, run behind a reverse proxy or run multiple gateway processes.
 - `ABSTRACTGATEWAY_ALLOWED_ORIGINS` controls **CORS** (which browser Origins are allowed to call the API).
   - It can list multiple values like: `http://localhost:*,http://127.0.0.1:*,http://192.168.1.188:*`
+  - Glob patterns are supported (e.g. `https://*.ngrok-free.app`).
   - It does **not** change which IPs the server listens on.
   - Non-browser clients (e.g. `curl`) are not subject to CORS, but still require auth if `ABSTRACTGATEWAY_AUTH_TOKEN` is set.
 

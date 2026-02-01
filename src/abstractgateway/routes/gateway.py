@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 
 from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore
-from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord
+from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord, WaitReason
 
 from .. import host_metrics
 from ..service import backlog_exec_runner_status, get_gateway_service, run_summary
@@ -170,8 +170,8 @@ class DeprecateWorkflowRequest(BaseModel):
 
 
 class GenerateRunSummaryRequest(BaseModel):
-    provider: str = Field(default="lmstudio", description="AbstractCore provider name.")
-    model: str = Field(default="qwen/qwen3-next-80b", description="Model id/name.")
+    provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
+    model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
     include_subruns: bool = Field(default=True, description="Include child/subworkflow runs in the summary context.")
 
 
@@ -205,8 +205,8 @@ class EmbeddingsResponse(BaseModel):
 
 
 class RunChatRequest(BaseModel):
-    provider: str = Field(default="lmstudio", description="AbstractCore provider name.")
-    model: str = Field(default="qwen/qwen3-next-80b", description="Model id/name.")
+    provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
+    model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
     include_subruns: bool = Field(default=True, description="Include child/subworkflow runs in the chat context.")
     messages: list[Dict[str, Any]] = Field(default_factory=list, description="Chat messages (role/content).")
     persist: bool = Field(default=False, description="If true, persist the Q/A to the parent run ledger as abstract.chat.")
@@ -229,6 +229,26 @@ class RunChatResponse(BaseModel):
     model: str
     generated_at: str
     answer: str
+
+
+class SaveChatThreadRequest(BaseModel):
+    provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
+    model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
+    include_subruns: bool = Field(default=True, description="Include child/subworkflow runs in the chat context.")
+    messages: list[Dict[str, Any]] = Field(default_factory=list, description="Chat messages to persist (role/content/ts).")
+    title: Optional[str] = Field(default=None, description="Optional thread title (UI label).")
+
+
+class SaveChatThreadResponse(BaseModel):
+    ok: bool = Field(default=True)
+    run_id: str
+    workflow_id: str
+    thread_id: str
+    created_at: str
+    duplicate: bool = Field(default=False, description="True if an identical chat thread was already saved (no-op).")
+    title: Optional[str] = None
+    message_count: int = 0
+    chat_artifact: Dict[str, Any]
 
 
 class KGQueryRequest(BaseModel):
@@ -3584,8 +3604,9 @@ async def generate_run_summary(run_id: str, req: GenerateRunSummaryRequest) -> G
         "per_run": per_run,
     }
 
-    provider = str(req.provider or "lmstudio").strip() or "lmstudio"
-    model = str(req.model or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+    # Defaults follow gateway provider/model env config.
+    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
+    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
 
     try:
         summary_text = await asyncio.to_thread(_generate_summary_text, provider=provider, model=model, context=context)
@@ -3796,8 +3817,9 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
         "ledger_excerpt_by_run": ledger_excerpt_by_run,
     }
 
-    provider = str(req.provider or "lmstudio").strip() or "lmstudio"
-    model = str(req.model or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+    # Defaults follow gateway provider/model env config.
+    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
+    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
     messages = list(req.messages or [])
 
     try:
@@ -3839,6 +3861,278 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
         model=model,
         generated_at=generated_at,
         answer=answer_text,
+    )
+
+
+@router.post("/runs/{run_id}/chat_threads", response_model=SaveChatThreadResponse)
+async def save_chat_thread(run_id: str, req: SaveChatThreadRequest) -> SaveChatThreadResponse:
+    """Persist a full observer chat thread as an artifact + durable ledger event."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    store_fn = getattr(store, "store", None)
+    if not callable(store_fn):
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    workflow_id = str(getattr(run, "workflow_id", "") or "")
+    include_subruns = bool(getattr(req, "include_subruns", True))
+
+    # Defaults follow gateway provider/model env config.
+    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
+    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+
+    created_at = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+    thread_id = str(uuid.uuid4())
+
+    def _derive_title(items: list[Dict[str, Any]]) -> str:
+        for m in items or []:
+            if not isinstance(m, dict):
+                continue
+            if str(m.get("role") or "") != "user":
+                continue
+            c = m.get("content")
+            if isinstance(c, str) and c.strip():
+                return _clamp_text(c.strip().replace("\n", " "), max_len=80)
+        return ""
+
+    title = str(getattr(req, "title", "") or "").strip() or _derive_title(list(req.messages or []))
+    if not title:
+        title = None
+
+    messages_in = list(req.messages or [])
+    messages_out: list[Dict[str, Any]] = []
+    for m in messages_in:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "").strip()
+        content = m.get("content")
+        if not isinstance(content, str):
+            continue
+        text = content.strip()
+        if not text:
+            continue
+        ts = m.get("ts")
+        msg: Dict[str, Any] = {"role": role or "user", "content": text}
+        if isinstance(ts, str) and ts.strip():
+            msg["ts"] = ts.strip()
+        messages_out.append(msg)
+
+    # Keep a hard cap to avoid unbounded storage / memory pressure.
+    max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_CHAT_THREAD_BYTES", "") or "").strip()
+    try:
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 750_000
+    except Exception:
+        max_bytes = 750_000
+    if max_bytes <= 0:
+        max_bytes = 750_000
+
+    doc: Dict[str, Any] = {
+        "schema": "abstract.chat.thread.v0",
+        "thread_id": thread_id,
+        "created_at": created_at,
+        "workflow_id": workflow_id,
+        "run_id": rid,
+        "provider": provider,
+        "model": model,
+        "include_subruns": include_subruns,
+        "title": title,
+        "messages": messages_out,
+    }
+    try:
+        blob = json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to encode chat thread: {e}")
+    if len(blob) > int(max_bytes):
+        raise HTTPException(status_code=413, detail=f"Chat thread too large ({len(blob)} bytes > {max_bytes} bytes)")
+
+    sha256 = hashlib.sha256(blob).hexdigest()
+
+    # Best-effort idempotency: if the exact same serialized thread was already saved for this run,
+    # return the existing artifact/thread id instead of creating duplicates (common double-click UX).
+    try:
+        list_fn = getattr(store, "list_by_run", None)
+        if callable(list_fn):
+            existing_meta = None
+            existing_tags: Dict[str, Any] = {}
+            for m in list_fn(rid) or []:
+                try:
+                    aid0 = str(getattr(m, "artifact_id", "") or "").strip()
+                    tags0 = getattr(m, "tags", None)
+                    tags2 = dict(tags0 or {}) if isinstance(tags0, dict) else {}
+                    if not aid0:
+                        continue
+                    if str(tags2.get("kind") or "") != "chat_thread":
+                        continue
+                    if str(tags2.get("sha256") or "") != sha256:
+                        continue
+                    existing_meta = m
+                    existing_tags = tags2
+                    break
+                except Exception:
+                    continue
+
+            if existing_meta is not None:
+                artifact_id = str(getattr(existing_meta, "artifact_id", "") or "").strip()
+                if artifact_id:
+                    thread_id2 = str(existing_tags.get("thread_id") or "").strip() or thread_id
+                    created_at2 = str(existing_tags.get("created_at") or "").strip() or created_at
+                    title2 = str(existing_tags.get("title") or "").strip() or title or ""
+                    if not title2:
+                        title2 = None
+                    try:
+                        mc2 = int(existing_tags.get("message_count") or len(messages_out))
+                    except Exception:
+                        mc2 = int(len(messages_out))
+
+                    chat_artifact: Dict[str, Any] = {
+                        "$artifact": artifact_id,
+                        "content_type": "application/json; charset=utf-8",
+                        "filename": "chat_thread.json",
+                        "sha256": sha256,
+                        "size_bytes": len(blob),
+                    }
+
+                    # Ensure a durable ledger event exists (handles rare "artifact stored but event failed" cases).
+                    found_event = False
+                    try:
+                        ledger = svc.host.ledger_store.list(rid)
+                        if not isinstance(ledger, list):
+                            ledger = []
+                        tail = ledger[-2500:] if len(ledger) > 2500 else ledger
+                        for rec0 in reversed(tail):
+                            if not isinstance(rec0, dict):
+                                continue
+                            eff0 = rec0.get("effect")
+                            if not isinstance(eff0, dict) or str(eff0.get("type") or "") != "emit_event":
+                                continue
+                            p0 = eff0.get("payload")
+                            if not isinstance(p0, dict) or str(p0.get("name") or "") != "abstract.chat.thread":
+                                continue
+                            pay0 = p0.get("payload")
+                            if not isinstance(pay0, dict):
+                                continue
+                            if str(pay0.get("thread_id") or "") == thread_id2:
+                                found_event = True
+                                break
+                            art0 = pay0.get("chat_artifact")
+                            if isinstance(art0, dict) and str(art0.get("$artifact") or "") == artifact_id:
+                                found_event = True
+                                break
+                    except Exception:
+                        found_event = False
+
+                    if not found_event:
+                        payload = {
+                            "thread_id": thread_id2,
+                            "created_at": created_at2,
+                            "workflow_id": workflow_id,
+                            "run_id": rid,
+                            "provider": provider,
+                            "model": model,
+                            "include_subruns": include_subruns,
+                            "title": title2,
+                            "message_count": mc2,
+                            "chat_artifact": chat_artifact,
+                        }
+                        eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.chat.thread", "scope": "run", "run_id": rid, "payload": payload})
+                        rec = StepRecord.start(run=run, node_id="observer", effect=eff, idempotency_key=f"observer:chat_thread:{thread_id2}")
+                        rec.finish_success({"emitted": True, "name": "abstract.chat.thread", "payload": payload})
+                        svc.host.ledger_store.append(rec)
+
+                    return SaveChatThreadResponse(
+                        ok=True,
+                        run_id=rid,
+                        workflow_id=workflow_id,
+                        thread_id=thread_id2,
+                        created_at=created_at2,
+                        duplicate=True,
+                        title=title2,
+                        message_count=mc2,
+                        chat_artifact=chat_artifact,
+                    )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    tags: Dict[str, str] = {
+        "kind": "chat_thread",
+        "target": "observer",
+        "thread_id": thread_id,
+        "workflow_id": workflow_id,
+        "source_run_id": rid,
+        "created_at": created_at,
+        "provider": provider,
+        "model": model,
+        "include_subruns": "true" if include_subruns else "false",
+        "message_count": str(len(messages_out)),
+        "sha256": sha256,
+    }
+    if title:
+        tags["title"] = _clamp_text(str(title), max_len=140)
+    sid = str(getattr(run, "session_id", "") or "").strip()
+    if sid:
+        tags["session_id"] = sid
+
+    try:
+        meta = store_fn(blob, content_type="application/json; charset=utf-8", run_id=rid, tags=tags)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store chat thread artifact: {e}")
+
+    artifact_id = str(getattr(meta, "artifact_id", "") or "") if meta is not None else ""
+    if not artifact_id:
+        artifact_id = str(meta.get("artifact_id", "") or "") if isinstance(meta, dict) else ""
+    if not artifact_id:
+        raise HTTPException(status_code=500, detail="Artifact store did not return an artifact_id for chat thread")
+
+    chat_artifact: Dict[str, Any] = {
+        "$artifact": artifact_id,
+        "content_type": "application/json; charset=utf-8",
+        "filename": "chat_thread.json",
+        "sha256": sha256,
+        "size_bytes": len(blob),
+    }
+
+    payload = {
+        "thread_id": thread_id,
+        "created_at": created_at,
+        "workflow_id": workflow_id,
+        "run_id": rid,
+        "provider": provider,
+        "model": model,
+        "include_subruns": include_subruns,
+        "title": title,
+        "message_count": len(messages_out),
+        "chat_artifact": chat_artifact,
+    }
+    try:
+        eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.chat.thread", "scope": "run", "run_id": rid, "payload": payload})
+        rec = StepRecord.start(run=run, node_id="observer", effect=eff, idempotency_key=f"observer:chat_thread:{thread_id}")
+        rec.finish_success({"emitted": True, "name": "abstract.chat.thread", "payload": payload})
+        svc.host.ledger_store.append(rec)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to persist chat thread event: {e}")
+
+    return SaveChatThreadResponse(
+        ok=True,
+        run_id=rid,
+        workflow_id=workflow_id,
+        thread_id=thread_id,
+        created_at=created_at,
+        duplicate=False,
+        title=title,
+        message_count=len(messages_out),
+        chat_artifact=chat_artifact,
     )
 
 
@@ -4477,6 +4771,8 @@ class BugReportCreateResponse(BaseModel):
     session_id: str
     session_memory_run_id: str
     active_run_id: Optional[str] = None
+    proposed_backlog_relpath: str = ""
+    proposed_backlog_item_id: Optional[int] = None
 
 
 def _gateway_bug_reports_dir() -> Path:
@@ -4585,6 +4881,403 @@ def _format_session_attachments_md(*, session_memory_run_id: str) -> str:
         lines.append(f"- …and {len(attachments) - 50} more")
 
     return "\n".join(lines)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "") or "").strip().lower()
+    if not raw:
+        return bool(default)
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
+def _report_attachment_candidates(report: Any, *, session_memory_run_id: str) -> list[Dict[str, str]]:
+    """Best-effort list of artifact-backed attachments relevant to this report.
+
+    Preference order:
+    1) attachments_next_run in the report's client_context (this reflects what the client had attached).
+    2) most recent session memory artifacts tagged as attachments (fallback).
+    """
+    out: list[Dict[str, str]] = []
+    ctx = getattr(report, "context", None)
+    if isinstance(ctx, dict):
+        client_ctx = ctx.get("client_context")
+        if isinstance(client_ctx, dict):
+            items = client_ctx.get("attachments_next_run")
+            if isinstance(items, list):
+                for it in items[:50]:
+                    if not isinstance(it, dict):
+                        continue
+                    st = str(it.get("status") or "").strip().lower()
+                    if st and st != "ok":
+                        continue
+                    aid = str(it.get("artifact_id") or "").strip()
+                    if not aid:
+                        continue
+                    out.append(
+                        {
+                            "artifact_id": aid,
+                            "filename": str(it.get("filename") or "").strip(),
+                            "content_type": str(it.get("content_type") or "").strip().lower(),
+                            "sha256": str(it.get("sha256") or "").strip().lower(),
+                        }
+                    )
+    if out:
+        return out
+
+    svc = get_gateway_service()
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    list_fn = getattr(store, "list_by_run", None)
+    if not callable(list_fn):
+        return []
+    try:
+        metas = list_fn(str(session_memory_run_id))
+    except Exception:
+        return []
+
+    # Pick the most recent attachment artifacts.
+    attachments: list[Any] = []
+    for meta in metas or []:
+        tags = getattr(meta, "tags", None)
+        if isinstance(tags, dict) and str(tags.get("kind") or "").strip() == "attachment":
+            attachments.append(meta)
+
+    def _key(m: Any) -> str:
+        return str(getattr(m, "created_at", "") or "")
+
+    attachments.sort(key=_key, reverse=True)
+    for meta in attachments[:8]:
+        aid = str(getattr(meta, "artifact_id", "") or "").strip()
+        if not aid:
+            continue
+        tags = getattr(meta, "tags", None)
+        tags = tags if isinstance(tags, dict) else {}
+        out.append(
+            {
+                "artifact_id": aid,
+                "filename": str(tags.get("filename") or "").strip(),
+                "content_type": str(getattr(meta, "content_type", "") or "").strip().lower(),
+                "sha256": str(tags.get("sha256") or "").strip().lower(),
+            }
+        )
+    return out
+
+
+def _detect_safe_attachment_mime(content: bytes) -> str:
+    """Best-effort magic detection for common safe media types (stdlib-only)."""
+    b = bytes(content or b"")
+    if len(b) >= 8 and b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if len(b) >= 3 and b[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if len(b) >= 6 and (b[:6] == b"GIF87a" or b[:6] == b"GIF89a"):
+        return "image/gif"
+    if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "image/webp"
+    if len(b) >= 5 and b[:5] == b"%PDF-":
+        return "application/pdf"
+    if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE":
+        return "audio/wav"
+    if len(b) >= 4 and b[:4] == b"OggS":
+        return "audio/ogg"
+    if len(b) >= 4 and b[:4] == b"fLaC":
+        return "audio/flac"
+    if len(b) >= 3 and b[:3] == b"ID3":
+        return "audio/mpeg"
+    if len(b) >= 2 and b[0] == 0xFF and (b[1] & 0xE0) == 0xE0:
+        return "audio/mpeg"
+    # ISO BMFF (mp4/mov): size(4) + ftyp(4) + brand...
+    if len(b) >= 12 and b[4:8] == b"ftyp":
+        return "video/mp4"
+    # EBML (webm/mkv)
+    if len(b) >= 4 and b[:4] == b"\x1A\x45\xDF\xA3":
+        return "video/webm"
+    return ""
+
+
+def _ext_for_mime(mime: str) -> str:
+    m = str(mime or "").strip().lower()
+    return {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "application/pdf": ".pdf",
+        "audio/wav": ".wav",
+        "audio/ogg": ".ogg",
+        "audio/flac": ".flac",
+        "audio/mpeg": ".mp3",
+        "video/mp4": ".mp4",
+        "video/webm": ".webm",
+    }.get(m, "")
+
+
+def _backlog_assets_section_md(*, item_id: int, stored: list[Dict[str, Any]], skipped: list[Dict[str, str]]) -> str:
+    if not stored and not skipped:
+        return ""
+    lines: list[str] = []
+    lines.append("## Attachments (repo)")
+    lines.append("Copied from the report/session artifacts (treat as untrusted inputs).")
+    lines.append("")
+    if stored:
+        for s in stored[:25]:
+            rel = str(s.get("relpath") or "").strip()
+            size = int(s.get("bytes") or 0) if str(s.get("bytes") or "").strip() else 0
+            sha = str(s.get("sha256") or "").strip()
+            ctype = str(s.get("content_type") or "").strip()
+            meta = []
+            if ctype:
+                meta.append(ctype)
+            if size > 0:
+                meta.append(f"{size} B")
+            if sha:
+                meta.append(f"sha256={sha[:8]}…")
+            suffix = f" ({', '.join(meta)})" if meta else ""
+            if rel:
+                lines.append(f"- `{rel}`{suffix}")
+    if skipped:
+        lines.append("")
+        lines.append("### Skipped")
+        for s in skipped[:25]:
+            name = str(s.get("filename") or s.get("artifact_id") or "(attachment)").strip()
+            reason = str(s.get("reason") or "skipped").strip()
+            lines.append(f"- `{name}` — {reason}")
+    lines.append("")
+    lines.append(f"Session artifacts remain available under the session memory run (see Context).")
+    lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _maybe_copy_report_attachments_to_backlog_assets(
+    *,
+    repo_root: Path,
+    item_id: int,
+    report: Any,
+    session_memory_run_id: str,
+    backlog_path: Path,
+) -> None:
+    """Best-effort: copy safe media attachments into docs/backlog/assets/{id}/ and link them from the backlog item."""
+    if not _env_bool("ABSTRACTGATEWAY_REPORT_COPY_ATTACHMENTS_TO_BACKLOG", True):
+        return
+
+    rr = Path(repo_root).expanduser().resolve()
+    pid = f"{int(item_id):03d}"
+
+    try:
+        max_files_raw = str(os.getenv("ABSTRACTGATEWAY_REPORT_BACKLOG_ASSETS_MAX_FILES", "") or "").strip()
+        max_files = int(max_files_raw) if max_files_raw else 8
+        if max_files <= 0:
+            max_files = 8
+    except Exception:
+        max_files = 8
+
+    try:
+        max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_REPORT_BACKLOG_ASSETS_MAX_BYTES", "") or "").strip()
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 15 * 1024 * 1024
+        if max_bytes <= 0:
+            max_bytes = 15 * 1024 * 1024
+    except Exception:
+        max_bytes = 15 * 1024 * 1024
+
+    cand = _report_attachment_candidates(report, session_memory_run_id=str(session_memory_run_id))
+    if not cand:
+        return
+
+    svc = get_gateway_service()
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    load_fn = getattr(store, "load", None)
+    if not callable(load_fn):
+        return
+
+    assets_root = (rr / "docs" / "backlog" / "assets").resolve()
+    assets_dir = (assets_root / pid).resolve()
+    try:
+        assets_dir.relative_to(assets_root)
+    except Exception:
+        return
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    stored: list[Dict[str, Any]] = []
+    skipped: list[Dict[str, str]] = []
+
+    for it in cand[: max(1, max_files)]:
+        aid = str(it.get("artifact_id") or "").strip()
+        if not aid:
+            continue
+        try:
+            art = load_fn(aid)
+        except Exception as e:
+            skipped.append({"artifact_id": aid, "filename": str(it.get("filename") or ""), "reason": f"load failed: {e}"})
+            continue
+        if art is None:
+            skipped.append({"artifact_id": aid, "filename": str(it.get("filename") or ""), "reason": "not found"})
+            continue
+        content = bytes(getattr(art, "content", b"") or b"")
+        if len(content) > int(max_bytes):
+            skipped.append({"artifact_id": aid, "filename": str(it.get("filename") or ""), "reason": f"too large ({len(content)} bytes)"})
+            continue
+
+        detected = _detect_safe_attachment_mime(content)
+        if not detected:
+            # Conservative: only auto-copy types we can validate by magic.
+            skipped.append({"artifact_id": aid, "filename": str(it.get("filename") or ""), "reason": "unrecognized/unsafe type"})
+            continue
+
+        # Disallow svg explicitly (can carry scripts).
+        if detected == "image/svg+xml":
+            skipped.append({"artifact_id": aid, "filename": str(it.get("filename") or ""), "reason": "svg disabled"})
+            continue
+
+        expected_ext = _ext_for_mime(detected)
+        raw_name = str(it.get("filename") or "") or str(getattr(getattr(art, "metadata", None), "tags", {}).get("filename") or "")
+        base_name = _sanitize_backlog_asset_filename(raw_name or f"attachment{expected_ext or ''}")
+        stem, ext = os.path.splitext(base_name)
+        if expected_ext and ext.lower() != expected_ext:
+            base_name = _sanitize_backlog_asset_filename(f"{stem}{expected_ext}")
+
+        dest = (assets_dir / base_name).resolve()
+        try:
+            dest.relative_to(assets_dir)
+        except Exception:
+            skipped.append({"artifact_id": aid, "filename": base_name, "reason": "invalid dest"})
+            continue
+
+        if dest.exists():
+            for i in range(2, 2000):
+                candidate = (assets_dir / f"{stem}-{i}{expected_ext or ext}").resolve()
+                try:
+                    candidate.relative_to(assets_dir)
+                except Exception:
+                    continue
+                if not candidate.exists():
+                    dest = candidate
+                    base_name = candidate.name
+                    break
+        if dest.exists():
+            skipped.append({"artifact_id": aid, "filename": base_name, "reason": "filename collision"})
+            continue
+
+        try:
+            with open(dest, "xb") as f:
+                f.write(content)
+        except Exception as e:
+            skipped.append({"artifact_id": aid, "filename": base_name, "reason": f"write failed: {e}"})
+            continue
+
+        sha = hashlib.sha256(content).hexdigest()
+        relpath = f"docs/backlog/assets/{pid}/{base_name}"
+        stored.append({"relpath": relpath, "bytes": len(content), "sha256": sha, "content_type": detected})
+
+    if not stored and not skipped:
+        return
+
+    try:
+        md = backlog_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return
+
+    section = _backlog_assets_section_md(item_id=item_id, stored=stored, skipped=skipped)
+    if not section.strip():
+        return
+
+    if "## Attachments (repo)" in md:
+        return
+
+    insert_before = "\n\n## Related (best-effort)"
+    idx = md.find(insert_before)
+    if idx >= 0:
+        new_md = md[:idx] + "\n\n" + section.strip() + md[idx:]
+    else:
+        insert_before2 = "\n\n## Scope"
+        idx2 = md.find(insert_before2)
+        if idx2 >= 0:
+            new_md = md[:idx2] + "\n\n" + section.strip() + md[idx2:]
+        else:
+            new_md = md.rstrip() + "\n\n" + section.strip() + "\n"
+
+    try:
+        backlog_path.write_text(new_md if new_md.endswith("\n") else new_md + "\n", encoding="utf-8")
+    except Exception:
+        return
+
+
+def _maybe_autobridge_report_to_proposed_backlog(
+    *,
+    report_path: Path,
+    report_relpath: str,
+    report_type: str,
+    repo_root: Path,
+) -> Optional[Dict[str, Any]]:
+    """Best-effort: write a typed proposed backlog item for a report.
+
+    This must never fail the report creation endpoint; callers should treat errors as non-fatal.
+    """
+
+    try:
+        from ..maintenance.draft_generator import BacklogIdAllocator, write_backlog_draft  # type: ignore
+        from ..maintenance.report_models import TriageDecision  # type: ignore
+        from ..maintenance.report_parser import parse_report_file  # type: ignore
+        from ..maintenance.triage import compute_missing_fields  # type: ignore
+        from ..maintenance.triage_queue import decision_id_for_report  # type: ignore
+    except Exception:
+        return None
+
+    rr = Path(repo_root).expanduser().resolve()
+    backlog_root = (rr / "docs" / "backlog").resolve()
+    if not (backlog_root / "template.md").exists():
+        # Repo exists, but backlog system isn't present.
+        return None
+
+    try:
+        report = parse_report_file(Path(report_path))
+    except Exception:
+        return None
+
+    missing = []
+    try:
+        missing = compute_missing_fields(report)
+    except Exception:
+        missing = []
+
+    did = decision_id_for_report(report_relpath=str(report_relpath))
+    decision = TriageDecision(
+        decision_id=str(did),
+        report_type=str(report_type or "bug"),  # type: ignore[arg-type]
+        report_relpath=str(report_relpath),
+        missing_fields=list(missing) if isinstance(missing, list) else [],
+        duplicates=[],
+    )
+
+    allocator = BacklogIdAllocator.from_backlog_root(backlog_root)
+    path, item_id = write_backlog_draft(
+        repo_root=rr,
+        backlog_root=backlog_root,
+        allocator=allocator,
+        report=report,
+        decision=decision,
+        llm_suggestion=None,
+    )
+    try:
+        session_memory_run_id = str(getattr(getattr(report, "header", None), "session_memory_run_id", "") or "").strip()
+        if session_memory_run_id:
+            _maybe_copy_report_attachments_to_backlog_assets(
+                repo_root=rr,
+                item_id=int(item_id),
+                report=report,
+                session_memory_run_id=session_memory_run_id,
+                backlog_path=Path(path),
+            )
+    except Exception:
+        # Best-effort only; never fail report filing.
+        pass
+    try:
+        rel = str(path.relative_to(rr))
+    except Exception:
+        rel = str(path)
+    return {"item_id": int(item_id), "relpath": rel}
 
 
 @router.post("/bugs/report")
@@ -4721,6 +5414,26 @@ async def bugs_report(req: BugReportCreateRequest) -> BugReportCreateResponse:
 
     # Do not leak absolute paths; return a stable path relative to the gateway data dir.
     rel_path = f"bug_reports/{filename}"
+
+    proposed_backlog_relpath = ""
+    proposed_backlog_item_id: Optional[int] = None
+    try:
+        repo_root = _triage_repo_root_from_env()
+        if repo_root is not None:
+            out = _maybe_autobridge_report_to_proposed_backlog(
+                report_path=path,
+                report_relpath=rel_path,
+                report_type="bug",
+                repo_root=repo_root,
+            )
+            if isinstance(out, dict):
+                proposed_backlog_relpath = str(out.get("relpath") or "").strip()
+                bid = out.get("item_id")
+                if isinstance(bid, int):
+                    proposed_backlog_item_id = bid
+    except Exception:
+        # Best-effort only; do not fail report filing.
+        pass
     return BugReportCreateResponse(
         ok=True,
         filename=filename,
@@ -4730,6 +5443,8 @@ async def bugs_report(req: BugReportCreateRequest) -> BugReportCreateResponse:
         session_id=sid,
         session_memory_run_id=session_memory_run_id,
         active_run_id=active_run_id or None,
+        proposed_backlog_relpath=proposed_backlog_relpath,
+        proposed_backlog_item_id=proposed_backlog_item_id,
     )
 
 
@@ -4832,6 +5547,8 @@ class FeatureReportCreateResponse(BaseModel):
     session_id: str
     session_memory_run_id: str
     active_run_id: Optional[str] = None
+    proposed_backlog_relpath: str = ""
+    proposed_backlog_item_id: Optional[int] = None
 
 
 class ReportInboxItem(BaseModel):
@@ -4899,6 +5616,7 @@ class BacklogItemSummary(BaseModel):
     item_id: int
     package: str
     title: str
+    task_type: str = Field(default="task", description="bug|feature|task")
     summary: str = ""
     parsed: bool = True
 
@@ -4955,6 +5673,7 @@ class BacklogCreateRequest(BaseModel):
     kind: str = Field(..., description="Backlog kind to create in (planned|proposed|recurrent).")
     package: str = Field(..., description="Package scope (e.g. framework, abstractruntime, abstractgateway).")
     title: str = Field(..., description="Backlog title.")
+    task_type: Optional[str] = Field(default=None, description="Backlog item type: bug|feature|task.")
     summary: Optional[str] = Field(default=None, description="Optional 1-paragraph summary.")
     content: Optional[str] = Field(
         default=None,
@@ -4993,6 +5712,34 @@ class BacklogAssistResponse(BaseModel):
     ok: bool = True
     reply: str
     draft_markdown: str = ""
+
+
+class BacklogMaintainRequest(BaseModel):
+    kind: str = Field(..., description="Target backlog kind (planned|proposed|recurrent|deprecated).")
+    filename: str = Field(..., description="Backlog filename to maintain (e.g. 123-framework-title.md).")
+    package: str = Field(..., description="Target package (best-effort).")
+    title: str = Field(..., description="Working title (best-effort).")
+    summary: Optional[str] = Field(default=None, description="Working summary (best-effort).")
+    draft_markdown: Optional[str] = Field(default=None, description="Current draft markdown (optional).")
+    messages: List[Dict[str, Any]] = Field(default_factory=list, description="Chat messages: {role, content}.")
+    provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
+    model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
+
+
+class BacklogAdvisorRequest(BaseModel):
+    messages: List[Dict[str, Any]] = Field(default_factory=list, description="Chat messages: {role, content}.")
+    provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
+    model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
+    focus_kind: Optional[str] = Field(
+        default=None,
+        description="Optional current backlog tab (processing|planned|proposed|recurrent|completed|failed|deprecated|trash).",
+    )
+    focus_type: Optional[str] = Field(default=None, description="Optional current type filter (bug|feature|task|all).")
+
+
+class BacklogAdvisorResponse(BaseModel):
+    ok: bool = True
+    reply: str
 
 
 class BacklogExecConfigResponse(BaseModel):
@@ -5235,6 +5982,26 @@ async def features_report(req: FeatureReportCreateRequest) -> FeatureReportCreat
 
     # Do not leak absolute paths; return a stable path relative to the gateway data dir.
     rel_path = f"feature_requests/{filename}"
+
+    proposed_backlog_relpath = ""
+    proposed_backlog_item_id: Optional[int] = None
+    try:
+        repo_root = _triage_repo_root_from_env()
+        if repo_root is not None:
+            out = _maybe_autobridge_report_to_proposed_backlog(
+                report_path=path,
+                report_relpath=rel_path,
+                report_type="feature",
+                repo_root=repo_root,
+            )
+            if isinstance(out, dict):
+                proposed_backlog_relpath = str(out.get("relpath") or "").strip()
+                bid = out.get("item_id")
+                if isinstance(bid, int):
+                    proposed_backlog_item_id = bid
+    except Exception:
+        # Best-effort only; do not fail report filing.
+        pass
     return FeatureReportCreateResponse(
         ok=True,
         filename=filename,
@@ -5244,6 +6011,8 @@ async def features_report(req: FeatureReportCreateRequest) -> FeatureReportCreat
         session_id=sid,
         session_memory_run_id=session_memory_run_id,
         active_run_id=active_run_id or None,
+        proposed_backlog_relpath=proposed_backlog_relpath,
+        proposed_backlog_item_id=proposed_backlog_item_id,
     )
 
 #
@@ -5811,6 +6580,7 @@ async def backlog_list(kind: str) -> BacklogListResponse:
                 item_id=int(item.item_id),
                 package=str(item.package),
                 title=str(item.title),
+                task_type=str(getattr(item, "task_type", "task") or "task"),
                 summary=str(item.summary or ""),
                 parsed=True,
             )
@@ -5827,6 +6597,7 @@ async def backlog_list(kind: str) -> BacklogListResponse:
                 item_id=0,
                 package="",
                 title=p.name,
+                task_type="task",
                 summary="",
                 parsed=False,
             )
@@ -5869,6 +6640,7 @@ async def backlog_content(kind: str, filename: str) -> BacklogContentResponse:
 _BACKLOG_KINDS = {"planned", "completed", "proposed", "recurrent", "deprecated", "trash"}
 _BACKLOG_WRITE_KINDS = {"planned", "proposed", "recurrent", "completed", "deprecated", "trash"}
 _BACKLOG_CREATE_KINDS = {"planned", "proposed", "recurrent"}
+_BACKLOG_ASSIST_KINDS = {"planned", "proposed", "recurrent", "deprecated"}
 
 
 def _safe_backlog_kind(value: str) -> Optional[str]:
@@ -5885,6 +6657,25 @@ def _safe_backlog_package(value: str) -> Optional[str]:
     if not re.fullmatch(r"[a-z][a-z0-9_-]{1,60}", raw):
         return None
     return raw
+
+
+_BACKLOG_TASK_TYPES = {"bug", "feature", "task"}
+_BACKLOG_TITLE_TYPE_PREFIX_RE = re.compile(r"^\[(bug|feature|task)\]\s*", re.IGNORECASE)
+
+
+def _safe_backlog_task_type(value: Optional[str]) -> Optional[str]:
+    t = str(value or "").strip().lower()
+    if not t:
+        return None
+    if t in _BACKLOG_TASK_TYPES:
+        return t
+    return None
+
+
+def _strip_backlog_title_type_prefix(title: str) -> str:
+    s = str(title or "").strip()
+    s = _BACKLOG_TITLE_TYPE_PREFIX_RE.sub("", s).strip()
+    return s or str(title or "").strip()
 
 
 def _slug_kebab(value: str) -> str:
@@ -5953,16 +6744,19 @@ def _render_backlog_markdown(
     item_id: int,
     package: str,
     title: str,
+    task_type: str,
     summary: str,
     created_at: str,
     content_override: Optional[str] = None,
 ) -> str:
     pid = f"{int(item_id):03d}"
-    header = f"# {pid}-{package}: {title}".strip()
+    tt = _safe_backlog_task_type(task_type) or "task"
+    clean_title = _strip_backlog_title_type_prefix(title)
+    header = f"# {pid}-{package}: [{tt.upper()}] {clean_title}".strip()
 
     base = str(content_override or "").strip() or str(template_md or "")
     out = base
-    out = out.replace("{ID}", pid).replace("{Package}", package).replace("{Title}", title)
+    out = out.replace("{ID}", pid).replace("{Package}", package).replace("{Title}", clean_title).replace("{Type}", tt)
 
     # Force the first H1 to match our id/pkg/title (best-effort).
     lines = out.splitlines()
@@ -5997,6 +6791,37 @@ def _render_backlog_markdown(
         lines.insert(insert_at + 1, "")
     out = "\n".join(lines)
 
+    # Ensure Type line is present and correct (best-effort).
+    lines = out.splitlines()
+    type_line = f"> Type: {tt}".strip()
+    found_type = False
+    for i, raw in enumerate(lines[:60]):
+        if raw.strip().lower().startswith("> type:"):
+            lines[i] = type_line
+            found_type = True
+            break
+    if not found_type:
+        created_idx = -1
+        for i, raw in enumerate(lines[:60]):
+            if raw.strip().lower().startswith("> created:"):
+                created_idx = i
+                break
+        if created_idx >= 0:
+            insert_at = created_idx + 1
+            if insert_at < len(lines) and not lines[insert_at].strip():
+                lines.insert(insert_at, type_line)
+            else:
+                lines.insert(insert_at, type_line)
+                lines.insert(insert_at + 1, "")
+        else:
+            # Insert after header (and an optional blank line).
+            insert_at = 1
+            if len(lines) > 1 and not lines[1].strip():
+                insert_at = 2
+            lines.insert(insert_at, type_line)
+            lines.insert(insert_at + 1, "")
+    out = "\n".join(lines)
+
     if summary.strip():
         # Best-effort: replace placeholder summary line after "## Summary".
         lines = out.splitlines()
@@ -6028,6 +6853,7 @@ _DEFAULT_BACKLOG_EXEC_PROMPT_PREFIX = (
     "for both the filename and content), implement it while thinking of the long term consequences of your choices to inform on the best "
     "possible trajectory to create clean, simple and efficient code. when the code is implemented, test the new features and if there are "
     "errors, engage in a loop of reasoning, fix, test until everything work following the A/B/C tests (docs/adr/0019-testing-strategy-and-levels.md). "
+    "if the backlog item references attachments (typically under docs/backlog/assets/<id>/...), treat them as first-class inputs and open/read them. "
     "when all tests pass, then you can move the task to docs/backlog/completed/ and write your report at the end. Once you are familiar enough "
     "with our framework and its different package, i would like you to work on the following task."
 )
@@ -6308,6 +7134,12 @@ async def backlog_create(req: BacklogCreateRequest) -> BacklogCreateResponse:
     title = str(req.title or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
+    task_type = _safe_backlog_task_type(req.task_type)
+    if task_type is None:
+        m = _BACKLOG_TITLE_TYPE_PREFIX_RE.match(title)
+        if m:
+            task_type = _safe_backlog_task_type(m.group(1))
+    task_type = task_type or "task"
     summary = str(req.summary or "").strip()
 
     template_md = _read_backlog_template(repo_root)
@@ -6348,6 +7180,7 @@ async def backlog_create(req: BacklogCreateRequest) -> BacklogCreateResponse:
             item_id=item_id,
             package=pkg,
             title=title,
+            task_type=task_type,
             summary=summary,
             created_at=created_at,
             content_override=req.content,
@@ -6452,8 +7285,8 @@ async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
         raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
 
     k = _safe_backlog_kind(req.kind)
-    if k is None or k not in _BACKLOG_CREATE_KINDS:
-        raise HTTPException(status_code=400, detail="Invalid backlog kind for assist (planned|proposed|recurrent)")
+    if k is None or k not in _BACKLOG_ASSIST_KINDS:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind for assist (planned|proposed|recurrent|deprecated)")
 
     pkg = _safe_backlog_package(req.package)
     if pkg is None:
@@ -6492,6 +7325,422 @@ async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
     reply = str(out.get("reply") or "").strip()
     draft = str(out.get("draft_markdown") or "").strip()
     return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft)
+
+
+def _build_backlog_maintain_agent_prompt(
+    *,
+    repo_root: Path,
+    kind: str,
+    filename: str,
+    package: str,
+    title: str,
+    summary: str,
+    template_md: str,
+    draft_md: str,
+    messages: list[Dict[str, Any]],
+) -> str:
+    ctx = {
+        "repo_root": str(repo_root),
+        "backlog": {
+            "kind": kind,
+            "filename": filename,
+            "relpath": f"docs/backlog/{kind}/{filename}",
+            "template_relpath": "docs/backlog/template.md",
+        },
+        "package": package,
+        "title": title,
+        "summary": summary,
+        "backlog_template": _clamp_text(template_md, max_len=80_000),
+        "current_draft_markdown": _clamp_text(draft_md, max_len=220_000),
+        "messages": [
+            {"role": str(m.get("role") or ""), "content": _clamp_text(str(m.get("content") or ""), max_len=8_000)}
+            for m in (messages or [])
+            if isinstance(m, dict)
+            and str(m.get("role") or "").strip().lower() in {"user", "assistant"}
+            and isinstance(m.get("content"), str)
+            and str(m.get("content") or "").strip()
+        ],
+    }
+    return (
+        "You are maintaining a single backlog markdown item in AbstractFramework.\n\n"
+        "You have tool access (read/search web + repository). Use tools sparingly and only when needed.\n"
+        "Do NOT write files or run commands.\n\n"
+        "Goals:\n"
+        "- Keep the backlog item clear, testable, and aligned with repo conventions.\n"
+        "- Preserve the item id/filename semantics.\n"
+        "- Keep security best practices (no secrets in markdown).\n"
+        "- If attachments are referenced, keep them under the '## Related' -> 'Attachments' list.\n\n"
+        "CONTEXT (JSON):\n"
+        + json.dumps(ctx, ensure_ascii=False, indent=2)
+        + "\n\n"
+        "Return ONLY a JSON object matching the response schema with keys: reply, draft_markdown.\n"
+    )
+
+
+def _parse_backlog_maintain_reply(raw: str) -> tuple[str, str]:
+    text = str(raw or "").strip()
+    if not text:
+        return ("", "")
+    try:
+        obj = json.loads(text)
+    except Exception:
+        return (text, "")
+    if not isinstance(obj, dict):
+        return (text, "")
+    reply = str(obj.get("reply") or "").strip()
+    draft = str(obj.get("draft_markdown") or obj.get("draftMarkdown") or "").strip()
+    return (reply or text, draft)
+
+
+def _build_backlog_advisor_agent_prompt(
+    *,
+    repo_root: Path,
+    focus_kind: Optional[str],
+    focus_type: Optional[str],
+    web_tools_enabled: bool,
+    messages: list[Dict[str, Any]],
+) -> str:
+    ctx: Dict[str, Any] = {
+        "repo_root": str(repo_root),
+        "backlog_root": "docs/backlog",
+        "focus_kind": str(focus_kind or "").strip() or None,
+        "focus_type": str(focus_type or "").strip() or None,
+        "web_tools_enabled": bool(web_tools_enabled),
+        "notes": (
+            "You are a read-only advisor. Use tools to inspect docs/backlog and connect/prioritize items. "
+            "Cite backlog items as repo-relative paths like docs/backlog/<kind>/<filename>."
+        ),
+        "messages": [],
+    }
+
+    # Bound message history for safety.
+    out_msgs: list[Dict[str, str]] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "").strip().lower()
+        if role not in {"user", "assistant", "system"}:
+            continue
+        content = m.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        out_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
+        if len(out_msgs) >= 40:
+            break
+    ctx["messages"] = out_msgs
+
+    return (
+        "You are AbstractFramework Backlog Advisor (read-only).\n\n"
+        "You help a human review the entire repo backlog (docs/backlog/): search it, connect related items, find duplicates, "
+        "and propose a prioritized next set of actions.\n\n"
+        "Rules:\n"
+        "- Read-only: do NOT write files and do NOT run shell commands.\n"
+        "- Use tools sparingly. Prefer skim/search over reading many full files.\n"
+        "- When recommending actions, reference backlog items using repo-relative paths.\n"
+        "- Ask clarifying questions if needed.\n"
+        "- Never include secrets.\n\n"
+        "CONTEXT (JSON):\n"
+        + json.dumps(ctx, ensure_ascii=False, indent=2)
+        + "\n\n"
+        'Return ONLY a JSON object matching the response schema with key: "reply".\n'
+    )
+
+
+def _parse_backlog_advisor_reply(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    try:
+        obj = json.loads(text)
+    except Exception:
+        return text
+    if not isinstance(obj, dict):
+        return text
+    reply = str(obj.get("reply") or "").strip()
+    return reply or text
+
+
+@router.post("/backlog/maintain", response_model=BacklogAssistResponse)
+async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse:
+    """Agentic (tool-using) maintenance assistant for an existing backlog item.
+
+    Runs the `basic-agent` bundle (default entrypoint) with a structured JSON response schema.
+    """
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    k = _safe_backlog_kind(req.kind)
+    if k is None or k not in _BACKLOG_ASSIST_KINDS:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind for maintain (planned|proposed|recurrent|deprecated)")
+
+    safe_name = _safe_backlog_filename(req.filename)
+    if safe_name is None:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    pkg = _safe_backlog_package(req.package)
+    if pkg is None:
+        raise HTTPException(status_code=400, detail="Invalid package")
+
+    title = str(req.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+
+    summary = str(req.summary or "").strip()
+    draft_md = str(req.draft_markdown or "")
+    if len(draft_md) > 600_000:
+        draft_md = draft_md[:600_000] + "\n…(truncated)…\n"
+
+    dir_path = _backlog_dir_for(repo_root, k)
+    backlog_path = (dir_path / safe_name).resolve()
+    try:
+        backlog_path.relative_to(dir_path)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not backlog_path.exists():
+        raise HTTPException(status_code=404, detail="Backlog item not found")
+
+    # Template is used as a style anchor in the prompt.
+    template_md = _read_backlog_template(repo_root)
+
+    # Defaults follow gateway provider/model env config.
+    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
+    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+
+    # Build an agentic prompt (tools can read/search the repo + web).
+    prompt = _build_backlog_maintain_agent_prompt(
+        repo_root=repo_root,
+        kind=k,
+        filename=safe_name,
+        package=pkg,
+        title=title,
+        summary=summary,
+        template_md=template_md,
+        draft_md=draft_md,
+        messages=req.messages or [],
+    )
+
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["reply", "draft_markdown"],
+        "properties": {
+            "reply": {"type": "string"},
+            "draft_markdown": {"type": "string"},
+        },
+    }
+
+    svc = get_gateway_service()
+    if not bool(getattr(svc.config, "runner_enabled", True)):
+        raise HTTPException(status_code=409, detail="Gateway runner is disabled (start the gateway without --no-runner)")
+    svc.runner.start()
+
+    # Ensure the basic-agent bundle exists (bundle workflow source required).
+    host = _require_bundle_host(svc)
+    try:
+        run_id = host.start_run(
+            flow_id="",
+            bundle_id="basic-agent",
+            bundle_version=None,
+            input_data={
+                "workspace_root": str(repo_root),
+                "workspace_access_mode": "workspace_only",
+                "provider": provider,
+                "model": model,
+                "prompt": prompt,
+                "resp_schema": schema,
+                "max_iterations": 12,
+                # Defense-in-depth: allow only read/search/network tools.
+                "tools": ["read_file", "search_files", "list_files", "skim_folders", "web_search", "fetch_url"],
+                "system": (
+                    "You are AbstractFramework Maintenance AI.\n"
+                    "Return ONLY valid JSON (no markdown fences) matching the provided schema.\n"
+                    "Do not write files or run shell commands.\n"
+                    "Never include secrets.\n"
+                ),
+            },
+            actor_id="gateway",
+            session_id=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to start maintenance agent: {e}")
+
+    # Wait for the run to complete (best-effort).
+    deadline = time.time() + 90.0
+    last_status = ""
+    while time.time() < deadline:
+        try:
+            run = svc.host.run_store.load(str(run_id))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to load maintenance run: {e}")
+        if run is None:
+            raise HTTPException(status_code=500, detail="Maintenance run disappeared")
+        st = getattr(run, "status", None)
+        st_val = getattr(st, "value", None) or str(st or "")
+        last_status = str(st_val or "")
+        if st == RunStatus.COMPLETED or str(st_val) == "completed":
+            break
+        if st == RunStatus.FAILED or str(st_val) == "failed":
+            err = str(getattr(run, "error", "") or "").strip()
+            raise HTTPException(status_code=400, detail=f"Maintenance agent failed: {err or 'unknown error'}")
+        if st == RunStatus.CANCELLED or str(st_val) == "cancelled":
+            raise HTTPException(status_code=409, detail="Maintenance agent cancelled")
+        if st == RunStatus.WAITING or str(st_val) == "waiting":
+            waiting = getattr(run, "waiting", None)
+            reason = getattr(waiting, "reason", None)
+            reason_val = getattr(reason, "value", None) or str(reason or "")
+            reason_str = str(reason_val or "").strip().lower()
+            last_status = f"waiting({reason_str or 'unknown'})"
+            if reason == WaitReason.USER or reason_str == "user":
+                prompt = str(getattr(waiting, "prompt", "") or "").strip()
+                choices = getattr(waiting, "choices", None)
+                if isinstance(choices, list) and choices:
+                    c = ", ".join([str(x) for x in choices[:12]])
+                    raise HTTPException(status_code=409, detail=f"Maintenance agent is waiting for user input: {prompt or '(no prompt)'} (choices: {c})")
+                raise HTTPException(status_code=409, detail=f"Maintenance agent is waiting for user input: {prompt or '(no prompt)'}")
+            await asyncio.sleep(0.25)
+            continue
+        await asyncio.sleep(0.25)
+    else:
+        raise HTTPException(status_code=408, detail=f"Maintenance agent timed out (status={last_status or 'unknown'})")
+
+    try:
+        run2 = svc.host.run_store.load(str(run_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load maintenance run output: {e}")
+    if run2 is None or not isinstance(getattr(run2, "output", None), dict):
+        raise HTTPException(status_code=500, detail="Maintenance agent produced no output")
+    raw_resp = str((run2.output or {}).get("response") or "").strip()
+    reply, draft = _parse_backlog_maintain_reply(raw_resp)
+    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft)
+
+
+@router.post("/backlog/advisor", response_model=BacklogAdvisorResponse)
+async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
+    """Read-only advisor chat for the repo backlog (docs/backlog).
+
+    Runs the `basic-agent` bundle (default entrypoint) with read/search/list/skim + optional web tools.
+    """
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    # Defaults follow gateway provider/model env config.
+    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
+    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+
+    focus_kind = str(req.focus_kind or "").strip() or None
+    focus_type = str(req.focus_type or "").strip() or None
+
+    allow_web_raw = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_ADVISOR_ALLOW_WEB", "") or "").strip().lower()
+    allow_web = allow_web_raw in {"1", "true", "yes", "y", "on"}
+    tools = ["read_file", "search_files", "list_files", "skim_folders"]
+    if allow_web:
+        tools.extend(["web_search", "fetch_url"])
+
+    prompt = _build_backlog_advisor_agent_prompt(
+        repo_root=repo_root,
+        focus_kind=focus_kind,
+        focus_type=focus_type,
+        web_tools_enabled=allow_web,
+        messages=req.messages or [],
+    )
+
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["reply"],
+        "properties": {
+            "reply": {"type": "string"},
+        },
+    }
+
+    svc = get_gateway_service()
+    if not bool(getattr(svc.config, "runner_enabled", True)):
+        raise HTTPException(status_code=409, detail="Gateway runner is disabled (start the gateway without --no-runner)")
+    svc.runner.start()
+
+    host = _require_bundle_host(svc)
+    try:
+        run_id = host.start_run(
+            flow_id="",
+            bundle_id="basic-agent",
+            bundle_version=None,
+            input_data={
+                "workspace_root": str(repo_root),
+                "workspace_access_mode": "workspace_only",
+                "provider": provider,
+                "model": model,
+                "prompt": prompt,
+                "resp_schema": schema,
+                "max_iterations": 10,
+                # Read-only advisor: allow only read/search/list/skim (+ optional web tools).
+                "tools": tools,
+                "system": (
+                    "You are AbstractFramework Backlog Advisor (read-only).\n"
+                    "Return ONLY valid JSON (no markdown fences) matching the provided schema.\n"
+                    "Do not write files or run shell commands.\n"
+                    "Never include secrets.\n"
+                ),
+            },
+            actor_id="gateway",
+            session_id=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to start backlog advisor agent: {e}")
+
+    # Wait for the run to complete (best-effort).
+    deadline = time.time() + 90.0
+    last_status = ""
+    while time.time() < deadline:
+        try:
+            run = svc.host.run_store.load(str(run_id))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to load advisor run: {e}")
+        if run is None:
+            raise HTTPException(status_code=500, detail="Advisor run disappeared")
+        st = getattr(run, "status", None)
+        st_val = getattr(st, "value", None) or str(st or "")
+        last_status = str(st_val or "")
+        if st == RunStatus.COMPLETED or str(st_val) == "completed":
+            break
+        if st == RunStatus.FAILED or str(st_val) == "failed":
+            err = str(getattr(run, "error", "") or "").strip()
+            raise HTTPException(status_code=400, detail=f"Advisor failed: {err or 'unknown error'}")
+        if st == RunStatus.CANCELLED or str(st_val) == "cancelled":
+            raise HTTPException(status_code=409, detail="Advisor cancelled")
+        if st == RunStatus.WAITING or str(st_val) == "waiting":
+            waiting = getattr(run, "waiting", None)
+            reason = getattr(waiting, "reason", None)
+            reason_val = getattr(reason, "value", None) or str(reason or "")
+            reason_str = str(reason_val or "").strip().lower()
+            last_status = f"waiting({reason_str or 'unknown'})"
+            if reason == WaitReason.USER or reason_str == "user":
+                prompt = str(getattr(waiting, "prompt", "") or "").strip()
+                choices = getattr(waiting, "choices", None)
+                if isinstance(choices, list) and choices:
+                    c = ", ".join([str(x) for x in choices[:12]])
+                    raise HTTPException(status_code=409, detail=f"Advisor is waiting for user input: {prompt or '(no prompt)'} (choices: {c})")
+                raise HTTPException(status_code=409, detail=f"Advisor is waiting for user input: {prompt or '(no prompt)'}")
+            await asyncio.sleep(0.25)
+            continue
+        await asyncio.sleep(0.25)
+    else:
+        raise HTTPException(status_code=408, detail=f"Advisor timed out (status={last_status or 'unknown'})")
+
+    try:
+        run2 = svc.host.run_store.load(str(run_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load advisor run output: {e}")
+    if run2 is None or not isinstance(getattr(run2, "output", None), dict):
+        raise HTTPException(status_code=500, detail="Advisor produced no output")
+    raw_resp = str((run2.output or {}).get("response") or "").strip()
+    reply = _parse_backlog_advisor_reply(raw_resp)
+    return BacklogAdvisorResponse(ok=True, reply=reply)
 
 
 # ---------------------------------------------------------------------------

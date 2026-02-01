@@ -113,6 +113,22 @@ def test_origin_allowlist_blocks_untrusted_origin() -> None:
         assert r.status_code == 403
 
 
+def test_origin_allowlist_supports_glob_patterns() -> None:
+    app = _make_app(
+        policy=GatewayAuthPolicy(
+            enabled=True,
+            tokens=("t",),
+            allowed_origins=("https://*.ngrok-free.app",),
+        )
+    )
+    with TestClient(app) as client:
+        r = client.get(
+            "/api/gateway/runs/x",
+            headers={"Authorization": "Bearer t", "Origin": "https://cd37c7c7a7de.ngrok-free.app"},
+        )
+        assert r.status_code == 200, r.text
+
+
 def test_sse_requires_token() -> None:
     app = _make_app(policy=GatewayAuthPolicy(enabled=True, tokens=("t",)))
     with TestClient(app) as client:
@@ -223,4 +239,3 @@ def test_upload_body_limit_rejects_when_exceeded() -> None:
             headers=headers,
         )
         assert r.status_code == 413
-

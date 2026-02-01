@@ -164,13 +164,12 @@ def test_triage_approve_writes_draft_and_backlog_is_browsable(tmp_path: Path, mo
         draft_relpath = str(out.get("draft_relpath") or "").strip()
         assert draft_relpath
 
-        proposed = client.get("/api/gateway/backlog/proposed")
-        assert proposed.status_code == 200
-        items = proposed.json()["items"]
+        planned = client.get("/api/gateway/backlog/planned")
+        assert planned.status_code == 200
+        items = planned.json()["items"]
         assert any(i["filename"] == Path(draft_relpath).name for i in items)
 
         draft_name = Path(draft_relpath).name
-        draft = client.get(f"/api/gateway/backlog/proposed/{draft_name}/content")
+        draft = client.get(f"/api/gateway/backlog/planned/{draft_name}/content")
         assert draft.status_code == 200
-        assert "Source report:" in draft.json()["content"]
-
+        assert "Source report relpath:" in draft.json()["content"]

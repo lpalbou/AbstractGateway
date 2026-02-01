@@ -4,10 +4,11 @@ import datetime
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .backlog_parser import max_backlog_id
 from .report_models import ReportRecord, TriageDecision
+from .text_similarity import similarity, tokenize
 
 
 def _now_local_timestamp() -> str:
@@ -72,14 +73,184 @@ def _draft_title(report: ReportRecord) -> str:
 
 
 def _draft_summary(report: ReportRecord) -> str:
-    kind = "bug" if report.report_type == "bug" else "feature request"
-    title = report.header.title.strip() if report.header.title else kind
-    return f"Translate a reported {kind} into an actionable backlog item: {title}"
+    title = report.header.title.strip() if report.header.title else ""
+    if report.report_type == "bug":
+        t = title or "bug"
+        return (
+            f"Fix reported issue: {t}. Use the linked report/session/run artifacts to reproduce, identify root cause, and implement a minimal fix "
+            "with targeted tests (ADR-0019)."
+        )
+    t = title or "feature request"
+    return (
+        f"Implement requested feature: {t}. Use the linked report/session/run artifacts to capture context, define clear acceptance criteria, "
+        "and deliver a scoped change with minimal dependencies."
+    )
 
 
-def _format_related(report: ReportRecord, decision: TriageDecision) -> str:
+def _read_text_bounded(path: Path, *, max_chars: int = 80_000) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    if len(text) > int(max_chars):
+        return text[: int(max_chars)]
+    return text
+
+
+_KEYWORD_BOOSTS: Dict[str, float] = {
+    # UX + theming.
+    "theme": 0.22,
+    "themes": 0.22,
+    "ui": 0.08,
+    "ux": 0.08,
+    # Durability / replay / observability.
+    "replay": 0.18,
+    "ledger": 0.18,
+    "history": 0.10,
+    "tool": 0.14,
+    "tools": 0.14,
+    "attachment": 0.14,
+    "attachments": 0.14,
+    # Security / auth.
+    "auth": 0.14,
+    "security": 0.14,
+    # Process.
+    "backlog": 0.10,
+    "triage": 0.10,
+}
+
+
+def _boosted_similarity(*, query_text: str, candidate_text: str) -> float:
+    """Similarity with small keyword boosts for higher-signal terms.
+
+    The underlying similarity function is intentionally lightweight and tends to produce
+    low raw scores on long documents (ADRs). Keyword boosts help surface relevant items
+    without pretending they are definitive matches.
+    """
+
+    base = similarity(query_text, candidate_text)
+    qt = set(tokenize(query_text))
+    ct = set(tokenize(candidate_text))
+    boost = 0.0
+    for kw, w in _KEYWORD_BOOSTS.items():
+        if kw in qt and kw in ct:
+            boost += float(w)
+    return min(1.0, base + min(boost, 0.35))
+
+
+def _related_adrs_markdown(*, repo_root: Optional[Path], report: ReportRecord, k: int = 4) -> str:
+    if repo_root is None:
+        return "- (repo unavailable)"
+    rr = Path(repo_root).expanduser().resolve()
+    adr_dir = (rr / "docs" / "adr").resolve()
+    if not adr_dir.exists():
+        return "- (no docs/adr directory)"
+
+    query = report.to_similarity_text()
+    candidates: List[Tuple[str, str]] = []
+    for p in sorted(adr_dir.glob("*.md")):
+        if p.name.lower() == "readme.md":
+            continue
+        rel = ""
+        try:
+            rel = str(p.relative_to(rr))
+        except Exception:
+            rel = str(p)
+        text = _read_text_bounded(p, max_chars=60_000)
+        if not text.strip():
+            continue
+        # Focus the candidate text on the ADR "front matter" to avoid long-body dilution.
+        head = "\n".join(text.splitlines()[:120]).strip()
+        cand_text = f"{p.name}\n{head}".strip()
+        candidates.append((rel, cand_text))
+        if len(candidates) >= 250:
+            break
+
+    if not candidates:
+        return "- (none found)"
+
+    scored: List[Tuple[str, float]] = []
+    for ref, text in candidates:
+        s = _boosted_similarity(query_text=query, candidate_text=text)
+        scored.append((ref, s))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    top = scored[: max(0, int(k))]
+    top = [(ref, s) for ref, s in top if s >= 0.06]
+    if not top:
+        return "- (none)"
+    return "\n".join([f"- ({s:.2f}) `{ref}`" for ref, s in top]).strip()
+
+
+def _related_backlog_markdown(*, repo_root: Optional[Path], report: ReportRecord, k: int = 8) -> str:
+    """Best-effort related backlog pointers (fast enough for auto-bridge).
+
+    We intentionally include both planned (dependencies) and completed (related prior work).
+    This is deterministic and does not use an LLM.
+    """
+    if repo_root is None:
+        return "- (repo unavailable)"
+    rr = Path(repo_root).expanduser().resolve()
+    planned_dir = (rr / "docs" / "backlog" / "planned").resolve()
+    completed_dir = (rr / "docs" / "backlog" / "completed").resolve()
+    if not planned_dir.exists() and not completed_dir.exists():
+        return "- (no backlog)"
+
+    try:
+        from .backlog_parser import iter_backlog_items  # type: ignore
+    except Exception:
+        return "- (backlog parser unavailable)"
+
+    planned_items = list(iter_backlog_items(planned_dir, kind="planned")) if planned_dir.exists() else []
+    completed_items = list(iter_backlog_items(completed_dir, kind="completed")) if completed_dir.exists() else []
+    items = planned_items + completed_items
+    if not items:
+        return "- (none)"
+
+    query = report.to_similarity_text()
+    scored: List[Tuple[float, str, Any]] = []
+    for item in items[:1200]:
+        try:
+            rel = str(item.path.relative_to(rr))
+        except Exception:
+            rel = str(item.path)
+        text = item.to_similarity_text()
+        score = _boosted_similarity(query_text=query, candidate_text=text)
+        scored.append((score, rel, item))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [x for x in scored if x[0] >= 0.10][: max(0, int(k))]
+    if not top:
+        return "- (none)"
+
+    lines: List[str] = []
+    for score, ref, item in top:
+        title = str(getattr(item, "title", "") or "").strip()
+        pkg = str(getattr(item, "package", "") or "").strip()
+        kind = str(getattr(item, "kind", "") or "").strip()
+        label = f"{pkg}: {title}" if pkg and title else title or pkg or ref
+        kind_tag = f"{kind}" if kind else "backlog"
+        lines.append(f"- ({score:.2f}, {kind_tag}) {label} — `{ref}`")
+    return "\n".join(lines).strip()
+
+
+def _format_related(report: ReportRecord, decision: TriageDecision, *, repo_root: Optional[Path] = None) -> str:
     rel: list[str] = []
-    rel.append(f"- Source report: `{report.path}`")
+    if str(getattr(decision, "report_relpath", "") or "").strip():
+        rel.append(f"- Source report relpath: `{decision.report_relpath}`")
+
+    # Prefer a repo-root relative path for docs portability when possible.
+    if repo_root is not None:
+        try:
+            rr = Path(repo_root).expanduser().resolve()
+            rp = Path(report.path).expanduser().resolve()
+            rel_repo = str(rp.relative_to(rr))
+        except Exception:
+            rel_repo = ""
+        if rel_repo:
+            rel.append(f"- Source report file (repo): `{rel_repo}`")
+
+    if report.header.report_id:
+        rel.append(f"- Report ID: `{report.header.report_id}`")
     if report.header.session_id:
         rel.append(f"- Session ID: `{report.header.session_id}`")
     if report.header.active_run_id:
@@ -89,7 +260,18 @@ def _format_related(report: ReportRecord, decision: TriageDecision) -> str:
     if decision.duplicates:
         rel.append("- Possible duplicates:")
         for d in decision.duplicates[:5]:
-            rel.append(f"  - ({d.kind}, {d.score:.2f}) {d.title or d.ref}")
+            ref = str(getattr(d, "ref", "") or "").strip()
+            title = str(getattr(d, "title", "") or "").strip()
+            ref_out = ref
+            if repo_root is not None and ref:
+                try:
+                    rr = Path(repo_root).expanduser().resolve()
+                    rp = Path(ref).expanduser().resolve()
+                    if str(rp).startswith(str(rr)):
+                        ref_out = str(rp.relative_to(rr))
+                except Exception:
+                    ref_out = ref
+            rel.append(f"  - ({d.kind}, {d.score:.2f}) {title or ref_out}")
     return "\n".join(rel).strip()
 
 
@@ -100,7 +282,10 @@ def generate_backlog_draft_markdown(
     report: ReportRecord,
     decision: TriageDecision,
     llm_suggestion: Optional[Dict[str, Any]] = None,
+    repo_root: Optional[Path] = None,
 ) -> str:
+    task_type = "bug" if report.report_type == "bug" else "feature"
+    type_tag = "BUG" if task_type == "bug" else "FEATURE"
     title = _draft_title(report)
     summary = _draft_summary(report)
     created = _now_local_timestamp()
@@ -122,21 +307,40 @@ def generate_backlog_draft_markdown(
 
     suggested_ac = llm_ac.strip()
     if not suggested_ac:
-        suggested_ac = "- [ ] Reproduce the issue and identify root cause\n- [ ] Implement fix with minimal blast radius\n- [ ] Add targeted tests (ADR-0019)\n- [ ] Verify no regressions"
+        if report.report_type == "bug":
+            suggested_ac = "- [ ] Reproduce the issue and identify root cause\n- [ ] Implement fix with minimal blast radius\n- [ ] Add targeted tests (ADR-0019)\n- [ ] Verify no regressions"
+        else:
+            suggested_ac = (
+                "- [ ] Confirm problem/motivation and proposed solution\n"
+                "- [ ] Define clear acceptance criteria (2–5 items)\n"
+                "- [ ] Implement the feature with minimal dependencies\n"
+                "- [ ] Add/adjust tests per ADR-0019\n"
+                "- [ ] Verify UX + durability expectations (replay/session context)"
+            )
 
-    related = _format_related(report, decision)
+    related = _format_related(report, decision, repo_root=repo_root)
+    related_backlog = _related_backlog_markdown(repo_root=repo_root, report=report, k=6)
+    related_adrs = _related_adrs_markdown(repo_root=repo_root, report=report, k=4)
 
     return (
-        f"# {item_id:03d}-{package}: {title}\n\n"
-        f"> Created: {created}\n\n"
+        f"# {item_id:03d}-{package}: [{type_tag}] {title}\n\n"
+        f"> Created: {created}\n"
+        f"> Type: {task_type}\n"
+        f"> Source report relpath: {decision.report_relpath}\n"
+        f"> Source report id: {report.header.report_id or ''}\n\n"
         "## Summary\n"
         f"{summary}\n\n"
         "## Diagram\n"
         "```\n"
-        "Report inbox -> Triage -> Backlog draft -> (human review) -> Planned -> Implementation\n"
+        "/bug|/feature -> gateway report -> auto-proposed backlog -> (optional triage) -> planned -> implementation\n"
         "```\n\n"
         "## Context\n"
         f"{related}\n\n"
+        "## Related (best-effort)\n"
+        "### Potential ADRs\n"
+        f"{related_adrs}\n\n"
+        "### Potential dependencies / related backlog items\n"
+        f"{related_backlog}\n\n"
         "## Scope\n"
         "### Included\n"
         "- Fix/implement the behavior described in the report\n"
@@ -158,8 +362,8 @@ def generate_backlog_draft_markdown(
         "- Level B (integration): reproduce with file-backed stores or the relevant gateway/client wiring.\n"
         "- Level C (optional): run a real client flow if it requires external infra.\n\n"
         "## Related\n"
-        f"- Maintenance triage: `docs/backlog/planned/644-framework-automated-report-triage-pipeline-v0.md`\n"
-        f"- Report inbox: `docs/backlog/README.md`\n"
+        f"- Report inbox + triage: `docs/backlog/planned/644-framework-automated-report-triage-pipeline-v0.md`\n"
+        f"- Backlog conventions: `docs/backlog/README.md`\n"
     )
 
 
@@ -176,21 +380,34 @@ def write_backlog_draft(
     proposed_dir.mkdir(parents=True, exist_ok=True)
 
     package = _guess_package(report)
-    item_id = allocator.allocate()
     title = str((llm_suggestion or {}).get("backlog_title") or report.header.title or "").strip()
     slug = _slug(title or report.header.title or report.description or "draft")
 
-    filename = f"{item_id:03d}-{package}-{slug}.md"
-    path = proposed_dir / filename
+    last_err: Optional[str] = None
+    for _ in range(0, 500):
+        item_id = allocator.allocate()
+        filename = f"{item_id:03d}-{package}-{slug}.md"
+        path = proposed_dir / filename
 
-    md = generate_backlog_draft_markdown(
-        item_id=item_id,
-        package=package,
-        report=report,
-        decision=decision,
-        llm_suggestion=llm_suggestion,
-    )
-    path.write_text(md, encoding="utf-8")
+        md = generate_backlog_draft_markdown(
+            item_id=item_id,
+            package=package,
+            report=report,
+            decision=decision,
+            llm_suggestion=llm_suggestion,
+            repo_root=repo_root,
+        )
+        try:
+            with open(path, "x", encoding="utf-8") as f:
+                f.write(md)
+            last_err = None
+            break
+        except FileExistsError:
+            last_err = "Filename collision"
+            continue
+
+    if last_err is not None:
+        raise RuntimeError(last_err)
 
     # Store repo-root relative path in the decision.
     try:

@@ -128,3 +128,58 @@ def test_gateway_feature_report_endpoint_creates_template_and_collision_safe_fil
         report2 = feature_dir / filename2
         assert report2.exists()
 
+
+def test_gateway_feature_report_endpoint_auto_bridges_to_typed_proposed_backlog_when_repo_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-features-bridge", flow_id="root")
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "docs" / "backlog").mkdir(parents=True, exist_ok=True)
+    (repo_root / "docs" / "backlog" / "template.md").write_text("# {ID}-{Package}: [TASK] {Title}\n", encoding="utf-8")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    description = "Feature: auto-bridge creates proposed backlog"
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/features/report",
+            headers=headers,
+            json={
+                "session_id": "s1",
+                "description": description,
+                "active_run_id": "r1",
+                "workflow_id": "bundle-features-bridge:root",
+            },
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("ok") is True
+
+        report_filename = str(body.get("filename") or "").strip()
+        assert report_filename
+        assert (runtime_dir / "feature_requests" / report_filename).exists()
+
+        backlog_rel = str(body.get("proposed_backlog_relpath") or "").strip()
+        backlog_id = body.get("proposed_backlog_item_id")
+        assert backlog_rel
+        assert isinstance(backlog_id, int) and backlog_id > 0
+
+        backlog_path = (repo_root / backlog_rel).resolve()
+        assert backlog_path.exists()
+        md = backlog_path.read_text(encoding="utf-8")
+        assert "> Type: feature" in md
+        assert f"> Source report relpath: feature_requests/{report_filename}" in md

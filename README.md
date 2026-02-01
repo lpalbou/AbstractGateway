@@ -88,6 +88,7 @@ Notes:
 - For production, run behind HTTPS (reverse proxy) and set exact allowed origins.
 - `ABSTRACTGATEWAY_ALLOWED_ORIGINS` is **CORS** (browser policy). It can list multiple origins like:
   - `http://localhost:*,http://127.0.0.1:*,http://192.168.1.188:*`
+  - Glob patterns are supported (e.g. `https://*.ngrok-free.app`).
   - This does **not** control which IPs the server listens on; it only controls which browser Origins can call the API.
 
 ## Split API vs runner (recommended for upgrades)

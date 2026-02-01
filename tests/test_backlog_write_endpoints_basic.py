@@ -90,7 +90,8 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
         content_resp = client.get(f"/api/gateway/backlog/proposed/{filename}/content")
         assert content_resp.status_code == 200
         content = content_resp.json()["content"]
-        assert f"# {item_id:03d}-framework: Example task" in content
+        assert f"# {item_id:03d}-framework: [TASK] Example task" in content
+        assert "> Type: task" in content
 
         bad_update = client.post(
             f"/api/gateway/backlog/proposed/{filename}/update",
@@ -124,4 +125,3 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
         assert assist.status_code == 200
         assert assist.json()["reply"] == "ok"
         assert "draft" in assist.json()["draft_markdown"]
-

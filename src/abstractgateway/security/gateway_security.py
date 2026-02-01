@@ -13,6 +13,7 @@ Design constraints:
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import hmac
 import json
 import logging
@@ -335,8 +336,11 @@ class GatewaySecurityMiddleware:
                 continue
             if p == "*":
                 return True
-            if p.endswith("*"):
-                if o.startswith(p[:-1]):
+            # Glob-style matching (fnmatch): supports patterns like
+            # - http://localhost:*
+            # - https://*.ngrok-free.app
+            if any(ch in p for ch in ("*", "?", "[")):
+                if fnmatch.fnmatchcase(o, p):
                     return True
                 continue
             if o == p:

@@ -221,6 +221,20 @@ def triage_reports(
     if resolved_repo_root is not None:
         backlog_planned, backlog_completed, backlog_proposed = scan_backlog(resolved_repo_root)
 
+    proposed_by_report_relpath: Dict[str, BacklogItem] = {}
+    proposed_by_report_id: Dict[str, BacklogItem] = {}
+    for item in backlog_proposed:
+        rel = str(getattr(item, "source_report_relpath", "") or "").strip()
+        if rel:
+            prev = proposed_by_report_relpath.get(rel)
+            if prev is None or int(getattr(item, "item_id", 0)) > int(getattr(prev, "item_id", 0)):
+                proposed_by_report_relpath[rel] = item
+        rid = str(getattr(item, "source_report_id", "") or "").strip()
+        if rid:
+            prev = proposed_by_report_id.get(rid)
+            if prev is None or int(getattr(item, "item_id", 0)) > int(getattr(prev, "item_id", 0)):
+                proposed_by_report_id[rid] = item
+
     qdir = decisions_dir(gateway_data_dir=gw_dir)
 
     llm_cfg = load_llm_assist_config()
@@ -285,6 +299,20 @@ def triage_reports(
             llm_suggestion=llm_suggestion,
         )
 
+        # Link to an existing proposed backlog item (auto-bridge or manual), so triage never generates duplicates.
+        if resolved_repo_root is not None and not decision.draft_relpath:
+            linked: Optional[BacklogItem] = None
+            if relpath in proposed_by_report_relpath:
+                linked = proposed_by_report_relpath.get(relpath)
+            elif report.header.report_id and report.header.report_id in proposed_by_report_id:
+                linked = proposed_by_report_id.get(report.header.report_id)
+            if linked is not None:
+                try:
+                    decision.draft_relpath = str(linked.path.relative_to(resolved_repo_root))
+                except Exception:
+                    decision.draft_relpath = str(linked.path)
+                save_decision(dir_path=qdir, decision=decision)
+
         # Skip draft creation if repo/backlog is unavailable.
         if write_drafts and allocator is not None and resolved_repo_root is not None and backlog_root is not None:
             # Only write once; do not overwrite manual edits.
@@ -338,22 +366,24 @@ def apply_decision_action(
         decision.updated_at = now
         save_decision(dir_path=qdir, decision=decision)
 
+        resolved_repo_root = repo_root or find_repo_root(Path.cwd())
+        if resolved_repo_root is None:
+            return decision, None
+        backlog_root = (resolved_repo_root / "docs" / "backlog").resolve()
+        planned_dir = (backlog_root / "planned").resolve()
+
         if write_draft_on_approve and not decision.draft_relpath:
-            resolved_repo_root = repo_root or find_repo_root(Path.cwd())
-            if resolved_repo_root is None:
-                return decision, None
-            backlog_root = resolved_repo_root / "docs" / "backlog"
             allocator = BacklogIdAllocator.from_backlog_root(backlog_root)
 
-            # Load report content (needed for draft).
+            # Load report content (needed for proposed backlog creation).
             report_path = gw_dir / decision.report_relpath
             try:
                 report = parse_report_file(report_path)
-            except Exception as e:
+            except Exception:
                 return decision, None
 
             suggestion = decision.llm_suggestion if isinstance(decision.llm_suggestion, dict) else None
-            draft_path, _ = write_backlog_draft(
+            _draft_path, _ = write_backlog_draft(
                 repo_root=resolved_repo_root,
                 backlog_root=backlog_root,
                 allocator=allocator,
@@ -363,7 +393,46 @@ def apply_decision_action(
             )
             decision.updated_at = _now_utc_iso()
             save_decision(dir_path=qdir, decision=decision)
-            return decision, None
+
+        # If a proposed backlog exists, treat approval as elevation to planned.
+        if decision.draft_relpath:
+            src = (resolved_repo_root / decision.draft_relpath).resolve()
+            try:
+                src.relative_to(backlog_root)
+            except Exception:
+                return decision, None
+
+            # Only elevate from proposed -> planned (avoid moving already planned/completed items).
+            try:
+                rel = src.relative_to(backlog_root)
+            except Exception:
+                rel = None
+            if rel and rel.parts and rel.parts[0] == "proposed":
+                planned_dir.mkdir(parents=True, exist_ok=True)
+                dest = (planned_dir / src.name).resolve()
+                try:
+                    dest.relative_to(planned_dir)
+                except Exception:
+                    return decision, "Invalid planned path"
+                if dest.exists():
+                    # Already elevated (or name collision); do not error.
+                    try:
+                        decision.draft_relpath = str(dest.relative_to(resolved_repo_root))
+                        decision.updated_at = _now_utc_iso()
+                        save_decision(dir_path=qdir, decision=decision)
+                    except Exception:
+                        pass
+                    return decision, None
+                try:
+                    src.rename(dest)
+                except Exception as e:
+                    return decision, f"Failed to elevate backlog item: {e}"
+                try:
+                    decision.draft_relpath = str(dest.relative_to(resolved_repo_root))
+                except Exception:
+                    decision.draft_relpath = str(dest)
+                decision.updated_at = _now_utc_iso()
+                save_decision(dir_path=qdir, decision=decision)
         return decision, None
 
     if act in {"reject", "rejected"}:
@@ -371,6 +440,49 @@ def apply_decision_action(
         decision.defer_until = ""
         decision.updated_at = now
         save_decision(dir_path=qdir, decision=decision)
+        resolved_repo_root = repo_root or find_repo_root(Path.cwd())
+        if resolved_repo_root is None or not decision.draft_relpath:
+            return decision, None
+
+        backlog_root = (resolved_repo_root / "docs" / "backlog").resolve()
+        deprecated_dir = (backlog_root / "deprecated").resolve()
+
+        src = (resolved_repo_root / decision.draft_relpath).resolve()
+        try:
+            src.relative_to(backlog_root)
+        except Exception:
+            return decision, None
+
+        # Only move from proposed -> deprecated (avoid touching planned/completed).
+        try:
+            rel = src.relative_to(backlog_root)
+        except Exception:
+            rel = None
+        if rel and rel.parts and rel.parts[0] == "proposed":
+            deprecated_dir.mkdir(parents=True, exist_ok=True)
+            dest = (deprecated_dir / src.name).resolve()
+            try:
+                dest.relative_to(deprecated_dir)
+            except Exception:
+                return decision, "Invalid deprecated path"
+            if dest.exists():
+                try:
+                    decision.draft_relpath = str(dest.relative_to(resolved_repo_root))
+                    decision.updated_at = _now_utc_iso()
+                    save_decision(dir_path=qdir, decision=decision)
+                except Exception:
+                    pass
+                return decision, None
+            try:
+                src.rename(dest)
+            except Exception as e:
+                return decision, f"Failed to deprecate backlog item: {e}"
+            try:
+                decision.draft_relpath = str(dest.relative_to(resolved_repo_root))
+            except Exception:
+                decision.draft_relpath = str(dest)
+            decision.updated_at = _now_utc_iso()
+            save_decision(dir_path=qdir, decision=decision)
         return decision, None
 
     # defer
