@@ -110,6 +110,44 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
         assert moved.status_code == 200
         assert moved.json()["to_relpath"].endswith(f"/planned/{filename}")
 
+        created2 = client.post(
+            "/api/gateway/backlog/create",
+            json={"kind": "proposed", "package": "framework", "title": "Second task", "summary": "World"},
+        )
+        assert created2.status_code == 200
+        filename2 = created2.json()["filename"]
+        moved2 = client.post("/api/gateway/backlog/move", json={"from_kind": "proposed", "to_kind": "planned", "filename": filename2})
+        assert moved2.status_code == 200
+        assert moved2.json()["to_relpath"].endswith(f"/planned/{filename2}")
+
+        merged = client.post(
+            "/api/gateway/backlog/merge",
+            json={
+                "kind": "planned",
+                "package": "framework",
+                "title": "Master backlog",
+                "task_type": "task",
+                "items": [
+                    {"kind": "planned", "filename": filename},
+                    {"kind": "planned", "filename": filename2},
+                ],
+            },
+        )
+        assert merged.status_code == 200
+        master = merged.json()
+        master_filename = master["filename"]
+        assert master["kind"] == "planned"
+        assert master_filename.endswith(".md")
+        assert f"docs/backlog/planned/{filename}" in master.get("merged_relpaths", [])
+        assert f"docs/backlog/planned/{filename2}" in master.get("merged_relpaths", [])
+
+        master_path = backlog_root / "planned" / master_filename
+        assert master_path.exists()
+        master_text = master_path.read_text(encoding="utf-8", errors="replace")
+        assert "## Dependencies" in master_text
+        assert f"`docs/backlog/planned/{filename}`" in master_text
+        assert f"`docs/backlog/planned/{filename2}`" in master_text
+
         # Execute queues a request file under gateway data dir.
         exec_resp = client.post(f"/api/gateway/backlog/planned/{filename}/execute")
         assert exec_resp.status_code == 200
@@ -117,6 +155,25 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
         assert isinstance(rid, str) and rid
         qpath = gateway_dir / "backlog_exec_queue" / f"{rid}.json"
         assert qpath.exists()
+
+        exec_batch = client.post(
+            "/api/gateway/backlog/execute_batch",
+            json={"items": [{"kind": "planned", "filename": filename}, {"kind": "planned", "filename": filename2}]},
+        )
+        assert exec_batch.status_code == 200
+        bid = exec_batch.json()["request_id"]
+        assert isinstance(bid, str) and bid
+        bqpath = gateway_dir / "backlog_exec_queue" / f"{bid}.json"
+        assert bqpath.exists()
+        queued = bqpath.read_text(encoding="utf-8", errors="replace")
+        assert "batch(2)" in queued
+        assert "backlog_queue" in queued
+        assert filename in queued
+        assert filename2 in queued
+        # The prompt should embed the referenced backlog contents.
+        prompt = exec_batch.json()["prompt"]
+        assert "Example task" in prompt
+        assert "Second task" in prompt
 
         assist = client.post(
             "/api/gateway/backlog/assist",

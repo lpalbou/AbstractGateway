@@ -83,7 +83,8 @@ def test_gateway_bug_report_endpoint_creates_template_and_collision_safe_files(
     from abstractgateway.app import app
 
     headers = {"Authorization": f"Bearer {token}"}
-    description = "../etc/passwd cannot open file"
+    # Security regression fixture: simulate path traversal-like input without referencing real system files.
+    description = "../SENSITIVE_FILE cannot open file"
 
     with TestClient(app) as client:
         r1 = client.post(

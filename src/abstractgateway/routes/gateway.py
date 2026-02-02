@@ -5770,6 +5770,34 @@ class BacklogExecuteResponse(BaseModel):
     prompt: str
 
 
+class BacklogRef(BaseModel):
+    kind: str
+    filename: str
+
+
+class BacklogExecuteBatchRequest(BaseModel):
+    items: List[BacklogRef] = Field(default_factory=list, description="Ordered backlog items to execute sequentially (planned items).")
+
+
+class BacklogMergeRequest(BaseModel):
+    kind: str = Field(default="planned", description="Destination kind for the master backlog (planned|proposed|recurrent).")
+    package: str = Field(..., description="Package scope for the master backlog (e.g. framework, abstractobserver).")
+    title: str = Field(..., description="Title for the master backlog.")
+    task_type: Optional[str] = Field(default=None, description="Master backlog type: bug|feature|task (default: task).")
+    summary: Optional[str] = Field(default=None, description="Optional summary override for the master backlog.")
+    items: List[BacklogRef] = Field(default_factory=list, description="Backlog items to reference (planned items).")
+
+
+class BacklogMergeResponse(BaseModel):
+    ok: bool = True
+    kind: str
+    filename: str
+    relpath: str
+    item_id: int
+    sha256: str
+    merged_relpaths: List[str] = Field(default_factory=list)
+
+
 class BacklogAssistRequest(BaseModel):
     kind: str = Field(..., description="Target backlog kind (planned|proposed|recurrent).")
     package: str = Field(..., description="Target package (best-effort).")
@@ -5861,6 +5889,13 @@ class BacklogExecLogTailResponse(BaseModel):
     ok: bool = True
     request_id: str
     name: str
+    bytes: int = 0
+    truncated: bool = False
+    content: str = ""
+
+
+class AuditLogTailResponse(BaseModel):
+    ok: bool = True
     bytes: int = 0
     truncated: bool = False
     content: str = ""
@@ -6619,6 +6654,40 @@ async def backlog_exec_log_tail(
     return BacklogExecLogTailResponse(request_id=rid, name=nm, bytes=len(data), truncated=bool(truncated), content=text)
 
 
+@router.get("/audit/tail", response_model=AuditLogTailResponse)
+async def audit_log_tail(
+    max_bytes: int = Query(default=80_000, ge=1024, le=400_000, description="Tail size in bytes (bounded)."),
+) -> AuditLogTailResponse:
+    base = _gateway_base_dir()
+    path = (base / "audit_log.jsonl").resolve()
+    try:
+        path.relative_to(base)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid audit log path")
+
+    if not path.exists():
+        return AuditLogTailResponse(bytes=0, truncated=False, content="")
+
+    data = b""
+    truncated = False
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = int(f.tell() or 0)
+            start = max(0, size - int(max_bytes))
+            truncated = start > 0
+            f.seek(start, os.SEEK_SET)
+            data = f.read(int(max_bytes))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read audit log: {e}")
+
+    try:
+        text = data.decode("utf-8", errors="replace")
+    except Exception:
+        text = ""
+    return AuditLogTailResponse(bytes=len(data), truncated=bool(truncated), content=text)
+
+
 @router.get("/backlog/{kind}", response_model=BacklogListResponse)
 async def backlog_list(kind: str) -> BacklogListResponse:
     repo_root = _triage_repo_root_from_env()
@@ -6917,6 +6986,43 @@ def _render_backlog_markdown(
 
     if not out.endswith("\n"):
         out += "\n"
+    return out
+
+
+def _resolve_backlog_refs(
+    *,
+    repo_root: Path,
+    refs: List[BacklogRef],
+    allowed_kinds: set[str],
+    max_items: int = 25,
+) -> List[Dict[str, Any]]:
+    if len(refs) > max_items:
+        raise HTTPException(status_code=413, detail=f"Too many backlog items ({len(refs)} > {max_items})")
+
+    seen: set[str] = set()
+    out: List[Dict[str, Any]] = []
+    for r in refs:
+        k = _safe_backlog_kind(getattr(r, "kind", ""))
+        if k is None or k not in allowed_kinds:
+            raise HTTPException(status_code=400, detail="Invalid backlog kind for this operation")
+        safe = _safe_backlog_filename(getattr(r, "filename", ""))
+        if safe is None:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        dir_path = _backlog_dir_for(repo_root, k)
+        path = (dir_path / safe).resolve()
+        try:
+            path.relative_to(dir_path)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid path")
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"Backlog item not found: {safe}")
+
+        relpath = f"docs/backlog/{k}/{safe}"
+        if relpath in seen:
+            continue
+        seen.add(relpath)
+        out.append({"kind": k, "filename": safe, "relpath": relpath, "path": path})
     return out
 
 
@@ -7281,6 +7387,187 @@ async def backlog_create(req: BacklogCreateRequest) -> BacklogCreateResponse:
     raise HTTPException(status_code=409, detail=last_err or "Could not allocate a unique backlog filename")
 
 
+@router.post("/backlog/merge", response_model=BacklogMergeResponse)
+async def backlog_merge(req: BacklogMergeRequest) -> BacklogMergeResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    k = _safe_backlog_kind(req.kind)
+    if k is None or k not in _BACKLOG_CREATE_KINDS:
+        raise HTTPException(status_code=400, detail="Invalid backlog kind for merge (planned|proposed|recurrent)")
+
+    pkg = _safe_backlog_package(req.package)
+    if pkg is None:
+        raise HTTPException(status_code=400, detail="Invalid package")
+    title = str(req.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+
+    task_type = _safe_backlog_task_type(req.task_type)
+    if task_type is None:
+        m = _BACKLOG_TITLE_TYPE_PREFIX_RE.match(title)
+        if m:
+            task_type = _safe_backlog_task_type(m.group(1))
+    task_type = task_type or "task"
+
+    resolved = _resolve_backlog_refs(repo_root=repo_root, refs=list(req.items or []), allowed_kinds={"planned"})
+    if len(resolved) < 2:
+        raise HTTPException(status_code=400, detail="Merge requires at least 2 planned backlog items")
+
+    merged_relpaths = [str(r.get("relpath") or "") for r in resolved if str(r.get("relpath") or "").strip()]
+
+    default_summary = f"Execute {len(merged_relpaths)} planned backlog items sequentially in one agent run to reuse context."
+    final_summary = str(req.summary or "").strip() or default_summary
+
+    template_md = _read_backlog_template(repo_root)
+    created_at = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+
+    md_lines: List[str] = []
+    md_lines.append(f"# {{ID}}-{{Package}}: [{task_type.upper()}] {{Title}}")
+    md_lines.append("")
+    md_lines.append(f"> Created: {created_at}")
+    md_lines.append(f"> Type: {task_type}")
+    md_lines.append("")
+    md_lines.append("## Summary")
+    md_lines.append(final_summary)
+    md_lines.append("")
+    md_lines.append("## Diagram")
+    md_lines.append("```")
+    md_lines.append("planned items (A, B, …) -> master backlog -> single exec worker (one Codex run)")
+    md_lines.append("```")
+    md_lines.append("")
+    md_lines.append("## Context")
+    md_lines.append(
+        "Creating the proper context (architecture + ADRs + code scanning) takes time. This master backlog groups several planned items so a single agent run can execute them sequentially while keeping a growing context."
+    )
+    md_lines.append("")
+    md_lines.append("## Scope")
+    md_lines.append("### Included")
+    md_lines.append("- Execute the referenced backlog items sequentially (in order).")
+    md_lines.append("- For each referenced item: implement, test per ADR-0019, and move it to `docs/backlog/completed/` with a report.")
+    md_lines.append("")
+    md_lines.append("### Excluded")
+    md_lines.append("- Rewriting the referenced backlog items as part of the merge (beyond normal edits required during implementation).")
+    md_lines.append("")
+    md_lines.append("## Implementation Plan")
+    md_lines.append(
+        "1. For each referenced backlog item (in order): read it, implement it, run tests per ADR-0019, fix until green, then move it to completed with a report."
+    )
+    md_lines.append("2. After all items are complete, re-run the relevant test suites to ensure nothing regressed.")
+    md_lines.append("3. Move this master backlog item to completed with a short summary + the commands used.")
+    md_lines.append("")
+    md_lines.append("## Dependencies")
+    md_lines.append("- Referenced backlog items:")
+    for rel in merged_relpaths:
+        md_lines.append(f"  - `{rel}`")
+    md_lines.append("")
+    md_lines.append("## Acceptance Criteria")
+    md_lines.append("- [ ] All referenced backlog items are completed (moved to `docs/backlog/completed/` with reports).")
+    md_lines.append("- [ ] Tests pass per ADR-0019 and commands are recorded in reports.")
+    md_lines.append("- [ ] This master backlog is moved to completed with a report.")
+    md_lines.append("")
+    md_lines.append("## Testing (ADR-0019)")
+    md_lines.append("- Level A:")
+    md_lines.append("  - `...`")
+    md_lines.append("- Level B:")
+    md_lines.append("  - `...`")
+    md_lines.append("- Level C (optional / opt-in):")
+    md_lines.append("  - `...`")
+    md_lines.append("")
+    md_lines.append("## Related")
+    md_lines.append("- ADRs:")
+    md_lines.append("  - `docs/adr/0019-testing-strategy-and-levels.md`")
+    md_lines.append("- Generated from:")
+    for rel in merged_relpaths:
+        md_lines.append(f"  - `{rel}`")
+    md_lines.append("")
+    md_lines.append("---")
+    md_lines.append("## Report (added when completed)")
+    md_lines.append("")
+    md_lines.append("> Completed: YYYY-MM-DD")
+    md_lines.append("")
+    md_lines.append("### What changed")
+    md_lines.append("- ")
+    md_lines.append("")
+    md_lines.append("### Security / hardening")
+    md_lines.append("- ")
+    md_lines.append("")
+    md_lines.append("### Testing (ADR-0019)")
+    md_lines.append("Levels executed:")
+    md_lines.append("- A:")
+    md_lines.append("- B:")
+    md_lines.append("- C (if any):")
+    md_lines.append("")
+    md_lines.append("Commands run:")
+    md_lines.append("- `...`")
+    md_lines.append("")
+    md_lines.append("### Follow-ups")
+    md_lines.append("- ")
+    md_lines.append("")
+    merged_md = "\n".join(md_lines)
+
+    backlog_root = (repo_root / "docs" / "backlog").resolve()
+    dir_path = (backlog_root / k).resolve()
+    dir_path.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from ..maintenance.draft_generator import BacklogIdAllocator  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backlog id allocator unavailable: {e}")
+
+    allocator = BacklogIdAllocator.from_backlog_root(backlog_root)
+    last_err: Optional[str] = None
+    for _ in range(0, 200):
+        item_id = allocator.allocate()
+        slug = _slug_kebab(title)
+        filename = f"{item_id:03d}-{pkg}-{slug}.md"
+        safe = _safe_backlog_filename(filename)
+        if safe is None:
+            last_err = "Failed to generate a safe filename"
+            continue
+        path = (dir_path / safe).resolve()
+        try:
+            path.relative_to(dir_path)
+        except Exception:
+            last_err = "Invalid path"
+            continue
+        if path.exists():
+            last_err = "Filename collision"
+            continue
+
+        md = _render_backlog_markdown(
+            template_md=template_md,
+            item_id=item_id,
+            package=pkg,
+            title=title,
+            task_type=task_type,
+            summary=final_summary,
+            created_at=created_at,
+            content_override=merged_md,
+        )
+        try:
+            with open(path, "x", encoding="utf-8") as f:
+                f.write(md)
+        except FileExistsError:
+            last_err = "Filename collision"
+            continue
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create master backlog item: {e}")
+
+        sha = _sha256_hex_text(md)
+        return BacklogMergeResponse(
+            kind=k,
+            filename=safe,
+            relpath=f"docs/backlog/{k}/{safe}",
+            item_id=int(item_id),
+            sha256=sha,
+            merged_relpaths=merged_relpaths,
+        )
+
+    raise HTTPException(status_code=409, detail=last_err or "Could not allocate a unique backlog filename")
+
+
 @router.post("/backlog/{kind}/{filename}/execute", response_model=BacklogExecuteResponse)
 async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
     repo_root = _triage_repo_root_from_env()
@@ -7332,6 +7619,104 @@ async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
         "request_id": request_id,
         "status": "queued",
         "backlog": {"kind": k, "filename": safe, "relpath": f"docs/backlog/{k}/{safe}"},
+        "target_agent": target_agent,
+        "prompt": prompt,
+    }
+    try:
+        with open(qpath, "x", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.write("\n")
+    except FileExistsError:
+        # Extremely unlikely; retry once.
+        request_id = uuid.uuid4().hex[:16]
+        qpath = (qdir / f"{request_id}.json").resolve()
+        with open(qpath, "x", encoding="utf-8") as f:
+            payload["request_id"] = request_id
+            json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.write("\n")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue execution request: {e}")
+
+    return BacklogExecuteResponse(ok=True, request_id=request_id, request_relpath=f"backlog_exec_queue/{request_id}.json", prompt=prompt)
+
+
+@router.post("/backlog/execute_batch", response_model=BacklogExecuteResponse)
+async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecuteResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    resolved = _resolve_backlog_refs(repo_root=repo_root, refs=list(req.items or []), allowed_kinds={"planned"})
+    if len(resolved) < 2:
+        raise HTTPException(status_code=400, detail="Batch execute requires at least 2 planned backlog items")
+
+    items = [{"kind": r["kind"], "filename": r["filename"], "relpath": r["relpath"]} for r in resolved]
+    relpaths = [str(r["relpath"]) for r in resolved]
+
+    prompt_parts: List[str] = []
+    prompt_parts.append(_DEFAULT_BACKLOG_EXEC_PROMPT_PREFIX)
+    prompt_parts.append("")
+    prompt_parts.append("Batch execution request:")
+    prompt_parts.append("- Execute the following backlog items sequentially (in order) **in a single agent run**.")
+    prompt_parts.append("- Keep a single growing context (do not restart between items).")
+    prompt_parts.append("- For each item: follow its instructions, run tests per ADR-0019, and move it to `docs/backlog/completed/` with a report.")
+    prompt_parts.append("")
+    prompt_parts.append("Backlog queue:")
+    for i, rel in enumerate(relpaths, start=1):
+        prompt_parts.append(f"{i}. {rel}")
+    prompt_parts.append("")
+    prompt_parts.append("---")
+
+    max_total_chars = 1_800_000
+    total = sum(len(p) + 1 for p in prompt_parts)
+    for i, r in enumerate(resolved, start=1):
+        if total >= max_total_chars:
+            prompt_parts.append("")
+            prompt_parts.append("…(truncated: too many backlog items/contents)…")
+            break
+        prompt_parts.append("")
+        prompt_parts.append(f"## Backlog item {i}: {r['relpath']}")
+        prompt_parts.append("")
+        content = _read_text_bounded(Path(r["path"]), max_chars=500_000)
+        remaining = max_total_chars - total
+        if remaining <= 0:
+            prompt_parts.append("…(truncated)…")
+            break
+        if len(content) > remaining:
+            content = content[:remaining] + "\n…(truncated)…\n"
+        prompt_parts.append(content)
+        total += len(content) + 2
+
+    prompt = "\n".join(prompt_parts).strip() + "\n"
+
+    base = _gateway_base_dir()
+    qdir = (base / "backlog_exec_queue").resolve()
+    qdir.mkdir(parents=True, exist_ok=True)
+    request_id = uuid.uuid4().hex[:16]
+    qpath = (qdir / f"{request_id}.json").resolve()
+    try:
+        qpath.relative_to(qdir)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Invalid queue path")
+
+    target_agent = "codex:gpt-5.2"
+    try:
+        from ..maintenance.backlog_exec_runner import BacklogExecRunnerConfig, normalize_codex_model_id  # type: ignore
+
+        cfg = BacklogExecRunnerConfig.from_env()
+        ex = str(getattr(cfg, "executor", "") or "").strip().lower()
+        if ex in {"codex", "codex_cli", "codex-cli"}:
+            target_agent = f"codex:{normalize_codex_model_id(getattr(cfg, 'codex_model', 'gpt-5.2'))}"
+    except Exception:
+        pass
+
+    payload = {
+        "created_at": datetime.datetime.now().astimezone().isoformat(),
+        "request_id": request_id,
+        "status": "queued",
+        # Synthetic label: avoid copying a fake backlog path; the real list is in backlog_queue.
+        "backlog": {"kind": "planned", "filename": f"batch({len(items)})", "relpath": ""},
+        "backlog_queue": {"mode": "sequential", "items": items},
         "target_agent": target_agent,
         "prompt": prompt,
     }

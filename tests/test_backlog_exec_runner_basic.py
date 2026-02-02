@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -78,3 +80,93 @@ def test_backlog_exec_runner_processes_queue_and_writes_logs(tmp_path: Path, mon
     assert (run_dir / "codex_stderr.log").exists()
 
     assert not (queue_dir / f"{request_id}.lock").exists()
+
+
+@pytest.mark.basic
+def test_backlog_exec_runner_can_execute_multiple_requests_in_parallel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.maintenance.backlog_exec_runner import BacklogExecRunner, BacklogExecRunnerConfig
+
+    gateway_dir = tmp_path / "gateway"
+    queue_dir = gateway_dir / "backlog_exec_queue"
+    queue_dir.mkdir(parents=True, exist_ok=True)
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+
+    def _write_req(request_id: str) -> Path:
+        req_path = queue_dir / f"{request_id}.json"
+        req_obj = {
+            "created_at": "2026-02-02T00:00:00+00:00",
+            "request_id": request_id,
+            "status": "queued",
+            "backlog": {
+                "kind": "planned",
+                "filename": f"{request_id}-framework-example.md",
+                "relpath": f"docs/backlog/planned/{request_id}-framework-example.md",
+            },
+            "prompt": f"hello {request_id}",
+            "target_agent": "codex:gpt-5.2",
+        }
+        req_path.write_text(json.dumps(req_obj, indent=2) + "\n", encoding="utf-8")
+        return req_path
+
+    r1 = _write_req("req1")
+    r2 = _write_req("req2")
+
+    first_started = threading.Event()
+    second_started = threading.Event()
+    allow_finish = threading.Event()
+    counter_lock = threading.Lock()
+    call_count = 0
+
+    def fake_run(cmd, stdout=None, stderr=None, cwd=None, check=None, timeout=None, stdin=None, **_kw):  # type: ignore
+        nonlocal call_count
+        with counter_lock:
+            call_count += 1
+            idx = call_count
+        if idx == 1:
+            first_started.set()
+        if idx == 2:
+            second_started.set()
+
+        if not allow_finish.wait(timeout=5.0):
+            raise RuntimeError("Timed out waiting for allow_finish")
+
+        if stdout is not None:
+            stdout.write(b'{"event":"final"}\n')
+        if stderr is not None:
+            stderr.write(b"")
+        try:
+            midx = cmd.index("--output-last-message")
+            out_path = Path(cmd[midx + 1])
+            out_path.write_text("done", encoding="utf-8")
+        except Exception:
+            pass
+        return SimpleNamespace(returncode=0)
+
+    import abstractgateway.maintenance.backlog_exec_runner as mod
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    cfg = BacklogExecRunnerConfig(enabled=True, poll_interval_s=0.01, workers=2, executor="codex_cli", notify=False)
+    runner = BacklogExecRunner(gateway_data_dir=gateway_dir, cfg=cfg)
+    runner.start()
+    try:
+        assert first_started.wait(timeout=2.0)
+        assert second_started.wait(timeout=2.0), "Expected a second concurrent execution worker to start"
+        allow_finish.set()
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            s1 = json.loads(r1.read_text(encoding="utf-8")).get("status")
+            s2 = json.loads(r2.read_text(encoding="utf-8")).get("status")
+            if s1 == "completed" and s2 == "completed":
+                break
+            time.sleep(0.02)
+
+        assert json.loads(r1.read_text(encoding="utf-8")).get("status") == "completed"
+        assert json.loads(r2.read_text(encoding="utf-8")).get("status") == "completed"
+    finally:
+        allow_finish.set()
+        runner.stop()

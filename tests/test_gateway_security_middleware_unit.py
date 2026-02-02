@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from typing import AsyncIterator
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
@@ -239,3 +242,50 @@ def test_upload_body_limit_rejects_when_exceeded() -> None:
             headers=headers,
         )
         assert r.status_code == 413
+
+
+def test_mutating_requests_write_audit_log_and_include_request_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUDIT_LOG", "1")
+
+    app = _make_app(policy=GatewayAuthPolicy(enabled=True, tokens=("t",)))
+    with TestClient(app) as client:
+        r = client.post("/api/gateway/commands", json={"x": 1}, headers={"Authorization": "Bearer t"})
+        assert r.status_code == 200, r.text
+        rid = str(r.headers.get("x-request-id") or "").strip()
+        assert rid
+
+    audit_path = tmp_path / "audit_log.jsonl"
+    assert audit_path.exists()
+    lines = [ln for ln in audit_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert lines
+    entry = json.loads(lines[-1])
+    assert entry.get("request_id") == rid
+    assert entry.get("method") == "POST"
+    assert entry.get("path") == "/api/gateway/commands"
+    assert entry.get("status") == 200
+    assert entry.get("auth_required") is True
+    assert "Bearer t" not in lines[-1]
+
+
+def test_unauthorized_mutating_requests_are_audited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUDIT_LOG", "1")
+
+    app = _make_app(policy=GatewayAuthPolicy(enabled=True, tokens=("t",)))
+    with TestClient(app) as client:
+        r = client.post("/api/gateway/commands", json={"x": 1})
+        assert r.status_code == 401
+        rid = str(r.headers.get("x-request-id") or "").strip()
+        assert rid
+
+    audit_path = tmp_path / "audit_log.jsonl"
+    assert audit_path.exists()
+    lines = [ln for ln in audit_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert lines
+    entry = json.loads(lines[-1])
+    assert entry.get("request_id") == rid
+    assert entry.get("method") == "POST"
+    assert entry.get("path") == "/api/gateway/commands"
+    assert entry.get("status") == 401
+    assert entry.get("auth_required") is True

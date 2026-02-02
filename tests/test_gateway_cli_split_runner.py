@@ -27,6 +27,7 @@ def test_cli_serve_no_runner_sets_env_and_invokes_uvicorn(monkeypatch: pytest.Mo
     monkeypatch.setitem(sys.modules, "uvicorn", uvicorn)
 
     monkeypatch.delenv("ABSTRACTGATEWAY_RUNNER", raising=False)
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     gateway_cli.main(["serve", "--no-runner", "--host", "127.0.0.1", "--port", "9999"])
 
     assert called["app"] == "abstractgateway.app:app"
@@ -88,3 +89,24 @@ def test_runner_module_does_not_import_fastapi() -> None:
         timeout=15,
     )
     assert proc.stdout.strip() == "False"
+
+
+@pytest.mark.basic
+def test_cli_serve_requires_auth_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import cli as gateway_cli
+
+    monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_TOKEN", raising=False)
+    with pytest.raises(SystemExit) as e:
+        gateway_cli.main(["serve", "--host", "127.0.0.1", "--port", "9999", "--no-runner"])
+    assert "Missing gateway auth token" in str(e.value)
+
+
+@pytest.mark.basic
+def test_cli_serve_refuses_weak_token_on_public_bind(monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import cli as gateway_cli
+
+    # Weak token is allowed on loopback, but should be rejected when binding publicly.
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
+    with pytest.raises(SystemExit) as e:
+        gateway_cli.main(["serve", "--host", "0.0.0.0", "--port", "9999", "--no-runner"])
+    assert "Refusing to start" in str(e.value)

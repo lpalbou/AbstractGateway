@@ -13,18 +13,24 @@ Design constraints:
 from __future__ import annotations
 
 import asyncio
+import datetime
 import fnmatch
 import hmac
+import hashlib
 import json
 import logging
 import os
 import threading
 import time
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 
 logger = logging.getLogger(__name__)
+
+_AUDIT_LOCK = threading.Lock()
 
 
 def _as_bool(raw: Any, default: bool = False) -> bool:
@@ -67,6 +73,96 @@ def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
         if v2 is not None and str(v2).strip():
             return v2
     return None
+
+
+def _now_utc_iso() -> str:
+    try:
+        return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    except Exception:
+        # Best-effort: avoid ever throwing in security middleware.
+        return ""
+
+
+def _sha256_hex(text: str) -> str:
+    try:
+        h = hashlib.sha256()
+        h.update(str(text or "").encode("utf-8", errors="ignore"))
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
+def _audit_data_dir_from_env() -> Path:
+    raw = (
+        os.getenv("ABSTRACTGATEWAY_DATA_DIR")
+        or os.getenv("ABSTRACTFLOW_RUNTIME_DIR")
+        or os.getenv("ABSTRACTFLOW_GATEWAY_DATA_DIR")
+        or "./runtime"
+    )
+    try:
+        return Path(str(raw)).expanduser().resolve()
+    except Exception:
+        return Path("./runtime").resolve()
+
+
+def _audit_log_enabled(*, default: bool) -> bool:
+    raw = os.getenv("ABSTRACTGATEWAY_AUDIT_LOG")
+    if raw is None:
+        return bool(default)
+    return _as_bool(raw, bool(default))
+
+
+def _audit_log_max_bytes() -> int:
+    raw = os.getenv("ABSTRACTGATEWAY_AUDIT_LOG_MAX_BYTES") or ""
+    try:
+        v = int(str(raw).strip())
+        return max(0, v)
+    except Exception:
+        # Default: 50MB (bounded, but large enough for multi-day local dev).
+        return 50 * 1024 * 1024
+
+
+def _audit_log_rotations() -> int:
+    raw = os.getenv("ABSTRACTGATEWAY_AUDIT_LOG_ROTATIONS") or ""
+    try:
+        v = int(str(raw).strip())
+        return max(0, min(200, v))
+    except Exception:
+        return 10
+
+
+def _audit_header_allowlist() -> Tuple[str, ...]:
+    raw = os.getenv("ABSTRACTGATEWAY_AUDIT_LOG_HEADERS") or ""
+    if not str(raw).strip():
+        return ("x-client-id", "x-client-version", "x-forwarded-for")
+    out: list[str] = []
+    for part in str(raw).split(","):
+        p = part.strip().lower()
+        if p:
+            out.append(p)
+    return tuple(out)
+
+
+def _audit_redact_query(query_string: bytes) -> str:
+    # Do not log full query params by default (can contain secrets). Keep only keys.
+    try:
+        qs = (query_string or b"").decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+    if not qs:
+        return ""
+    # Parse best-effort without importing urllib for speed/robustness.
+    parts = []
+    for kv in qs.split("&"):
+        if not kv:
+            continue
+        k = kv.split("=", 1)[0].strip()
+        if k:
+            parts.append(k)
+    if not parts:
+        return ""
+    parts = parts[:50]
+    return "&".join([f"{k}=<redacted>" for k in parts])
 
 
 @dataclass(frozen=True)
@@ -297,6 +393,69 @@ class GatewaySecurityMiddleware:
                     "(ABSTRACTGATEWAY_AUTH_TOKEN). Mutating endpoints will be rejected."
                 )
 
+        self._audit_enabled = _audit_log_enabled(default=bool(policy.enabled))
+        self._audit_max_bytes = int(_audit_log_max_bytes())
+        self._audit_rotations = int(_audit_log_rotations())
+        self._audit_headers = _audit_header_allowlist()
+
+    def _audit_append(self, entry: Dict[str, Any]) -> None:
+        if not self._audit_enabled:
+            return
+        try:
+            line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
+        except Exception:
+            return
+        data = line.encode("utf-8", errors="replace")
+        try:
+            with _AUDIT_LOCK:
+                path = (_audit_data_dir_from_env() / "audit_log.jsonl").resolve()
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    return
+
+                # Rotate if needed (best-effort).
+                try:
+                    max_bytes = int(self._audit_max_bytes)
+                except Exception:
+                    max_bytes = 0
+                if max_bytes > 0 and path.exists():
+                    try:
+                        size = int(path.stat().st_size)
+                    except Exception:
+                        size = 0
+                    if size >= max_bytes:
+                        ts = _now_utc_iso().replace(":", "").replace("-", "")
+                        rotated = path.with_name(f"audit_log.{ts}.jsonl")
+                        try:
+                            path.replace(rotated)
+                        except Exception:
+                            # If rotation fails, keep appending to the same file.
+                            pass
+                        else:
+                            # Best-effort pruning: keep only N rotated files.
+                            keep = int(self._audit_rotations)
+                            if keep > 0:
+                                try:
+                                    olds = sorted(
+                                        path.parent.glob("audit_log.*.jsonl"),
+                                        key=lambda p: p.name,
+                                        reverse=True,
+                                    )
+                                    for p in olds[keep:]:
+                                        try:
+                                            p.unlink()
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+
+                with open(path, "ab") as f:
+                    f.write(data)
+        except Exception:
+            # Never break request handling due to audit logging.
+            return
+
     # ---------------------------
     # Helpers
     # ---------------------------
@@ -404,154 +563,257 @@ class GatewaySecurityMiddleware:
         is_write = method in {"POST", "PUT", "PATCH", "DELETE"}
         ip = self._client_ip(scope)
 
-        # Origin checks (only when Origin is present).
-        origin = self._header(scope, "origin")
-        if origin is not None and not self._origin_allowed(origin):
-            await self._reject(send, status=403, detail="Forbidden (origin not allowed)")
-            return
+        request_id = (self._header(scope, "x-request-id") or "").strip()
+        if not request_id:
+            request_id = uuid.uuid4().hex
 
-        # Lockout handling (only meaningful when auth is enabled).
-        locked = self._lockouts.check_locked(ip)
-        if locked is not None and locked > 0:
-            await self._reject(
-                send,
-                status=429,
-                detail="Too Many Requests (auth lockout)",
-                headers=[(b"retry-after", str(int(locked)).encode("utf-8"))],
-            )
-            return
+        started_at_s = time.time()
+        status_code: Optional[int] = None
+        error: Optional[str] = None
+        auth_required: bool = False
+        presented_token_fp: str = ""
 
-        # Auth decision.
-        auth_required = False
-        if is_write and self._policy.protect_write_endpoints:
-            auth_required = True
-        if is_read and self._policy.protect_read_endpoints:
-            # Optional dev escape hatch (loopback-only).
-            if self._policy.dev_allow_unauthenticated_reads_on_loopback and _is_loopback_ip(ip):
-                auth_required = False
-            else:
-                auth_required = True
-
-        # OPTIONS preflight: allow through (but still origin-checked above).
-        if method == "OPTIONS":
-            return await self._app(scope, receive, send)
-
-        if auth_required:
-            if not self._policy.tokens:
-                await self._reject(send, status=503, detail="Gateway auth required but no token configured")
-                return
-            auth = self._header(scope, "authorization") or ""
-            token = ""
-            if auth.lower().startswith("bearer "):
-                token = auth.split(" ", 1)[1].strip()
-            if not token or not self._token_valid(token):
-                lock = self._lockouts.record_failure(ip)
-                if lock is not None and lock > 0:
-                    await self._reject(
-                        send,
-                        status=429,
-                        detail="Too Many Requests (auth lockout)",
-                        headers=[(b"retry-after", str(int(lock)).encode("utf-8"))],
-                    )
-                    return
-                await self._reject(
-                    send,
-                    status=401,
-                    detail="Unauthorized",
-                    headers=[(b"www-authenticate", b"Bearer")],
-                )
-                return
-            self._lockouts.record_success(ip)
-
-        def _upload_kind(path: str) -> str:
-            p = str(path or "").rstrip("/")
-            if p.endswith("/attachments/upload"):
-                return "attachments"
-            if p.endswith("/bundles/upload"):
-                return "bundles"
-            return ""
-
-        # Body size limits (for mutating endpoints).
-        buffered_body: Optional[bytes] = None
-        max_body_bytes = int(self._policy.max_body_bytes)
-        upload_kind = _upload_kind(path)
-        if upload_kind:
-            # Multipart requests include boundary + part headers in `Content-Length`.
-            # This overhead is typically tiny (KBs), but we allow a conservative cushion so the
-            # security layer cannot reject a valid upload that is still within the endpoint's
-            # per-file cap (e.g. 25MB for /attachments/upload).
-            overhead = 2 * 1024 * 1024
-            endpoint_cap = (
-                int(self._policy.max_attachment_bytes) if upload_kind == "attachments" else int(self._policy.max_bundle_bytes)
-            )
-            max_body_bytes = max(0, int(endpoint_cap) + int(overhead))
-            if int(self._policy.max_upload_body_bytes) > 0:
-                max_body_bytes = min(max_body_bytes, int(self._policy.max_upload_body_bytes))
-
-        if is_write and max_body_bytes > 0:
-            cl = self._header(scope, "content-length")
-            if cl is not None:
+        async def _send_wrapped(message: dict) -> None:
+            nonlocal status_code
+            if message.get("type") == "http.response.start":
                 try:
-                    content_length = int(cl)
-                    if content_length > int(max_body_bytes):
-                        await self._reject(
-                            send,
-                            status=413,
-                            detail=f"Payload Too Large ({content_length} bytes > {int(max_body_bytes)} bytes)",
-                        )
-                        return
+                    status_code = int(message.get("status") or 0)
+                except Exception:
+                    status_code = 0
+
+                try:
+                    hdrs = list(message.get("headers") or [])
+                except Exception:
+                    hdrs = []
+                has_rid = False
+                for k, _v in hdrs:
+                    try:
+                        if bytes(k).lower() == b"x-request-id":
+                            has_rid = True
+                            break
+                    except Exception:
+                        continue
+                if not has_rid:
+                    hdrs.append((b"x-request-id", str(request_id).encode("utf-8")))
+                message = dict(message)
+                message["headers"] = hdrs
+            await send(message)
+
+        def _finalize_audit() -> None:
+            if not is_write:
+                return
+            if not self._audit_enabled:
+                return
+            now = time.time()
+            duration_ms = int(max(0.0, (now - float(started_at_s))) * 1000.0)
+            qs = scope.get("query_string") or b""
+            entry: Dict[str, Any] = {
+                "ts": _now_utc_iso(),
+                "request_id": str(request_id),
+                "ip": str(ip),
+                "method": str(method),
+                "path": str(path),
+                "query": _audit_redact_query(qs if isinstance(qs, (bytes, bytearray)) else b""),
+                "status": int(status_code or 0),
+                "duration_ms": int(duration_ms),
+                "auth_required": bool(auth_required),
+            }
+            if presented_token_fp:
+                entry["auth_token_fp"] = str(presented_token_fp)
+
+            origin = self._header(scope, "origin")
+            if origin:
+                entry["origin"] = str(origin)
+            ua = self._header(scope, "user-agent")
+            if ua:
+                entry["user_agent"] = str(ua)
+            cl = self._header(scope, "content-length")
+            if cl and str(cl).strip().isdigit():
+                try:
+                    entry["bytes_in"] = int(str(cl).strip())
                 except Exception:
                     pass
-            else:
-                # No content-length: buffer up to limit+1, then replay.
-                limit = int(max_body_bytes)
-                chunks: list[bytes] = []
-                size = 0
-                more = True
-                while more:
-                    message = await receive()
-                    if message.get("type") != "http.request":
-                        continue
-                    body = message.get("body", b"") or b""
-                    more = bool(message.get("more_body", False))
-                    if body:
-                        chunks.append(body)
-                        size += len(body)
-                        if size > limit:
-                            await self._reject(send, status=413, detail=f"Payload Too Large ({size} bytes > {limit} bytes)")
-                            return
-                buffered_body = b"".join(chunks)
 
-        # Concurrency limits: separate pool for SSE streams.
-        is_sse = path.endswith("/ledger/stream")
-        sem = self._sse_sema if is_sse else self._sema
-        acquired = await self._try_acquire(sem)
-        if not acquired:
-            await self._reject(
-                send,
-                status=429,
-                detail="Too Many Requests (concurrency limit)",
-                headers=[(b"retry-after", b"1")],
-            )
-            return
+            headers_out: Dict[str, str] = {}
+            for hn in self._audit_headers:
+                try:
+                    v = self._header(scope, hn)
+                except Exception:
+                    v = None
+                if v is None:
+                    continue
+                headers_out[str(hn)] = str(v)
+            if headers_out:
+                entry["headers"] = headers_out
+
+            if error:
+                entry["error"] = str(error)
+
+            self._audit_append(entry)
 
         try:
-            if buffered_body is None:
-                return await self._app(scope, receive, send)
+            # Origin checks (only when Origin is present).
+            origin = self._header(scope, "origin")
+            if origin is not None and not self._origin_allowed(origin):
+                await self._reject(_send_wrapped, status=403, detail="Forbidden (origin not allowed)")
+                return
 
-            # Replay buffered body to downstream app.
-            sent = False
+            # Lockout handling (only meaningful when auth is enabled).
+            locked = self._lockouts.check_locked(ip)
+            if locked is not None and locked > 0:
+                await self._reject(
+                    _send_wrapped,
+                    status=429,
+                    detail="Too Many Requests (auth lockout)",
+                    headers=[(b"retry-after", str(int(locked)).encode("utf-8"))],
+                )
+                return
 
-            async def _replay_receive():
-                nonlocal sent
-                if sent:
-                    return {"type": "http.request", "body": b"", "more_body": False}
-                sent = True
-                return {"type": "http.request", "body": buffered_body, "more_body": False}
+            # Auth decision.
+            auth_required = False
+            if is_write and self._policy.protect_write_endpoints:
+                auth_required = True
+            if is_read and self._policy.protect_read_endpoints:
+                # Optional dev escape hatch (loopback-only).
+                if self._policy.dev_allow_unauthenticated_reads_on_loopback and _is_loopback_ip(ip):
+                    auth_required = False
+                else:
+                    auth_required = True
 
-            return await self._app(scope, _replay_receive, send)
-        finally:
+            # OPTIONS preflight: allow through (but still origin-checked above).
+            if method == "OPTIONS":
+                return await self._app(scope, receive, _send_wrapped)
+
+            if auth_required:
+                if not self._policy.tokens:
+                    await self._reject(_send_wrapped, status=503, detail="Gateway auth required but no token configured")
+                    return
+                auth = self._header(scope, "authorization") or ""
+                token = ""
+                if auth.lower().startswith("bearer "):
+                    token = auth.split(" ", 1)[1].strip()
+                if token:
+                    presented_token_fp = _sha256_hex(token)[:12]
+                if not token or not self._token_valid(token):
+                    lock = self._lockouts.record_failure(ip)
+                    if lock is not None and lock > 0:
+                        await self._reject(
+                            _send_wrapped,
+                            status=429,
+                            detail="Too Many Requests (auth lockout)",
+                            headers=[(b"retry-after", str(int(lock)).encode("utf-8"))],
+                        )
+                        return
+                    await self._reject(
+                        _send_wrapped,
+                        status=401,
+                        detail="Unauthorized",
+                        headers=[(b"www-authenticate", b"Bearer")],
+                    )
+                    return
+                self._lockouts.record_success(ip)
+
+            def _upload_kind(path: str) -> str:
+                p = str(path or "").rstrip("/")
+                if p.endswith("/attachments/upload"):
+                    return "attachments"
+                if p.endswith("/bundles/upload"):
+                    return "bundles"
+                return ""
+
+            # Body size limits (for mutating endpoints).
+            buffered_body: Optional[bytes] = None
+            max_body_bytes = int(self._policy.max_body_bytes)
+            upload_kind = _upload_kind(path)
+            if upload_kind:
+                # Multipart requests include boundary + part headers in `Content-Length`.
+                # This overhead is typically tiny (KBs), but we allow a conservative cushion so the
+                # security layer cannot reject a valid upload that is still within the endpoint's
+                # per-file cap (e.g. 25MB for /attachments/upload).
+                overhead = 2 * 1024 * 1024
+                endpoint_cap = (
+                    int(self._policy.max_attachment_bytes)
+                    if upload_kind == "attachments"
+                    else int(self._policy.max_bundle_bytes)
+                )
+                max_body_bytes = max(0, int(endpoint_cap) + int(overhead))
+                if int(self._policy.max_upload_body_bytes) > 0:
+                    max_body_bytes = min(max_body_bytes, int(self._policy.max_upload_body_bytes))
+
+            if is_write and max_body_bytes > 0:
+                cl = self._header(scope, "content-length")
+                if cl is not None:
+                    try:
+                        content_length = int(cl)
+                        if content_length > int(max_body_bytes):
+                            await self._reject(
+                                _send_wrapped,
+                                status=413,
+                                detail=f"Payload Too Large ({content_length} bytes > {int(max_body_bytes)} bytes)",
+                            )
+                            return
+                    except Exception:
+                        pass
+                else:
+                    # No content-length: buffer up to limit+1, then replay.
+                    limit = int(max_body_bytes)
+                    chunks: list[bytes] = []
+                    size = 0
+                    more = True
+                    while more:
+                        message = await receive()
+                        if message.get("type") != "http.request":
+                            continue
+                        body = message.get("body", b"") or b""
+                        more = bool(message.get("more_body", False))
+                        if body:
+                            chunks.append(body)
+                            size += len(body)
+                            if size > limit:
+                                await self._reject(
+                                    _send_wrapped, status=413, detail=f"Payload Too Large ({size} bytes > {limit} bytes)"
+                                )
+                                return
+                    buffered_body = b"".join(chunks)
+
+            # Concurrency limits: separate pool for SSE streams.
+            is_sse = path.endswith("/ledger/stream")
+            sem = self._sse_sema if is_sse else self._sema
+            acquired = await self._try_acquire(sem)
+            if not acquired:
+                await self._reject(
+                    _send_wrapped,
+                    status=429,
+                    detail="Too Many Requests (concurrency limit)",
+                    headers=[(b"retry-after", b"1")],
+                )
+                return
+
             try:
-                sem.release()
+                if buffered_body is None:
+                    return await self._app(scope, receive, _send_wrapped)
+
+                # Replay buffered body to downstream app.
+                sent = False
+
+                async def _replay_receive():
+                    nonlocal sent
+                    if sent:
+                        return {"type": "http.request", "body": b"", "more_body": False}
+                    sent = True
+                    return {"type": "http.request", "body": buffered_body, "more_body": False}
+
+                return await self._app(scope, _replay_receive, _send_wrapped)
+            finally:
+                try:
+                    sem.release()
+                except Exception:
+                    pass
+        except Exception as e:  # pragma: no cover
+            try:
+                error = str(e)
             except Exception:
-                pass
+                error = "error"
+            raise
+        finally:
+            _finalize_audit()

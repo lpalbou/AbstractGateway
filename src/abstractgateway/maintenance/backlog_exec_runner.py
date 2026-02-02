@@ -28,6 +28,22 @@ def _as_bool(raw: Any, default: bool) -> bool:
     return default
 
 
+def _as_int(raw: Any, default: int) -> int:
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return int(raw)
+    if isinstance(raw, int):
+        return raw
+    s = str(raw).strip()
+    if not s:
+        return default
+    try:
+        return int(s)
+    except Exception:
+        return default
+
+
 def _now_iso() -> str:
     return datetime.datetime.now().astimezone().isoformat()
 
@@ -49,6 +65,7 @@ def normalize_codex_model_id(raw: Any) -> str:
     if low.endswith("-xhigh"):
         m = m[: -len("-xhigh")]
     return m.strip() or "gpt-5.2"
+
 
 def _triage_repo_root_from_env() -> Optional[Path]:
     raw = str(os.getenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT") or os.getenv("ABSTRACT_TRIAGE_REPO_ROOT") or "").strip()
@@ -106,6 +123,7 @@ def _store_backlog_exec_logs_to_ledger(
     now = _now_iso()
 
     backlog = req.get("backlog") if isinstance(req.get("backlog"), dict) else {}
+    backlog_queue = req.get("backlog_queue") if isinstance(req.get("backlog_queue"), dict) else {}
     backlog_kind = str(backlog.get("kind") or "").strip()
     backlog_filename = str(backlog.get("filename") or "").strip()
     backlog_relpath = str(backlog.get("relpath") or "").strip()
@@ -155,6 +173,7 @@ def _store_backlog_exec_logs_to_ledger(
         "kind": "backlog_exec",
         "request_id": str(request_id),
         "backlog": backlog,
+        "backlog_queue": backlog_queue if backlog_queue else {},
         "executor": req.get("executor") if isinstance(req.get("executor"), dict) else {},
         "run_dir_relpath": str(req.get("run_dir_relpath") or ""),
         "prompt": str(prompt or ""),
@@ -191,7 +210,7 @@ def _store_backlog_exec_logs_to_ledger(
             step_id=str(request_id),
             node_id="backlog_exec",
             status=StepStatus.COMPLETED if ok else StepStatus.FAILED,
-            effect={"type": "backlog_exec", "payload": {"request_id": str(request_id), "backlog": backlog}},
+            effect={"type": "backlog_exec", "payload": {"request_id": str(request_id), "backlog": backlog, "backlog_queue": backlog_queue}},
             result={
                 "ok": ok,
                 "exit_code": result.get("exit_code"),
@@ -217,6 +236,7 @@ def _store_backlog_exec_logs_to_ledger(
 class BacklogExecRunnerConfig:
     enabled: bool = False
     poll_interval_s: float = 2.0
+    workers: int = 1
     executor: str = "none"  # none|codex_cli|workflow_bundle
     notify: bool = False
 
@@ -236,6 +256,14 @@ class BacklogExecRunnerConfig:
             poll_s = float(str(poll_s_raw).strip()) if str(poll_s_raw).strip() else 2.0
         except Exception:
             poll_s = 2.0
+        workers_raw = (
+            os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_WORKERS")
+            or os.getenv("ABSTRACT_BACKLOG_EXEC_WORKERS")
+            or os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_THREADS")
+            or os.getenv("ABSTRACT_BACKLOG_EXEC_THREADS")
+            or ""
+        )
+        workers = _as_int(workers_raw, 1)
 
         executor = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXECUTOR") or os.getenv("ABSTRACT_BACKLOG_EXECUTOR") or "none").strip().lower()
         notify = _as_bool(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_NOTIFY"), False) or _as_bool(
@@ -259,6 +287,7 @@ class BacklogExecRunnerConfig:
         return BacklogExecRunnerConfig(
             enabled=bool(enabled),
             poll_interval_s=max(0.25, float(poll_s)),
+            workers=max(1, min(32, int(workers))),
             executor=executor,
             notify=bool(notify),
             codex_bin=codex_bin,
@@ -539,7 +568,7 @@ class BacklogExecRunner:
         self.gateway_data_dir = Path(gateway_data_dir).expanduser().resolve()
         self.cfg = cfg
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._threads: list[threading.Thread] = []
         self._last_error: Optional[str] = None
 
     def last_error(self) -> Optional[str]:
@@ -548,26 +577,31 @@ class BacklogExecRunner:
     def start(self) -> None:
         if not self.cfg.enabled:
             return
-        if self._thread is not None and self._thread.is_alive():
+        if self.is_running():
             return
         self._stop.clear()
-        t = threading.Thread(target=self._run, name="BacklogExecRunner", daemon=True)
-        self._thread = t
-        t.start()
+        self._threads = []
+        workers = max(1, min(32, int(getattr(self.cfg, "workers", 1) or 1)))
+        for i in range(workers):
+            name = f"BacklogExecWorker-{i + 1}"
+            t = threading.Thread(target=self._run, name=name, daemon=True)
+            self._threads.append(t)
+            t.start()
 
     def stop(self) -> None:
         self._stop.set()
-        t = self._thread
-        if t is None:
-            return
-        try:
-            t.join(timeout=5.0)
-        except Exception:
-            pass
+        threads = list(self._threads)
+        self._threads = []
+        for t in threads:
+            try:
+                t.join(timeout=5.0)
+            except Exception:
+                pass
 
     def is_running(self) -> bool:
-        t = self._thread
-        return bool(t is not None and t.is_alive() and not self._stop.is_set())
+        if self._stop.is_set():
+            return False
+        return any(t.is_alive() for t in self._threads)
 
     def _run(self) -> None:
         repo_root = _triage_repo_root_from_env()

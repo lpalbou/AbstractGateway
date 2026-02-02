@@ -5,6 +5,45 @@ import os
 import signal
 import threading
 import json
+import sys
+
+
+def _stderr(line: str) -> None:
+    print(str(line), file=sys.stderr)
+
+
+def _is_loopback_host(host: str) -> bool:
+    h = str(host or "").strip().lower()
+    return h in {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_public_bind_host(host: str) -> bool:
+    h = str(host or "").strip().lower()
+    return h in {"0.0.0.0", "::"}
+
+
+def _is_weak_token(token: str) -> bool:
+    t = str(token or "").strip()
+    if not t:
+        return True
+    if t.lower() in {"dev-token", "devtoken", "token", "changeme", "password", "admin", "god", "zeus", "root", "superuser"}:
+        return True
+    # Heuristic: short shared secrets are easy to brute-force / leak.
+    return len(t) < 15
+
+
+def _looks_like_public_origin_pattern(pattern: str) -> bool:
+    p = str(pattern or "").strip().lower()
+    if not p:
+        return False
+    if p == "*":
+        return True
+    if "ngrok" in p and "*" in p:
+        return True
+    if "localhost" in p or "127.0.0.1" in p or "::1" in p:
+        return False
+    # Any wildcard on a non-loopback origin is risky.
+    return "*" in p
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -88,6 +127,65 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
+        # ------------------------------------------------------------------
+        # Startup security self-checks (fail-fast on missing auth token).
+        # ------------------------------------------------------------------
+        try:
+            from .security import load_gateway_auth_policy_from_env
+        except Exception:
+            load_gateway_auth_policy_from_env = None  # type: ignore[assignment]
+
+        if load_gateway_auth_policy_from_env is not None:
+            policy = load_gateway_auth_policy_from_env()
+
+            if bool(policy.enabled) and bool(policy.protect_write_endpoints) and not tuple(policy.tokens or ()):
+                raise SystemExit(
+                    "Missing gateway auth token.\n\n"
+                    "Set a strong shared secret before starting the gateway:\n"
+                    '  export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c \'import secrets; print(secrets.token_urlsafe(32))\')"\n'
+                    "\n"
+                    "This is required for security, especially if you bind to 0.0.0.0 or expose the gateway via ngrok."
+                )
+
+            host = str(getattr(args, "host", "") or "")
+            if _is_public_bind_host(host):
+                _stderr(
+                    "[WARN] Gateway is binding to 0.0.0.0/:: (non-loopback). "
+                    "If you expose this service (ngrok/LAN), ensure you use a strong auth token and restrict origins."
+                )
+                _stderr("       Example hardening:")
+                _stderr(
+                    '         export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c \'import secrets; print(secrets.token_urlsafe(32))\')"'
+                )
+                _stderr("         export ABSTRACTGATEWAY_ALLOWED_ORIGINS=https://<your-subdomain>.ngrok-free.app")
+                _stderr("         export ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER=0   # unless explicitly needed")
+                if any(_is_weak_token(t) for t in tuple(policy.tokens or ())):
+                    raise SystemExit(
+                        "Refusing to start: weak auth token detected while binding to a non-loopback host.\n"
+                        "Set a stronger token (>=15 chars, random) and try again."
+                    )
+
+            origins = tuple(getattr(policy, "allowed_origins", ()) or ())
+            public_wildcard_origins = any(_looks_like_public_origin_pattern(o) for o in origins)
+            if public_wildcard_origins:
+                _stderr(
+                    "[WARN] ABSTRACTGATEWAY_ALLOWED_ORIGINS contains public wildcard origin patterns. "
+                    "This weakens browser-origin protections."
+                )
+                if not _is_loopback_host(host) and any(_is_weak_token(t) for t in tuple(policy.tokens or ())):
+                    raise SystemExit(
+                        "Refusing to start: weak auth token detected while using public wildcard origins.\n"
+                        "Set a stronger token (>=15 chars, random) and try again."
+                    )
+
+            # Backlog exec runner can run code/tools; warn loudly when enabled.
+            runner_enabled = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER") or os.getenv("ABSTRACT_BACKLOG_EXEC_RUNNER") or "").strip()
+            if runner_enabled.lower() in {"1", "true", "yes", "on"}:
+                _stderr(
+                    "[WARN] Backlog exec runner is enabled. It can execute queued backlog tasks on this machine. "
+                    "Only enable this in trusted environments."
+                )
+
         prev_runner_env = os.environ.get("ABSTRACTGATEWAY_RUNNER")
         if bool(getattr(args, "no_runner", False)):
             # Override env for this process: do not start the background runner loop in the HTTP API process.
@@ -313,6 +411,7 @@ def main(argv: list[str] | None = None) -> None:
         cfg = BacklogExecRunnerConfig(
             enabled=True,
             poll_interval_s=cfg.poll_interval_s,
+            workers=getattr(cfg, "workers", 1),
             executor=cfg.executor,
             notify=cfg.notify,
             codex_bin=cfg.codex_bin,
