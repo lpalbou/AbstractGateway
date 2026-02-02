@@ -289,6 +289,85 @@ class GatewayRunner:
                 continue
             self._submit_tick(rid)
 
+        # Best-effort recovery: if we restart after a child run reaches a terminal state,
+        # parents blocked on WAITING(SUBWORKFLOW) can remain stuck because we don't tick
+        # terminal child runs. Detect such cases and resume parents.
+        try:
+            self._repair_terminal_subworkflow_waits()
+        except Exception:
+            pass
+
+    def _repair_terminal_subworkflow_waits(self) -> None:
+        list_runs = getattr(self.run_store, "list_runs", None)
+        if not callable(list_runs):
+            return
+
+        try:
+            waiting = list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.SUBWORKFLOW, limit=int(self._cfg.run_scan_limit))
+        except TypeError:
+            # Older/alternate stores may not support wait_reason filtering.
+            waiting = list_runs(status=RunStatus.WAITING, limit=int(self._cfg.run_scan_limit))
+        except Exception:
+            waiting = []
+
+        for r in waiting or []:
+            # Only repair gateway-owned run trees.
+            if getattr(r, "actor_id", None) != "gateway":
+                continue
+            wait = getattr(r, "waiting", None)
+            if wait is None or getattr(wait, "reason", None) != WaitReason.SUBWORKFLOW:
+                continue
+            details = getattr(wait, "details", None)
+            if not isinstance(details, dict):
+                continue
+            sub_run_id = details.get("sub_run_id")
+            if not isinstance(sub_run_id, str) or not sub_run_id.strip():
+                continue
+            child = self.run_store.load(sub_run_id.strip())
+            if child is None:
+                continue
+
+            st = getattr(child, "status", None)
+            if st not in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
+                continue
+
+            child_out_raw: Any = getattr(child, "output", None)
+            if isinstance(child_out_raw, dict):
+                child_out: Dict[str, Any] = dict(child_out_raw)
+            else:
+                child_out = {"result": child_out_raw}
+
+            if st != RunStatus.COMPLETED:
+                child_out.setdefault("success", False)
+                if st == RunStatus.CANCELLED:
+                    child_out.setdefault("cancelled", True)
+                err = getattr(child, "error", None)
+                if isinstance(err, str) and err.strip():
+                    child_out.setdefault("error", err.strip())
+
+            runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
+            payload: Dict[str, Any] = {"sub_run_id": sub_run_id.strip(), "output": child_out}
+            try:
+                include_traces = bool(details.get("include_traces") or details.get("includeTraces"))
+            except Exception:
+                include_traces = False
+            if include_traces:
+                try:
+                    payload["node_traces"] = runtime.get_node_traces(sub_run_id.strip()) or {}
+                except Exception:
+                    payload["node_traces"] = {}
+            try:
+                runtime.resume(
+                    workflow=wf,
+                    run_id=r.run_id,
+                    wait_key=getattr(wait, "wait_key", None),
+                    payload=payload,
+                    max_steps=0,
+                )
+            except Exception:
+                # Best-effort recovery only; avoid blocking the runner loop on a single bad tree.
+                continue
+
     def _submit_tick(self, run_id: str) -> None:
         with self._inflight_lock:
             if run_id in self._inflight:
@@ -371,6 +450,37 @@ class GatewayRunner:
                 runtime.resume_run(rid)
             else:
                 runtime.cancel_run(rid, reason=reason_str or "Cancelled")
+
+        # UX affordance for scheduled runs: resuming a paused schedule should trigger the next
+        # WAIT_UNTIL immediately so the schedule "wakes up" right away.
+        if typ == "resume" and apply_to_tree and "payload" not in payload:
+            try:
+                self._maybe_trigger_scheduled_wait_now(run_id)
+            except Exception:
+                pass
+
+    def _maybe_trigger_scheduled_wait_now(self, run_id: str) -> None:
+        run = self.run_store.load(str(run_id))
+        if run is None:
+            return
+
+        root = run if self._is_scheduled_parent_run(run) else self._find_scheduled_root(run)
+        if root is None or not self._scheduled_parent_is_recurrent(root):
+            return
+
+        waiting = getattr(root, "waiting", None)
+        if getattr(root, "status", None) != RunStatus.WAITING or waiting is None:
+            return
+        if getattr(waiting, "reason", None) != WaitReason.UNTIL:
+            return
+        until = getattr(waiting, "until", None)
+        if not isinstance(until, str) or not until.strip():
+            return
+
+        now = utc_now_iso()
+        waiting.until = now  # type: ignore[attr-defined]
+        root.updated_at = now
+        self.run_store.save(root)
 
     def _apply_emit_event(self, payload: Dict[str, Any], *, default_session_id: str, client_id: Optional[str]) -> None:
         name = payload.get("name")

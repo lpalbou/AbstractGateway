@@ -66,13 +66,44 @@ class BacklogIdAllocator:
 
 
 def _draft_title(report: ReportRecord) -> str:
+    def _from_desc(desc: str) -> str:
+        raw = str(desc or "").replace("\r", "")
+        for line in raw.split("\n"):
+            s = line.strip()
+            if not s:
+                continue
+            s2 = re.sub(r"^\s*/(bug|feature)\b\s*", "", s, flags=re.IGNORECASE).strip()
+            s2 = re.sub(r"\s+", " ", s2).strip()
+            return s2 or s
+        return ""
+
     base = report.header.title.strip() if report.header.title else ""
+    desc_line = _from_desc(report.description)
+
+    # Prefer the report's first-line description when it looks like the stored title
+    # was previously truncated (older gateway versions clamped report titles).
+    if desc_line:
+        if not base:
+            base = desc_line
+        elif len(base) >= 100 and len(desc_line) > len(base) and desc_line.lower().startswith(base.lower()):
+            base = desc_line
+
     if base:
+        base = re.sub(r"\s+", " ", base).strip()
+        if len(base) > 120:
+            base = base[:120].rstrip()
         return base
     return "Bug fix" if report.report_type == "bug" else "Feature request"
 
 
 def _draft_summary(report: ReportRecord) -> str:
+    # In proposed backlog items, preserve the user's report description verbatim
+    # (never truncate). This is the "source of truth" for what was requested.
+    desc = str(report.description or "")
+    if desc.strip():
+        lines = desc.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        return "\n".join([f"    {ln}" for ln in lines]).rstrip()
+
     title = report.header.title.strip() if report.header.title else ""
     if report.report_type == "bug":
         t = title or "bug"
@@ -298,7 +329,9 @@ def generate_backlog_draft_markdown(
         llm_pkgs = str(llm_suggestion.get("packages") or "").strip()
         llm_ac = str(llm_suggestion.get("acceptance_criteria") or "").strip()
     if llm_title:
-        title = llm_title
+        title = re.sub(r"\s+", " ", llm_title).strip()
+        if len(title) > 120:
+            title = title[:120].rstrip()
     if llm_pkgs:
         package = llm_pkgs.split(",", 1)[0].strip().lower() or package
 

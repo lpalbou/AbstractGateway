@@ -60,6 +60,159 @@ def _triage_repo_root_from_env() -> Optional[Path]:
         return None
 
 
+def _backlog_exec_run_id(request_id: str) -> str:
+    rid = str(request_id or "").strip()
+    return f"backlog_exec_{rid}" if rid else "backlog_exec"
+
+
+def _build_gateway_stores(*, gateway_data_dir: Path):
+    # Lazy import: keep this module usable in minimal contexts.
+    from ..config import GatewayHostConfig  # type: ignore
+    from ..stores import build_file_stores, build_sqlite_stores  # type: ignore
+
+    base = Path(gateway_data_dir).expanduser().resolve()
+    cfg = GatewayHostConfig.from_env()
+    backend = str(getattr(cfg, "store_backend", "file") or "file").strip().lower() or "file"
+    if backend == "sqlite":
+        return build_sqlite_stores(base_dir=base, db_path=getattr(cfg, "db_path", None))
+    return build_file_stores(base_dir=base)
+
+
+def _store_backlog_exec_logs_to_ledger(
+    *,
+    gateway_data_dir: Path,
+    request_id: str,
+    req: Dict[str, Any],
+    prompt: str,
+    run_dir: Path,
+    result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Persist backlog execution logs as a durable run+ledger entry.
+
+    Contract:
+    - Never raise (best-effort). Caller should still record completion in request JSON.
+    - Store the full logs as artifacts and reference them from both RunState.vars and a ledger StepRecord.
+    """
+
+    try:
+        stores = _build_gateway_stores(gateway_data_dir=gateway_data_dir)
+    except Exception:
+        return {}
+
+    from abstractruntime.core.models import RunState, RunStatus, StepRecord, StepStatus  # type: ignore
+    from abstractruntime.storage.artifacts import artifact_ref  # type: ignore
+
+    rid = _backlog_exec_run_id(request_id)
+    now = _now_iso()
+
+    backlog = req.get("backlog") if isinstance(req.get("backlog"), dict) else {}
+    backlog_kind = str(backlog.get("kind") or "").strip()
+    backlog_filename = str(backlog.get("filename") or "").strip()
+    backlog_relpath = str(backlog.get("relpath") or "").strip()
+    item_id = None
+    try:
+        item_id = int(str(backlog_filename).split("-", 1)[0])
+    except Exception:
+        item_id = None
+
+    base_tags = {
+        "kind": "backlog_exec_log",
+        "request_id": str(request_id),
+        "backlog_kind": backlog_kind,
+        "backlog_filename": backlog_filename,
+        "backlog_relpath": backlog_relpath,
+        "backlog_item_id": str(item_id) if item_id is not None else "",
+    }
+    base_tags = {k: v for k, v in base_tags.items() if isinstance(v, str) and v.strip()}
+
+    def _store_file(*, path: Path, name: str, content_type: str) -> Optional[str]:
+        try:
+            if not path.exists():
+                return None
+            data = path.read_bytes()
+            meta = stores.artifact_store.store(data, content_type=content_type, run_id=rid, tags={**base_tags, "name": name})
+            return str(getattr(meta, "artifact_id", "") or "").strip() or None
+        except Exception:
+            return None
+
+    events_id = _store_file(path=(run_dir / "codex_events.jsonl").resolve(), name="events", content_type="application/jsonl")
+    stderr_id = _store_file(path=(run_dir / "codex_stderr.log").resolve(), name="stderr", content_type="text/plain")
+    last_id = _store_file(path=(run_dir / "codex_last_message.txt").resolve(), name="last_message", content_type="text/plain")
+
+    log_artifacts = {
+        "events": artifact_ref(events_id) if events_id else None,
+        "stderr": artifact_ref(stderr_id) if stderr_id else None,
+        "last_message": artifact_ref(last_id) if last_id else None,
+    }
+
+    ok = bool(result.get("ok") is True)
+    status = RunStatus.COMPLETED if ok else RunStatus.FAILED
+    started_at = str(req.get("started_at") or result.get("started_at") or now)
+    finished_at = str(req.get("finished_at") or result.get("finished_at") or now)
+    err = str(result.get("error") or "").strip() or None
+
+    run_vars = {
+        "kind": "backlog_exec",
+        "request_id": str(request_id),
+        "backlog": backlog,
+        "executor": req.get("executor") if isinstance(req.get("executor"), dict) else {},
+        "run_dir_relpath": str(req.get("run_dir_relpath") or ""),
+        "prompt": str(prompt or ""),
+        "result": {
+            "ok": ok,
+            "exit_code": result.get("exit_code"),
+            "error": err,
+            "log_artifacts": log_artifacts,
+        },
+    }
+
+    try:
+        run = RunState(
+            run_id=rid,
+            workflow_id="backlog_exec",
+            status=status,
+            current_node="backlog_exec",
+            vars=run_vars,
+            output=None,
+            error=err,
+            created_at=started_at,
+            updated_at=finished_at,
+            actor_id="backlog_exec_runner",
+            session_id=None,
+            parent_run_id=None,
+        )
+        stores.run_store.save(run)
+    except Exception:
+        pass
+
+    try:
+        rec = StepRecord(
+            run_id=rid,
+            step_id=str(request_id),
+            node_id="backlog_exec",
+            status=StepStatus.COMPLETED if ok else StepStatus.FAILED,
+            effect={"type": "backlog_exec", "payload": {"request_id": str(request_id), "backlog": backlog}},
+            result={
+                "ok": ok,
+                "exit_code": result.get("exit_code"),
+                "error": err,
+                "log_artifacts": log_artifacts,
+            },
+            error=err,
+            started_at=started_at,
+            ended_at=finished_at,
+            actor_id="backlog_exec_runner",
+            session_id=None,
+            attempt=1,
+            idempotency_key=f"backlog_exec:{request_id}",
+        )
+        stores.ledger_store.append(rec)
+    except Exception:
+        pass
+
+    return {"ledger_run_id": rid, "log_artifacts": log_artifacts}
+
+
 @dataclass(frozen=True)
 class BacklogExecRunnerConfig:
     enabled: bool = False
@@ -319,6 +472,19 @@ def process_next_backlog_exec_request(
                 return True, request_id
 
             result = executor.execute(prompt=prompt, repo_root=repo_root, run_dir=run_dir)
+
+            # Persist a durable copy of the execution log into the gateway ledger (best-effort).
+            persisted = _store_backlog_exec_logs_to_ledger(
+                gateway_data_dir=gateway_data_dir,
+                request_id=request_id,
+                req=req,
+                prompt=prompt,
+                run_dir=run_dir,
+                result=result if isinstance(result, dict) else {},
+            )
+            if isinstance(result, dict) and isinstance(persisted, dict) and persisted:
+                result.setdefault("ledger", {}).update(persisted)
+
             req["result"] = result
             req["finished_at"] = str(result.get("finished_at") or _now_iso())
             req["status"] = "completed" if bool(result.get("ok") is True) else "failed"

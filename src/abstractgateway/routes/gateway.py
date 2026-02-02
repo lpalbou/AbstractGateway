@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import hashlib
+import io
 import json
 import logging
 import mimetypes
@@ -23,6 +24,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -4800,7 +4802,11 @@ def _bug_report_title(description: str) -> str:
     first = str(description or "").strip().splitlines()[0].strip()
     title = first or "Bug report"
     title = re.sub(r"\s+", " ", title).strip()
-    return title[:120] if len(title) > 120 else title
+    if title.lower().startswith("/bug"):
+        title = title[len("/bug") :].strip() or "Bug report"
+    if len(title) > 120:
+        title = title[:120].rstrip()
+    return title
 
 
 def _bug_report_slug(description: str) -> str:
@@ -4967,7 +4973,12 @@ def _report_attachment_candidates(report: Any, *, session_memory_run_id: str) ->
 
 
 def _detect_safe_attachment_mime(content: bytes) -> str:
-    """Best-effort magic detection for common safe media types (stdlib-only)."""
+    """Best-effort magic detection for common safe media types (stdlib-only).
+
+    This is intentionally conservative: it only returns a MIME type when the content
+    is recognizable by magic bytes (and for zip containers, by a minimal structural
+    check) to reduce the risk of copying unexpected/scriptable files into the repo.
+    """
     b = bytes(content or b"")
     if len(b) >= 8 and b[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
@@ -4977,8 +4988,39 @@ def _detect_safe_attachment_mime(content: bytes) -> str:
         return "image/gif"
     if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WEBP":
         return "image/webp"
+    if len(b) >= 2 and b[:2] == b"BM":
+        return "image/bmp"
+    if len(b) >= 4 and b[:4] in {b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"}:
+        return "image/tiff"
+    if len(b) >= 4 and b[:4] in {b"\x00\x00\x01\x00", b"\x00\x00\x02\x00"}:
+        return "image/x-icon"
     if len(b) >= 5 and b[:5] == b"%PDF-":
         return "application/pdf"
+    if len(b) >= 5 and b[:5] == b"{\\rtf":
+        return "text/rtf"
+    if len(b) >= 4 and b[:2] == b"PK":
+        # Zip-based documents (docx/xlsx/pptx/odt). Keep checks minimal and stdlib-only.
+        try:
+            with zipfile.ZipFile(io.BytesIO(b)) as zf:
+                names = set(zf.namelist())
+                if "[Content_Types].xml" in names:
+                    if "word/document.xml" in names:
+                        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    if "xl/workbook.xml" in names:
+                        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    if "ppt/presentation.xml" in names:
+                        return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                if "mimetype" in names:
+                    try:
+                        mt = bytes(zf.read("mimetype")[:200])
+                    except Exception:
+                        mt = b""
+                    if mt.strip() == b"application/vnd.oasis.opendocument.text":
+                        return "application/vnd.oasis.opendocument.text"
+                if "content.xml" in names and "META-INF/manifest.xml" in names:
+                    return "application/vnd.oasis.opendocument.text"
+        except Exception:
+            pass
     if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE":
         return "audio/wav"
     if len(b) >= 4 and b[:4] == b"OggS":
@@ -4987,13 +5029,30 @@ def _detect_safe_attachment_mime(content: bytes) -> str:
         return "audio/flac"
     if len(b) >= 3 and b[:3] == b"ID3":
         return "audio/mpeg"
-    if len(b) >= 2 and b[0] == 0xFF and (b[1] & 0xE0) == 0xE0:
+    # AAC ADTS: 0xFFF syncword with layer bits == 00.
+    if len(b) >= 2 and b[0] == 0xFF and (b[1] & 0xF6) == 0xF0:
+        return "audio/aac"
+    # MP3: allow frame sync but exclude AAC-like layer==00.
+    if len(b) >= 2 and b[0] == 0xFF and (b[1] & 0xE0) == 0xE0 and ((b[1] >> 1) & 0x3) != 0:
         return "audio/mpeg"
-    # ISO BMFF (mp4/mov): size(4) + ftyp(4) + brand...
+    if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"AVI ":
+        return "video/x-msvideo"
+    # ISO BMFF (mp4/m4a/mov): size(4) + ftyp(4) + brands...
     if len(b) >= 12 and b[4:8] == b"ftyp":
+        brands = b[8:64]
+        if b"M4A " in brands or b"M4B " in brands or b"M4P " in brands:
+            return "audio/mp4"
+        if b"qt  " in brands:
+            return "video/quicktime"
         return "video/mp4"
+    # ASF (wmv)
+    if len(b) >= 16 and b[:16] == b"\x30\x26\xB2\x75\x8E\x66\xCF\x11\xA6\xD9\x00\xAA\x00\x62\xCE\x6C":
+        return "video/x-ms-wmv"
     # EBML (webm/mkv)
     if len(b) >= 4 and b[:4] == b"\x1A\x45\xDF\xA3":
+        head = b[:512].lower()
+        if b"matroska" in head:
+            return "video/x-matroska"
         return "video/webm"
     return ""
 
@@ -5005,13 +5064,27 @@ def _ext_for_mime(mime: str) -> str:
         "image/jpeg": ".jpg",
         "image/gif": ".gif",
         "image/webp": ".webp",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tiff",
+        "image/x-icon": ".ico",
         "application/pdf": ".pdf",
+        "text/rtf": ".rtf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+        "application/vnd.oasis.opendocument.text": ".odt",
         "audio/wav": ".wav",
         "audio/ogg": ".ogg",
         "audio/flac": ".flac",
+        "audio/aac": ".aac",
+        "audio/mp4": ".m4a",
         "audio/mpeg": ".mp3",
         "video/mp4": ".mp4",
         "video/webm": ".webm",
+        "video/x-msvideo": ".avi",
+        "video/quicktime": ".mov",
+        "video/x-matroska": ".mkv",
+        "video/x-ms-wmv": ".wmv",
     }.get(m, "")
 
 
@@ -5076,11 +5149,11 @@ def _maybe_copy_report_attachments_to_backlog_assets(
 
     try:
         max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_REPORT_BACKLOG_ASSETS_MAX_BYTES", "") or "").strip()
-        max_bytes = int(max_bytes_raw) if max_bytes_raw else 15 * 1024 * 1024
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
         if max_bytes <= 0:
-            max_bytes = 15 * 1024 * 1024
+            max_bytes = 25 * 1024 * 1024
     except Exception:
-        max_bytes = 15 * 1024 * 1024
+        max_bytes = 25 * 1024 * 1024
 
     cand = _report_attachment_candidates(report, session_memory_run_id=str(session_memory_run_id))
     if not cand:
@@ -5835,7 +5908,9 @@ def _feature_request_title(description: str) -> str:
     title = re.sub(r"\s+", " ", title).strip()
     if title.lower().startswith("/feature"):
         title = title[len("/feature") :].strip() or "Feature request"
-    return title[:120] if len(title) > 120 else title
+    if len(title) > 120:
+        title = title[:120].rstrip()
+    return title
 
 
 def _feature_request_slug(description: str) -> str:
@@ -7053,11 +7128,11 @@ async def backlog_upload_attachment(
 
     try:
         max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_BACKLOG_ATTACHMENT_BYTES", "") or "").strip()
-        max_bytes = int(max_bytes_raw) if max_bytes_raw else 15 * 1024 * 1024
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
         if max_bytes <= 0:
-            max_bytes = 15 * 1024 * 1024
+            max_bytes = 25 * 1024 * 1024
     except Exception:
-        max_bytes = 15 * 1024 * 1024
+        max_bytes = 25 * 1024 * 1024
 
     try:
         content = await file.read()
@@ -7395,6 +7470,8 @@ def _parse_backlog_maintain_reply(raw: str) -> tuple[str, str]:
 def _build_backlog_advisor_agent_prompt(
     *,
     repo_root: Path,
+    gateway_data_dir: Optional[Path],
+    workspace_allowed_paths: Optional[list[str]],
     focus_kind: Optional[str],
     focus_type: Optional[str],
     web_tools_enabled: bool,
@@ -7402,13 +7479,15 @@ def _build_backlog_advisor_agent_prompt(
 ) -> str:
     ctx: Dict[str, Any] = {
         "repo_root": str(repo_root),
+        "gateway_data_dir": str(gateway_data_dir) if isinstance(gateway_data_dir, Path) else None,
         "backlog_root": "docs/backlog",
         "focus_kind": str(focus_kind or "").strip() or None,
         "focus_type": str(focus_type or "").strip() or None,
         "web_tools_enabled": bool(web_tools_enabled),
+        "workspace_allowed_paths": list(workspace_allowed_paths or [])[:32],
         "notes": (
-            "You are a read-only advisor. Use tools to inspect docs/backlog and connect/prioritize items. "
-            "Cite backlog items as repo-relative paths like docs/backlog/<kind>/<filename>."
+            "You are a read-only advisor. Use tools to inspect docs/backlog, relevant code (packages/*), and logs (gateway_data_dir) "
+            "to connect/prioritize items and validate feasibility. Cite backlog items as repo-relative paths like docs/backlog/<kind>/<filename>."
         ),
         "messages": [],
     }
@@ -7436,6 +7515,8 @@ def _build_backlog_advisor_agent_prompt(
         "Rules:\n"
         "- Read-only: do NOT write files and do NOT run shell commands.\n"
         "- Use tools sparingly. Prefer skim/search over reading many full files.\n"
+        "- You may inspect source code under the repo root to validate recommendations.\n"
+        "- You may inspect gateway logs/runtime artifacts only within the allowed workspace roots.\n"
         "- When recommending actions, reference backlog items using repo-relative paths.\n"
         "- Ask clarifying questions if needed.\n"
         "- Never include secrets.\n\n"
@@ -7458,6 +7539,48 @@ def _parse_backlog_advisor_reply(raw: str) -> str:
         return text
     reply = str(obj.get("reply") or "").strip()
     return reply or text
+
+
+def _backlog_agent_allowed_paths(*, repo_root: Path, svc: Any) -> list[str]:
+    """Return additional allowed workspace roots for backlog advisor/maintainer runs.
+
+    Rationale:
+    - The repo is always the workspace root (code/docs).
+    - The gateway data dir may be outside the repo in deployments; allow read-only access so the
+      agent can consult logs/ledgers/artifacts for debugging and grounding.
+    - Operators may extend the allowlist via env, but should avoid pointing at secret-bearing dirs
+      when using remote providers.
+    """
+    out: list[str] = []
+
+    if _env_bool("ABSTRACTGATEWAY_BACKLOG_AGENT_ALLOW_GATEWAY_DATA_DIR", True):
+        try:
+            data_dir = getattr(getattr(svc, "config", None), "data_dir", None)
+            if isinstance(data_dir, (str, Path)) and str(data_dir).strip():
+                out.append(str(Path(str(data_dir)).expanduser().resolve()))
+        except Exception:
+            pass
+
+    extra = _parse_lines_or_json_list(os.getenv("ABSTRACTGATEWAY_BACKLOG_AGENT_ALLOWED_PATHS"))
+    out.extend([str(x) for x in extra if isinstance(x, str) and str(x).strip()])
+
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for p in out:
+        raw = str(p or "").strip()
+        if not raw:
+            continue
+        try:
+            resolved = str(Path(raw).expanduser().resolve())
+        except Exception:
+            resolved = raw
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        cleaned.append(resolved)
+
+    # Keep list bounded.
+    return cleaned[:32]
 
 
 @router.post("/backlog/maintain", response_model=BacklogAssistResponse)
@@ -7537,6 +7660,8 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
 
     # Ensure the basic-agent bundle exists (bundle workflow source required).
     host = _require_bundle_host(svc)
+    allowed_paths = _backlog_agent_allowed_paths(repo_root=repo_root, svc=svc)
+    access_mode = "workspace_or_allowed" if allowed_paths else "workspace_only"
     try:
         run_id = host.start_run(
             flow_id="",
@@ -7544,14 +7669,24 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
             bundle_version=None,
             input_data={
                 "workspace_root": str(repo_root),
-                "workspace_access_mode": "workspace_only",
+                "workspace_access_mode": access_mode,
+                **({"workspace_allowed_paths": allowed_paths} if allowed_paths else {}),
                 "provider": provider,
                 "model": model,
                 "prompt": prompt,
                 "resp_schema": schema,
                 "max_iterations": 12,
                 # Defense-in-depth: allow only read/search/network tools.
-                "tools": ["read_file", "search_files", "list_files", "skim_folders", "web_search", "fetch_url"],
+                "tools": [
+                    "read_file",
+                    "search_files",
+                    "list_files",
+                    "skim_folders",
+                    "skim_files",
+                    "analyze_code",
+                    "web_search",
+                    "fetch_url",
+                ],
                 "system": (
                     "You are AbstractFramework Maintenance AI.\n"
                     "Return ONLY valid JSON (no markdown fences) matching the provided schema.\n"
@@ -7636,12 +7771,18 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
 
     allow_web_raw = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_ADVISOR_ALLOW_WEB", "") or "").strip().lower()
     allow_web = allow_web_raw in {"1", "true", "yes", "y", "on"}
-    tools = ["read_file", "search_files", "list_files", "skim_folders"]
+    tools = ["read_file", "search_files", "list_files", "skim_folders", "skim_files", "analyze_code"]
     if allow_web:
         tools.extend(["web_search", "fetch_url"])
 
+    svc = get_gateway_service()
+    allowed_paths = _backlog_agent_allowed_paths(repo_root=repo_root, svc=svc)
+    access_mode = "workspace_or_allowed" if allowed_paths else "workspace_only"
+
     prompt = _build_backlog_advisor_agent_prompt(
         repo_root=repo_root,
+        gateway_data_dir=Path(getattr(getattr(svc, "config", None), "data_dir", repo_root)).expanduser().resolve(),
+        workspace_allowed_paths=allowed_paths,
         focus_kind=focus_kind,
         focus_type=focus_type,
         web_tools_enabled=allow_web,
@@ -7657,7 +7798,6 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
         },
     }
 
-    svc = get_gateway_service()
     if not bool(getattr(svc.config, "runner_enabled", True)):
         raise HTTPException(status_code=409, detail="Gateway runner is disabled (start the gateway without --no-runner)")
     svc.runner.start()
@@ -7670,7 +7810,8 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
             bundle_version=None,
             input_data={
                 "workspace_root": str(repo_root),
-                "workspace_access_mode": "workspace_only",
+                "workspace_access_mode": access_mode,
+                **({"workspace_allowed_paths": allowed_paths} if allowed_paths else {}),
                 "provider": provider,
                 "model": model,
                 "prompt": prompt,

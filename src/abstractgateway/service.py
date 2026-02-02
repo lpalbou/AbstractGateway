@@ -313,6 +313,7 @@ def run_summary(run: Any) -> Dict[str, Any]:
         out["waiting"] = {
             "reason": getattr(getattr(waiting, "reason", None), "value", None) or str(getattr(waiting, "reason", "")),
             "wait_key": getattr(waiting, "wait_key", None),
+            "until": getattr(waiting, "until", None),
             "prompt": getattr(waiting, "prompt", None),
             "choices": getattr(waiting, "choices", None),
             "allow_free_text": getattr(waiting, "allow_free_text", None),

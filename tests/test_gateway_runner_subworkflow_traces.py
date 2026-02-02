@@ -179,3 +179,64 @@ def test_gateway_runner_marks_child_failed_and_resumes_parent(tmp_path: Path) ->
     output = sub.get("output")
     assert isinstance(output, dict)
     assert output.get("success") is False
+
+
+def test_gateway_runner_recovers_stuck_subworkflow_wait_when_child_already_terminal(tmp_path: Path) -> None:
+    run_store = InMemoryRunStore()
+    ledger_store = InMemoryLedgerStore()
+
+    runtime = Runtime(
+        run_store=run_store,
+        ledger_store=ledger_store,
+        effect_handlers=build_effect_handlers(llm=_StubLLM(), tools=_StubTools()),
+    )
+
+    def child_node(_run, _ctx) -> StepPlan:
+        return StepPlan(node_id="child_node", complete_output={"ok": True})
+
+    child = WorkflowSpec(workflow_id="child_terminal", entry_node="child_node", nodes={"child_node": child_node})
+
+    def start(run, _ctx) -> StepPlan:
+        return StepPlan(
+            node_id="start",
+            effect=Effect(
+                type=EffectType.START_SUBWORKFLOW,
+                payload={"workflow_id": "child_terminal", "vars": {}, "async": True, "wait": True},
+                result_key="sub",
+            ),
+            next_node="done",
+        )
+
+    def done(run, _ctx) -> StepPlan:
+        return StepPlan(node_id="done", complete_output={"sub": run.vars.get("sub")})
+
+    parent = WorkflowSpec(workflow_id="parent_terminal", entry_node="start", nodes={"start": start, "done": done})
+
+    registry: Dict[str, WorkflowSpec] = {"parent_terminal": parent, "child_terminal": child}
+    runtime.set_workflow_registry(registry)
+
+    parent_run_id = runtime.start(workflow=parent, vars={}, actor_id="gateway")
+    parent_state = runtime.tick(workflow=parent, run_id=parent_run_id, max_steps=5)
+
+    assert parent_state.status == RunStatus.WAITING
+    assert parent_state.waiting is not None
+    assert parent_state.waiting.reason == WaitReason.SUBWORKFLOW
+
+    child_run_id = parent_state.waiting.details.get("sub_run_id")
+    assert isinstance(child_run_id, str) and child_run_id
+
+    # Simulate a process crash/restart where the child has already reached a terminal state
+    # but the runner never got a chance to tick the child and resume the parent.
+    child_state = runtime.get_state(child_run_id)
+    child_state.status = RunStatus.FAILED
+    child_state.error = "boom"
+    child_state.updated_at = "2026-01-01T00:00:00+00:00"
+    run_store.save(child_state)
+
+    host = _Host(runtime=runtime, registry=registry, run_store=run_store, ledger_store=ledger_store)
+    runner = GatewayRunner(base_dir=tmp_path, host=host)
+
+    runner._repair_terminal_subworkflow_waits()
+
+    resumed_parent = runtime.get_state(parent_run_id)
+    assert resumed_parent.status == RunStatus.RUNNING

@@ -32,6 +32,8 @@ def _parse_title_and_type(text: str, *, path: Path) -> Tuple[ReportType, str]:
         if m:
             kind = (m.group("kind") or "").strip().lower()
             title = (m.group("title") or "").strip()
+            if len(title) > 120:
+                title = title[:120].rstrip()
             return ("bug" if kind == "bug" else "feature", title)
         break
     inferred = _infer_report_type_from_path(path) or "bug"
@@ -68,7 +70,9 @@ def _parse_sections(text: str) -> Dict[str, str]:
             continue
         if current:
             sections[current].append(raw.rstrip("\n"))
-    return {k: "\n".join(v).strip() for k, v in sections.items()}
+    # Preserve leading whitespace (many templates store user-provided fields as
+    # Markdown literals via indentation). Only strip surrounding newlines.
+    return {k: "\n".join(v).strip("\n") for k, v in sections.items()}
 
 
 def _extract_context_json(text: str) -> Dict[str, Any]:
@@ -89,8 +93,32 @@ def _first_nonempty_section(sections: Dict[str, str], *names: str) -> str:
     for name in names:
         content = sections.get(name)
         if isinstance(content, str) and content.strip():
-            return content.strip()
+            # Preserve indentation (see `_parse_sections`).
+            return content.strip("\n")
     return ""
+
+
+def _dedent_markdown_literal(text: str) -> str:
+    """Remove a single Markdown-literal indentation level (4 spaces).
+
+    Gateway report templates store user-provided descriptions as indented code
+    blocks to avoid accidental Markdown/HTML rendering. Downstream consumers
+    (triage + proposed backlog drafts) want the raw user text.
+    """
+
+    s = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not s:
+        return ""
+    lines = s.split("\n")
+    out: list[str] = []
+    for ln in lines:
+        if ln.startswith("    "):
+            out.append(ln[4:])
+        elif ln.startswith("\t"):
+            out.append(ln[1:])
+        else:
+            out.append(ln)
+    return "\n".join(out).rstrip("\n")
 
 
 def parse_report_file(path: Path) -> ReportRecord:
@@ -121,6 +149,7 @@ def parse_report_file(path: Path) -> ReportRecord:
         "User Request",
         "Description",
     )
+    description = _dedent_markdown_literal(description)
 
     # Environment info (best-effort; present in templates but may be missing/edited).
     env_section = sections.get("Environment") or ""
@@ -188,4 +217,3 @@ def parse_report_file(path: Path) -> ReportRecord:
         sections=sections,
         context=context,
     )
-

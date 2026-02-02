@@ -325,6 +325,8 @@ def test_gateway_scheduled_run_can_reschedule_interval_in_place(tmp_path: Path, 
                 and body.get("current_node") == "wait_interval"
                 and isinstance(waiting, dict)
                 and waiting.get("reason") == "until"
+                and isinstance(waiting.get("until"), str)
+                and bool(str(waiting.get("until") or "").strip())
             )
 
         _wait_until(_waiting_on_interval, timeout_s=10.0, poll_s=0.1)

@@ -152,7 +152,7 @@ def test_gateway_bug_report_endpoint_auto_bridges_to_typed_proposed_backlog_when
     from abstractgateway.app import app
 
     headers = {"Authorization": f"Bearer {token}"}
-    description = "Bug: auto-bridge creates proposed backlog"
+    description = "This is a very long bug description " + ("y" * 160) + " TAIL-456"
 
     with TestClient(app) as client:
         r = client.post(
@@ -166,7 +166,10 @@ def test_gateway_bug_report_endpoint_auto_bridges_to_typed_proposed_backlog_when
 
         report_filename = str(body.get("filename") or "").strip()
         assert report_filename
-        assert (runtime_dir / "bug_reports" / report_filename).exists()
+        report_path = runtime_dir / "bug_reports" / report_filename
+        assert report_path.exists()
+        report_md = report_path.read_text(encoding="utf-8")
+        assert "TAIL-456" in report_md
 
         backlog_rel = str(body.get("proposed_backlog_relpath") or "").strip()
         backlog_id = body.get("proposed_backlog_item_id")
@@ -178,3 +181,5 @@ def test_gateway_bug_report_endpoint_auto_bridges_to_typed_proposed_backlog_when
         md = backlog_path.read_text(encoding="utf-8")
         assert "> Type: bug" in md
         assert f"> Source report relpath: bug_reports/{report_filename}" in md
+        assert "TAIL-456" in md
+        assert f"    {description}" in md
