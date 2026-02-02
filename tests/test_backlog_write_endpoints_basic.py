@@ -149,12 +149,16 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
         assert f"`docs/backlog/planned/{filename2}`" in master_text
 
         # Execute queues a request file under gateway data dir.
-        exec_resp = client.post(f"/api/gateway/backlog/planned/{filename}/execute")
+        exec_resp = client.post(f"/api/gateway/backlog/planned/{master_filename}/execute")
         assert exec_resp.status_code == 200
         rid = exec_resp.json()["request_id"]
         assert isinstance(rid, str) and rid
         qpath = gateway_dir / "backlog_exec_queue" / f"{rid}.json"
         assert qpath.exists()
+
+        # Duplicate execute should be rejected while queued/running.
+        exec_dup = client.post(f"/api/gateway/backlog/planned/{master_filename}/execute")
+        assert exec_dup.status_code == 409
 
         exec_batch = client.post(
             "/api/gateway/backlog/execute_batch",
@@ -174,6 +178,12 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
         prompt = exec_batch.json()["prompt"]
         assert "Example task" in prompt
         assert "Second task" in prompt
+
+        exec_batch_dup = client.post(
+            "/api/gateway/backlog/execute_batch",
+            json={"items": [{"kind": "planned", "filename": filename}, {"kind": "planned", "filename": filename2}]},
+        )
+        assert exec_batch_dup.status_code == 409
 
         assist = client.post(
             "/api/gateway/backlog/assist",

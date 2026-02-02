@@ -236,7 +236,7 @@ def _store_backlog_exec_logs_to_ledger(
 class BacklogExecRunnerConfig:
     enabled: bool = False
     poll_interval_s: float = 2.0
-    workers: int = 1
+    workers: int = 2
     executor: str = "none"  # none|codex_cli|workflow_bundle
     notify: bool = False
 
@@ -263,7 +263,7 @@ class BacklogExecRunnerConfig:
             or os.getenv("ABSTRACT_BACKLOG_EXEC_THREADS")
             or ""
         )
-        workers = _as_int(workers_raw, 1)
+        workers = _as_int(workers_raw, 2)
 
         executor = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXECUTOR") or os.getenv("ABSTRACT_BACKLOG_EXECUTOR") or "none").strip().lower()
         notify = _as_bool(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_NOTIFY"), False) or _as_bool(

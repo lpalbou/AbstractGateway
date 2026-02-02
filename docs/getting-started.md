@@ -56,6 +56,34 @@ abstractgateway runner
 abstractgateway serve --no-runner --host 127.0.0.1 --port 8081
 ```
 
+### Process manager (dev-only; remote start/stop/redeploy)
+
+AbstractGateway can optionally expose a **process manager** API that lets trusted UIs (e.g. AbstractObserver) start/stop a small allowlisted set of local dev processes (Vite servers, Flow backend) and trigger gateway redeploy actions.
+
+Safety contract:
+- **Disabled by default**
+- Still protected by gateway auth (Bearer token)
+- Intended for **trusted dev machines** (do not enable on untrusted/public hosts)
+
+Enable it:
+
+```bash
+export ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1
+export ABSTRACTGATEWAY_TRIAGE_REPO_ROOT="$PWD"   # used as the repo root for relative `cwd` resolution
+```
+
+Optional: override the managed process list (operator-provided JSON file):
+
+```bash
+export ABSTRACTGATEWAY_PROCESS_MANAGER_CONFIG="$PWD/runtime/gateway/processes.json"
+```
+
+Gateway endpoints (when enabled):
+- `GET /api/gateway/processes`
+- `POST /api/gateway/processes/{id}/start|stop|restart`
+- `POST /api/gateway/processes/gateway/redeploy`
+- `GET /api/gateway/processes/{id}/logs/tail`
+
 ### `--host` vs `ABSTRACTGATEWAY_ALLOWED_ORIGINS` (common confusion)
 
 - `abstractgateway serve --host ...` controls the **bind address** (network interfaces to listen on).

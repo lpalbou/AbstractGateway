@@ -4626,7 +4626,12 @@ async def discovery_providers(include_models: bool = Query(False, description="I
                     items.append(dict(p))
 
     items.sort(key=lambda x: str(x.get("name") or ""))
-    return {"items": items}
+
+    # Gateway-configured defaults (used by thin clients to preselect provider/model).
+    default_provider = str(os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
+    default_model = str(os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+
+    return {"items": items, "default_provider": default_provider, "default_model": default_model}
 
 
 @router.get("/discovery/providers/{provider_name}/models")
@@ -5831,6 +5836,14 @@ class BacklogAdvisorRequest(BaseModel):
     messages: List[Dict[str, Any]] = Field(default_factory=list, description="Chat messages: {role, content}.")
     provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
     model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
+    agent: Optional[str] = Field(
+        default=None,
+        description="Optional agent bundle id override (default: basic-agent).",
+    )
+    include_trace: bool = Field(
+        default=False,
+        description="When true, include a best-effort tool execution trace (bounded, for UI display).",
+    )
     focus_kind: Optional[str] = Field(
         default=None,
         description="Optional current backlog tab (processing|planned|proposed|recurrent|completed|failed|deprecated|trash).",
@@ -5841,6 +5854,8 @@ class BacklogAdvisorRequest(BaseModel):
 class BacklogAdvisorResponse(BaseModel):
     ok: bool = True
     reply: str
+    run_id: Optional[str] = None
+    tool_trace: Optional[List[Dict[str, Any]]] = None
 
 
 class BacklogExecConfigResponse(BaseModel):
@@ -5894,10 +5909,44 @@ class BacklogExecLogTailResponse(BaseModel):
     content: str = ""
 
 
+class BacklogExecActiveItem(BaseModel):
+    request_id: str
+    status: str
+    kind: str
+    filename: str
+    relpath: str
+
+
+class BacklogExecActiveItemsResponse(BaseModel):
+    ok: bool = True
+    items: List[BacklogExecActiveItem] = Field(default_factory=list)
+
+
 class AuditLogTailResponse(BaseModel):
     ok: bool = True
     bytes: int = 0
     truncated: bool = False
+    content: str = ""
+
+
+class ProcessListResponse(BaseModel):
+    ok: bool = True
+    enabled: bool = False
+    processes: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ProcessActionResponse(BaseModel):
+    ok: bool = True
+    process_id: str
+    state: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcessLogTailResponse(BaseModel):
+    ok: bool = True
+    process_id: str
+    bytes: int = 0
+    truncated: bool = False
+    log_relpath: Optional[str] = None
     content: str = ""
 
 
@@ -6507,6 +6556,83 @@ def _exec_request_summary(req: Dict[str, Any], *, request_id: str) -> BacklogExe
     )
 
 
+def _backlog_exec_active_items_from_queue(
+    *,
+    qdir: Path,
+    wanted_statuses: set[str],
+    limit_requests: int = 2000,
+    limit_items: int = 1200,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen_rel: set[str] = set()
+
+    if not qdir.exists():
+        return []
+
+    paths = list(qdir.glob("*.json"))
+    try:
+        paths.sort(key=lambda p: float(p.stat().st_mtime), reverse=True)
+    except Exception:
+        paths.sort(key=lambda p: p.name, reverse=True)
+
+    scanned = 0
+    for p in paths:
+        scanned += 1
+        if scanned > int(limit_requests):
+            break
+        if len(out) >= int(limit_items):
+            break
+        try:
+            p.relative_to(qdir)
+        except Exception:
+            continue
+        req = _load_json_bounded(p)
+        st = str(req.get("status") or "").strip().lower() or "unknown"
+        if st not in wanted_statuses:
+            continue
+        rid = str(req.get("request_id") or p.stem).strip().lower()
+        rid = _safe_backlog_exec_request_id(rid) or ""
+        if not rid:
+            continue
+
+        def _add_item(kind: str, filename: str, relpath: str) -> None:
+            nonlocal out
+            k = str(kind or "").strip()
+            fn = str(filename or "").strip()
+            rel = str(relpath or "").strip().replace("\\", "/")
+            if not k or not fn or not rel:
+                return
+            if rel in seen_rel:
+                return
+            if len(out) >= int(limit_items):
+                return
+            seen_rel.add(rel)
+            out.append({"request_id": rid, "status": st, "kind": k, "filename": fn, "relpath": rel})
+
+        backlog = req.get("backlog") if isinstance(req.get("backlog"), dict) else {}
+        bk = str(backlog.get("kind") or "").strip()
+        bf = str(backlog.get("filename") or "").strip()
+        br = str(backlog.get("relpath") or "").strip()
+        if br and bk and bf and not bf.lower().startswith("batch("):
+            _add_item(bk, bf, br)
+
+        bq = req.get("backlog_queue") if isinstance(req.get("backlog_queue"), dict) else {}
+        items = bq.get("items") if isinstance(bq.get("items"), list) else []
+        for it in items[:200]:
+            if len(out) >= int(limit_items):
+                break
+            if not isinstance(it, dict):
+                continue
+            k2 = str(it.get("kind") or "").strip()
+            fn2 = str(it.get("filename") or "").strip()
+            if not k2 or not fn2:
+                continue
+            rel2 = f"docs/backlog/{k2}/{fn2}"
+            _add_item(k2, fn2, rel2)
+
+    return out
+
+
 @router.get("/backlog/exec/requests", response_model=BacklogExecRequestListResponse)
 async def backlog_exec_requests(
     status: str = Query(default="", description="Optional comma-separated statuses (queued|running|completed|failed)."),
@@ -6557,6 +6683,33 @@ async def backlog_exec_requests(
     items.sort(key=lambda t: t[0], reverse=True)
     out = [s for _, s in items[: int(limit)]]
     return BacklogExecRequestListResponse(requests=out)
+
+
+@router.get("/backlog/exec/active_items", response_model=BacklogExecActiveItemsResponse)
+async def backlog_exec_active_items(
+    status: str = Query(default="queued,running", description="Optional comma-separated statuses (queued|running)."),
+    limit: int = Query(default=600, ge=1, le=2000),
+) -> BacklogExecActiveItemsResponse:
+    """Return backlog item relpaths currently queued/running in the backlog exec queue.
+
+    This is used by thin clients to hide items from `docs/backlog/planned/` while they are being processed,
+    reducing accidental duplicate executions.
+    """
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    base = _gateway_base_dir()
+    qdir = (base / "backlog_exec_queue").resolve()
+    if not qdir.exists():
+        return BacklogExecActiveItemsResponse(items=[])
+
+    wanted_raw = [s.strip().lower() for s in str(status or "").split(",") if s.strip()]
+    wanted = set(wanted_raw) if wanted_raw else {"queued", "running"}
+
+    raw = _backlog_exec_active_items_from_queue(qdir=qdir, wanted_statuses=wanted, limit_items=int(limit))
+    items = [BacklogExecActiveItem(**it) for it in raw[: int(limit)]]
+    return BacklogExecActiveItemsResponse(items=items)
 
 
 @router.get("/backlog/exec/requests/{request_id}", response_model=BacklogExecRequestDetailResponse)
@@ -6686,6 +6839,123 @@ async def audit_log_tail(
     except Exception:
         text = ""
     return AuditLogTailResponse(bytes=len(data), truncated=bool(truncated), content=text)
+
+
+def _process_manager_enabled() -> bool:
+    return _env_bool("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER", False)
+
+
+def _require_process_manager():
+    if not _process_manager_enabled():
+        raise HTTPException(status_code=404, detail="Process manager is disabled (set ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1)")
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Repo root is not configured (set ABSTRACTGATEWAY_TRIAGE_REPO_ROOT)")
+    base_dir = _gateway_base_dir()
+    try:
+        from ..maintenance.process_manager import get_process_manager  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Process manager unavailable: {e}")
+    try:
+        return get_process_manager(base_dir=base_dir, repo_root=repo_root)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize process manager: {e}")
+
+
+@router.get("/processes", response_model=ProcessListResponse)
+async def processes_list() -> ProcessListResponse:
+    if not _process_manager_enabled():
+        return ProcessListResponse(enabled=False, processes=[])
+    mgr = _require_process_manager()
+    try:
+        procs = mgr.list_processes()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list processes: {e}")
+    return ProcessListResponse(enabled=True, processes=procs)
+
+
+@router.post("/processes/{process_id}/start", response_model=ProcessActionResponse)
+async def processes_start(process_id: str) -> ProcessActionResponse:
+    mgr = _require_process_manager()
+    pid = str(process_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="process_id is required")
+    try:
+        st = mgr.start(pid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown process id")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to start process: {e}")
+    return ProcessActionResponse(process_id=pid, state=st)
+
+
+@router.post("/processes/{process_id}/stop", response_model=ProcessActionResponse)
+async def processes_stop(process_id: str) -> ProcessActionResponse:
+    mgr = _require_process_manager()
+    pid = str(process_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="process_id is required")
+    try:
+        st = mgr.stop(pid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown process id")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to stop process: {e}")
+    return ProcessActionResponse(process_id=pid, state=st)
+
+
+@router.post("/processes/{process_id}/restart", response_model=ProcessActionResponse)
+async def processes_restart(process_id: str) -> ProcessActionResponse:
+    mgr = _require_process_manager()
+    pid = str(process_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="process_id is required")
+    try:
+        st = mgr.restart(pid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown process id")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to restart process: {e}")
+    return ProcessActionResponse(process_id=pid, state=st if isinstance(st, dict) else {"status": "ok"})
+
+
+@router.post("/processes/{process_id}/redeploy", response_model=ProcessActionResponse)
+async def processes_redeploy(process_id: str) -> ProcessActionResponse:
+    mgr = _require_process_manager()
+    pid = str(process_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="process_id is required")
+    if pid != "gateway":
+        raise HTTPException(status_code=400, detail="redeploy is only supported for process_id=gateway in v0")
+    try:
+        st = mgr.redeploy_gateway()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to redeploy gateway: {e}")
+    return ProcessActionResponse(process_id=pid, state=st if isinstance(st, dict) else {"status": "ok"})
+
+
+@router.get("/processes/{process_id}/logs/tail", response_model=ProcessLogTailResponse)
+async def processes_log_tail(
+    process_id: str,
+    max_bytes: int = Query(default=80_000, ge=1024, le=400_000, description="Tail size in bytes (bounded)."),
+) -> ProcessLogTailResponse:
+    mgr = _require_process_manager()
+    pid = str(process_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="process_id is required")
+    try:
+        out = mgr.log_tail(pid, max_bytes=int(max_bytes))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown process id")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read process log: {e}")
+    return ProcessLogTailResponse(
+        process_id=pid,
+        bytes=int(out.get("bytes") or 0),
+        truncated=bool(out.get("truncated")),
+        log_relpath=str(out.get("log_relpath") or "") or None,
+        content=str(out.get("content") or ""),
+    )
 
 
 @router.get("/backlog/{kind}", response_model=BacklogListResponse)
@@ -7590,12 +7860,23 @@ async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Backlog item not found")
 
-    content = _read_text_bounded(path, max_chars=500_000)
-    prompt = _DEFAULT_BACKLOG_EXEC_PROMPT_PREFIX + "\n\nBacklog item:\n\n" + content
-
+    relpath = f"docs/backlog/{k}/{safe}"
     base = _gateway_base_dir()
     qdir = (base / "backlog_exec_queue").resolve()
     qdir.mkdir(parents=True, exist_ok=True)
+
+    active = _backlog_exec_active_items_from_queue(qdir=qdir, wanted_statuses={"queued", "running"}, limit_items=3000)
+    existing = next((it for it in active if str(it.get("relpath") or "").strip() == relpath), None)
+    if isinstance(existing, dict):
+        rid = str(existing.get("request_id") or "").strip()
+        st = str(existing.get("status") or "").strip() or "queued"
+        if rid:
+            raise HTTPException(status_code=409, detail=f"Backlog item is already {st} (request_id={rid})")
+        raise HTTPException(status_code=409, detail=f"Backlog item is already {st}")
+
+    content = _read_text_bounded(path, max_chars=500_000)
+    prompt = _DEFAULT_BACKLOG_EXEC_PROMPT_PREFIX + "\n\nBacklog item:\n\n" + content
+
     request_id = uuid.uuid4().hex[:16]
     qpath = (qdir / f"{request_id}.json").resolve()
     try:
@@ -7618,7 +7899,7 @@ async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
         "created_at": datetime.datetime.now().astimezone().isoformat(),
         "request_id": request_id,
         "status": "queued",
-        "backlog": {"kind": k, "filename": safe, "relpath": f"docs/backlog/{k}/{safe}"},
+        "backlog": {"kind": k, "filename": safe, "relpath": relpath},
         "target_agent": target_agent,
         "prompt": prompt,
     }
@@ -7652,6 +7933,18 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
 
     items = [{"kind": r["kind"], "filename": r["filename"], "relpath": r["relpath"]} for r in resolved]
     relpaths = [str(r["relpath"]) for r in resolved]
+
+    base = _gateway_base_dir()
+    qdir = (base / "backlog_exec_queue").resolve()
+    qdir.mkdir(parents=True, exist_ok=True)
+
+    active = _backlog_exec_active_items_from_queue(qdir=qdir, wanted_statuses={"queued", "running"}, limit_items=8000)
+    active_rel = {str(it.get("relpath") or "").strip() for it in active if isinstance(it, dict) and str(it.get("relpath") or "").strip()}
+    overlapping = [rel for rel in relpaths if rel in active_rel]
+    if overlapping:
+        joined = ", ".join(overlapping[:5])
+        more = f" (+{len(overlapping) - 5} more)" if len(overlapping) > 5 else ""
+        raise HTTPException(status_code=409, detail=f"One or more backlog items are already queued/running: {joined}{more}")
 
     prompt_parts: List[str] = []
     prompt_parts.append(_DEFAULT_BACKLOG_EXEC_PROMPT_PREFIX)
@@ -7688,10 +7981,6 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
         total += len(content) + 2
 
     prompt = "\n".join(prompt_parts).strip() + "\n"
-
-    base = _gateway_base_dir()
-    qdir = (base / "backlog_exec_queue").resolve()
-    qdir.mkdir(parents=True, exist_ok=True)
     request_id = uuid.uuid4().hex[:16]
     qpath = (qdir / f"{request_id}.json").resolve()
     try:
@@ -7900,6 +8189,7 @@ def _build_backlog_advisor_agent_prompt(
         "Rules:\n"
         "- Read-only: do NOT write files and do NOT run shell commands.\n"
         "- Use tools sparingly. Prefer skim/search over reading many full files.\n"
+        "- Do not claim you listed/read/searched something unless you actually did it with tools.\n"
         "- You may inspect source code under the repo root to validate recommendations.\n"
         "- You may inspect gateway logs/runtime artifacts only within the allowed workspace roots.\n"
         "- When recommending actions, reference backlog items using repo-relative paths.\n"
@@ -7924,6 +8214,183 @@ def _parse_backlog_advisor_reply(raw: str) -> str:
         return text
     reply = str(obj.get("reply") or "").strip()
     return reply or text
+
+
+def _tool_trace_from_node_traces(*, run_id: str, node_traces: Any, max_calls: int = 80) -> list[dict[str, Any]]:
+    """Extract a bounded, UI-friendly tool execution trace from runtime-owned node traces.
+
+    Best-effort: intentionally avoids returning large tool outputs (e.g. file contents).
+    """
+
+    def _summarize_output(output: Any) -> dict[str, Any]:
+        try:
+            if output is None:
+                return {}
+            if isinstance(output, str):
+                return {"type": "text", "chars": len(output)}
+            if isinstance(output, list):
+                preview: list[str] = []
+                for x in output[:8]:
+                    preview.append(_clamp_text(x if isinstance(x, str) else str(x), max_len=240))
+                return {"type": "list", "items": len(output), **({"preview": preview} if preview else {})}
+            if isinstance(output, dict):
+                keys = [str(k) for k in list(output.keys())[:24]]
+                return {"type": "object", "key_count": len(output.keys()), "keys": keys}
+            return {"type": type(output).__name__}
+        except Exception:
+            return {}
+
+    out: list[dict[str, Any]] = []
+    rid = str(run_id or "").strip()
+    nt = node_traces if isinstance(node_traces, dict) else {}
+    for node_id, trace in nt.items():
+        if len(out) >= max_calls:
+            break
+        if not isinstance(trace, dict):
+            continue
+        steps = trace.get("steps")
+        if not isinstance(steps, list):
+            continue
+        for step in steps:
+            if len(out) >= max_calls:
+                break
+            if not isinstance(step, dict):
+                continue
+            eff = step.get("effect")
+            if not isinstance(eff, dict):
+                continue
+            if str(eff.get("type") or "").strip().lower() != "tool_calls":
+                continue
+            payload = eff.get("payload") if isinstance(eff.get("payload"), dict) else {}
+            calls = payload.get("tool_calls")
+            calls = calls if isinstance(calls, list) else []
+            result = step.get("result") if isinstance(step.get("result"), dict) else {}
+            results = result.get("results")
+            results = results if isinstance(results, list) else []
+            res_by_call_id: dict[str, dict[str, Any]] = {}
+            for r in results:
+                if not isinstance(r, dict):
+                    continue
+                cid = str(r.get("call_id") or "").strip()
+                if cid:
+                    res_by_call_id[cid] = r
+
+            ts = str(step.get("ts") or "").strip() or None
+            for c in calls[:64]:
+                if len(out) >= max_calls:
+                    break
+                if not isinstance(c, dict):
+                    continue
+                name = str(c.get("name") or "").strip()
+                if not name:
+                    continue
+                call_id = str(c.get("call_id") or "").strip() or None
+                res = res_by_call_id.get(str(call_id or "")) if call_id else None
+                success = res.get("success") if isinstance(res, dict) else None
+                success = bool(success) if isinstance(success, bool) else None
+                error = str((res or {}).get("error") or "").strip() or None
+                args = c.get("arguments")
+                entry: dict[str, Any] = {
+                    "ts": ts,
+                    "run_id": rid,
+                    "node_id": str(node_id),
+                    "name": name,
+                    **({"call_id": call_id} if call_id else {}),
+                    **({"arguments": args} if args is not None else {}),
+                    **({"success": success} if success is not None else {}),
+                    **({"error": error} if error else {}),
+                }
+                if isinstance(res, dict) and "output" in res:
+                    summary = _summarize_output(res.get("output"))
+                    if summary:
+                        entry["output_summary"] = summary
+                out.append(entry)
+
+    return out
+
+
+def _sub_run_ids_from_node_traces(node_traces: Any) -> list[str]:
+    out: list[str] = []
+    nt = node_traces if isinstance(node_traces, dict) else {}
+    for trace in nt.values():
+        if not isinstance(trace, dict):
+            continue
+        steps = trace.get("steps")
+        if not isinstance(steps, list):
+            continue
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            wait = step.get("wait")
+            if not isinstance(wait, dict):
+                continue
+            reason = str(wait.get("reason") or "").strip().lower()
+            if reason != "subworkflow":
+                continue
+            details = wait.get("details") if isinstance(wait.get("details"), dict) else {}
+            sub = str(details.get("sub_run_id") or "").strip()
+            if sub:
+                out.append(sub)
+
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for rid in out:
+        if rid in seen:
+            continue
+        seen.add(rid)
+        cleaned.append(rid)
+        if len(cleaned) >= 24:
+            break
+    return cleaned
+
+
+def _collect_tool_trace_for_run_tree(*, svc: Any, root_run_id: str, max_runs: int = 16, max_calls: int = 80) -> list[dict[str, Any]]:
+    """Collect tool calls across a run and its subworkflow run tree (bounded)."""
+    run_store = getattr(getattr(svc, "host", None), "run_store", None)
+    if run_store is None:
+        return []
+
+    def _load(rid: str) -> Any:
+        try:
+            return run_store.load(str(rid))
+        except Exception:
+            return None
+
+    def _node_traces(run: Any) -> dict[str, Any]:
+        try:
+            vars_obj = getattr(run, "vars", None)
+        except Exception:
+            vars_obj = None
+        if not isinstance(vars_obj, dict):
+            return {}
+        rt = vars_obj.get("_runtime")
+        if not isinstance(rt, dict):
+            return {}
+        nt = rt.get("node_traces")
+        return nt if isinstance(nt, dict) else {}
+
+    queue: list[str] = [str(root_run_id)]
+    seen: set[str] = set()
+    trace: list[dict[str, Any]] = []
+
+    while queue and len(seen) < max_runs and len(trace) < max_calls:
+        rid = str(queue.pop(0) or "").strip()
+        if not rid or rid in seen:
+            continue
+        seen.add(rid)
+        run = _load(rid)
+        if run is None:
+            continue
+        nt = _node_traces(run)
+        if nt:
+            trace.extend(_tool_trace_from_node_traces(run_id=rid, node_traces=nt, max_calls=max_calls - len(trace)))
+            queue.extend(_sub_run_ids_from_node_traces(nt))
+
+    try:
+        trace.sort(key=lambda x: str((x or {}).get("ts") or ""))
+    except Exception:
+        pass
+    return trace[:max_calls]
 
 
 def _backlog_agent_allowed_paths(*, repo_root: Path, svc: Any) -> list[str]:
@@ -8141,7 +8608,7 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
 async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
     """Read-only advisor chat for the repo backlog (docs/backlog).
 
-    Runs the `basic-agent` bundle (default entrypoint) with read/search/list/skim + optional web tools.
+    Runs a ReAct-style agent bundle (default: `basic-agent`) with read/search/list/skim + optional web tools.
     """
     repo_root = _triage_repo_root_from_env()
     if repo_root is None:
@@ -8159,6 +8626,13 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
     tools = ["read_file", "search_files", "list_files", "skim_folders", "skim_files", "analyze_code"]
     if allow_web:
         tools.extend(["web_search", "fetch_url"])
+
+    agent_bundle = str(
+        req.agent
+        or os.getenv("ABSTRACTGATEWAY_BACKLOG_ADVISOR_AGENT")
+        or os.getenv("ABSTRACT_BACKLOG_ADVISOR_AGENT")
+        or "basic-agent"
+    ).strip() or "basic-agent"
 
     svc = get_gateway_service()
     allowed_paths = _backlog_agent_allowed_paths(repo_root=repo_root, svc=svc)
@@ -8191,7 +8665,7 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
     try:
         run_id = host.start_run(
             flow_id="",
-            bundle_id="basic-agent",
+            bundle_id=agent_bundle,
             bundle_version=None,
             input_data={
                 "workspace_root": str(repo_root),
@@ -8266,7 +8740,13 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
         raise HTTPException(status_code=500, detail="Advisor produced no output")
     raw_resp = str((run2.output or {}).get("response") or "").strip()
     reply = _parse_backlog_advisor_reply(raw_resp)
-    return BacklogAdvisorResponse(ok=True, reply=reply)
+    tool_trace = None
+    if bool(req.include_trace):
+        try:
+            tool_trace = _collect_tool_trace_for_run_tree(svc=svc, root_run_id=str(run_id))
+        except Exception:
+            tool_trace = None
+    return BacklogAdvisorResponse(ok=True, reply=reply, run_id=str(run_id), tool_trace=tool_trace)
 
 
 # ---------------------------------------------------------------------------

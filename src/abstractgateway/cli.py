@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import threading
 import json
 import sys
+import copy
 
 
 def _stderr(line: str) -> None:
@@ -44,6 +46,36 @@ def _looks_like_public_origin_pattern(pattern: str) -> bool:
         return False
     # Any wildcard on a non-loopback origin is risky.
     return "*" in p
+
+
+class _UvicornAccessLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover
+        # Silence the extremely high-frequency GPU metrics polling logs (200 OK only).
+        # Keep non-200 logs as a security/ops signal.
+        try:
+            args = record.args
+            # Uvicorn access logs pass args as:
+            #   (client_addr, method, full_path, http_version, status_code)
+            if isinstance(args, tuple) and len(args) >= 5:
+                full_path = str(args[2] or "")
+                status_code = args[4]
+                if "/api/gateway/host/metrics/gpu" in full_path:
+                    try:
+                        if int(status_code) == 200:
+                            return False
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+
+        if "/api/gateway/host/metrics/gpu" in msg and msg.rstrip().endswith(" 200"):
+            return False
+        return True
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -186,6 +218,11 @@ def main(argv: list[str] | None = None) -> None:
                     "Only enable this in trusted environments."
                 )
 
+        if str(os.getenv("ABSTRACTGATEWAY_SILENCE_GPU_METRICS_ACCESS_LOG", "1")).strip().lower() in {"1", "true", "yes", "on"}:
+            silence_gpu_metrics_access_log = True
+        else:
+            silence_gpu_metrics_access_log = False
+
         prev_runner_env = os.environ.get("ABSTRACTGATEWAY_RUNNER")
         if bool(getattr(args, "no_runner", False)):
             # Override env for this process: do not start the background runner loop in the HTTP API process.
@@ -201,12 +238,25 @@ def main(argv: list[str] | None = None) -> None:
             )
 
         try:
-            uvicorn.run(
-                "abstractgateway.app:app",
-                host=str(args.host),
-                port=int(args.port),
-                reload=bool(args.reload),
-            )
+            run_kwargs: dict[str, object] = {
+                "host": str(args.host),
+                "port": int(args.port),
+                "reload": bool(args.reload),
+            }
+
+            if silence_gpu_metrics_access_log:
+                try:
+                    log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+                    log_config.setdefault("filters", {})["suppress_gpu_metrics"] = {
+                        "()": "abstractgateway.cli._UvicornAccessLogFilter"
+                    }
+                    log_config.setdefault("handlers", {}).setdefault("access", {})["filters"] = ["suppress_gpu_metrics"]
+                    run_kwargs["log_config"] = log_config
+                except Exception:
+                    # Best-effort: if uvicorn logging config shape changes, keep default logging rather than crashing.
+                    pass
+
+            uvicorn.run("abstractgateway.app:app", **run_kwargs)
         finally:
             if prev_runner_env is None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)

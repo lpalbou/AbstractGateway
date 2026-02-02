@@ -93,6 +93,27 @@ def test_backlog_exec_config_and_requests_endpoints(tmp_path: Path, monkeypatch:
         ),
         encoding="utf-8",
     )
+    (qdir / "dddddddddddddddd.json").write_text(
+        "\n".join(
+            [
+                "{",
+                '  "created_at": "2026-01-31T03:00:00Z",',
+                '  "request_id": "dddddddddddddddd",',
+                '  "status": "queued",',
+                '  "backlog": {"kind": "planned", "filename": "batch(2)", "relpath": ""},',
+                '  "backlog_queue": {',
+                '    "mode": "sequential",',
+                '    "items": [',
+                '      {"kind": "planned", "filename": "701-framework-a.md", "relpath": "docs/backlog/planned/701-framework-a.md"},',
+                '      {"kind": "planned", "filename": "702-framework-b.md", "relpath": "docs/backlog/planned/702-framework-b.md"}',
+                "    ]",
+                "  }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
     with TestClient(app) as client:
@@ -107,7 +128,7 @@ def test_backlog_exec_config_and_requests_endpoints(tmp_path: Path, monkeypatch:
         lst = client.get("/api/gateway/backlog/exec/requests?status=queued,running&limit=10")
         assert lst.status_code == 200
         items = lst.json()["requests"]
-        assert len(items) == 2
+        assert len(items) == 3
         statuses = {it["status"] for it in items}
         assert statuses == {"queued", "running"}
 
@@ -117,6 +138,14 @@ def test_backlog_exec_config_and_requests_endpoints(tmp_path: Path, monkeypatch:
         assert len(items) == 1
         assert items[0]["request_id"] == "cccccccccccccccc"
         assert items[0]["error"] == "boom"
+
+        active = client.get("/api/gateway/backlog/exec/active_items")
+        assert active.status_code == 200
+        active_items = active.json()["items"]
+        rels = {it["relpath"] for it in active_items}
+        assert "docs/backlog/planned/650-framework-test.md" in rels
+        assert "docs/backlog/planned/701-framework-a.md" in rels
+        assert "docs/backlog/planned/702-framework-b.md" in rels
 
         detail = client.get("/api/gateway/backlog/exec/requests/cccccccccccccccc")
         assert detail.status_code == 200

@@ -94,6 +94,9 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
     )
     monkeypatch.setattr(provider_registry, "get_available_models_for_provider", lambda _name: ["m1", "m2"])
 
+    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "ollama")
+    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "llama3")
+
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
         tools = client.get("/api/gateway/discovery/tools", headers=headers)
@@ -104,7 +107,10 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
 
         providers = client.get("/api/gateway/discovery/providers?include_models=false", headers=headers)
         assert providers.status_code == 200, providers.text
-        items = providers.json().get("items") or []
+        body = providers.json()
+        assert body.get("default_provider") == "ollama"
+        assert body.get("default_model") == "llama3"
+        items = body.get("items") or []
         assert [p.get("name") for p in items] == ["lmstudio", "ollama"]
 
         providers2 = client.get("/api/gateway/discovery/providers?include_models=true", headers=headers)
