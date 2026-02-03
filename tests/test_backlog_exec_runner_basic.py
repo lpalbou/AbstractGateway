@@ -76,7 +76,7 @@ def test_backlog_exec_runner_processes_queue_and_writes_logs(tmp_path: Path, mon
     assert cmd[-1] == "hello world"
 
     updated = json.loads(req_path.read_text(encoding="utf-8"))
-    assert updated["status"] == "completed"
+    assert updated["status"] == "awaiting_qa"
     assert updated.get("started_at")
     assert updated.get("finished_at")
     assert updated.get("run_dir_relpath") == f"backlog_exec_runs/{request_id}"
@@ -170,12 +170,12 @@ def test_backlog_exec_runner_can_execute_multiple_requests_in_parallel(tmp_path:
         while time.monotonic() < deadline:
             s1 = json.loads(r1.read_text(encoding="utf-8")).get("status")
             s2 = json.loads(r2.read_text(encoding="utf-8")).get("status")
-            if s1 == "completed" and s2 == "completed":
+            if s1 == "awaiting_qa" and s2 == "awaiting_qa":
                 break
             time.sleep(0.02)
 
-        assert json.loads(r1.read_text(encoding="utf-8")).get("status") == "completed"
-        assert json.loads(r2.read_text(encoding="utf-8")).get("status") == "completed"
+        assert json.loads(r1.read_text(encoding="utf-8")).get("status") == "awaiting_qa"
+        assert json.loads(r2.read_text(encoding="utf-8")).get("status") == "awaiting_qa"
     finally:
         allow_finish.set()
         runner.stop()

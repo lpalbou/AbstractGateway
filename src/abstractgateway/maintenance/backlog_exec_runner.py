@@ -200,10 +200,15 @@ def _uat_root_from_env(*, repo_root: Path) -> Path:
 
 
 def _ensure_uat_workspace(*, repo_root: Path, request_id: str) -> Optional[Path]:
-    """Create (or reuse) a candidate worktree for this request.
+    """Create (or reuse) a candidate workspace for this request.
 
-    v0 approach:
-    - Use a git worktree rooted under <repo_root>/untracked/backlog_exec_uat/workspaces/<request_id>
+    The AbstractFramework root is a *workspace of repos* (no root `.git/`), so we
+    cannot create a single worktree at repo_root.
+
+    v0 approach (multi-repo):
+    - Create <repo_root>/untracked/backlog_exec_uat/workspaces/<request_id>/
+    - For each top-level repo dir with a `.git/`, create a detached worktree:
+        git -C <repo> worktree add --detach <candidate>/<repo_name> HEAD
     - Best-effort symlink shared caches (node_modules, .venv) to avoid re-install overhead
     """
     rid = str(request_id or "").strip()
@@ -219,19 +224,64 @@ def _ensure_uat_workspace(*, repo_root: Path, request_id: str) -> Optional[Path]
         return ws
 
     try:
-        # Detached HEAD worktree: avoid requiring branch management or commits.
-        subprocess.run(
-            ["git", "-C", str(Path(repo_root).resolve()), "worktree", "add", "--detach", str(ws), "HEAD"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=60.0,
-        )
+        ws.mkdir(parents=True, exist_ok=True)
     except Exception:
         return None
 
-    # Best-effort: reuse repo-local caches to make UAT worktrees runnable without reinstall.
     rr = Path(repo_root).resolve()
+
+    def _is_git_repo_dir(p: Path) -> bool:
+        try:
+            g = (p / ".git").resolve()
+        except Exception:
+            g = p / ".git"
+        return g.exists()
+
+    repos: List[Path] = []
+    try:
+        for child in sorted(rr.iterdir(), key=lambda p: p.name):
+            if not child.is_dir():
+                continue
+            if child.name.startswith("."):
+                continue
+            if not _is_git_repo_dir(child):
+                continue
+            repos.append(child)
+    except Exception:
+        return None
+
+    required = {"abstractgateway", "abstractobserver", "abstractcode", "abstractflow", "docs"}
+    required_present = {p.name for p in repos if p.name in required}
+
+    # Create required repos first (we need them to render a usable UAT stack).
+    def _worktree_add(repo: Path) -> bool:
+        dst = (ws / repo.name).resolve()
+        if dst.exists():
+            return True
+        try:
+            subprocess.run(
+                ["git", "-C", str(repo), "worktree", "add", "--detach", str(dst), "HEAD"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=90.0,
+            )
+            return True
+        except Exception:
+            return False
+
+    for repo in repos:
+        if repo.name in required_present:
+            if not _worktree_add(repo):
+                return None
+
+    # Best-effort: remaining repos (non-fatal).
+    for repo in repos:
+        if repo.name in required_present:
+            continue
+        _worktree_add(repo)
+
+    # Best-effort: reuse repo-local caches to make UAT worktrees runnable without reinstall.
     _try_symlink(src=(rr / ".venv").resolve(), dst=(ws / ".venv").resolve())
     _try_symlink(src=(rr / "abstractobserver" / "node_modules").resolve(), dst=(ws / "abstractobserver" / "node_modules").resolve())
     _try_symlink(src=(rr / "abstractcode" / "web" / "node_modules").resolve(), dst=(ws / "abstractcode" / "web" / "node_modules").resolve())
@@ -256,21 +306,247 @@ def _is_uat_mode(mode: str) -> bool:
     return m in {"uat", "candidate"}
 
 
-def _write_git_diff_patch(*, repo_root: Path, out_path: Path) -> bool:
-    """Write a best-effort git patch (diff vs HEAD) for the candidate workspace."""
+def _is_safe_repo_relpath(path: str) -> bool:
+    p = str(path or "").replace("\\", "/").strip()
+    if not p:
+        return False
+    if p.startswith("/") or p.startswith("\\"):
+        return False
+    # Windows drive/path style.
+    if re.match(r"^[a-zA-Z]:[/\\\\]", p):
+        return False
+    parts = [seg for seg in p.split("/") if seg]
+    if not parts:
+        return False
+    for seg in parts:
+        if seg in {".", ".."}:
+            return False
+    return True
+
+
+def _write_candidate_git_diff_patch(*, candidate_root: Path, out_path: Path) -> bool:
+    """Write a best-effort git patch for a candidate workspace.
+
+    - If candidate_root is a git repo, we `git diff` directly.
+    - If candidate_root is a multi-repo workspace, we concatenate per-repo diffs and
+      prefix paths with the repo folder (so the patch is readable at the workspace root).
+    """
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
     except Exception:
         return False
     try:
+        root = Path(candidate_root).resolve()
+        if (root / ".git").exists():
+            with open(out_path, "wb") as f:
+                subprocess.run(
+                    ["git", "-C", str(root), "diff", "--binary", "--no-color"],
+                    check=False,
+                    stdout=f,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30.0,
+                )
+            return out_path.exists()
+
+        repos: List[Path] = []
+        for child in sorted(root.iterdir(), key=lambda p: p.name):
+            if not child.is_dir():
+                continue
+            if child.name.startswith("."):
+                continue
+            if not (child / ".git").exists():
+                continue
+            repos.append(child)
+
+        wrote_any = False
         with open(out_path, "wb") as f:
-            subprocess.run(
-                ["git", "-C", str(Path(repo_root).resolve()), "diff", "--binary", "--no-color"],
-                check=False,
-                stdout=f,
-                stderr=subprocess.DEVNULL,
-                timeout=30.0,
-            )
+            for repo in repos:
+                # Prefix the diff paths so the patch is meaningful at the workspace root.
+                src_prefix = f"a/{repo.name}/"
+                dst_prefix = f"b/{repo.name}/"
+                proc = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(repo),
+                        "diff",
+                        "--binary",
+                        "--no-color",
+                        f"--src-prefix={src_prefix}",
+                        f"--dst-prefix={dst_prefix}",
+                    ],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30.0,
+                )
+                if proc.stdout:
+                    f.write(proc.stdout)
+                    if not proc.stdout.endswith(b"\n"):
+                        f.write(b"\n")
+                    wrote_any = True
+        return out_path.exists() and wrote_any
+    except Exception:
+        return False
+
+
+def _candidate_manifest_path(run_dir: Path) -> Path:
+    return (Path(run_dir).resolve() / "candidate_manifest.json").resolve()
+
+
+_SKIP_UNTRACKED_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".cache",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    "runtime",
+    "logs",
+    "untracked",
+}
+
+
+def _git_stdout(*, cwd: Path, args: List[str], timeout_s: float) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(Path(cwd).resolve()),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=float(timeout_s),
+            check=False,
+        )
+    except Exception:
+        return ""
+    return str(proc.stdout or "")
+
+
+def _collect_repo_candidate_manifest(repo_dir: Path) -> Dict[str, Any]:
+    repo = Path(repo_dir).resolve()
+    name = repo.name
+
+    copy_paths: set[str] = set()
+    delete_paths: set[str] = set()
+    skipped: List[Dict[str, str]] = []
+
+    diff = _git_stdout(cwd=repo, args=["diff", "--name-status"], timeout_s=30.0)
+    for raw in diff.splitlines():
+        line = raw.strip("\n").rstrip("\r")
+        if not line:
+            continue
+        parts = line.split("\t")
+        if not parts:
+            continue
+        st = str(parts[0] or "").strip()
+        if not st:
+            continue
+
+        def _add_copy(p: str) -> None:
+            ps = str(p or "").strip()
+            if not _is_safe_repo_relpath(ps):
+                skipped.append({"path": ps, "reason": "unsafe_path"})
+                return
+            copy_paths.add(ps.replace("\\", "/"))
+
+        def _add_delete(p: str) -> None:
+            ps = str(p or "").strip()
+            if not _is_safe_repo_relpath(ps):
+                skipped.append({"path": ps, "reason": "unsafe_path"})
+                return
+            delete_paths.add(ps.replace("\\", "/"))
+
+        if st.startswith("R") and len(parts) >= 3:
+            _add_delete(parts[1])
+            _add_copy(parts[2])
+            continue
+        if st.startswith("C") and len(parts) >= 3:
+            _add_copy(parts[2])
+            continue
+
+        code = st[0]
+        if code in {"M", "A"} and len(parts) >= 2:
+            _add_copy(parts[1])
+        elif code == "D" and len(parts) >= 2:
+            _add_delete(parts[1])
+        else:
+            # Unknown / ignored.
+            continue
+
+    untracked = _git_stdout(cwd=repo, args=["ls-files", "--others", "--exclude-standard"], timeout_s=30.0)
+    for raw in untracked.splitlines():
+        p = str(raw or "").strip()
+        if not p:
+            continue
+        p = p.replace("\\", "/")
+        if not _is_safe_repo_relpath(p):
+            skipped.append({"path": p, "reason": "unsafe_path"})
+            continue
+        segs = [s for s in p.split("/") if s]
+        if any(s in _SKIP_UNTRACKED_DIRS for s in segs):
+            skipped.append({"path": p, "reason": "skipped_untracked_dir"})
+            continue
+        copy_paths.add(p)
+
+    # If a path is deleted, don't also try to copy it.
+    copy_paths.difference_update(delete_paths)
+
+    return {
+        "repo": name,
+        "repo_relpath": name,
+        "copy": sorted(copy_paths),
+        "delete": sorted(delete_paths),
+        "skipped": skipped[:500],
+    }
+
+
+def _write_candidate_manifest(*, candidate_root: Path, run_dir: Path, request_id: str, candidate_relpath: str) -> bool:
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return False
+
+    root = Path(candidate_root).resolve()
+    repos: List[Path] = []
+    try:
+        for child in sorted(root.iterdir(), key=lambda p: p.name):
+            if not child.is_dir():
+                continue
+            if child.name.startswith("."):
+                continue
+            if not (child / ".git").exists():
+                continue
+            repos.append(child)
+    except Exception:
+        return False
+
+    repoman: List[Dict[str, Any]] = []
+    for repo in repos:
+        try:
+            repoman.append(_collect_repo_candidate_manifest(repo))
+        except Exception:
+            continue
+
+    out_path = _candidate_manifest_path(run_dir)
+    obj = {
+        "version": 1,
+        "created_at": _now_iso(),
+        "request_id": str(request_id),
+        "candidate_relpath": str(candidate_relpath or ""),
+        "repos": repoman,
+    }
+    try:
+        out_path.write_text(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return out_path.exists()
     except Exception:
         return False
@@ -383,12 +659,14 @@ def _store_backlog_exec_logs_to_ledger(
     stderr_id = _store_file(path=(run_dir / "codex_stderr.log").resolve(), name="stderr", content_type="text/plain")
     last_id = _store_file(path=(run_dir / "codex_last_message.txt").resolve(), name="last_message", content_type="text/plain")
     patch_id = _store_file(path=(run_dir / "candidate.patch").resolve(), name="candidate_patch", content_type="text/x-diff")
+    manifest_id = _store_file(path=(run_dir / "candidate_manifest.json").resolve(), name="candidate_manifest", content_type="application/json")
 
     log_artifacts = {
         "events": artifact_ref(events_id) if events_id else None,
         "stderr": artifact_ref(stderr_id) if stderr_id else None,
         "last_message": artifact_ref(last_id) if last_id else None,
         "candidate_patch": artifact_ref(patch_id) if patch_id else None,
+        "candidate_manifest": artifact_ref(manifest_id) if manifest_id else None,
     }
 
     ok = bool(result.get("ok") is True)
@@ -406,6 +684,7 @@ def _store_backlog_exec_logs_to_ledger(
         "execution_mode": str(req.get("execution_mode") or ""),
         "candidate_relpath": str(req.get("candidate_relpath") or ""),
         "candidate_patch_relpath": str(req.get("candidate_patch_relpath") or ""),
+        "candidate_manifest_relpath": str(req.get("candidate_manifest_relpath") or ""),
         "run_dir_relpath": str(req.get("run_dir_relpath") or ""),
         "prompt": str(prompt or ""),
         "result": {
@@ -546,6 +825,10 @@ def exec_runs_dir(gateway_data_dir: Path) -> Path:
     return (Path(gateway_data_dir).expanduser().resolve() / "backlog_exec_runs").resolve()
 
 
+def uat_deploy_lock_path(gateway_data_dir: Path) -> Path:
+    return (Path(gateway_data_dir).expanduser().resolve() / "uat_deploy_lock.json").resolve()
+
+
 def _load_json(path: Path) -> Dict[str, Any]:
     try:
         obj = json.loads(path.read_text(encoding="utf-8", errors="replace"))
@@ -559,6 +842,46 @@ def _atomic_write_json(path: Path, obj: Dict[str, Any]) -> None:
     data = json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     tmp.write_text(data, encoding="utf-8")
     tmp.replace(path)
+
+
+def _read_uat_deploy_lock(gateway_data_dir: Path) -> Dict[str, Any]:
+    path = uat_deploy_lock_path(gateway_data_dir)
+    if not path.exists():
+        return {}
+    obj = _load_json(path)
+    return obj if isinstance(obj, dict) else {}
+
+
+def _try_acquire_uat_deploy_lock(*, gateway_data_dir: Path, request_id: str, candidate_relpath: str) -> Tuple[bool, str]:
+    """Acquire (or refresh) the shared UAT deploy lock.
+
+    Returns: (acquired, current_owner_request_id)
+    """
+    rid = str(request_id or "").strip()
+    if not rid:
+        return False, ""
+
+    path = uat_deploy_lock_path(gateway_data_dir)
+    cur = _read_uat_deploy_lock(gateway_data_dir)
+    owner = str(cur.get("owner_request_id") or "").strip()
+    if owner and owner != rid:
+        return False, owner
+
+    now = _now_iso()
+    created_at = str(cur.get("created_at") or "").strip() or now
+    payload = {
+        "version": 1,
+        "owner_request_id": rid,
+        "candidate_relpath": str(candidate_relpath or "").strip(),
+        "created_at": created_at,
+        "updated_at": now,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_json(path, payload)
+        return True, rid
+    except Exception:
+        return False, owner or ""
 
 
 def _claim_lock(queue_dir: Path, request_id: str) -> Optional[Path]:
@@ -812,13 +1135,23 @@ def process_next_backlog_exec_request(
 
             result = executor.execute(prompt=prompt, repo_root=candidate_root, run_dir=run_dir, env=exec_env)
 
-            # Candidate patch for review (best-effort).
+            # Candidate review artifacts (best-effort): patch + manifest.
             patch_relpath = ""
+            manifest_relpath = ""
             if _is_uat_mode(exec_mode):
                 patch_path = (run_dir / "candidate.patch").resolve()
-                if _write_git_diff_patch(repo_root=candidate_root, out_path=patch_path):
+                if _write_candidate_git_diff_patch(candidate_root=candidate_root, out_path=patch_path):
                     patch_relpath = str(Path("backlog_exec_runs") / request_id / "candidate.patch").replace("\\", "/")
                     req["candidate_patch_relpath"] = patch_relpath
+                manifest_path = _candidate_manifest_path(run_dir)
+                if _write_candidate_manifest(
+                    candidate_root=candidate_root,
+                    run_dir=run_dir,
+                    request_id=request_id,
+                    candidate_relpath=candidate_relpath,
+                ):
+                    manifest_relpath = str(Path("backlog_exec_runs") / request_id / manifest_path.name).replace("\\", "/")
+                    req["candidate_manifest_relpath"] = manifest_relpath
 
             # Persist a durable copy of the execution log into the gateway ledger (best-effort).
             persisted = _store_backlog_exec_logs_to_ledger(
@@ -834,28 +1167,64 @@ def process_next_backlog_exec_request(
 
             req["result"] = result
             req["finished_at"] = str(result.get("finished_at") or _now_iso())
-            if bool(result.get("ok") is True) and _is_uat_mode(exec_mode):
+            if bool(result.get("ok") is True):
+                # Success always requires an explicit human decision (UAT approve or inplace approve).
                 req["status"] = "awaiting_qa"
-                # Update the stable UAT pointer for convenience.
-                try:
-                    uat_root = _uat_root_from_env(repo_root=repo_root)
-                    cur = (uat_root / "current")
-                    # Replace existing symlink/file.
-                    try:
-                        if cur.is_symlink() or cur.exists():
-                            cur.unlink()
-                    except Exception:
-                        pass
-                    try:
-                        cur.parent.mkdir(parents=True, exist_ok=True)
-                        cur.symlink_to(candidate_root)
-                        req["uat_current_relpath"] = _safe_relpath_from_repo_root(repo_root=repo_root, path=cur) or ""
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
+                if _is_uat_mode(exec_mode):
+                    # Shared UAT deploy lock: avoid swapping UAT underneath an operator.
+                    acquired, owner = _try_acquire_uat_deploy_lock(
+                        gateway_data_dir=gateway_data_dir, request_id=request_id, candidate_relpath=candidate_relpath
+                    )
+                    req["uat_lock_owner_request_id"] = owner
+                    req["uat_lock_acquired"] = bool(acquired)
+                    if not acquired and owner and owner != request_id:
+                        req["uat_pending"] = True
+
+                    # Update the stable UAT pointer only if we own the lock.
+                    if acquired:
+                        try:
+                            uat_root = _uat_root_from_env(repo_root=repo_root)
+                            cur = (uat_root / "current")
+                            # Replace existing symlink/file.
+                            try:
+                                if cur.is_symlink() or cur.exists():
+                                    cur.unlink()
+                            except Exception:
+                                pass
+                            try:
+                                cur.parent.mkdir(parents=True, exist_ok=True)
+                                cur.symlink_to(candidate_root)
+                                req["uat_current_relpath"] = _safe_relpath_from_repo_root(repo_root=repo_root, path=cur) or ""
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+
+                        # Auto-deploy the full UAT stack when the process manager is enabled.
+                        if _as_bool(os.getenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER"), False):
+                            try:
+                                from .process_manager import get_process_manager  # type: ignore
+
+                                mgr = get_process_manager(base_dir=gateway_data_dir, repo_root=repo_root)
+                                deployed: Dict[str, Any] = {}
+                                for pid in (
+                                    "gateway_uat",
+                                    "abstractflow_backend_uat",
+                                    "abstractflow_frontend_uat",
+                                    "abstractobserver_uat",
+                                    "abstractcode_web_uat",
+                                ):
+                                    try:
+                                        deployed[pid] = mgr.restart(pid)
+                                    except Exception as e:
+                                        deployed[pid] = {"status": "error", "error": str(e)}
+                                req["uat_deploy"] = {"at": _now_iso(), "processes": deployed}
+                            except Exception as e:
+                                req["uat_deploy_error"] = str(e)
+                else:
+                    req["inplace_warning"] = "Execution mode was inplace (prod may already be mutated)."
             else:
-                req["status"] = "completed" if bool(result.get("ok") is True) else "failed"
+                req["status"] = "failed"
             _atomic_write_json(p, req)
 
             if cfg.notify:

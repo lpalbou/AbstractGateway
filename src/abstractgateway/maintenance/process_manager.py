@@ -80,7 +80,7 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             description="Gateway running candidate code from untracked/backlog_exec_uat/current.",
             cwd=".",
             command=[_default_shell(), "-lc", "./agw-uat.sh"],
-            url="http://localhost:8082",
+            url="http://localhost:6081",
         ),
         "build": ProcessSpec(
             id="build",
@@ -106,7 +106,7 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             description="Vite dev server from untracked/backlog_exec_uat/current.",
             cwd=".",
             command=[_default_shell(), "-lc", "./aobs-uat.sh"],
-            url="http://localhost:3011",
+            url="http://localhost:6082",
         ),
         "abstractcode_web": ProcessSpec(
             id="abstractcode_web",
@@ -124,7 +124,7 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             description="Vite dev server from untracked/backlog_exec_uat/current.",
             cwd=".",
             command=[_default_shell(), "-lc", "./acode-web-uat.sh"],
-            url="http://localhost:3012",
+            url="http://localhost:6083",
         ),
         "abstractflow_frontend": ProcessSpec(
             id="abstractflow_frontend",
@@ -135,6 +135,15 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             command=["npm", "run", "dev"],
             url="http://localhost:3003",
         ),
+        "abstractflow_frontend_uat": ProcessSpec(
+            id="abstractflow_frontend_uat",
+            label="AbstractFlow Web (frontend, UAT)",
+            kind="service",
+            description="Vite dev server from untracked/backlog_exec_uat/current.",
+            cwd=".",
+            command=[_default_shell(), "-lc", "./aflow-frontend-uat.sh"],
+            url="http://localhost:6084",
+        ),
         "abstractflow_backend": ProcessSpec(
             id="abstractflow_backend",
             label="AbstractFlow Web (backend)",
@@ -143,6 +152,15 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             cwd="abstractflow/web",
             command=[sys.executable, "-m", "backend", "--host", "0.0.0.0", "--port", "8080", "--reload"],
             url="http://localhost:8080",
+        ),
+        "abstractflow_backend_uat": ProcessSpec(
+            id="abstractflow_backend_uat",
+            label="AbstractFlow Web (backend, UAT)",
+            kind="service",
+            description="FastAPI backend from untracked/backlog_exec_uat/current.",
+            cwd=".",
+            command=[_default_shell(), "-lc", "./aflow-backend-uat.sh"],
+            url="http://localhost:6080",
         ),
     }
 

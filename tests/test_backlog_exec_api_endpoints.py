@@ -179,26 +179,28 @@ def test_backlog_exec_feedback_and_promote_endpoints(tmp_path: Path, monkeypatch
 
     repo_root = tmp_path / "repo"
     repo_root.mkdir(parents=True, exist_ok=True)
-    (repo_root / "demo.txt").write_text("old\n", encoding="utf-8")
+    (repo_root / "demo").mkdir(parents=True, exist_ok=True)
+    (repo_root / "demo" / "demo.txt").write_text("old\n", encoding="utf-8")
     monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
 
     # Seed an awaiting_qa request (eligible for feedback/promote).
     rid = "eeeeeeeeeeeeeeee"
     run_dir = runs_dir / rid
     run_dir.mkdir(parents=True, exist_ok=True)
-    patch = "\n".join(
-        [
-            "diff --git a/demo.txt b/demo.txt",
-            "index 1111111..2222222 100644",
-            "--- a/demo.txt",
-            "+++ b/demo.txt",
-            "@@ -1 +1 @@",
-            "-old",
-            "+new",
-            "",
-        ]
-    )
-    (run_dir / "candidate.patch").write_text(patch, encoding="utf-8")
+    # Candidate workspace with one repo folder ("demo") that changes demo.txt.
+    candidate_rel = f"untracked/backlog_exec_uat/workspaces/{rid}"
+    candidate_root = repo_root / candidate_rel
+    (candidate_root / "demo").mkdir(parents=True, exist_ok=True)
+    (candidate_root / "demo" / "demo.txt").write_text("new\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "created_at": "2026-02-03T10:00:00Z",
+        "request_id": rid,
+        "candidate_relpath": candidate_rel,
+        "repos": [{"repo": "demo", "repo_relpath": "demo", "copy": ["demo.txt"], "delete": [], "skipped": []}],
+    }
+    (run_dir / "candidate_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     payload = {
         "created_at": "2026-02-03T10:00:00Z",
         "request_id": rid,
@@ -206,7 +208,8 @@ def test_backlog_exec_feedback_and_promote_endpoints(tmp_path: Path, monkeypatch
         "execution_mode": "uat",
         "attempt": 1,
         "run_dir_relpath": f"backlog_exec_runs/{rid}",
-        "candidate_patch_relpath": f"backlog_exec_runs/{rid}/candidate.patch",
+        "candidate_relpath": candidate_rel,
+        "candidate_manifest_relpath": f"backlog_exec_runs/{rid}/candidate_manifest.json",
         "backlog": {"kind": "planned", "filename": "715-framework-uat.md", "relpath": "docs/backlog/planned/715-framework-uat.md"},
         "result": {"ok": True, "exit_code": 0, "last_message": "done"},
     }
@@ -227,7 +230,8 @@ def test_backlog_exec_feedback_and_promote_endpoints(tmp_path: Path, monkeypatch
         payload_on_disk = json.loads((qdir / f"{rid}.json").read_text(encoding="utf-8"))
         payload_on_disk["status"] = "awaiting_qa"
         payload_on_disk["result"] = {"ok": True, "exit_code": 0}
-        payload_on_disk["candidate_patch_relpath"] = f"backlog_exec_runs/{rid}/candidate.patch"
+        payload_on_disk["candidate_relpath"] = candidate_rel
+        payload_on_disk["candidate_manifest_relpath"] = f"backlog_exec_runs/{rid}/candidate_manifest.json"
         (qdir / f"{rid}.json").write_text(json.dumps(payload_on_disk, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
         pr = client.post(f"/api/gateway/backlog/exec/requests/{rid}/promote", json={"redeploy": False})
@@ -235,6 +239,6 @@ def test_backlog_exec_feedback_and_promote_endpoints(tmp_path: Path, monkeypatch
         pr_payload = pr.json()["payload"]
         assert pr_payload["status"] == "promoted"
         assert pr_payload.get("promoted_at")
-        assert pr_payload.get("promotion", {}).get("files_count") == 1
+        assert pr_payload.get("promotion", {}).get("copied") == 1
 
-    assert (repo_root / "demo.txt").read_text(encoding="utf-8") == "new\n"
+    assert (repo_root / "demo" / "demo.txt").read_text(encoding="utf-8") == "new\n"

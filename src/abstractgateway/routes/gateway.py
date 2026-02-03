@@ -5782,6 +5782,7 @@ class BacklogRef(BaseModel):
 
 
 class BacklogExecuteBatchRequest(BaseModel):
+    execution_mode: Optional[str] = Field(default=None, description="Execution mode override: uat|inplace.")
     items: List[BacklogRef] = Field(default_factory=list, description="Ordered backlog items to execute sequentially (planned items).")
 
 
@@ -6885,6 +6886,7 @@ async def backlog_exec_request_feedback(request_id: str, req: BacklogExecFeedbac
                 "status": status,
                 "result": prev_result,
                 "candidate_patch_relpath": str(payload.get("candidate_patch_relpath") or ""),
+                "candidate_manifest_relpath": str(payload.get("candidate_manifest_relpath") or ""),
             }
         )
         if len(rh) > 25:
@@ -6904,6 +6906,11 @@ async def backlog_exec_request_feedback(request_id: str, req: BacklogExecFeedbac
     payload["finished_at"] = ""
     payload["result"] = {}
     payload["candidate_patch_relpath"] = ""
+    payload["candidate_manifest_relpath"] = ""
+    payload.pop("uat_pending", None)
+    payload.pop("uat_lock_owner_request_id", None)
+    payload.pop("uat_lock_acquired", None)
+    payload.pop("inplace_warning", None)
 
     try:
         _write_json_atomic(path, payload)
@@ -6944,89 +6951,193 @@ async def backlog_exec_request_promote(request_id: str, req: BacklogExecPromoteR
     exec_mode = str(payload.get("execution_mode") or "").strip().lower() or "uat"
     if exec_mode == "candidate":
         exec_mode = "uat"
-    if exec_mode != "uat":
-        raise HTTPException(status_code=400, detail="Promotion is only supported for execution_mode=uat in v0")
+    if exec_mode not in {"uat", "inplace"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported execution_mode={exec_mode!r}")
 
-    # Find candidate patch file.
-    patch_rel = str(payload.get("candidate_patch_relpath") or "").strip()
-    run_dir_rel = str(payload.get("run_dir_relpath") or "").strip()
-    patch_path: Optional[Path] = None
-    if patch_rel:
-        pp = (base / patch_rel).resolve()
+    promotion_summary: Dict[str, Any] = {}
+
+    if exec_mode == "uat":
+        # Candidate workspace root (under repo_root).
+        candidate_rel = str(payload.get("candidate_relpath") or "").strip()
+        if not candidate_rel or not _is_safe_repo_relpath(candidate_rel):
+            raise HTTPException(status_code=400, detail="No candidate workspace available for promotion")
+        candidate_root = (Path(repo_root).resolve() / candidate_rel).resolve()
         try:
-            pp.relative_to(base)
+            candidate_root.relative_to(Path(repo_root).resolve())
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid patch path")
-        patch_path = pp
-    elif run_dir_rel:
-        rd = (base / run_dir_rel).resolve()
+            raise HTTPException(status_code=400, detail="Invalid candidate workspace path")
+        if not candidate_root.exists():
+            raise HTTPException(status_code=400, detail="Candidate workspace does not exist")
+
+        # Candidate manifest (produced by the exec runner).
+        manifest_rel = str(payload.get("candidate_manifest_relpath") or "").strip()
+        run_dir_rel = str(payload.get("run_dir_relpath") or "").strip()
+        if not manifest_rel and run_dir_rel:
+            manifest_rel = str(Path(run_dir_rel) / "candidate_manifest.json").replace("\\", "/")
+        if not manifest_rel:
+            raise HTTPException(status_code=400, detail="No candidate manifest available for promotion")
+
+        manifest_path = (base / manifest_rel).resolve()
         try:
-            rd.relative_to(base)
+            manifest_path.relative_to(base)
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid run_dir path")
-        pp = (rd / "candidate.patch").resolve()
+            raise HTTPException(status_code=400, detail="Invalid manifest path")
+        if not manifest_path.exists():
+            raise HTTPException(status_code=400, detail="Candidate manifest not found")
+
+        manifest_bytes = b""
         try:
-            pp.relative_to(rd)
+            manifest_bytes = manifest_path.read_bytes()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read candidate manifest: {e}")
+        if len(manifest_bytes) > 8_000_000:
+            raise HTTPException(status_code=413, detail="Candidate manifest is too large")
+
+        try:
+            manifest_obj = json.loads(manifest_bytes.decode("utf-8", errors="replace"))
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid patch path")
-        patch_path = pp
+            manifest_obj = {}
+        if not isinstance(manifest_obj, dict):
+            raise HTTPException(status_code=400, detail="Invalid candidate manifest")
 
-    if patch_path is None or not patch_path.exists():
-        raise HTTPException(status_code=400, detail="No candidate patch available for promotion")
+        repos = manifest_obj.get("repos")
+        if not isinstance(repos, list):
+            raise HTTPException(status_code=400, detail="Invalid candidate manifest (repos)")
 
-    patch_bytes = b""
-    try:
-        patch_bytes = patch_path.read_bytes()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read patch: {e}")
-    if len(patch_bytes) > 60_000_000:
-        raise HTTPException(status_code=413, detail="Patch is too large")
-    patch_text = ""
-    try:
-        patch_text = patch_bytes.decode("utf-8", errors="replace")
-    except Exception:
-        patch_text = ""
+        max_total_files = 8000
+        max_file_bytes = 25_000_000
+        copied = 0
+        deleted = 0
+        skipped: List[Dict[str, Any]] = []
+        applied_copy: List[str] = []
+        applied_delete: List[str] = []
+        total_seen = 0
 
-    patch_paths = _extract_patch_paths(patch_text)
-    unsafe = [p for p in patch_paths if not _is_safe_repo_relpath(p)]
-    if unsafe:
-        sample = ", ".join(unsafe[:3])
-        more = f" (+{len(unsafe) - 3} more)" if len(unsafe) > 3 else ""
-        raise HTTPException(status_code=400, detail=f"Unsafe patch paths detected: {sample}{more}")
+        for entry in repos:
+            if not isinstance(entry, dict):
+                continue
+            repo_name = str(entry.get("repo_relpath") or entry.get("repo") or "").strip()
+            if not repo_name or "/" in repo_name or "\\" in repo_name or repo_name in {".", ".."}:
+                continue
+            src_repo = (candidate_root / repo_name).resolve()
+            dst_repo = (Path(repo_root).resolve() / repo_name).resolve()
+            try:
+                src_repo.relative_to(candidate_root)
+                dst_repo.relative_to(Path(repo_root).resolve())
+            except Exception:
+                continue
+            if not src_repo.exists() or not dst_repo.exists():
+                continue
 
-    # Apply patch to repo_root (best-effort). `git apply` does not require a git repo.
-    try:
-        proc = subprocess.run(
-            ["git", "apply", "--whitespace=nowarn", str(patch_path)],
-            cwd=str(Path(repo_root).resolve()),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=60.0,
-            check=False,
-        )
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="git is not available (required to apply patch)")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to apply patch: {e}")
-    if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip()
-        if len(err) > 3500:
-            err = err[:3500] + "\n…(truncated)…"
-        raise HTTPException(status_code=400, detail=f"Patch apply failed: {err or 'unknown error'}")
+            copy_list = entry.get("copy")
+            del_list = entry.get("delete")
+            if not isinstance(copy_list, list):
+                copy_list = []
+            if not isinstance(del_list, list):
+                del_list = []
+
+            for raw in copy_list:
+                if total_seen >= max_total_files:
+                    break
+                rel = str(raw or "").replace("\\", "/").strip()
+                if not _is_safe_repo_relpath(rel) or rel.startswith(".git/") or rel == ".git":
+                    skipped.append({"repo": repo_name, "path": rel, "reason": "unsafe_path"})
+                    continue
+                src = (src_repo / rel).resolve()
+                dst = (dst_repo / rel).resolve()
+                try:
+                    src.relative_to(src_repo)
+                    dst.relative_to(dst_repo)
+                except Exception:
+                    skipped.append({"repo": repo_name, "path": rel, "reason": "unsafe_resolution"})
+                    continue
+                if src.is_symlink():
+                    skipped.append({"repo": repo_name, "path": rel, "reason": "symlink_not_allowed"})
+                    continue
+                if not src.exists() or not src.is_file():
+                    skipped.append({"repo": repo_name, "path": rel, "reason": "missing_source"})
+                    continue
+                try:
+                    size = int(src.stat().st_size or 0)
+                except Exception:
+                    size = 0
+                if size > max_file_bytes:
+                    skipped.append({"repo": repo_name, "path": rel, "reason": "file_too_large", "bytes": size})
+                    continue
+                try:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst, follow_symlinks=False)
+                    copied += 1
+                    total_seen += 1
+                    if len(applied_copy) < 200:
+                        applied_copy.append(f"{repo_name}/{rel}")
+                except Exception as e:
+                    skipped.append({"repo": repo_name, "path": rel, "reason": f"copy_failed: {e}"})
+
+            for raw in del_list:
+                if total_seen >= max_total_files:
+                    break
+                rel = str(raw or "").replace("\\", "/").strip()
+                if not _is_safe_repo_relpath(rel) or rel.startswith(".git/") or rel == ".git":
+                    skipped.append({"repo": repo_name, "path": rel, "reason": "unsafe_path"})
+                    continue
+                dst = (dst_repo / rel).resolve()
+                try:
+                    dst.relative_to(dst_repo)
+                except Exception:
+                    skipped.append({"repo": repo_name, "path": rel, "reason": "unsafe_resolution"})
+                    continue
+                if not dst.exists():
+                    continue
+                if dst.is_dir():
+                    skipped.append({"repo": repo_name, "path": rel, "reason": "refuse_delete_dir"})
+                    continue
+                try:
+                    dst.unlink()
+                    deleted += 1
+                    total_seen += 1
+                    if len(applied_delete) < 200:
+                        applied_delete.append(f"{repo_name}/{rel}")
+                except Exception as e:
+                    skipped.append({"repo": repo_name, "path": rel, "reason": f"delete_failed: {e}"})
+
+        promotion_summary = {
+            "mode": "uat_manifest",
+            "candidate_relpath": candidate_rel,
+            "candidate_manifest_relpath": manifest_rel,
+            "manifest_sha256": _sha256_hex_bytes(manifest_bytes),
+            "copied": copied,
+            "deleted": deleted,
+            "skipped": skipped[:500],
+            "applied_copy_sample": applied_copy,
+            "applied_delete_sample": applied_delete,
+        }
+    else:
+        promotion_summary = {
+            "mode": "inplace",
+            "note": "Execution mode was inplace; no promotion copy was performed (prod may already be mutated).",
+        }
 
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     payload["status"] = "promoted"
     payload["promoted_at"] = now
-    payload["promotion"] = {
-        "patch_sha256": _sha256_hex_bytes(patch_bytes),
-        "files": patch_paths[:500],
-        "files_count": len(patch_paths),
-    }
-    payload["promotion_report"] = {
-        "at": now,
-        "note": "Applied candidate.patch to repo_root via git apply.",
-    }
+    payload["promotion"] = promotion_summary
+    payload["promotion_report"] = {"at": now, "note": "Promotion completed."}
+
+    # Release UAT lock if we own it (best-effort).
+    try:
+        lock_path = (base / "uat_deploy_lock.json").resolve()
+        lock_path.relative_to(base)
+        if lock_path.exists():
+            lock_obj = _load_json_bounded(lock_path)
+            owner = str(lock_obj.get("owner_request_id") or "").strip()
+            if owner == rid:
+                try:
+                    lock_path.unlink()
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     # Optional redeploy hook (best-effort).
     if bool(req.redeploy):
@@ -8146,7 +8257,12 @@ async def backlog_merge(req: BacklogMergeRequest) -> BacklogMergeResponse:
 
 
 @router.post("/backlog/{kind}/{filename}/execute", response_model=BacklogExecuteResponse)
-async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
+async def backlog_execute(
+    kind: str,
+    filename: str,
+    execution_mode: Optional[str] = Query(default=None, description="Execution mode override: uat|inplace."),
+) -> BacklogExecuteResponse:
+    mode_override = str(execution_mode or "").strip().lower()
     repo_root = _triage_repo_root_from_env()
     if repo_root is None:
         raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
@@ -8207,6 +8323,14 @@ async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
         execution_mode = str(getattr(cfg, "exec_mode_default", "") or "").strip().lower() or "uat"
     except Exception:
         pass
+
+    if mode_override:
+        if mode_override in {"uat", "candidate"}:
+            execution_mode = "uat"
+        elif mode_override == "inplace":
+            execution_mode = "inplace"
+        else:
+            raise HTTPException(status_code=400, detail="Invalid execution_mode (expected uat|inplace)")
 
     payload = {
         "created_at": datetime.datetime.now().astimezone().isoformat(),
@@ -8320,6 +8444,15 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
         execution_mode = str(getattr(cfg, "exec_mode_default", "") or "").strip().lower() or "uat"
     except Exception:
         pass
+
+    override = str(getattr(req, "execution_mode", None) or "").strip().lower()
+    if override:
+        if override in {"uat", "candidate"}:
+            execution_mode = "uat"
+        elif override == "inplace":
+            execution_mode = "inplace"
+        else:
+            raise HTTPException(status_code=400, detail="Invalid execution_mode (expected uat|inplace)")
 
     payload = {
         "created_at": datetime.datetime.now().astimezone().isoformat(),
