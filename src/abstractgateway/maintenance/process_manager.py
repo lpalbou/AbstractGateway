@@ -73,6 +73,15 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             command=[],
             url=None,
         ),
+        "gateway_uat": ProcessSpec(
+            id="gateway_uat",
+            label="AbstractGateway (UAT)",
+            kind="service",
+            description="Gateway running candidate code from untracked/backlog_exec_uat/current.",
+            cwd=".",
+            command=[_default_shell(), "-lc", "./agw-uat.sh"],
+            url="http://localhost:8082",
+        ),
         "build": ProcessSpec(
             id="build",
             label="build.sh (deps install)",
@@ -90,6 +99,15 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             command=["npm", "run", "dev"],
             url="http://localhost:3001",
         ),
+        "abstractobserver_uat": ProcessSpec(
+            id="abstractobserver_uat",
+            label="AbstractObserver (web, UAT)",
+            kind="service",
+            description="Vite dev server from untracked/backlog_exec_uat/current.",
+            cwd=".",
+            command=[_default_shell(), "-lc", "./aobs-uat.sh"],
+            url="http://localhost:3011",
+        ),
         "abstractcode_web": ProcessSpec(
             id="abstractcode_web",
             label="AbstractCode Web",
@@ -98,6 +116,15 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             cwd="abstractcode/web",
             command=["npm", "run", "dev"],
             url="http://localhost:3002",
+        ),
+        "abstractcode_web_uat": ProcessSpec(
+            id="abstractcode_web_uat",
+            label="AbstractCode Web (UAT)",
+            kind="service",
+            description="Vite dev server from untracked/backlog_exec_uat/current.",
+            cwd=".",
+            command=[_default_shell(), "-lc", "./acode-web-uat.sh"],
+            url="http://localhost:3012",
         ),
         "abstractflow_frontend": ProcessSpec(
             id="abstractflow_frontend",

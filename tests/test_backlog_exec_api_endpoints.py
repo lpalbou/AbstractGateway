@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,7 +45,7 @@ def test_backlog_exec_config_and_requests_endpoints(tmp_path: Path, monkeypatch:
     monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER", "1")
     monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_EXECUTOR", "codex_cli")
     monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_CODEX_BIN", sys.executable)
-    monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_CODEX_MODEL", "gpt-5.2")
+    monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_CODEX_MODEL", "gpt-5.2-xhigh")
 
     # Seed a few request JSON files.
     qdir = gateway_dir / "backlog_exec_queue"
@@ -124,6 +125,8 @@ def test_backlog_exec_config_and_requests_endpoints(tmp_path: Path, monkeypatch:
         assert body["runner_alive"] is True
         assert body["executor"] == "codex_cli"
         assert body["can_execute"] is True
+        assert body.get("codex_model") == "gpt-5.2"
+        assert body.get("codex_reasoning_effort") == "xhigh"
 
         lst = client.get("/api/gateway/backlog/exec/requests?status=queued,running&limit=10")
         assert lst.status_code == 200
@@ -163,3 +166,75 @@ def test_backlog_exec_config_and_requests_endpoints(tmp_path: Path, monkeypatch:
         t = tail.json()
         assert t["name"] == "events"
         assert "line2" in t["content"]
+
+
+@pytest.mark.basic
+def test_backlog_exec_feedback_and_promote_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway_dir = tmp_path / "gateway"
+    gateway_dir.mkdir(parents=True, exist_ok=True)
+    qdir = gateway_dir / "backlog_exec_queue"
+    qdir.mkdir(parents=True, exist_ok=True)
+    runs_dir = gateway_dir / "backlog_exec_runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / "demo.txt").write_text("old\n", encoding="utf-8")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+
+    # Seed an awaiting_qa request (eligible for feedback/promote).
+    rid = "eeeeeeeeeeeeeeee"
+    run_dir = runs_dir / rid
+    run_dir.mkdir(parents=True, exist_ok=True)
+    patch = "\n".join(
+        [
+            "diff --git a/demo.txt b/demo.txt",
+            "index 1111111..2222222 100644",
+            "--- a/demo.txt",
+            "+++ b/demo.txt",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "",
+        ]
+    )
+    (run_dir / "candidate.patch").write_text(patch, encoding="utf-8")
+    payload = {
+        "created_at": "2026-02-03T10:00:00Z",
+        "request_id": rid,
+        "status": "awaiting_qa",
+        "execution_mode": "uat",
+        "attempt": 1,
+        "run_dir_relpath": f"backlog_exec_runs/{rid}",
+        "candidate_patch_relpath": f"backlog_exec_runs/{rid}/candidate.patch",
+        "backlog": {"kind": "planned", "filename": "715-framework-uat.md", "relpath": "docs/backlog/planned/715-framework-uat.md"},
+        "result": {"ok": True, "exit_code": 0, "last_message": "done"},
+    }
+    (qdir / f"{rid}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
+    with TestClient(app) as client:
+        fb = client.post(f"/api/gateway/backlog/exec/requests/{rid}/feedback", json={"feedback": "please fix X"})
+        assert fb.status_code == 200
+        fb_payload = fb.json()["payload"]
+        assert fb_payload["status"] == "queued"
+        assert fb_payload.get("attempt") == 2
+        assert fb_payload.get("result") == {}
+        assert isinstance(fb_payload.get("feedback"), list) and fb_payload["feedback"]
+        assert isinstance(fb_payload.get("result_history"), list) and fb_payload["result_history"]
+
+        # Put it back into awaiting_qa so promote can run.
+        payload_on_disk = json.loads((qdir / f"{rid}.json").read_text(encoding="utf-8"))
+        payload_on_disk["status"] = "awaiting_qa"
+        payload_on_disk["result"] = {"ok": True, "exit_code": 0}
+        payload_on_disk["candidate_patch_relpath"] = f"backlog_exec_runs/{rid}/candidate.patch"
+        (qdir / f"{rid}.json").write_text(json.dumps(payload_on_disk, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        pr = client.post(f"/api/gateway/backlog/exec/requests/{rid}/promote", json={"redeploy": False})
+        assert pr.status_code == 200
+        pr_payload = pr.json()["payload"]
+        assert pr_payload["status"] == "promoted"
+        assert pr_payload.get("promoted_at")
+        assert pr_payload.get("promotion", {}).get("files_count") == 1
+
+    assert (repo_root / "demo.txt").read_text(encoding="utf-8") == "new\n"

@@ -53,7 +53,14 @@ def test_backlog_exec_runner_processes_queue_and_writes_logs(tmp_path: Path, mon
 
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
 
-    cfg = BacklogExecRunnerConfig(enabled=True, poll_interval_s=0.01, executor="codex_cli", notify=False, codex_model="gpt-5.2-xhigh")
+    cfg = BacklogExecRunnerConfig(
+        enabled=True,
+        poll_interval_s=0.01,
+        executor="codex_cli",
+        notify=False,
+        codex_model="gpt-5.2-xhigh",
+        exec_mode_default="inplace",
+    )
     processed, rid = process_next_backlog_exec_request(gateway_data_dir=gateway_dir, repo_root=repo_root, cfg=cfg)
     assert processed is True
     assert rid == request_id
@@ -63,6 +70,8 @@ def test_backlog_exec_runner_processes_queue_and_writes_logs(tmp_path: Path, mon
     assert "--ask-for-approval" not in cmd
     midx = cmd.index("--model")
     assert cmd[midx + 1] == "gpt-5.2"
+    cidx = cmd.index("-c")
+    assert cmd[cidx + 1] == 'model_reasoning_effort="xhigh"'
     assert cmd[-2] == "--"
     assert cmd[-1] == "hello world"
 
@@ -149,7 +158,7 @@ def test_backlog_exec_runner_can_execute_multiple_requests_in_parallel(tmp_path:
 
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
 
-    cfg = BacklogExecRunnerConfig(enabled=True, poll_interval_s=0.01, workers=2, executor="codex_cli", notify=False)
+    cfg = BacklogExecRunnerConfig(enabled=True, poll_interval_s=0.01, workers=2, executor="codex_cli", notify=False, exec_mode_default="inplace")
     runner = BacklogExecRunner(gateway_data_dir=gateway_dir, cfg=cfg)
     runner.start()
     try:

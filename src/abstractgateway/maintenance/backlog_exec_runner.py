@@ -3,12 +3,13 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .notifier import send_email_notification, send_telegram_notification
 
@@ -49,22 +50,53 @@ def _now_iso() -> str:
 
 
 def normalize_codex_model_id(raw: Any) -> str:
-    """Normalize Codex model ids for `codex exec --model <MODEL>`.
+    """Normalize Codex model ids for `codex exec --model <MODEL>`."""
 
-    Codex CLI shows "effort" (e.g. reasoning xhigh) separately from the model id.
-    Some configs historically used names like `gpt-5.2-xhigh` which are rejected by Codex.
+    return parse_codex_model_spec(raw)[0]
+
+
+def normalize_codex_reasoning_effort(raw: Any) -> Optional[str]:
+    s = str(raw or "").strip().lower()
+    if not s:
+        return None
+    if s in {"low", "medium", "high", "xhigh"}:
+        return s
+    return None
+
+
+def parse_codex_model_spec(raw: Any) -> Tuple[str, Optional[str]]:
+    """Parse a "model spec" into (model_id, reasoning_effort).
+
+    Supported forms:
+    - `gpt-5.2-xhigh` (historic effort suffix; Codex CLI rejects this as `--model`, so we split it)
+    - `gpt-5.2 (reasoning xhigh, ...)` (copy/paste from UI)
+    - `gpt-5.2` (no effort specified)
     """
 
-    m = str(raw or "").strip()
-    if not m:
-        return "gpt-5.2"
-    # Drop anything after whitespace (e.g. "gpt-5.2 (reasoning xhigh, ...)" from copy/paste).
-    if " " in m:
-        m = m.split(" ", 1)[0].strip()
-    low = m.lower()
-    if low.endswith("-xhigh"):
-        m = m[: -len("-xhigh")]
-    return m.strip() or "gpt-5.2"
+    s = str(raw or "").strip()
+    if not s:
+        return "gpt-5.2", None
+
+    # Codex CLI expects model ids without spaces, so use the first token by default.
+    token = s.split(" ", 1)[0].strip()
+    model_id = token or "gpt-5.2"
+
+    low = model_id.lower()
+    effort: Optional[str] = None
+    for cand in ("xhigh", "high", "medium", "low"):
+        suffix = f"-{cand}"
+        if low.endswith(suffix):
+            model_id = model_id[: -len(suffix)].strip() or "gpt-5.2"
+            effort = cand
+            break
+
+    if effort is None:
+        # Try to recover effort from a descriptive string (best-effort).
+        m = re.search(r"(?:reasoning|effort)\s*[:=]?\s*(xhigh|high|medium|low)\b", s, flags=re.IGNORECASE)
+        if m:
+            effort = normalize_codex_reasoning_effort(m.group(1))
+
+    return (model_id.strip() or "gpt-5.2"), effort
 
 
 def _triage_repo_root_from_env() -> Optional[Path]:
@@ -80,6 +112,200 @@ def _triage_repo_root_from_env() -> Optional[Path]:
 def _backlog_exec_run_id(request_id: str) -> str:
     rid = str(request_id or "").strip()
     return f"backlog_exec_{rid}" if rid else "backlog_exec"
+
+
+def _safe_relpath_from_repo_root(*, repo_root: Path, path: Path) -> Optional[str]:
+    try:
+        rel = path.resolve().relative_to(repo_root.resolve())
+    except Exception:
+        return None
+    return str(rel).replace("\\", "/")
+
+
+def _repo_pythonpath_entries(repo_root: Path) -> List[str]:
+    """Best-effort PYTHONPATH entries to prefer repo code over editable installs.
+
+    Many packages use a `src/` layout; some (e.g., abstractcode) do not.
+    We include:
+    - <pkg>/src when present
+    - otherwise <pkg> when it contains a pyproject.toml
+    """
+    root = Path(repo_root).resolve()
+    out: List[str] = []
+    try:
+        for child in sorted(root.iterdir(), key=lambda p: p.name):
+            if not child.is_dir():
+                continue
+            if child.name.startswith("."):
+                continue
+            if not (child / "pyproject.toml").exists():
+                continue
+            src = child / "src"
+            if src.is_dir():
+                out.append(str(src))
+            else:
+                out.append(str(child))
+    except Exception:
+        return []
+    return out
+
+
+def _build_pythonpath_for_repo(*, repo_root: Path, base_env: Optional[Dict[str, str]] = None) -> str:
+    env = base_env or os.environ
+    existing = str(env.get("PYTHONPATH") or "").strip()
+    parts = [p for p in _repo_pythonpath_entries(repo_root) if p]
+    if existing:
+        parts.append(existing)
+    # De-dupe preserving order.
+    seen: set[str] = set()
+    deduped: List[str] = []
+    for p in parts:
+        ps = str(p).strip()
+        if not ps or ps in seen:
+            continue
+        seen.add(ps)
+        deduped.append(ps)
+    return os.pathsep.join(deduped)
+
+
+def _try_symlink(*, src: Path, dst: Path) -> None:
+    try:
+        if not src.exists():
+            return
+        if dst.exists() or dst.is_symlink():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.symlink_to(src)
+    except Exception:
+        pass
+
+
+def _default_uat_root(repo_root: Path) -> Path:
+    return (Path(repo_root).resolve() / "untracked" / "backlog_exec_uat").resolve()
+
+
+def _uat_root_from_env(*, repo_root: Path) -> Path:
+    raw = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_UAT_DIR") or os.getenv("ABSTRACT_BACKLOG_EXEC_UAT_DIR") or "").strip()
+    if not raw:
+        return _default_uat_root(repo_root)
+    try:
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = (Path(repo_root).resolve() / p).resolve()
+        else:
+            p = p.resolve()
+        return p
+    except Exception:
+        return _default_uat_root(repo_root)
+
+
+def _ensure_uat_workspace(*, repo_root: Path, request_id: str) -> Optional[Path]:
+    """Create (or reuse) a candidate worktree for this request.
+
+    v0 approach:
+    - Use a git worktree rooted under <repo_root>/untracked/backlog_exec_uat/workspaces/<request_id>
+    - Best-effort symlink shared caches (node_modules, .venv) to avoid re-install overhead
+    """
+    rid = str(request_id or "").strip()
+    if not rid:
+        return None
+
+    uat_root = _uat_root_from_env(repo_root=repo_root)
+    ws_root = (uat_root / "workspaces").resolve()
+    ws_root.mkdir(parents=True, exist_ok=True)
+
+    ws = (ws_root / rid).resolve()
+    if ws.exists():
+        return ws
+
+    try:
+        # Detached HEAD worktree: avoid requiring branch management or commits.
+        subprocess.run(
+            ["git", "-C", str(Path(repo_root).resolve()), "worktree", "add", "--detach", str(ws), "HEAD"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60.0,
+        )
+    except Exception:
+        return None
+
+    # Best-effort: reuse repo-local caches to make UAT worktrees runnable without reinstall.
+    rr = Path(repo_root).resolve()
+    _try_symlink(src=(rr / ".venv").resolve(), dst=(ws / ".venv").resolve())
+    _try_symlink(src=(rr / "abstractobserver" / "node_modules").resolve(), dst=(ws / "abstractobserver" / "node_modules").resolve())
+    _try_symlink(src=(rr / "abstractcode" / "web" / "node_modules").resolve(), dst=(ws / "abstractcode" / "web" / "node_modules").resolve())
+    _try_symlink(src=(rr / "abstractflow" / "web" / "frontend" / "node_modules").resolve(), dst=(ws / "abstractflow" / "web" / "frontend" / "node_modules").resolve())
+
+    return ws
+
+
+_VALID_EXEC_MODE_RE = re.compile(r"^(uat|candidate|inplace)$", re.IGNORECASE)
+
+
+def _default_exec_mode() -> str:
+    raw = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_MODE") or os.getenv("ABSTRACT_BACKLOG_EXEC_MODE") or "").strip().lower()
+    if raw and _VALID_EXEC_MODE_RE.match(raw):
+        return "uat" if raw in {"uat", "candidate"} else "inplace"
+    # Safer default: do not mutate prod repo unless explicitly requested.
+    return "uat"
+
+
+def _is_uat_mode(mode: str) -> bool:
+    m = str(mode or "").strip().lower()
+    return m in {"uat", "candidate"}
+
+
+def _write_git_diff_patch(*, repo_root: Path, out_path: Path) -> bool:
+    """Write a best-effort git patch (diff vs HEAD) for the candidate workspace."""
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return False
+    try:
+        with open(out_path, "wb") as f:
+            subprocess.run(
+                ["git", "-C", str(Path(repo_root).resolve()), "diff", "--binary", "--no-color"],
+                check=False,
+                stdout=f,
+                stderr=subprocess.DEVNULL,
+                timeout=30.0,
+            )
+        return out_path.exists()
+    except Exception:
+        return False
+
+
+def _latest_feedback_text(req: Dict[str, Any]) -> str:
+    fb = req.get("feedback")
+    if not isinstance(fb, list) or not fb:
+        return ""
+    last = fb[-1]
+    if isinstance(last, dict):
+        return str(last.get("text") or "")
+    return str(last or "")
+
+
+def _prompt_with_feedback(prompt: str, *, req: Dict[str, Any]) -> str:
+    base = str(prompt or "").strip()
+    fb = _latest_feedback_text(req).strip()
+    if not fb:
+        return base
+    if len(fb) > 20_000:
+        fb = fb[:20_000].rstrip() + "\n…(truncated)…"
+    attempt_raw = req.get("attempt")
+    try:
+        attempt = int(attempt_raw) if attempt_raw is not None else None
+    except Exception:
+        attempt = None
+    suffix = "\n\n---\n"
+    suffix += "Operator QA feedback"
+    if attempt is not None:
+        suffix += f" (attempt {attempt})"
+    suffix += ":\n"
+    suffix += fb
+    suffix += "\n---\n"
+    return base + suffix
 
 
 def _build_gateway_stores(*, gateway_data_dir: Path):
@@ -156,11 +382,13 @@ def _store_backlog_exec_logs_to_ledger(
     events_id = _store_file(path=(run_dir / "codex_events.jsonl").resolve(), name="events", content_type="application/jsonl")
     stderr_id = _store_file(path=(run_dir / "codex_stderr.log").resolve(), name="stderr", content_type="text/plain")
     last_id = _store_file(path=(run_dir / "codex_last_message.txt").resolve(), name="last_message", content_type="text/plain")
+    patch_id = _store_file(path=(run_dir / "candidate.patch").resolve(), name="candidate_patch", content_type="text/x-diff")
 
     log_artifacts = {
         "events": artifact_ref(events_id) if events_id else None,
         "stderr": artifact_ref(stderr_id) if stderr_id else None,
         "last_message": artifact_ref(last_id) if last_id else None,
+        "candidate_patch": artifact_ref(patch_id) if patch_id else None,
     }
 
     ok = bool(result.get("ok") is True)
@@ -175,6 +403,9 @@ def _store_backlog_exec_logs_to_ledger(
         "backlog": backlog,
         "backlog_queue": backlog_queue if backlog_queue else {},
         "executor": req.get("executor") if isinstance(req.get("executor"), dict) else {},
+        "execution_mode": str(req.get("execution_mode") or ""),
+        "candidate_relpath": str(req.get("candidate_relpath") or ""),
+        "candidate_patch_relpath": str(req.get("candidate_patch_relpath") or ""),
         "run_dir_relpath": str(req.get("run_dir_relpath") or ""),
         "prompt": str(prompt or ""),
         "result": {
@@ -243,8 +474,12 @@ class BacklogExecRunnerConfig:
     # Codex executor defaults.
     codex_bin: str = "codex"
     codex_model: str = "gpt-5.2"
+    codex_reasoning_effort: str = ""  # low|medium|high|xhigh (optional)
     codex_sandbox: str = "workspace-write"
     codex_approvals: str = "never"
+
+    # Execution safety (v0)
+    exec_mode_default: str = "uat"  # uat|inplace
 
     @staticmethod
     def from_env() -> "BacklogExecRunnerConfig":
@@ -271,10 +506,14 @@ class BacklogExecRunnerConfig:
         )
 
         codex_bin = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_CODEX_BIN") or os.getenv("ABSTRACT_BACKLOG_CODEX_BIN") or "codex").strip() or "codex"
-        codex_model = (
-            str(os.getenv("ABSTRACTGATEWAY_BACKLOG_CODEX_MODEL") or os.getenv("ABSTRACT_BACKLOG_CODEX_MODEL") or "gpt-5.2").strip()
-            or "gpt-5.2"
-        )
+        raw_model = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_CODEX_MODEL") or os.getenv("ABSTRACT_BACKLOG_CODEX_MODEL") or "gpt-5.2").strip() or "gpt-5.2"
+        raw_effort = str(
+            os.getenv("ABSTRACTGATEWAY_BACKLOG_CODEX_REASONING_EFFORT")
+            or os.getenv("ABSTRACT_BACKLOG_CODEX_REASONING_EFFORT")
+            or ""
+        ).strip()
+        codex_model, inferred_effort = parse_codex_model_spec(raw_model)
+        codex_effort = normalize_codex_reasoning_effort(raw_effort) or inferred_effort or None
         codex_sandbox = (
             str(os.getenv("ABSTRACTGATEWAY_BACKLOG_CODEX_SANDBOX") or os.getenv("ABSTRACT_BACKLOG_CODEX_SANDBOX") or "workspace-write").strip()
             or "workspace-write"
@@ -292,8 +531,10 @@ class BacklogExecRunnerConfig:
             notify=bool(notify),
             codex_bin=codex_bin,
             codex_model=codex_model,
+            codex_reasoning_effort=str(codex_effort or "").strip(),
             codex_sandbox=codex_sandbox,
             codex_approvals=codex_approvals,
+            exec_mode_default=_default_exec_mode(),
         )
 
 
@@ -349,31 +590,43 @@ def _release_lock(lock_path: Optional[Path]) -> None:
 class BacklogExecutor:
     name: str = "executor"
 
-    def execute(self, *, prompt: str, repo_root: Path, run_dir: Path) -> Dict[str, Any]:
+    def execute(self, *, prompt: str, repo_root: Path, run_dir: Path, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         raise NotImplementedError
 
 
 class CodexCliExecutor(BacklogExecutor):
     name = "codex_cli"
 
-    def __init__(self, *, bin_path: str, model: str, sandbox: str, approvals: str):
+    def __init__(self, *, bin_path: str, model: str, reasoning_effort: str, sandbox: str, approvals: str):
         self.bin_path = str(bin_path or "codex").strip() or "codex"
         self.model = str(model or "").strip() or "gpt-5.2"
+        self.reasoning_effort = str(reasoning_effort or "").strip()
         self.sandbox = str(sandbox or "").strip() or "workspace-write"
         self.approvals = str(approvals or "").strip() or "never"
 
-    def execute(self, *, prompt: str, repo_root: Path, run_dir: Path) -> Dict[str, Any]:
+    def execute(self, *, prompt: str, repo_root: Path, run_dir: Path, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         run_dir.mkdir(parents=True, exist_ok=True)
         events_path = (run_dir / "codex_events.jsonl").resolve()
         last_msg_path = (run_dir / "codex_last_message.txt").resolve()
         stderr_path = (run_dir / "codex_stderr.log").resolve()
         rel_base = Path("backlog_exec_runs") / str(run_dir.name)
-        model_id = normalize_codex_model_id(self.model)
+        model_id, inferred_effort = parse_codex_model_spec(self.model)
+        effort = normalize_codex_reasoning_effort(self.reasoning_effort) or inferred_effort or None
+
+        # Preserve previous attempt logs (best-effort).
+        try:
+            for p in (events_path, last_msg_path, stderr_path):
+                if not p.exists():
+                    continue
+                ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                p.rename(p.with_name(f"{p.name}.{ts}.bak"))
+        except Exception:
+            pass
 
         # Keep this invocation compatible with the installed Codex CLI.
         # As of 2026-01, `codex exec --help` shows no `--ask-for-approval` flag; passing it causes hard failure.
         # We also force `--` before the prompt to prevent prompt text from being parsed as flags.
-        cmd = [
+        cmd: List[str] = [
             self.bin_path,
             "exec",
             "--json",
@@ -386,22 +639,29 @@ class CodexCliExecutor(BacklogExecutor):
             str(repo_root),
             "--model",
             model_id,
-            "--sandbox",
-            self.sandbox,
-            "--",
-            str(prompt or ""),
         ]
+        if effort:
+            cmd.extend(["-c", f'model_reasoning_effort="{effort}"'])
+        cmd.extend(["--sandbox", self.sandbox, "--", str(prompt or "")])
 
         started_at = _now_iso()
         exit_code = -1
         err: Optional[str] = None
         try:
+            run_env = dict(os.environ)
+            if isinstance(env, dict):
+                for k, v in env.items():
+                    ks = str(k or "").strip()
+                    if not ks:
+                        continue
+                    run_env[ks] = str(v if v is not None else "")
             with open(events_path, "wb") as out, open(stderr_path, "wb") as errf:
                 proc = subprocess.run(
                     cmd,
                     stdout=out,
                     stderr=errf,
                     cwd=str(repo_root),
+                    env=run_env,
                     check=False,
                     timeout=None,
                     stdin=subprocess.DEVNULL,
@@ -424,6 +684,8 @@ class CodexCliExecutor(BacklogExecutor):
         return {
             "ok": bool(ok),
             "executor": self.name,
+            "model": model_id,
+            "reasoning_effort": effort,
             "started_at": started_at,
             "finished_at": finished_at,
             "exit_code": exit_code,
@@ -442,7 +704,13 @@ def _resolve_executor(cfg: BacklogExecRunnerConfig) -> Optional[BacklogExecutor]
     if not ex or ex == "none":
         return None
     if ex in {"codex", "codex_cli", "codex-cli"}:
-        return CodexCliExecutor(bin_path=cfg.codex_bin, model=cfg.codex_model, sandbox=cfg.codex_sandbox, approvals=cfg.codex_approvals)
+        return CodexCliExecutor(
+            bin_path=cfg.codex_bin,
+            model=cfg.codex_model,
+            reasoning_effort=cfg.codex_reasoning_effort,
+            sandbox=cfg.codex_sandbox,
+            approvals=cfg.codex_approvals,
+        )
     # Future: execute via a bundle workflow run (durable).
     if ex in {"workflow", "workflow_bundle", "workflow-bundle"}:
         return None
@@ -484,15 +752,53 @@ def process_next_backlog_exec_request(
             run_dir = (run_root / request_id).resolve()
             run_root.mkdir(parents=True, exist_ok=True)
 
+            exec_mode = str(req.get("execution_mode") or "").strip().lower() or str(getattr(cfg, "exec_mode_default", "") or "").strip().lower()
+            if not exec_mode:
+                exec_mode = "uat"
+            if exec_mode == "candidate":
+                exec_mode = "uat"
+            req["execution_mode"] = exec_mode
+
+            candidate_root = repo_root
+            candidate_relpath = ""
+            if _is_uat_mode(exec_mode):
+                ws = _ensure_uat_workspace(repo_root=repo_root, request_id=request_id)
+                if ws is None:
+                    req["status"] = "failed"
+                    req["finished_at"] = _now_iso()
+                    req["result"] = {"ok": False, "error": "Failed to create UAT workspace"}
+                    _atomic_write_json(p, req)
+                    return True, request_id
+                candidate_root = ws
+                rel = _safe_relpath_from_repo_root(repo_root=repo_root, path=ws)
+                candidate_relpath = rel or ""
+                if candidate_relpath:
+                    req["candidate_relpath"] = candidate_relpath
+
             # Update to running.
             req["status"] = "running"
             req["started_at"] = _now_iso()
             req.setdefault("executor", {})["type"] = executor.name
             req.setdefault("executor", {})["version"] = "v0"
+            if isinstance(executor, CodexCliExecutor):
+                try:
+                    model_id, inferred_effort = parse_codex_model_spec(executor.model)
+                except Exception:
+                    model_id, inferred_effort = ("gpt-5.2", None)
+                effort = normalize_codex_reasoning_effort(getattr(executor, "reasoning_effort", "")) or inferred_effort or None
+                req.setdefault("executor", {})["model"] = model_id
+                if effort:
+                    req.setdefault("executor", {})["reasoning_effort"] = effort
+                req.setdefault("executor", {})["sandbox"] = str(getattr(executor, "sandbox", "") or "").strip()
+                # Older queued requests won't have these keys; fill for observability.
+                if "target_model" not in req:
+                    req["target_model"] = model_id
+                if effort and "target_reasoning_effort" not in req:
+                    req["target_reasoning_effort"] = effort
             req.setdefault("run_dir_relpath", str(Path("backlog_exec_runs") / request_id).replace("\\", "/"))
             _atomic_write_json(p, req)
 
-            prompt = str(req.get("prompt") or "").strip()
+            prompt = _prompt_with_feedback(str(req.get("prompt") or ""), req=req)
             if not prompt:
                 req["status"] = "failed"
                 req["finished_at"] = _now_iso()
@@ -500,7 +806,19 @@ def process_next_backlog_exec_request(
                 _atomic_write_json(p, req)
                 return True, request_id
 
-            result = executor.execute(prompt=prompt, repo_root=repo_root, run_dir=run_dir)
+            exec_env: Dict[str, str] = {}
+            if _is_uat_mode(exec_mode):
+                exec_env["PYTHONPATH"] = _build_pythonpath_for_repo(repo_root=candidate_root)
+
+            result = executor.execute(prompt=prompt, repo_root=candidate_root, run_dir=run_dir, env=exec_env)
+
+            # Candidate patch for review (best-effort).
+            patch_relpath = ""
+            if _is_uat_mode(exec_mode):
+                patch_path = (run_dir / "candidate.patch").resolve()
+                if _write_git_diff_patch(repo_root=candidate_root, out_path=patch_path):
+                    patch_relpath = str(Path("backlog_exec_runs") / request_id / "candidate.patch").replace("\\", "/")
+                    req["candidate_patch_relpath"] = patch_relpath
 
             # Persist a durable copy of the execution log into the gateway ledger (best-effort).
             persisted = _store_backlog_exec_logs_to_ledger(
@@ -516,7 +834,28 @@ def process_next_backlog_exec_request(
 
             req["result"] = result
             req["finished_at"] = str(result.get("finished_at") or _now_iso())
-            req["status"] = "completed" if bool(result.get("ok") is True) else "failed"
+            if bool(result.get("ok") is True) and _is_uat_mode(exec_mode):
+                req["status"] = "awaiting_qa"
+                # Update the stable UAT pointer for convenience.
+                try:
+                    uat_root = _uat_root_from_env(repo_root=repo_root)
+                    cur = (uat_root / "current")
+                    # Replace existing symlink/file.
+                    try:
+                        if cur.is_symlink() or cur.exists():
+                            cur.unlink()
+                    except Exception:
+                        pass
+                    try:
+                        cur.parent.mkdir(parents=True, exist_ok=True)
+                        cur.symlink_to(candidate_root)
+                        req["uat_current_relpath"] = _safe_relpath_from_repo_root(repo_root=repo_root, path=cur) or ""
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            else:
+                req["status"] = "completed" if bool(result.get("ok") is True) else "failed"
             _atomic_write_json(p, req)
 
             if cfg.notify:

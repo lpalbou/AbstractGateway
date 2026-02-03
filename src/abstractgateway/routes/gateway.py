@@ -20,6 +20,7 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -5868,6 +5869,7 @@ class BacklogExecConfigResponse(BaseModel):
     notify: bool = False
     codex_bin: Optional[str] = None
     codex_model: Optional[str] = None
+    codex_reasoning_effort: Optional[str] = None
     codex_available: Optional[bool] = None
 
 
@@ -5881,6 +5883,8 @@ class BacklogExecRequestSummary(BaseModel):
     backlog_kind: Optional[str] = None
     backlog_filename: Optional[str] = None
     target_agent: Optional[str] = None
+    target_model: Optional[str] = None
+    target_reasoning_effort: Optional[str] = None
     executor_type: Optional[str] = None
     ok: Optional[bool] = None
     exit_code: Optional[int] = None
@@ -5920,6 +5924,17 @@ class BacklogExecActiveItem(BaseModel):
 class BacklogExecActiveItemsResponse(BaseModel):
     ok: bool = True
     items: List[BacklogExecActiveItem] = Field(default_factory=list)
+
+
+class BacklogExecFeedbackRequest(BaseModel):
+    feedback: str = Field(..., description="Operator feedback for the next iteration (max 20k chars).")
+
+
+class BacklogExecPromoteRequest(BaseModel):
+    redeploy: bool = Field(
+        default=False,
+        description="When true, attempt a best-effort redeploy via the process manager (if enabled).",
+    )
 
 
 class AuditLogTailResponse(BaseModel):
@@ -6474,6 +6489,7 @@ async def backlog_exec_config() -> BacklogExecConfigResponse:
     codex_available: Optional[bool] = None
     codex_bin: Optional[str] = None
     codex_model: Optional[str] = None
+    codex_reasoning_effort: Optional[str] = None
     if str(cfg.executor or "").strip().lower() in {"codex", "codex_cli", "codex-cli"}:
         codex_bin = str(cfg.codex_bin or "").strip() or "codex"
         try:
@@ -6482,6 +6498,7 @@ async def backlog_exec_config() -> BacklogExecConfigResponse:
             normalize_codex_model_id = None  # type: ignore
 
         raw_model = str(cfg.codex_model or "").strip() or "gpt-5.2"
+        codex_reasoning_effort = str(getattr(cfg, "codex_reasoning_effort", "") or "").strip() or None
         if callable(normalize_codex_model_id):
             try:
                 codex_model = str(normalize_codex_model_id(raw_model))
@@ -6505,6 +6522,7 @@ async def backlog_exec_config() -> BacklogExecConfigResponse:
         notify=bool(cfg.notify),
         codex_bin=codex_bin,
         codex_model=codex_model,
+        codex_reasoning_effort=codex_reasoning_effort,
         codex_available=codex_available,
     )
 
@@ -6521,8 +6539,14 @@ def _exec_request_summary(req: Dict[str, Any], *, request_id: str) -> BacklogExe
     backlog_filename = str(backlog.get("filename") or "").strip() or None
 
     target_agent = str(req.get("target_agent") or "").strip() or None
+    target_model = str(req.get("target_model") or "").strip() or None
+    target_reasoning_effort = str(req.get("target_reasoning_effort") or "").strip() or None
     executor_info = req.get("executor") if isinstance(req.get("executor"), dict) else {}
     executor_type = str(executor_info.get("type") or "").strip() or None
+    if not target_model:
+        target_model = str(executor_info.get("model") or "").strip() or None
+    if not target_reasoning_effort:
+        target_reasoning_effort = str(executor_info.get("reasoning_effort") or "").strip() or None
 
     result = req.get("result") if isinstance(req.get("result"), dict) else {}
     ok_val = result.get("ok")
@@ -6547,6 +6571,8 @@ def _exec_request_summary(req: Dict[str, Any], *, request_id: str) -> BacklogExe
         backlog_kind=backlog_kind,
         backlog_filename=backlog_filename,
         target_agent=target_agent,
+        target_model=target_model,
+        target_reasoning_effort=target_reasoning_effort,
         executor_type=executor_type,
         ok=ok,
         exit_code=exit_code,
@@ -6635,7 +6661,10 @@ def _backlog_exec_active_items_from_queue(
 
 @router.get("/backlog/exec/requests", response_model=BacklogExecRequestListResponse)
 async def backlog_exec_requests(
-    status: str = Query(default="", description="Optional comma-separated statuses (queued|running|completed|failed)."),
+    status: str = Query(
+        default="",
+        description="Optional comma-separated statuses (queued|running|awaiting_qa|completed|failed|promoted).",
+    ),
     limit: int = Query(default=200, ge=1, le=1000),
 ) -> BacklogExecRequestListResponse:
     repo_root = _triage_repo_root_from_env()
@@ -6687,7 +6716,10 @@ async def backlog_exec_requests(
 
 @router.get("/backlog/exec/active_items", response_model=BacklogExecActiveItemsResponse)
 async def backlog_exec_active_items(
-    status: str = Query(default="queued,running", description="Optional comma-separated statuses (queued|running)."),
+    status: str = Query(
+        default="queued,running,awaiting_qa",
+        description="Optional comma-separated statuses (queued|running|awaiting_qa).",
+    ),
     limit: int = Query(default=600, ge=1, le=2000),
 ) -> BacklogExecActiveItemsResponse:
     """Return backlog item relpaths currently queued/running in the backlog exec queue.
@@ -6741,6 +6773,281 @@ async def backlog_exec_request_detail(
         req.pop("prompt", None)
 
     return BacklogExecRequestDetailResponse(request_id=rid, payload=req)
+
+
+def _write_json_atomic(path: Path, obj: Dict[str, Any]) -> None:
+    tmp = path.with_suffix(".tmp")
+    data = json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    tmp.write_text(data, encoding="utf-8")
+    tmp.replace(path)
+
+
+def _extract_patch_paths(patch_text: str) -> List[str]:
+    """Extract file paths referenced by a git patch (best-effort)."""
+    out: List[str] = []
+    rx = re.compile(r"^diff --git a/(.+?) b/(.+?)\r?$")
+    for line in str(patch_text or "").splitlines():
+        m = rx.match(line)
+        if not m:
+            continue
+        for raw in (m.group(1), m.group(2)):
+            s = str(raw or "").strip()
+            if not s or s == "/dev/null":
+                continue
+            # Git may quote paths when they contain special chars: a/"foo bar"
+            if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+                s = s[1:-1]
+            out.append(s)
+    # De-dupe (preserve order).
+    seen: set[str] = set()
+    deduped: List[str] = []
+    for p in out:
+        ps = str(p).replace("\\", "/").strip()
+        if not ps or ps in seen:
+            continue
+        seen.add(ps)
+        deduped.append(ps)
+    return deduped
+
+
+def _is_safe_repo_relpath(relpath: str) -> bool:
+    s = str(relpath or "").replace("\\", "/").strip()
+    if not s:
+        return False
+    if s.startswith("/") or s.startswith("~"):
+        return False
+    # Avoid Windows drive paths.
+    if re.match(r"^[a-zA-Z]:/", s):
+        return False
+    parts = [p for p in s.split("/") if p]
+    if not parts:
+        return False
+    return all(p not in {"..", "."} for p in parts)
+
+
+def _sha256_hex_bytes(data: bytes) -> str:
+    try:
+        h = hashlib.sha256()
+        h.update(data)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
+@router.post("/backlog/exec/requests/{request_id}/feedback", response_model=BacklogExecRequestDetailResponse)
+async def backlog_exec_request_feedback(request_id: str, req: BacklogExecFeedbackRequest) -> BacklogExecRequestDetailResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    rid = _safe_backlog_exec_request_id(request_id)
+    if rid is None:
+        raise HTTPException(status_code=400, detail="Invalid request_id")
+
+    feedback = str(req.feedback or "")
+    if not feedback.strip():
+        raise HTTPException(status_code=400, detail="feedback is required")
+    if len(feedback) > 20_000:
+        raise HTTPException(status_code=413, detail="feedback is too large (max 20,000 chars)")
+
+    base = _gateway_base_dir()
+    qdir = (base / "backlog_exec_queue").resolve()
+    path = (qdir / f"{rid}.json").resolve()
+    try:
+        path.relative_to(qdir)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    payload = _load_json_bounded(path)
+    status = str(payload.get("status") or "").strip().lower() or "unknown"
+    if status not in {"awaiting_qa", "failed", "completed"}:
+        raise HTTPException(status_code=409, detail=f"Cannot add feedback when status={status!r}")
+
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    attempt_raw = payload.get("attempt")
+    try:
+        attempt = int(attempt_raw) if attempt_raw is not None else 1
+    except Exception:
+        attempt = 1
+    next_attempt = max(1, attempt + 1)
+
+    # Preserve previous result for auditability.
+    rh = payload.get("result_history") if isinstance(payload.get("result_history"), list) else []
+    prev_result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    if prev_result:
+        rh.append(
+            {
+                "at": now,
+                "attempt": attempt,
+                "status": status,
+                "result": prev_result,
+                "candidate_patch_relpath": str(payload.get("candidate_patch_relpath") or ""),
+            }
+        )
+        if len(rh) > 25:
+            rh = rh[-25:]
+
+    fb = payload.get("feedback") if isinstance(payload.get("feedback"), list) else []
+    fb.append({"at": now, "attempt": next_attempt, "text": feedback})
+    if len(fb) > 50:
+        fb = fb[-50:]
+
+    payload["attempt"] = next_attempt
+    payload["feedback"] = fb
+    payload["result_history"] = rh
+
+    payload["status"] = "queued"
+    payload["started_at"] = ""
+    payload["finished_at"] = ""
+    payload["result"] = {}
+    payload["candidate_patch_relpath"] = ""
+
+    try:
+        _write_json_atomic(path, payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write request: {e}")
+
+    # Hide prompt by default (the normal detail endpoint does that).
+    sanitized = dict(payload)
+    sanitized.pop("prompt", None)
+    return BacklogExecRequestDetailResponse(request_id=rid, payload=sanitized)
+
+
+@router.post("/backlog/exec/requests/{request_id}/promote", response_model=BacklogExecRequestDetailResponse)
+async def backlog_exec_request_promote(request_id: str, req: BacklogExecPromoteRequest) -> BacklogExecRequestDetailResponse:
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    rid = _safe_backlog_exec_request_id(request_id)
+    if rid is None:
+        raise HTTPException(status_code=400, detail="Invalid request_id")
+
+    base = _gateway_base_dir()
+    qdir = (base / "backlog_exec_queue").resolve()
+    path = (qdir / f"{rid}.json").resolve()
+    try:
+        path.relative_to(qdir)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    payload = _load_json_bounded(path)
+    status = str(payload.get("status") or "").strip().lower() or "unknown"
+    if status != "awaiting_qa":
+        raise HTTPException(status_code=409, detail=f"Cannot promote when status={status!r}")
+
+    exec_mode = str(payload.get("execution_mode") or "").strip().lower() or "uat"
+    if exec_mode == "candidate":
+        exec_mode = "uat"
+    if exec_mode != "uat":
+        raise HTTPException(status_code=400, detail="Promotion is only supported for execution_mode=uat in v0")
+
+    # Find candidate patch file.
+    patch_rel = str(payload.get("candidate_patch_relpath") or "").strip()
+    run_dir_rel = str(payload.get("run_dir_relpath") or "").strip()
+    patch_path: Optional[Path] = None
+    if patch_rel:
+        pp = (base / patch_rel).resolve()
+        try:
+            pp.relative_to(base)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid patch path")
+        patch_path = pp
+    elif run_dir_rel:
+        rd = (base / run_dir_rel).resolve()
+        try:
+            rd.relative_to(base)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid run_dir path")
+        pp = (rd / "candidate.patch").resolve()
+        try:
+            pp.relative_to(rd)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid patch path")
+        patch_path = pp
+
+    if patch_path is None or not patch_path.exists():
+        raise HTTPException(status_code=400, detail="No candidate patch available for promotion")
+
+    patch_bytes = b""
+    try:
+        patch_bytes = patch_path.read_bytes()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read patch: {e}")
+    if len(patch_bytes) > 60_000_000:
+        raise HTTPException(status_code=413, detail="Patch is too large")
+    patch_text = ""
+    try:
+        patch_text = patch_bytes.decode("utf-8", errors="replace")
+    except Exception:
+        patch_text = ""
+
+    patch_paths = _extract_patch_paths(patch_text)
+    unsafe = [p for p in patch_paths if not _is_safe_repo_relpath(p)]
+    if unsafe:
+        sample = ", ".join(unsafe[:3])
+        more = f" (+{len(unsafe) - 3} more)" if len(unsafe) > 3 else ""
+        raise HTTPException(status_code=400, detail=f"Unsafe patch paths detected: {sample}{more}")
+
+    # Apply patch to repo_root (best-effort). `git apply` does not require a git repo.
+    try:
+        proc = subprocess.run(
+            ["git", "apply", "--whitespace=nowarn", str(patch_path)],
+            cwd=str(Path(repo_root).resolve()),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60.0,
+            check=False,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="git is not available (required to apply patch)")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to apply patch: {e}")
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        if len(err) > 3500:
+            err = err[:3500] + "\n…(truncated)…"
+        raise HTTPException(status_code=400, detail=f"Patch apply failed: {err or 'unknown error'}")
+
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    payload["status"] = "promoted"
+    payload["promoted_at"] = now
+    payload["promotion"] = {
+        "patch_sha256": _sha256_hex_bytes(patch_bytes),
+        "files": patch_paths[:500],
+        "files_count": len(patch_paths),
+    }
+    payload["promotion_report"] = {
+        "at": now,
+        "note": "Applied candidate.patch to repo_root via git apply.",
+    }
+
+    # Optional redeploy hook (best-effort).
+    if bool(req.redeploy):
+        try:
+            if _process_manager_enabled():
+                mgr = _require_process_manager()
+                out = mgr.redeploy_gateway()
+                payload.setdefault("promotion_report", {})["redeploy"] = out
+            else:
+                payload.setdefault("promotion_report", {})["redeploy"] = {"status": "skipped", "reason": "process_manager_disabled"}
+        except Exception as e:
+            payload.setdefault("promotion_report", {})["redeploy_error"] = str(e)
+
+    try:
+        _write_json_atomic(path, payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write request: {e}")
+
+    sanitized = dict(payload)
+    sanitized.pop("prompt", None)
+    return BacklogExecRequestDetailResponse(request_id=rid, payload=sanitized)
 
 
 @router.get("/backlog/exec/requests/{request_id}/logs/tail", response_model=BacklogExecLogTailResponse)
@@ -7865,7 +8172,7 @@ async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
     qdir = (base / "backlog_exec_queue").resolve()
     qdir.mkdir(parents=True, exist_ok=True)
 
-    active = _backlog_exec_active_items_from_queue(qdir=qdir, wanted_statuses={"queued", "running"}, limit_items=3000)
+    active = _backlog_exec_active_items_from_queue(qdir=qdir, wanted_statuses={"queued", "running", "awaiting_qa"}, limit_items=3000)
     existing = next((it for it in active if str(it.get("relpath") or "").strip() == relpath), None)
     if isinstance(existing, dict):
         rid = str(existing.get("request_id") or "").strip()
@@ -7885,13 +8192,19 @@ async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
         raise HTTPException(status_code=500, detail="Invalid queue path")
 
     target_agent = "codex:gpt-5.2"
+    target_model: Optional[str] = None
+    target_reasoning_effort: Optional[str] = None
+    execution_mode = "uat"
     try:
         from ..maintenance.backlog_exec_runner import BacklogExecRunnerConfig, normalize_codex_model_id  # type: ignore
 
         cfg = BacklogExecRunnerConfig.from_env()
         ex = str(getattr(cfg, "executor", "") or "").strip().lower()
         if ex in {"codex", "codex_cli", "codex-cli"}:
-            target_agent = f"codex:{normalize_codex_model_id(getattr(cfg, 'codex_model', 'gpt-5.2'))}"
+            target_model = normalize_codex_model_id(getattr(cfg, "codex_model", "gpt-5.2"))
+            target_reasoning_effort = str(getattr(cfg, "codex_reasoning_effort", "") or "").strip() or None
+            target_agent = f"codex:{target_model}"
+        execution_mode = str(getattr(cfg, "exec_mode_default", "") or "").strip().lower() or "uat"
     except Exception:
         pass
 
@@ -7899,8 +8212,11 @@ async def backlog_execute(kind: str, filename: str) -> BacklogExecuteResponse:
         "created_at": datetime.datetime.now().astimezone().isoformat(),
         "request_id": request_id,
         "status": "queued",
+        "execution_mode": execution_mode,
         "backlog": {"kind": k, "filename": safe, "relpath": relpath},
         "target_agent": target_agent,
+        "target_model": target_model,
+        "target_reasoning_effort": target_reasoning_effort,
         "prompt": prompt,
     }
     try:
@@ -7938,7 +8254,7 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
     qdir = (base / "backlog_exec_queue").resolve()
     qdir.mkdir(parents=True, exist_ok=True)
 
-    active = _backlog_exec_active_items_from_queue(qdir=qdir, wanted_statuses={"queued", "running"}, limit_items=8000)
+    active = _backlog_exec_active_items_from_queue(qdir=qdir, wanted_statuses={"queued", "running", "awaiting_qa"}, limit_items=8000)
     active_rel = {str(it.get("relpath") or "").strip() for it in active if isinstance(it, dict) and str(it.get("relpath") or "").strip()}
     overlapping = [rel for rel in relpaths if rel in active_rel]
     if overlapping:
@@ -7989,13 +8305,19 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
         raise HTTPException(status_code=500, detail="Invalid queue path")
 
     target_agent = "codex:gpt-5.2"
+    target_model: Optional[str] = None
+    target_reasoning_effort: Optional[str] = None
+    execution_mode = "uat"
     try:
         from ..maintenance.backlog_exec_runner import BacklogExecRunnerConfig, normalize_codex_model_id  # type: ignore
 
         cfg = BacklogExecRunnerConfig.from_env()
         ex = str(getattr(cfg, "executor", "") or "").strip().lower()
         if ex in {"codex", "codex_cli", "codex-cli"}:
-            target_agent = f"codex:{normalize_codex_model_id(getattr(cfg, 'codex_model', 'gpt-5.2'))}"
+            target_model = normalize_codex_model_id(getattr(cfg, "codex_model", "gpt-5.2"))
+            target_reasoning_effort = str(getattr(cfg, "codex_reasoning_effort", "") or "").strip() or None
+            target_agent = f"codex:{target_model}"
+        execution_mode = str(getattr(cfg, "exec_mode_default", "") or "").strip().lower() or "uat"
     except Exception:
         pass
 
@@ -8003,10 +8325,13 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
         "created_at": datetime.datetime.now().astimezone().isoformat(),
         "request_id": request_id,
         "status": "queued",
+        "execution_mode": execution_mode,
         # Synthetic label: avoid copying a fake backlog path; the real list is in backlog_queue.
         "backlog": {"kind": "planned", "filename": f"batch({len(items)})", "relpath": ""},
         "backlog_queue": {"mode": "sequential", "items": items},
         "target_agent": target_agent,
+        "target_model": target_model,
+        "target_reasoning_effort": target_reasoning_effort,
         "prompt": prompt,
     }
     try:

@@ -466,8 +466,10 @@ def main(argv: list[str] | None = None) -> None:
             notify=cfg.notify,
             codex_bin=cfg.codex_bin,
             codex_model=cfg.codex_model,
+            codex_reasoning_effort=getattr(cfg, "codex_reasoning_effort", ""),
             codex_sandbox=cfg.codex_sandbox,
             codex_approvals=cfg.codex_approvals,
+            exec_mode_default=getattr(cfg, "exec_mode_default", "uat"),
         )
 
         stop = threading.Event()
