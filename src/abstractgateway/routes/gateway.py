@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore
@@ -5654,6 +5654,115 @@ class ReportContentResponse(BaseModel):
     content: str
 
 
+class EmailAccountInfo(BaseModel):
+    account: str
+    email: str = ""
+    from_email: Optional[str] = None
+    can_read: bool = False
+    can_send: bool = False
+    imap_password_set: Optional[bool] = None
+    smtp_password_set: Optional[bool] = None
+
+
+class EmailAccountsResponse(BaseModel):
+    ok: bool = True
+    source: str = ""
+    config_path: str = ""
+    default_account: str = ""
+    accounts: List[EmailAccountInfo] = Field(default_factory=list)
+
+
+class EmailMessageSummary(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    uid: str
+    message_id: str = ""
+    subject: str = ""
+    from_: str = Field(default="", alias="from")
+    to: str = ""
+    date: str = ""
+    flags: List[str] = Field(default_factory=list)
+    seen: bool = False
+    size: Optional[int] = None
+
+
+class EmailListFilter(BaseModel):
+    since: Optional[str] = None
+    status: str = "all"
+    limit: int = 20
+
+
+class EmailListCounts(BaseModel):
+    returned: int = 0
+    unread: int = 0
+    read: int = 0
+
+
+class EmailListResponse(BaseModel):
+    ok: bool = True
+    account: str
+    mailbox: str
+    filter: EmailListFilter
+    counts: EmailListCounts
+    messages: List[EmailMessageSummary] = Field(default_factory=list)
+
+
+class EmailAttachmentInfo(BaseModel):
+    filename: str = ""
+    content_type: str = ""
+
+
+class EmailReadResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    ok: bool = True
+    account: str
+    mailbox: str
+    uid: str
+    message_id: str = ""
+    subject: str = ""
+    from_: str = Field(default="", alias="from")
+    to: str = ""
+    cc: str = ""
+    date: str = ""
+    flags: List[str] = Field(default_factory=list)
+    seen: bool = False
+    body_text: str = ""
+    body_html: str = ""
+    attachments: List[EmailAttachmentInfo] = Field(default_factory=list)
+
+
+class EmailSendRequest(BaseModel):
+    account: Optional[str] = None
+    to: Any = Field(..., description="Recipient email or list of emails.")
+    subject: str
+    body_text: Optional[str] = None
+    body_html: Optional[str] = None
+    cc: Any = None
+    bcc: Any = None
+    headers: Optional[Dict[str, str]] = None
+
+
+class EmailSmtpInfo(BaseModel):
+    host: str = ""
+    port: int = 0
+    username: str = ""
+    starttls: bool = True
+
+
+class EmailSendResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    ok: bool = True
+    account: str
+    message_id: str = ""
+    from_: str = Field(default="", alias="from")
+    to: List[str] = Field(default_factory=list)
+    cc: List[str] = Field(default_factory=list)
+    bcc: List[str] = Field(default_factory=list)
+    smtp: EmailSmtpInfo
+
+
 class TriageDecisionSummary(BaseModel):
     decision_id: str
     report_type: str
@@ -6400,6 +6509,202 @@ async def get_feature_request_content(filename: str) -> ReportContentResponse:
         raise HTTPException(status_code=404, detail="Feature request not found")
     content = _read_text_bounded(path, max_chars=400_000)
     return ReportContentResponse(report_type="feature", filename=safe, relpath=f"feature_requests/{safe}", content=content)
+
+
+def _require_email_tools():
+    try:
+        from abstractcore.tools.comms_tools import list_email_accounts as tool_list_email_accounts
+        from abstractcore.tools.comms_tools import list_emails as tool_list_emails
+        from abstractcore.tools.comms_tools import read_email as tool_read_email
+        from abstractcore.tools.comms_tools import send_email as tool_send_email
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Email tools are not available: {e}") from e
+    return tool_list_email_accounts, tool_list_emails, tool_read_email, tool_send_email
+
+
+def _email_tool_payload_or_error(payload: Any) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=500, detail="Email tool returned a non-dict payload")
+    if not bool(payload.get("success")):
+        err = str(payload.get("error") or "Email tool failed")
+        err_norm = err.strip().lower()
+        if any(
+            needle in err_norm
+            for needle in (
+                "is required",
+                "must be",
+                "unknown account",
+                "specify account",
+                "status must be",
+            )
+        ):
+            raise HTTPException(status_code=400, detail=err)
+        raise HTTPException(status_code=500, detail=err)
+    return payload
+
+
+@router.get("/email/accounts", response_model=EmailAccountsResponse)
+async def email_list_accounts() -> EmailAccountsResponse:
+    tool_list_email_accounts, _tool_list_emails, _tool_read_email, _tool_send_email = _require_email_tools()
+    payload = _email_tool_payload_or_error(tool_list_email_accounts())
+    items: list[EmailAccountInfo] = []
+    for raw in payload.get("accounts") or []:
+        if not isinstance(raw, dict):
+            continue
+        items.append(
+            EmailAccountInfo(
+                account=str(raw.get("account") or ""),
+                email=str(raw.get("email") or ""),
+                from_email=str(raw.get("from_email") or "") or None,
+                can_read=bool(raw.get("can_read")),
+                can_send=bool(raw.get("can_send")),
+                imap_password_set=raw.get("imap_password_set") if raw.get("imap_password_set") in {True, False, None} else None,
+                smtp_password_set=raw.get("smtp_password_set") if raw.get("smtp_password_set") in {True, False, None} else None,
+            )
+        )
+
+    return EmailAccountsResponse(
+        source=str(payload.get("source") or ""),
+        config_path=str(payload.get("config_path") or ""),
+        default_account=str(payload.get("default_account") or ""),
+        accounts=items,
+    )
+
+
+@router.get("/email/messages", response_model=EmailListResponse)
+async def email_list_messages(
+    account: str = Query(default="", description="Optional account name (required if multiple configured)."),
+    mailbox: str = Query(default="", description="Optional mailbox override (default: account config or INBOX)."),
+    since: str = Query(default="", description="Optional since filter (e.g. '7d' or ISO8601)."),
+    status: str = Query(default="all", description="all|unread|read"),
+    limit: int = Query(default=20, ge=1, le=200),
+) -> EmailListResponse:
+    _tool_list_email_accounts, tool_list_emails, _tool_read_email, _tool_send_email = _require_email_tools()
+    payload = _email_tool_payload_or_error(
+        tool_list_emails(
+            account=str(account or "").strip() or None,
+            mailbox=str(mailbox or "").strip() or None,
+            since=str(since or "").strip() or None,
+            status=str(status or "").strip() or "all",
+            limit=int(limit),
+        )
+    )
+    filt = payload.get("filter") if isinstance(payload.get("filter"), dict) else {}
+    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+    messages = payload.get("messages") if isinstance(payload.get("messages"), list) else []
+
+    out_messages: list[EmailMessageSummary] = []
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        out_messages.append(
+            EmailMessageSummary(
+                uid=str(m.get("uid") or ""),
+                message_id=str(m.get("message_id") or ""),
+                subject=str(m.get("subject") or ""),
+                from_=str(m.get("from") or ""),
+                to=str(m.get("to") or ""),
+                date=str(m.get("date") or ""),
+                flags=[str(x) for x in (m.get("flags") or []) if isinstance(x, str)],
+                seen=bool(m.get("seen")),
+                size=int(m.get("size")) if isinstance(m.get("size"), int) else None,
+            )
+        )
+
+    return EmailListResponse(
+        account=str(payload.get("account") or ""),
+        mailbox=str(payload.get("mailbox") or ""),
+        filter=EmailListFilter(
+            since=str(filt.get("since") or "") or None,
+            status=str(filt.get("status") or "all"),
+            limit=int(filt.get("limit") or 0) or int(limit),
+        ),
+        counts=EmailListCounts(
+            returned=int(counts.get("returned") or 0),
+            unread=int(counts.get("unread") or 0),
+            read=int(counts.get("read") or 0),
+        ),
+        messages=out_messages,
+    )
+
+
+@router.get("/email/messages/{uid}", response_model=EmailReadResponse)
+async def email_read_message(
+    uid: str,
+    account: str = Query(default="", description="Optional account name (required if multiple configured)."),
+    mailbox: str = Query(default="", description="Optional mailbox override (default: account config or INBOX)."),
+    max_body_chars: int = Query(default=20000, ge=1000, le=200000),
+) -> EmailReadResponse:
+    _tool_list_email_accounts, _tool_list_emails, tool_read_email, _tool_send_email = _require_email_tools()
+    payload = _email_tool_payload_or_error(
+        tool_read_email(
+            uid=str(uid or "").strip(),
+            account=str(account or "").strip() or None,
+            mailbox=str(mailbox or "").strip() or None,
+            max_body_chars=int(max_body_chars),
+        )
+    )
+    attachments_raw = payload.get("attachments") if isinstance(payload.get("attachments"), list) else []
+    attachments: list[EmailAttachmentInfo] = []
+    for a in attachments_raw:
+        if not isinstance(a, dict):
+            continue
+        attachments.append(
+            EmailAttachmentInfo(
+                filename=str(a.get("filename") or ""),
+                content_type=str(a.get("content_type") or ""),
+            )
+        )
+
+    return EmailReadResponse(
+        account=str(payload.get("account") or ""),
+        mailbox=str(payload.get("mailbox") or ""),
+        uid=str(payload.get("uid") or ""),
+        message_id=str(payload.get("message_id") or ""),
+        subject=str(payload.get("subject") or ""),
+        from_=str(payload.get("from") or ""),
+        to=str(payload.get("to") or ""),
+        cc=str(payload.get("cc") or ""),
+        date=str(payload.get("date") or ""),
+        flags=[str(x) for x in (payload.get("flags") or []) if isinstance(x, str)],
+        seen=bool(payload.get("seen")),
+        body_text=str(payload.get("body_text") or ""),
+        body_html=str(payload.get("body_html") or ""),
+        attachments=attachments,
+    )
+
+
+@router.post("/email/send", response_model=EmailSendResponse)
+async def email_send_message(req: EmailSendRequest) -> EmailSendResponse:
+    _tool_list_email_accounts, _tool_list_emails, _tool_read_email, tool_send_email = _require_email_tools()
+    payload = _email_tool_payload_or_error(
+        tool_send_email(
+            to=req.to,
+            subject=str(req.subject or ""),
+            account=str(req.account or "").strip() or None,
+            body_text=req.body_text,
+            body_html=req.body_html,
+            cc=req.cc,
+            bcc=req.bcc,
+            headers=req.headers,
+        )
+    )
+    smtp_raw = payload.get("smtp") if isinstance(payload.get("smtp"), dict) else {}
+    smtp = EmailSmtpInfo(
+        host=str(smtp_raw.get("host") or ""),
+        port=int(smtp_raw.get("port") or 0),
+        username=str(smtp_raw.get("username") or ""),
+        starttls=bool(smtp_raw.get("starttls")) if smtp_raw.get("starttls") in {True, False} else True,
+    )
+    return EmailSendResponse(
+        account=str(payload.get("account") or ""),
+        message_id=str(payload.get("message_id") or ""),
+        from_=str(payload.get("from") or ""),
+        to=[str(x) for x in (payload.get("to") or []) if isinstance(x, str)],
+        cc=[str(x) for x in (payload.get("cc") or []) if isinstance(x, str)],
+        bcc=[str(x) for x in (payload.get("bcc") or []) if isinstance(x, str)],
+        smtp=smtp,
+    )
 
 
 @router.post("/triage/run", response_model=TriageRunResponse)
