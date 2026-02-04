@@ -14,6 +14,54 @@ def _stderr(line: str) -> None:
     print(str(line), file=sys.stderr)
 
 
+def _configure_console_logging(level: int = logging.INFO) -> None:
+    """Best-effort console logging config aligned with AbstractCore's default format."""
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    datefmt = "%H:%M:%S"
+    root = logging.getLogger()
+    if root.handlers:
+        for h in list(root.handlers):
+            try:
+                h.setFormatter(logging.Formatter(fmt, datefmt=datefmt))
+            except Exception:
+                continue
+        try:
+            root.setLevel(int(level))
+        except Exception:
+            pass
+        return
+    logging.basicConfig(level=int(level), format=fmt, datefmt=datefmt)
+
+
+def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) -> dict:
+    """Return a uvicorn log_config dict that matches AbstractCore-style formatting."""
+    log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+
+    datefmt = "%H:%M:%S"
+    default_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    access_fmt = '%(asctime)s [%(levelname)s] %(name)s: %(client_addr)s - "%(request_line)s" %(status_code)s'
+
+    try:
+        fmts = log_config.setdefault("formatters", {})
+        if isinstance(fmts.get("default"), dict):
+            fmts["default"]["fmt"] = default_fmt
+            fmts["default"]["datefmt"] = datefmt
+        if isinstance(fmts.get("access"), dict):
+            fmts["access"]["fmt"] = access_fmt
+            fmts["access"]["datefmt"] = datefmt
+    except Exception:
+        # If uvicorn logging config structure changes, keep default logging.
+        return log_config
+
+    if silence_gpu_metrics_access_log:
+        log_config.setdefault("filters", {})["suppress_gpu_metrics"] = {
+            "()": "abstractgateway.cli._UvicornAccessLogFilter"
+        }
+        log_config.setdefault("handlers", {}).setdefault("access", {})["filters"] = ["suppress_gpu_metrics"]
+
+    return log_config
+
+
 def _is_loopback_host(host: str) -> bool:
     h = str(host or "").strip().lower()
     return h in {"127.0.0.1", "::1", "localhost"}
@@ -79,6 +127,7 @@ class _UvicornAccessLogFilter(logging.Filter):
 
 
 def main(argv: list[str] | None = None) -> None:
+    _configure_console_logging()
     parser = argparse.ArgumentParser(prog="abstractgateway", description="AbstractGateway (Run Gateway host)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -244,17 +293,10 @@ def main(argv: list[str] | None = None) -> None:
                 "reload": bool(args.reload),
             }
 
-            if silence_gpu_metrics_access_log:
-                try:
-                    log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
-                    log_config.setdefault("filters", {})["suppress_gpu_metrics"] = {
-                        "()": "abstractgateway.cli._UvicornAccessLogFilter"
-                    }
-                    log_config.setdefault("handlers", {}).setdefault("access", {})["filters"] = ["suppress_gpu_metrics"]
-                    run_kwargs["log_config"] = log_config
-                except Exception:
-                    # Best-effort: if uvicorn logging config shape changes, keep default logging rather than crashing.
-                    pass
+            run_kwargs["log_config"] = _build_uvicorn_log_config(
+                uvicorn=uvicorn,
+                silence_gpu_metrics_access_log=bool(silence_gpu_metrics_access_log),
+            )
 
             uvicorn.run("abstractgateway.app:app", **run_kwargs)
         finally:

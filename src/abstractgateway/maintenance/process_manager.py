@@ -38,6 +38,12 @@ def managed_env_var_allowlist() -> Dict[str, ManagedEnvVarSpec]:
     specs = [
         # Email (framework tools + bridges).
         ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_ACCOUNTS_CONFIG",
+            label="Email accounts config path",
+            description="Path to a YAML/JSON multi-account config file (e.g. /path/to/emails.yaml).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
             key="ABSTRACT_EMAIL_SMTP_HOST",
             label="SMTP host",
             description="SMTP server hostname (e.g. smtp.gmail.com).",
