@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -346,3 +347,84 @@ def test_backlog_exec_promote_releases_uat_lock_no_autodeploy(tmp_path: Path, mo
         assert rep.get("uat_lock_owner_request_id") == rid1
         assert rep.get("uat_lock_released") is True
         assert rep.get("next_uat_autodeployed_request_id") in {None, ""}
+
+
+@pytest.mark.basic
+def test_backlog_exec_promote_blocks_when_prod_diverged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway_dir = tmp_path / "gateway"
+    gateway_dir.mkdir(parents=True, exist_ok=True)
+    qdir = gateway_dir / "backlog_exec_queue"
+    qdir.mkdir(parents=True, exist_ok=True)
+    runs_dir = gateway_dir / "backlog_exec_runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+
+    def _git(cwd: Path, args: list[str]) -> None:
+        subprocess.run(["git", *args], cwd=str(cwd), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10.0)
+
+    # Create a real git repo so conflict detection is exercised.
+    demo_repo = repo_root / "demo"
+    demo_repo.mkdir(parents=True, exist_ok=True)
+    _git(demo_repo, ["init"])
+    _git(demo_repo, ["config", "user.email", "test@example.com"])
+    _git(demo_repo, ["config", "user.name", "Test"])
+    (demo_repo / "demo.txt").write_text("old\n", encoding="utf-8")
+    _git(demo_repo, ["add", "demo.txt"])
+    _git(demo_repo, ["commit", "-m", "base"])
+
+    rid = "ffffffffffffffff"
+    run_dir = runs_dir / rid
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Candidate workspace uses a detached worktree at HEAD (matches prod base).
+    candidate_rel = f"untracked/backlog_exec_uat/workspaces/{rid}"
+    candidate_root = repo_root / candidate_rel
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    _git(demo_repo, ["worktree", "add", "--detach", str(candidate_root / "demo"), "HEAD"])
+    (candidate_root / "demo" / "demo.txt").write_text("new\n", encoding="utf-8")
+
+    # Diverge prod after the candidate was created (simulates another promotion/manual edit).
+    (demo_repo / "demo.txt").write_text("prod_changed\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "created_at": "2026-02-03T10:00:00Z",
+        "request_id": rid,
+        "candidate_relpath": candidate_rel,
+        "repos": [{"repo": "demo", "repo_relpath": "demo", "copy": ["demo.txt"], "delete": [], "skipped": []}],
+    }
+    (run_dir / "candidate_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    (qdir / f"{rid}.json").write_text(
+        json.dumps(
+            {
+                "created_at": "2026-02-03T10:00:00Z",
+                "request_id": rid,
+                "status": "awaiting_qa",
+                "execution_mode": "uat",
+                "run_dir_relpath": f"backlog_exec_runs/{rid}",
+                "candidate_relpath": candidate_rel,
+                "candidate_manifest_relpath": f"backlog_exec_runs/{rid}/candidate_manifest.json",
+                "backlog": {"kind": "planned", "filename": "710-x.md", "relpath": "docs/backlog/planned/710-x.md"},
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
+    with TestClient(app) as client:
+        pr = client.post(f"/api/gateway/backlog/exec/requests/{rid}/promote", json={"redeploy": False})
+        assert pr.status_code == 409
+
+    payload_on_disk = json.loads((qdir / f"{rid}.json").read_text(encoding="utf-8"))
+    rep = payload_on_disk.get("promotion_report") or {}
+    assert rep.get("blocked") is True
+    assert rep.get("reason") == "conflicts"
+    assert int(rep.get("conflicts_total") or 0) >= 1

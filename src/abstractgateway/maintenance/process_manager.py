@@ -162,7 +162,9 @@ def _pid_commandline(pid: int) -> str:
         return ""
     try:
         proc = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
+            # Use wide output so long commandlines (node/uvicorn) aren't truncated.
+            # This is critical for UAT stop safety checks that match on ports/markers.
+            ["ps", "-ww", "-p", str(pid), "-o", "command="],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -234,6 +236,14 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             kind="service",
             description="Gateway running candidate code from untracked/backlog_exec_uat/current.",
             cwd=".",
+            env={
+                # Pin defaults to prevent accidental env leakage from the operator shell.
+                "ABSTRACTGATEWAY_UAT_PORT": "6081",
+                "ABSTRACTGATEWAY_UAT_DATA_DIR": "runtime/gateway_uat",
+                "ABSTRACTGATEWAY_UAT_REPO_ROOT": "untracked/backlog_exec_uat/current",
+                # UAT should not execute backlog jobs (only the prod gateway should).
+                "ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER": "0",
+            },
             command=[_default_shell(), "-lc", "./agw-uat.sh"],
             url="http://localhost:6081",
         ),
@@ -260,6 +270,10 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             kind="service",
             description="Vite dev server from untracked/backlog_exec_uat/current.",
             cwd=".",
+            env={
+                "ABSTRACTOBSERVER_UAT_PORT": "6082",
+                "ABSTRACTGATEWAY_UAT_REPO_ROOT": "untracked/backlog_exec_uat/current",
+            },
             command=[_default_shell(), "-lc", "./aobs-uat.sh"],
             url="http://localhost:6082",
         ),
@@ -278,6 +292,10 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             kind="service",
             description="Vite dev server from untracked/backlog_exec_uat/current.",
             cwd=".",
+            env={
+                "ABSTRACTCODE_WEB_UAT_PORT": "6083",
+                "ABSTRACTGATEWAY_UAT_REPO_ROOT": "untracked/backlog_exec_uat/current",
+            },
             command=[_default_shell(), "-lc", "./acode-web-uat.sh"],
             url="http://localhost:6083",
         ),
@@ -296,6 +314,11 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             kind="service",
             description="Vite dev server from untracked/backlog_exec_uat/current.",
             cwd=".",
+            env={
+                "ABSTRACTFLOW_FRONTEND_UAT_PORT": "6084",
+                "ABSTRACTFLOW_BACKEND_UAT_PORT": "6080",
+                "ABSTRACTGATEWAY_UAT_REPO_ROOT": "untracked/backlog_exec_uat/current",
+            },
             command=[_default_shell(), "-lc", "./aflow-frontend-uat.sh"],
             url="http://localhost:6084",
         ),
@@ -314,6 +337,11 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
             kind="service",
             description="FastAPI backend from untracked/backlog_exec_uat/current.",
             cwd=".",
+            env={
+                "ABSTRACTFLOW_BACKEND_UAT_PORT": "6080",
+                "ABSTRACTFLOW_RUNTIME_DIR": "runtime/abstractflow_uat",
+                "ABSTRACTGATEWAY_UAT_REPO_ROOT": "untracked/backlog_exec_uat/current",
+            },
             command=[_default_shell(), "-lc", "./aflow-backend-uat.sh"],
             url="http://localhost:6080",
         ),
