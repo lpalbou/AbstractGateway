@@ -10,6 +10,12 @@ Important operational defaults:
 - Bundle mode (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`) is the default and loads `.flow` bundles from `ABSTRACTGATEWAY_FLOWS_DIR`.
 - The system is replay-first; SSE is an optimization, not a source of truth.
 
+Multimodal notes:
+- Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (reports `voice/audio/vision` plugin status).
+- Voice/audio durable endpoints (when `abstractvoice` is installed on the gateway host):
+  - STT: `POST /api/gateway/runs/{run_id}/audio/transcribe`
+  - TTS: `POST /api/gateway/runs/{run_id}/voice/tts`
+
 ## Start here
 
 - [README](./README.md): install + quickstart

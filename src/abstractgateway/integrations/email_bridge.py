@@ -430,11 +430,17 @@ class EmailBridge:
     # ---------------------------------------------------------------------
 
     def _resolve_password(self) -> tuple[Optional[str], Optional[str]]:
-        name = str(self._cfg.imap_password_env_var or "").strip() or "EMAIL_PASSWORD"
-        v = os.getenv(name)
-        if v is None or not str(v).strip():
-            return None, f"Missing IMAP password env var {name}"
-        return str(v).strip(), None
+        ref = str(self._cfg.imap_password_env_var or "").strip() or "EMAIL_PASSWORD"
+        v = os.getenv(ref)
+        if v is not None and str(v).strip():
+            return str(v).strip(), None
+
+        # Fail fast for conventional env var names (avoid silently using a name as a password).
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", ref):
+            return None, f"Missing IMAP password env var {ref}"
+
+        # Otherwise: treat the reference as a literal secret.
+        return ref, None
 
     def _connect_imap(self) -> tuple[Optional[imaplib.IMAP4_SSL], Optional[str]]:
         password, err = self._resolve_password()
@@ -774,4 +780,3 @@ class EmailBridge:
         }
 
         return payload, session_id, thread_key
-
