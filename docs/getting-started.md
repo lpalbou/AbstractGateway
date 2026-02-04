@@ -1,48 +1,88 @@
-# AbstractGateway — Getting Started
+# AbstractGateway — Getting started
 
-AbstractGateway is the deployable HTTP/SSE host for **durable AbstractRuntime runs**:
-- clients submit durable commands (`start`, `resume`, `pause`, `cancel`, `emit_event`)
-- clients render by replaying/streaming the append-only ledger
+AbstractGateway is a deployable HTTP/SSE host for **durable AbstractRuntime runs**:
+- clients **start runs** and submit **durable commands**
+- clients **render** by replaying/streaming the durable ledger (replay-first)
 
-This document covers:
-- running the gateway in **bundle mode** (recommended)
-- choosing a durability backend (**file** vs **sqlite**)
-- migrating an existing file-backed runtime directory to SQLite
+This guide gets a new installation running in **bundle mode** (recommended), then covers **file vs SQLite** durability and a best-effort **file → SQLite** migration.
 
 ## Prerequisites
 
-- Python environment with:
-  - `abstractgateway` (runner + durable gateway host), and
-  - `abstractgateway[http]` if you want to run the HTTP/SSE server (`abstractgateway serve`).
-- A bundles directory containing `*.flow` bundles (recommended).
-- If you run workflows that use LLM nodes:
-  - a provider reachable by AbstractCore (e.g. LMStudio).
+- Python `>=3.10` (see `pyproject.toml`)
+- Workflow source:
+  - **Bundle mode** (recommended): one `.flow` file or a directory of `*.flow` bundles
+    - You can also upload bundles after startup via `POST /api/gateway/bundles/upload` (see below)
+  - **VisualFlow directory mode** (compat): a directory of `*.json` VisualFlow files (requires `abstractgateway[visualflow]`)
+
+## Install
+
+```bash
+# Core package (runner + stores + CLI)
+pip install abstractgateway
+
+# HTTP server (FastAPI + Uvicorn)
+pip install "abstractgateway[http]"
+```
+
+Optional (only if your workflows need it):
+- LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.0"`
+- Visual Agent nodes (bundle mode): `pip install abstractagent`
+- `memory_kg_*` nodes (bundle mode): `pip install lancedb`
 
 ## 1) Run (bundle mode, file-backed stores)
 
-File-backed stores are the default. They are transparent and great for dev.
+File-backed stores are the default and easiest for dev.
 
 ```bash
 export ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle
-export ABSTRACTGATEWAY_FLOWS_DIR="flows/bundles"
-export ABSTRACTGATEWAY_DATA_DIR="runtime/gateway"
+export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"      # directory with *.flow (or a single .flow file)
+export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 
-export ABSTRACTGATEWAY_AUTH_TOKEN="dev-token"
+# Required by default: the server refuses to start without a token.
+export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
 
-# If your bundles contain LLM/Agent nodes:
-export ABSTRACTGATEWAY_PROVIDER="lmstudio"
-export ABSTRACTGATEWAY_MODEL="qwen/qwen3-next-80b"
-
-# Tool execution:
-# - passthrough (default): tool calls become a durable wait for external approval/execution
-# - local: execute tools in-process (dev only; treat as high risk)
-export ABSTRACTGATEWAY_TOOL_MODE="passthrough"
-
-abstractgateway serve --host 127.0.0.1 --port 8081
+abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
-### Split API vs runner (recommended for upgrades)
+OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs`
+
+Smoke checks:
+
+```bash
+curl -sS "http://127.0.0.1:8080/api/health"
+
+curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+  "http://127.0.0.1:8080/api/gateway/bundles"
+```
+
+If `bundles.items` is empty, either:
+- point `ABSTRACTGATEWAY_FLOWS_DIR` at a directory containing `*.flow` files (or a single `.flow` file), or
+- upload a bundle via the API:
+
+```bash
+curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+  -F "file=@./my-bundle@0.1.0.flow" \
+  -F "overwrite=false" \
+  -F "reload=true" \
+  "http://127.0.0.1:8080/api/gateway/bundles/upload"
+```
+
+## 2) Start a run (bundle mode)
+
+First, discover entrypoints from `GET /api/gateway/bundles`. Then start a run:
+
+```bash
+curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"bundle_id":"my-bundle","input_data":{"prompt":"Hello"}}' \
+  "http://127.0.0.1:8080/api/gateway/runs/start"
+```
+
+Notes:
+- If a bundle has multiple entrypoints and no default, you must pass `flow_id`.
+- See [api.md](./api.md) for ledger replay/stream and durable commands.
+
+## 3) Split API vs runner (recommended for upgrades)
 
 By default, `abstractgateway serve` starts the HTTP API **and** the runner loop in the same process.
 
@@ -53,59 +93,20 @@ To restart the HTTP API without pausing durable execution, run two processes sha
 abstractgateway runner
 
 # Process 2 (HTTP API only):
-abstractgateway serve --no-runner --host 127.0.0.1 --port 8081
+abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
 ```
 
-### Process manager (dev-only; remote start/stop/redeploy)
+## 4) What’s stored in `ABSTRACTGATEWAY_DATA_DIR` (file backend)
 
-AbstractGateway can optionally expose a **process manager** API that lets trusted UIs (e.g. AbstractObserver) start/stop a small allowlisted set of local dev processes (Vite servers, Flow backend) and trigger gateway redeploy actions.
-
-Safety contract:
-- **Disabled by default**
-- Still protected by gateway auth (Bearer token)
-- Intended for **trusted dev machines** (do not enable on untrusted/public hosts)
-
-Enable it:
-
-```bash
-export ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1
-export ABSTRACTGATEWAY_TRIAGE_REPO_ROOT="$PWD"   # used as the repo root for relative `cwd` resolution
-```
-
-Optional: override the managed process list (operator-provided JSON file):
-
-```bash
-export ABSTRACTGATEWAY_PROCESS_MANAGER_CONFIG="$PWD/runtime/gateway/processes.json"
-```
-
-Gateway endpoints (when enabled):
-- `GET /api/gateway/processes`
-- `POST /api/gateway/processes/{id}/start|stop|restart`
-- `POST /api/gateway/processes/gateway/redeploy`
-- `GET /api/gateway/processes/{id}/logs/tail`
-
-### `--host` vs `ABSTRACTGATEWAY_ALLOWED_ORIGINS` (common confusion)
-
-- `abstractgateway serve --host ...` controls the **bind address** (network interfaces to listen on).
-  - Local-only: `--host 127.0.0.1`
-  - LAN/dev: `--host 0.0.0.0` (all interfaces) or `--host <your-lan-ip>` (e.g. `192.168.1.188`)
-  - You cannot pass multiple hosts; if you need multiple binds, run behind a reverse proxy or run multiple gateway processes.
-- `ABSTRACTGATEWAY_ALLOWED_ORIGINS` controls **CORS** (which browser Origins are allowed to call the API).
-  - It can list multiple values like: `http://localhost:*,http://127.0.0.1:*,http://192.168.1.188:*`
-  - Glob patterns are supported (e.g. `https://*.ngrok-free.app`).
-  - It does **not** change which IPs the server listens on.
-  - Non-browser clients (e.g. `curl`) are not subject to CORS, but still require auth if `ABSTRACTGATEWAY_AUTH_TOKEN` is set.
-
-### What gets stored in `ABSTRACTGATEWAY_DATA_DIR` (file backend)
-
-When `ABSTRACTGATEWAY_STORE_BACKEND=file` (default), the gateway persists:
+When `ABSTRACTGATEWAY_STORE_BACKEND=file` (default), the gateway persists (via `abstractruntime` stores):
 - `run_<run_id>.json` (checkpointed run state)
 - `ledger_<run_id>.jsonl` (append-only step records)
 - `commands.jsonl` and `commands_cursor.json` (durable inbox + runner cursor)
-- `artifacts/` (artifact blobs/refs; used for large payloads and attachments)
+- `artifacts/` (offloaded blobs/attachments)
 - `dynamic_flows/` (gateway-generated wrapper flows, e.g. schedules)
+- `workspaces/` (per-run workspaces created at run start when `workspace_root` is not provided)
 
-## 2) Enable SQLite-backed stores (recommended for large/long-running dirs)
+## 5) Enable SQLite-backed stores
 
 SQLite-backed stores eliminate directory scanning and move run/ledger/inbox data into indexed tables.
 
@@ -116,31 +117,19 @@ export ABSTRACTGATEWAY_STORE_BACKEND=sqlite
 
 # Optional; when omitted, defaults to: <ABSTRACTGATEWAY_DATA_DIR>/gateway.sqlite3
 export ABSTRACTGATEWAY_DB_PATH="$PWD/runtime/gateway/gateway.sqlite3"
+
+abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
-Then start the gateway as usual:
+## 6) Migrate an existing file-backed data dir → SQLite
 
-```bash
-abstractgateway serve --host 127.0.0.1 --port 8081
-```
-
-## 3) Migrate an existing file-backed data dir → SQLite
-
-This is a **best-effort** local migration that *reads*:
+This is a **best-effort** local migration (`abstractgateway migrate`) that reads:
 - `run_*.json`
 - `ledger_*.jsonl`
 - `commands.jsonl`
 - `commands_cursor.json`
 
-and writes a single SQLite database file.
-
-The migration does **not** delete your old `run_*.json` / `ledger_*.jsonl` files.
-
-### Example: migrate `runtime/gateway/` into `runtime/gateway/gateway.sqlite3`
-
-1) Stop the gateway (avoid concurrent writes).
-2) Back up the directory (recommended).
-3) Run the migration.
+and writes a single SQLite DB file. It does **not** delete the original files.
 
 ```bash
 cp -a runtime/gateway "runtime/gateway.file-backup.$(date +%Y%m%d-%H%M%S)"
@@ -150,74 +139,11 @@ abstractgateway migrate --from=file --to=sqlite \
   --db-path runtime/gateway/gateway.sqlite3
 ```
 
-Now run in SQLite mode:
-
-```bash
-export ABSTRACTGATEWAY_STORE_BACKEND=sqlite
-export ABSTRACTGATEWAY_DB_PATH="$PWD/runtime/gateway/gateway.sqlite3"
-abstractgateway serve --host 127.0.0.1 --port 8081
-```
-
-### Smoke checks (SQLite mode)
-
-List bundles:
-
-```bash
-curl -sS -H "Authorization: Bearer dev-token" \
-  "http://127.0.0.1:8081/api/gateway/bundles"
-```
-
-Upload/install a `.flow` bundle (thin-client friendly):
-
-```bash
-curl -sS -H "Authorization: Bearer dev-token" \
-  -F "file=@./flows/bundles/my-bundle@0.1.0.flow" \
-  -F "overwrite=false" \
-  -F "reload=true" \
-  "http://127.0.0.1:8081/api/gateway/bundles/upload"
-```
-
-Remove/uninstall a bundle version:
-
-```bash
-curl -sS -X DELETE -H "Authorization: Bearer dev-token" \
-  "http://127.0.0.1:8081/api/gateway/bundles/my-bundle?bundle_version=0.1.0"
-```
-
-List runs:
-
-```bash
-curl -sS -H "Authorization: Bearer dev-token" \
-  "http://127.0.0.1:8081/api/gateway/runs?limit=5"
-```
-
-Verify the DB has data:
-
-```bash
-sqlite3 runtime/gateway/gateway.sqlite3 \
-  "select count(*) as runs from runs; select count(*) as ledger_rows from ledger; select count(*) as commands from commands;"
-```
-
-## 4) LMStudio notes (Level C / real inference)
-
-If you use `ABSTRACTGATEWAY_PROVIDER=lmstudio`, ensure LMStudio is running an OpenAI-compatible server (default: `http://localhost:1234/v1`).
-
-Optional:
-
-```bash
-export LMSTUDIO_BASE_URL="http://localhost:1234/v1"
-```
-
-## 5) Tool execution modes (important)
-
-- `ABSTRACTGATEWAY_TOOL_MODE=passthrough` (recommended default):
-  - the workflow can request tools, but the gateway will pause in a durable wait (approval required).
-- `ABSTRACTGATEWAY_TOOL_MODE=local` (dev only):
-  - the gateway executes tools in-process via AbstractCore’s default tool map.
-  - enabling comms tools (`ABSTRACT_ENABLE_COMMS_TOOLS=1`, email credentials, etc.) can have real-world side effects.
-
 ## Related docs
 
-- Package architecture: `abstractgateway/docs/architecture.md`
-- Framework architecture: `docs/architecture.md`
-- Testing levels (A/B/C): `docs/adr/0019-testing-strategy-and-levels.md`
+- Docs index: [README.md](./README.md)
+- Architecture: [architecture.md](./architecture.md)
+- Configuration (env vars + optional deps): [configuration.md](./configuration.md)
+- API overview: [api.md](./api.md)
+- Security: [security.md](./security.md)
+- Operator tooling (optional): [maintenance.md](./maintenance.md)

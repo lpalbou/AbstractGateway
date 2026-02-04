@@ -1,0 +1,44 @@
+# AbstractGateway
+
+> Durable Run Gateway host for AbstractRuntime: start runs + append durable commands; clients replay/stream the durable ledger (replay-first).
+
+This repository contains the `abstractgateway` Python package (CLI + FastAPI server + durable stores + runner worker).
+The main HTTP surface is under `/api/gateway/*` (see `src/abstractgateway/routes/gateway.py`).
+
+Important operational defaults:
+- `abstractgateway serve` requires an auth token by default (`ABSTRACTGATEWAY_AUTH_TOKEN`) and enforces an Origin allowlist on requests that include `Origin`.
+- Bundle mode (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`) is the default and loads `.flow` bundles from `ABSTRACTGATEWAY_FLOWS_DIR`.
+- The system is replay-first; SSE is an optimization, not a source of truth.
+
+## Start here
+
+- [README](./README.md): install + quickstart
+- [Docs index](./docs/README.md): documentation map
+
+## Core docs
+
+- [Getting started](./docs/getting-started.md): run the gateway + choose file vs SQLite stores
+- [API overview](./docs/api.md): core endpoints + curl examples
+- [Security](./docs/security.md): bearer token + origin allowlist + limits/audit log
+- [Configuration](./docs/configuration.md): env vars + install extras
+- [Architecture](./docs/architecture.md): components + durability model (diagram)
+
+## Key entrypoints (code)
+
+- [FastAPI app](./src/abstractgateway/app.py): ASGI app + middleware + routers
+- [Gateway routes](./src/abstractgateway/routes/gateway.py): `/api/gateway/*` endpoints (runs, ledger, bundles, commands, tooling)
+- [Security middleware](./src/abstractgateway/security/gateway_security.py): auth/origin/limits/audit log
+- [Service composition](./src/abstractgateway/service.py): config + stores + host + runner wiring
+- [Runner worker](./src/abstractgateway/runner.py): poll durable inbox + tick runs
+- [Stores](./src/abstractgateway/stores.py): file vs SQLite durability wiring
+- [CLI](./src/abstractgateway/cli.py): `abstractgateway serve|runner|migrate|...`
+
+## Development
+
+- [Tests](./tests/): API/security/runner contract tests (run with `pytest`)
+- Install for local dev: `pip install -e ".[dev,http]"`
+- Run server: `abstractgateway serve --host 127.0.0.1 --port 8080`
+
+## Optional
+
+- [Operator tooling](./docs/maintenance.md): triage/backlog/process manager/file helpers (disabled by default; high trust required)

@@ -1142,7 +1142,8 @@ def deploy_uat_for_request(*, gateway_data_dir: Path, repo_root: Path, request_i
         # Best-effort: liveness probes so the operator can immediately see whether the UAT URLs
         # are actually reachable (process running != port listening).
         try:
-            time.sleep(0.25)
+            # Give dev servers a moment to bind their ports before probing.
+            time.sleep(0.85)
             info_by_id = {p.get("id"): p for p in (mgr.list_processes() or []) if isinstance(p, dict)}
             for pid, st in list(deployed.items()):
                 if not isinstance(st, dict):

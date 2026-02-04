@@ -12,9 +12,131 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 
 _SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+_SAFE_ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class ManagedEnvVarSpec:
+    key: str
+    label: str
+    description: str
+    category: str = "general"
+    secret: bool = False
+
+
+def managed_env_var_allowlist() -> Dict[str, ManagedEnvVarSpec]:
+    """Allowlisted environment variables that can be set via the process manager UI.
+
+    Security rationale:
+    - Disallow arbitrary env var editing (PATH, LD_PRELOAD, PYTHONPATH, NODE_OPTIONS, etc).
+    - Treat stored values as secrets: never return them to HTTP clients.
+    """
+    specs = [
+        # Email (framework tools + bridges).
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_SMTP_HOST",
+            label="SMTP host",
+            description="SMTP server hostname (e.g. smtp.gmail.com).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_SMTP_PORT",
+            label="SMTP port",
+            description="SMTP port (e.g. 587 for STARTTLS, 465 for implicit TLS).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_SMTP_USERNAME",
+            label="SMTP username",
+            description="SMTP username (often the email address).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_SMTP_PASSWORD_ENV_VAR",
+            label="SMTP password env var",
+            description="Name of the env var that contains the SMTP password (default: EMAIL_PASSWORD).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_SMTP_STARTTLS",
+            label="SMTP STARTTLS",
+            description="Whether to use STARTTLS for SMTP (true/false).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_FROM",
+            label="From email",
+            description="Default From address (used when the tool doesn't specify one).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_REPLY_TO",
+            label="Reply-To",
+            description="Optional default Reply-To address.",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_DEFAULT_ACCOUNT",
+            label="Default account",
+            description="Default email account name (when multiple accounts exist).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_ACCOUNT_NAME",
+            label="Account name",
+            description="Optional account name label for env-based config (default: 'default').",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_IMAP_HOST",
+            label="IMAP host",
+            description="IMAP server hostname.",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_IMAP_PORT",
+            label="IMAP port",
+            description="IMAP port (default: 993).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_IMAP_USERNAME",
+            label="IMAP username",
+            description="IMAP username (often the email address).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR",
+            label="IMAP password env var",
+            description="Name of the env var that contains the IMAP password (default: EMAIL_PASSWORD).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="ABSTRACT_EMAIL_IMAP_FOLDER",
+            label="IMAP folder",
+            description="Mailbox folder to poll (default: INBOX).",
+            category="email",
+        ),
+        ManagedEnvVarSpec(
+            key="EMAIL_PASSWORD",
+            label="EMAIL_PASSWORD",
+            description="Email account password (referenced by *_PASSWORD_ENV_VAR by default).",
+            category="email",
+            secret=True,
+        ),
+    ]
+
+    out: Dict[str, ManagedEnvVarSpec] = {}
+    for s in specs:
+        k = str(s.key or "").strip()
+        if not k or not _SAFE_ENV_KEY_RE.match(k):
+            raise ValueError(f"Invalid allowlisted env var key: {k!r}")
+        out[k] = s
+    return out
 
 
 def _now_utc_iso() -> str:
@@ -33,6 +155,39 @@ def _is_pid_running(pid: int) -> bool:
         return True
     except Exception:
         return False
+
+
+def _pid_commandline(pid: int) -> str:
+    if not isinstance(pid, int) or pid <= 0:
+        return ""
+    try:
+        proc = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=1.0,
+            check=False,
+        )
+    except Exception:
+        return ""
+    return str(proc.stdout or "").strip()
+
+
+def _expected_port_from_url(url: Optional[str]) -> Optional[int]:
+    s = str(url or "").strip()
+    if not s:
+        return None
+    try:
+        u = urlparse(s)
+    except Exception:
+        return None
+    if u.port is None:
+        return None
+    try:
+        return int(u.port)
+    except Exception:
+        return None
 
 
 def _default_shell() -> str:
@@ -249,17 +404,29 @@ class ProcessManager:
         self._base_dir = Path(base_dir).expanduser().resolve()
         self._repo_root = Path(repo_root).expanduser().resolve()
         self._specs = dict(specs)
+        self._managed_env_specs = managed_env_var_allowlist()
         self._lock = threading.Lock()
         self._procs: Dict[str, subprocess.Popen[bytes]] = {}
 
         self._state_dir = (self._base_dir / "process_manager").resolve()
         self._logs_dir = (self._base_dir / "process_logs").resolve()
         self._state_path = (self._state_dir / "state.json").resolve()
+        self._env_overrides_path = (self._state_dir / "env_overrides.json").resolve()
 
         self._state_dir.mkdir(parents=True, exist_ok=True)
         self._logs_dir.mkdir(parents=True, exist_ok=True)
 
         self._state: Dict[str, Dict[str, Any]] = self._load_state()
+        self._env_overrides_error: Optional[str] = None
+        self._env_overrides: Dict[str, Dict[str, Any]] = self._load_env_overrides()
+
+        # Apply persisted overrides to this gateway process early so runtime
+        # integrations that read os.getenv() observe the configured values.
+        try:
+            with self._lock:
+                self._apply_env_overrides_to_environ_locked()
+        except Exception:
+            pass
 
     @property
     def base_dir(self) -> Path:
@@ -302,6 +469,61 @@ class ProcessManager:
         tmp.replace(self._state_path)
 
     # ----------------------------
+    # Managed env overrides (write-only)
+    # ----------------------------
+
+    def _load_env_overrides(self) -> Dict[str, Dict[str, Any]]:
+        self._env_overrides_error = None
+        if not self._env_overrides_path.exists():
+            return {}
+        try:
+            raw = self._env_overrides_path.read_text(encoding="utf-8", errors="replace")
+            obj = json.loads(raw)
+        except Exception as e:
+            self._env_overrides_error = f"Failed to read env_overrides.json: {e}"
+            return {}
+        if not isinstance(obj, dict):
+            self._env_overrides_error = "env_overrides.json must be a JSON object"
+            return {}
+        raw_vars = obj.get("vars")
+        if not isinstance(raw_vars, dict):
+            self._env_overrides_error = "env_overrides.json must contain 'vars' (object)"
+            return {}
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for k, v in raw_vars.items():
+            key = str(k or "").strip()
+            if not key or not _SAFE_ENV_KEY_RE.match(key):
+                continue
+            if not isinstance(v, dict):
+                continue
+            enabled = v.get("enabled")
+            out[key] = {
+                "enabled": bool(enabled) if isinstance(enabled, bool) else True,
+                "value": str(v.get("value") if v.get("value") is not None else ""),
+                "updated_at": str(v.get("updated_at") or "").strip() or None,
+            }
+        return out
+
+    def _save_env_overrides(self) -> None:
+        tmp = self._env_overrides_path.with_suffix(".tmp")
+        obj = {"version": 1, "updated_at": _now_utc_iso(), "vars": self._env_overrides}
+        data = json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        tmp.write_text(data, encoding="utf-8")
+
+        # Best-effort: keep secrets readable only by the current user.
+        try:
+            os.chmod(tmp, 0o600)
+        except Exception:
+            pass
+
+        tmp.replace(self._env_overrides_path)
+        try:
+            os.chmod(self._env_overrides_path, 0o600)
+        except Exception:
+            pass
+
+    # ----------------------------
     # Public API
     # ----------------------------
 
@@ -334,6 +556,123 @@ class ProcessManager:
                 out.append(info)
             return out
 
+    def list_managed_env_vars(self) -> Dict[str, Any]:
+        """Return allowlisted env vars metadata without exposing values."""
+        with self._lock:
+            error = self._env_overrides_error
+            out: List[Dict[str, Any]] = []
+            for key, spec in sorted(self._managed_env_specs.items(), key=lambda kv: kv[0]):
+                rec = self._env_overrides.get(key) if isinstance(self._env_overrides, dict) else None
+                source = "missing"
+                updated_at: Optional[str] = None
+                if isinstance(rec, dict):
+                    enabled0 = rec.get("enabled")
+                    enabled = bool(enabled0) if isinstance(enabled0, bool) else True
+                    updated_at = str(rec.get("updated_at") or "").strip() or None
+                    source = "override" if enabled else "unset"
+                else:
+                    v = os.getenv(key)
+                    if v is not None and str(v).strip() != "":
+                        source = "inherited"
+                    elif v is not None:
+                        source = "inherited_empty"
+
+                is_set = source in {"override", "inherited", "inherited_empty"}
+                out.append(
+                    {
+                        "key": key,
+                        "label": spec.label,
+                        "description": spec.description,
+                        "category": spec.category,
+                        "secret": bool(spec.secret),
+                        "is_set": bool(is_set),
+                        "source": source,
+                        "updated_at": updated_at,
+                    }
+                )
+            return {"ok": True, "error": error, "vars": out}
+
+    def update_managed_env_vars(self, *, set_vars: Dict[str, str], unset: List[str]) -> Dict[str, Any]:
+        set_vars = dict(set_vars or {})
+        unset = list(unset or [])
+
+        # Validate keys early to avoid persisting partial updates.
+        normalized_set: Dict[str, str] = {}
+        for k, v in set_vars.items():
+            key = str(k or "").strip()
+            if not key or not _SAFE_ENV_KEY_RE.match(key):
+                raise ValueError(f"Invalid env var key: {key!r}")
+            if key not in self._managed_env_specs:
+                raise ValueError(f"Env var key not allowlisted: {key}")
+            value = "" if v is None else str(v)
+            if "\x00" in value:
+                raise ValueError(f"Invalid env var value for {key}: contains NUL byte")
+            if len(value.encode("utf-8", errors="replace")) > 16_384:
+                raise ValueError(f"Env var value too large for {key} (max 16KB)")
+            normalized_set[key] = value
+
+        normalized_unset: List[str] = []
+        for k in unset:
+            key = str(k or "").strip()
+            if not key or not _SAFE_ENV_KEY_RE.match(key):
+                raise ValueError(f"Invalid env var key: {key!r}")
+            if key not in self._managed_env_specs:
+                raise ValueError(f"Env var key not allowlisted: {key}")
+            normalized_unset.append(key)
+
+        overlap = set(normalized_set.keys()) & set(normalized_unset)
+        if overlap:
+            keys = ", ".join(sorted(overlap))
+            raise ValueError(f"Env vars cannot be both set and unset in the same request: {keys}")
+
+        if not normalized_set and not normalized_unset:
+            raise ValueError("No env var updates provided (set/unset)")
+
+        if len(normalized_set) + len(normalized_unset) > 64:
+            raise ValueError("Too many env vars in one request (max 64)")
+
+        now = _now_utc_iso()
+        with self._lock:
+            for key, value in normalized_set.items():
+                self._env_overrides[key] = {"enabled": True, "value": value, "updated_at": now}
+            for key in normalized_unset:
+                # Security: clear the stored value when unsetting (avoid lingering secrets on disk).
+                self._env_overrides[key] = {"enabled": False, "value": "", "updated_at": now}
+
+            self._save_env_overrides()
+            self._env_overrides_error = None
+
+            # Apply immediately to this gateway process environment. This is safe
+            # because keys are strictly allowlisted.
+            self._apply_env_overrides_to_environ_locked()
+
+        # Return a fresh view (still metadata-only).
+        return self.list_managed_env_vars()
+
+    def _apply_env_overrides_to_environ_locked(self) -> None:
+        for key in self._managed_env_specs.keys():
+            rec = self._env_overrides.get(key) if isinstance(self._env_overrides, dict) else None
+            if not isinstance(rec, dict):
+                continue
+            enabled0 = rec.get("enabled")
+            enabled = bool(enabled0) if isinstance(enabled0, bool) else True
+            if enabled:
+                os.environ[key] = str(rec.get("value") if rec.get("value") is not None else "")
+            else:
+                os.environ.pop(key, None)
+
+    def _apply_env_overrides_to_dict_locked(self, env: Dict[str, str]) -> None:
+        for key in self._managed_env_specs.keys():
+            rec = self._env_overrides.get(key) if isinstance(self._env_overrides, dict) else None
+            if not isinstance(rec, dict):
+                continue
+            enabled0 = rec.get("enabled")
+            enabled = bool(enabled0) if isinstance(enabled0, bool) else True
+            if enabled:
+                env[key] = str(rec.get("value") if rec.get("value") is not None else "")
+            else:
+                env.pop(key, None)
+
     def start(self, process_id: str) -> Dict[str, Any]:
         pid = str(process_id or "").strip()
         if not pid or pid not in self._specs:
@@ -362,6 +701,7 @@ class ProcessManager:
                 raise FileNotFoundError(f"cwd does not exist: {cwd_path}")
 
             env = dict(os.environ)
+            self._apply_env_overrides_to_dict_locked(env)
             for k, v in (spec.env or {}).items():
                 env[str(k)] = str(v)
 
@@ -424,6 +764,29 @@ class ProcessManager:
                 self._save_state()
                 return dict(st)
 
+            # Safety: UAT processes are frequently restarted and operator-triggered; if state is stale or
+            # the PID was re-used by an unrelated process, stopping could terminate the wrong service.
+            # For UAT processes, require a best-effort commandline sanity check based on the expected port.
+            if pid.endswith("_uat"):
+                expected_port = _expected_port_from_url(spec.url)
+                if isinstance(expected_port, int) and expected_port > 0:
+                    cmdline = _pid_commandline(proc_pid)
+                    if not cmdline:
+                        st["status"] = "error"
+                        st["last_error"] = f"Refusing to stop pid={proc_pid}: cannot read commandline via ps (expected port {expected_port})"
+                        self._state[pid] = st
+                        self._save_state()
+                        return dict(st)
+                    if str(expected_port) not in cmdline:
+                        st["status"] = "error"
+                        st["last_error"] = (
+                            f"Refusing to stop pid={proc_pid}: commandline does not mention expected port {expected_port}. "
+                            f"cmd={cmdline[:240]!r}"
+                        )
+                        self._state[pid] = st
+                        self._save_state()
+                        return dict(st)
+
             # Best-effort: terminate the process group.
             try:
                 os.killpg(proc_pid, signal.SIGTERM)
@@ -468,10 +831,13 @@ class ProcessManager:
         if spec.kind == "self":
             return self.restart_self()
         try:
-            self.stop(pid)
+            st = self.stop(pid)
+            if isinstance(st, dict) and str(st.get("status") or "").strip().lower() == "error":
+                return dict(st)
         except Exception:
-            # Continue with best-effort restart even if stop failed.
-            pass
+            # Continue with best-effort restart for non-UAT processes only.
+            if pid.endswith("_uat"):
+                raise
         return self.start(pid)
 
     def restart_self(self) -> Dict[str, Any]:
@@ -578,6 +944,11 @@ class ProcessManager:
     def _schedule_gateway_execv(self, *, delay_s: float) -> None:
         def _do() -> None:
             time.sleep(max(0.0, float(delay_s)))
+            try:
+                with self._lock:
+                    self._apply_env_overrides_to_environ_locked()
+            except Exception:
+                pass
             argv = list(sys.argv)
             exe = argv[0] if argv else ""
             # Prefer re-exec of the original entrypoint when possible.

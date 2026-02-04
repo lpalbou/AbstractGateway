@@ -5966,6 +5966,29 @@ class ProcessLogTailResponse(BaseModel):
     content: str = ""
 
 
+class ProcessEnvVarItem(BaseModel):
+    key: str
+    label: str
+    description: str
+    category: str = "general"
+    secret: bool = False
+    is_set: bool = False
+    source: str = ""
+    updated_at: Optional[str] = None
+
+
+class ProcessEnvListResponse(BaseModel):
+    ok: bool = True
+    enabled: bool = False
+    error: Optional[str] = None
+    vars: List[ProcessEnvVarItem] = Field(default_factory=list)
+
+
+class ProcessEnvUpdateRequest(BaseModel):
+    set_vars: Dict[str, str] = Field(default_factory=dict, alias="set")
+    unset: List[str] = Field(default_factory=list)
+
+
 class BacklogAttachmentStored(BaseModel):
     filename: str
     relpath: str
@@ -7497,6 +7520,41 @@ async def processes_list() -> ProcessListResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list processes: {e}")
     return ProcessListResponse(enabled=True, processes=procs)
+
+
+@router.get("/processes/env", response_model=ProcessEnvListResponse)
+async def processes_env_list() -> ProcessEnvListResponse:
+    if not _process_manager_enabled():
+        return ProcessEnvListResponse(enabled=False, vars=[])
+
+    mgr = _require_process_manager()
+    try:
+        out = mgr.list_managed_env_vars()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list managed env vars: {e}")
+
+    vars0 = out.get("vars") if isinstance(out, dict) else []
+    if not isinstance(vars0, list):
+        vars0 = []
+    err = str(out.get("error") or "").strip() if isinstance(out, dict) else ""
+    return ProcessEnvListResponse(enabled=True, error=(err or None), vars=vars0)
+
+
+@router.post("/processes/env", response_model=ProcessEnvListResponse)
+async def processes_env_update(req: ProcessEnvUpdateRequest) -> ProcessEnvListResponse:
+    mgr = _require_process_manager()
+    try:
+        out = mgr.update_managed_env_vars(set_vars=dict(req.set_vars or {}), unset=list(req.unset or []))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update managed env vars: {e}")
+
+    vars0 = out.get("vars") if isinstance(out, dict) else []
+    if not isinstance(vars0, list):
+        vars0 = []
+    err = str(out.get("error") or "").strip() if isinstance(out, dict) else ""
+    return ProcessEnvListResponse(enabled=True, error=(err or None), vars=vars0)
 
 
 @router.post("/processes/{process_id}/start", response_model=ProcessActionResponse)

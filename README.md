@@ -1,109 +1,84 @@
 # AbstractGateway
 
-AbstractGateway is the **deployable Run Gateway host** for AbstractRuntime runs:
-- durable command inbox
-- ledger replay/stream
-- security baseline (token + origin + limits)
+AbstractGateway is a **deployable Run Gateway host** for AbstractRuntime runs:
+- start durable runs
+- accept a durable command inbox
+- replay/stream a durable ledger (replay-first)
+- enforce a security baseline (token + origin allowlist + limits)
 
 This decouples the gateway service from any specific UI (AbstractFlow, AbstractCode, web/PWA thin clients).
 
-## What it does (contract)
-- Clients **act** by submitting durable commands: `start`, `resume`, `pause`, `cancel`, `emit_event`
-- Clients **render** by replaying/streaming the durable ledger (cursor-based, replay-first)
+Start here: [docs/getting-started.md](docs/getting-started.md)
 
-Endpoints:
-- `POST /api/gateway/runs/start`
-- `GET /api/gateway/runs/{run_id}`
-- `GET /api/gateway/runs/{run_id}/ledger`
-- `GET /api/gateway/runs/{run_id}/ledger/stream` (SSE)
-- `POST /api/gateway/commands`
+## Quickstart (HTTP server, bundle mode)
+
+```bash
+pip install "abstractgateway[http]"
+
+export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"   # *.flow dir (or a single .flow file)
+export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
+
+# Required by default: the server refuses to start without a token.
+export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+# Browser-origin allowlist (glob patterns). Default allows localhost; customize when exposing remotely.
+export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
+
+abstractgateway serve --host 127.0.0.1 --port 8080
+```
+
+OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs`
+
+Smoke checks:
+
+```bash
+curl -sS "http://127.0.0.1:8080/api/health"
+
+curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+  "http://127.0.0.1:8080/api/gateway/bundles"
+```
+
+## Client contract (replay-first)
+
+- Clients **start runs**: `POST /api/gateway/runs/start`
+- Clients **act** by submitting durable commands: `POST /api/gateway/commands`
+  - supported types: `pause|resume|cancel|emit_event|update_schedule|compact_memory`
+- Clients **render** by replaying/streaming the durable ledger:
+  - replay: `GET /api/gateway/runs/{run_id}/ledger?after=...`
+  - stream (SSE): `GET /api/gateway/runs/{run_id}/ledger/stream?after=...`
+
+See `docs/api.md` for curl examples and the live OpenAPI spec (`/openapi.json`).
 
 ## Install
 
-### Runner-only (no HTTP stack)
+### Base (runner + stores + CLI)
+
+Requires Python `>=3.10` (see `pyproject.toml`).
 
 ```bash
 pip install abstractgateway
 ```
 
-This installs the durable gateway host + runner loop, but **not** the FastAPI/Uvicorn HTTP server dependencies.
-
-### HTTP API/SSE server
+### HTTP API/SSE server (FastAPI + Uvicorn)
 
 ```bash
 pip install "abstractgateway[http]"
 ```
 
-Bundle mode executes **WorkflowBundles** (`.flow`) via **WorkflowArtifacts** without importing `abstractflow`.
+### Optional extras
 
-### Optional (compatibility): VisualFlow JSON
+- `abstractgateway[visualflow]`: run VisualFlow JSON from a directory of `*.json` files (requires `abstractflow`)
+- `abstractgateway[telegram]`: Telegram bridge dependencies
+- `abstractgateway[dev]`: local test/dev deps
 
-```bash
-pip install "abstractgateway[visualflow]"
-```
+### Bundle-dependent dependencies (only if your workflows need them)
 
-This mode depends on the **AbstractFlow compiler library** (`abstractflow`) to interpret VisualFlow JSON (it does **not** require the AbstractFlow web UI/app).
-If you want to serve this host over HTTP, install: `pip install "abstractgateway[http,visualflow]"`.
-
-## Run
-
-To run the HTTP API/SSE server, ensure you installed `abstractgateway[http]`.
+- LLM/tool nodes in bundle mode require AbstractRuntime’s AbstractCore integration:
 
 ```bash
-export ABSTRACTGATEWAY_DATA_DIR="./runtime"
-export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles-or-flow"
-
-# Durable store backend (default: file)
-# - file:   run_*.json + ledger_*.jsonl + commands.jsonl under ABSTRACTGATEWAY_DATA_DIR
-# - sqlite: OLTP tables + wait_index in a single sqlite file (recommended for large/long-running dirs)
-export ABSTRACTGATEWAY_STORE_BACKEND="file"  # or: sqlite
-# When using sqlite, defaults to: <ABSTRACTGATEWAY_DATA_DIR>/gateway.sqlite3
-export ABSTRACTGATEWAY_DB_PATH="$ABSTRACTGATEWAY_DATA_DIR/gateway.sqlite3"
-
-# Security (recommended)
-export ABSTRACTGATEWAY_AUTH_TOKEN="your-token"
-# Allow your browser app Origin(s). Wildcard ports are supported (dev convenience).
-# Example (LAN dev): "http://localhost:*,http://127.0.0.1:*,http://192.168.1.188:*"
-export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
-
-# LLM defaults (required if the bundle contains LLM/Agent nodes)
-export ABSTRACTGATEWAY_PROVIDER="lmstudio"
-export ABSTRACTGATEWAY_MODEL="qwen/qwen3-next-80b"
-# Tools:
-# - passthrough (default): tool calls become a durable approval wait (safe for remote/untrusted hosts)
-# - local: execute tools inside the gateway process (dev only)
-export ABSTRACTGATEWAY_TOOL_MODE="passthrough"  # or: local
-
-abstractgateway serve --host 127.0.0.1 --port 8080
+pip install "abstractruntime[abstractcore]>=0.4.0"
 ```
 
-Notes:
-- `--host` controls the *bind address* (which network interfaces the server listens on). It does **not** accept a list.
-  - Local-only: `--host 127.0.0.1`
-  - LAN: `--host 0.0.0.0` (all interfaces) or `--host <your-lan-ip>` (e.g. `192.168.1.188`)
-  - If you bind to `0.0.0.0`, treat the gateway as reachable by other machines on your network; keep auth enabled.
-- `ABSTRACTGATEWAY_WORKFLOW_SOURCE` defaults to `bundle`. Valid values:
-  - `bundle` (default): `ABSTRACTGATEWAY_FLOWS_DIR` points to a directory containing `*.flow` bundles (or a single `.flow` file)
-  - `visualflow` (compat): `ABSTRACTGATEWAY_FLOWS_DIR` points to a directory containing `*.json` VisualFlow files
-- For production, run behind HTTPS (reverse proxy) and set exact allowed origins.
-- `ABSTRACTGATEWAY_ALLOWED_ORIGINS` is **CORS** (browser policy). It can list multiple origins like:
-  - `http://localhost:*,http://127.0.0.1:*,http://192.168.1.188:*`
-  - Glob patterns are supported (e.g. `https://*.ngrok-free.app`).
-  - This does **not** control which IPs the server listens on; it only controls which browser Origins can call the API.
-
-## Split API vs runner (recommended for upgrades)
-
-By default, `abstractgateway serve` starts the HTTP API **and** the background runner loop in the same process.
-
-To restart the HTTP API without pausing durable execution, run them as two processes sharing the same `ABSTRACTGATEWAY_DATA_DIR`:
-
-```bash
-# Process 1 (runner worker, no HTTP deps needed):
-abstractgateway runner
-
-# Process 2 (HTTP API only):
-abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
-```
+For details on `ABSTRACTGATEWAY_PROVIDER`/`MODEL`, store backends, and workflow sources, see `docs/configuration.md`.
 
 ## Creating a `.flow` bundle (authoring)
 
@@ -113,53 +88,13 @@ Use AbstractFlow to pack a bundle:
 abstractflow bundle pack /path/to/root.json --out /path/to/bundles/my.flow --flows-dir /path/to/flows
 ```
 
-## Starting a run (bundle mode)
-
-If the bundle has a **single entrypoint** (or declares `manifest.default_entrypoint`), you can start it with just `bundle_id` + `input_data`:
-
-```bash
-curl -sS -X POST "http://localhost:8080/api/gateway/runs/start" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-token" \
-  -d '{"bundle_id":"my-bundle","input_data":{"prompt":"Hello"}}'
-```
-
-If the bundle exposes **multiple entrypoints** and has no default, you must select one with `flow_id`:
-
-```bash
-curl -sS -X POST "http://localhost:8080/api/gateway/runs/start" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-token" \
-  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Hello"}}'
-```
-
-For backwards-compatible clients, you can also pass a namespaced id as `flow_id` (`"my-bundle:ac-echo"`) without sending `bundle_id`.
-
-## Switch to SQLite (recommended for production-like workloads)
-
-Migration is best-effort and reads your existing file-backed data dir:
-- `run_*.json` → `runs` table (+ `wait_index`)
-- `ledger_*.jsonl` → `ledger` table (+ `ledger_heads`)
-- `commands.jsonl` → `commands` table
-- `commands_cursor.json` → `command_cursors`
-
-Example:
-
-```bash
-# Stop the gateway first (avoid concurrent writes).
-cp -a runtime/gateway "runtime/gateway.file-backup.$(date +%Y%m%d-%H%M%S)"
-
-abstractgateway migrate --from=file --to=sqlite \
-  --data-dir runtime/gateway \
-  --db-path runtime/gateway/gateway.sqlite3
-
-# Then run with:
-export ABSTRACTGATEWAY_STORE_BACKEND=sqlite
-export ABSTRACTGATEWAY_DB_PATH="$PWD/runtime/gateway/gateway.sqlite3"
-abstractgateway serve --host 127.0.0.1 --port 8080
-```
+See `docs/getting-started.md` for running, split API/runner, and file→SQLite migration.
 
 ## Docs
-- Getting started (env + sqlite migration): `abstractgateway/docs/getting-started.md`
-- Architecture: `docs/architecture.md` (framework) and `abstractgateway/docs/architecture.md` (this package)
-- Deployment: `docs/guide/deployment.md`
+- Docs index: [docs/README.md](docs/README.md)
+- Getting started: [docs/getting-started.md](docs/getting-started.md)
+- Architecture: [docs/architecture.md](docs/architecture.md)
+- Configuration: [docs/configuration.md](docs/configuration.md)
+- API overview: [docs/api.md](docs/api.md)
+- Security: [docs/security.md](docs/security.md)
+- Operator tooling (optional): [docs/maintenance.md](docs/maintenance.md)

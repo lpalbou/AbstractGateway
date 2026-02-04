@@ -1,84 +1,122 @@
-# AbstractGateway — Architecture (Living)
+# AbstractGateway — Architecture
 
-> Updated: 2026-01-08  
-> Status: implemented (see completed backlog 318)
+> Status: implemented (v0.1.0)  
+> Last reviewed: 2026-02-04
 
-AbstractGateway is the **deployable control-plane host** for AbstractRuntime runs:
-- clients submit **durable commands** (start/resume/pause/cancel/emit_event)
-- clients render by replaying/streaming the **append-only ledger** (cursor-based)
-- the gateway host owns the durable stores and is the single authority for a run (ADR‑0020)
+AbstractGateway is a **durable run gateway** for AbstractRuntime:
+- **Start runs** (and optionally schedule them)
+- Accept **durable commands** (`pause`, `resume`, `cancel`, `emit_event`, …)
+- Let clients **replay** the durable ledger and optionally **stream** updates (SSE)
 
-## Diagram (v0)
+This document describes the code in this repository (see **Evidence** links).
+
+## High-level shape
 
 ```mermaid
 flowchart LR
-  subgraph Clients["Clients (stateless thin UIs)"]
-    ACode["AbstractCode (TUI)"]
-    Web["Web/PWA Thin Client"]
-    FlowUI["AbstractFlow UI"]
-    Third["3rd-party apps"]
+  subgraph Clients["Clients (thin/stateless UIs)"]
+    UI["Web/PWA / TUI / 3rd-party"]
   end
 
-  subgraph GW["AbstractGateway (service)"]
-    API["HTTP API + SSE\n/api/gateway/*"]
-    Inbox["Durable Command Inbox\n(CommandStore)"]
-    Runner["GatewayRunner\npoll + tick"]
-    Stores["RunStore / LedgerStore / ArtifactStore"]
+  subgraph GW["AbstractGateway (this package)"]
+    Sec["GatewaySecurityMiddleware\n(auth + origin + limits)"]
+    API["FastAPI routes\n/api/gateway/*"]
+    Runner["GatewayRunner\npoll commands + tick runs"]
+    Host["Workflow host\n(bundle | visualflow)"]
+    Stores["Durable stores\nruns + ledger + commands + artifacts"]
   end
 
-  subgraph RT["AbstractRuntime (kernel)"]
-    Runtime["Runtime.tick / resume"]
+  subgraph RT["AbstractRuntime"]
+    Runtime["Runtime.tick(...)"]
+    Registry["WorkflowRegistry / WorkflowSpec"]
   end
 
-  Clients -->|commands| API
-  API --> Inbox
-  API -->|ledger replay/stream| Stores
-  Inbox --> Runner
+  UI -->|HTTP| Sec --> API
+  API -->|append commands / upload bundles| Stores
+  API -->|ledger replay / SSE stream| Stores
+  Runner -->|poll inbox| Stores
+  Runner -->|load runtime+workflow| Host
+  Host --> Registry
   Runner --> Runtime
-  Runtime --> Stores
+  Runtime -->|append StepRecords| Stores
 ```
 
-## Split-process deployment (API vs runner)
+## Core components (code-mapped)
 
-In production-like deployments, it is useful to restart the HTTP API without pausing durable execution.
+- **HTTP API**: `src/abstractgateway/app.py` mounts routers under `/api` (`/api/gateway/*` is the main surface).
+- **Security layer** (ASGI middleware):
+  - Protects `/api/gateway/*` with bearer token auth + origin allowlist + request limits.
+  - Implemented in `src/abstractgateway/security/gateway_security.py`.
+- **Durable stores** (file or SQLite):
+  - Built by `src/abstractgateway/stores.py` (`build_file_stores`, `build_sqlite_stores`).
+  - Store types come from `abstractruntime` (RunStore, LedgerStore, CommandStore, ArtifactStore).
+- **Workflow host** (what “workflows” mean in this gateway):
+  - `bundle` (default): load `.flow` WorkflowBundles and compile VisualFlow JSON via `abstractruntime.visualflow_compiler` (`src/abstractgateway/hosts/bundle_host.py`).
+  - `visualflow` (optional): load VisualFlow JSON from `*.json` files via `abstractflow` (`src/abstractgateway/hosts/visualflow_host.py`).
+  - Wired in `src/abstractgateway/service.py` (`create_default_gateway_service`).
+- **Runner worker**:
+  - Polls the durable command inbox and applies commands; ticks RUNNING runs forward (`src/abstractgateway/runner.py`).
+  - A filesystem lock (`gateway_runner.lock`) prevents double-ticking in split-process deployments.
 
-AbstractGateway supports running the API and the runner as separate processes that share the same durable stores:
-- `abstractgateway runner` runs the long-lived tick loop (no HTTP stack).
-- `abstractgateway serve --no-runner ...` runs the HTTP API without starting the runner in-process.
+## Durable contract (replay-first)
 
-The `gateway_runner.lock` file under `ABSTRACTGATEWAY_DATA_DIR` remains the safety net to prevent multiple runner processes from ticking the same runs concurrently.
+The gateway is intentionally **replay-first**:
+- The **durable ledger** is the source of truth.
+- SSE (`/ledger/stream`) is an optimization; clients should reconnect by replaying from a cursor.
 
-## Scope and packaging
-AbstractGateway should be deployable without installing authoring tools (AbstractFlow).
-Workflow loading must therefore be pluggable:
-- core `abstractgateway` depends on `abstractruntime`
-- default workflow source: **WorkflowBundles (.flow)** containing **VisualFlow JSON** (`manifest.flows`), compiled via `abstractruntime.visualflow_compiler` (no `abstractflow` import)
-- optional extras can add additional workflow sources (e.g. a “directory of VisualFlow JSON files” host wired with authoring-side helpers)
+This contract is stated and implemented in `src/abstractgateway/routes/gateway.py` (ledger endpoints + SSE) and `src/abstractgateway/runner.py` (StepRecord append semantics).
 
-Bundle-mode execution wiring:
-- VisualFlow is compiled via `abstractruntime.visualflow_compiler` (single semantics engine).
-- LLM/tool workflows are supported by wiring `abstractruntime.integrations.abstractcore`:
-  - `LLM_CALL` handler (AbstractCore-backed)
-  - `TOOL_CALLS` handler (host-configured tool executor)
-- Visual Agent nodes are supported by registering deterministic per-node ReAct workflows (requires `abstractagent`).
-- Visual “On Event” nodes are supported by compiling derived listener workflows and starting them as child runs in the same session.
+## Deployment shape: one process vs split API/runner
 
-Runtime configuration (env):
-- `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: default provider/model for bundle-mode runs that contain LLM nodes.
-- `ABSTRACTGATEWAY_TOOL_MODE`:
-  - `passthrough` (default): tool calls enter a durable wait (safest for untrusted hosts)
-  - `local`: tool calls execute in the gateway process (dev only)
+Supported patterns:
+- **Single process**: `abstractgateway serve` starts both the HTTP API and the background runner (FastAPI lifespan + service composition).
+- **Split**: run `abstractgateway runner` (worker) and `abstractgateway serve --no-runner` (API) against the same `ABSTRACTGATEWAY_DATA_DIR`.
 
-Run start identifiers (bundle mode):
-- The **bundle** is the portable distribution unit. Clients should primarily identify “what to run” via `bundle_id`.
-- The **flow id** selects *which entrypoint/subflow* within the bundle to start:
-  - If a bundle has a single `manifest.entrypoints[]` item **or** declares `manifest.default_entrypoint`, the gateway can start it with `{bundle_id, input_data}` (no `flow_id`).
-  - If the bundle has multiple entrypoints and no `default_entrypoint`, clients must specify `flow_id` (or pass a fully-qualified workflow id like `bundle:flow`).
+Evidence:
+- CLI flags and runner env toggles: `src/abstractgateway/cli.py`
+- Runner lock file: `src/abstractgateway/runner.py`
 
-## Related
-- Backlog 318: `docs/backlog/completed/318-framework-abstractgateway-extract-run-gateway-host.md`
-- ADR‑0018: `docs/adr/0018-durable-run-gateway-and-remote-host-control-plane.md`
-- ADR‑0020: `docs/adr/0020-agent-host-pool-and-orchestrator-placement.md`
-- Integrations:
-  - Telegram bridge: `docs/guide/telegram-integration.md`
-  - Email bridge: `docs/guide/email-integration.md`
+## Workflow sources (bundle vs visualflow)
+
+### Bundle mode (recommended)
+
+- Input: `*.flow` files (WorkflowBundles) under `ABSTRACTGATEWAY_FLOWS_DIR` (file or directory).
+- Internals:
+  - Bundles are opened with `abstractruntime.workflow_bundle.open_workflow_bundle`.
+  - VisualFlow JSON is namespaced (`bundle@version:flow`) and compiled via `compile_visualflow`.
+  - “Dynamic flows” (e.g. schedules) are persisted under `<data_dir>/dynamic_flows/` and reloaded on startup.
+
+Evidence: `src/abstractgateway/hosts/bundle_host.py` (`WorkflowBundleGatewayHost.load_from_dir`).
+
+### VisualFlow directory mode (compatibility)
+
+- Input: `*.json` VisualFlow files under `ABSTRACTGATEWAY_FLOWS_DIR`.
+- Requires the `abstractflow` compiler library (`pip install "abstractgateway[visualflow]"`).
+
+Evidence: `src/abstractgateway/hosts/visualflow_host.py` (`_require_visualflow_deps`, `VisualFlowRegistry`).
+
+## Security model (gateway endpoints)
+
+`GatewaySecurityMiddleware` applies only to paths starting with `/api/gateway`:
+- **Bearer token auth** (`ABSTRACTGATEWAY_AUTH_TOKEN` / `ABSTRACTGATEWAY_AUTH_TOKENS`)
+- **Origin allowlist** (`ABSTRACTGATEWAY_ALLOWED_ORIGINS`, glob patterns supported)
+- **Abuse resistance** (body size caps, concurrency caps, auth lockouts, optional audit log)
+
+Evidence: `src/abstractgateway/security/gateway_security.py` (`GatewayAuthPolicy`, `load_gateway_auth_policy_from_env`, middleware `__call__`).
+
+## Evidence (jump-to-code)
+
+- Composition root: `src/abstractgateway/service.py` (`create_default_gateway_service`, `start_gateway_runner`)
+- API surface: `src/abstractgateway/routes/gateway.py` (everything under `/api/gateway/*`)
+- Runner semantics: `src/abstractgateway/runner.py` (`GatewayRunner`)
+- Store backends: `src/abstractgateway/stores.py`
+- Security policy + middleware: `src/abstractgateway/security/gateway_security.py`
+- CLI + split runner: `src/abstractgateway/cli.py`
+
+## Related docs
+
+- Getting started (run + stores): [getting-started.md](./getting-started.md)
+- Configuration (env vars): [configuration.md](./configuration.md)
+- API overview (client contract): [api.md](./api.md)
+- Security guide: [security.md](./security.md)
+- Operator tooling (triage/backlog/process manager): [maintenance.md](./maintenance.md)
