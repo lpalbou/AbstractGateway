@@ -68,21 +68,21 @@ def send_email_notification(*, subject: str, body_text: str) -> Tuple[bool, Opti
     smtp_host = (
         _env("ABSTRACT_BACKLOG_EMAIL_SMTP_HOST", "ABSTRACTGATEWAY_BACKLOG_EMAIL_SMTP_HOST")
         or _env("ABSTRACT_TRIAGE_EMAIL_SMTP_HOST", "ABSTRACTGATEWAY_TRIAGE_EMAIL_SMTP_HOST")
+        or _env("ABSTRACT_EMAIL_SMTP_HOST")
         or ""
     )
     username = (
         _env("ABSTRACT_BACKLOG_EMAIL_USERNAME", "ABSTRACTGATEWAY_BACKLOG_EMAIL_USERNAME")
         or _env("ABSTRACT_TRIAGE_EMAIL_USERNAME", "ABSTRACTGATEWAY_TRIAGE_EMAIL_USERNAME")
+        or _env("ABSTRACT_EMAIL_SMTP_USERNAME")
         or ""
     )
     password_env_var = (
         _env("ABSTRACT_BACKLOG_EMAIL_PASSWORD_ENV_VAR", "ABSTRACTGATEWAY_BACKLOG_EMAIL_PASSWORD_ENV_VAR")
         or _env("ABSTRACT_TRIAGE_EMAIL_PASSWORD_ENV_VAR", "ABSTRACTGATEWAY_TRIAGE_EMAIL_PASSWORD_ENV_VAR")
-        or "EMAIL_PASSWORD"
+        or _env("ABSTRACT_EMAIL_SMTP_PASSWORD_ENV_VAR")
+        or ""
     )
-
-    if not smtp_host or not username:
-        return False, "Missing SMTP host/username (set ABSTRACT_TRIAGE_EMAIL_SMTP_HOST/USERNAME)"
 
     # Prefer the framework tool (secrets via env var indirection).
     try:
@@ -92,9 +92,10 @@ def send_email_notification(*, subject: str, body_text: str) -> Tuple[bool, Opti
 
     try:
         out: Dict[str, Any] = send_email(
-            smtp_host=smtp_host,
-            username=username,
-            password_env_var=password_env_var,
+            smtp_host=smtp_host or None,
+            username=username or None,
+            password_env_var=password_env_var or None,
+            from_email=_env("ABSTRACT_EMAIL_FROM"),
             to=to,
             subject=str(subject or ""),
             body_text=str(body_text or ""),

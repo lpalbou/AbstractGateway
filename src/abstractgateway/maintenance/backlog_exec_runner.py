@@ -4,9 +4,11 @@ import datetime
 import json
 import os
 import re
+import socket
 import subprocess
 import threading
 import time
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -120,6 +122,36 @@ def _safe_relpath_from_repo_root(*, repo_root: Path, path: Path) -> Optional[str
     except Exception:
         return None
     return str(rel).replace("\\", "/")
+
+
+def _tail_text(path: Path, *, max_bytes: int = 12_000) -> str:
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = int(f.tell() or 0)
+            start = max(0, size - int(max_bytes))
+            f.seek(start, os.SEEK_SET)
+            data = f.read(int(max_bytes))
+        return data.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _probe_service_url(url: str, *, timeout_s: float = 0.9) -> Dict[str, Any]:
+    s = str(url or "").strip()
+    if not s:
+        return {"ok": False, "error": "missing_url"}
+    try:
+        u = urlparse(s)
+    except Exception:
+        return {"ok": False, "error": "invalid_url"}
+    host = str(u.hostname or "localhost").strip() or "localhost"
+    port = int(u.port or (443 if (u.scheme or "").lower() == "https" else 80))
+    try:
+        with socket.create_connection((host, port), timeout=float(timeout_s)):
+            return {"ok": True, "host": host, "port": port}
+    except Exception as e:
+        return {"ok": False, "host": host, "port": port, "error": str(e)}
 
 
 def _repo_pythonpath_entries(repo_root: Path) -> List[str]:
@@ -388,6 +420,88 @@ def _write_candidate_git_diff_patch(*, candidate_root: Path, out_path: Path) -> 
         return out_path.exists() and wrote_any
     except Exception:
         return False
+
+
+_BACKLOG_ID_FROM_FILENAME_RE = re.compile(r"^(?P<id>\d+)-")
+
+
+def _maybe_fix_backlog_move_in_candidate(*, candidate_root: Path, req: Dict[str, Any]) -> Dict[str, Any]:
+    """Best-effort enforce the 'planned -> completed' move inside a candidate workspace.
+
+    Some agent runs create the completed backlog file but forget to delete the planned one.
+    That results in duplicated backlog items (both Planned and Completed) after promotion.
+
+    Safety constraints:
+    - Only touches a planned backlog item under the `docs/` repo.
+    - Only deletes the planned file when a completed file for the same numeric id exists.
+    """
+    out: Dict[str, Any] = {"ok": False, "action": "none"}
+    backlog = req.get("backlog") if isinstance(req.get("backlog"), dict) else {}
+    relpath = str(backlog.get("relpath") or "").replace("\\\\", "/").strip()
+    if not relpath:
+        out["reason"] = "missing_relpath"
+        return out
+    if not relpath.startswith("docs/backlog/planned/"):
+        out["reason"] = "not_planned_docs_backlog"
+        return out
+
+    planned_name = relpath.split("/")[-1]
+    m = _BACKLOG_ID_FROM_FILENAME_RE.match(planned_name)
+    if not m:
+        out["reason"] = "unparseable_id"
+        return out
+    item_id = str(m.group("id") or "").strip()
+    if not item_id:
+        out["reason"] = "missing_id"
+        return out
+
+    root = Path(candidate_root).resolve()
+    planned_path = (root / relpath).resolve()
+    try:
+        planned_path.relative_to(root)
+    except Exception:
+        out["reason"] = "unsafe_planned_path"
+        return out
+
+    completed_dir = (root / "docs" / "backlog" / "completed").resolve()
+    try:
+        completed_dir.relative_to(root)
+    except Exception:
+        out["reason"] = "unsafe_completed_dir"
+        return out
+
+    matches: List[Path] = []
+    try:
+        if completed_dir.exists():
+            matches = sorted(completed_dir.glob(f"{item_id}-*.md"))
+    except Exception:
+        matches = []
+
+    if not matches:
+        out["reason"] = "no_completed_file"
+        return out
+
+    if not planned_path.exists():
+        out["ok"] = True
+        out["reason"] = "planned_missing"
+        out["completed_relpath"] = str(matches[0].relative_to(root)).replace("\\\\", "/")
+        return out
+
+    try:
+        planned_path.unlink()
+    except Exception as e:
+        out["reason"] = f"unlink_failed: {e}"
+        return out
+
+    out.update(
+        {
+            "ok": True,
+            "action": "deleted_planned_duplicate",
+            "planned_relpath": relpath,
+            "completed_relpath": str(matches[0].relative_to(root)).replace("\\\\", "/"),
+        }
+    )
+    return out
 
 
 def _candidate_manifest_path(run_dir: Path) -> Path:
@@ -852,10 +966,10 @@ def _read_uat_deploy_lock(gateway_data_dir: Path) -> Dict[str, Any]:
     return obj if isinstance(obj, dict) else {}
 
 
-def _try_acquire_uat_deploy_lock(*, gateway_data_dir: Path, request_id: str, candidate_relpath: str) -> Tuple[bool, str]:
-    """Acquire (or refresh) the shared UAT deploy lock.
+def _write_uat_deploy_lock(*, gateway_data_dir: Path, request_id: str, candidate_relpath: str) -> Tuple[bool, str]:
+    """Force-set the shared UAT deploy lock (operator-controlled).
 
-    Returns: (acquired, current_owner_request_id)
+    Returns: (ok, previous_owner_request_id)
     """
     rid = str(request_id or "").strip()
     if not rid:
@@ -863,25 +977,205 @@ def _try_acquire_uat_deploy_lock(*, gateway_data_dir: Path, request_id: str, can
 
     path = uat_deploy_lock_path(gateway_data_dir)
     cur = _read_uat_deploy_lock(gateway_data_dir)
-    owner = str(cur.get("owner_request_id") or "").strip()
-    if owner and owner != rid:
-        return False, owner
+    prev_owner = str(cur.get("owner_request_id") or "").strip()
 
     now = _now_iso()
-    created_at = str(cur.get("created_at") or "").strip() or now
     payload = {
-        "version": 1,
+        "version": 2,
         "owner_request_id": rid,
         "candidate_relpath": str(candidate_relpath or "").strip(),
-        "created_at": created_at,
         "updated_at": now,
+        "previous_owner_request_id": prev_owner,
+        "previous_updated_at": str(cur.get("updated_at") or "").strip(),
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_json(path, payload)
-        return True, rid
+        return True, prev_owner
     except Exception:
-        return False, owner or ""
+        return False, prev_owner
+
+
+def deploy_uat_for_request(*, gateway_data_dir: Path, repo_root: Path, request_id: str) -> Dict[str, Any]:
+    """Deploy/restart the shared UAT stack for a specific completed request (operator-controlled).
+
+    Safety:
+    - requires `status=awaiting_qa` and `execution_mode=uat`
+    - only points UAT `current` symlink at a repo-root-contained candidate workspace
+    - requires the process manager to be enabled (so we can restart services deterministically)
+    """
+    rid = str(request_id or "").strip()
+    if not rid:
+        return {"ok": False, "error": "missing_request_id"}
+
+    # UAT deploy should make the UAT URLs usable, which requires starting/restarting services.
+    # We keep the process manager opt-in for security, so refuse the deploy when disabled.
+    if not _as_bool(os.getenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER"), False):
+        try:
+            base = Path(gateway_data_dir).expanduser().resolve()
+            qdir = exec_queue_dir(base)
+            path = (qdir / f"{rid}.json").resolve()
+            if path.exists():
+                req = _load_json(path)
+                if isinstance(req, dict):
+                    req["uat_deploy"] = {"at": _now_iso(), "processes": {"status": "skipped", "reason": "process_manager_disabled"}}
+                    req["uat_deploy_error"] = "process_manager_disabled"
+                    try:
+                        _atomic_write_json(path, req)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return {"ok": False, "error": "process_manager_disabled"}
+
+    rr = Path(repo_root).resolve()
+    base = Path(gateway_data_dir).expanduser().resolve()
+    qdir = exec_queue_dir(base)
+    path = (qdir / f"{rid}.json").resolve()
+    try:
+        path.relative_to(qdir)
+    except Exception:
+        return {"ok": False, "error": "invalid_request_path"}
+    if not path.exists():
+        return {"ok": False, "error": "request_not_found"}
+
+    req = _load_json(path)
+    status = str(req.get("status") or "").strip().lower()
+    if status != "awaiting_qa":
+        return {"ok": False, "error": "invalid_status", "status": status}
+
+    exec_mode = str(req.get("execution_mode") or "").strip().lower() or "uat"
+    if exec_mode == "candidate":
+        exec_mode = "uat"
+    if not _is_uat_mode(exec_mode):
+        return {"ok": False, "error": "invalid_execution_mode", "execution_mode": exec_mode}
+
+    candidate_relpath = str(req.get("candidate_relpath") or "").strip()
+    if not candidate_relpath:
+        return {"ok": False, "error": "missing_candidate_relpath"}
+    candidate_root = (rr / candidate_relpath).resolve()
+    try:
+        candidate_root.relative_to(rr)
+    except Exception:
+        return {"ok": False, "error": "unsafe_candidate_path"}
+    if not candidate_root.exists():
+        return {"ok": False, "error": "candidate_missing"}
+
+    ok, prev_owner = _write_uat_deploy_lock(gateway_data_dir=base, request_id=rid, candidate_relpath=candidate_relpath)
+    req["uat_lock_owner_request_id"] = rid
+    req["uat_lock_acquired"] = bool(ok)
+    if prev_owner and prev_owner != rid:
+        req["uat_lock_previous_owner_request_id"] = prev_owner
+    if not ok:
+        try:
+            _atomic_write_json(path, req)
+        except Exception:
+            pass
+        return {"ok": False, "error": "uat_lock_write_failed", "previous_owner_request_id": prev_owner}
+
+    # Operator-controlled deploy/restart: point the stable UAT pointer to this request's candidate.
+    lock_path = uat_deploy_lock_path(base)
+
+    def _release_lock_best_effort() -> None:
+        try:
+            obj = _read_uat_deploy_lock(base)
+            cur_owner = str(obj.get("owner_request_id") or "").strip()
+            if cur_owner and cur_owner != rid:
+                return
+            if lock_path.exists():
+                lock_path.unlink()
+        except Exception:
+            pass
+
+    #
+    # IMPORTANT: Do NOT call `.resolve()` on the `current` path, because it would resolve the symlink
+    # target (the previous candidate workspace) and break unlink/symlink updates.
+    uat_root = _uat_root_from_env(repo_root=rr).resolve()
+    cur = (uat_root / "current")
+    try:
+        cur.absolute().relative_to(uat_root)
+    except Exception:
+        _release_lock_best_effort()
+        return {"ok": False, "error": "unsafe_uat_current_path"}
+
+    if cur.exists() and not cur.is_symlink():
+        # Safety: we never want to overwrite an on-disk directory/file here.
+        _release_lock_best_effort()
+        return {"ok": False, "error": "uat_current_not_symlink"}
+
+    try:
+        if cur.is_symlink() or cur.exists():
+            cur.unlink()
+    except Exception:
+        _release_lock_best_effort()
+        return {"ok": False, "error": "uat_current_unlink_failed"}
+
+    try:
+        cur.parent.mkdir(parents=True, exist_ok=True)
+        cur.symlink_to(candidate_root)
+        req["uat_current_relpath"] = _safe_relpath_from_repo_root(repo_root=rr, path=cur) or ""
+    except Exception:
+        req["uat_current_relpath"] = ""
+        _release_lock_best_effort()
+        return {"ok": False, "error": "uat_current_symlink_failed"}
+
+    # Mark as no longer pending once we own the lock.
+    req.pop("uat_pending", None)
+
+    deployed: Dict[str, Any] = {}
+    try:
+        from .process_manager import get_process_manager  # type: ignore
+
+        mgr = get_process_manager(base_dir=base, repo_root=rr)
+        for pid in (
+            "gateway_uat",
+            "abstractflow_backend_uat",
+            "abstractflow_frontend_uat",
+            "abstractobserver_uat",
+            "abstractcode_web_uat",
+        ):
+            try:
+                deployed[pid] = mgr.restart(pid)
+            except Exception as e:
+                deployed[pid] = {"status": "error", "error": str(e)}
+
+        # Best-effort: liveness probes so the operator can immediately see whether the UAT URLs
+        # are actually reachable (process running != port listening).
+        try:
+            time.sleep(0.25)
+            info_by_id = {p.get("id"): p for p in (mgr.list_processes() or []) if isinstance(p, dict)}
+            for pid, st in list(deployed.items()):
+                if not isinstance(st, dict):
+                    continue
+                info = info_by_id.get(pid) if isinstance(info_by_id.get(pid), dict) else {}
+                url = str((info or {}).get("url") or "").strip()
+                if url:
+                    st["url"] = url
+                    st["probe"] = _probe_service_url(url)
+                    if not bool(st.get("probe", {}).get("ok") is True):
+                        rel = str(st.get("log_relpath") or "").strip()
+                        if rel:
+                            log_path = (base / rel).resolve()
+                            try:
+                                log_path.relative_to(base)
+                                st["log_tail"] = _tail_text(log_path, max_bytes=8000)
+                            except Exception:
+                                pass
+                deployed[pid] = st
+        except Exception:
+            pass
+
+        req["uat_deploy"] = {"at": _now_iso(), "processes": deployed}
+    except Exception as e:
+        req["uat_deploy_error"] = str(e)
+        deployed = {"status": "error", "error": str(e)}
+
+    try:
+        _atomic_write_json(path, req)
+    except Exception:
+        pass
+
+    return {"ok": True, "request_id": rid, "deployed": deployed}
 
 
 def _claim_lock(queue_dir: Path, request_id: str) -> Optional[Path]:
@@ -1135,6 +1429,16 @@ def process_next_backlog_exec_request(
 
             result = executor.execute(prompt=prompt, repo_root=candidate_root, run_dir=run_dir, env=exec_env)
 
+            # Backlog hygiene (UAT only): some runs create the completed file but forget to delete the planned one.
+            # Do this *before* producing patch/manifest so the deletion is visible and gets promoted.
+            if _is_uat_mode(exec_mode) and isinstance(result, dict) and bool(result.get("ok") is True):
+                try:
+                    cleanup = _maybe_fix_backlog_move_in_candidate(candidate_root=candidate_root, req=req)
+                    if isinstance(cleanup, dict) and cleanup:
+                        req["candidate_backlog_cleanup"] = cleanup
+                except Exception as e:
+                    req["candidate_backlog_cleanup"] = {"ok": False, "action": "error", "error": str(e)}
+
             # Candidate review artifacts (best-effort): patch + manifest.
             patch_relpath = ""
             manifest_relpath = ""
@@ -1171,56 +1475,7 @@ def process_next_backlog_exec_request(
                 # Success always requires an explicit human decision (UAT approve or inplace approve).
                 req["status"] = "awaiting_qa"
                 if _is_uat_mode(exec_mode):
-                    # Shared UAT deploy lock: avoid swapping UAT underneath an operator.
-                    acquired, owner = _try_acquire_uat_deploy_lock(
-                        gateway_data_dir=gateway_data_dir, request_id=request_id, candidate_relpath=candidate_relpath
-                    )
-                    req["uat_lock_owner_request_id"] = owner
-                    req["uat_lock_acquired"] = bool(acquired)
-                    if not acquired and owner and owner != request_id:
-                        req["uat_pending"] = True
-
-                    # Update the stable UAT pointer only if we own the lock.
-                    if acquired:
-                        try:
-                            uat_root = _uat_root_from_env(repo_root=repo_root)
-                            cur = (uat_root / "current")
-                            # Replace existing symlink/file.
-                            try:
-                                if cur.is_symlink() or cur.exists():
-                                    cur.unlink()
-                            except Exception:
-                                pass
-                            try:
-                                cur.parent.mkdir(parents=True, exist_ok=True)
-                                cur.symlink_to(candidate_root)
-                                req["uat_current_relpath"] = _safe_relpath_from_repo_root(repo_root=repo_root, path=cur) or ""
-                            except Exception:
-                                pass
-                        except Exception:
-                            pass
-
-                        # Auto-deploy the full UAT stack when the process manager is enabled.
-                        if _as_bool(os.getenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER"), False):
-                            try:
-                                from .process_manager import get_process_manager  # type: ignore
-
-                                mgr = get_process_manager(base_dir=gateway_data_dir, repo_root=repo_root)
-                                deployed: Dict[str, Any] = {}
-                                for pid in (
-                                    "gateway_uat",
-                                    "abstractflow_backend_uat",
-                                    "abstractflow_frontend_uat",
-                                    "abstractobserver_uat",
-                                    "abstractcode_web_uat",
-                                ):
-                                    try:
-                                        deployed[pid] = mgr.restart(pid)
-                                    except Exception as e:
-                                        deployed[pid] = {"status": "error", "error": str(e)}
-                                req["uat_deploy"] = {"at": _now_iso(), "processes": deployed}
-                            except Exception as e:
-                                req["uat_deploy_error"] = str(e)
+                    req["uat_deploy"] = {"at": _now_iso(), "processes": {"status": "not_deployed", "reason": "manual_operator_action_required"}}
                 else:
                     req["inplace_warning"] = "Execution mode was inplace (prod may already be mutated)."
             else:

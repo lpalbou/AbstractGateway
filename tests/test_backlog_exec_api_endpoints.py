@@ -242,3 +242,107 @@ def test_backlog_exec_feedback_and_promote_endpoints(tmp_path: Path, monkeypatch
         assert pr_payload.get("promotion", {}).get("copied") == 1
 
     assert (repo_root / "demo" / "demo.txt").read_text(encoding="utf-8") == "new\n"
+
+
+@pytest.mark.basic
+def test_backlog_exec_promote_releases_uat_lock_no_autodeploy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway_dir = tmp_path / "gateway"
+    gateway_dir.mkdir(parents=True, exist_ok=True)
+    qdir = gateway_dir / "backlog_exec_queue"
+    qdir.mkdir(parents=True, exist_ok=True)
+    runs_dir = gateway_dir / "backlog_exec_runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+
+    # Seed prod repo content to be updated on promotion.
+    (repo_root / "demo").mkdir(parents=True, exist_ok=True)
+    (repo_root / "demo" / "demo.txt").write_text("old\n", encoding="utf-8")
+
+    rid1 = "aaaaaaaaaaaaaaaa"
+    rid2 = "bbbbbbbbbbbbbbbb"
+    cand1_rel = f"untracked/backlog_exec_uat/workspaces/{rid1}"
+    cand2_rel = f"untracked/backlog_exec_uat/workspaces/{rid2}"
+    cand1_root = repo_root / cand1_rel
+    cand2_root = repo_root / cand2_rel
+    (cand1_root / "demo").mkdir(parents=True, exist_ok=True)
+    (cand2_root / "demo").mkdir(parents=True, exist_ok=True)
+    (cand1_root / "demo" / "demo.txt").write_text("new1\n", encoding="utf-8")
+    (cand2_root / "demo" / "demo.txt").write_text("new2\n", encoding="utf-8")
+
+    # Candidate manifests.
+    for rid, cand_rel in [(rid1, cand1_rel), (rid2, cand2_rel)]:
+        run_dir = runs_dir / rid
+        run_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "version": 1,
+            "created_at": "2026-02-03T10:00:00Z",
+            "request_id": rid,
+            "candidate_relpath": cand_rel,
+            "repos": [{"repo": "demo", "repo_relpath": "demo", "copy": ["demo.txt"], "delete": [], "skipped": []}],
+        }
+        (run_dir / "candidate_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    # Two awaiting_qa requests; rid1 is the current UAT lock owner.
+    (qdir / f"{rid1}.json").write_text(
+        json.dumps(
+            {
+                "created_at": "2026-02-03T10:00:00Z",
+                "request_id": rid1,
+                "status": "awaiting_qa",
+                "execution_mode": "uat",
+                "run_dir_relpath": f"backlog_exec_runs/{rid1}",
+                "candidate_relpath": cand1_rel,
+                "candidate_manifest_relpath": f"backlog_exec_runs/{rid1}/candidate_manifest.json",
+                "backlog": {"kind": "planned", "filename": "700-a.md", "relpath": "docs/backlog/planned/700-a.md"},
+                "uat_lock_acquired": True,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (qdir / f"{rid2}.json").write_text(
+        json.dumps(
+            {
+                "created_at": "2026-02-03T10:01:00Z",
+                "request_id": rid2,
+                "status": "awaiting_qa",
+                "execution_mode": "uat",
+                "run_dir_relpath": f"backlog_exec_runs/{rid2}",
+                "candidate_relpath": cand2_rel,
+                "candidate_manifest_relpath": f"backlog_exec_runs/{rid2}/candidate_manifest.json",
+                "backlog": {"kind": "planned", "filename": "701-b.md", "relpath": "docs/backlog/planned/701-b.md"},
+                "uat_lock_acquired": False,
+                "uat_pending": True,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # Durable lock file owned by rid1.
+    (gateway_dir / "uat_deploy_lock.json").write_text(
+        json.dumps({"version": 1, "owner_request_id": rid1, "candidate_relpath": cand1_rel}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
+    with TestClient(app) as client:
+        pr = client.post(f"/api/gateway/backlog/exec/requests/{rid1}/promote", json={"redeploy": False})
+        assert pr.status_code == 200
+        payload = pr.json()["payload"]
+        assert payload["status"] == "promoted"
+        rep = payload.get("promotion_report") or {}
+        assert rep.get("uat_lock_owner_request_id") == rid1
+        assert rep.get("uat_lock_released") is True
+        assert rep.get("next_uat_autodeployed_request_id") in {None, ""}

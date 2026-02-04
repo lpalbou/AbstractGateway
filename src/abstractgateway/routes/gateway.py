@@ -5933,7 +5933,7 @@ class BacklogExecFeedbackRequest(BaseModel):
 
 class BacklogExecPromoteRequest(BaseModel):
     redeploy: bool = Field(
-        default=False,
+        default=True,
         description="When true, attempt a best-effort redeploy via the process manager (if enabled).",
     )
 
@@ -6917,6 +6917,33 @@ async def backlog_exec_request_feedback(request_id: str, req: BacklogExecFeedbac
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write request: {e}")
 
+    # Release UAT lock (if owned).
+    # This keeps the single shared UAT stack moving forward without manual intervention.
+    feedback_report: Dict[str, Any] = {"at": now}
+    lock_released = False
+    lock_owner = ""
+    try:
+        lock_path = (base / "uat_deploy_lock.json").resolve()
+        lock_path.relative_to(base)
+        if lock_path.exists():
+            lock_obj = _load_json_bounded(lock_path)
+            lock_owner = str(lock_obj.get("owner_request_id") or "").strip()
+            if lock_owner == rid:
+                lock_path.unlink()
+                lock_released = True
+    except Exception as e:
+        feedback_report["uat_lock_release_error"] = str(e)
+    feedback_report["uat_lock_owner_request_id"] = lock_owner
+    feedback_report["uat_lock_released"] = bool(lock_released)
+
+    # No UAT auto-deploy: operator manually deploys/restarts UAT for a specific request.
+
+    payload["feedback_report"] = feedback_report
+    try:
+        _write_json_atomic(path, payload)
+    except Exception as e:
+        payload.setdefault("feedback_report", {})["writeback_error"] = str(e)
+
     # Hide prompt by default (the normal detail endpoint does that).
     sanitized = dict(payload)
     sanitized.pop("prompt", None)
@@ -7003,6 +7030,134 @@ async def backlog_exec_request_promote(request_id: str, req: BacklogExecPromoteR
         repos = manifest_obj.get("repos")
         if not isinstance(repos, list):
             raise HTTPException(status_code=400, detail="Invalid candidate manifest (repos)")
+
+        # Conflict detection (safe-by-default):
+        # Promotion is manifest-based (copy/delete), not a git merge/rebase. To avoid clobbering
+        # changes that landed in prod after the candidate workspace was created, we compare the
+        # current prod file contents to the candidate repo HEAD version. If prod differs from
+        # base for any file we plan to copy/delete, we block promotion with 409.
+        def _git_run(*, cwd: Path, args: List[str], timeout_s: float = 8.0) -> Tuple[bool, str]:
+            try:
+                proc = subprocess.run(
+                    ["git", *args],
+                    cwd=str(cwd),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    timeout=float(timeout_s),
+                    check=False,
+                )
+            except Exception:
+                return False, ""
+            return proc.returncode == 0, str(proc.stdout or "").strip()
+
+        def _base_blob_id(*, repo: Path, rel: str) -> Optional[str]:
+            ok, out = _git_run(cwd=repo, args=["rev-parse", f"HEAD:{rel}"])
+            if not ok or not out:
+                return None
+            return out.strip()
+
+        def _file_blob_id(*, repo: Path, rel: str) -> Optional[str]:
+            ok, out = _git_run(cwd=repo, args=["hash-object", rel])
+            if not ok or not out:
+                return None
+            return out.strip()
+
+        conflicts: List[Dict[str, Any]] = []
+
+        # First pass: detect conflicts before applying any copy/delete.
+        for entry in repos:
+            if not isinstance(entry, dict):
+                continue
+            repo_name = str(entry.get("repo_relpath") or entry.get("repo") or "").strip()
+            if not repo_name or "/" in repo_name or "\\" in repo_name or repo_name in {".", ".."}:
+                continue
+            src_repo = (candidate_root / repo_name).resolve()
+            dst_repo = (Path(repo_root).resolve() / repo_name).resolve()
+            try:
+                src_repo.relative_to(candidate_root)
+                dst_repo.relative_to(Path(repo_root).resolve())
+            except Exception:
+                continue
+            if not src_repo.exists() or not dst_repo.exists():
+                continue
+            # Conflict detection relies on candidate+prod repos being real git repos.
+            if not (src_repo / ".git").exists() or not (dst_repo / ".git").exists():
+                continue
+
+            copy_list = entry.get("copy")
+            del_list = entry.get("delete")
+            if not isinstance(copy_list, list):
+                copy_list = []
+            if not isinstance(del_list, list):
+                del_list = []
+
+            for raw in copy_list:
+                rel = str(raw or "").replace("\\", "/").strip()
+                if not rel or not _is_safe_repo_relpath(rel) or rel.startswith(".git/") or rel == ".git":
+                    continue
+                # Only consider files that exist in candidate and are regular files (promotion later will validate again).
+                src = (src_repo / rel).resolve()
+                try:
+                    src.relative_to(src_repo)
+                except Exception:
+                    continue
+                if not src.exists() or not src.is_file() or src.is_symlink():
+                    continue
+
+                dst = (dst_repo / rel).resolve()
+                try:
+                    dst.relative_to(dst_repo)
+                except Exception:
+                    continue
+                prod_exists = dst.exists() and dst.is_file() and not dst.is_symlink()
+
+                base_blob = _base_blob_id(repo=src_repo, rel=rel)
+                if prod_exists:
+                    prod_blob = _file_blob_id(repo=dst_repo, rel=rel)
+                    if base_blob is None:
+                        conflicts.append({"repo": repo_name, "path": rel, "reason": "prod_created_since_candidate_base"})
+                    elif not prod_blob:
+                        conflicts.append({"repo": repo_name, "path": rel, "reason": "prod_hash_failed"})
+                    elif prod_blob != base_blob:
+                        conflicts.append({"repo": repo_name, "path": rel, "reason": "prod_changed_since_candidate_base"})
+                else:
+                    # If the file existed in the candidate base (tracked at HEAD) but is missing in prod now,
+                    # promotion would resurrect/overwrite a deletion; treat as a conflict to force re-run.
+                    if base_blob is not None:
+                        conflicts.append({"repo": repo_name, "path": rel, "reason": "prod_missing_since_candidate_base"})
+
+            for raw in del_list:
+                rel = str(raw or "").replace("\\", "/").strip()
+                if not rel or not _is_safe_repo_relpath(rel) or rel.startswith(".git/") or rel == ".git":
+                    continue
+                dst = (dst_repo / rel).resolve()
+                try:
+                    dst.relative_to(dst_repo)
+                except Exception:
+                    continue
+                if not dst.exists() or not dst.is_file() or dst.is_symlink():
+                    continue
+
+                base_blob = _base_blob_id(repo=src_repo, rel=rel)
+                prod_blob = _file_blob_id(repo=dst_repo, rel=rel)
+                if base_blob is None:
+                    conflicts.append({"repo": repo_name, "path": rel, "reason": "delete_missing_base_blob"})
+                elif not prod_blob:
+                    conflicts.append({"repo": repo_name, "path": rel, "reason": "prod_hash_failed"})
+                elif prod_blob != base_blob:
+                    conflicts.append({"repo": repo_name, "path": rel, "reason": "prod_changed_since_candidate_base"})
+
+        if conflicts:
+            payload.setdefault("promotion_report", {})["blocked"] = True
+            payload["promotion_report"]["reason"] = "conflicts"
+            payload["promotion_report"]["conflicts"] = conflicts[:200]
+            payload["promotion_report"]["conflicts_total"] = len(conflicts)
+            try:
+                _write_json_atomic(path, payload)
+            except Exception:
+                pass
+            raise HTTPException(status_code=409, detail="Promotion blocked: prod has diverged from candidate base (conflicts detected)")
 
         max_total_files = 8000
         max_file_bytes = 25_000_000
@@ -7124,20 +7279,31 @@ async def backlog_exec_request_promote(request_id: str, req: BacklogExecPromoteR
     payload["promotion"] = promotion_summary
     payload["promotion_report"] = {"at": now, "note": "Promotion completed."}
 
-    # Release UAT lock if we own it (best-effort).
+    # Write early so that any stale-lock recovery sees the updated status (avoids a lock handoff race
+    # when the exec runner is disabled and the lock file couldn't be deleted for some reason).
+    try:
+        _write_json_atomic(path, payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write request: {e}")
+
+    # Release UAT lock if we own it, so another pending request can deploy.
+    lock_owner = ""
+    lock_released = False
     try:
         lock_path = (base / "uat_deploy_lock.json").resolve()
         lock_path.relative_to(base)
         if lock_path.exists():
             lock_obj = _load_json_bounded(lock_path)
-            owner = str(lock_obj.get("owner_request_id") or "").strip()
-            if owner == rid:
-                try:
-                    lock_path.unlink()
-                except Exception:
-                    pass
-    except Exception:
-        pass
+            lock_owner = str(lock_obj.get("owner_request_id") or "").strip()
+            if lock_owner == rid:
+                lock_path.unlink()
+                lock_released = True
+    except Exception as e:
+        payload.setdefault("promotion_report", {})["uat_lock_release_error"] = str(e)
+    payload.setdefault("promotion_report", {})["uat_lock_owner_request_id"] = lock_owner
+    payload.setdefault("promotion_report", {})["uat_lock_released"] = bool(lock_released)
+
+    # Release UAT lock (if owned). No UAT auto-deploy: operator manually deploys/restarts UAT for a specific request.
 
     # Optional redeploy hook (best-effort).
     if bool(req.redeploy):
@@ -7154,8 +7320,49 @@ async def backlog_exec_request_promote(request_id: str, req: BacklogExecPromoteR
     try:
         _write_json_atomic(path, payload)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write request: {e}")
+        # Promotion already completed and we already wrote the promoted status once above; do not fail the request.
+        payload.setdefault("promotion_report", {})["writeback_error"] = str(e)
 
+    sanitized = dict(payload)
+    sanitized.pop("prompt", None)
+    return BacklogExecRequestDetailResponse(request_id=rid, payload=sanitized)
+
+
+@router.post("/backlog/exec/requests/{request_id}/uat/deploy", response_model=BacklogExecRequestDetailResponse)
+async def backlog_exec_request_deploy_uat(request_id: str) -> BacklogExecRequestDetailResponse:
+    """Manually deploy a pending UAT request to the shared UAT stack (best-effort)."""
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+
+    rid = _safe_backlog_exec_request_id(request_id)
+    if rid is None:
+        raise HTTPException(status_code=400, detail="Invalid request_id")
+
+    base = _gateway_base_dir()
+    qdir = (base / "backlog_exec_queue").resolve()
+    path = (qdir / f"{rid}.json").resolve()
+    try:
+        path.relative_to(qdir)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    try:
+        from ..maintenance.backlog_exec_runner import deploy_uat_for_request  # type: ignore
+
+        out = deploy_uat_for_request(gateway_data_dir=base, repo_root=Path(repo_root).resolve(), request_id=rid)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to deploy to UAT: {e}")
+
+    if not bool(out.get("ok") is True):
+        err = str(out.get("error") or "deploy_failed")
+        raise HTTPException(status_code=400, detail=f"Deploy failed: {err}")
+
+    payload = _load_json_bounded(path)
     sanitized = dict(payload)
     sanitized.pop("prompt", None)
     return BacklogExecRequestDetailResponse(request_id=rid, payload=sanitized)

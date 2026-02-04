@@ -179,3 +179,33 @@ def test_backlog_exec_runner_can_execute_multiple_requests_in_parallel(tmp_path:
     finally:
         allow_finish.set()
         runner.stop()
+
+
+@pytest.mark.basic
+def test_candidate_backlog_cleanup_deletes_planned_when_completed_exists(tmp_path: Path) -> None:
+    from abstractgateway.maintenance.backlog_exec_runner import _maybe_fix_backlog_move_in_candidate
+
+    candidate_root = tmp_path / "candidate"
+    planned_dir = candidate_root / "docs" / "backlog" / "planned"
+    completed_dir = candidate_root / "docs" / "backlog" / "completed"
+    planned_dir.mkdir(parents=True, exist_ok=True)
+    completed_dir.mkdir(parents=True, exist_ok=True)
+
+    planned = planned_dir / "720-foo.md"
+    planned.write_text("# 720-framework: [TASK] Foo\n", encoding="utf-8")
+    completed = completed_dir / "720-bar.md"
+    completed.write_text("# 720-framework: [TASK] Bar\n", encoding="utf-8")
+
+    req = {"backlog": {"relpath": "docs/backlog/planned/720-foo.md"}}
+    out = _maybe_fix_backlog_move_in_candidate(candidate_root=candidate_root, req=req)
+    assert out.get("ok") is True
+    assert out.get("action") == "deleted_planned_duplicate"
+    assert not planned.exists()
+
+    # No-op when no completed file exists.
+    planned2 = planned_dir / "721-foo.md"
+    planned2.write_text("# 721-framework: [TASK] Foo\n", encoding="utf-8")
+    req2 = {"backlog": {"relpath": "docs/backlog/planned/721-foo.md"}}
+    out2 = _maybe_fix_backlog_move_in_candidate(candidate_root=candidate_root, req=req2)
+    assert out2.get("ok") is False
+    assert planned2.exists()

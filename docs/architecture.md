@@ -79,3 +79,6 @@ Run start identifiers (bundle mode):
 - Backlog 318: `docs/backlog/completed/318-framework-abstractgateway-extract-run-gateway-host.md`
 - ADR‑0018: `docs/adr/0018-durable-run-gateway-and-remote-host-control-plane.md`
 - ADR‑0020: `docs/adr/0020-agent-host-pool-and-orchestrator-placement.md`
+- Integrations:
+  - Telegram bridge: `docs/guide/telegram-integration.md`
+  - Email bridge: `docs/guide/email-integration.md`

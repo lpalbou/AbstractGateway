@@ -26,6 +26,7 @@ class GatewayService:
     embedding_model: Optional[str] = None
     embeddings_client: Optional[Any] = None
     telegram_bridge: Optional[Any] = None
+    email_bridge: Optional[Any] = None
 
 
 _service: Optional[GatewayService] = None
@@ -155,6 +156,14 @@ def create_default_gateway_service() -> GatewayService:
             raise RuntimeError("ABSTRACT_TELEGRAM_FLOW_ID is required when ABSTRACT_TELEGRAM_BRIDGE=1")
         telegram_bridge = TelegramBridge(config=tcfg, host=host, runner=runner, artifact_store=stores.artifact_store)
 
+    email_bridge = None
+    email_enabled_raw = os.getenv("ABSTRACT_EMAIL_BRIDGE")
+    if email_enabled_raw is not None and str(email_enabled_raw).strip().lower() in {"1", "true", "yes", "on"}:
+        from .integrations.email_bridge import EmailBridge, EmailBridgeConfig
+
+        ecfg = EmailBridgeConfig.from_env(base_dir=cfg.data_dir)
+        email_bridge = EmailBridge(config=ecfg, host=host, runner=runner, artifact_store=stores.artifact_store)
+
     return GatewayService(
         config=cfg,
         stores=stores,
@@ -165,6 +174,7 @@ def create_default_gateway_service() -> GatewayService:
         embedding_model=embedding_model,
         embeddings_client=embeddings_client,
         telegram_bridge=telegram_bridge,
+        email_bridge=email_bridge,
     )
 
 
@@ -192,6 +202,9 @@ def start_gateway_runner() -> None:
     bridge = getattr(svc, "telegram_bridge", None)
     if bridge is not None:
         bridge.start()
+    email_bridge = getattr(svc, "email_bridge", None)
+    if email_bridge is not None:
+        email_bridge.start()
 
 
 def stop_gateway_runner() -> None:
@@ -203,6 +216,12 @@ def stop_gateway_runner() -> None:
             bridge = getattr(_service, "telegram_bridge", None)
             if bridge is not None:
                 bridge.stop()
+        except Exception:
+            pass
+        try:
+            bridge2 = getattr(_service, "email_bridge", None)
+            if bridge2 is not None:
+                bridge2.stop()
         except Exception:
             pass
         try:

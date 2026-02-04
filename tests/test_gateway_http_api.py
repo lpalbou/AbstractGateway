@@ -402,7 +402,6 @@ def test_gateway_generate_run_summary_appends_to_ledger(tmp_path: Path, monkeypa
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
     monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
-
     from abstractgateway.app import app
     import abstractgateway.routes.gateway as gateway_routes
 
