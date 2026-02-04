@@ -135,4 +135,41 @@ Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`).
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).  
 See: [maintenance.md](./maintenance.md).
 
+## Email inbox (operator UI; optional)
+
+These endpoints power AbstractObserver’s **Inbox → Email** UI. They are **account-scoped**: the browser cannot supply arbitrary IMAP/SMTP host/user credentials. The gateway host must be configured with one or more email accounts (multi-account YAML or env vars).
+
+Endpoints:
+- `GET /api/gateway/email/accounts`
+- `GET /api/gateway/email/messages?account=…&mailbox=…&since=…&status=…&limit=…`
+- `GET /api/gateway/email/messages/{uid}?account=…&mailbox=…&max_body_chars=…`
+- `POST /api/gateway/email/send`
+
+Examples:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/accounts"
+```
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/messages?status=unread&since=7d&limit=20"
+```
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/messages/12345?max_body_chars=20000"
+```
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"to":"you@example.com","subject":"Hello","body_text":"Hi!"}' \
+  "$BASE_URL/api/gateway/email/send"
+```
+
+Configuration notes (gateway host):
+- Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
+- Single-account env fallback: set `ABSTRACT_EMAIL_IMAP_*` and/or `ABSTRACT_EMAIL_SMTP_*`.
+- The secret itself must be present in the env var referenced by `*_PASSWORD_ENV_VAR` (e.g. `EMAIL_PASSWORD=...`).
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`/email/accounts|messages|send`) which proxies to `abstractcore.tools.comms_tools`.
+
 Troubleshooting and common questions: [faq.md](./faq.md).

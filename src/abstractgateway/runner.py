@@ -597,7 +597,7 @@ class GatewayRunner:
                         rec.finish_failure(err)
                         self.ledger_store.append(rec)
                     except Exception:
-                        pass
+                        logger.exception("GatewayRunner: failed to append tick_exception record for %s", run_id)
                 state = latest
             except Exception:
                 return

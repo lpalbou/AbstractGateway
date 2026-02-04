@@ -9,6 +9,7 @@ Important operational defaults:
 - `abstractgateway serve` requires an auth token by default (`ABSTRACTGATEWAY_AUTH_TOKEN`) and enforces an Origin allowlist on requests that include `Origin`.
 - Bundle mode (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`) is the default and loads `.flow` bundles from `ABSTRACTGATEWAY_FLOWS_DIR`.
 - The system is replay-first; SSE is an optimization, not a source of truth.
+- Optional operator endpoints include account-scoped email inbox routes (`/api/gateway/email/*`) used by AbstractObserver (Inbox → Email).
 
 Multimodal notes:
 - Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (reports `voice/audio/vision` plugin status).

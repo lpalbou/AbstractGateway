@@ -87,8 +87,18 @@ Endpoints:
 - `GET /api/gateway/processes`
 - `POST /api/gateway/processes/{id}/start|stop|restart|redeploy`
 - `GET /api/gateway/processes/{id}/logs/tail`
+- `GET /api/gateway/processes/env` (metadata only; never returns values)
+- `POST /api/gateway/processes/env` (write-only set/unset for allowlisted keys)
 
 Evidence: `src/abstractgateway/routes/gateway.py` (endpoint guards) and `src/abstractgateway/maintenance/process_manager.py`.
+
+### Env var allowlist (write-only)
+
+Env var editing is allowlist-only and values are write-only (they are never returned to the client). Overrides are persisted on the gateway host under:
+- `<ABSTRACTGATEWAY_DATA_DIR>/process_manager/env_overrides.json`
+
+To extend the allowlist, update:
+- `src/abstractgateway/maintenance/process_manager.py` → `managed_env_var_allowlist()`
 
 ## File + attachment helpers (thin-client support)
 
@@ -120,6 +130,22 @@ Enable (Email):
 - IMAP credentials + polling config (see `src/abstractgateway/integrations/email_bridge.py`)
 
 Evidence: bridge startup in `src/abstractgateway/service.py` (`start_gateway_runner`).
+
+## Email inbox endpoints (AbstractObserver Inbox → Email)
+
+If email accounts are configured on the gateway host, the gateway exposes account-scoped endpoints used by AbstractObserver to list/read/send emails:
+- `GET /api/gateway/email/accounts`
+- `GET /api/gateway/email/messages`
+- `GET /api/gateway/email/messages/{uid}`
+- `POST /api/gateway/email/send`
+
+These endpoints proxy to AbstractCore comms tools and never accept arbitrary IMAP/SMTP host/user secrets from the browser.
+
+Configuration notes:
+- Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
+- Single-account env fallback: `ABSTRACT_EMAIL_IMAP_*` / `ABSTRACT_EMAIL_SMTP_*`.
+
+Evidence: `/api/gateway/email/*` routes in `src/abstractgateway/routes/gateway.py` which call `abstractcore.tools.comms_tools`.
 
 ## Related docs
 
