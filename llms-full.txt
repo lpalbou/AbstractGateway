@@ -1,7 +1,7 @@
 # AbstractGateway — llms-full
 
 This file is a single-document snapshot of the human-facing docs in this repo, intended for LLM/agent ingestion.
-If it drifts, regenerate by concatenating the same sources in the same order (see `llms.txt` for the short index).
+It is generated from the sources listed in `llms.txt` in the same order. Relative links are normalized to repo-root paths.
 
 ---
 
@@ -55,7 +55,7 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
   - replay: `GET /api/gateway/runs/{run_id}/ledger?after=...`
   - stream (SSE): `GET /api/gateway/runs/{run_id}/ledger/stream?after=...`
 
-See `docs/api.md` for curl examples and the live OpenAPI spec (`/openapi.json`).
+See [docs/api.md](docs/api.md) for curl examples and the live OpenAPI spec (`/openapi.json`).
 
 ## Install
 
@@ -87,7 +87,7 @@ pip install "abstractgateway[http]"
 pip install "abstractruntime[abstractcore]>=0.4.0"
 ```
 
-For details on `ABSTRACTGATEWAY_PROVIDER`/`MODEL`, store backends, and workflow sources, see `docs/configuration.md`.
+For details on `ABSTRACTGATEWAY_PROVIDER`/`MODEL`, store backends, and workflow sources, see [docs/configuration.md](docs/configuration.md).
 
 ## Creating a `.flow` bundle (authoring)
 
@@ -97,16 +97,190 @@ Use AbstractFlow to pack a bundle:
 abstractflow bundle pack /path/to/root.json --out /path/to/bundles/my.flow --flows-dir /path/to/flows
 ```
 
-See `docs/getting-started.md` for running, split API/runner, and file→SQLite migration.
+See [docs/getting-started.md](docs/getting-started.md) for running, split API/runner, and file→SQLite migration.
 
 ## Docs
+
+### Project docs
+
+- Changelog: [CHANGELOG.md](CHANGELOG.md) (compat: `CHANGELOD.md`)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy (vulnerability reporting): [SECURITY.md](SECURITY.md)
+- Acknowledgments: [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) (compat: `ACKNOWLEDMENTS.md`)
+
+### Package docs
+
 - Docs index: [docs/README.md](docs/README.md)
 - Getting started: [docs/getting-started.md](docs/getting-started.md)
+- FAQ: [docs/faq.md](docs/faq.md)
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - API overview: [docs/api.md](docs/api.md)
 - Security: [docs/security.md](docs/security.md)
 - Operator tooling (optional): [docs/maintenance.md](docs/maintenance.md)
+
+---
+
+## CHANGELOG.md
+
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.1] - 2026-02-04
+
+### Changed
+
+- Documentation refresh for external users:
+  - new FAQ (`docs/faq.md`)
+  - clarified quickstart + smoke checks in `README.md`
+  - tightened getting started, configuration, security, and API overview docs
+  - improved cross-linking in `CONTRIBUTING.md` and `SECURITY.md`
+  - refreshed `llms.txt` / `llms-full.txt` for agent ingestion (index + full snapshot)
+- Version bump to reflect the documentation release (`0.1.0` → `0.1.1`).
+
+### Notes
+
+- No intentional runtime behavior changes in this release; it is documentation-focused.
+
+## [0.1.0] - 2026-02-03
+
+### Added
+
+- Initial public package for AbstractGateway (`abstractgateway`).
+
+---
+
+## CONTRIBUTING.md
+
+# Contributing
+
+Thanks for your interest in improving AbstractGateway.
+
+This repo is a Python package (`src/` layout) with a FastAPI server, a durable runner worker, and contract tests under `tests/`.
+
+## Quick start (dev)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+
+python -m pip install -U pip
+pip install -e ".[dev,http]"
+```
+
+Run the test suite:
+
+```bash
+pytest
+```
+
+If you only want the fast/unit/contract layer:
+
+```bash
+pytest -m basic
+```
+
+Notes:
+- `integration` and `e2e` tests may require optional dependencies and/or external services (e.g. an LLM provider).
+- The CLI entrypoint is `abstractgateway` (see `pyproject.toml`).
+
+## How to contribute
+
+1. **Open an issue** (or a draft PR) describing what you want to change and why.
+2. Keep changes **small and reviewable**.
+3. Add/adjust tests where it improves confidence.
+4. Update docs so they remain truthful and user-facing:
+   - README is the entrypoint.
+   - `docs/getting-started.md` is the step-by-step guide.
+   - Prefer adding FAQ entries for recurring “gotchas”.
+
+## Project conventions
+
+- Source of truth is the code in `src/`.
+- Keep public docs concise, actionable, and aligned with the current behavior.
+- Prefer explicit env var names as used in code (see `docs/configuration.md`).
+
+## Release checklist (maintainers)
+
+1. Update `CHANGELOG.md`.
+2. Bump version in:
+   - `pyproject.toml`
+   - `src/abstractgateway/__init__.py`
+   - `src/abstractgateway/app.py` (FastAPI version string)
+3. Run `pytest`.
+4. Build artifacts (optional): `python -m build`
+
+## Related docs
+
+- Package overview + quickstart: [README.md](README.md)
+- Docs index: [docs/README.md](docs/README.md)
+- Getting started: [docs/getting-started.md](docs/getting-started.md)
+
+---
+
+## SECURITY.md
+
+# Security policy
+
+Thanks for helping keep AbstractGateway and its users safe.
+
+## Reporting a vulnerability
+
+Please **do not** open a public GitHub issue for security vulnerabilities.
+
+Instead, use GitHub’s **private vulnerability reporting** / **Security Advisories** for this repository:
+- Go to the repository’s **Security** tab
+- Open **Advisories**
+- Click **Report a vulnerability** (or create a draft advisory)
+
+If you cannot use GitHub advisories, contact the maintainers privately (e.g. via GitHub profile contact links).
+
+## What to include
+
+To help us triage quickly, include:
+- a clear description of the issue and impact
+- minimal reproduction steps or a PoC
+- affected versions and environments (OS/Python version/config)
+- any suggested mitigation or patch
+
+## Coordinated disclosure
+
+We appreciate responsible disclosure and will work with you to:
+- confirm the issue
+- assess severity and affected versions
+- produce a fix and release
+
+Please avoid active exploitation, privacy violations, or destructive testing.
+
+## Related docs
+
+- Security configuration (auth/origin/limits): [docs/security.md](docs/security.md)
+- Getting started: [docs/getting-started.md](docs/getting-started.md)
+
+---
+
+## ACKNOWLEDGMENTS.md
+
+# Acknowledgments
+
+AbstractGateway stands on the shoulders of many open-source projects and contributors.
+
+## Open-source dependencies
+
+Notably (non-exhaustive):
+- **AbstractRuntime** and related libraries in the Abstract ecosystem
+- **FastAPI**, **Starlette**, **Uvicorn**, and **Pydantic** for the HTTP server and API modeling
+- The wider Python packaging and tooling ecosystem
+
+## Contributors
+
+Thank you to everyone who reports issues, improves documentation, and contributes code.
 
 ---
 
@@ -118,12 +292,13 @@ Start here if you’re new to the project.
 
 ## Docs map
 
-- Quickstart + stores (file/SQLite): [getting-started.md](./getting-started.md)
-- Architecture (durable contract + components): [architecture.md](./architecture.md)
-- Configuration (env vars + install extras): [configuration.md](./configuration.md)
-- API overview (client contract + OpenAPI): [api.md](./api.md)
-- Security guide (auth/origin/limits/audit log): [security.md](./security.md)
-- Operator tooling (triage/backlog/process manager): [maintenance.md](./maintenance.md)
+- Quickstart + stores (file/SQLite): [getting-started.md](docs/getting-started.md)
+- FAQ / troubleshooting: [faq.md](docs/faq.md)
+- Architecture (durable contract + components): [architecture.md](docs/architecture.md)
+- Configuration (env vars + install extras): [configuration.md](docs/configuration.md)
+- API overview (client contract + OpenAPI): [api.md](docs/api.md)
+- Security guide (auth/origin/limits/audit log): [security.md](docs/security.md)
+- Operator tooling (triage/backlog/process manager): [maintenance.md](docs/maintenance.md)
 
 ## API docs (generated)
 
@@ -131,6 +306,14 @@ When the HTTP server is running (`abstractgateway serve`):
 - Health: `GET /api/health`
 - OpenAPI JSON: `GET /openapi.json`
 - Interactive Swagger UI: `GET /docs`
+
+## Project docs
+
+- Package README: [../README.md](README.md)
+- Changelog: [../CHANGELOG.md](CHANGELOG.md) (compat: `CHANGELOD.md`)
+- Contributing: [../CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy (vulnerability reporting): [../SECURITY.md](SECURITY.md)
+- Acknowledgments: [../ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) (compat: `ACKNOWLEDMENTS.md`)
 
 ---
 
@@ -165,7 +348,7 @@ pip install "abstractgateway[http]"
 Optional (only if your workflows need it):
 - LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.0"`
 - Visual Agent nodes (bundle mode): `pip install abstractagent`
-- `memory_kg_*` nodes (bundle mode): `pip install lancedb`
+- `memory_kg_*` nodes (bundle mode): `pip install "abstractmemory[lancedb]"` (or `abstractmemory` + `lancedb`)
 
 ## 1) Run (bundle mode, file-backed stores)
 
@@ -218,7 +401,7 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" -H "Content-Type
 
 Notes:
 - If a bundle has multiple entrypoints and no default, you must pass `flow_id`.
-- See [api.md](./api.md) for ledger replay/stream and durable commands.
+- See [api.md](docs/api.md) for ledger replay/stream and durable commands.
 
 ## 3) Split API vs runner (recommended for upgrades)
 
@@ -279,12 +462,222 @@ abstractgateway migrate --from=file --to=sqlite \
 
 ## Related docs
 
-- Docs index: [README.md](./README.md)
-- Architecture: [architecture.md](./architecture.md)
-- Configuration (env vars + optional deps): [configuration.md](./configuration.md)
-- API overview: [api.md](./api.md)
-- Security: [security.md](./security.md)
-- Operator tooling (optional): [maintenance.md](./maintenance.md)
+- Docs index: [README.md](docs/README.md)
+- FAQ: [faq.md](docs/faq.md)
+- Architecture: [architecture.md](docs/architecture.md)
+- Configuration (env vars + optional deps): [configuration.md](docs/configuration.md)
+- API overview: [api.md](docs/api.md)
+- Security: [security.md](docs/security.md)
+- Operator tooling (optional): [maintenance.md](docs/maintenance.md)
+
+---
+
+## docs/faq.md
+
+# AbstractGateway — FAQ
+
+This FAQ is written for first-time users integrating or operating `abstractgateway`.
+For the full API surface, rely on the live OpenAPI spec (`/openapi.json`, `/docs`) which is generated from code.
+
+## Getting started
+
+### What is AbstractGateway?
+
+AbstractGateway is a **durable run gateway** for AbstractRuntime:
+- starts runs from workflows (bundle mode or visualflow directory mode)
+- accepts a **durable command inbox** (commands are appended, then applied asynchronously by the runner)
+- exposes a **replay-first ledger** API (SSE is optional)
+
+Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.py`, `src/abstractgateway/service.py`.
+
+### Do I need AbstractFlow to run workflows?
+
+Not for **bundle mode** (the default).
+
+- Bundle mode loads `.flow` bundles and compiles VisualFlow JSON via `abstractruntime.visualflow_compiler` (no `abstractflow` import).
+- You only need `abstractflow` to **author** bundles, or to run **visualflow directory mode**.
+
+Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation), `src/abstractgateway/hosts/visualflow_host.py` (requires `abstractflow`).
+
+### What’s the difference between bundle mode and visualflow directory mode?
+
+- **Bundle mode** (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`, default):
+  - input: one `.flow` file or a directory of `*.flow`
+  - versioning: bundles are addressed as `bundle_id@bundle_version`
+- **VisualFlow directory mode** (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=visualflow`):
+  - input: a directory of `*.json` VisualFlow files
+  - requires: `pip install "abstractgateway[visualflow]"`
+
+Evidence: `src/abstractgateway/service.py` (workflow source switch), `src/abstractgateway/hosts/bundle_host.py`, `src/abstractgateway/hosts/visualflow_host.py`.
+
+## Security
+
+### Why does `abstractgateway serve` refuse to start?
+
+By default, the server requires an auth token for `/api/gateway/*` and will fail-fast if none is configured.
+
+Fix:
+
+```bash
+export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+```
+
+Evidence: startup self-check in `src/abstractgateway/cli.py`, policy loading in `src/abstractgateway/security/gateway_security.py`.
+
+### What’s the difference between `--host` and `ABSTRACTGATEWAY_ALLOWED_ORIGINS`?
+
+- `abstractgateway serve --host ...` controls the **bind address** (network interfaces the server listens on).
+- `ABSTRACTGATEWAY_ALLOWED_ORIGINS` controls an **Origin allowlist** for requests that include an `Origin` header (browser/origin defense) on `/api/gateway/*`.
+
+Evidence: CLI flags in `src/abstractgateway/cli.py`, origin checks in `src/abstractgateway/security/gateway_security.py`.
+
+### Why do I get `401` / `403` / `429` / `413` from `/api/gateway/*`?
+
+Common causes:
+- `401 Unauthorized`: missing/invalid `Authorization: Bearer <token>`
+- `403 Forbidden (origin not allowed)`: browser `Origin` not matched by `ABSTRACTGATEWAY_ALLOWED_ORIGINS`
+- `429 Too Many Requests (auth lockout)`: repeated auth failures from the same client IP (lockout backoff)
+- `413 Payload Too Large`: request exceeds configured body/upload limits
+
+Evidence: `GatewaySecurityMiddleware.__call__` in `src/abstractgateway/security/gateway_security.py`.
+
+### Can I disable security (dev only)?
+
+Prefer keeping security enabled, even in dev.
+
+If you must relax it:
+- disable the gateway security layer entirely: `ABSTRACTGATEWAY_SECURITY=0`
+- or (safer) allow unauthenticated reads on loopback only: `ABSTRACTGATEWAY_DEV_READ_NO_AUTH=1`
+- or fine-tune: `ABSTRACTGATEWAY_PROTECT_READ=0`, `ABSTRACTGATEWAY_PROTECT_WRITE=0`
+
+Evidence: env policy loader in `src/abstractgateway/security/gateway_security.py`.
+
+## Storage
+
+### Where is data stored?
+
+Everything is rooted at `ABSTRACTGATEWAY_DATA_DIR`:
+
+- File backend (default): `run_*.json`, `ledger_*.jsonl`, `commands.jsonl`, `commands_cursor.json`, plus `artifacts/`
+- SQLite backend: a single DB file (default `<DATA_DIR>/gateway.sqlite3`) plus `artifacts/`
+- Gateway-generated workflows (e.g. schedules): `dynamic_flows/`
+- Per-run workspaces (when `workspace_root` is not provided at start): `workspaces/`
+
+Evidence: `src/abstractgateway/stores.py`, `src/abstractgateway/routes/gateway.py` (`start_run` workspace default), `src/abstractgateway/hosts/bundle_host.py` (dynamic flows).
+
+### How do I switch to SQLite? Can I migrate?
+
+- Switch by setting `ABSTRACTGATEWAY_STORE_BACKEND=sqlite` (and optionally `ABSTRACTGATEWAY_DB_PATH`).
+- Migrate file → SQLite with `abstractgateway migrate --from=file --to=sqlite ...` (best-effort local migration).
+
+Evidence: `src/abstractgateway/stores.py`, `src/abstractgateway/migrate.py`, CLI wiring in `src/abstractgateway/cli.py`.
+
+## Runs, ledger, commands
+
+### What is the ledger, and what does `after` mean?
+
+- The ledger is an **append-only** list of step records.
+- `after` is a cursor meaning “number of records already consumed”; responses return `next_after`.
+- SSE streams ledger updates, but clients should always reconnect by replaying from the last cursor.
+
+Evidence: `GET /runs/{run_id}/ledger` and `/ledger/stream` in `src/abstractgateway/routes/gateway.py`.
+
+### How do durable commands work? When do they take effect?
+
+`POST /api/gateway/commands` appends a command record to a durable inbox.
+The background runner polls the inbox and applies commands asynchronously.
+
+Supported command types:
+`pause|resume|cancel|emit_event|update_schedule|compact_memory`
+
+Evidence: `submit_command` in `src/abstractgateway/routes/gateway.py`, command application in `src/abstractgateway/runner.py`.
+
+## Bundles and workflow execution
+
+### How do I run a specific bundle version?
+
+When starting runs in bundle mode you can select versions in two ways:
+- pass `bundle_id` + `bundle_version`
+- or pass a namespaced `flow_id` like `bundle@version:flow` (this also works for selecting “latest” via `bundle:flow`)
+
+Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start_run`).
+
+### My bundle fails with “LLM/tool execution requires AbstractCore integration”
+
+Install AbstractRuntime’s AbstractCore integration:
+
+```bash
+pip install "abstractruntime[abstractcore]>=0.4.0"
+```
+
+Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/needs_tools`).
+
+### My bundle fails with “LLM nodes but no default provider/model is configured”
+
+Provide defaults via env vars:
+
+```bash
+export ABSTRACTGATEWAY_PROVIDER="lmstudio"
+export ABSTRACTGATEWAY_MODEL="..."
+```
+
+The gateway may also infer defaults from flow JSON if provider/model are set on at least one `llm_call` or `agent` node.
+
+Evidence: `_scan_flows_for_llm_defaults` + provider/model selection in `src/abstractgateway/hosts/bundle_host.py`.
+
+### Why do tool calls not execute?
+
+In bundle mode, tool execution is controlled by:
+
+- `ABSTRACTGATEWAY_TOOL_MODE=passthrough` (default): tools do **not** execute in-process; workflows enter a durable “approval required” wait.
+- `ABSTRACTGATEWAY_TOOL_MODE=local`: tools execute inside the gateway process (dev only; higher risk).
+
+Evidence: tool executor selection in `src/abstractgateway/hosts/bundle_host.py`.
+
+### My bundle fails with “Visual Agent nodes require AbstractAgent”
+
+Install `abstractagent`:
+
+```bash
+pip install abstractagent
+```
+
+Evidence: agent workflow registration in `src/abstractgateway/hosts/bundle_host.py`.
+
+### My bundle fails with “memory_kg_* nodes … install abstractmemory”
+
+`memory_kg_*` nodes require the AbstractMemory integration:
+
+```bash
+pip install "abstractmemory[lancedb]"
+```
+
+Evidence: memory KG wiring in `src/abstractgateway/hosts/bundle_host.py` (imports `abstractmemory` and `abstractruntime.integrations.abstractmemory`).
+
+## Deployment
+
+### How do I run API and runner as separate processes?
+
+Run:
+
+```bash
+abstractgateway runner
+abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
+```
+
+The runner uses a lock file (`gateway_runner.lock`) to prevent double-ticking on the same data dir.
+
+Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock acquisition in `src/abstractgateway/runner.py`.
+
+## Related docs
+
+- Docs index: [README.md](docs/README.md)
+- Getting started: [getting-started.md](docs/getting-started.md)
+- API overview: [api.md](docs/api.md)
+- Security: [security.md](docs/security.md)
+- Configuration: [configuration.md](docs/configuration.md)
+- Architecture: [architecture.md](docs/architecture.md)
+- Operator tooling (optional): [maintenance.md](docs/maintenance.md)
 
 ---
 
@@ -292,7 +685,7 @@ abstractgateway migrate --from=file --to=sqlite \
 
 # AbstractGateway — Architecture
 
-> Status: implemented (v0.1.0)  
+> Status: implemented (v0.1.1)  
 > Last reviewed: 2026-02-04
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
@@ -407,11 +800,12 @@ Evidence: `src/abstractgateway/security/gateway_security.py` (`GatewayAuthPolicy
 
 ## Related docs
 
-- Getting started (run + stores): [getting-started.md](./getting-started.md)
-- Configuration (env vars): [configuration.md](./configuration.md)
-- API overview (client contract): [api.md](./api.md)
-- Security guide: [security.md](./security.md)
-- Operator tooling (triage/backlog/process manager): [maintenance.md](./maintenance.md)
+- Getting started (run + stores): [getting-started.md](docs/getting-started.md)
+- FAQ: [faq.md](docs/faq.md)
+- Configuration (env vars): [configuration.md](docs/configuration.md)
+- API overview (client contract): [api.md](docs/api.md)
+- Security guide: [security.md](docs/security.md)
+- Operator tooling (triage/backlog/process manager): [maintenance.md](docs/maintenance.md)
 
 ---
 
@@ -434,7 +828,7 @@ Optional extras (see `pyproject.toml`):
 Optional (not bundled as an extra in this package, but required by some workflows/features):
 - `abstractruntime[abstractcore]`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`)
 - `abstractagent`: required for Visual Agent nodes (bundle mode)
-- `lancedb`: required for bundles that use `memory_kg_*` nodes
+- `abstractmemory[lancedb]` (or `abstractmemory` + `lancedb`): required for bundles that use `memory_kg_*` nodes
 
 ## Core environment variables
 
@@ -499,10 +893,11 @@ Most-used:
 
 ## Related docs
 
-- Getting started: [getting-started.md](./getting-started.md)
-- Security configuration: [security.md](./security.md)
-- API overview: [api.md](./api.md)
-- Operator tooling env vars: [maintenance.md](./maintenance.md)
+- Getting started: [getting-started.md](docs/getting-started.md)
+- FAQ: [faq.md](docs/faq.md)
+- Security configuration: [security.md](docs/security.md)
+- API overview: [api.md](docs/api.md)
+- Operator tooling env vars: [maintenance.md](docs/maintenance.md)
 
 ---
 
@@ -521,7 +916,7 @@ The API is documented at runtime:
 ## Auth
 
 By default, `/api/gateway/*` is protected by `GatewaySecurityMiddleware` (bearer token + origin allowlist).  
-See: [security.md](./security.md).
+See: [security.md](docs/security.md).
 
 All examples below assume:
 
@@ -643,7 +1038,9 @@ Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`).
 ## Beyond the core
 
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).  
-See: [maintenance.md](./maintenance.md).
+See: [maintenance.md](docs/maintenance.md).
+
+Troubleshooting and common questions: [faq.md](docs/faq.md).
 
 ---
 
@@ -657,6 +1054,7 @@ AbstractGateway secures the **gateway API surface** (`/api/gateway/*`) using an 
 Notes:
 - `/api/health` is intentionally not protected.
 - `/api/triage/action/*` uses signed action tokens and is not under `/api/gateway` (see `src/abstractgateway/routes/triage.py`).
+- Vulnerability reporting policy: see [../SECURITY.md](SECURITY.md).
 
 ## Default behavior (token required)
 
@@ -746,8 +1144,9 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 ## Related docs
 
-- Configuration overview: [configuration.md](./configuration.md)
-- API overview: [api.md](./api.md)
+- Configuration overview: [configuration.md](docs/configuration.md)
+- API overview: [api.md](docs/api.md)
+- FAQ: [faq.md](docs/faq.md)
 
 ---
 
@@ -878,5 +1277,6 @@ Evidence: bridge startup in `src/abstractgateway/service.py` (`start_gateway_run
 
 ## Related docs
 
-- API overview (core client contract): [api.md](./api.md)
-- Security: [security.md](./security.md)
+- API overview (core client contract): [api.md](docs/api.md)
+- Security: [security.md](docs/security.md)
+- FAQ: [faq.md](docs/faq.md)

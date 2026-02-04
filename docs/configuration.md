@@ -15,7 +15,7 @@ Optional extras (see `pyproject.toml`):
 Optional (not bundled as an extra in this package, but required by some workflows/features):
 - `abstractruntime[abstractcore]`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`)
 - `abstractagent`: required for Visual Agent nodes (bundle mode)
-- `lancedb`: required for bundles that use `memory_kg_*` nodes
+- `abstractmemory[lancedb]` (or `abstractmemory` + `lancedb`): required for bundles that use `memory_kg_*` nodes
 
 ## Core environment variables
 
@@ -81,6 +81,7 @@ Most-used:
 ## Related docs
 
 - Getting started: [getting-started.md](./getting-started.md)
+- FAQ: [faq.md](./faq.md)
 - Security configuration: [security.md](./security.md)
 - API overview: [api.md](./api.md)
 - Operator tooling env vars: [maintenance.md](./maintenance.md)

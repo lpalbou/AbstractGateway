@@ -1,6 +1,6 @@
 # AbstractGateway — Architecture
 
-> Status: implemented (v0.1.0)  
+> Status: implemented (v0.1.1)  
 > Last reviewed: 2026-02-04
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
@@ -116,6 +116,7 @@ Evidence: `src/abstractgateway/security/gateway_security.py` (`GatewayAuthPolicy
 ## Related docs
 
 - Getting started (run + stores): [getting-started.md](./getting-started.md)
+- FAQ: [faq.md](./faq.md)
 - Configuration (env vars): [configuration.md](./configuration.md)
 - API overview (client contract): [api.md](./api.md)
 - Security guide: [security.md](./security.md)

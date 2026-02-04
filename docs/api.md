@@ -134,3 +134,5 @@ Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`).
 
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).  
 See: [maintenance.md](./maintenance.md).
+
+Troubleshooting and common questions: [faq.md](./faq.md).

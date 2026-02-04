@@ -46,7 +46,7 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
   - replay: `GET /api/gateway/runs/{run_id}/ledger?after=...`
   - stream (SSE): `GET /api/gateway/runs/{run_id}/ledger/stream?after=...`
 
-See `docs/api.md` for curl examples and the live OpenAPI spec (`/openapi.json`).
+See [docs/api.md](docs/api.md) for curl examples and the live OpenAPI spec (`/openapi.json`).
 
 ## Install
 
@@ -78,7 +78,7 @@ pip install "abstractgateway[http]"
 pip install "abstractruntime[abstractcore]>=0.4.0"
 ```
 
-For details on `ABSTRACTGATEWAY_PROVIDER`/`MODEL`, store backends, and workflow sources, see `docs/configuration.md`.
+For details on `ABSTRACTGATEWAY_PROVIDER`/`MODEL`, store backends, and workflow sources, see [docs/configuration.md](docs/configuration.md).
 
 ## Creating a `.flow` bundle (authoring)
 
@@ -88,11 +88,22 @@ Use AbstractFlow to pack a bundle:
 abstractflow bundle pack /path/to/root.json --out /path/to/bundles/my.flow --flows-dir /path/to/flows
 ```
 
-See `docs/getting-started.md` for running, split API/runner, and file→SQLite migration.
+See [docs/getting-started.md](docs/getting-started.md) for running, split API/runner, and file→SQLite migration.
 
 ## Docs
+
+### Project docs
+
+- Changelog: [CHANGELOG.md](CHANGELOG.md) (compat: `CHANGELOD.md`)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy (vulnerability reporting): [SECURITY.md](SECURITY.md)
+- Acknowledgments: [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) (compat: `ACKNOWLEDMENTS.md`)
+
+### Package docs
+
 - Docs index: [docs/README.md](docs/README.md)
 - Getting started: [docs/getting-started.md](docs/getting-started.md)
+- FAQ: [docs/faq.md](docs/faq.md)
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - API overview: [docs/api.md](docs/api.md)

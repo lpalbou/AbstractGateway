@@ -15,9 +15,23 @@ Important operational defaults:
 - [README](./README.md): install + quickstart
 - [Docs index](./docs/README.md): documentation map
 
+For a single-file snapshot of the docs set, see: [llms-full.txt](./llms-full.txt).
+
+Compatibility note:
+- `CHANGELOD.md` → `CHANGELOG.md`
+- `ACKNOWLEDMENTS.md` → `ACKNOWLEDGMENTS.md`
+
+## Project docs
+
+- [Changelog](./CHANGELOG.md)
+- [Contributing](./CONTRIBUTING.md)
+- [Security policy](./SECURITY.md)
+- [Acknowledgments](./ACKNOWLEDGMENTS.md)
+
 ## Core docs
 
 - [Getting started](./docs/getting-started.md): run the gateway + choose file vs SQLite stores
+- [FAQ](./docs/faq.md): common questions + troubleshooting
 - [API overview](./docs/api.md): core endpoints + curl examples
 - [Security](./docs/security.md): bearer token + origin allowlist + limits/audit log
 - [Configuration](./docs/configuration.md): env vars + install extras

@@ -766,26 +766,48 @@ class ProcessManager:
 
             # Safety: UAT processes are frequently restarted and operator-triggered; if state is stale or
             # the PID was re-used by an unrelated process, stopping could terminate the wrong service.
-            # For UAT processes, require a best-effort commandline sanity check based on the expected port.
+            #
+            # For UAT processes, require a best-effort commandline sanity check. We accept either:
+            # - the expected port (from spec.url), OR
+            # - the UAT launch script name (from spec.command) when present.
             if pid.endswith("_uat"):
                 expected_port = _expected_port_from_url(spec.url)
-                if isinstance(expected_port, int) and expected_port > 0:
-                    cmdline = _pid_commandline(proc_pid)
-                    if not cmdline:
-                        st["status"] = "error"
-                        st["last_error"] = f"Refusing to stop pid={proc_pid}: cannot read commandline via ps (expected port {expected_port})"
-                        self._state[pid] = st
-                        self._save_state()
-                        return dict(st)
-                    if str(expected_port) not in cmdline:
-                        st["status"] = "error"
-                        st["last_error"] = (
-                            f"Refusing to stop pid={proc_pid}: commandline does not mention expected port {expected_port}. "
-                            f"cmd={cmdline[:240]!r}"
-                        )
-                        self._state[pid] = st
-                        self._save_state()
-                        return dict(st)
+                expected_marker = ""
+                try:
+                    last = str((spec.command or [])[-1] or "").strip()
+                    if last:
+                        name = Path(last).name
+                        if name and ("uat" in name.lower() or name.lower().endswith(".sh")):
+                            expected_marker = name
+                except Exception:
+                    expected_marker = ""
+
+                cmdline = _pid_commandline(proc_pid)
+                if not cmdline:
+                    st["status"] = "error"
+                    st["last_error"] = (
+                        f"Refusing to stop pid={proc_pid}: cannot read commandline via ps "
+                        f"(expected port {expected_port}, marker {expected_marker!r})"
+                    )
+                    self._state[pid] = st
+                    self._save_state()
+                    return dict(st)
+
+                ok = False
+                if isinstance(expected_port, int) and expected_port > 0 and str(expected_port) in cmdline:
+                    ok = True
+                if expected_marker and expected_marker in cmdline:
+                    ok = True
+
+                if not ok:
+                    st["status"] = "error"
+                    st["last_error"] = (
+                        f"Refusing to stop pid={proc_pid}: commandline does not match expected UAT markers. "
+                        f"expected_port={expected_port}, marker={expected_marker!r}, cmd={cmdline[:240]!r}"
+                    )
+                    self._state[pid] = st
+                    self._save_state()
+                    return dict(st)
 
             # Best-effort: terminate the process group.
             try:

@@ -27,7 +27,7 @@ pip install "abstractgateway[http]"
 Optional (only if your workflows need it):
 - LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.0"`
 - Visual Agent nodes (bundle mode): `pip install abstractagent`
-- `memory_kg_*` nodes (bundle mode): `pip install lancedb`
+- `memory_kg_*` nodes (bundle mode): `pip install "abstractmemory[lancedb]"` (or `abstractmemory` + `lancedb`)
 
 ## 1) Run (bundle mode, file-backed stores)
 
@@ -142,6 +142,7 @@ abstractgateway migrate --from=file --to=sqlite \
 ## Related docs
 
 - Docs index: [README.md](./README.md)
+- FAQ: [faq.md](./faq.md)
 - Architecture: [architecture.md](./architecture.md)
 - Configuration (env vars + optional deps): [configuration.md](./configuration.md)
 - API overview: [api.md](./api.md)

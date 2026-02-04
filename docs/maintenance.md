@@ -125,3 +125,4 @@ Evidence: bridge startup in `src/abstractgateway/service.py` (`start_gateway_run
 
 - API overview (core client contract): [api.md](./api.md)
 - Security: [security.md](./security.md)
+- FAQ: [faq.md](./faq.md)

@@ -6,6 +6,7 @@ AbstractGateway secures the **gateway API surface** (`/api/gateway/*`) using an 
 Notes:
 - `/api/health` is intentionally not protected.
 - `/api/triage/action/*` uses signed action tokens and is not under `/api/gateway` (see `src/abstractgateway/routes/triage.py`).
+- Vulnerability reporting policy: see [../SECURITY.md](../SECURITY.md).
 
 ## Default behavior (token required)
 
@@ -97,3 +98,4 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 - Configuration overview: [configuration.md](./configuration.md)
 - API overview: [api.md](./api.md)
+- FAQ: [faq.md](./faq.md)

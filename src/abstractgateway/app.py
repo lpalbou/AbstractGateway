@@ -26,7 +26,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(
     title="AbstractGateway",
     description="Durable Run Gateway for AbstractRuntime (commands + ledger replay/stream).",
-    version="0.1.0",
+    version="0.1.1",
     lifespan=_lifespan,
 )
 
@@ -53,4 +53,3 @@ app.include_router(triage_router, prefix="/api")
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "service": "abstractgateway"}
-
