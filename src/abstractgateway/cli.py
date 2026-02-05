@@ -18,11 +18,18 @@ def _configure_console_logging(level: int = logging.INFO) -> None:
     """Best-effort console logging config aligned with AbstractCore's default format."""
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     datefmt = "%H:%M:%S"
+    try:
+        # Prefer AbstractCore's colored formatter when available to keep a consistent UX.
+        from abstractcore.utils.structured_logging import ColoredFormatter  # type: ignore
+
+        formatter: logging.Formatter = ColoredFormatter(fmt, datefmt=datefmt)
+    except Exception:
+        formatter = logging.Formatter(fmt, datefmt=datefmt)
     root = logging.getLogger()
     if root.handlers:
         for h in list(root.handlers):
             try:
-                h.setFormatter(logging.Formatter(fmt, datefmt=datefmt))
+                h.setFormatter(formatter)
             except Exception:
                 continue
         try:
@@ -31,11 +38,23 @@ def _configure_console_logging(level: int = logging.INFO) -> None:
             pass
         return
     logging.basicConfig(level=int(level), format=fmt, datefmt=datefmt)
+    # `basicConfig` created handlers; set our preferred formatter.
+    for h in list(logging.getLogger().handlers):
+        try:
+            h.setFormatter(formatter)
+        except Exception:
+            continue
 
 
 def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) -> dict:
     """Return a uvicorn log_config dict that matches AbstractCore-style formatting."""
-    log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    try:
+        base = getattr(getattr(uvicorn, "config", None), "LOGGING_CONFIG", None)
+        if not isinstance(base, dict):
+            return {}
+        log_config = copy.deepcopy(base)
+    except Exception:
+        return {}
 
     datefmt = "%H:%M:%S"
     default_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -43,12 +62,18 @@ def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) 
 
     try:
         fmts = log_config.setdefault("formatters", {})
-        if isinstance(fmts.get("default"), dict):
-            fmts["default"]["fmt"] = default_fmt
-            fmts["default"]["datefmt"] = datefmt
-        if isinstance(fmts.get("access"), dict):
-            fmts["access"]["fmt"] = access_fmt
-            fmts["access"]["datefmt"] = datefmt
+        # Replace uvicorn's default formatters with AbstractCore's formatter when available.
+        # NOTE: uvicorn's built-in DefaultFormatter uses `use_colors`; our formatter does not.
+        try:
+            from abstractcore.utils.structured_logging import ColoredFormatter  # type: ignore
+
+            formatter_path = "abstractcore.utils.structured_logging.ColoredFormatter"
+            _ = ColoredFormatter  # silence unused import for type checkers
+        except Exception:
+            formatter_path = "logging.Formatter"
+
+        fmts["default"] = {"()": formatter_path, "fmt": default_fmt, "datefmt": datefmt}
+        fmts["access"] = {"()": formatter_path, "fmt": access_fmt, "datefmt": datefmt}
     except Exception:
         # If uvicorn logging config structure changes, keep default logging.
         return log_config
@@ -293,10 +318,12 @@ def main(argv: list[str] | None = None) -> None:
                 "reload": bool(args.reload),
             }
 
-            run_kwargs["log_config"] = _build_uvicorn_log_config(
+            log_config = _build_uvicorn_log_config(
                 uvicorn=uvicorn,
                 silence_gpu_metrics_access_log=bool(silence_gpu_metrics_access_log),
             )
+            if log_config:
+                run_kwargs["log_config"] = log_config
 
             uvicorn.run("abstractgateway.app:app", **run_kwargs)
         finally:
