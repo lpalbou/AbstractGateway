@@ -25,8 +25,8 @@ pip install "abstractgateway[http]"
 ```
 
 Optional (only if your workflows need it):
-- LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.0"`
-- Visual Agent nodes (bundle mode): `pip install abstractagent`
+- LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.0"` (already included by `abstractgateway[http]`)
+- Visual Agent nodes (bundle mode): `pip install abstractagent` (already included by `abstractgateway[http]`)
 - `memory_kg_*` nodes (bundle mode): `pip install "abstractmemory[lancedb]"` (or `abstractmemory` + `lancedb`)
 
 ## 1) Run (bundle mode, file-backed stores)

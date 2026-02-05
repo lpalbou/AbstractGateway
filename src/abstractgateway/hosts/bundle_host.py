@@ -453,7 +453,13 @@ class WorkflowBundleGatewayHost:
     ) -> "WorkflowBundleGatewayHost":
         base = Path(bundles_dir).expanduser().resolve()
         if not base.exists():
-            raise FileNotFoundError(f"bundles_dir does not exist: {base}")
+            if str(base.name or "").lower().endswith(".flow"):
+                raise FileNotFoundError(f"bundles_dir file does not exist: {base}")
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+                logger.warning("bundles_dir did not exist; created %s", base)
+            except Exception as e:
+                raise FileNotFoundError(f"bundles_dir does not exist and could not be created: {base} ({e})") from e
 
         bundle_paths: list[Path] = []
         if base.is_file():

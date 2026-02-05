@@ -12,9 +12,9 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[telegram]`: Telegram bridge dependencies (AbstractRuntime’s AbstractCore integration)
 - `abstractgateway[dev]`: local dev/test deps
 
-Optional (not bundled as an extra in this package, but required by some workflows/features):
-- `abstractruntime[abstractcore]`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`)
-- `abstractagent`: required for Visual Agent nodes (bundle mode)
+Optional (required by some workflows/features):
+- `abstractruntime[abstractcore]`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`) — already included by `abstractgateway[http]`
+- `abstractagent`: required for Visual Agent nodes (bundle mode) — already included by `abstractgateway[http]`
 - `abstractmemory[lancedb]` (or `abstractmemory` + `lancedb`): required for bundles that use `memory_kg_*` nodes
 
 ## Core environment variables

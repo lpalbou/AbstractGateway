@@ -47,7 +47,11 @@ def _configure_console_logging(level: int = logging.INFO) -> None:
 
 
 def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) -> dict:
-    """Return a uvicorn log_config dict that matches AbstractCore-style formatting."""
+    """Return a uvicorn log_config dict aligned with AbstractCore-style formatting.
+
+    Note: access logs must use uvicorn's AccessFormatter so fields like client_addr/request_line/status_code
+    are derived correctly from the positional args tuple.
+    """
     try:
         base = getattr(getattr(uvicorn, "config", None), "LOGGING_CONFIG", None)
         if not isinstance(base, dict):
@@ -60,29 +64,30 @@ def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) 
     default_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     access_fmt = '%(asctime)s [%(levelname)s] %(name)s: %(client_addr)s - "%(request_line)s" %(status_code)s'
 
+    fmts = log_config.setdefault("formatters", {})
+
     try:
-        fmts = log_config.setdefault("formatters", {})
-        # Replace uvicorn's default formatters with AbstractCore's formatter when available.
-        # NOTE: uvicorn's built-in DefaultFormatter uses `use_colors`; our formatter does not.
-        try:
-            from abstractcore.utils.structured_logging import ColoredFormatter  # type: ignore
+        from abstractcore.utils.structured_logging import ColoredFormatter  # type: ignore
 
-            formatter_path = "abstractcore.utils.structured_logging.ColoredFormatter"
-            _ = ColoredFormatter  # silence unused import for type checkers
-        except Exception:
-            formatter_path = "logging.Formatter"
-
-        fmts["default"] = {"()": formatter_path, "fmt": default_fmt, "datefmt": datefmt}
-        fmts["access"] = {"()": formatter_path, "fmt": access_fmt, "datefmt": datefmt}
+        _ = ColoredFormatter  # silence unused import for type checkers
+        default_formatter_path = "abstractcore.utils.structured_logging.ColoredFormatter"
     except Exception:
-        # If uvicorn logging config structure changes, keep default logging.
-        return log_config
+        default_formatter_path = "uvicorn.logging.DefaultFormatter"
+
+    fmts["default"] = {"()": default_formatter_path, "fmt": default_fmt, "datefmt": datefmt}
+    fmts["access"] = {"()": "uvicorn.logging.AccessFormatter", "fmt": access_fmt, "datefmt": datefmt}
 
     if silence_gpu_metrics_access_log:
         log_config.setdefault("filters", {})["suppress_gpu_metrics"] = {
             "()": "abstractgateway.cli._UvicornAccessLogFilter"
         }
-        log_config.setdefault("handlers", {}).setdefault("access", {})["filters"] = ["suppress_gpu_metrics"]
+        access_handler = log_config.setdefault("handlers", {}).setdefault("access", {})
+        filters = access_handler.get("filters")
+        if isinstance(filters, list):
+            if "suppress_gpu_metrics" not in filters:
+                filters.append("suppress_gpu_metrics")
+        else:
+            access_handler["filters"] = ["suppress_gpu_metrics"]
 
     return log_config
 
@@ -307,7 +312,7 @@ def main(argv: list[str] | None = None) -> None:
         except Exception as e:
             raise SystemExit(
                 "AbstractGateway HTTP server dependencies are missing.\n"
-                "Install with: `pip install \"abstractgateway[http]\"`\n"
+                "Install with: `pip install \"abstractgateway[http]\"` (or from source: `pip install \".[http]\"`).\n"
                 f"(import failed: {e})"
             )
 

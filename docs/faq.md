@@ -128,7 +128,7 @@ Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start
 
 ### My bundle fails with “LLM/tool execution requires AbstractCore integration”
 
-Install AbstractRuntime’s AbstractCore integration:
+Install AbstractRuntime’s AbstractCore integration (already included by `abstractgateway[http]`):
 
 ```bash
 pip install "abstractruntime[abstractcore]>=0.4.0"
@@ -160,7 +160,7 @@ Evidence: tool executor selection in `src/abstractgateway/hosts/bundle_host.py`.
 
 ### My bundle fails with “Visual Agent nodes require AbstractAgent”
 
-Install `abstractagent`:
+Install `abstractagent` (already included by `abstractgateway[http]`):
 
 ```bash
 pip install abstractagent

@@ -72,10 +72,18 @@ pip install "abstractgateway[http]"
 
 ### Bundle-dependent dependencies (only if your workflows need them)
 
-- LLM/tool nodes in bundle mode require AbstractRuntime’s AbstractCore integration:
+- LLM/tool nodes in bundle mode require AbstractRuntime’s AbstractCore integration.
+  - If you installed `abstractgateway[http]`, this is already included.
+  - If you installed only the base package, install it explicitly:
 
 ```bash
 pip install "abstractruntime[abstractcore]>=0.4.0"
+```
+
+Visual Agent nodes require `abstractagent` (also included by `abstractgateway[http]`):
+
+```bash
+pip install abstractagent
 ```
 
 For details on `ABSTRACTGATEWAY_PROVIDER`/`MODEL`, store backends, and workflow sources, see [docs/configuration.md](docs/configuration.md).
