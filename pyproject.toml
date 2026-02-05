@@ -28,6 +28,11 @@ http = [
   "uvicorn[standard]>=0.23.0",
 ]
 
+# Voice/audio capabilities (TTS + STT) via AbstractCore capability plugins.
+voice = [
+  "abstractvoice>=0.6.0",
+]
+
 # Optional support for starting runs from VisualFlow JSON (compiled via AbstractFlow).
 visualflow = [
   "abstractflow>=0.3.0",
@@ -41,6 +46,19 @@ dev = [
   "httpx>=0.27.0",
   "AbstractRuntime[abstractcore]>=0.4.0",
   "abstractagent>=0.3.0",
+  "fastapi>=0.100.0",
+  "python-multipart>=0.0.6",
+  "uvicorn[standard]>=0.23.0",
+]
+
+# Meta extra: everything needed for a "batteries-included" gateway.
+# Note: some capabilities still require runtime configuration (auth, model provider, optional downloads).
+all = [
+  "AbstractRuntime[abstractcore]>=0.4.0",
+  "abstractagent>=0.3.0",
+  "abstractcore[tools]>=2.6.8",
+  "abstractflow>=0.3.0",
+  "abstractvoice>=0.6.0",
   "fastapi>=0.100.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]>=0.23.0",

@@ -158,6 +158,20 @@ In bundle mode, tool execution is controlled by:
 
 Evidence: tool executor selection in `src/abstractgateway/hosts/bundle_host.py`.
 
+### Why do `/voice/tts` or `/audio/transcribe` fail with “capability unavailable”?
+
+Those endpoints are backed by **AbstractCore capability plugins** (voice/audio). Install the voice extra:
+
+```bash
+pip install "abstractgateway[voice]"
+```
+
+If your voice backend needs to download models on first use, you may also need:
+
+```bash
+export ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS=1
+```
+
 ### My bundle fails with “Visual Agent nodes require AbstractAgent”
 
 Install `abstractagent` (already included by `abstractgateway[http]`):

@@ -10,6 +10,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[http]`: FastAPI + Uvicorn (`abstractgateway serve`)
 - `abstractgateway[visualflow]`: VisualFlow JSON directory mode via `abstractflow`
 - `abstractgateway[telegram]`: Telegram bridge dependencies (AbstractRuntime’s AbstractCore integration)
+- `abstractgateway[voice]`: voice/audio endpoints (TTS + STT) via `abstractvoice`
+- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice + visualflow)
 - `abstractgateway[dev]`: local dev/test deps
 
 Optional (required by some workflows/features):

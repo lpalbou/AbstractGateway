@@ -22,11 +22,18 @@ pip install abstractgateway
 
 # HTTP server (FastAPI + Uvicorn)
 pip install "abstractgateway[http]"
+
+# Optional: voice/audio (TTS + STT endpoints)
+pip install "abstractgateway[voice]"
+
+# Or: batteries-included (HTTP + tools + voice + visualflow)
+pip install "abstractgateway[all]"
 ```
 
 Optional (only if your workflows need it):
 - LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.0"` (already included by `abstractgateway[http]`)
 - Visual Agent nodes (bundle mode): `pip install abstractagent` (already included by `abstractgateway[http]`)
+- Voice/audio endpoints (TTS/STT): `pip install "abstractgateway[voice]"` (or `pip install abstractvoice`)
 - `memory_kg_*` nodes (bundle mode): `pip install "abstractmemory[lancedb]"` (or `abstractmemory` + `lancedb`)
 
 ## 1) Run (bundle mode, file-backed stores)
