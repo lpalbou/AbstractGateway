@@ -14,7 +14,38 @@ def _stderr(line: str) -> None:
     print(str(line), file=sys.stderr)
 
 
-def _configure_console_logging(level: int = logging.INFO) -> None:
+def _resolve_default_console_level() -> int:
+    """Return the framework's default console log level (ERROR-only by default)."""
+    level_map: dict[str, int] = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+        "NONE": logging.CRITICAL + 10,
+    }
+    try:
+        from abstractcore.config import get_config_manager  # type: ignore
+
+        lvl = str(get_config_manager().config.logging.console_level or "").strip().upper()
+        return level_map.get(lvl, logging.ERROR)
+    except Exception:
+        return logging.ERROR
+
+
+def _uvicorn_log_level(console_level: int) -> str:
+    if console_level <= logging.DEBUG:
+        return "debug"
+    if console_level <= logging.INFO:
+        return "info"
+    if console_level <= logging.WARNING:
+        return "warning"
+    if console_level <= logging.ERROR:
+        return "error"
+    return "critical"
+
+
+def _configure_console_logging(level: int) -> None:
     """Best-effort console logging config aligned with AbstractCore's default format."""
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     datefmt = "%H:%M:%S"
@@ -157,7 +188,8 @@ class _UvicornAccessLogFilter(logging.Filter):
 
 
 def main(argv: list[str] | None = None) -> None:
-    _configure_console_logging()
+    console_level = _resolve_default_console_level()
+    _configure_console_logging(console_level)
     parser = argparse.ArgumentParser(prog="abstractgateway", description="AbstractGateway (Run Gateway host)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -322,6 +354,7 @@ def main(argv: list[str] | None = None) -> None:
                 "port": int(args.port),
                 "reload": bool(args.reload),
             }
+            run_kwargs["log_level"] = _uvicorn_log_level(int(console_level))
 
             log_config = _build_uvicorn_log_config(
                 uvicorn=uvicorn,

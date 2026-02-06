@@ -76,6 +76,18 @@ def create_default_gateway_service() -> GatewayService:
     else:
         raise RuntimeError(f"Unsupported store backend: {backend}. Supported: file|sqlite")
 
+    # Best-effort: apply persisted process-manager env overrides early so runtime
+    # integrations (email bridge, report triage, etc.) observe the configured values
+    # immediately after a gateway restart.
+    try:
+        enabled_raw = os.getenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER")
+        if enabled_raw is not None and str(enabled_raw).strip().lower() in {"1", "true", "yes", "on"}:
+            from .maintenance.process_manager import get_managed_env_var_manager
+
+            get_managed_env_var_manager(base_dir=stores.base_dir)
+    except Exception:
+        pass
+
     # Workflow source:
     # - bundle (default): `.flow` bundles with VisualFlow JSON (compiled via AbstractRuntime; no AbstractFlow import)
     # - visualflow (optional): load VisualFlow JSON files directly from a directory (host wiring currently uses AbstractFlow extras)

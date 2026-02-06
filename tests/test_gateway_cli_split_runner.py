@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -16,16 +17,15 @@ def test_cli_serve_no_runner_sets_env_and_invokes_uvicorn(monkeypatch: pytest.Mo
 
     uvicorn = types.ModuleType("uvicorn")
 
-    def _run(app: str, *, host: str, port: int, reload: bool) -> None:
+    def _run(app: str, **kwargs: object) -> None:
         called["app"] = app
-        called["host"] = host
-        called["port"] = port
-        called["reload"] = reload
+        called.update(kwargs)
         assert os.environ.get("ABSTRACTGATEWAY_RUNNER") == "0"
 
     uvicorn.run = _run  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "uvicorn", uvicorn)
 
+    monkeypatch.setattr(gateway_cli, "_resolve_default_console_level", lambda: logging.ERROR)
     monkeypatch.delenv("ABSTRACTGATEWAY_RUNNER", raising=False)
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     gateway_cli.main(["serve", "--no-runner", "--host", "127.0.0.1", "--port", "9999"])
@@ -34,6 +34,7 @@ def test_cli_serve_no_runner_sets_env_and_invokes_uvicorn(monkeypatch: pytest.Mo
     assert called["host"] == "127.0.0.1"
     assert called["port"] == 9999
     assert called["reload"] is False
+    assert called["log_level"] == "error"
 
 
 @pytest.mark.basic

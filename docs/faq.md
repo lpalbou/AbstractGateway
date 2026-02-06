@@ -160,13 +160,19 @@ Evidence: tool executor selection in `src/abstractgateway/hosts/bundle_host.py`.
 
 ### Why do `/voice/tts` or `/audio/transcribe` fail with “capability unavailable”?
 
-Those endpoints are backed by **AbstractCore capability plugins** (voice/audio). Install the voice extra:
+Those endpoints are backed by **AbstractVoice** (`abstractvoice`). Install the voice extra:
 
 ```bash
 pip install "abstractgateway[voice]"
 ```
 
-If your voice backend needs to download models on first use, you may also need:
+Or use the batteries-included install:
+
+```bash
+pip install "abstractgateway[all]"
+```
+
+By default, the gateway allows AbstractVoice to download models on first use. If you disabled downloads (or want to enable them explicitly), set:
 
 ```bash
 export ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS=1

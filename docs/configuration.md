@@ -11,7 +11,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[visualflow]`: VisualFlow JSON directory mode via `abstractflow`
 - `abstractgateway[telegram]`: Telegram bridge dependencies (AbstractRuntime’s AbstractCore integration)
 - `abstractgateway[voice]`: voice/audio endpoints (TTS + STT) via `abstractvoice`
-- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice + visualflow)
+- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice + media + visualflow)
 - `abstractgateway[dev]`: local dev/test deps
 
 Optional (required by some workflows/features):
@@ -36,6 +36,8 @@ Optional (required by some workflows/features):
   Evidence: `src/abstractgateway/service.py`
 - `ABSTRACTGATEWAY_DB_PATH`: SQLite DB file path (optional; default: `<DATA_DIR>/gateway.sqlite3`)  
   Evidence: `src/abstractgateway/stores.py` (`build_sqlite_stores`)
+  Note: for safety, when `ABSTRACTGATEWAY_STORE_BACKEND=sqlite`, the DB path must be **under** `ABSTRACTGATEWAY_DATA_DIR`.
+  The gateway fails fast if `ABSTRACTGATEWAY_DB_PATH` points elsewhere (prevents cross-wiring UAT/prod durable state).
 
 ### Runner tuning (advanced)
 

@@ -76,6 +76,17 @@ def build_sqlite_stores(*, base_dir: Path, db_path: Path | None = None) -> Gatew
     base.mkdir(parents=True, exist_ok=True)
 
     db_file = Path(db_path).expanduser().resolve() if db_path is not None else (base / "gateway.sqlite3")
+    try:
+        db_file.relative_to(base)
+    except Exception as e:
+        raise ValueError(
+            "Invalid sqlite store configuration: db_path must be under base_dir.\n"
+            f"  base_dir={base}\n"
+            f"  db_path={db_file}\n"
+            "\n"
+            "If you set ABSTRACTGATEWAY_DB_PATH, it must point to a file under ABSTRACTGATEWAY_DATA_DIR.\n"
+            "This prevents cross-wiring UAT/prod durable state."
+        ) from e
     db = SqliteDatabase(db_file)
 
     artifact_store = FileArtifactStore(base)

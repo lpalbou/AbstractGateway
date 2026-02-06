@@ -70,10 +70,16 @@ Evidence: `src/abstractgateway/service.py` (runner startup), `src/abstractgatewa
 
 The process manager can start/stop a small allowlisted set of local processes and tail logs. It is intended for **trusted dev machines**.
 
+Notes:
+- **Process control** (`/api/gateway/processes`, start/stop, log tail) is **repo-root scoped** for safety and assumes a monorepo-style checkout (scripts like `./build.sh`, `./agw-uat.sh`, …).
+- **Env-var management** (`/api/gateway/processes/env`) is **repo-root independent** and works in packaged installs (it persists under `ABSTRACTGATEWAY_DATA_DIR`).
+
 Enable:
 
 ```bash
 export ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1
+
+# Optional (process control only): the AbstractFramework checkout root
 export ABSTRACTGATEWAY_TRIAGE_REPO_ROOT="$PWD"
 ```
 
@@ -84,11 +90,11 @@ export ABSTRACTGATEWAY_PROCESS_MANAGER_CONFIG="$PWD/runtime/gateway/processes.js
 ```
 
 Endpoints:
-- `GET /api/gateway/processes`
+- `GET /api/gateway/processes` (requires `ABSTRACTGATEWAY_TRIAGE_REPO_ROOT`)
 - `POST /api/gateway/processes/{id}/start|stop|restart|redeploy`
 - `GET /api/gateway/processes/{id}/logs/tail`
-- `GET /api/gateway/processes/env` (metadata only; never returns values)
-- `POST /api/gateway/processes/env` (write-only set/unset for allowlisted keys)
+- `GET /api/gateway/processes/env` (metadata only; never returns values; does not require repo root)
+- `POST /api/gateway/processes/env` (write-only set/unset for allowlisted keys; does not require repo root)
 
 Evidence: `src/abstractgateway/routes/gateway.py` (endpoint guards) and `src/abstractgateway/maintenance/process_manager.py`.
 
@@ -96,6 +102,8 @@ Evidence: `src/abstractgateway/routes/gateway.py` (endpoint guards) and `src/abs
 
 Env var editing is allowlist-only and values are write-only (they are never returned to the client). Overrides are persisted on the gateway host under:
 - `<ABSTRACTGATEWAY_DATA_DIR>/process_manager/env_overrides.json`
+
+When the gateway starts and `ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1`, it loads and applies persisted overrides to its own `os.environ` (best-effort).
 
 To extend the allowlist, update:
 - `src/abstractgateway/maintenance/process_manager.py` → `managed_env_var_allowlist()`

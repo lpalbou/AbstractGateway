@@ -6,6 +6,15 @@ from pathlib import Path
 from typing import Any, Optional
 
 
+def _is_within_dir(path: Path, base_dir: Path) -> bool:
+    """Return True if path is located under base_dir (after resolution)."""
+    try:
+        path.relative_to(base_dir)
+        return True
+    except Exception:
+        return False
+
+
 def _as_bool(raw: Any, default: bool) -> bool:
     if raw is None:
         return default
@@ -90,11 +99,29 @@ class GatewayHostConfig:
         batch = _as_int(_env("ABSTRACTGATEWAY_COMMAND_BATCH_LIMIT", "ABSTRACTFLOW_GATEWAY_COMMAND_BATCH_LIMIT"), 200)
         scan = _as_int(_env("ABSTRACTGATEWAY_RUN_SCAN_LIMIT", "ABSTRACTFLOW_GATEWAY_RUN_SCAN_LIMIT"), 200)
 
+        data_dir = Path(data_dir_raw).expanduser().resolve()
+        flows_dir = Path(flows_dir_raw).expanduser().resolve()
+        db_path = Path(db_path_raw).expanduser().resolve() if db_path_raw else None
+
+        if store_backend == "sqlite":
+            effective_db = (db_path if db_path is not None else (data_dir / "gateway.sqlite3")).expanduser().resolve()
+            if not _is_within_dir(effective_db, data_dir):
+                raw = str(db_path_raw or "").strip() or "<unset>"
+                raise SystemExit(
+                    "Invalid sqlite configuration: ABSTRACTGATEWAY_DB_PATH must point to a file under ABSTRACTGATEWAY_DATA_DIR.\n"
+                    f"  ABSTRACTGATEWAY_DATA_DIR={data_dir}\n"
+                    f"  ABSTRACTGATEWAY_DB_PATH={raw}\n"
+                    f"  effective_db_path={effective_db}\n"
+                    "\n"
+                    "Fix: unset ABSTRACTGATEWAY_DB_PATH or set it to e.g. \"$ABSTRACTGATEWAY_DATA_DIR/gateway.sqlite3\".\n"
+                    "This prevents cross-wiring UAT/prod durable state."
+                )
+
         return GatewayHostConfig(
-            data_dir=Path(data_dir_raw).expanduser().resolve(),
-            flows_dir=Path(flows_dir_raw).expanduser().resolve(),
+            data_dir=data_dir,
+            flows_dir=flows_dir,
             store_backend=store_backend,
-            db_path=Path(db_path_raw).expanduser().resolve() if db_path_raw else None,
+            db_path=db_path,
             runner_enabled=bool(runner_enabled),
             poll_interval_s=float(poll_s),
             command_batch_limit=max(1, int(batch)),

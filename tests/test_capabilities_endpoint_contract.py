@@ -71,17 +71,11 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         r1 = client.get("/api/gateway/discovery/capabilities")
         assert r1.status_code in {401, 403}, r1.text
 
-        # Stub deterministic registry status.
-        import abstractgateway.routes.gateway as gateway_routes
-
-        class _StubReg:
-            def status(self):
-                return {"capabilities": {"voice": {"available": False}, "audio": {"available": False}, "vision": {"available": False}}}
-
-        monkeypatch.setattr(gateway_routes, "_get_gateway_capability_registry", lambda: _StubReg())
-
         r2 = client.get("/api/gateway/discovery/capabilities", headers=headers)
         assert r2.status_code == 200, r2.text
         body = r2.json()
-        assert isinstance(body.get("capabilities"), dict)
-
+        caps = body.get("capabilities")
+        assert isinstance(caps, dict)
+        for k in ("voice", "tools", "visualflow", "vision_fallback", "media"):
+            assert isinstance(caps.get(k), dict)
+            assert isinstance(caps[k].get("installed"), bool)

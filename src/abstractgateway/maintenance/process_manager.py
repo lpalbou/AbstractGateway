@@ -145,6 +145,234 @@ def managed_env_var_allowlist() -> Dict[str, ManagedEnvVarSpec]:
     return out
 
 
+class ManagedEnvVarManager:
+    """Persisted, allowlisted env-var overrides (write-only values).
+
+    This is used by:
+    - the gateway process manager ENV API (`/api/gateway/processes/env`)
+    - the process manager itself when spawning child processes
+
+    It is intentionally independent from `repo_root` so operator config works in
+    non-repo deployments (e.g. packaged gateway installs).
+    """
+
+    def __init__(self, *, base_dir: Path):
+        self._base_dir = Path(base_dir).expanduser().resolve()
+        self._managed_env_specs = managed_env_var_allowlist()
+        self._lock = threading.Lock()
+
+        self._state_dir = (self._base_dir / "process_manager").resolve()
+        self._env_overrides_path = (self._state_dir / "env_overrides.json").resolve()
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+
+        self._env_overrides_error: Optional[str] = None
+        self._env_overrides: Dict[str, Dict[str, Any]] = self._load_env_overrides()
+
+        # Apply persisted overrides to this gateway process early so runtime
+        # integrations that read os.getenv() observe the configured values.
+        try:
+            with self._lock:
+                self._apply_env_overrides_to_environ_locked()
+        except Exception:
+            pass
+
+    @property
+    def base_dir(self) -> Path:
+        return self._base_dir
+
+    def list_managed_env_vars(self) -> Dict[str, Any]:
+        """Return allowlisted env vars metadata without exposing values."""
+        with self._lock:
+            error = self._env_overrides_error
+            out: List[Dict[str, Any]] = []
+            for key, spec in sorted(self._managed_env_specs.items(), key=lambda kv: kv[0]):
+                rec = self._env_overrides.get(key) if isinstance(self._env_overrides, dict) else None
+                source = "missing"
+                updated_at: Optional[str] = None
+                if isinstance(rec, dict):
+                    enabled0 = rec.get("enabled")
+                    enabled = bool(enabled0) if isinstance(enabled0, bool) else True
+                    updated_at = str(rec.get("updated_at") or "").strip() or None
+                    source = "override" if enabled else "unset"
+                else:
+                    v = os.getenv(key)
+                    if v is not None and str(v).strip() != "":
+                        source = "inherited"
+                    elif v is not None:
+                        source = "inherited_empty"
+
+                is_set = source in {"override", "inherited", "inherited_empty"}
+                out.append(
+                    {
+                        "key": key,
+                        "label": spec.label,
+                        "description": spec.description,
+                        "category": spec.category,
+                        "secret": bool(spec.secret),
+                        "is_set": bool(is_set),
+                        "source": source,
+                        "updated_at": updated_at,
+                    }
+                )
+            return {"ok": True, "error": error, "vars": out}
+
+    def update_managed_env_vars(self, *, set_vars: Dict[str, str], unset: List[str]) -> Dict[str, Any]:
+        set_vars = dict(set_vars or {})
+        unset = list(unset or [])
+
+        # Validate keys early to avoid persisting partial updates.
+        normalized_set: Dict[str, str] = {}
+        for k, v in set_vars.items():
+            key = str(k or "").strip()
+            if not key or not _SAFE_ENV_KEY_RE.match(key):
+                raise ValueError(f"Invalid env var key: {key!r}")
+            if key not in self._managed_env_specs:
+                raise ValueError(f"Env var key not allowlisted: {key}")
+            value = "" if v is None else str(v)
+            if "\x00" in value:
+                raise ValueError(f"Invalid env var value for {key}: contains NUL byte")
+            if len(value.encode("utf-8", errors="replace")) > 16_384:
+                raise ValueError(f"Env var value too large for {key} (max 16KB)")
+            normalized_set[key] = value
+
+        normalized_unset: List[str] = []
+        for k in unset:
+            key = str(k or "").strip()
+            if not key or not _SAFE_ENV_KEY_RE.match(key):
+                raise ValueError(f"Invalid env var key: {key!r}")
+            if key not in self._managed_env_specs:
+                raise ValueError(f"Env var key not allowlisted: {key}")
+            normalized_unset.append(key)
+
+        overlap = set(normalized_set.keys()) & set(normalized_unset)
+        if overlap:
+            keys = ", ".join(sorted(overlap))
+            raise ValueError(f"Env vars cannot be both set and unset in the same request: {keys}")
+
+        if not normalized_set and not normalized_unset:
+            raise ValueError("No env var updates provided (set/unset)")
+
+        if len(normalized_set) + len(normalized_unset) > 64:
+            raise ValueError("Too many env vars in one request (max 64)")
+
+        now = _now_utc_iso()
+        with self._lock:
+            for key, value in normalized_set.items():
+                self._env_overrides[key] = {"enabled": True, "value": value, "updated_at": now}
+            for key in normalized_unset:
+                # Security: clear the stored value when unsetting (avoid lingering secrets on disk).
+                self._env_overrides[key] = {"enabled": False, "value": "", "updated_at": now}
+
+            self._save_env_overrides()
+            self._env_overrides_error = None
+
+            # Apply immediately to this gateway process environment. This is safe
+            # because keys are strictly allowlisted.
+            self._apply_env_overrides_to_environ_locked()
+
+        # Return a fresh view (still metadata-only).
+        return self.list_managed_env_vars()
+
+    def apply_overrides_to_dict(self, env: Dict[str, str]) -> None:
+        if not isinstance(env, dict):
+            return
+        with self._lock:
+            self._apply_env_overrides_to_dict_locked(env)
+
+    def apply_overrides_to_environ(self) -> None:
+        with self._lock:
+            self._apply_env_overrides_to_environ_locked()
+
+    def _load_env_overrides(self) -> Dict[str, Dict[str, Any]]:
+        self._env_overrides_error = None
+        if not self._env_overrides_path.exists():
+            return {}
+        try:
+            raw = self._env_overrides_path.read_text(encoding="utf-8", errors="replace")
+            obj = json.loads(raw)
+        except Exception as e:
+            self._env_overrides_error = f"Failed to read env_overrides.json: {e}"
+            return {}
+        if not isinstance(obj, dict):
+            self._env_overrides_error = "env_overrides.json must be a JSON object"
+            return {}
+        raw_vars = obj.get("vars")
+        if not isinstance(raw_vars, dict):
+            self._env_overrides_error = "env_overrides.json must contain 'vars' (object)"
+            return {}
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for k, v in raw_vars.items():
+            key = str(k or "").strip()
+            if not key or not _SAFE_ENV_KEY_RE.match(key):
+                continue
+            if not isinstance(v, dict):
+                continue
+            enabled = v.get("enabled")
+            out[key] = {
+                "enabled": bool(enabled) if isinstance(enabled, bool) else True,
+                "value": str(v.get("value") if v.get("value") is not None else ""),
+                "updated_at": str(v.get("updated_at") or "").strip() or None,
+            }
+        return out
+
+    def _save_env_overrides(self) -> None:
+        tmp = self._env_overrides_path.with_suffix(".tmp")
+        obj = {"version": 1, "updated_at": _now_utc_iso(), "vars": self._env_overrides}
+        data = json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        tmp.write_text(data, encoding="utf-8")
+
+        # Best-effort: keep secrets readable only by the current user.
+        try:
+            os.chmod(tmp, 0o600)
+        except Exception:
+            pass
+
+        tmp.replace(self._env_overrides_path)
+        try:
+            os.chmod(self._env_overrides_path, 0o600)
+        except Exception:
+            pass
+
+    def _apply_env_overrides_to_environ_locked(self) -> None:
+        for key in self._managed_env_specs.keys():
+            rec = self._env_overrides.get(key) if isinstance(self._env_overrides, dict) else None
+            if not isinstance(rec, dict):
+                continue
+            enabled0 = rec.get("enabled")
+            enabled = bool(enabled0) if isinstance(enabled0, bool) else True
+            if enabled:
+                os.environ[key] = str(rec.get("value") if rec.get("value") is not None else "")
+            else:
+                os.environ.pop(key, None)
+
+    def _apply_env_overrides_to_dict_locked(self, env: Dict[str, str]) -> None:
+        for key in self._managed_env_specs.keys():
+            rec = self._env_overrides.get(key) if isinstance(self._env_overrides, dict) else None
+            if not isinstance(rec, dict):
+                continue
+            enabled0 = rec.get("enabled")
+            enabled = bool(enabled0) if isinstance(enabled0, bool) else True
+            if enabled:
+                env[key] = str(rec.get("value") if rec.get("value") is not None else "")
+            else:
+                env.pop(key, None)
+
+
+_ENV_MANAGER: Optional[ManagedEnvVarManager] = None
+_ENV_MANAGER_LOCK = threading.Lock()
+
+
+def get_managed_env_var_manager(*, base_dir: Path) -> ManagedEnvVarManager:
+    global _ENV_MANAGER
+    with _ENV_MANAGER_LOCK:
+        resolved_base = Path(base_dir).expanduser().resolve()
+        if _ENV_MANAGER is not None and _ENV_MANAGER.base_dir == resolved_base:
+            return _ENV_MANAGER
+        _ENV_MANAGER = ManagedEnvVarManager(base_dir=resolved_base)
+        return _ENV_MANAGER
+
+
 def _now_utc_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -438,29 +666,18 @@ class ProcessManager:
         self._base_dir = Path(base_dir).expanduser().resolve()
         self._repo_root = Path(repo_root).expanduser().resolve()
         self._specs = dict(specs)
-        self._managed_env_specs = managed_env_var_allowlist()
         self._lock = threading.Lock()
         self._procs: Dict[str, subprocess.Popen[bytes]] = {}
 
         self._state_dir = (self._base_dir / "process_manager").resolve()
         self._logs_dir = (self._base_dir / "process_logs").resolve()
         self._state_path = (self._state_dir / "state.json").resolve()
-        self._env_overrides_path = (self._state_dir / "env_overrides.json").resolve()
 
         self._state_dir.mkdir(parents=True, exist_ok=True)
         self._logs_dir.mkdir(parents=True, exist_ok=True)
 
         self._state: Dict[str, Dict[str, Any]] = self._load_state()
-        self._env_overrides_error: Optional[str] = None
-        self._env_overrides: Dict[str, Dict[str, Any]] = self._load_env_overrides()
-
-        # Apply persisted overrides to this gateway process early so runtime
-        # integrations that read os.getenv() observe the configured values.
-        try:
-            with self._lock:
-                self._apply_env_overrides_to_environ_locked()
-        except Exception:
-            pass
+        self._env_mgr = get_managed_env_var_manager(base_dir=self._base_dir)
 
     @property
     def base_dir(self) -> Path:
@@ -503,61 +720,6 @@ class ProcessManager:
         tmp.replace(self._state_path)
 
     # ----------------------------
-    # Managed env overrides (write-only)
-    # ----------------------------
-
-    def _load_env_overrides(self) -> Dict[str, Dict[str, Any]]:
-        self._env_overrides_error = None
-        if not self._env_overrides_path.exists():
-            return {}
-        try:
-            raw = self._env_overrides_path.read_text(encoding="utf-8", errors="replace")
-            obj = json.loads(raw)
-        except Exception as e:
-            self._env_overrides_error = f"Failed to read env_overrides.json: {e}"
-            return {}
-        if not isinstance(obj, dict):
-            self._env_overrides_error = "env_overrides.json must be a JSON object"
-            return {}
-        raw_vars = obj.get("vars")
-        if not isinstance(raw_vars, dict):
-            self._env_overrides_error = "env_overrides.json must contain 'vars' (object)"
-            return {}
-
-        out: Dict[str, Dict[str, Any]] = {}
-        for k, v in raw_vars.items():
-            key = str(k or "").strip()
-            if not key or not _SAFE_ENV_KEY_RE.match(key):
-                continue
-            if not isinstance(v, dict):
-                continue
-            enabled = v.get("enabled")
-            out[key] = {
-                "enabled": bool(enabled) if isinstance(enabled, bool) else True,
-                "value": str(v.get("value") if v.get("value") is not None else ""),
-                "updated_at": str(v.get("updated_at") or "").strip() or None,
-            }
-        return out
-
-    def _save_env_overrides(self) -> None:
-        tmp = self._env_overrides_path.with_suffix(".tmp")
-        obj = {"version": 1, "updated_at": _now_utc_iso(), "vars": self._env_overrides}
-        data = json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        tmp.write_text(data, encoding="utf-8")
-
-        # Best-effort: keep secrets readable only by the current user.
-        try:
-            os.chmod(tmp, 0o600)
-        except Exception:
-            pass
-
-        tmp.replace(self._env_overrides_path)
-        try:
-            os.chmod(self._env_overrides_path, 0o600)
-        except Exception:
-            pass
-
-    # ----------------------------
     # Public API
     # ----------------------------
 
@@ -591,121 +753,10 @@ class ProcessManager:
             return out
 
     def list_managed_env_vars(self) -> Dict[str, Any]:
-        """Return allowlisted env vars metadata without exposing values."""
-        with self._lock:
-            error = self._env_overrides_error
-            out: List[Dict[str, Any]] = []
-            for key, spec in sorted(self._managed_env_specs.items(), key=lambda kv: kv[0]):
-                rec = self._env_overrides.get(key) if isinstance(self._env_overrides, dict) else None
-                source = "missing"
-                updated_at: Optional[str] = None
-                if isinstance(rec, dict):
-                    enabled0 = rec.get("enabled")
-                    enabled = bool(enabled0) if isinstance(enabled0, bool) else True
-                    updated_at = str(rec.get("updated_at") or "").strip() or None
-                    source = "override" if enabled else "unset"
-                else:
-                    v = os.getenv(key)
-                    if v is not None and str(v).strip() != "":
-                        source = "inherited"
-                    elif v is not None:
-                        source = "inherited_empty"
-
-                is_set = source in {"override", "inherited", "inherited_empty"}
-                out.append(
-                    {
-                        "key": key,
-                        "label": spec.label,
-                        "description": spec.description,
-                        "category": spec.category,
-                        "secret": bool(spec.secret),
-                        "is_set": bool(is_set),
-                        "source": source,
-                        "updated_at": updated_at,
-                    }
-                )
-            return {"ok": True, "error": error, "vars": out}
+        return self._env_mgr.list_managed_env_vars()
 
     def update_managed_env_vars(self, *, set_vars: Dict[str, str], unset: List[str]) -> Dict[str, Any]:
-        set_vars = dict(set_vars or {})
-        unset = list(unset or [])
-
-        # Validate keys early to avoid persisting partial updates.
-        normalized_set: Dict[str, str] = {}
-        for k, v in set_vars.items():
-            key = str(k or "").strip()
-            if not key or not _SAFE_ENV_KEY_RE.match(key):
-                raise ValueError(f"Invalid env var key: {key!r}")
-            if key not in self._managed_env_specs:
-                raise ValueError(f"Env var key not allowlisted: {key}")
-            value = "" if v is None else str(v)
-            if "\x00" in value:
-                raise ValueError(f"Invalid env var value for {key}: contains NUL byte")
-            if len(value.encode("utf-8", errors="replace")) > 16_384:
-                raise ValueError(f"Env var value too large for {key} (max 16KB)")
-            normalized_set[key] = value
-
-        normalized_unset: List[str] = []
-        for k in unset:
-            key = str(k or "").strip()
-            if not key or not _SAFE_ENV_KEY_RE.match(key):
-                raise ValueError(f"Invalid env var key: {key!r}")
-            if key not in self._managed_env_specs:
-                raise ValueError(f"Env var key not allowlisted: {key}")
-            normalized_unset.append(key)
-
-        overlap = set(normalized_set.keys()) & set(normalized_unset)
-        if overlap:
-            keys = ", ".join(sorted(overlap))
-            raise ValueError(f"Env vars cannot be both set and unset in the same request: {keys}")
-
-        if not normalized_set and not normalized_unset:
-            raise ValueError("No env var updates provided (set/unset)")
-
-        if len(normalized_set) + len(normalized_unset) > 64:
-            raise ValueError("Too many env vars in one request (max 64)")
-
-        now = _now_utc_iso()
-        with self._lock:
-            for key, value in normalized_set.items():
-                self._env_overrides[key] = {"enabled": True, "value": value, "updated_at": now}
-            for key in normalized_unset:
-                # Security: clear the stored value when unsetting (avoid lingering secrets on disk).
-                self._env_overrides[key] = {"enabled": False, "value": "", "updated_at": now}
-
-            self._save_env_overrides()
-            self._env_overrides_error = None
-
-            # Apply immediately to this gateway process environment. This is safe
-            # because keys are strictly allowlisted.
-            self._apply_env_overrides_to_environ_locked()
-
-        # Return a fresh view (still metadata-only).
-        return self.list_managed_env_vars()
-
-    def _apply_env_overrides_to_environ_locked(self) -> None:
-        for key in self._managed_env_specs.keys():
-            rec = self._env_overrides.get(key) if isinstance(self._env_overrides, dict) else None
-            if not isinstance(rec, dict):
-                continue
-            enabled0 = rec.get("enabled")
-            enabled = bool(enabled0) if isinstance(enabled0, bool) else True
-            if enabled:
-                os.environ[key] = str(rec.get("value") if rec.get("value") is not None else "")
-            else:
-                os.environ.pop(key, None)
-
-    def _apply_env_overrides_to_dict_locked(self, env: Dict[str, str]) -> None:
-        for key in self._managed_env_specs.keys():
-            rec = self._env_overrides.get(key) if isinstance(self._env_overrides, dict) else None
-            if not isinstance(rec, dict):
-                continue
-            enabled0 = rec.get("enabled")
-            enabled = bool(enabled0) if isinstance(enabled0, bool) else True
-            if enabled:
-                env[key] = str(rec.get("value") if rec.get("value") is not None else "")
-            else:
-                env.pop(key, None)
+        return self._env_mgr.update_managed_env_vars(set_vars=set_vars, unset=unset)
 
     def start(self, process_id: str) -> Dict[str, Any]:
         pid = str(process_id or "").strip()
@@ -735,7 +786,7 @@ class ProcessManager:
                 raise FileNotFoundError(f"cwd does not exist: {cwd_path}")
 
             env = dict(os.environ)
-            self._apply_env_overrides_to_dict_locked(env)
+            self._env_mgr.apply_overrides_to_dict(env)
             for k, v in (spec.env or {}).items():
                 env[str(k)] = str(v)
 
@@ -1001,8 +1052,7 @@ class ProcessManager:
         def _do() -> None:
             time.sleep(max(0.0, float(delay_s)))
             try:
-                with self._lock:
-                    self._apply_env_overrides_to_environ_locked()
+                self._env_mgr.apply_overrides_to_environ()
             except Exception:
                 pass
             argv = list(sys.argv)

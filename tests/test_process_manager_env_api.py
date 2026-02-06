@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ def test_process_env_endpoints_disabled_by_default(tmp_path: Path, monkeypatch: 
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER", "0")
 
     from abstractgateway.app import app
 
@@ -42,9 +44,6 @@ def test_process_env_endpoints_write_only_and_allowlisted(tmp_path: Path, monkey
     flows_dir = tmp_path / "flows"
     flows_dir.mkdir(parents=True, exist_ok=True)
 
-    repo_root = tmp_path / "repo"
-    repo_root.mkdir(parents=True, exist_ok=True)
-
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows_dir))
@@ -54,7 +53,6 @@ def test_process_env_endpoints_write_only_and_allowlisted(tmp_path: Path, monkey
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
 
     monkeypatch.setenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER", "1")
-    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
 
     from abstractgateway.app import app
 
@@ -117,3 +115,50 @@ def test_process_env_endpoints_write_only_and_allowlisted(tmp_path: Path, monkey
         # Disallowed keys rejected.
         r3 = client.post("/api/gateway/processes/env", headers=headers, json={"set": {"PATH": "/tmp"}})
         assert r3.status_code == 400, r3.text
+
+
+@pytest.mark.basic
+def test_env_overrides_are_applied_on_gateway_startup_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    flows_dir = tmp_path / "flows"
+    flows_dir.mkdir(parents=True, exist_ok=True)
+
+    # Persist an override before the gateway starts.
+    state_dir = runtime_dir / "process_manager"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    overrides_path = state_dir / "env_overrides.json"
+    overrides_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-02-06T00:00:00Z",
+                "vars": {"ABSTRACT_EMAIL_FROM": {"enabled": True, "value": "persisted@example.com", "updated_at": "2026-02-06T00:00:00Z"}},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # Ensure the host environment doesn't already provide it.
+    monkeypatch.delenv("ABSTRACT_EMAIL_FROM", raising=False)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER", "1")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        with TestClient(app) as client:
+            r = client.get("/api/gateway/processes/env", headers=headers)
+            assert r.status_code == 200, r.text
+            assert os.getenv("ABSTRACT_EMAIL_FROM") == "persisted@example.com"
+    finally:
+        os.environ.pop("ABSTRACT_EMAIL_FROM", None)

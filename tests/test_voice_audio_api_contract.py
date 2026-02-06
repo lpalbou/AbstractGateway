@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 
@@ -68,23 +69,15 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
     from abstractgateway.app import app
     import abstractgateway.routes.gateway as gateway_routes
 
-    from abstractcore.capabilities.errors import CapabilityUnavailableError
-
     headers = {"Authorization": f"Bearer {token}"}
 
-    class _UnavailableReg:
-        class _Voice:
-            def tts(self, _text: str, **_kwargs):
-                raise CapabilityUnavailableError(capability="voice", reason="voice capability unavailable")
+    def _unavailable_voice_manager():
+        raise HTTPException(
+            status_code=400,
+            detail='Voice/audio support is not available. Install with: pip install "abstractgateway[voice]" (or "abstractgateway[all]")',
+        )
 
-        class _Audio:
-            def transcribe(self, _audio: object, **_kwargs):
-                raise CapabilityUnavailableError(capability="audio", reason="audio capability unavailable")
-
-        voice = _Voice()
-        audio = _Audio()
-
-    monkeypatch.setattr(gateway_routes, "_get_gateway_capability_registry", lambda: _UnavailableReg())
+    monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", _unavailable_voice_manager)
 
     with TestClient(app) as client:
         # Auth required.
@@ -94,7 +87,7 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
         # Capability unavailable: explicit error.
         tts_unavail = client.post("/api/gateway/runs/session_memory_s1/voice/tts", json={"text": "hello"}, headers=headers)
         assert tts_unavail.status_code == 400, tts_unavail.text
-        assert "unavailable" in str(tts_unavail.json().get("detail") or "").lower()
+        assert "abstractgateway[voice]" in str(tts_unavail.json().get("detail") or "").lower()
 
         # Upload an audio artifact for STT.
         upload = client.post(
@@ -112,28 +105,17 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
             headers=headers,
         )
         assert stt_unavail.status_code == 400, stt_unavail.text
-        assert "unavailable" in str(stt_unavail.json().get("detail") or "").lower()
+        assert "abstractgateway[voice]" in str(stt_unavail.json().get("detail") or "").lower()
 
-    # Success path: deterministic stub registry.
-    class _OkReg:
-        class _Voice:
-            def tts(self, text: str, **kwargs):
-                store = kwargs["artifact_store"]
-                run_id = kwargs.get("run_id")
-                fmt = str(kwargs.get("format") or "wav").strip().lower() or "wav"
-                ct = "audio/wav" if fmt == "wav" else "audio/mpeg"
-                content = f"tts:{text}".encode("utf-8")
-                meta = store.store(content, content_type=ct, run_id=str(run_id))
-                return {"$artifact": meta.artifact_id, "content_type": ct, "filename": f"tts.{fmt}"}
+    # Success path: deterministic stub voice manager.
+    class _OkVoiceManager:
+        def speak_to_bytes(self, text: str, *, format: str = "wav", voice: str | None = None) -> bytes:  # noqa: ARG002
+            return f"tts:{text}".encode("utf-8")
 
-        class _Audio:
-            def transcribe(self, _audio: object, **_kwargs):
-                return "hello world"
+        def transcribe_from_bytes(self, _audio_bytes: bytes, *, language: str | None = None) -> str:  # noqa: ARG002
+            return "hello world"
 
-        voice = _Voice()
-        audio = _Audio()
-
-    monkeypatch.setattr(gateway_routes, "_get_gateway_capability_registry", lambda: _OkReg())
+    monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", lambda: _OkVoiceManager())
 
     with TestClient(app) as client2:
         upload2 = client2.post(
@@ -173,3 +155,66 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
         audio_out = tts_body.get("audio_artifact") or {}
         assert isinstance(audio_out, dict)
         assert isinstance(audio_out.get("$artifact"), str) and audio_out["$artifact"]
+
+
+@pytest.mark.basic
+def test_audio_transcribe_accepts_session_scoped_artifacts_for_any_run_in_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-audio-transcribe-scope", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    headers = {"Authorization": f"Bearer {token}"}
+
+    class _OkVoiceManager:
+        def speak_to_bytes(self, text: str, *, format: str = "wav", voice: str | None = None) -> bytes:  # noqa: ARG002
+            return f"tts:{text}".encode("utf-8")
+
+        def transcribe_from_bytes(self, _audio_bytes: bytes, *, language: str | None = None) -> str:  # noqa: ARG002
+            return "hello world"
+
+    monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", lambda: _OkVoiceManager())
+
+    with TestClient(app) as client:
+        # Start a normal run with session_id=s1.
+        started = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": "bundle-audio-transcribe-scope", "session_id": "s1", "input_data": {"prompt": "hi"}},
+            headers=headers,
+        )
+        assert started.status_code == 200, started.text
+        run_id = started.json().get("run_id")
+        assert isinstance(run_id, str) and run_id
+
+        # Upload an audio attachment (stored under the session memory owner run id).
+        upload = client.post(
+            "/api/gateway/attachments/upload",
+            data={"session_id": "s1"},
+            files={"file": ("clip.wav", b"RIFF....", "audio/wav")},
+            headers=headers,
+        )
+        assert upload.status_code == 200, upload.text
+        audio_ref = upload.json()["attachment"]
+        assert isinstance(audio_ref.get("$artifact"), str) and audio_ref["$artifact"]
+
+        # Transcribe the session-scoped audio while targeting the started run id.
+        stt = client.post(
+            f"/api/gateway/runs/{run_id}/audio/transcribe",
+            json={"audio_artifact": audio_ref, "request_id": "req-stt-1"},
+            headers=headers,
+        )
+        assert stt.status_code == 200, stt.text
+        body = stt.json()
+        assert body.get("ok") is True
+        assert body.get("run_id") == run_id
+        assert body.get("request_id") == "req-stt-1"
+        assert body.get("text") == "hello world"

@@ -428,3 +428,169 @@ def test_backlog_exec_promote_blocks_when_prod_diverged(tmp_path: Path, monkeypa
     assert rep.get("blocked") is True
     assert rep.get("reason") == "conflicts"
     assert int(rep.get("conflicts_total") or 0) >= 1
+
+
+@pytest.mark.basic
+def test_backlog_exec_feedback_stops_uat_stack_when_lock_owned_and_process_manager_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway_dir = tmp_path / "gateway"
+    gateway_dir.mkdir(parents=True, exist_ok=True)
+    qdir = gateway_dir / "backlog_exec_queue"
+    qdir.mkdir(parents=True, exist_ok=True)
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+
+    rid = "cccccccccccccccc"
+    (qdir / f"{rid}.json").write_text(
+        json.dumps(
+            {
+                "created_at": "2026-02-03T10:00:00Z",
+                "request_id": rid,
+                "status": "awaiting_qa",
+                "execution_mode": "uat",
+                "attempt": 1,
+                "run_dir_relpath": f"backlog_exec_runs/{rid}",
+                "candidate_relpath": f"untracked/backlog_exec_uat/workspaces/{rid}",
+                "backlog": {"kind": "planned", "filename": "700-x.md", "relpath": "docs/backlog/planned/700-x.md"},
+                "uat_lock_acquired": True,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # Durable lock file owned by this request.
+    (gateway_dir / "uat_deploy_lock.json").write_text(
+        json.dumps({"version": 1, "owner_request_id": rid, "candidate_relpath": f"untracked/backlog_exec_uat/workspaces/{rid}"}, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    stopped: list[str] = []
+
+    class _Mgr:
+        def stop(self, process_id: str):  # noqa: ANN001
+            stopped.append(str(process_id))
+            return {"status": "stopped", "pid": None}
+
+    mgr = _Mgr()
+    monkeypatch.setattr(gateway_routes, "_process_manager_enabled", lambda: True)
+    monkeypatch.setattr(gateway_routes, "_require_process_manager", lambda: mgr)
+
+    app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
+    with TestClient(app) as client:
+        fb = client.post(f"/api/gateway/backlog/exec/requests/{rid}/feedback", json={"feedback": "please fix X"})
+        assert fb.status_code == 200
+        payload = fb.json()["payload"]
+        rep = payload.get("feedback_report") or {}
+        stop_rep = rep.get("uat_stop") or {}
+        procs = stop_rep.get("processes") or {}
+        assert isinstance(procs, dict)
+        # Expect the shared UAT stack stop order (UI/frontends first).
+        assert stopped == [
+            "abstractcode_web_uat",
+            "abstractobserver_uat",
+            "abstractflow_frontend_uat",
+            "abstractflow_backend_uat",
+            "gateway_uat",
+        ]
+
+
+@pytest.mark.basic
+def test_backlog_exec_promote_stops_uat_stack_when_lock_owned_and_process_manager_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway_dir = tmp_path / "gateway"
+    gateway_dir.mkdir(parents=True, exist_ok=True)
+    qdir = gateway_dir / "backlog_exec_queue"
+    qdir.mkdir(parents=True, exist_ok=True)
+    runs_dir = gateway_dir / "backlog_exec_runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / "demo").mkdir(parents=True, exist_ok=True)
+    (repo_root / "demo" / "demo.txt").write_text("old\n", encoding="utf-8")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+
+    rid = "dddddddddddddddd"
+    run_dir = runs_dir / rid
+    run_dir.mkdir(parents=True, exist_ok=True)
+    candidate_rel = f"untracked/backlog_exec_uat/workspaces/{rid}"
+    candidate_root = repo_root / candidate_rel
+    (candidate_root / "demo").mkdir(parents=True, exist_ok=True)
+    (candidate_root / "demo" / "demo.txt").write_text("new\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "created_at": "2026-02-03T10:00:00Z",
+        "request_id": rid,
+        "candidate_relpath": candidate_rel,
+        "repos": [{"repo": "demo", "repo_relpath": "demo", "copy": ["demo.txt"], "delete": [], "skipped": []}],
+    }
+    (run_dir / "candidate_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    (qdir / f"{rid}.json").write_text(
+        json.dumps(
+            {
+                "created_at": "2026-02-03T10:00:00Z",
+                "request_id": rid,
+                "status": "awaiting_qa",
+                "execution_mode": "uat",
+                "run_dir_relpath": f"backlog_exec_runs/{rid}",
+                "candidate_relpath": candidate_rel,
+                "candidate_manifest_relpath": f"backlog_exec_runs/{rid}/candidate_manifest.json",
+                "backlog": {"kind": "planned", "filename": "700-x.md", "relpath": "docs/backlog/planned/700-x.md"},
+                "uat_lock_acquired": True,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # Durable lock file owned by this request.
+    (gateway_dir / "uat_deploy_lock.json").write_text(
+        json.dumps({"version": 1, "owner_request_id": rid, "candidate_relpath": candidate_rel}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    stopped: list[str] = []
+
+    class _Mgr:
+        def stop(self, process_id: str):  # noqa: ANN001
+            stopped.append(str(process_id))
+            return {"status": "stopped", "pid": None}
+
+    mgr = _Mgr()
+    monkeypatch.setattr(gateway_routes, "_process_manager_enabled", lambda: True)
+    monkeypatch.setattr(gateway_routes, "_require_process_manager", lambda: mgr)
+
+    app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
+    with TestClient(app) as client:
+        pr = client.post(f"/api/gateway/backlog/exec/requests/{rid}/promote", json={"redeploy": False})
+        assert pr.status_code == 200
+        payload = pr.json()["payload"]
+        rep = payload.get("promotion_report") or {}
+        stop_rep = rep.get("uat_stop") or {}
+        procs = stop_rep.get("processes") or {}
+        assert isinstance(procs, dict)
+        assert stopped == [
+            "abstractcode_web_uat",
+            "abstractobserver_uat",
+            "abstractflow_frontend_uat",
+            "abstractflow_backend_uat",
+            "gateway_uat",
+        ]

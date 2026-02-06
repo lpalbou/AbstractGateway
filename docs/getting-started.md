@@ -26,7 +26,7 @@ pip install "abstractgateway[http]"
 # Optional: voice/audio (TTS + STT endpoints)
 pip install "abstractgateway[voice]"
 
-# Or: batteries-included (HTTP + tools + voice + visualflow)
+# Or: batteries-included (HTTP + tools + voice + media + visualflow)
 pip install "abstractgateway[all]"
 ```
 
@@ -124,6 +124,9 @@ export ABSTRACTGATEWAY_STORE_BACKEND=sqlite
 
 # Optional; when omitted, defaults to: <ABSTRACTGATEWAY_DATA_DIR>/gateway.sqlite3
 export ABSTRACTGATEWAY_DB_PATH="$PWD/runtime/gateway/gateway.sqlite3"
+#
+# Safety invariant: when using sqlite, the DB file must live under ABSTRACTGATEWAY_DATA_DIR.
+# The gateway will refuse to start if ABSTRACTGATEWAY_DB_PATH points outside (prevents UAT/prod cross-wiring).
 
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```

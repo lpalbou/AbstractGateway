@@ -69,7 +69,7 @@ pip install "abstractgateway[http]"
 - `abstractgateway[visualflow]`: run VisualFlow JSON from a directory of `*.json` files (requires `abstractflow`)
 - `abstractgateway[telegram]`: Telegram bridge dependencies
 - `abstractgateway[voice]`: enable voice/audio endpoints (TTS/STT) via `abstractvoice`
-- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice + visualflow)
+- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice + media + visualflow)
 - `abstractgateway[dev]`: local test/dev deps
 
 ### Bundle-dependent dependencies (only if your workflows need them)

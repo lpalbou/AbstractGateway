@@ -39,6 +39,7 @@ Notes:
    - README is the entrypoint.
    - `docs/getting-started.md` is the step-by-step guide.
    - Prefer adding FAQ entries for recurring “gotchas”.
+   - Regenerate the LLM snapshot: `python scripts/generate-llms-full.py` (updates `llms-full.txt`).
 
 ## Project conventions
 

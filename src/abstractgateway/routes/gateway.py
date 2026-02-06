@@ -45,42 +45,43 @@ from ..workflow_deprecations import WorkflowDeprecatedError
 router = APIRouter(prefix="/gateway", tags=["gateway"])
 logger = logging.getLogger(__name__)
 
-_CAP_REGISTRY = None
-_CAP_REGISTRY_LOCK = threading.Lock()
+_VOICE_MANAGER = None
+_VOICE_MANAGER_LOCK = threading.Lock()
 
 
-class _GatewayCapabilityOwner:
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-
-
-def _get_gateway_capability_registry():
-    """Return a process-wide capability registry (lazy, best-effort).
+def _get_gateway_voice_manager():
+    """Return a process-wide voice manager (lazy, best-effort).
 
     This keeps gateway deployments dependency-light while allowing operators to
-    install optional modality packages (e.g. abstractvoice) in the same env.
+    install optional voice/audio packages (abstractvoice) in the same env.
     """
-    global _CAP_REGISTRY
-    with _CAP_REGISTRY_LOCK:
-        if _CAP_REGISTRY is not None:
-            return _CAP_REGISTRY
+    global _VOICE_MANAGER
+    with _VOICE_MANAGER_LOCK:
+        if _VOICE_MANAGER is not None:
+            return _VOICE_MANAGER
 
         try:
-            from abstractcore.capabilities.registry import CapabilityRegistry
-        except Exception as e:  # pragma: no cover
-            raise HTTPException(status_code=400, detail=f"AbstractCore capabilities are not available: {e}")
+            from abstractvoice.vm.manager import VoiceManager
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Voice/audio support is not available: {e}. "
+                    'Install with: pip install "abstractgateway[voice]" (or "abstractgateway[all]")'
+                ),
+            )
 
-        cfg: Dict[str, Any] = {}
-        lang = str(os.getenv("ABSTRACTGATEWAY_VOICE_LANGUAGE", "") or "").strip()
-        if lang:
-            cfg["voice_language"] = lang
+        lang = str(os.getenv("ABSTRACTGATEWAY_VOICE_LANGUAGE", "") or "").strip() or "en"
         allow_downloads_raw = str(os.getenv("ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS", "") or "").strip().lower()
-        if allow_downloads_raw:
-            cfg["voice_allow_downloads"] = allow_downloads_raw in {"1", "true", "yes", "y", "on"}
+        if not allow_downloads_raw:
+            # Default to enabling downloads for a smoother first-run UX (new machines).
+            # Operators can disable by setting ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS=0.
+            allow_downloads = True
+        else:
+            allow_downloads = allow_downloads_raw in {"1", "true", "yes", "y", "on"}
 
-        owner = _GatewayCapabilityOwner(cfg)
-        _CAP_REGISTRY = CapabilityRegistry(owner)
-        return _CAP_REGISTRY
+        _VOICE_MANAGER = VoiceManager(language=lang, allow_downloads=bool(allow_downloads))
+        return _VOICE_MANAGER
 
 
 class StartRunRequest(BaseModel):
@@ -1269,6 +1270,85 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
             input_data.pop("workspace_ignored_paths", None)
         input_data.pop("workspaceIgnoredPaths", None)
 
+    return input_data
+
+
+def _normalize_run_context_media(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Best-effort normalize attachment/media inputs into `input_data.context.attachments`.
+
+    Rationale:
+    - AbstractAgent ReAct adapter expects `context.attachments` (or legacy `context.media`)
+      to feed `payload.media` into LLM_CALL effects.
+    - Some clients attach media under `input_data.attachments` or per-message fields; lift
+      these into the canonical place to enable image fallback / media handling.
+    """
+
+    def _norm_items(raw: Any) -> list[Any]:
+        items = list(raw) if isinstance(raw, (list, tuple)) else None
+        if not items:
+            return []
+        out: list[Any] = []
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+                continue
+            if isinstance(item, dict):
+                aid = item.get("$artifact")
+                if not (isinstance(aid, str) and aid.strip()):
+                    aid = item.get("artifact_id")
+                if isinstance(aid, str) and aid.strip():
+                    out.append(dict(item))
+        return out
+
+    ctx0 = input_data.get("context")
+    ctx = dict(ctx0) if isinstance(ctx0, dict) else None
+
+    # Collect media candidates from common shapes.
+    merged: list[Any] = []
+    if ctx is not None:
+        merged.extend(_norm_items(ctx.get("attachments")))
+        merged.extend(_norm_items(ctx.get("media")))
+        msgs = ctx.get("messages")
+        if isinstance(msgs, list):
+            for m in msgs:
+                if not isinstance(m, dict):
+                    continue
+                merged.extend(_norm_items(m.get("attachments")))
+                merged.extend(_norm_items(m.get("media")))
+
+    merged.extend(_norm_items(input_data.get("attachments")))
+    merged.extend(_norm_items(input_data.get("media")))
+
+    if not merged:
+        return input_data
+
+    def _key(it: Any) -> Optional[Tuple[str, str]]:
+        if isinstance(it, str):
+            s = it.strip()
+            return ("path", s) if s else None
+        if isinstance(it, dict):
+            aid = it.get("$artifact") or it.get("artifact_id")
+            if isinstance(aid, str) and aid.strip():
+                return ("artifact", aid.strip())
+        return None
+
+    deduped: list[Any] = []
+    seen: set[Tuple[str, str]] = set()
+    for it in merged:
+        k = _key(it)
+        if k is None or k in seen:
+            continue
+        deduped.append(dict(it) if isinstance(it, dict) else it)
+        seen.add(k)
+
+    if ctx is None:
+        ctx = {}
+    # Prefer canonical key; keep legacy `context.media` untouched for back-compat.
+    ctx.setdefault("attachments", deduped)
+    # If canonical key exists but was empty/invalid, overwrite with normalized.
+    if not _norm_items(ctx.get("attachments")):
+        ctx["attachments"] = deduped
+    input_data["context"] = ctx
     return input_data
 
 
@@ -2581,6 +2661,7 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = dict(req.input_data or {})
         input_data = _sanitize_run_workspace_policy(input_data)
+        input_data = _normalize_run_context_media(input_data)
         # Default workspace_root behavior (cross-client):
         # - If omitted, create a per-run workspace under the gateway data_dir.
         # - Clients may override only within the operator-configured server workspace roots.
@@ -4152,7 +4233,6 @@ class VoiceTTSResponse(BaseModel):
     request_id: str
     audio_artifact: Dict[str, Any]
 
-
 @router.post("/runs/{run_id}/voice/tts", response_model=VoiceTTSResponse)
 async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     """Deterministic TTS: store audio as artifact + emit a durable ledger event."""
@@ -4184,29 +4264,64 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     fmt = str(getattr(req, "format", "wav") or "wav").strip().lower()
 
     try:
-        from abstractcore.capabilities.errors import CapabilityUnavailableError
-
-        reg = _get_gateway_capability_registry()
-        audio_ref = reg.voice.tts(
+        vm = _get_gateway_voice_manager()
+        audio_bytes0 = vm.speak_to_bytes(
             text,
-            voice=str(voice) if isinstance(voice, str) and voice.strip() else None,
             format=fmt,
-            artifact_store=store,
-            run_id=str(getattr(run, "run_id", rid)),
-            tags={"request_id": request_id, "session_id": str(getattr(run, "session_id", "") or "")},
-            metadata={"request_id": request_id, "text": text, "voice": voice, "format": fmt},
+            voice=str(voice) if isinstance(voice, str) and voice.strip() else None,
         )
-    except CapabilityUnavailableError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except ImportError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        if not isinstance(audio_bytes0, (bytes, bytearray)):
+            raise TypeError("Voice backend returned non-bytes audio")
+        audio_bytes = bytes(audio_bytes0)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
 
-    if not isinstance(audio_ref, dict) or not isinstance(audio_ref.get("$artifact"), str) or not audio_ref.get("$artifact"):
-        raise HTTPException(status_code=500, detail="TTS backend returned an invalid artifact ref")
+    store_fn = getattr(store, "store", None)
+    if not callable(store_fn):
+        raise HTTPException(status_code=500, detail="Artifact store does not support storing bytes")
+
+    if fmt in {"wav", "wave"}:
+        content_type = "audio/wav"
+        filename = "tts.wav"
+    elif fmt in {"mp3", "mpeg"}:
+        content_type = "audio/mpeg"
+        filename = "tts.mp3"
+    else:
+        content_type = "application/octet-stream"
+        filename = f"tts.{fmt}" if fmt else "tts.bin"
+
+    sha256 = hashlib.sha256(audio_bytes).hexdigest()
+    tags: Dict[str, str] = {
+        "kind": "voice_tts",
+        "request_id": request_id,
+        "sha256": sha256,
+        "format": fmt,
+        "session_id": str(getattr(run, "session_id", "") or ""),
+    }
+    voice_str = str(voice or "").strip() if isinstance(voice, str) else ""
+    if voice_str:
+        tags["voice"] = voice_str
+
+    try:
+        meta = store_fn(audio_bytes, content_type=content_type, run_id=str(getattr(run, "run_id", rid)), tags=tags)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store TTS audio artifact: {e}")
+
+    artifact_id = str(getattr(meta, "artifact_id", "") or "") if meta is not None else ""
+    if not artifact_id:
+        artifact_id = str(meta.get("artifact_id", "") or "") if isinstance(meta, dict) else ""
+    if not artifact_id:
+        raise HTTPException(status_code=500, detail="Artifact store did not return an artifact_id for TTS audio")
+
+    audio_ref: Dict[str, Any] = {
+        "$artifact": artifact_id,
+        "content_type": content_type,
+        "filename": filename,
+        "sha256": sha256,
+        "size_bytes": len(audio_bytes),
+    }
 
     payload = {
         "run_id": str(getattr(run, "run_id", rid)),
@@ -4278,9 +4393,37 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         raise HTTPException(status_code=404, detail="audio_artifact not found")
 
     expected_run_id = str(getattr(run, "run_id", rid))
-    if meta_in.run_id and str(meta_in.run_id) != expected_run_id:
-        # Do not leak cross-run artifact existence to callers.
-        raise HTTPException(status_code=404, detail="audio_artifact not found")
+    # Attachments are session-scoped in this gateway: uploads are stored under the session memory
+    # owner run id, not necessarily the active chat/run id. Allow audio artifacts that belong to:
+    # - this run, OR
+    # - this run's session memory owner run, OR
+    # - any artifact explicitly tagged with this session_id (defense-in-depth for storage backends).
+    session_id = ""
+    try:
+        sid0 = getattr(run, "session_id", None)
+        session_id = sid0.strip() if isinstance(sid0, str) and sid0.strip() else ""
+    except Exception:
+        session_id = ""
+
+    allowed_run_ids = {expected_run_id}
+    if session_id:
+        try:
+            allowed_run_ids.add(_session_memory_run_id(session_id))
+        except Exception:
+            pass
+
+    meta_run_id = ""
+    try:
+        meta_run_id = str(getattr(meta_in, "run_id", "") or "").strip()
+    except Exception:
+        meta_run_id = ""
+
+    if meta_run_id and meta_run_id not in allowed_run_ids:
+        tags = getattr(meta_in, "tags", None)
+        tagged_session = str(tags.get("session_id") or "").strip() if isinstance(tags, dict) else ""
+        if not session_id or not tagged_session or tagged_session != session_id:
+            # Do not leak cross-session artifact existence to callers.
+            raise HTTPException(status_code=404, detail="audio_artifact not found")
 
     content_type_in = str(getattr(meta_in, "content_type", "") or "")
     if content_type_in and not content_type_in.startswith("audio/") and content_type_in != "application/octet-stream":
@@ -4288,16 +4431,28 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
 
     language = getattr(req, "language", None)
 
+    load_fn = getattr(store, "load", None)
+    if not callable(load_fn):
+        raise HTTPException(status_code=400, detail="Artifact store does not support content reads")
     try:
-        from abstractcore.capabilities.errors import CapabilityUnavailableError
+        artifact_in = load_fn(str(audio_artifact_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load audio artifact content: {e}")
+    if artifact_in is None:
+        raise HTTPException(status_code=404, detail="audio_artifact not found")
 
-        reg = _get_gateway_capability_registry()
-        text = reg.audio.transcribe(audio_ref, language=str(language) if isinstance(language, str) and language.strip() else None, artifact_store=store)
+    audio_bytes0 = getattr(artifact_in, "content", b"") or b""
+    if not isinstance(audio_bytes0, (bytes, bytearray)):
+        raise HTTPException(status_code=500, detail="audio_artifact content is not bytes")
+    audio_bytes = bytes(audio_bytes0)
+
+    try:
+        vm = _get_gateway_voice_manager()
+        text = vm.transcribe_from_bytes(
+            audio_bytes,
+            language=str(language) if isinstance(language, str) and language.strip() else None,
+        )
         text = str(text or "")
-    except CapabilityUnavailableError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except ImportError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
@@ -4595,17 +4750,65 @@ async def discovery_tools() -> Dict[str, Any]:
 
 @router.get("/discovery/capabilities")
 async def discovery_capabilities() -> Dict[str, Any]:
-    """List installed AbstractCore capability plugins (voice/audio/vision) for thin clients."""
+    """List optional gateway capabilities for thin clients (best-effort)."""
+    caps: Dict[str, Any] = {}
+
     try:
-        reg = _get_gateway_capability_registry()
-        status = reg.status()
-        if isinstance(status, dict):
-            return status
-        return {"capabilities": {}, "error": "Capability registry returned non-dict status"}
-    except HTTPException:
-        raise
+        import abstractvoice  # type: ignore
+
+        caps["voice"] = {"installed": True, "version": getattr(abstractvoice, "__version__", None)}
     except Exception as e:
-        return {"capabilities": {}, "error": str(e)}
+        caps["voice"] = {
+            "installed": False,
+            "error": str(e),
+            "install_hint": 'pip install "abstractgateway[voice]" (or "abstractgateway[all]")',
+        }
+
+    try:
+        from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
+
+        specs = list_default_tool_specs()
+        caps["tools"] = {"installed": True, "count": len(specs) if isinstance(specs, list) else None}
+    except Exception as e:
+        caps["tools"] = {"installed": False, "error": str(e)}
+
+    try:
+        import importlib.metadata
+        import importlib.util
+
+        if importlib.util.find_spec("abstractflow") is None:
+            raise ModuleNotFoundError("No module named 'abstractflow'")
+        ver = None
+        try:
+            ver = importlib.metadata.version("abstractflow")
+        except Exception:
+            ver = None
+        caps["visualflow"] = {"installed": True, "version": ver}
+    except Exception as e:
+        caps["visualflow"] = {"installed": False, "error": str(e)}
+
+    # This is not a separate extra, but some clients (e.g. AbstractCode) surface the presence of a vision fallback.
+    try:
+        import abstractcore.media.vision_fallback  # type: ignore  # noqa: F401
+
+        caps["vision_fallback"] = {"installed": True}
+    except Exception as e:
+        caps["vision_fallback"] = {"installed": False, "error": str(e)}
+
+    # AbstractCore media stack (images/docs). Some modules import without optional deps; report readiness.
+    try:
+        from abstractcore.media.auto_handler import AutoMediaHandler  # type: ignore
+
+        h = AutoMediaHandler(enable_events=False)
+        avail = getattr(h, "_available_processors", None)
+        if isinstance(avail, dict):
+            caps["media"] = {"installed": True, "available_processors": {str(k): bool(v) for k, v in avail.items()}}
+        else:
+            caps["media"] = {"installed": True}
+    except Exception as e:
+        caps["media"] = {"installed": False, "error": str(e)}
+
+    return {"capabilities": caps}
 
 
 @router.get("/discovery/providers")
@@ -7194,6 +7397,10 @@ async def backlog_exec_request_feedback(request_id: str, req: BacklogExecFeedbac
     if status not in {"awaiting_qa", "failed", "completed"}:
         raise HTTPException(status_code=409, detail=f"Cannot add feedback when status={status!r}")
 
+    exec_mode = str(payload.get("execution_mode") or "").strip().lower() or "uat"
+    if exec_mode == "candidate":
+        exec_mode = "uat"
+
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     attempt_raw = payload.get("attempt")
@@ -7265,6 +7472,31 @@ async def backlog_exec_request_feedback(request_id: str, req: BacklogExecFeedbac
     feedback_report["uat_lock_released"] = bool(lock_released)
 
     # No UAT auto-deploy: operator manually deploys/restarts UAT for a specific request.
+
+    # Stop UAT after operator decision so UAT is short-lived (ports/services do not linger).
+    if exec_mode == "uat" and lock_owner == rid:
+        stop_report: Dict[str, Any] = {"at": now}
+        if _process_manager_enabled():
+            try:
+                mgr = _require_process_manager()
+                stopped: Dict[str, Any] = {}
+                for pid in (
+                    "abstractcode_web_uat",
+                    "abstractobserver_uat",
+                    "abstractflow_frontend_uat",
+                    "abstractflow_backend_uat",
+                    "gateway_uat",
+                ):
+                    try:
+                        stopped[pid] = mgr.stop(pid)
+                    except Exception as e:
+                        stopped[pid] = {"status": "error", "error": str(e)}
+                stop_report["processes"] = stopped
+            except Exception as e:
+                stop_report["error"] = str(e)
+        else:
+            stop_report["processes"] = {"status": "skipped", "reason": "process_manager_disabled"}
+        feedback_report["uat_stop"] = stop_report
 
     payload["feedback_report"] = feedback_report
     try:
@@ -7633,6 +7865,31 @@ async def backlog_exec_request_promote(request_id: str, req: BacklogExecPromoteR
 
     # Release UAT lock (if owned). No UAT auto-deploy: operator manually deploys/restarts UAT for a specific request.
 
+    # Stop UAT after operator decision so UAT is short-lived (ports/services do not linger).
+    if exec_mode == "uat" and lock_owner == rid:
+        stop_report: Dict[str, Any] = {"at": now}
+        if _process_manager_enabled():
+            try:
+                mgr = _require_process_manager()
+                stopped: Dict[str, Any] = {}
+                for pid in (
+                    "abstractcode_web_uat",
+                    "abstractobserver_uat",
+                    "abstractflow_frontend_uat",
+                    "abstractflow_backend_uat",
+                    "gateway_uat",
+                ):
+                    try:
+                        stopped[pid] = mgr.stop(pid)
+                    except Exception as e:
+                        stopped[pid] = {"status": "error", "error": str(e)}
+                stop_report["processes"] = stopped
+            except Exception as e:
+                stop_report["error"] = str(e)
+        else:
+            stop_report["processes"] = {"status": "skipped", "reason": "process_manager_disabled"}
+        payload.setdefault("promotion_report", {})["uat_stop"] = stop_report
+
     # Optional redeploy hook (best-effort).
     if bool(req.redeploy):
         try:
@@ -7815,9 +8072,28 @@ def _require_process_manager():
         raise HTTPException(status_code=500, detail=f"Failed to initialize process manager: {e}")
 
 
+def _require_managed_env_var_manager():
+    if not _process_manager_enabled():
+        raise HTTPException(status_code=404, detail="Process manager is disabled (set ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1)")
+    base_dir = _gateway_base_dir()
+    try:
+        from ..maintenance.process_manager import get_managed_env_var_manager  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Managed env var manager unavailable: {e}")
+    try:
+        return get_managed_env_var_manager(base_dir=base_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize managed env var manager: {e}")
+
+
 @router.get("/processes", response_model=ProcessListResponse)
 async def processes_list() -> ProcessListResponse:
     if not _process_manager_enabled():
+        return ProcessListResponse(enabled=False, processes=[])
+    # Fresh installs (packaged gateway) may enable the process manager for env config
+    # while not having a repo checkout. Process control is repo-root scoped and must
+    # degrade gracefully (UI should show a hint, not a hard error).
+    if _triage_repo_root_from_env() is None:
         return ProcessListResponse(enabled=False, processes=[])
     mgr = _require_process_manager()
     try:
@@ -7832,7 +8108,7 @@ async def processes_env_list() -> ProcessEnvListResponse:
     if not _process_manager_enabled():
         return ProcessEnvListResponse(enabled=False, vars=[])
 
-    mgr = _require_process_manager()
+    mgr = _require_managed_env_var_manager()
     try:
         out = mgr.list_managed_env_vars()
     except Exception as e:
@@ -7847,7 +8123,7 @@ async def processes_env_list() -> ProcessEnvListResponse:
 
 @router.post("/processes/env", response_model=ProcessEnvListResponse)
 async def processes_env_update(req: ProcessEnvUpdateRequest) -> ProcessEnvListResponse:
-    mgr = _require_process_manager()
+    mgr = _require_managed_env_var_manager()
     try:
         out = mgr.update_managed_env_vars(set_vars=dict(req.set_vars or {}), unset=list(req.unset or []))
     except ValueError as e:

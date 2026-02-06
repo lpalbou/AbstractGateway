@@ -28,8 +28,9 @@ http = [
   "uvicorn[standard]>=0.23.0",
 ]
 
-# Voice/audio capabilities (TTS + STT) via AbstractCore capability plugins.
+# Voice/audio capabilities (TTS + STT) via AbstractVoice.
 voice = [
+  "AbstractRuntime[abstractcore]>=0.4.0",
   "abstractvoice>=0.6.0",
 ]
 
@@ -56,7 +57,7 @@ dev = [
 all = [
   "AbstractRuntime[abstractcore]>=0.4.0",
   "abstractagent>=0.3.0",
-  "abstractcore[tools]>=2.6.8",
+  "abstractcore[media,tools]>=2.6.8",
   "abstractflow>=0.3.0",
   "abstractvoice>=0.6.0",
   "fastapi>=0.100.0",

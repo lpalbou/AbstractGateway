@@ -286,11 +286,15 @@ def test_gateway_ledger_batch_endpoint(tmp_path: Path, monkeypatch: pytest.Monke
             headers=headers,
         )
         assert r2.status_code == 200, r2.text
-        run_id_2 = r2.json()["run_id"]        def _has_wait(rid: str) -> bool:
+        run_id_2 = r2.json()["run_id"]
+
+        def _has_wait(rid: str) -> bool:
             rr = client.get(f"/api/gateway/runs/{rid}", headers=headers)
             assert rr.status_code == 200, rr.text
             w = rr.json().get("waiting")
-            return isinstance(w, dict) and bool(w.get("wait_key"))        _wait_until(lambda: _has_wait(run_id_1), timeout_s=10.0, poll_s=0.1)
+            return isinstance(w, dict) and bool(w.get("wait_key"))
+
+        _wait_until(lambda: _has_wait(run_id_1), timeout_s=10.0, poll_s=0.1)
         _wait_until(lambda: _has_wait(run_id_2), timeout_s=10.0, poll_s=0.1)
         batch = client.post(
             "/api/gateway/runs/ledger/batch",

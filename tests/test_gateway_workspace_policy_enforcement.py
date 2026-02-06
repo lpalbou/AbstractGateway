@@ -82,6 +82,9 @@ def test_server_file_endpoints_ignore_client_scope_overrides(tmp_path: Path, mon
     secret.write_text("secret\n", encoding="utf-8")
 
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TOOL_MODE", "passthrough")
 
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
@@ -118,6 +121,9 @@ def test_workspace_policy_endpoint_exposes_mount_names_only(tmp_path: Path, monk
 
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_MOUNTS", f"notes={notes}\n")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TOOL_MODE", "passthrough")
 
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
@@ -140,6 +146,9 @@ def test_sanitize_run_workspace_policy_rejects_outside_root(tmp_path: Path, monk
     outside.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TOOL_MODE", "passthrough")
 
     from abstractgateway.routes.gateway import _sanitize_run_workspace_policy
 

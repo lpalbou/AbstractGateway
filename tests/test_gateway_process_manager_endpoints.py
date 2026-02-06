@@ -31,6 +31,7 @@ def test_process_manager_endpoints_disabled_by_default(tmp_path: Path, monkeypat
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER", "0")
 
     from abstractgateway.app import app
 
@@ -44,6 +45,45 @@ def test_process_manager_endpoints_disabled_by_default(tmp_path: Path, monkeypat
 
         r2 = client.post("/api/gateway/processes/does-not-exist/start", headers=headers)
         assert r2.status_code == 404
+
+
+@pytest.mark.basic
+def test_process_manager_list_is_gracefully_disabled_without_repo_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    flows_dir = tmp_path / "flows"
+    flows_dir.mkdir(parents=True, exist_ok=True)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
+
+    # Enabled, but no repo root configured.
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER", "1")
+    monkeypatch.delenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", raising=False)
+    monkeypatch.delenv("ABSTRACT_TRIAGE_REPO_ROOT", raising=False)
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        # Process control is repo-root scoped -> should be disabled, not a hard error.
+        r = client.get("/api/gateway/processes", headers=headers)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("enabled") is False
+        assert body.get("processes") == []
+
+        # Env-var management should still work (no repo root required).
+        r2 = client.get("/api/gateway/processes/env", headers=headers)
+        assert r2.status_code == 200, r2.text
+        body2 = r2.json()
+        assert body2.get("enabled") is True
+        keys = {it.get("key") for it in (body2.get("vars") or []) if isinstance(it, dict)}
+        assert "ABSTRACT_EMAIL_FROM" in keys
 
 
 @pytest.mark.integration
