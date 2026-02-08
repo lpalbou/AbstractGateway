@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.2.0"
+version = "0.2.1"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
-  "AbstractRuntime>=0.4.0",
+  "AbstractRuntime>=0.4.2",
 ]
 
 [project.optional-dependencies]
@@ -21,8 +21,8 @@ runner = []
 
 # HTTP API deployments (FastAPI + Uvicorn + AbstractCore integration).
 http = [
-  "AbstractRuntime[abstractcore]>=0.4.0",
-  "abstractagent>=0.3.0",
+  "AbstractRuntime[abstractcore]>=0.4.2",
+  "abstractagent>=0.3.1",
   "fastapi>=0.100.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]>=0.23.0",
@@ -30,23 +30,23 @@ http = [
 
 # Voice/audio capabilities (TTS + STT) via AbstractVoice.
 voice = [
-  "AbstractRuntime[abstractcore]>=0.4.0",
-  "abstractvoice>=0.6.0",
+  "AbstractRuntime[abstractcore]>=0.4.2",
+  "abstractvoice>=0.6.3",
 ]
 
 # Optional support for starting runs from VisualFlow JSON (compiled via AbstractFlow).
 visualflow = [
-  "abstractflow>=0.3.0",
+  "abstractflow>=0.3.7",
 ]
 telegram = [
   # Enables Telegram tools + TDLib wrapper via AbstractRuntime's AbstractCore integration.
-  "AbstractRuntime[abstractcore]>=0.4.0",
+  "AbstractRuntime[abstractcore]>=0.4.2",
 ]
 dev = [
   "pytest>=7.0.0",
   "httpx>=0.27.0",
-  "AbstractRuntime[abstractcore]>=0.4.0",
-  "abstractagent>=0.3.0",
+  "AbstractRuntime[abstractcore]>=0.4.2",
+  "abstractagent>=0.3.1",
   "fastapi>=0.100.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]>=0.23.0",
@@ -55,11 +55,11 @@ dev = [
 # Meta extra: everything needed for a "batteries-included" gateway.
 # Note: some capabilities still require runtime configuration (auth, model provider, optional downloads).
 all = [
-  "AbstractRuntime[abstractcore]>=0.4.0",
-  "abstractagent>=0.3.0",
-  "abstractcore[media,tools]>=2.6.8",
-  "abstractflow>=0.3.0",
-  "abstractvoice>=0.6.0",
+  "AbstractRuntime[abstractcore]>=0.4.2",
+  "abstractagent>=0.3.1",
+  "abstractcore[media,tools]>=2.11.8",
+  "abstractflow>=0.3.7",
+  "abstractvoice>=0.6.3",
   "fastapi>=0.100.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]>=0.23.0",
