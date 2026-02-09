@@ -11,6 +11,20 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.basic
 
 
+def _require_kg_deps():
+    try:
+        import lancedb  # type: ignore  # noqa: F401
+    except Exception:
+        pytest.skip("lancedb is not installed")
+
+    try:
+        from abstractmemory import LanceDBTripleStore, TripleAssertion  # type: ignore
+    except Exception:
+        pytest.skip("abstractmemory is not installed")
+
+    return LanceDBTripleStore, TripleAssertion
+
+
 def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> None:
     bundles_dir.mkdir(parents=True, exist_ok=True)
 
@@ -94,12 +108,7 @@ def _make_client(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Te
 
 
 def test_gateway_kg_query_endpoint_returns_persisted_triples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    try:
-        import lancedb  # type: ignore  # noqa: F401
-    except Exception:
-        pytest.skip("lancedb is not installed")
-
-    from abstractmemory import LanceDBTripleStore, TripleAssertion
+    LanceDBTripleStore, TripleAssertion = _require_kg_deps()
     from abstractruntime.integrations.abstractmemory.effect_handlers import resolve_scope_owner_id
 
     client, headers, runtime_dir = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
@@ -187,12 +196,7 @@ def test_gateway_kg_query_endpoint_returns_persisted_triples(tmp_path: Path, mon
 
 
 def test_gateway_kg_query_supports_session_id_without_run_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    try:
-        import lancedb  # type: ignore  # noqa: F401
-    except Exception:
-        pytest.skip("lancedb is not installed")
-
-    from abstractmemory import LanceDBTripleStore, TripleAssertion
+    LanceDBTripleStore, TripleAssertion = _require_kg_deps()
 
     client, headers, runtime_dir = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
@@ -228,12 +232,7 @@ def test_gateway_kg_query_supports_session_id_without_run_id(tmp_path: Path, mon
 
 
 def test_gateway_kg_query_scope_all_works_with_session_id_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    try:
-        import lancedb  # type: ignore  # noqa: F401
-    except Exception:
-        pytest.skip("lancedb is not installed")
-
-    from abstractmemory import LanceDBTripleStore, TripleAssertion
+    LanceDBTripleStore, TripleAssertion = _require_kg_deps()
 
     client, headers, runtime_dir = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
@@ -279,12 +278,7 @@ def test_gateway_kg_query_scope_all_works_with_session_id_only(tmp_path: Path, m
 
 
 def test_gateway_kg_query_all_owners_session_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    try:
-        import lancedb  # type: ignore  # noqa: F401
-    except Exception:
-        pytest.skip("lancedb is not installed")
-
-    from abstractmemory import LanceDBTripleStore, TripleAssertion
+    LanceDBTripleStore, TripleAssertion = _require_kg_deps()
 
     client, headers, runtime_dir = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
@@ -317,12 +311,7 @@ def test_gateway_kg_query_all_owners_session_scope(tmp_path: Path, monkeypatch: 
 
 
 def test_gateway_kg_query_all_owners_all_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    try:
-        import lancedb  # type: ignore  # noqa: F401
-    except Exception:
-        pytest.skip("lancedb is not installed")
-
-    from abstractmemory import LanceDBTripleStore, TripleAssertion
+    LanceDBTripleStore, TripleAssertion = _require_kg_deps()
 
     client, headers, runtime_dir = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
@@ -365,13 +354,8 @@ def test_gateway_kg_query_rejects_all_owners_with_owner_id(tmp_path: Path, monke
 
 
 def test_gateway_kg_query_supports_query_text_when_embedder_available(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    try:
-        import lancedb  # type: ignore  # noqa: F401
-    except Exception:
-        pytest.skip("lancedb is not installed")
-
     from abstractgateway.service import GatewayService, get_gateway_service
-    from abstractmemory import LanceDBTripleStore, TripleAssertion
+    LanceDBTripleStore, TripleAssertion = _require_kg_deps()
 
     class _StubEmbedder:
         def embed_texts(self, texts):  # type: ignore[no-untyped-def]

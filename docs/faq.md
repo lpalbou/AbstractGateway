@@ -14,6 +14,18 @@ AbstractGateway is a **durable run gateway** for AbstractRuntime:
 
 Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.py`, `src/abstractgateway/service.py`.
 
+### How does this fit in the AbstractFramework ecosystem?
+
+- **AbstractRuntime** (required): the durable run model + tick loop + stores (declared in `pyproject.toml`).
+- **AbstractGateway** (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in `src/abstractgateway/routes/gateway.py`).
+- **AbstractCore** (optional, via `abstractruntime[abstractcore]`): LLM/tool execution wiring used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
+- Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).
+
+Related repos:
+- AbstractFramework: https://github.com/lpalbou/AbstractFramework
+- AbstractCore: https://github.com/lpalbou/abstractcore
+- AbstractRuntime: https://github.com/lpalbou/abstractruntime
+
 ### Do I need AbstractFlow to run workflows?
 
 Not for **bundle mode** (the default).
@@ -116,6 +128,19 @@ Supported command types:
 
 Evidence: `submit_command` in `src/abstractgateway/routes/gateway.py`, command application in `src/abstractgateway/runner.py`.
 
+### Can I schedule a workflow to run periodically?
+
+Yes (bundle mode).
+
+Use `POST /api/gateway/runs/schedule` to start a scheduled parent run that launches the target workflow as child runs over time.
+
+Notes:
+- `interval` supports compact durations like `15m`, `1h`, `2d`.
+- If `interval` is set and `repeat_count` is omitted, the schedule repeats forever (until you cancel it).
+- To stop the schedule, cancel the scheduled parent run via `POST /api/gateway/commands` with type `cancel`.
+
+Evidence: `ScheduleRunRequest` + `start_scheduled_run` in `src/abstractgateway/routes/gateway.py`.
+
 ## Bundles and workflow execution
 
 ### How do I run a specific bundle version?
@@ -131,7 +156,7 @@ Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start
 Install AbstractRuntime’s AbstractCore integration (already included by `abstractgateway[http]`):
 
 ```bash
-pip install "abstractruntime[abstractcore]>=0.4.0"
+pip install "abstractruntime[abstractcore]>=0.4.2"
 ```
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/needs_tools`).

@@ -8,6 +8,10 @@ The API is documented at runtime:
 - OpenAPI JSON: `GET /openapi.json`
 - Swagger UI: `GET /docs`
 
+Context:
+- In the AbstractFramework ecosystem, UIs and automations call this API to operate **AbstractRuntime** runs.
+- Architecture diagram and core concepts: [architecture.md](./architecture.md)
+
 ## Auth
 
 By default, `/api/gateway/*` is protected by `GatewaySecurityMiddleware` (bearer token + origin allowlist).  
@@ -56,6 +60,26 @@ curl -sS -H "$AUTH" -H "Content-Type: application/json" \
 
 Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
 
+### 2b) Schedule a run (bundle mode)
+
+`POST /api/gateway/runs/schedule` starts a **scheduled parent run** that launches the target workflow as child runs over time.
+
+Example (run 3 times, every hour, starting now):
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Ping"},"start_at":"now","interval":"1h","repeat_count":3,"share_context":true,"session_id":"sess-1"}' \
+  "$BASE_URL/api/gateway/runs/schedule"
+```
+
+Notes:
+- `start_at`: ISO 8601 timestamp (recommended) or `"now"`.
+- `interval`: e.g. `"15m"`, `"1h"`, `"2d"`. If omitted, runs once.
+- `repeat_count`: if omitted and `interval` is set, repeats forever. Alternatively use `repeat_until` (ISO 8601).
+- To stop a schedule, cancel the scheduled parent run via `POST /api/gateway/commands` with type `cancel`.
+
+Evidence: `ScheduleRunRequest`, `start_scheduled_run` in `src/abstractgateway/routes/gateway.py`.
+
 ### 3) Replay the ledger (cursor-based)
 
 Ledger pages are replayed using `after` as “number of items already consumed”.
@@ -69,6 +93,18 @@ Response shape:
 - `next_after`: the next cursor to use
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`get_ledger`).
+
+### 3b) Replay ledgers for multiple runs (batch)
+
+Use `POST /api/gateway/runs/ledger/batch` to reduce request fanout when observing many runs/subflows.
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"limit":200,"runs":[{"run_id":"<run_id_1>","after":0},{"run_id":"<run_id_2>","after":0}]}' \
+  "$BASE_URL/api/gateway/runs/ledger/batch"
+```
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`get_ledger_batch`).
 
 ### 4) Stream ledger updates (SSE)
 
@@ -134,6 +170,15 @@ Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`).
 
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).  
 See: [maintenance.md](./maintenance.md).
+
+## Discovery endpoints (optional)
+
+These exist to help thin clients adapt to the deployed gateway.
+
+- Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
+- Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`discovery_capabilities`, `discovery_providers`).
 
 ## Email inbox (operator UI; optional)
 

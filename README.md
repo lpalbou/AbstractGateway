@@ -10,6 +10,19 @@ This decouples the gateway service from any specific UI (AbstractFlow, AbstractC
 
 Start here: [docs/getting-started.md](docs/getting-started.md)
 
+## AbstractFramework ecosystem
+
+AbstractGateway is part of the **AbstractFramework** ecosystem:
+
+- **AbstractRuntime** (required): durable run model + workflow registry + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
+- **AbstractCore** (optional, via `abstractruntime[abstractcore]`): LLM/tool execution wiring used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
+- Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractCode / AbstractObserver / thin clients (rendering + operations)
+
+Related repos:
+- AbstractFramework: https://github.com/lpalbou/AbstractFramework
+- AbstractCore: https://github.com/lpalbou/abstractcore
+- AbstractRuntime: https://github.com/lpalbou/abstractruntime
+
 ## Quickstart (HTTP server, bundle mode)
 
 ```bash
@@ -40,6 +53,7 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
 ## Client contract (replay-first)
 
 - Clients **start runs**: `POST /api/gateway/runs/start`
+- Clients can **schedule runs** (bundle mode): `POST /api/gateway/runs/schedule`
 - Clients **act** by submitting durable commands: `POST /api/gateway/commands`
   - supported types: `pause|resume|cancel|emit_event|update_schedule|compact_memory`
 - Clients **render** by replaying/streaming the durable ledger:
@@ -79,7 +93,7 @@ pip install "abstractgateway[http]"
   - If you installed only the base package, install it explicitly:
 
 ```bash
-pip install "abstractruntime[abstractcore]>=0.4.0"
+pip install "abstractruntime[abstractcore]>=0.4.2"
 ```
 
 Visual Agent nodes require `abstractagent` (also included by `abstractgateway[http]`):

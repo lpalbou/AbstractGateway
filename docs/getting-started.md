@@ -6,6 +6,17 @@ AbstractGateway is a deployable HTTP/SSE host for **durable AbstractRuntime runs
 
 This guide gets a new installation running in **bundle mode** (recommended), then covers **file vs SQLite** durability and a best-effort **file → SQLite** migration.
 
+## AbstractFramework ecosystem (context)
+
+AbstractGateway is one component in the larger **AbstractFramework** ecosystem:
+- **AbstractRuntime** (required): durable runs + workflow registry + stores
+- **AbstractCore** (optional, via `abstractruntime[abstractcore]`): LLM/tool execution wiring used by many bundles
+
+Related repos:
+- AbstractFramework: https://github.com/lpalbou/AbstractFramework
+- AbstractCore: https://github.com/lpalbou/abstractcore
+- AbstractRuntime: https://github.com/lpalbou/abstractruntime
+
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
@@ -31,7 +42,7 @@ pip install "abstractgateway[all]"
 ```
 
 Optional (only if your workflows need it):
-- LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.0"` (already included by `abstractgateway[http]`)
+- LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.2"` (already included by `abstractgateway[http]`)
 - Visual Agent nodes (bundle mode): `pip install abstractagent` (already included by `abstractgateway[http]`)
 - Voice/audio endpoints (TTS/STT): `pip install "abstractgateway[voice]"` (or `pip install abstractvoice`)
 - `memory_kg_*` nodes (bundle mode): `pip install "abstractmemory[lancedb]"` (or `abstractmemory` + `lancedb`)
@@ -88,6 +99,18 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" -H "Content-Type
 Notes:
 - If a bundle has multiple entrypoints and no default, you must pass `flow_id`.
 - See [api.md](./api.md) for ledger replay/stream and durable commands.
+
+## 2b) (Optional) Schedule a run (bundle mode)
+
+To launch a workflow periodically, start a **scheduled parent run**:
+
+```bash
+curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Ping"},"start_at":"now","interval":"1h","repeat_count":3}' \
+  "http://127.0.0.1:8080/api/gateway/runs/schedule"
+```
+
+Tip: to stop a schedule, cancel the scheduled parent run (`POST /api/gateway/commands`, type `cancel`).
 
 ## 3) Split API vs runner (recommended for upgrades)
 

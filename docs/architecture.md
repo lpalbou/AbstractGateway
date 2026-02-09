@@ -1,7 +1,7 @@
 # AbstractGateway — Architecture
 
-> Status: implemented (v0.1.1)  
-> Last reviewed: 2026-02-04
+> Status: implemented (v0.2.1)  
+> Last reviewed: 2026-02-09
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
 - **Start runs** (and optionally schedule them)
@@ -9,6 +9,13 @@ AbstractGateway is a **durable run gateway** for AbstractRuntime:
 - Let clients **replay** the durable ledger and optionally **stream** updates (SSE)
 
 This document describes the code in this repository (see **Evidence** links).
+
+## Ecosystem placement (AbstractFramework)
+
+AbstractGateway is designed to sit between **thin clients / UIs** and **AbstractRuntime**:
+- AbstractGateway: HTTP/SSE API + durability glue + baseline security (`src/abstractgateway/app.py`, `src/abstractgateway/routes/gateway.py`)
+- AbstractRuntime (required): run model + tick loop + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
+- AbstractCore (optional, via `abstractruntime[abstractcore]`): LLM/tool execution wiring used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
 
 ## High-level shape
 

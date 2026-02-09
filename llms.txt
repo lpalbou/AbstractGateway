@@ -3,64 +3,78 @@
 > Durable Run Gateway host for AbstractRuntime: start runs + append durable commands; clients replay/stream the durable ledger (replay-first).
 
 This repository contains the `abstractgateway` Python package (CLI + FastAPI server + durable stores + runner worker).
-The main HTTP surface is under `/api/gateway/*` (see `src/abstractgateway/routes/gateway.py`).
+The main HTTP surface is `/api/gateway/*` (FastAPI routes in `src/abstractgateway/routes/gateway.py`).
+The live HTTP contract is the runtime OpenAPI schema: `GET /openapi.json` (Swagger UI: `GET /docs`).
 
-Important operational defaults:
-- `abstractgateway serve` requires an auth token by default (`ABSTRACTGATEWAY_AUTH_TOKEN`) and enforces an Origin allowlist on requests that include `Origin`.
-- Bundle mode (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`) is the default and loads `.flow` bundles from `ABSTRACTGATEWAY_FLOWS_DIR`.
-- SQLite safety invariant: when `ABSTRACTGATEWAY_STORE_BACKEND=sqlite`, the DB file must be under `ABSTRACTGATEWAY_DATA_DIR` (fail-fast; prevents UAT/prod cross-wiring).
-- The system is replay-first; SSE is an optimization, not a source of truth.
-- Optional operator endpoints include account-scoped email inbox routes (`/api/gateway/email/*`) used by AbstractObserver (Inbox → Email).
+Format note: follows the [llms.txt specification](https://llmstxt.org/).
+
+Key invariants / defaults (evidence in code):
+- Security is enabled by default for `/api/gateway/*` (bearer token via `ABSTRACTGATEWAY_AUTH_TOKEN`/`ABSTRACTGATEWAY_AUTH_TOKENS`, origin allowlist via `ABSTRACTGATEWAY_ALLOWED_ORIGINS`, request limits). `/api/health` is intentionally public. `abstractgateway serve` fails fast when auth is required but no token is configured (`src/abstractgateway/security/gateway_security.py`, startup checks in `src/abstractgateway/cli.py`).
+- Bundle mode is the default workflow source (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`) and loads `.flow` bundles from `ABSTRACTGATEWAY_FLOWS_DIR` (`src/abstractgateway/service.py`, `src/abstractgateway/hosts/bundle_host.py`).
+- SQLite safety invariant: when `ABSTRACTGATEWAY_STORE_BACKEND=sqlite`, the DB file (`ABSTRACTGATEWAY_DB_PATH`, default `<DATA_DIR>/gateway.sqlite3`) must be under `ABSTRACTGATEWAY_DATA_DIR` (fail-fast; prevents cross-wiring durable state) (`src/abstractgateway/config.py`).
+- The system is replay-first; SSE streams are an optimization, not a source of truth (`src/abstractgateway/routes/gateway.py`).
+- Optional operator endpoints include account-scoped email inbox routes (`/api/gateway/email/*`) used by AbstractObserver (Inbox → Email) (`src/abstractgateway/routes/gateway.py`).
 
 Multimodal notes:
-- Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (reports `voice/audio/vision` plugin status).
+- Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (best-effort; reports installed optional capabilities like `voice`, `tools`, `visualflow`, `vision_fallback`, `media`).
 - Voice/audio durable endpoints (when `abstractvoice` is installed on the gateway host):
   - STT: `POST /api/gateway/runs/{run_id}/audio/transcribe`
   - TTS: `POST /api/gateway/runs/{run_id}/voice/tts`
 
-## Start here
-
-- [README](./README.md): install + quickstart
-- [Docs index](./docs/README.md): documentation map
-
-For a single-file snapshot of the docs set, see: [llms-full.txt](./llms-full.txt).
+Regeneration:
+- `python scripts/generate-llms-full.py` regenerates `llms-full.txt` from the Markdown doc links in this `llms.txt`.
 
 Compatibility note:
 - `CHANGELOD.md` → `CHANGELOG.md`
 - `ACKNOWLEDMENTS.md` → `ACKNOWLEDGMENTS.md`
 
+## Ecosystem
+
+- [AbstractFramework](https://github.com/lpalbou/AbstractFramework): ecosystem meta-repo (this gateway is one component)
+- [AbstractRuntime](https://github.com/lpalbou/abstractruntime): durable runs + tick loop + stores (required dependency)
+- [AbstractCore](https://github.com/lpalbou/abstractcore): LLM/tool/media integrations used by many bundles (via `abstractruntime[abstractcore]`)
+- [AbstractRuntime ↔ AbstractCore integration](./README.md): why some bundles need `abstractruntime[abstractcore]` (see “Bundle-dependent dependencies”)
+- [AbstractFlow](https://github.com/lpalbou/abstractflow): authoring + bundling `.flow` WorkflowBundles (optional)
+
+## Start here
+
+- [README.md](./README.md): install + quickstart + doc map
+- [docs/README.md](./docs/README.md): docs index (what to read for each topic)
+- [docs/getting-started.md](./docs/getting-started.md): step-by-step setup (bundle mode + file/SQLite + split API/runner)
+- [llms-full.txt](./llms-full.txt): single-file snapshot of the Markdown docs linked in this file
+
 ## Project docs
 
-- [Changelog](./CHANGELOG.md)
-- [Contributing](./CONTRIBUTING.md)
-- [Security policy](./SECURITY.md)
-- [Acknowledgments](./ACKNOWLEDGMENTS.md)
+- [CHANGELOG.md](./CHANGELOG.md): release notes (human-oriented)
+- [CONTRIBUTING.md](./CONTRIBUTING.md): dev setup + tests + contribution workflow
+- [SECURITY.md](./SECURITY.md): responsible vulnerability reporting process
+- [ACKNOWLEDGMENTS.md](./ACKNOWLEDGMENTS.md): dependency acknowledgments (see `pyproject.toml` for canonical list)
 
 ## Core docs
 
-- [Getting started](./docs/getting-started.md): run the gateway + choose file vs SQLite stores
-- [FAQ](./docs/faq.md): common questions + troubleshooting
-- [API overview](./docs/api.md): core endpoints + curl examples
-- [Security](./docs/security.md): bearer token + origin allowlist + limits/audit log
-- [Configuration](./docs/configuration.md): env vars + install extras
-- [Architecture](./docs/architecture.md): components + durability model (diagram)
+- [docs/getting-started.md](./docs/getting-started.md): run the gateway + choose file vs SQLite stores + split API/runner
+- [docs/api.md](./docs/api.md): client contract + curl examples (replay-first ledger + durable commands)
+- [docs/security.md](./docs/security.md): token auth + origin allowlist + limits + audit log
+- [docs/configuration.md](./docs/configuration.md): env vars + install extras
+- [docs/architecture.md](./docs/architecture.md): components + durability model (includes diagram)
+- [docs/faq.md](./docs/faq.md): common questions + troubleshooting
 
-## Key entrypoints (code)
+## Key code entrypoints
 
-- [FastAPI app](./src/abstractgateway/app.py): ASGI app + middleware + routers
-- [Gateway routes](./src/abstractgateway/routes/gateway.py): `/api/gateway/*` endpoints (runs, ledger, bundles, commands, tooling)
-- [Security middleware](./src/abstractgateway/security/gateway_security.py): auth/origin/limits/audit log
-- [Service composition](./src/abstractgateway/service.py): config + stores + host + runner wiring
-- [Runner worker](./src/abstractgateway/runner.py): poll durable inbox + tick runs
-- [Stores](./src/abstractgateway/stores.py): file vs SQLite durability wiring
-- [CLI](./src/abstractgateway/cli.py): `abstractgateway serve|runner|migrate|...`
-
-## Development
-
-- [Tests](./tests/): API/security/runner contract tests (run with `pytest`)
-- Install for local dev: `pip install -e ".[dev,http]"`
-- Run server: `abstractgateway serve --host 127.0.0.1 --port 8080`
+- [pyproject.toml](./pyproject.toml): packaging metadata + dependency extras + CLI entrypoint
+- [src/abstractgateway/app.py](./src/abstractgateway/app.py): FastAPI app + middleware + routers + health endpoint
+- [src/abstractgateway/routes/gateway.py](./src/abstractgateway/routes/gateway.py): `/api/gateway/*` endpoints (runs, ledger, bundles, commands, tooling)
+- [src/abstractgateway/security/gateway_security.py](./src/abstractgateway/security/gateway_security.py): auth/origin/limits/audit log middleware
+- [src/abstractgateway/service.py](./src/abstractgateway/service.py): composition root (config + stores + host + runner + optional bridges)
+- [src/abstractgateway/runner.py](./src/abstractgateway/runner.py): durable command inbox polling + run ticking
+- [src/abstractgateway/stores.py](./src/abstractgateway/stores.py): file vs SQLite store wiring
+- [src/abstractgateway/config.py](./src/abstractgateway/config.py): env var parsing + sqlite safety invariant
+- [src/abstractgateway/cli.py](./src/abstractgateway/cli.py): `abstractgateway serve|runner|migrate|triage-*|...`
+- [src/abstractgateway/hosts/bundle_host.py](./src/abstractgateway/hosts/bundle_host.py): `.flow` bundle loading + VisualFlow compilation + tool/LLM wiring switches
+- [src/abstractgateway/hosts/visualflow_host.py](./src/abstractgateway/hosts/visualflow_host.py): VisualFlow directory mode (requires `abstractgateway[visualflow]`)
 
 ## Optional
 
-- [Operator tooling](./docs/maintenance.md): triage/backlog/process manager/file helpers (disabled by default; high trust required)
+- [docs/maintenance.md](./docs/maintenance.md): operator tooling (triage/backlog/process manager/file helpers; high trust required)
+- [scripts/generate-llms-full.py](./scripts/generate-llms-full.py): generator for `llms-full.txt`
+- [tests/](./tests/): test suite (`pytest`, most tests are marked `basic`)

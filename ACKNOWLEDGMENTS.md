@@ -7,13 +7,14 @@ This list is **non-exhaustive**. The canonical dependency list for this package 
 ## Core dependencies
 
 - **AbstractRuntime**: durable run model, workflow registry, file/SQLite stores, and runtime tick loop.
-- **FastAPI** (via **Starlette**) + **Pydantic**: HTTP API surface and request/response models.
-- **Uvicorn**: ASGI server used by `abstractgateway serve`.
 
 ## Optional integrations (feature-dependent)
 
 These are not required for the base gateway, but are used by optional modes/features:
 
+- **FastAPI** (via **Starlette**) + **Pydantic**: HTTP API surface and request/response models (`abstractgateway[http]`).
+- **Uvicorn**: ASGI server used by `abstractgateway serve` (`abstractgateway[http]`).
+- **python-multipart**: multipart upload support for bundle/attachment endpoints (`abstractgateway[http]`).
 - **AbstractFlow**: VisualFlow JSON directory mode and workflow authoring/bundling workflows (see `abstractgateway[visualflow]`).
 - **AbstractCore** integration (via `abstractruntime[abstractcore]`): LLM/tool execution wiring, embeddings client, Telegram TDLib wrapper.
 - **AbstractAgent**: Visual Agent nodes in bundle mode.

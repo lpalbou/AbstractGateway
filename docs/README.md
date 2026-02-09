@@ -2,6 +2,19 @@
 
 Start here if you’re new to the project.
 
+## AbstractFramework ecosystem
+
+AbstractGateway is one component in the larger AbstractFramework ecosystem:
+
+- **AbstractRuntime** (required): durable runs + stores
+- **AbstractCore** (optional, via `abstractruntime[abstractcore]`): LLM/tool execution wiring used by many bundles
+- Higher-level UIs (optional): AbstractFlow / AbstractObserver / AbstractCode / thin clients
+
+Related repos:
+- AbstractFramework: https://github.com/lpalbou/AbstractFramework
+- AbstractCore: https://github.com/lpalbou/abstractcore
+- AbstractRuntime: https://github.com/lpalbou/abstractruntime
+
 ## Docs map
 
 - Quickstart + stores (file/SQLite): [getting-started.md](./getting-started.md)
