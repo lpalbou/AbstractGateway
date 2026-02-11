@@ -698,6 +698,7 @@ class WorkflowBundleGatewayHost:
                 ledger_store=ledger_store,
                 workflow_registry=wf_reg,
                 artifact_store=artifact_store,
+                effect_handlers=extra_effect_handlers,
             )
 
         # Register derived workflows required by VisualFlow semantics:
