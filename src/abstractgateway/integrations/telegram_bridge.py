@@ -13,7 +13,22 @@ from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from abstractcore.tools.telegram_tdlib import TdlibNotAvailable, get_global_tdlib_client, stop_global_tdlib_client
+try:
+    from abstractcore.tools.telegram_tdlib import TdlibNotAvailable, get_global_tdlib_client, stop_global_tdlib_client
+except Exception:  # pragma: no cover
+    # Keep Telegram bridge importable in minimal environments where `abstractcore` (or its deps)
+    # are not installed. TDLib transport will surface a clear runtime error when used.
+    class TdlibNotAvailable(RuntimeError):
+        pass
+
+    def get_global_tdlib_client(*, start: bool = False):  # type: ignore[no-untyped-def]
+        raise TdlibNotAvailable(
+            "TDLib transport requires `abstractcore` and its Telegram TDLib helper. "
+            "Install: pip install \"abstractcore[tools]\" and configure TDLib (tdjson + env vars)."
+        )
+
+    def stop_global_tdlib_client() -> None:
+        return None
 from abstractruntime import Runtime
 from abstractruntime.core.models import RunStatus, WaitReason
 
@@ -53,6 +68,73 @@ def _parse_lines_or_json_list(raw: Any) -> list[str]:
             return [str(x).strip() for x in parsed if isinstance(x, str) and str(x).strip()]
     lines = [ln.strip() for ln in text.splitlines()]
     return [ln for ln in lines if ln]
+
+
+def _parse_ints_lines_or_json_list(raw: Any) -> list[int]:
+    """Parse a newline/comma-separated string or JSON array into a list of ints (best-effort)."""
+    if raw is None or isinstance(raw, bool):
+        return []
+    text = str(raw or "").strip()
+    if not text:
+        return []
+
+    items: list[Any] = []
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, list):
+            items = list(parsed)
+
+    if not items:
+        parts = [p.strip() for p in re.split(r"[,\n]", text)]
+        items = [p for p in parts if p]
+
+    out: list[int] = []
+    for x in items:
+        if isinstance(x, int) and not isinstance(x, bool):
+            out.append(int(x))
+            continue
+        try:
+            s = str(x or "").strip()
+        except Exception:
+            continue
+        if not s:
+            continue
+        try:
+            out.append(int(s))
+        except Exception:
+            continue
+
+    # Dedup while preserving order.
+    seen: set[int] = set()
+    deduped: list[int] = []
+    for n in out:
+        if n in seen:
+            continue
+        seen.add(n)
+        deduped.append(int(n))
+    return deduped
+
+
+def _get_by_path(value: Any, path: str) -> Any:
+    """Best-effort dotted-path lookup supporting dicts and numeric list indices."""
+    current = value
+    for part in str(path or "").split("."):
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(part)
+            continue
+        if isinstance(current, list) and part.isdigit():
+            idx = int(part)
+            if idx < 0 or idx >= len(current):
+                return None
+            current = current[idx]
+            continue
+        return None
+    return current
 
 
 def _command_base(text: str) -> str:
@@ -136,6 +218,23 @@ class TelegramBridgeConfig:
     reset_delete_max: int = 200
     reset_message: str = "Conversation reset. Send a new message to start fresh."
 
+    # Access control
+    #
+    # Telegram bots (and user accounts) are discoverable; without access control, anyone can message
+    # the bridge and trigger durable runs + LLM calls. These policies are enforced in-process in the
+    # bridge before creating bindings or emitting events.
+    #
+    # DM policy: "disabled" | "open" | "allowlist" | "pairing"
+    # Group policy: "disabled" | "open" | "allowlist"
+    dm_policy: str = "pairing"
+    group_policy: str = "allowlist"
+    require_mention_in_groups: bool = True
+    pairing_ttl_s: float = 3600.0
+    allowed_users: frozenset[int] = frozenset()
+    allowed_chats: frozenset[int] = frozenset()
+    group_allowed_users: Optional[frozenset[int]] = None  # None -> fallback to allowed_users; empty -> allow any sender
+    admin_users: frozenset[int] = frozenset()
+
     # Tool permissions (Telegram UX)
     #
     # These defaults apply per-chat unless overridden via `/tools ...` commands.
@@ -191,6 +290,49 @@ class TelegramBridgeConfig:
             or "Conversation reset. Send a new message to start fresh."
         )
 
+        dm_policy_raw = str(os.getenv("ABSTRACT_TELEGRAM_DM_POLICY", "") or "").strip().lower()
+        if dm_policy_raw in {"allow_list", "allow-list", "whitelist"}:
+            dm_policy_raw = "allowlist"
+        if dm_policy_raw in {"pair", "pairing"}:
+            dm_policy = "pairing"
+        elif dm_policy_raw in {"disabled", "off", "none"}:
+            dm_policy = "disabled"
+        elif dm_policy_raw in {"open", "public"}:
+            dm_policy = "open"
+        elif dm_policy_raw in {"allowlist"}:
+            dm_policy = "allowlist"
+        else:
+            dm_policy = "pairing"
+
+        group_policy_raw = str(os.getenv("ABSTRACT_TELEGRAM_GROUP_POLICY", "") or "").strip().lower()
+        if group_policy_raw in {"allow_list", "allow-list", "whitelist"}:
+            group_policy_raw = "allowlist"
+        if group_policy_raw in {"disabled", "off", "none"}:
+            group_policy = "disabled"
+        elif group_policy_raw in {"open", "public"}:
+            group_policy = "open"
+        elif group_policy_raw in {"allowlist"}:
+            group_policy = "allowlist"
+        else:
+            group_policy = "allowlist"
+
+        require_mention_in_groups = _as_bool(os.getenv("ABSTRACT_TELEGRAM_REQUIRE_MENTION_IN_GROUPS"), True)
+        try:
+            pairing_ttl_s = float(os.getenv("ABSTRACT_TELEGRAM_PAIRING_TTL_S", "3600") or "3600")
+        except Exception:
+            pairing_ttl_s = 3600.0
+        if pairing_ttl_s < 0:
+            pairing_ttl_s = 0.0
+
+        allowed_users = frozenset(_parse_ints_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_ALLOWED_USERS")))
+        allowed_chats = frozenset(_parse_ints_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_ALLOWED_CHATS")))
+
+        group_allowed_users_raw = os.getenv("ABSTRACT_TELEGRAM_GROUP_ALLOWED_USERS")
+        group_allowed_users_list = _parse_ints_lines_or_json_list(group_allowed_users_raw)
+        group_allowed_users = None if group_allowed_users_raw is None else frozenset(group_allowed_users_list)
+
+        admin_users = frozenset(_parse_ints_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_ADMIN_USERS")))
+
         tool_approve_all = _as_bool(os.getenv("ABSTRACT_TELEGRAM_APPROVE_ALL_TOOLS"), False)
         tool_allowed_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_ALLOWED_TOOLS"))
         tool_auto_approve_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_AUTO_APPROVE_TOOLS"))
@@ -227,6 +369,14 @@ class TelegramBridgeConfig:
             reset_delete_messages=bool(reset_delete_messages),
             reset_delete_max=int(reset_delete_max),
             reset_message=str(reset_message),
+            dm_policy=str(dm_policy),
+            group_policy=str(group_policy),
+            require_mention_in_groups=bool(require_mention_in_groups),
+            pairing_ttl_s=float(pairing_ttl_s),
+            allowed_users=frozenset(int(x) for x in allowed_users if isinstance(x, int) and not isinstance(x, bool)),
+            allowed_chats=frozenset(int(x) for x in allowed_chats if isinstance(x, int) and not isinstance(x, bool)),
+            group_allowed_users=frozenset(int(x) for x in group_allowed_users if isinstance(x, int) and not isinstance(x, bool)) if isinstance(group_allowed_users, frozenset) else None,
+            admin_users=frozenset(int(x) for x in admin_users if isinstance(x, int) and not isinstance(x, bool)),
             tool_approve_all=bool(tool_approve_all),
             tool_allowed_tools=list(tool_allowed_tools) if isinstance(tool_allowed_tools, list) else None,
             tool_auto_approve_tools=list(tool_auto_approve_tools) if isinstance(tool_auto_approve_tools, list) else None,
@@ -261,6 +411,12 @@ class TelegramBridge:
         self._typing_until: Dict[int, float] = {}
         self._typing_threads: Dict[int, threading.Thread] = {}
 
+        # Access-control caches (best-effort)
+        self._bot_username: Optional[str] = None
+        self._tdlib_username: Optional[str] = None
+        self._tdlib_chat_kind_cache: Dict[int, tuple[str, float]] = {}
+        self._unauthorized_log_until: Dict[str, float] = {}
+
     @property
     def enabled(self) -> bool:
         return bool(self._cfg.enabled)
@@ -282,6 +438,37 @@ class TelegramBridge:
                     "Telegram bridge: ABSTRACTGATEWAY_TOOL_MODE=%s bypasses tool approvals; "
                     "set ABSTRACTGATEWAY_TOOL_MODE=passthrough (recommended) or approval.",
                     tm,
+                )
+        except Exception:
+            pass
+
+        # Access control warnings (fail-closed defaults).
+        try:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            dm_pol = str(self._cfg.dm_policy or "").strip().lower() or "pairing"
+            grp_pol = str(self._cfg.group_policy or "").strip().lower() or "allowlist"
+
+            if dm_pol == "open":
+                logger.warning("Telegram bridge: dm_policy=open allows any Telegram user to trigger runs (dangerous).")
+            if grp_pol == "open":
+                logger.warning("Telegram bridge: group_policy=open allows any Telegram group to trigger runs (dangerous).")
+            if dm_pol == "pairing" and not set(self._cfg.admin_users or frozenset()):
+                logger.warning(
+                    "Telegram bridge: dm_policy=pairing but ABSTRACT_TELEGRAM_ADMIN_USERS is empty; "
+                    "pairing approvals require an admin to send /pair approve <code>. "
+                    "Tip: use /whoami to discover your numeric user_id."
+                )
+            if dm_pol == "allowlist" and not (self._effective_allowed_users() or self._effective_allowed_chats()):
+                logger.warning(
+                    "Telegram bridge: dm_policy=allowlist but no allowed users/chats are configured; "
+                    "all DMs will be ignored except /whoami. Set ABSTRACT_TELEGRAM_ALLOWED_USERS or use dm_policy=pairing."
+                )
+            if grp_pol == "allowlist" and not self._effective_allowed_chats():
+                logger.warning(
+                    "Telegram bridge: group_policy=allowlist but ABSTRACT_TELEGRAM_ALLOWED_CHATS is empty; "
+                    "all group messages will be ignored (expected for secure defaults)."
                 )
         except Exception:
             pass
@@ -340,6 +527,7 @@ class TelegramBridge:
         except Exception:
             self._state = {}
         self._state.setdefault("version", 1)
+        self._state.setdefault("access", {})
         self._state.setdefault("bindings", {})
         self._state.setdefault("session_revs", {})
         self._state.setdefault("approval_prompts", {})
@@ -354,6 +542,494 @@ class TelegramBridge:
             tmp.replace(path)
         except Exception:
             pass
+
+    # ---------------------------------------------------------------------
+    # Access control (Telegram)
+    # ---------------------------------------------------------------------
+
+    def _access_state(self) -> Dict[str, Any]:
+        access = self._state.get("access")
+        if not isinstance(access, dict):
+            access = {}
+            self._state["access"] = access
+        access.setdefault("version", 1)
+        access.setdefault("authorized_users", [])
+        access.setdefault("authorized_chats", [])
+        access.setdefault("pairing_requests", {})  # code -> record
+        access.setdefault("pairing_user_to_code", {})  # str(user_id) -> code
+        return access
+
+    def _authorized_users(self) -> set[int]:
+        access = self._access_state()
+        raw = access.get("authorized_users")
+        out: set[int] = set()
+        if isinstance(raw, list):
+            for x in raw:
+                if isinstance(x, int) and not isinstance(x, bool):
+                    out.add(int(x))
+        return out
+
+    def _authorized_chats(self) -> set[int]:
+        access = self._access_state()
+        raw = access.get("authorized_chats")
+        out: set[int] = set()
+        if isinstance(raw, list):
+            for x in raw:
+                if isinstance(x, int) and not isinstance(x, bool):
+                    out.add(int(x))
+        return out
+
+    def _is_admin_user(self, user_id: Optional[int]) -> bool:
+        if not isinstance(user_id, int) or isinstance(user_id, bool):
+            return False
+        return int(user_id) in set(self._cfg.admin_users or frozenset())
+
+    def _effective_allowed_users(self) -> set[int]:
+        return set(self._cfg.allowed_users or frozenset()) | self._authorized_users() | set(self._cfg.admin_users or frozenset())
+
+    def _effective_allowed_chats(self) -> set[int]:
+        return set(self._cfg.allowed_chats or frozenset()) | self._authorized_chats()
+
+    def _effective_group_allowed_users(self) -> set[int]:
+        raw = self._cfg.group_allowed_users
+        if raw is None:
+            return set(self._cfg.allowed_users or frozenset()) | self._authorized_users()
+        # Explicit empty -> no sender restriction.
+        if not raw:
+            return set()
+        return set(raw)
+
+    def _cleanup_expired_pairings_locked(self, access: Dict[str, Any]) -> None:
+        ttl = float(self._cfg.pairing_ttl_s or 0.0)
+        if ttl <= 0:
+            # Pairing effectively disabled; drop requests to avoid confusing operators.
+            access["pairing_requests"] = {}
+            access["pairing_user_to_code"] = {}
+            return
+
+        now = time.time()
+        reqs = access.get("pairing_requests")
+        if not isinstance(reqs, dict):
+            reqs = {}
+            access["pairing_requests"] = reqs
+        u2c = access.get("pairing_user_to_code")
+        if not isinstance(u2c, dict):
+            u2c = {}
+            access["pairing_user_to_code"] = u2c
+
+        expired_codes: list[str] = []
+        for code, rec in list(reqs.items()):
+            if not isinstance(code, str) or not isinstance(rec, dict):
+                expired_codes.append(str(code))
+                continue
+            exp = rec.get("expires_at_s")
+            if not isinstance(exp, (int, float)) or isinstance(exp, bool) or float(exp) <= now:
+                expired_codes.append(str(code))
+        for code in expired_codes:
+            rec = reqs.pop(str(code), None)
+            if isinstance(rec, dict):
+                uid = rec.get("user_id")
+                if isinstance(uid, int) and not isinstance(uid, bool):
+                    u2c.pop(str(uid), None)
+
+    def _new_pairing_code(self, *, existing: set[str]) -> str:
+        import secrets
+        import string
+
+        alphabet = string.ascii_uppercase + string.digits
+        for _ in range(64):
+            code = "".join(secrets.choice(alphabet) for _ in range(8))
+            if code not in existing:
+                return code
+        return secrets.token_hex(4).upper()
+
+    def _ensure_pairing_request(self, *, user_id: int, chat_id: int) -> tuple[str, Dict[str, Any], bool]:
+        """Return (code, record, is_new) for a user pairing request."""
+        uid = int(user_id)
+        now = time.time()
+        ttl = float(self._cfg.pairing_ttl_s or 0.0)
+        with self._lock:
+            access = self._access_state()
+            self._cleanup_expired_pairings_locked(access)
+
+            reqs = access.get("pairing_requests")
+            if not isinstance(reqs, dict):
+                reqs = {}
+                access["pairing_requests"] = reqs
+            u2c = access.get("pairing_user_to_code")
+            if not isinstance(u2c, dict):
+                u2c = {}
+                access["pairing_user_to_code"] = u2c
+
+            code0 = u2c.get(str(uid))
+            if isinstance(code0, str) and code0.strip():
+                rec0 = reqs.get(code0.strip())
+                if isinstance(rec0, dict):
+                    exp0 = rec0.get("expires_at_s")
+                    if isinstance(exp0, (int, float)) and not isinstance(exp0, bool) and float(exp0) > now:
+                        return code0.strip(), dict(rec0), False
+
+            existing = {str(k).strip() for k in reqs.keys() if isinstance(k, str) and str(k).strip()}
+            code = self._new_pairing_code(existing=existing)
+            rec = {
+                "code": str(code),
+                "user_id": int(uid),
+                "chat_id": int(chat_id),
+                "requested_at": _utc_now_iso(),
+                "expires_at_s": float(now + max(0.0, ttl)),
+            }
+            reqs[str(code)] = rec
+            u2c[str(uid)] = str(code)
+            self._save_state()
+            return str(code), dict(rec), True
+
+    def _format_pairing_request_message(self, *, code: str) -> str:
+        ttl = float(self._cfg.pairing_ttl_s or 0.0)
+        mins = int(ttl // 60) if ttl > 0 else 0
+        lines = [
+            "This Telegram contact is private.",
+            "",
+            f"Pairing code: {str(code).strip()}",
+            "",
+            "Ask the operator to approve with:",
+            f"/pair approve {str(code).strip()}",
+        ]
+        if mins > 0:
+            lines.append(f"(expires in ~{mins} min)")
+        lines.extend(["", "Send /whoami to share your IDs with the operator."])
+        return "\n".join(lines)
+
+    def _approve_pairing_code(self, *, code: str) -> tuple[Optional[Dict[str, Any]], str]:
+        c = str(code or "").strip().upper()
+        if not c:
+            return None, "Usage: /pair approve <code>"
+        with self._lock:
+            access = self._access_state()
+            self._cleanup_expired_pairings_locked(access)
+            reqs = access.get("pairing_requests")
+            if not isinstance(reqs, dict):
+                return None, "No pending pairing requests."
+            rec = reqs.get(c)
+            if not isinstance(rec, dict):
+                return None, "Unknown or expired pairing code."
+
+            uid = rec.get("user_id")
+            if not isinstance(uid, int) or isinstance(uid, bool):
+                return None, "Invalid pairing request (missing user_id)."
+            user_id = int(uid)
+
+            users = self._authorized_users()
+            users.add(int(user_id))
+            access["authorized_users"] = sorted(users)
+
+            reqs.pop(c, None)
+            u2c = access.get("pairing_user_to_code")
+            if isinstance(u2c, dict):
+                u2c.pop(str(user_id), None)
+
+            self._save_state()
+            return dict(rec), f"Approved user_id={user_id}."
+
+    def _deny_pairing_code(self, *, code: str) -> str:
+        c = str(code or "").strip().upper()
+        if not c:
+            return "Usage: /pair deny <code>"
+        with self._lock:
+            access = self._access_state()
+            self._cleanup_expired_pairings_locked(access)
+            reqs = access.get("pairing_requests")
+            if not isinstance(reqs, dict):
+                return "No pending pairing requests."
+            rec = reqs.pop(c, None)
+            if not isinstance(rec, dict):
+                return "Unknown or expired pairing code."
+            uid = rec.get("user_id")
+            if isinstance(uid, int) and not isinstance(uid, bool):
+                u2c = access.get("pairing_user_to_code")
+                if isinstance(u2c, dict):
+                    u2c.pop(str(int(uid)), None)
+            self._save_state()
+        return "Pairing request denied."
+
+    def _pairing_list(self) -> list[Dict[str, Any]]:
+        with self._lock:
+            access = self._access_state()
+            self._cleanup_expired_pairings_locked(access)
+            reqs = access.get("pairing_requests")
+            if not isinstance(reqs, dict):
+                return []
+            rows: list[Dict[str, Any]] = []
+            for code, rec in reqs.items():
+                if not isinstance(code, str) or not isinstance(rec, dict):
+                    continue
+                uid = rec.get("user_id")
+                cid = rec.get("chat_id")
+                exp = rec.get("expires_at_s")
+                if not isinstance(uid, int) or isinstance(uid, bool):
+                    continue
+                if not isinstance(cid, int) or isinstance(cid, bool):
+                    continue
+                expires_at = float(exp) if isinstance(exp, (int, float)) and not isinstance(exp, bool) else 0.0
+                rows.append({"code": code, "user_id": int(uid), "chat_id": int(cid), "expires_at_s": expires_at})
+            rows.sort(key=lambda r: float(r.get("expires_at_s") or 0.0))
+            return rows
+
+    def _my_username(self) -> Optional[str]:
+        if self._cfg.transport == "bot_api":
+            return self._bot_username_cached()
+        return self._tdlib_username_cached()
+
+    def _bot_username_cached(self) -> Optional[str]:
+        if isinstance(self._bot_username, str) and self._bot_username.strip():
+            return self._bot_username.strip()
+        url = self._bot_api("getMe")
+        if not url:
+            return None
+        try:
+            j = self._http_get_json(url, timeout_s=10.0)
+        except Exception:
+            return None
+        if not isinstance(j, dict) or j.get("ok") is not True:
+            return None
+        res = j.get("result")
+        if not isinstance(res, dict):
+            return None
+        u = res.get("username")
+        if isinstance(u, str) and u.strip():
+            self._bot_username = u.strip()
+            return self._bot_username
+        return None
+
+    def _tdlib_username_cached(self) -> Optional[str]:
+        if isinstance(self._tdlib_username, str) and self._tdlib_username.strip():
+            return self._tdlib_username.strip()
+        try:
+            client = get_global_tdlib_client(start=True)
+        except Exception:
+            return None
+        try:
+            me = client.request({"@type": "getMe"}, timeout_s=10.0)
+        except Exception:
+            return None
+        if not isinstance(me, dict) or me.get("@type") == "error":
+            return None
+        u = me.get("username")
+        if isinstance(u, str) and u.strip():
+            self._tdlib_username = u.strip()
+            return self._tdlib_username
+        usernames = me.get("usernames")
+        if isinstance(usernames, dict):
+            active = usernames.get("active_usernames")
+            if isinstance(active, list):
+                for x in active:
+                    if isinstance(x, str) and x.strip():
+                        self._tdlib_username = x.strip()
+                        return self._tdlib_username
+        return None
+
+    def _text_mentions_me(self, text: str) -> bool:
+        uname = self._my_username()
+        if not isinstance(uname, str) or not uname.strip():
+            return False
+        t = str(text or "")
+        if not t:
+            return False
+        pat = r"(?i)(?:^|\s)@" + re.escape(uname.strip()) + r"(?:\b|$)"
+        try:
+            return re.search(pat, t) is not None
+        except Exception:
+            return ("@" + uname.strip().lower()) in t.lower()
+
+    def _bot_chat_kind(self, *, chat_type: str) -> str:
+        t = str(chat_type or "").strip().lower()
+        if t == "private":
+            return "dm"
+        if t in {"group", "supergroup"}:
+            return "group"
+        if t == "channel":
+            return "channel"
+        return "group"
+
+    def _tdlib_chat_kind(self, *, chat_id: int) -> str:
+        cid = int(chat_id)
+        now = time.time()
+        cached = self._tdlib_chat_kind_cache.get(cid)
+        if isinstance(cached, tuple) and len(cached) == 2:
+            kind0, until0 = cached
+            if isinstance(kind0, str) and isinstance(until0, (int, float)) and float(until0) > now:
+                return str(kind0)
+
+        kind = "group"
+        try:
+            client = get_global_tdlib_client(start=True)
+            chat = client.request({"@type": "getChat", "chat_id": int(cid)}, timeout_s=10.0)
+        except Exception:
+            return kind
+
+        t = chat.get("type") if isinstance(chat, dict) else None
+        if isinstance(t, dict):
+            tt = str(t.get("@type") or "")
+            if tt in {"chatTypePrivate", "chatTypeSecret"}:
+                kind = "dm"
+            elif tt == "chatTypeBasicGroup":
+                kind = "group"
+            elif tt == "chatTypeSupergroup":
+                kind = "channel" if bool(t.get("is_channel")) else "group"
+
+        # Cache for a while to avoid repeated getChat calls.
+        self._tdlib_chat_kind_cache[int(cid)] = (str(kind), float(now + 600.0))
+        return kind
+
+    def _log_unauthorized(self, *, chat_id: int, from_user_id: Optional[int], reason: str) -> None:
+        import logging
+
+        key = f"{chat_id}:{from_user_id}:{reason}"
+        now = time.time()
+        until = self._unauthorized_log_until.get(key, 0.0)
+        if isinstance(until, (int, float)) and float(until) > now:
+            return
+        self._unauthorized_log_until[key] = float(now + 30.0)
+        logging.getLogger(__name__).warning(
+            "Telegram bridge: ignoring unauthorized message (reason=%s) user_id=%s chat_id=%s",
+            str(reason or ""),
+            from_user_id,
+            chat_id,
+        )
+
+    def _is_authorized_incoming(
+        self,
+        *,
+        chat_id: int,
+        chat_kind: str,
+        from_user_id: Optional[int],
+        text: str,
+    ) -> bool:
+        """Return True when this inbound message should be processed by the bridge."""
+        kind = str(chat_kind or "").strip().lower() or "group"
+        uid = int(from_user_id) if isinstance(from_user_id, int) and not isinstance(from_user_id, bool) else None
+
+        if self._is_admin_user(uid):
+            return True
+
+        allowed_users = self._effective_allowed_users()
+        allowed_chats = self._effective_allowed_chats()
+
+        if kind == "dm":
+            pol = str(self._cfg.dm_policy or "pairing").strip().lower()
+            if pol == "disabled":
+                self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="dm_disabled")
+                return False
+            if pol == "open":
+                return True
+            if (uid is not None and uid in allowed_users) or (int(chat_id) in allowed_chats):
+                return True
+            if pol == "pairing":
+                if uid is None:
+                    self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="pairing_missing_user_id")
+                    return False
+                code, _rec, is_new = self._ensure_pairing_request(user_id=uid, chat_id=int(chat_id))
+                if bool(is_new):
+                    self._send_text(chat_id=int(chat_id), text=self._format_pairing_request_message(code=code))
+                self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="pairing_requested")
+                return False
+            self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="dm_allowlist")
+            return False
+
+        # Groups/channels
+        pol = str(self._cfg.group_policy or "allowlist").strip().lower()
+        if pol == "disabled":
+            self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="group_disabled")
+            return False
+
+        if pol == "allowlist":
+            if int(chat_id) not in allowed_chats:
+                self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="group_chat_allowlist")
+                return False
+
+        # Mention requirement: skip only for commands (including /reset, /tools, /pair, /whoami).
+        if bool(self._cfg.require_mention_in_groups):
+            if not str(text or "").lstrip().startswith("/"):
+                if not self._text_mentions_me(str(text or "")):
+                    return False
+
+        allowed_senders = self._effective_group_allowed_users()
+        if allowed_senders and (uid is None or uid not in allowed_senders):
+            self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="group_sender_allowlist")
+            return False
+
+        return True
+
+    def _handle_whoami_command(self, *, chat_id: int, chat_kind: str, from_user_id: Optional[int]) -> None:
+        uid = int(from_user_id) if isinstance(from_user_id, int) and not isinstance(from_user_id, bool) else None
+        lines = [
+            f"transport: {self._cfg.transport}",
+            f"chat_id: {int(chat_id)}",
+            f"chat_kind: {str(chat_kind or '') or 'unknown'}",
+            f"user_id: {uid if uid is not None else 'unknown'}",
+        ]
+        self._send_text(chat_id=int(chat_id), text="\n".join(lines))
+
+    def _handle_pair_command(self, *, chat_id: int, from_user_id: Optional[int], text: str, chat_kind: str) -> None:
+        uid = int(from_user_id) if isinstance(from_user_id, int) and not isinstance(from_user_id, bool) else None
+        args = _command_args(text)
+        parts = [p for p in str(args or "").split() if p.strip()]
+        sub = parts[0].strip().lower() if parts else ""
+
+        # Admin subcommands
+        if sub in {"approve", "allow", "grant"}:
+            if not self._is_admin_user(uid):
+                self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="pair_admin_only")
+                return
+            code = parts[1].strip() if len(parts) >= 2 else ""
+            rec, msg = self._approve_pairing_code(code=code)
+            self._send_text(chat_id=int(chat_id), text=str(msg))
+            if isinstance(rec, dict):
+                # Notify the paired user in the original chat.
+                req_chat_id = rec.get("chat_id")
+                if isinstance(req_chat_id, int) and not isinstance(req_chat_id, bool):
+                    self._send_text(chat_id=int(req_chat_id), text="✅ Approved. You can now send messages here.")
+            return
+
+        if sub in {"deny", "reject", "cancel"}:
+            if not self._is_admin_user(uid):
+                self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="pair_admin_only")
+                return
+            code = parts[1].strip() if len(parts) >= 2 else ""
+            msg = self._deny_pairing_code(code=code)
+            self._send_text(chat_id=int(chat_id), text=str(msg))
+            return
+
+        if sub in {"list", "ls"}:
+            if not self._is_admin_user(uid):
+                self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="pair_admin_only")
+                return
+            rows = self._pairing_list()
+            if not rows:
+                self._send_text(chat_id=int(chat_id), text="No pending pairing requests.")
+                return
+            lines = ["Pending pairing requests:"]
+            for r in rows[:20]:
+                code = str(r.get("code") or "")
+                user_id = r.get("user_id")
+                lines.append(f"- {code} (user_id={user_id})")
+            if len(rows) > 20:
+                lines.append(f"…and {len(rows) - 20} more")
+            self._send_text(chat_id=int(chat_id), text="\n".join(lines))
+            return
+
+        # Pairing request (DM-only)
+        if str(chat_kind or "").lower() != "dm":
+            # In groups, pairing requests are silently ignored (avoid spam).
+            self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="pair_dm_only")
+            return
+        if str(self._cfg.dm_policy or "").strip().lower() != "pairing" and not self._is_admin_user(uid):
+            self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="pairing_disabled")
+            return
+        if uid is None:
+            self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="pairing_missing_user_id")
+            return
+        code, _rec, _is_new = self._ensure_pairing_request(user_id=uid, chat_id=int(chat_id))
+        self._send_text(chat_id=int(chat_id), text=self._format_pairing_request_message(code=code))
 
     # ---------------------------------------------------------------------
     # Tool approvals (Telegram UX)
@@ -1150,6 +1826,25 @@ class TelegramBridge:
             payload = self._merge_tool_wait_results(pending=pending, host_payload=host_payload)
             self._resume_tool_wait(run_id=run_id, wait_key=wait_key, payload=payload)
             self._send_text(chat_id=int(chat_id), text="Approved. Continuing…")
+            # The typing loop is stopped while waiting for approval. Restart it so we can:
+            # - keep the "typing…" indicator alive if the workflow keeps running
+            # - detect and auto-run any subsequent auto-approved waits (including delivery tools)
+            try:
+                if self._cfg.transport == "bot_api":
+                    self._start_typing_loop(chat_id, session_id=str(session_id or ""), send_fn=lambda: self._send_bot_typing(chat_id))
+                else:
+                    self._start_typing_loop(chat_id, session_id=str(session_id or ""), send_fn=lambda: self._send_tdlib_typing(chat_id))
+            except Exception:
+                pass
+            # Best-effort: immediately re-check for a follow-up tool wait (common: send_telegram_message).
+            try:
+                nxt = self._find_pending_tool_approval(session_id=session_id)
+                if isinstance(nxt, dict):
+                    wk2 = str(nxt.get("wait_key") or "").strip()
+                    if wk2 and wk2 != wait_key:
+                        self._maybe_handle_tool_wait(chat_id=int(chat_id), session_id=str(session_id or ""))
+            except Exception:
+                pass
             return True
 
         host_payload = self._execute_tool_calls_with_policy(
@@ -1162,6 +1857,13 @@ class TelegramBridge:
         self._resume_tool_wait(run_id=run_id, wait_key=wait_key, payload=payload)
 
         self._send_text(chat_id=int(chat_id), text="Cancelled.")
+        try:
+            if self._cfg.transport == "bot_api":
+                self._start_typing_loop(chat_id, session_id=str(session_id or ""), send_fn=lambda: self._send_bot_typing(chat_id))
+            else:
+                self._start_typing_loop(chat_id, session_id=str(session_id or ""), send_fn=lambda: self._send_tdlib_typing(chat_id))
+        except Exception:
+            pass
         return True
 
     def _stash_pending_media(
@@ -1342,6 +2044,78 @@ class TelegramBridge:
                 runtime.cancel_run(rid, reason="Telegram session reset")
             except Exception:
                 continue
+
+    def _collect_tracked_bot_message_ids(self, *, chat_id: int) -> list[int]:
+        """Best-effort: collect sent Telegram message_ids tracked in run vars for this chat.
+
+        Shipped `telegram-agent` workflows store sent message ids in:
+          `run.vars._runtime.telegram.sent_message_ids`
+        """
+        base_prefix = f"{self._cfg.session_prefix}{chat_id}"
+        if not base_prefix:
+            return []
+        try:
+            runtime = Runtime(
+                run_store=self._runner.run_store,
+                ledger_store=self._runner.ledger_store,
+                artifact_store=self._runner.artifact_store,
+            )
+        except Exception:
+            return []
+
+        store = getattr(runtime, "run_store", None)
+        list_runs = getattr(store, "list_runs", None)
+        load = getattr(store, "load", None)
+        if not callable(list_runs):
+            return []
+
+        try:
+            runs = list_runs(limit=5000)
+        except Exception:
+            runs = []
+
+        out: list[int] = []
+
+        def _collect(v: Any) -> None:
+            if isinstance(v, int) and not isinstance(v, bool):
+                out.append(int(v))
+                return
+            if isinstance(v, float) and not isinstance(v, bool):
+                # Best-effort: tolerate floats that represent ints.
+                try:
+                    if float(v).is_integer():
+                        out.append(int(v))
+                except Exception:
+                    pass
+                return
+            if isinstance(v, (list, tuple)):
+                for x in v:
+                    _collect(x)
+                return
+
+        for r in runs or []:
+            try:
+                sid = str(getattr(r, "session_id", "") or "").strip()
+            except Exception:
+                continue
+            if not sid.startswith(base_prefix):
+                continue
+
+            run_obj = r
+            rid = getattr(r, "run_id", None)
+            if callable(load) and isinstance(rid, str) and rid:
+                try:
+                    run_obj = load(str(rid))
+                except Exception:
+                    run_obj = r
+
+            vars_obj = getattr(run_obj, "vars", None)
+            if not isinstance(vars_obj, dict):
+                continue
+            v = _get_by_path(vars_obj, "_runtime.telegram.sent_message_ids")
+            _collect(v)
+
+        return _dedup_ints(out)
 
     def _binding_for_chat(self, chat_id: int) -> Optional[Dict[str, Any]]:
         b = self._state.get("bindings")
@@ -1662,6 +2436,7 @@ class TelegramBridge:
         chat_id = chat.get("id")
         if not isinstance(chat_id, int):
             return
+        chat_kind = self._bot_chat_kind(chat_type=str(chat.get("type") or ""))
 
         from_obj = msg.get("from")
         if isinstance(from_obj, dict) and from_obj.get("is_bot") is True:
@@ -1675,6 +2450,18 @@ class TelegramBridge:
         if not text_raw:
             caption = msg.get("caption") if isinstance(msg.get("caption"), str) else ""
             text_raw = caption
+
+        cmd = _command_base(text_raw)
+        if cmd == "/whoami":
+            self._handle_whoami_command(chat_id=chat_id, chat_kind=chat_kind, from_user_id=from_uid)
+            return
+        if cmd in {"/pair", "/start"}:
+            self._handle_pair_command(chat_id=chat_id, from_user_id=from_uid, text=("/pair " + _command_args(text_raw)) if cmd == "/start" else text_raw, chat_kind=chat_kind)
+            return
+
+        if not self._is_authorized_incoming(chat_id=chat_id, chat_kind=chat_kind, from_user_id=from_uid, text=text_raw):
+            return
+
         if _command_base(text_raw) in {"/reset", "/clear", "/new"}:
             self._handle_bot_reset(chat_id=chat_id, message_id=msg.get("message_id"))
             return
@@ -1953,6 +2740,7 @@ class TelegramBridge:
         chat_id = msg.get("chat_id")
         if not isinstance(chat_id, int):
             return
+        chat_kind = self._tdlib_chat_kind(chat_id=int(chat_id))
 
         sender_id = msg.get("sender_id")
         from_uid = None
@@ -1973,6 +2761,17 @@ class TelegramBridge:
                         text = tt
             if not text:
                 text = self._tdlib_caption_text(content)
+
+        cmd = _command_base(text)
+        if cmd == "/whoami":
+            self._handle_whoami_command(chat_id=int(chat_id), chat_kind=chat_kind, from_user_id=from_uid)
+            return
+        if cmd in {"/pair", "/start"}:
+            self._handle_pair_command(chat_id=int(chat_id), from_user_id=from_uid, text=("/pair " + _command_args(text)) if cmd == "/start" else text, chat_kind=chat_kind)
+            return
+
+        if not self._is_authorized_incoming(chat_id=int(chat_id), chat_kind=chat_kind, from_user_id=from_uid, text=text):
+            return
 
         # Handle /reset command: clear binding and cancel runs.
         if _command_base(text) in {"/reset", "/clear", "/new"}:
@@ -2040,20 +2839,17 @@ class TelegramBridge:
             binding["updated_at"] = _utc_now_iso()
             self._save_state()
 
-    def _handle_tdlib_reset(self, *, chat_id: int) -> None:
+    def _handle_tdlib_reset(self, *, chat_id: int, message_id: Any = None) -> None:
         """Handle /reset for TDLib transport (Secret Chats): clear binding + cancel runs."""
         import logging
 
         logger = logging.getLogger(__name__)
         self._cancel_chat_runs(chat_id=chat_id)
 
-        removed_binding: Optional[Dict[str, Any]] = None
         with self._lock:
             bindings = self._state.get("bindings")
             if isinstance(bindings, dict):
-                removed = bindings.pop(str(chat_id), None)
-                if isinstance(removed, dict):
-                    removed_binding = dict(removed)
+                bindings.pop(str(chat_id), None)
             self._save_state()
 
         new_rev = self._bump_session_rev(chat_id)
@@ -2065,14 +2861,20 @@ class TelegramBridge:
         if self._cfg.reset_delete_messages:
             try:
                 tracked: list[int] = []
-                if isinstance(removed_binding, dict):
-                    raw_user_ids = removed_binding.get("user_message_ids")
-                    if isinstance(raw_user_ids, list):
-                        for x in raw_user_ids:
-                            if isinstance(x, int) and not isinstance(x, bool):
-                                tracked.append(int(x))
+
+                anchor = int(message_id) if isinstance(message_id, int) and not isinstance(message_id, bool) else None
+                max_delete = int(self._cfg.reset_delete_max or 0)
+                if anchor is not None and max_delete > 0:
+                    for i in range(int(max_delete)):
+                        mid = int(anchor) - int(i)
+                        if mid <= 0:
+                            break
+                        tracked.append(int(mid))
+
                 tracked.extend(self._collect_tracked_bot_message_ids(chat_id=chat_id))
-                tracked = _dedup_ints(tracked)[-int(self._cfg.reset_delete_max or 0) :] if self._cfg.reset_delete_max else _dedup_ints(tracked)
+                tracked = _dedup_ints(tracked)
+                if max_delete > 0 and len(tracked) > max_delete:
+                    tracked = sorted(tracked)[-int(max_delete) :]
                 self._tdlib_delete_messages(chat_id=chat_id, message_ids=tracked)
             except Exception:
                 pass
@@ -2087,19 +2889,6 @@ class TelegramBridge:
             client.send({"@type": "deleteMessages", "chat_id": int(chat_id), "message_ids": ids, "revoke": True})
         except Exception:
             pass
-
-
-def _dedup_ints(values: list[int]) -> list[int]:
-    out: list[int] = []
-    seen: set[int] = set()
-    for v in values or []:
-        if not isinstance(v, int) or isinstance(v, bool):
-            continue
-        if v in seen:
-            continue
-        seen.add(v)
-        out.append(int(v))
-    return out
 
     def _extract_tdlib_media(self, content: Dict[str, Any], *, run_id: str) -> list[Dict[str, Any]]:
         # Best-effort only: TDLib JSON shapes vary by content type; we try common paths.
@@ -2197,3 +2986,16 @@ def _dedup_ints(values: list[int]) -> list[int]:
             _download_and_store("sticker", file_id=fid, filename="sticker", mime_type=str(mime or "application/octet-stream"))
 
         return out
+
+
+def _dedup_ints(values: list[int]) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    for v in values or []:
+        if not isinstance(v, int) or isinstance(v, bool):
+            continue
+        if v in seen:
+            continue
+        seen.add(v)
+        out.append(int(v))
+    return out
