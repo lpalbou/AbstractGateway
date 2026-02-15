@@ -163,14 +163,16 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/n
 
 ### My bundle fails with “LLM nodes but no default provider/model is configured”
 
-Provide defaults via env vars:
+Provide defaults via env vars (most explicit):
 
 ```bash
 export ABSTRACTGATEWAY_PROVIDER="lmstudio"
 export ABSTRACTGATEWAY_MODEL="..."
 ```
 
-The gateway may also infer defaults from flow JSON if provider/model are set on at least one `llm_call` or `agent` node.
+Alternatives:
+- Configure global defaults via AbstractCore config (`abstractcore --config`, inspect with `abstractcore --status`).
+- Pin provider/model on at least one `llm_call` or `agent` node; the gateway scans the flow JSON for defaults.
 
 Evidence: `_scan_flows_for_llm_defaults` + provider/model selection in `src/abstractgateway/hosts/bundle_host.py`.
 

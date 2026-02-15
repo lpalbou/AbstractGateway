@@ -69,6 +69,7 @@ def test_telegram_bridge_creates_binding_stores_media_and_emits_event(tmp_path) 
         bundle_id=None,
         state_path=tmp_path / "tg_state.json",
         store_media=True,
+        typing_max_s=0.0,
     )
     bridge = TelegramBridge(config=cfg, host=host, runner=runner, artifact_store=artifacts)
     bridge._load_state()  # best-effort: avoid starting the polling thread
@@ -91,13 +92,14 @@ def test_telegram_bridge_creates_binding_stores_media_and_emits_event(tmp_path) 
 
     assert len(host.starts) == 1
     assert host.starts[0]["session_id"] == "telegram:99"
-    assert host.starts[0]["actor_id"] == "telegram"
+    assert host.starts[0]["actor_id"] == "gateway"
     assert len(runner.emits) == 1
     assert runner.emits[0].name == "telegram.message"
     assert runner.emits[0].session_id == "telegram:99"
 
     payload = runner.emits[0].payload
     assert isinstance(payload, dict)
+    assert "attachments" in payload
     tg = payload.get("telegram")
     assert isinstance(tg, dict)
     media = tg.get("media")
@@ -145,3 +147,203 @@ def test_telegram_bridge_start_bot_api_requires_token(tmp_path, monkeypatch: pyt
 
     with pytest.raises(ValueError, match="TEST_TELEGRAM_BOT_TOKEN"):
         bridge.start()
+
+
+def test_telegram_bridge_reset_bumps_session_and_starts_new_run(tmp_path) -> None:
+    from abstractgateway.integrations.telegram_bridge import TelegramBridge, TelegramBridgeConfig
+
+    host = _FakeHost()
+    runner = _FakeRunner()
+    artifacts = InMemoryArtifactStore()
+
+    cfg = TelegramBridgeConfig(
+        enabled=True,
+        transport="bot_api",
+        event_name="telegram.message",
+        session_prefix="telegram:",
+        flow_id="bundle:telegram_agent",
+        bundle_id=None,
+        state_path=tmp_path / "tg_state.json",
+        store_media=False,
+        typing_max_s=0.0,
+    )
+    bridge = TelegramBridge(config=cfg, host=host, runner=runner, artifact_store=artifacts)
+    bridge._load_state()  # type: ignore[attr-defined]
+
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 1,
+            "message": {"message_id": 10, "date": 1700000000, "chat": {"id": 99}, "from": {"id": 7}, "text": "hi"},
+        }
+    )
+    assert host.starts[0]["session_id"] == "telegram:99"
+
+    # Reset clears the binding and advances the session revision.
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 2,
+            "message": {"message_id": 11, "date": 1700000001, "chat": {"id": 99}, "from": {"id": 7}, "text": "/reset"},
+        }
+    )
+
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 3,
+            "message": {"message_id": 12, "date": 1700000002, "chat": {"id": 99}, "from": {"id": 7}, "text": "who are you?"},
+        }
+    )
+    assert len(host.starts) == 2
+    assert host.starts[1]["session_id"] == "telegram:99:r1"
+    assert runner.emits[-1].session_id == "telegram:99:r1"
+
+
+def test_telegram_bridge_pending_media_only_applies_when_referenced(tmp_path) -> None:
+    from abstractgateway.integrations.telegram_bridge import TelegramBridge, TelegramBridgeConfig
+
+    host = _FakeHost()
+    runner = _FakeRunner()
+    artifacts = InMemoryArtifactStore()
+
+    cfg = TelegramBridgeConfig(
+        enabled=True,
+        transport="bot_api",
+        event_name="telegram.message",
+        session_prefix="telegram:",
+        flow_id="bundle:telegram_agent",
+        bundle_id=None,
+        state_path=tmp_path / "tg_state.json",
+        store_media=True,
+        typing_max_s=0.0,
+    )
+    bridge = TelegramBridge(config=cfg, host=host, runner=runner, artifact_store=artifacts)
+    bridge._load_state()  # type: ignore[attr-defined]
+
+    bridge._bot_download_file = lambda *, file_id, timeout_s=30.0: (b"hello", {"file_id": file_id}, None)  # type: ignore[attr-defined]
+
+    # Media-only message stashes pending media for a follow-up.
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "date": 1700000000,
+                "chat": {"id": 99},
+                "from": {"id": 7},
+                "document": {"file_id": "file123", "file_name": "a.txt", "mime_type": "text/plain"},
+            },
+        }
+    )
+    assert "attachments" in runner.emits[-1].payload
+
+    # Unrelated follow-up text must NOT inherit the pending media.
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 2,
+            "message": {"message_id": 11, "date": 1700000001, "chat": {"id": 99}, "from": {"id": 7}, "text": "who are you?"},
+        }
+    )
+    assert runner.emits[-1].payload.get("attachments") == []
+
+    # Stash media again, then reference it explicitly.
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 3,
+            "message": {
+                "message_id": 12,
+                "date": 1700000002,
+                "chat": {"id": 99},
+                "from": {"id": 7},
+                "document": {"file_id": "file456", "file_name": "b.txt", "mime_type": "text/plain"},
+            },
+        }
+    )
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 4,
+            "message": {"message_id": 13, "date": 1700000003, "chat": {"id": 99}, "from": {"id": 7}, "text": "what is this?"},
+        }
+    )
+    assert "attachments" in runner.emits[-1].payload
+
+
+def test_telegram_bridge_pending_media_applies_when_replying_to_media_message(tmp_path) -> None:
+    from abstractgateway.integrations.telegram_bridge import TelegramBridge, TelegramBridgeConfig
+
+    host = _FakeHost()
+    runner = _FakeRunner()
+    artifacts = InMemoryArtifactStore()
+
+    cfg = TelegramBridgeConfig(
+        enabled=True,
+        transport="bot_api",
+        event_name="telegram.message",
+        session_prefix="telegram:",
+        flow_id="bundle:telegram_agent",
+        bundle_id=None,
+        state_path=tmp_path / "tg_state.json",
+        store_media=True,
+        typing_max_s=0.0,
+    )
+    bridge = TelegramBridge(config=cfg, host=host, runner=runner, artifact_store=artifacts)
+    bridge._load_state()  # type: ignore[attr-defined]
+
+    bridge._bot_download_file = lambda *, file_id, timeout_s=30.0: (b"hello", {"file_id": file_id}, None)  # type: ignore[attr-defined]
+
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "date": 1700000000,
+                "chat": {"id": 99},
+                "from": {"id": 7},
+                "document": {"file_id": "file123", "file_name": "a.txt", "mime_type": "text/plain"},
+            },
+        }
+    )
+
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 2,
+            "message": {
+                "message_id": 11,
+                "date": 1700000001,
+                "chat": {"id": 99},
+                "from": {"id": 7},
+                "text": "describe",
+                "reply_to_message": {"message_id": 10},
+            },
+        }
+    )
+    assert "attachments" in runner.emits[-1].payload
+
+
+def test_telegram_bridge_ignores_bot_messages(tmp_path) -> None:
+    from abstractgateway.integrations.telegram_bridge import TelegramBridge, TelegramBridgeConfig
+
+    host = _FakeHost()
+    runner = _FakeRunner()
+    artifacts = InMemoryArtifactStore()
+
+    cfg = TelegramBridgeConfig(
+        enabled=True,
+        transport="bot_api",
+        event_name="telegram.message",
+        session_prefix="telegram:",
+        flow_id="bundle:telegram_agent",
+        bundle_id=None,
+        state_path=tmp_path / "tg_state.json",
+        store_media=False,
+        typing_max_s=0.0,
+    )
+    bridge = TelegramBridge(config=cfg, host=host, runner=runner, artifact_store=artifacts)
+    bridge._load_state()  # type: ignore[attr-defined]
+
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 1,
+            "message": {"message_id": 10, "date": 1700000000, "chat": {"id": 99}, "from": {"id": 7, "is_bot": True}, "text": "hi"},
+        }
+    )
+    assert host.starts == []
+    assert runner.emits == []

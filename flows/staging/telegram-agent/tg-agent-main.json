@@ -1,0 +1,1206 @@
+{
+  "id": "tg-agent-main",
+  "name": "telegram-agent",
+  "description": "Event-driven Telegram contact: durable memory, media-aware replies, workflow-owned delivery.",
+  "interfaces": [],
+  "nodes": [
+    {
+      "id": "node-start",
+      "type": "on_flow_start",
+      "position": {
+        "x": -400,
+        "y": -200
+      },
+      "data": {
+        "nodeType": "on_flow_start",
+        "label": "Binding Created",
+        "icon": "&#x1F3C1;",
+        "headerColor": "#C0392B",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "exec-out",
+            "label": "",
+            "type": "execution"
+          }
+        ],
+        "pinDefaults": {}
+      }
+    },
+    {
+      "id": "node-end",
+      "type": "on_flow_end",
+      "position": {
+        "x": -100,
+        "y": -200
+      },
+      "data": {
+        "nodeType": "on_flow_end",
+        "label": "Root Done",
+        "icon": "&#x23F9;",
+        "headerColor": "#C0392B",
+        "inputs": [
+          {
+            "id": "exec-in",
+            "label": "",
+            "type": "execution"
+          }
+        ],
+        "outputs": []
+      }
+    },
+    {
+      "id": "node-event",
+      "type": "on_event",
+      "position": {
+        "x": -400,
+        "y": 100
+      },
+      "data": {
+        "nodeType": "on_event",
+        "label": "On Telegram Message",
+        "icon": "&#x1F4E8;",
+        "headerColor": "#2980B9",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "exec-out",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "payload",
+            "label": "payload",
+            "type": "any"
+          },
+          {
+            "id": "event_id",
+            "label": "event_id",
+            "type": "string"
+          }
+        ],
+        "eventConfig": {
+          "name": "telegram.message",
+          "scope": "session"
+        }
+      }
+    },
+    {
+      "id": "node-get-chat",
+      "type": "get",
+      "position": {
+        "x": -200,
+        "y": 40
+      },
+      "data": {
+        "nodeType": "get",
+        "label": "Get chat_id",
+        "icon": "&#x1F50D;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "object",
+            "label": "object",
+            "type": "any"
+          },
+          {
+            "id": "key",
+            "label": "key",
+            "type": "string"
+          },
+          {
+            "id": "default",
+            "label": "default",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "key": "telegram.chat_id",
+          "default": 0
+        }
+      }
+    },
+    {
+      "id": "node-get-text",
+      "type": "get",
+      "position": {
+        "x": -200,
+        "y": 160
+      },
+      "data": {
+        "nodeType": "get",
+        "label": "Get text",
+        "icon": "&#x1F4AC;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "object",
+            "label": "object",
+            "type": "any"
+          },
+          {
+            "id": "key",
+            "label": "key",
+            "type": "string"
+          },
+          {
+            "id": "default",
+            "label": "default",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "key": "telegram.text",
+          "default": ""
+        }
+      }
+    },
+    {
+      "id": "node-trim-text",
+      "type": "trim",
+      "position": {
+        "x": 40,
+        "y": 160
+      },
+      "data": {
+        "nodeType": "trim",
+        "label": "Trim text",
+        "icon": "&#x2702;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "text",
+            "label": "text",
+            "type": "string"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "label": "result",
+            "type": "string"
+          }
+        ],
+        "pinDefaults": {}
+      }
+    },
+    {
+      "id": "node-length-text",
+      "type": "length",
+      "position": {
+        "x": 260,
+        "y": 160
+      },
+      "data": {
+        "nodeType": "length",
+        "label": "Text length",
+        "icon": "&#x1F4CF;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "text",
+            "label": "text",
+            "type": "string"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "label": "result",
+            "type": "number"
+          }
+        ],
+        "pinDefaults": {}
+      }
+    },
+    {
+      "id": "node-compare-has-text",
+      "type": "compare",
+      "position": {
+        "x": 480,
+        "y": 160
+      },
+      "data": {
+        "nodeType": "compare",
+        "label": "Has text?",
+        "icon": "&#x1F522;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "a",
+            "label": "a",
+            "type": "any"
+          },
+          {
+            "id": "op",
+            "label": "op",
+            "type": "string"
+          },
+          {
+            "id": "b",
+            "label": "b",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "label": "result",
+            "type": "boolean"
+          }
+        ],
+        "pinDefaults": {
+          "op": ">",
+          "b": 0
+        }
+      }
+    },
+    {
+      "id": "node-if-has-text",
+      "type": "if",
+      "position": {
+        "x": -200,
+        "y": 320
+      },
+      "data": {
+        "nodeType": "if",
+        "label": "If has text",
+        "icon": "&#x2753;",
+        "headerColor": "#9B59B6",
+        "inputs": [
+          {
+            "id": "exec-in",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "condition",
+            "label": "condition",
+            "type": "boolean"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "true",
+            "label": "true",
+            "type": "execution"
+          },
+          {
+            "id": "false",
+            "label": "false",
+            "type": "execution"
+          },
+          {
+            "id": "condition",
+            "label": "condition",
+            "type": "boolean"
+          }
+        ],
+        "pinDefaults": {}
+      }
+    },
+    {
+      "id": "node-set-turn-text",
+      "type": "set_var",
+      "position": {
+        "x": 40,
+        "y": 280
+      },
+      "data": {
+        "nodeType": "set_var",
+        "label": "Set turn_text",
+        "icon": "&#x1F4DD;",
+        "headerColor": "#E67E22",
+        "inputs": [
+          {
+            "id": "exec-in",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "name",
+            "label": "name",
+            "type": "string"
+          },
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "exec-out",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "name": "telegram.turn_text"
+        }
+      }
+    },
+    {
+      "id": "node-set-turn-text-fallback",
+      "type": "set_var",
+      "position": {
+        "x": 40,
+        "y": 360
+      },
+      "data": {
+        "nodeType": "set_var",
+        "label": "Set turn_text (fallback)",
+        "icon": "&#x1F4DD;",
+        "headerColor": "#E67E22",
+        "inputs": [
+          {
+            "id": "exec-in",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "name",
+            "label": "name",
+            "type": "string"
+          },
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "exec-out",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "name": "telegram.turn_text",
+          "value": "No text was included. If there are attachments, respond based on them; otherwise ask the user what they need."
+        }
+      }
+    },
+    {
+      "id": "node-get-turn-text",
+      "type": "get_var",
+      "position": {
+        "x": 260,
+        "y": 320
+      },
+      "data": {
+        "nodeType": "get_var",
+        "label": "Get turn_text",
+        "icon": "&#x1F4CB;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "name",
+            "label": "name",
+            "type": "string"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "name": "telegram.turn_text"
+        }
+      }
+    },
+    {
+      "id": "node-get-provider",
+      "type": "get_var",
+      "position": {
+        "x": -200,
+        "y": 520
+      },
+      "data": {
+        "nodeType": "get_var",
+        "label": "Get provider",
+        "icon": "&#x2699;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "name",
+            "label": "name",
+            "type": "string"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "name": "_runtime.provider"
+        }
+      }
+    },
+    {
+      "id": "node-get-model",
+      "type": "get_var",
+      "position": {
+        "x": -200,
+        "y": 600
+      },
+      "data": {
+        "nodeType": "get_var",
+        "label": "Get model",
+        "icon": "&#x2699;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "name",
+            "label": "name",
+            "type": "string"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "name": "_runtime.model"
+        }
+      }
+    },
+    {
+      "id": "node-llm",
+      "type": "llm_call",
+      "position": {
+        "x": 40,
+        "y": 520
+      },
+      "data": {
+        "nodeType": "llm_call",
+        "label": "Draft reply (LLM)",
+        "icon": "&#x1F4AD;",
+        "headerColor": "#3498DB",
+        "inputs": [
+          {
+            "id": "exec-in",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "use_context",
+            "label": "use_context",
+            "type": "boolean"
+          },
+          {
+            "id": "context",
+            "label": "context",
+            "type": "object"
+          },
+          {
+            "id": "provider",
+            "label": "provider",
+            "type": "provider"
+          },
+          {
+            "id": "model",
+            "label": "model",
+            "type": "model"
+          },
+          {
+            "id": "system",
+            "label": "system",
+            "type": "string"
+          },
+          {
+            "id": "prompt",
+            "label": "prompt",
+            "type": "string"
+          },
+          {
+            "id": "tools",
+            "label": "tools",
+            "type": "tools"
+          },
+          {
+            "id": "temperature",
+            "label": "temperature",
+            "type": "number"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "exec-out",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "response",
+            "label": "response",
+            "type": "string"
+          },
+          {
+            "id": "success",
+            "label": "success",
+            "type": "boolean"
+          },
+          {
+            "id": "meta",
+            "label": "meta",
+            "type": "object"
+          }
+        ],
+        "effectConfig": {},
+        "pinDefaults": {
+          "use_context": true,
+          "tools": [],
+          "temperature": 0.7,
+          "system": "You are a helpful AI assistant chatting via Telegram. Reply in plain text and keep responses concise and friendly.\n\nOnly mention or describe attachments (images/audio/video/documents) if they are actually present for this message. If there are no attachments, do not claim you received any.\n\nIf the user sends media with no text, describe what you can infer from the media and ask one clarifying question if needed."
+        }
+      }
+    },
+    {
+      "id": "node-tool-params",
+      "type": "tool_parameters",
+      "position": {
+        "x": 260,
+        "y": 520
+      },
+      "data": {
+        "nodeType": "tool_parameters",
+        "label": "send_telegram_message()",
+        "icon": "&#x1F4E4;",
+        "headerColor": "#16A085",
+        "inputs": [
+          {
+            "id": "chat_id",
+            "label": "chat_id",
+            "type": "number"
+          },
+          {
+            "id": "text",
+            "label": "text",
+            "type": "string"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "tool_call",
+            "label": "tool_call",
+            "type": "object"
+          }
+        ],
+        "toolParametersConfig": {
+          "tool": "send_telegram_message"
+        },
+        "pinDefaults": {}
+      }
+    },
+    {
+      "id": "node-call-tool",
+      "type": "call_tool",
+      "position": {
+        "x": 480,
+        "y": 520
+      },
+      "data": {
+        "nodeType": "call_tool",
+        "label": "Send Telegram Message",
+        "icon": "&#x1F4E9;",
+        "headerColor": "#16A085",
+        "inputs": [
+          {
+            "id": "exec-in",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "tool_call",
+            "label": "tool_call",
+            "type": "object"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "exec-out",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "result",
+            "label": "result",
+            "type": "object"
+          },
+          {
+            "id": "success",
+            "label": "success",
+            "type": "boolean"
+          }
+        ],
+        "effectConfig": {
+          "allowed_tools": [
+            "send_telegram_message"
+          ]
+        },
+        "pinDefaults": {}
+      }
+    }
+    ,
+    {
+      "id": "node-if-sent",
+      "type": "if",
+      "position": {
+        "x": 700,
+        "y": 520
+      },
+      "data": {
+        "nodeType": "if",
+        "label": "If sent",
+        "icon": "&#x2753;",
+        "headerColor": "#9B59B6",
+        "inputs": [
+          {
+            "id": "exec-in",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "condition",
+            "label": "condition",
+            "type": "boolean"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "true",
+            "label": "true",
+            "type": "execution"
+          },
+          {
+            "id": "false",
+            "label": "false",
+            "type": "execution"
+          },
+          {
+            "id": "condition",
+            "label": "condition",
+            "type": "boolean"
+          }
+        ],
+        "pinDefaults": {}
+      }
+    },
+    {
+      "id": "node-get-sent-mid-bot",
+      "type": "get",
+      "position": {
+        "x": 700,
+        "y": 640
+      },
+      "data": {
+        "nodeType": "get",
+        "label": "Get sent message_id (bot_api)",
+        "icon": "&#x1F4AC;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "object",
+            "label": "object",
+            "type": "any"
+          },
+          {
+            "id": "key",
+            "label": "key",
+            "type": "string"
+          },
+          {
+            "id": "default",
+            "label": "default",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "key": "response.result.message_id",
+          "default": null
+        }
+      }
+    },
+    {
+      "id": "node-get-sent-mid-tdlib",
+      "type": "get",
+      "position": {
+        "x": 700,
+        "y": 740
+      },
+      "data": {
+        "nodeType": "get",
+        "label": "Get sent message_id (tdlib)",
+        "icon": "&#x1F4AC;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "object",
+            "label": "object",
+            "type": "any"
+          },
+          {
+            "id": "key",
+            "label": "key",
+            "type": "string"
+          },
+          {
+            "id": "default",
+            "label": "default",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "key": "response.id",
+          "default": null
+        }
+      }
+    },
+    {
+      "id": "node-coalesce-sent-mid",
+      "type": "coalesce",
+      "position": {
+        "x": 920,
+        "y": 690
+      },
+      "data": {
+        "nodeType": "coalesce",
+        "label": "Pick sent message_id",
+        "icon": "&#x1F500;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "a",
+            "label": "a",
+            "type": "any"
+          },
+          {
+            "id": "b",
+            "label": "b",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "label": "result",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {}
+      }
+    },
+    {
+      "id": "node-get-sent-mids",
+      "type": "get_var",
+      "position": {
+        "x": 920,
+        "y": 790
+      },
+      "data": {
+        "nodeType": "get_var",
+        "label": "Get sent_message_ids",
+        "icon": "&#x1F4CB;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "name",
+            "label": "name",
+            "type": "string"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "name": "_runtime.telegram.sent_message_ids"
+        }
+      }
+    },
+    {
+      "id": "node-append-sent-mid",
+      "type": "array_append",
+      "position": {
+        "x": 1140,
+        "y": 740
+      },
+      "data": {
+        "nodeType": "array_append",
+        "label": "Append sent message_id",
+        "icon": "&#x1F4CE;",
+        "headerColor": "#95A5A6",
+        "inputs": [
+          {
+            "id": "array",
+            "label": "array",
+            "type": "any"
+          },
+          {
+            "id": "item",
+            "label": "item",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "label": "result",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {}
+      }
+    },
+    {
+      "id": "node-set-sent-mids",
+      "type": "set_var",
+      "position": {
+        "x": 1360,
+        "y": 520
+      },
+      "data": {
+        "nodeType": "set_var",
+        "label": "Track sent_message_ids",
+        "icon": "&#x1F4DD;",
+        "headerColor": "#E67E22",
+        "inputs": [
+          {
+            "id": "exec-in",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "name",
+            "label": "name",
+            "type": "string"
+          },
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "exec-out",
+            "label": "",
+            "type": "execution"
+          },
+          {
+            "id": "value",
+            "label": "value",
+            "type": "any"
+          }
+        ],
+        "pinDefaults": {
+          "name": "_runtime.telegram.sent_message_ids"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-root-exec",
+      "source": "node-start",
+      "sourceHandle": "exec-out",
+      "target": "node-end",
+      "targetHandle": "exec-in",
+      "animated": true
+    },
+    {
+      "id": "edge-event-exec",
+      "source": "node-event",
+      "sourceHandle": "exec-out",
+      "target": "node-if-has-text",
+      "targetHandle": "exec-in",
+      "animated": true
+    },
+    {
+      "id": "edge-event-payload-to-get-chat",
+      "source": "node-event",
+      "sourceHandle": "payload",
+      "target": "node-get-chat",
+      "targetHandle": "object",
+      "animated": false
+    },
+    {
+      "id": "edge-event-payload-to-get-text",
+      "source": "node-event",
+      "sourceHandle": "payload",
+      "target": "node-get-text",
+      "targetHandle": "object",
+      "animated": false
+    },
+    {
+      "id": "edge-event-payload-to-llm-context",
+      "source": "node-event",
+      "sourceHandle": "payload",
+      "target": "node-llm",
+      "targetHandle": "context",
+      "animated": false
+    },
+    {
+      "id": "edge-get-text-to-trim",
+      "source": "node-get-text",
+      "sourceHandle": "value",
+      "target": "node-trim-text",
+      "targetHandle": "text",
+      "animated": false
+    },
+    {
+      "id": "edge-trim-to-length",
+      "source": "node-trim-text",
+      "sourceHandle": "result",
+      "target": "node-length-text",
+      "targetHandle": "text",
+      "animated": false
+    },
+    {
+      "id": "edge-length-to-compare",
+      "source": "node-length-text",
+      "sourceHandle": "result",
+      "target": "node-compare-has-text",
+      "targetHandle": "a",
+      "animated": false
+    },
+    {
+      "id": "edge-compare-to-if",
+      "source": "node-compare-has-text",
+      "sourceHandle": "result",
+      "target": "node-if-has-text",
+      "targetHandle": "condition",
+      "animated": false
+    },
+    {
+      "id": "edge-if-true-to-set",
+      "source": "node-if-has-text",
+      "sourceHandle": "true",
+      "target": "node-set-turn-text",
+      "targetHandle": "exec-in",
+      "animated": true
+    },
+    {
+      "id": "edge-if-false-to-set-fallback",
+      "source": "node-if-has-text",
+      "sourceHandle": "false",
+      "target": "node-set-turn-text-fallback",
+      "targetHandle": "exec-in",
+      "animated": true
+    },
+    {
+      "id": "edge-trim-to-set",
+      "source": "node-trim-text",
+      "sourceHandle": "result",
+      "target": "node-set-turn-text",
+      "targetHandle": "value",
+      "animated": false
+    },
+    {
+      "id": "edge-set-to-llm",
+      "source": "node-set-turn-text",
+      "sourceHandle": "exec-out",
+      "target": "node-llm",
+      "targetHandle": "exec-in",
+      "animated": true
+    },
+    {
+      "id": "edge-set-fallback-to-llm",
+      "source": "node-set-turn-text-fallback",
+      "sourceHandle": "exec-out",
+      "target": "node-llm",
+      "targetHandle": "exec-in",
+      "animated": true
+    },
+    {
+      "id": "edge-get-provider-to-llm",
+      "source": "node-get-provider",
+      "sourceHandle": "value",
+      "target": "node-llm",
+      "targetHandle": "provider",
+      "animated": false
+    },
+    {
+      "id": "edge-get-model-to-llm",
+      "source": "node-get-model",
+      "sourceHandle": "value",
+      "target": "node-llm",
+      "targetHandle": "model",
+      "animated": false
+    },
+    {
+      "id": "edge-get-turn-text-to-llm",
+      "source": "node-get-turn-text",
+      "sourceHandle": "value",
+      "target": "node-llm",
+      "targetHandle": "prompt",
+      "animated": false
+    },
+    {
+      "id": "edge-llm-to-call-tool-exec",
+      "source": "node-llm",
+      "sourceHandle": "exec-out",
+      "target": "node-call-tool",
+      "targetHandle": "exec-in",
+      "animated": true
+    },
+    {
+      "id": "edge-get-chat-to-tool-params",
+      "source": "node-get-chat",
+      "sourceHandle": "value",
+      "target": "node-tool-params",
+      "targetHandle": "chat_id",
+      "animated": false
+    },
+    {
+      "id": "edge-llm-response-to-tool-params",
+      "source": "node-llm",
+      "sourceHandle": "response",
+      "target": "node-tool-params",
+      "targetHandle": "text",
+      "animated": false
+    },
+    {
+      "id": "edge-tool-params-to-call-tool",
+      "source": "node-tool-params",
+      "sourceHandle": "tool_call",
+      "target": "node-call-tool",
+      "targetHandle": "tool_call",
+      "animated": false
+    },
+    {
+      "id": "edge-call-tool-to-if-sent",
+      "source": "node-call-tool",
+      "sourceHandle": "exec-out",
+      "target": "node-if-sent",
+      "targetHandle": "exec-in",
+      "animated": true
+    },
+    {
+      "id": "edge-call-tool-success-to-if-sent",
+      "source": "node-call-tool",
+      "sourceHandle": "success",
+      "target": "node-if-sent",
+      "targetHandle": "condition",
+      "animated": false
+    },
+    {
+      "id": "edge-if-sent-to-set-sent-mids",
+      "source": "node-if-sent",
+      "sourceHandle": "true",
+      "target": "node-set-sent-mids",
+      "targetHandle": "exec-in",
+      "animated": true
+    },
+    {
+      "id": "edge-call-tool-result-to-get-sent-mid-bot",
+      "source": "node-call-tool",
+      "sourceHandle": "result",
+      "target": "node-get-sent-mid-bot",
+      "targetHandle": "object",
+      "animated": false
+    },
+    {
+      "id": "edge-call-tool-result-to-get-sent-mid-tdlib",
+      "source": "node-call-tool",
+      "sourceHandle": "result",
+      "target": "node-get-sent-mid-tdlib",
+      "targetHandle": "object",
+      "animated": false
+    },
+    {
+      "id": "edge-get-sent-mid-bot-to-coalesce",
+      "source": "node-get-sent-mid-bot",
+      "sourceHandle": "value",
+      "target": "node-coalesce-sent-mid",
+      "targetHandle": "a",
+      "animated": false
+    },
+    {
+      "id": "edge-get-sent-mid-tdlib-to-coalesce",
+      "source": "node-get-sent-mid-tdlib",
+      "sourceHandle": "value",
+      "target": "node-coalesce-sent-mid",
+      "targetHandle": "b",
+      "animated": false
+    },
+    {
+      "id": "edge-get-sent-mids-to-append",
+      "source": "node-get-sent-mids",
+      "sourceHandle": "value",
+      "target": "node-append-sent-mid",
+      "targetHandle": "array",
+      "animated": false
+    },
+    {
+      "id": "edge-coalesce-to-append-item",
+      "source": "node-coalesce-sent-mid",
+      "sourceHandle": "result",
+      "target": "node-append-sent-mid",
+      "targetHandle": "item",
+      "animated": false
+    },
+    {
+      "id": "edge-append-to-set-sent-mids",
+      "source": "node-append-sent-mid",
+      "sourceHandle": "result",
+      "target": "node-set-sent-mids",
+      "targetHandle": "value",
+      "animated": false
+    }
+  ],
+  "entryNode": "node-start",
+  "created_at": "2026-02-14T00:00:00.000000",
+  "updated_at": "2026-02-14T00:00:00.000000"
+}

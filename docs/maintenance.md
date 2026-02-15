@@ -130,8 +130,15 @@ Background bridges can emit events into the runtime (e.g., â€œtelegram.messageâ€
 
 Enable (Telegram):
 - `ABSTRACT_TELEGRAM_BRIDGE=1`
-- `ABSTRACT_TELEGRAM_FLOW_ID=...` (required)
+- `ABSTRACT_TELEGRAM_FLOW_ID=...` (required; shipped bundle: `telegram-agent@0.0.1:tg-agent-main`)
+- Outbound replies require tool execution + tool exposure:
+  - `ABSTRACTGATEWAY_TOOL_MODE=local`
+  - `ABSTRACT_ENABLE_TELEGRAM_TOOLS=1`
 - transport + credentials depend on configuration (see `src/abstractgateway/integrations/telegram_bridge.py`)
+- optional knobs:
+  - Telegram-only routing override: `ABSTRACT_TELEGRAM_MODEL` (and optionally `ABSTRACT_TELEGRAM_PROVIDER`)
+  - Durable history limit: `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES`
+  - `/reset` message deletion controls: `ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES`, `ABSTRACT_TELEGRAM_RESET_DELETE_MAX`
 
 Enable (Email):
 - `ABSTRACT_EMAIL_BRIDGE=1`

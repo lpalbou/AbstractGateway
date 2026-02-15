@@ -656,11 +656,28 @@ class WorkflowBundleGatewayHost:
                     if detected is not None:
                         provider, model = detected
 
+                if (not provider or not model):
+                    # Best-effort: fall back to AbstractCore config defaults (abstractcore --config).
+                    try:
+                        from abstractcore.config import get_config_manager  # type: ignore
+
+                        cfg = get_config_manager().config
+                        cfg_provider = str(getattr(cfg.default_models, "global_provider", "") or "").strip().lower()
+                        cfg_model = str(getattr(cfg.default_models, "global_model", "") or "").strip()
+                        if cfg_provider and cfg_model:
+                            if not provider and not model:
+                                provider, model = cfg_provider, cfg_model
+                            elif provider and not model and cfg_provider == provider:
+                                model = cfg_model
+                    except Exception:
+                        pass
+
                 if not provider or not model:
                     raise WorkflowBundleError(
                         "Bundle contains LLM nodes but no default provider/model is configured. "
-                        "Set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL (or ensure the flow JSON "
-                        "includes provider/model on at least one llm_call/agent node)."
+                        "Set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL, configure defaults via "
+                        "`abstractcore --config`, or ensure the flow JSON includes provider/model on at least "
+                        "one llm_call/agent node."
                     )
 
                 runtime = create_local_runtime(
@@ -1006,7 +1023,27 @@ class WorkflowBundleGatewayHost:
         if spec is None:
             raise KeyError(f"Workflow '{workflow_id}' not found")
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
-        run_id = str(self.runtime.start(workflow=spec, vars=dict(input_data or {}), actor_id=actor_id, session_id=sid))
+        vars0 = dict(input_data or {})
+        # Best-effort: seed durable run vars with the gateway runtime defaults so VisualFlow
+        # nodes (notably Agent nodes) can inherit provider/model without per-node wiring.
+        try:
+            cfg = getattr(self.runtime, "config", None)
+            default_provider = getattr(cfg, "provider", None)
+            default_model = getattr(cfg, "model", None)
+        except Exception:  # pragma: no cover
+            default_provider = None
+            default_model = None
+        if default_provider or default_model:
+            rt_ns = vars0.get("_runtime")
+            if not isinstance(rt_ns, dict):
+                rt_ns = {}
+                vars0["_runtime"] = rt_ns
+            if isinstance(default_provider, str) and default_provider.strip() and not str(rt_ns.get("provider") or "").strip():
+                rt_ns["provider"] = default_provider.strip().lower()
+            if isinstance(default_model, str) and default_model.strip() and not str(rt_ns.get("model") or "").strip():
+                rt_ns["model"] = default_model.strip()
+
+        run_id = str(self.runtime.start(workflow=spec, vars=vars0, actor_id=actor_id, session_id=sid))
 
         # Default session_id to the root run_id for durable session-scoped behavior
         # (matches VisualSessionRunner semantics).
@@ -1061,6 +1098,17 @@ class WorkflowBundleGatewayHost:
             pass
 
         # Start session-scoped event listener workflows (best-effort).
+        listener_vars: Dict[str, Any] = {}
+        try:
+            rt_seed = vars0.get("_runtime")
+            if isinstance(rt_seed, dict) and rt_seed:
+                listener_vars["_runtime"] = dict(rt_seed)
+            limits_seed = vars0.get("_limits")
+            if isinstance(limits_seed, dict) and limits_seed:
+                listener_vars["_limits"] = dict(limits_seed)
+        except Exception:
+            listener_vars = {}
+
         listener_ids = self.event_listener_specs_by_root.get(workflow_id) or []
         for wid in listener_ids:
             listener_spec = self.specs.get(wid)
@@ -1069,7 +1117,7 @@ class WorkflowBundleGatewayHost:
             try:
                 child_run_id = self.runtime.start(
                     workflow=listener_spec,
-                    vars={},
+                    vars=dict(listener_vars),
                     session_id=effective_session_id,
                     parent_run_id=run_id,
                     actor_id=actor_id,
