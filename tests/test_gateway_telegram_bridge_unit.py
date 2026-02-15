@@ -347,3 +347,51 @@ def test_telegram_bridge_ignores_bot_messages(tmp_path) -> None:
     )
     assert host.starts == []
     assert runner.emits == []
+
+
+def test_telegram_bridge_tools_command_is_consumed_and_persists_policy(tmp_path) -> None:
+    from abstractgateway.integrations.telegram_bridge import TelegramBridge, TelegramBridgeConfig
+
+    host = _FakeHost()
+    runner = _FakeRunner()
+    artifacts = InMemoryArtifactStore()
+
+    cfg = TelegramBridgeConfig(
+        enabled=True,
+        transport="bot_api",
+        event_name="telegram.message",
+        session_prefix="telegram:",
+        flow_id="bundle:telegram_agent",
+        bundle_id=None,
+        state_path=tmp_path / "tg_state.json",
+        store_media=False,
+        typing_max_s=0.0,
+    )
+    bridge = TelegramBridge(config=cfg, host=host, runner=runner, artifact_store=artifacts)
+    bridge._load_state()  # type: ignore[attr-defined]
+
+    sent: list[dict[str, object]] = []
+    bridge._bot_send_text = lambda *, chat_id, text: sent.append({"chat_id": chat_id, "text": text})  # type: ignore[attr-defined]
+
+    bridge._handle_bot_update(  # type: ignore[attr-defined]
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "date": 1700000000,
+                "chat": {"id": 99},
+                "from": {"id": 7},
+                "text": "/tools allow read_file",
+            },
+        }
+    )
+
+    assert host.starts == []
+    assert runner.emits == []
+    assert sent and isinstance(sent[0].get("text"), str)
+
+    pol = bridge._state.get("tool_policies", {}).get("99")  # type: ignore[attr-defined]
+    assert isinstance(pol, dict)
+    allowed = pol.get("allowed_tools")
+    assert isinstance(allowed, list)
+    assert "read_file" in allowed

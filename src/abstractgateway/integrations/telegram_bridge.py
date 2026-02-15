@@ -37,6 +37,24 @@ def _as_bool(raw: Any, default: bool) -> bool:
     return default
 
 
+def _parse_lines_or_json_list(raw: Any) -> list[str]:
+    """Parse a newline-separated string or a JSON array of strings (best-effort)."""
+    if raw is None or isinstance(raw, bool):
+        return []
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(x).strip() for x in parsed if isinstance(x, str) and str(x).strip()]
+    lines = [ln.strip() for ln in text.splitlines()]
+    return [ln for ln in lines if ln]
+
+
 def _command_base(text: str) -> str:
     """Return the normalized bot-command token (e.g. "/reset" from "/reset@botname foo")."""
     s = str(text or "").strip()
@@ -46,6 +64,17 @@ def _command_base(text: str) -> str:
     if "@" in token:
         token = token.split("@", 1)[0].strip()
     return token.lower()
+
+
+def _command_args(text: str) -> str:
+    """Return the raw args string after the bot-command token (best-effort)."""
+    s = str(text or "").strip()
+    if not s.startswith("/"):
+        return ""
+    parts = s.split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    return str(parts[1] or "").strip()
 
 
 def _approval_token(text: str) -> str:
@@ -67,6 +96,9 @@ def _approval_token(text: str) -> str:
     if s in {"reject", "rejected", "deny", "denied", "cancel", "cancelled", "canceled", "no", "n"}:
         return "reject"
     return ""
+
+
+_TELEGRAM_PROTECTED_TOOLS: set[str] = {"send_telegram_message", "send_telegram_artifact"}
 
 
 @dataclass(frozen=True)
@@ -102,6 +134,16 @@ class TelegramBridgeConfig:
     # /reset behavior
     reset_delete_messages: bool = True
     reset_delete_max: int = 200
+    reset_message: str = "Conversation reset. Send a new message to start fresh."
+
+    # Tool permissions (Telegram UX)
+    #
+    # These defaults apply per-chat unless overridden via `/tools ...` commands.
+    tool_approve_all: bool = False
+    tool_allowed_tools: Optional[list[str]] = None  # None means "all"
+    tool_auto_approve_tools: Optional[list[str]] = None  # None means runtime defaults
+    tool_require_approval_tools: Optional[list[str]] = None  # None means runtime defaults
+    tool_blocked_tools: Optional[list[str]] = None
 
     @staticmethod
     def from_env(*, base_dir: Path) -> "TelegramBridgeConfig":
@@ -144,6 +186,26 @@ class TelegramBridgeConfig:
             reset_delete_max = 200
         if reset_delete_max < 0:
             reset_delete_max = 0
+        reset_message = (
+            str(os.getenv("ABSTRACT_TELEGRAM_RESET_MESSAGE", "") or "").strip()
+            or "Conversation reset. Send a new message to start fresh."
+        )
+
+        tool_approve_all = _as_bool(os.getenv("ABSTRACT_TELEGRAM_APPROVE_ALL_TOOLS"), False)
+        tool_allowed_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_ALLOWED_TOOLS"))
+        tool_auto_approve_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_AUTO_APPROVE_TOOLS"))
+        tool_require_approval_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_REQUIRE_APPROVAL_TOOLS"))
+        tool_blocked_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_BLOCKED_TOOLS"))
+
+        # Interpret empty lists as "unset" to keep defaults predictable.
+        if not tool_allowed_tools:
+            tool_allowed_tools = None
+        if not tool_auto_approve_tools:
+            tool_auto_approve_tools = None
+        if not tool_require_approval_tools:
+            tool_require_approval_tools = None
+        if not tool_blocked_tools:
+            tool_blocked_tools = None
 
         return TelegramBridgeConfig(
             enabled=bool(enabled),
@@ -164,6 +226,12 @@ class TelegramBridgeConfig:
             max_history_messages=int(max_history_messages),
             reset_delete_messages=bool(reset_delete_messages),
             reset_delete_max=int(reset_delete_max),
+            reset_message=str(reset_message),
+            tool_approve_all=bool(tool_approve_all),
+            tool_allowed_tools=list(tool_allowed_tools) if isinstance(tool_allowed_tools, list) else None,
+            tool_auto_approve_tools=list(tool_auto_approve_tools) if isinstance(tool_auto_approve_tools, list) else None,
+            tool_require_approval_tools=list(tool_require_approval_tools) if isinstance(tool_require_approval_tools, list) else None,
+            tool_blocked_tools=list(tool_blocked_tools) if isinstance(tool_blocked_tools, list) else None,
         )
 
 
@@ -204,6 +272,19 @@ class TelegramBridge:
             raise ValueError("ABSTRACT_TELEGRAM_FLOW_ID is required when ABSTRACT_TELEGRAM_BRIDGE=1")
 
         self._load_state()
+        # Operator footgun: local tool mode bypasses the Telegram approval UX.
+        try:
+            import logging
+
+            tm = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
+            if tm in {"local", "local_all", "local-all"}:
+                logging.getLogger(__name__).warning(
+                    "Telegram bridge: ABSTRACTGATEWAY_TOOL_MODE=%s bypasses tool approvals; "
+                    "set ABSTRACTGATEWAY_TOOL_MODE=passthrough (recommended) or approval.",
+                    tm,
+                )
+        except Exception:
+            pass
 
         if self._cfg.transport == "bot_api":
             if not self._bot_token():
@@ -262,6 +343,7 @@ class TelegramBridge:
         self._state.setdefault("bindings", {})
         self._state.setdefault("session_revs", {})
         self._state.setdefault("approval_prompts", {})
+        self._state.setdefault("tool_policies", {})
 
     def _save_state(self) -> None:
         path = self._cfg.state_path
@@ -276,6 +358,131 @@ class TelegramBridge:
     # ---------------------------------------------------------------------
     # Tool approvals (Telegram UX)
     # ---------------------------------------------------------------------
+
+    def _tool_policies(self) -> Dict[str, Any]:
+        pol = self._state.get("tool_policies")
+        if not isinstance(pol, dict):
+            pol = {}
+            self._state["tool_policies"] = pol
+        return pol
+
+    def _default_tool_policy(self) -> Dict[str, Any]:
+        """Default per-chat tool policy (operator-controlled via env)."""
+        auto: set[str] = set()
+        require: set[str] = set()
+        try:
+            from abstractruntime.integrations.abstractcore.tool_executor import ToolApprovalPolicy as _ToolApprovalPolicy
+
+            base = _ToolApprovalPolicy()
+            auto = set(getattr(base, "auto_approve_tools", set()) or set())
+            require = set(getattr(base, "require_approval_tools", set()) or set())
+        except Exception:
+            auto = set()
+            require = {"write_file", "edit_file", "execute_command"}
+
+        if isinstance(self._cfg.tool_auto_approve_tools, list):
+            auto = {str(t).strip() for t in self._cfg.tool_auto_approve_tools if isinstance(t, str) and str(t).strip()}
+        if isinstance(self._cfg.tool_require_approval_tools, list):
+            require = {str(t).strip() for t in self._cfg.tool_require_approval_tools if isinstance(t, str) and str(t).strip()}
+
+        allowed: Optional[set[str]] = None
+        if isinstance(self._cfg.tool_allowed_tools, list):
+            allowed = {str(t).strip() for t in self._cfg.tool_allowed_tools if isinstance(t, str) and str(t).strip()}
+            if not allowed:
+                allowed = None
+
+        blocked: set[str] = set()
+        if isinstance(self._cfg.tool_blocked_tools, list):
+            blocked = {str(t).strip() for t in self._cfg.tool_blocked_tools if isinstance(t, str) and str(t).strip()}
+
+        # Always allow + auto-approve the delivery tools so the bridge can keep responding.
+        if allowed is not None:
+            allowed |= set(_TELEGRAM_PROTECTED_TOOLS)
+        blocked -= set(_TELEGRAM_PROTECTED_TOOLS)
+        auto |= set(_TELEGRAM_PROTECTED_TOOLS)
+        require -= set(_TELEGRAM_PROTECTED_TOOLS)
+
+        return {
+            "version": 1,
+            "approve_all": bool(self._cfg.tool_approve_all),
+            "allowed_tools": sorted(allowed) if isinstance(allowed, set) else None,
+            "blocked_tools": sorted(blocked),
+            "auto_approve_tools": sorted(auto),
+            "require_approval_tools": sorted(require),
+        }
+
+    def _effective_tool_policy(self, *, chat_id: int) -> Dict[str, Any]:
+        default = self._default_tool_policy()
+        raw: Any = None
+        with self._lock:
+            raw = dict(self._tool_policies().get(str(chat_id)) or {}) if isinstance(self._tool_policies().get(str(chat_id)), dict) else None
+
+        if not isinstance(raw, dict):
+            return dict(default)
+
+        merged = dict(default)
+        # Shallow merge is enough; all leaves are JSON primitives / lists.
+        merged.update(raw)
+
+        approve_all = _as_bool(merged.get("approve_all"), default=bool(default.get("approve_all")))
+
+        allowed_tools_raw = merged.get("allowed_tools")
+        allowed: Optional[set[str]] = None
+        if allowed_tools_raw is None:
+            allowed = None
+        elif isinstance(allowed_tools_raw, list):
+            allowed = {str(t).strip() for t in allowed_tools_raw if isinstance(t, str) and str(t).strip()}
+            if not allowed:
+                allowed = None
+
+        blocked_raw = merged.get("blocked_tools")
+        blocked = {str(t).strip() for t in blocked_raw if isinstance(t, str) and str(t).strip()} if isinstance(blocked_raw, list) else set()
+
+        auto_raw = merged.get("auto_approve_tools")
+        auto = {str(t).strip() for t in auto_raw if isinstance(t, str) and str(t).strip()} if isinstance(auto_raw, list) else set()
+
+        req_raw = merged.get("require_approval_tools")
+        require = {str(t).strip() for t in req_raw if isinstance(t, str) and str(t).strip()} if isinstance(req_raw, list) else set()
+
+        if allowed is not None:
+            allowed |= set(_TELEGRAM_PROTECTED_TOOLS)
+        blocked -= set(_TELEGRAM_PROTECTED_TOOLS)
+        auto |= set(_TELEGRAM_PROTECTED_TOOLS)
+        require -= set(_TELEGRAM_PROTECTED_TOOLS)
+
+        return {
+            "version": 1,
+            "approve_all": bool(approve_all),
+            "allowed_tools": sorted(allowed) if isinstance(allowed, set) else None,
+            "blocked_tools": sorted(blocked),
+            "auto_approve_tools": sorted(auto),
+            "require_approval_tools": sorted(require),
+        }
+
+    def _save_tool_policy(self, *, chat_id: int, policy: Dict[str, Any]) -> None:
+        snap = dict(policy or {})
+        with self._lock:
+            self._tool_policies()[str(chat_id)] = snap
+            self._save_state()
+
+    def _clear_tool_policy(self, *, chat_id: int) -> None:
+        with self._lock:
+            self._tool_policies().pop(str(chat_id), None)
+            self._save_state()
+
+    def _tool_names_available(self) -> list[str]:
+        """Best-effort list of tool names (for `/tools list`)."""
+        names: set[str] = set()
+        try:
+            from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
+
+            names |= {str(k).strip() for k in (build_default_tool_map() or {}).keys() if isinstance(k, str) and str(k).strip()}
+        except Exception:
+            pass
+        # Runtime-owned tool (executed inside the runtime effect handler).
+        names.add("open_attachment")
+        names |= set(_TELEGRAM_PROTECTED_TOOLS)
+        return sorted(n for n in names if n)
 
     def _approval_prompts(self) -> Dict[str, Any]:
         prompts = self._state.get("approval_prompts")
@@ -311,11 +518,198 @@ class TelegramBridge:
                 "",
                 "Reply with /approve (or 'approve') to run.",
                 "Reply with anything else to cancel.",
+                "Send /tools to view or change tool permissions.",
             ]
         )
         # Telegram message hard cap ~4096 bytes; keep margin.
         text = "\n".join(lines).strip()
         return text[:3800] + "…" if len(text) > 3800 else text
+
+    def _format_tools_policy_message(self, *, chat_id: int) -> str:
+        pol = self._effective_tool_policy(chat_id=chat_id)
+        allowed = pol.get("allowed_tools")
+        allowed_s = "all" if allowed is None else ", ".join(list(allowed)[:40]) + ("…" if isinstance(allowed, list) and len(allowed) > 40 else "")
+        blocked = pol.get("blocked_tools") or []
+        auto = pol.get("auto_approve_tools") or []
+        req = pol.get("require_approval_tools") or []
+        approve_all = bool(pol.get("approve_all"))
+        tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower() or "passthrough"
+
+        def _fmt_list(items: Any, *, max_items: int) -> str:
+            if not isinstance(items, list) or not items:
+                return "(none)"
+            s = ", ".join(items[:max_items])
+            return s + ("…" if len(items) > max_items else "")
+
+        lines = [
+            "Tool permissions (this chat):",
+            f"- gateway_tool_mode: {tool_mode}",
+            f"- approve_all: {str(approve_all).lower()}",
+            f"- allowed: {allowed_s or '(none)'}",
+            f"- blocked: {_fmt_list(blocked, max_items=24)}",
+            f"- auto-run: {_fmt_list(auto, max_items=24)}",
+            f"- require approval: {_fmt_list(req, max_items=24)}",
+        ]
+        if tool_mode in {"local", "local_all", "local-all"}:
+            lines.append("")
+            lines.append("Note: approvals are bypassed when gateway_tool_mode is `local` (dangerous).")
+            lines.append("Set `ABSTRACTGATEWAY_TOOL_MODE=passthrough` (recommended) or `approval`.")
+        lines.extend(
+            [
+            "",
+            "Commands:",
+            "- /tools safe | open | strict | reset",
+            "- /tools approve_all on|off",
+            "- /tools allow all | <tool...>",
+            "- /tools block <tool...> | /tools unblock <tool...>",
+            "- /tools auto <tool...> | /tools ask <tool...>",
+            "- /tools list",
+            ]
+        )
+        text = "\n".join(lines).strip()
+        return text[:3800] + "…" if len(text) > 3800 else text
+
+    def _handle_tools_command(self, *, chat_id: int, from_user_id: Optional[int], text: str) -> bool:
+        """Handle `/tools ...` commands. Returns True when the message was consumed."""
+        base = _command_base(text)
+        if base not in {"/tools", "/tool"}:
+            return False
+
+        args = _command_args(text)
+        sub = args.split(maxsplit=1)[0].strip().lower() if args else ""
+        rest = args.split(maxsplit=1)[1].strip() if args and " " in args else ""
+
+        # Owner-only mutations (best-effort): allow viewing for anyone.
+        binding = self._binding_for_chat(chat_id)
+        owner = binding.get("owner_user_id") if isinstance(binding, dict) else None
+        is_owner = True
+        if isinstance(owner, int) and from_user_id is not None and int(from_user_id) != int(owner):
+            is_owner = False
+
+        if not sub or sub in {"help", "?"}:
+            self._send_text(chat_id=int(chat_id), text=self._format_tools_policy_message(chat_id=int(chat_id)))
+            return True
+
+        if sub == "list":
+            names = self._tool_names_available()
+            msg = "Available tools:\n" + "\n".join([f"- {n}" for n in names][:200])
+            self._send_text(chat_id=int(chat_id), text=msg[:3800] + "…" if len(msg) > 3800 else msg)
+            return True
+
+        if sub == "reset":
+            if not is_owner:
+                self._send_text(chat_id=int(chat_id), text="Only the chat owner can change tool permissions.")
+                return True
+            self._clear_tool_policy(chat_id=int(chat_id))
+            self._send_text(chat_id=int(chat_id), text="Tool permissions reset to defaults.")
+            return True
+
+        if sub in {"safe", "open", "strict"}:
+            if not is_owner:
+                self._send_text(chat_id=int(chat_id), text="Only the chat owner can change tool permissions.")
+                return True
+
+            default = self._default_tool_policy()
+            if sub == "safe":
+                pol = dict(default)
+            elif sub == "open":
+                pol = dict(default)
+                pol["approve_all"] = True
+                pol["allowed_tools"] = None
+                pol["blocked_tools"] = []
+            else:  # strict
+                pol = dict(default)
+                pol["approve_all"] = False
+                allow = set(pol.get("auto_approve_tools") or [])
+                allow |= set(_TELEGRAM_PROTECTED_TOOLS)
+                pol["allowed_tools"] = sorted(allow)
+                pol["blocked_tools"] = []
+                pol["require_approval_tools"] = []
+                pol["auto_approve_tools"] = sorted(allow)
+
+            self._save_tool_policy(chat_id=int(chat_id), policy=pol)
+            self._send_text(chat_id=int(chat_id), text=self._format_tools_policy_message(chat_id=int(chat_id)))
+            return True
+
+        if sub in {"approve_all", "approve-all"}:
+            if not is_owner:
+                self._send_text(chat_id=int(chat_id), text="Only the chat owner can change tool permissions.")
+                return True
+            token = str(rest or "").strip().lower()
+            val = True if token in {"1", "true", "yes", "on"} else False if token in {"0", "false", "no", "off"} else None
+            if val is None:
+                self._send_text(chat_id=int(chat_id), text="Usage: /tools approve_all on|off")
+                return True
+            pol = self._effective_tool_policy(chat_id=int(chat_id))
+            pol["approve_all"] = bool(val)
+            self._save_tool_policy(chat_id=int(chat_id), policy=pol)
+            self._send_text(chat_id=int(chat_id), text=self._format_tools_policy_message(chat_id=int(chat_id)))
+            return True
+
+        def _parse_tool_names(raw: str) -> list[str]:
+            if not raw:
+                return []
+            parts = re.split(r"[\\s,]+", raw.strip())
+            return [p for p in parts if p]
+
+        if sub in {"allow", "block", "unblock", "auto", "ask", "require"}:
+            if not is_owner:
+                self._send_text(chat_id=int(chat_id), text="Only the chat owner can change tool permissions.")
+                return True
+
+            pol = self._effective_tool_policy(chat_id=int(chat_id))
+            names = _parse_tool_names(rest)
+            if not names:
+                self._send_text(chat_id=int(chat_id), text=f"Usage: /tools {sub} <tool...>")
+                return True
+
+            allowed_tools = pol.get("allowed_tools")
+            allowed_set: Optional[set[str]] = None
+            if allowed_tools is None:
+                allowed_set = None
+            elif isinstance(allowed_tools, list):
+                allowed_set = {str(t).strip() for t in allowed_tools if isinstance(t, str) and str(t).strip()}
+                if not allowed_set:
+                    allowed_set = None
+
+            blocked_set = {str(t).strip() for t in (pol.get("blocked_tools") or []) if isinstance(t, str) and str(t).strip()}
+            auto_set = {str(t).strip() for t in (pol.get("auto_approve_tools") or []) if isinstance(t, str) and str(t).strip()}
+            req_set = {str(t).strip() for t in (pol.get("require_approval_tools") or []) if isinstance(t, str) and str(t).strip()}
+
+            if sub == "allow":
+                if any(n in {"*", "all"} for n in names):
+                    allowed_set = None
+                else:
+                    allowed_set = set(names)
+            elif sub == "block":
+                blocked_set |= set(names)
+            elif sub == "unblock":
+                blocked_set -= set(names)
+            elif sub == "auto":
+                auto_set |= set(names)
+                req_set -= set(names)
+            else:  # ask/require
+                req_set |= set(names)
+                auto_set -= set(names)
+
+            if allowed_set is not None:
+                allowed_set |= set(_TELEGRAM_PROTECTED_TOOLS)
+            blocked_set -= set(_TELEGRAM_PROTECTED_TOOLS)
+            auto_set |= set(_TELEGRAM_PROTECTED_TOOLS)
+            req_set -= set(_TELEGRAM_PROTECTED_TOOLS)
+
+            pol["allowed_tools"] = sorted(allowed_set) if isinstance(allowed_set, set) else None
+            pol["blocked_tools"] = sorted(blocked_set)
+            pol["auto_approve_tools"] = sorted(auto_set)
+            pol["require_approval_tools"] = sorted(req_set)
+            pol["approve_all"] = bool(pol.get("approve_all"))
+            self._save_tool_policy(chat_id=int(chat_id), policy=pol)
+            self._send_text(chat_id=int(chat_id), text=self._format_tools_policy_message(chat_id=int(chat_id)))
+            return True
+
+        self._send_text(chat_id=int(chat_id), text="Unknown /tools command. Send /tools for help.")
+        return True
+
 
     def _send_text(self, *, chat_id: int, text: str) -> None:
         """Best-effort: send a simple text message using the active transport."""
@@ -426,31 +820,293 @@ class TelegramBridge:
             wait_key_s = str(wait_key or "").strip()
             if not wait_key_s:
                 continue
-            return {"run_id": str(getattr(run, "run_id", "") or ""), "wait_key": wait_key_s, "tool_calls": list(tool_calls)}
+            return {
+                "run_id": str(getattr(run, "run_id", "") or ""),
+                "wait_key": wait_key_s,
+                "tool_calls": list(tool_calls),
+                "details": dict(details),
+            }
 
         return None
 
-    def _maybe_prompt_tool_approval(self, *, chat_id: int, session_id: str) -> bool:
+    def _resume_tool_wait(self, *, run_id: str, wait_key: str, payload: Dict[str, Any]) -> None:
+        rid = str(run_id or "").strip()
+        wk = str(wait_key or "").strip()
+        if not rid or not wk:
+            return
+        try:
+            rt, wf = self._host.runtime_and_workflow_for_run(rid)
+            rt.resume(workflow=wf, run_id=rid, wait_key=wk, payload=dict(payload), max_steps=0)
+        except Exception:
+            return
+        with self._lock:
+            self._approval_prompts().pop(wk, None)
+            self._save_state()
+
+    def _tool_allowed_by_policy(self, *, tool_name: str, policy: Dict[str, Any]) -> bool:
+        name = str(tool_name or "").strip()
+        if not name:
+            return False
+        if name in _TELEGRAM_PROTECTED_TOOLS:
+            return True
+        blocked = policy.get("blocked_tools")
+        if isinstance(blocked, list) and name in blocked:
+            return False
+        allowed = policy.get("allowed_tools")
+        if isinstance(allowed, list) and allowed and name not in allowed:
+            return False
+        return True
+
+    def _execute_tool_calls_with_policy(
+        self,
+        *,
+        tool_calls: list[Dict[str, Any]],
+        policy: Dict[str, Any],
+        approved: bool,
+        reject_error: str,
+    ) -> Dict[str, Any]:
+        results_by_index: Dict[int, Dict[str, Any]] = {}
+
+        def _err(tc: Dict[str, Any], message: str) -> Dict[str, Any]:
+            call_id = str(tc.get("call_id") or "")
+            runtime_call_id = tc.get("runtime_call_id")
+            name = str(tc.get("name") or "")
+            return {
+                "call_id": call_id,
+                "runtime_call_id": runtime_call_id,
+                "name": name,
+                "success": False,
+                "output": None,
+                "error": str(message or "Tool call failed"),
+            }
+
+        calls_to_exec: list[Dict[str, Any]] = []
+        exec_indexes: list[int] = []
+
+        for idx, tc in enumerate(list(tool_calls or [])):
+            if not isinstance(tc, dict):
+                results_by_index[idx] = {
+                    "call_id": "",
+                    "runtime_call_id": None,
+                    "name": "",
+                    "success": False,
+                    "output": None,
+                    "error": "Invalid tool call (expected an object)",
+                }
+                continue
+
+            name = str(tc.get("name") or "").strip()
+            if not approved:
+                results_by_index[idx] = _err(tc, reject_error)
+                continue
+
+            if not name:
+                results_by_index[idx] = _err(tc, "Tool call missing a valid name")
+                continue
+
+            if not self._tool_allowed_by_policy(tool_name=name, policy=policy):
+                results_by_index[idx] = _err(tc, f"Tool '{name}' is not allowed in this chat (send /tools to change).")
+                continue
+
+            calls_to_exec.append(dict(tc))
+            exec_indexes.append(int(idx))
+
+        if approved and calls_to_exec:
+            try:
+                from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
+                from abstractruntime.integrations.abstractcore.tool_executor import MappingToolExecutor
+
+                exec2 = MappingToolExecutor(build_default_tool_map())
+                out = exec2.execute(tool_calls=calls_to_exec)
+                exec_results = out.get("results") if isinstance(out, dict) else None
+                if isinstance(exec_results, list):
+                    for i2, r in enumerate(exec_results):
+                        idx = exec_indexes[i2] if i2 < len(exec_indexes) else None
+                        if idx is None:
+                            continue
+                        if isinstance(r, dict):
+                            results_by_index[int(idx)] = dict(r)
+                        else:
+                            results_by_index[int(idx)] = _err(calls_to_exec[i2], "Tool executor returned invalid result")
+                else:
+                    for idx, tc in zip(exec_indexes, calls_to_exec):
+                        results_by_index[int(idx)] = _err(tc, "Tool executor returned invalid results")
+            except Exception as e:
+                for idx, tc in zip(exec_indexes, calls_to_exec):
+                    results_by_index[int(idx)] = _err(tc, f"Tool execution failed: {e}")
+
+        merged: list[Dict[str, Any]] = []
+        for idx in range(len(tool_calls or [])):
+            r = results_by_index.get(idx)
+            if r is None:
+                r = {
+                    "call_id": "",
+                    "runtime_call_id": None,
+                    "name": "",
+                    "success": False,
+                    "output": None,
+                    "error": "Missing tool result",
+                }
+            merged.append(r)
+
+        return {"mode": "executed", "results": merged}
+
+    def _merge_tool_wait_results(self, *, pending: Dict[str, Any], host_payload: Dict[str, Any]) -> Dict[str, Any]:
+        details = pending.get("details")
+        if not isinstance(details, dict):
+            return dict(host_payload)
+
+        host_results = host_payload.get("results") if isinstance(host_payload, dict) else None
+        if not isinstance(host_results, list):
+            host_results = []
+
+        evidence = details.get("tool_calls_for_evidence")
+        if not isinstance(evidence, list) or not evidence:
+            # No mapping information: best-effort fall back to host results.
+            return {"mode": "executed", "results": list(host_results)}
+
+        # Determine the expected result length (original tool call count).
+        final_len: Optional[int] = None
+        raw_count = details.get("original_call_count")
+        if raw_count is not None and not isinstance(raw_count, bool):
+            try:
+                final_len = int(raw_count)
+            except Exception:
+                final_len = None
+        if final_len is None or final_len <= 0:
+            final_len = len(evidence)
+
+        results_by_index: Dict[int, Dict[str, Any]] = {}
+
+        def _int_key_map(obj: Any) -> Dict[int, Dict[str, Any]]:
+            out: Dict[int, Dict[str, Any]] = {}
+            if not isinstance(obj, dict):
+                return out
+            for k, v in obj.items():
+                try:
+                    idx = int(k)
+                except Exception:
+                    continue
+                if isinstance(v, dict):
+                    out[idx] = dict(v)
+            return out
+
+        results_by_index.update(_int_key_map(details.get("blocked_by_index")))
+        results_by_index.update(_int_key_map(details.get("pre_results_by_index")))
+
+        # Build mapping (call_id/runtime_call_id -> original index).
+        call_id_to_idx: Dict[str, int] = {}
+        runtime_call_id_to_idx: Dict[str, int] = {}
+        for idx, tc in enumerate(evidence):
+            if not isinstance(tc, dict):
+                continue
+            cid = str(tc.get("call_id") or "")
+            if cid:
+                call_id_to_idx.setdefault(cid, int(idx))
+            rcid = tc.get("runtime_call_id")
+            if rcid is not None:
+                rcid_s = str(rcid).strip()
+                if rcid_s:
+                    runtime_call_id_to_idx.setdefault(rcid_s, int(idx))
+
+        extras: list[Dict[str, Any]] = []
+        for r in host_results:
+            if not isinstance(r, dict):
+                continue
+            cid = str(r.get("call_id") or "")
+            rcid = r.get("runtime_call_id")
+            rcid_s = str(rcid).strip() if rcid is not None else ""
+            idx = call_id_to_idx.get(cid) if cid else None
+            if idx is None and rcid_s:
+                idx = runtime_call_id_to_idx.get(rcid_s)
+            if idx is None:
+                extras.append(dict(r))
+                continue
+            if idx in results_by_index:
+                continue
+            results_by_index[int(idx)] = dict(r)
+
+        merged: list[Dict[str, Any]] = []
+        for idx in range(int(final_len)):
+            fixed = results_by_index.get(idx)
+            if fixed is not None:
+                merged.append(fixed)
+                continue
+            if extras:
+                merged.append(extras.pop(0))
+                continue
+            merged.append(
+                {
+                    "call_id": "",
+                    "runtime_call_id": None,
+                    "name": "",
+                    "success": False,
+                    "output": None,
+                    "error": "Missing tool result",
+                }
+            )
+
+        return {"mode": "executed", "results": merged}
+
+    def _maybe_handle_tool_wait(self, *, chat_id: int, session_id: str) -> bool:
+        """Return True when waiting on user approval (prompted)."""
         pending = self._find_pending_tool_approval(session_id=session_id)
         if pending is None:
             return False
         wait_key = str(pending.get("wait_key") or "").strip()
-        if not wait_key:
+        run_id = str(pending.get("run_id") or "").strip()
+        tool_calls_any = pending.get("tool_calls")
+        tool_calls: list[Dict[str, Any]] = [dict(x) for x in tool_calls_any if isinstance(x, dict)] if isinstance(tool_calls_any, list) else []
+        if not wait_key or not run_id:
             return False
+
+        policy = self._effective_tool_policy(chat_id=int(chat_id))
+        approve_all = bool(policy.get("approve_all"))
+
+        allowed_calls: list[Dict[str, Any]] = []
+        for tc in tool_calls:
+            name = str(tc.get("name") or "").strip()
+            if name and self._tool_allowed_by_policy(tool_name=name, policy=policy):
+                allowed_calls.append(tc)
+
+        requires_approval = True
+        if not allowed_calls:
+            requires_approval = False
+        elif approve_all:
+            requires_approval = False
+        else:
+            try:
+                from abstractruntime.integrations.abstractcore.tool_executor import ToolApprovalPolicy as _ToolApprovalPolicy
+
+                auto = set(policy.get("auto_approve_tools") or [])
+                req = set(policy.get("require_approval_tools") or [])
+                tap = _ToolApprovalPolicy(auto_approve_tools=auto, require_approval_tools=req)
+                requires_approval = bool(tap.requires_approval(allowed_calls))
+            except Exception:
+                requires_approval = True
+
+        if not requires_approval:
+            host_payload = self._execute_tool_calls_with_policy(
+                tool_calls=tool_calls,
+                policy=policy,
+                approved=True,
+                reject_error="",
+            )
+            payload = self._merge_tool_wait_results(pending=pending, host_payload=host_payload)
+            self._resume_tool_wait(run_id=run_id, wait_key=wait_key, payload=payload)
+            return False
+
         with self._lock:
             prompts = self._approval_prompts()
-            if wait_key in prompts:
-                return False
-            prompts[wait_key] = {
-                "chat_id": int(chat_id),
-                "session_id": str(session_id),
-                "run_id": str(pending.get("run_id") or ""),
-                "prompted_at": _utc_now_iso(),
-            }
-            self._save_state()
-        tool_calls = pending.get("tool_calls")
-        tool_calls_list = tool_calls if isinstance(tool_calls, list) else []
-        self._send_text(chat_id=int(chat_id), text=self._format_tool_approval_prompt(tool_calls=tool_calls_list))
+            if wait_key not in prompts:
+                prompts[wait_key] = {
+                    "chat_id": int(chat_id),
+                    "session_id": str(session_id),
+                    "run_id": str(run_id),
+                    "prompted_at": _utc_now_iso(),
+                }
+                self._save_state()
+                self._send_text(chat_id=int(chat_id), text=self._format_tool_approval_prompt(tool_calls=tool_calls))
         return True
 
     def _handle_tool_approval_response(
@@ -458,11 +1114,18 @@ class TelegramBridge:
         *,
         chat_id: int,
         session_id: str,
+        from_user_id: Optional[int],
         text: str,
     ) -> bool:
         """Handle an approval reply. Returns True when the message was consumed."""
         pending = self._find_pending_tool_approval(session_id=session_id)
         if pending is None:
+            return False
+
+        # Best-effort owner check: prevent other chat participants from approving tools.
+        binding = self._binding_for_chat(chat_id)
+        owner = binding.get("owner_user_id") if isinstance(binding, dict) else None
+        if isinstance(owner, int) and from_user_id is not None and int(from_user_id) != int(owner):
             return False
 
         token = _approval_token(text)
@@ -476,60 +1139,29 @@ class TelegramBridge:
         if not run_id or not wait_key:
             return False
 
-        payload: Dict[str, Any]
+        policy = self._effective_tool_policy(chat_id=int(chat_id))
         if approve:
-            try:
-                from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
-                from abstractruntime.integrations.abstractcore.tool_executor import MappingToolExecutor
-
-                exec2 = MappingToolExecutor(build_default_tool_map())
-                payload = exec2.execute(tool_calls=tool_calls)
-            except Exception as e:
-                payload = {
-                    "mode": "executed",
-                    "results": [
-                        {
-                            "call_id": str(tc.get("call_id") or ""),
-                            "runtime_call_id": tc.get("runtime_call_id"),
-                            "name": str(tc.get("name") or ""),
-                            "success": False,
-                            "output": None,
-                            "error": f"Tool execution failed: {e}",
-                        }
-                        for tc in tool_calls
-                    ],
-                }
-        else:
-            payload = {
-                "mode": "executed",
-                "results": [
-                    {
-                        "call_id": str(tc.get("call_id") or ""),
-                        "runtime_call_id": tc.get("runtime_call_id"),
-                        "name": str(tc.get("name") or ""),
-                        "success": False,
-                        "output": None,
-                        "error": "User rejected tool call",
-                    }
-                    for tc in tool_calls
-                ],
-            }
-
-        try:
-            rt, wf = self._host.runtime_and_workflow_for_run(run_id)
-            rt.resume(workflow=wf, run_id=run_id, wait_key=wait_key, payload=payload, max_steps=0)
-        except Exception:
-            # If resume fails (stale wait), still consume the message to avoid loops.
-            pass
-
-        with self._lock:
-            self._approval_prompts().pop(wait_key, None)
-            self._save_state()
-
-        if approve:
+            host_payload = self._execute_tool_calls_with_policy(
+                tool_calls=tool_calls,
+                policy=policy,
+                approved=True,
+                reject_error="",
+            )
+            payload = self._merge_tool_wait_results(pending=pending, host_payload=host_payload)
+            self._resume_tool_wait(run_id=run_id, wait_key=wait_key, payload=payload)
             self._send_text(chat_id=int(chat_id), text="Approved. Continuing…")
-        else:
-            self._send_text(chat_id=int(chat_id), text="Cancelled.")
+            return True
+
+        host_payload = self._execute_tool_calls_with_policy(
+            tool_calls=tool_calls,
+            policy=policy,
+            approved=False,
+            reject_error="User rejected tool call",
+        )
+        payload = self._merge_tool_wait_results(pending=pending, host_payload=host_payload)
+        self._resume_tool_wait(run_id=run_id, wait_key=wait_key, payload=payload)
+
+        self._send_text(chat_id=int(chat_id), text="Cancelled.")
         return True
 
     def _stash_pending_media(
@@ -785,6 +1417,7 @@ class TelegramBridge:
 
             binding = {
                 "chat_id": chat_id,
+                "owner_user_id": int(from_user_id) if isinstance(from_user_id, int) and not isinstance(from_user_id, bool) else None,
                 "session_id": session_id,
                 "session_rev": int(rev),
                 "run_id": str(run_id),
@@ -994,7 +1627,7 @@ class TelegramBridge:
                     active = self._session_has_active_runs(session_id=str(session_id or ""))
                     # If the workflow is blocked on a tool approval, prompt the user and stop typing.
                     try:
-                        if self._maybe_prompt_tool_approval(chat_id=int(chat_id), session_id=str(session_id or "")):
+                        if self._maybe_handle_tool_wait(chat_id=int(chat_id), session_id=str(session_id or "")):
                             break
                     except Exception:
                         pass
@@ -1045,11 +1678,14 @@ class TelegramBridge:
         if _command_base(text_raw) in {"/reset", "/clear", "/new"}:
             self._handle_bot_reset(chat_id=chat_id, message_id=msg.get("message_id"))
             return
+        if _command_base(text_raw) in {"/tools", "/tool"}:
+            self._handle_tools_command(chat_id=chat_id, from_user_id=from_uid, text=text_raw)
+            return
 
         existing = self._binding_for_chat(chat_id)
         if isinstance(existing, dict):
             sid0 = str(existing.get("session_id") or "").strip()
-            if sid0 and self._handle_tool_approval_response(chat_id=chat_id, session_id=sid0, text=text_raw):
+            if sid0 and self._handle_tool_approval_response(chat_id=chat_id, session_id=sid0, from_user_id=from_uid, text=text_raw):
                 return
 
         binding = self._ensure_binding(chat_id=chat_id, from_user_id=from_uid)
@@ -1128,26 +1764,33 @@ class TelegramBridge:
                 bindings.pop(str(chat_id), None)
             self._save_state()
 
-        # Best-effort: delete prior messages by deleting a recent message-id window.
-        if self._cfg.reset_delete_messages:
-            try:
-                anchor = int(message_id) if isinstance(message_id, int) and not isinstance(message_id, bool) else None
-                max_delete = int(self._cfg.reset_delete_max or 0)
-                if anchor is not None and max_delete > 0:
-                    for i in range(max_delete):
-                        mid = int(anchor) - int(i)
-                        if mid <= 0:
-                            break
-                        self._bot_delete_message(chat_id=chat_id, message_id=mid)
-            except Exception:
-                pass
-
         # Advance the session revision so the next message starts a brand-new session_id.
         new_rev = self._bump_session_rev(chat_id)
         logger.info("Telegram bridge: reset chat_id=%s (new_rev=%s)", chat_id, new_rev)
 
-        # Send a confirmation message (this starts a new "first message" in the chat).
-        self._bot_send_text(chat_id=chat_id, text="Conversation reset. Send a new message to start fresh.")
+        # Send a confirmation message immediately; message deletion can be slow.
+        self._send_text(chat_id=int(chat_id), text=str(self._cfg.reset_message or "").strip())
+
+        # Best-effort: delete prior messages by deleting a recent message-id window (async).
+        if self._cfg.reset_delete_messages:
+            try:
+                anchor = int(message_id) if isinstance(message_id, int) and not isinstance(message_id, bool) else None
+                max_delete = int(self._cfg.reset_delete_max or 0)
+            except Exception:
+                anchor = None
+                max_delete = 0
+            if anchor is not None and max_delete > 0:
+                def _delete_window() -> None:
+                    try:
+                        for i in range(int(max_delete)):
+                            mid = int(anchor) - int(i)
+                            if mid <= 0:
+                                break
+                            self._bot_delete_message(chat_id=chat_id, message_id=mid)
+                    except Exception:
+                        pass
+
+                threading.Thread(target=_delete_window, daemon=True).start()
 
     def _bot_send_text(self, *, chat_id: int, text: str) -> None:
         """Best-effort: send a simple text message via Bot API."""
@@ -1335,11 +1978,14 @@ class TelegramBridge:
         if _command_base(text) in {"/reset", "/clear", "/new"}:
             self._handle_tdlib_reset(chat_id=chat_id, message_id=msg.get("id"))
             return
+        if _command_base(text) in {"/tools", "/tool"}:
+            self._handle_tools_command(chat_id=chat_id, from_user_id=from_uid, text=text)
+            return
 
         existing = self._binding_for_chat(chat_id)
         if isinstance(existing, dict):
             sid0 = str(existing.get("session_id") or "").strip()
-            if sid0 and self._handle_tool_approval_response(chat_id=chat_id, session_id=sid0, text=text):
+            if sid0 and self._handle_tool_approval_response(chat_id=chat_id, session_id=sid0, from_user_id=from_uid, text=text):
                 return
 
         binding = self._ensure_binding(chat_id=chat_id, from_user_id=from_uid)
@@ -1410,6 +2056,12 @@ class TelegramBridge:
                     removed_binding = dict(removed)
             self._save_state()
 
+        new_rev = self._bump_session_rev(chat_id)
+        logger.info("Telegram bridge: reset chat_id=%s (new_rev=%s)", chat_id, new_rev)
+
+        # Send a confirmation message immediately; message deletion can be slow.
+        self._send_text(chat_id=int(chat_id), text=str(self._cfg.reset_message or "").strip())
+
         if self._cfg.reset_delete_messages:
             try:
                 tracked: list[int] = []
@@ -1424,26 +2076,6 @@ class TelegramBridge:
                 self._tdlib_delete_messages(chat_id=chat_id, message_ids=tracked)
             except Exception:
                 pass
-
-        new_rev = self._bump_session_rev(chat_id)
-        logger.info("Telegram bridge: reset chat_id=%s (new_rev=%s)", chat_id, new_rev)
-
-        # Best-effort: send confirmation via TDLib (async).
-        try:
-            client = get_global_tdlib_client(start=True)
-            client.send(
-                {
-                    "@type": "sendMessage",
-                    "chat_id": int(chat_id),
-                    "input_message_content": {
-                        "@type": "inputMessageText",
-                        "text": {"@type": "formattedText", "text": "Conversation reset. Send a new message to start fresh."},
-                        "disable_web_page_preview": True,
-                    },
-                }
-            )
-        except Exception:
-            pass
 
     def _tdlib_delete_messages(self, *, chat_id: int, message_ids: list[int]) -> None:
         """Best-effort: delete messages via TDLib (may fail depending on chat permissions)."""

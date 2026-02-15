@@ -132,13 +132,14 @@ Enable (Telegram):
 - `ABSTRACT_TELEGRAM_BRIDGE=1`
 - `ABSTRACT_TELEGRAM_FLOW_ID=...` (required; shipped bundle: `telegram-agent@0.0.1:tg-agent-main`)
 - Outbound replies require tool execution + tool exposure:
-  - `ABSTRACTGATEWAY_TOOL_MODE=approval` (safe tools run; dangerous tools require `/approve`)
+  - `ABSTRACTGATEWAY_TOOL_MODE=passthrough` (default) or `approval` (safe tools in-process; dangerous tools require `/approve`)
   - `ABSTRACT_ENABLE_TELEGRAM_TOOLS=1`
 - transport + credentials depend on configuration (see `src/abstractgateway/integrations/telegram_bridge.py`)
 - optional knobs:
   - Telegram-only routing override: `ABSTRACT_TELEGRAM_MODEL` (and optionally `ABSTRACT_TELEGRAM_PROVIDER`)
   - Durable history limit: `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES`
-  - `/reset` message deletion controls: `ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES`, `ABSTRACT_TELEGRAM_RESET_DELETE_MAX`
+  - `/reset` controls: `ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES`, `ABSTRACT_TELEGRAM_RESET_DELETE_MAX`, `ABSTRACT_TELEGRAM_RESET_MESSAGE`
+  - Tool permissions defaults: `ABSTRACT_TELEGRAM_APPROVE_ALL_TOOLS`, `ABSTRACT_TELEGRAM_ALLOWED_TOOLS`, `ABSTRACT_TELEGRAM_AUTO_APPROVE_TOOLS`, `ABSTRACT_TELEGRAM_REQUIRE_APPROVAL_TOOLS`, `ABSTRACT_TELEGRAM_BLOCKED_TOOLS` (chat command: `/tools`)
 
 Enable (Email):
 - `ABSTRACT_EMAIL_BRIDGE=1`

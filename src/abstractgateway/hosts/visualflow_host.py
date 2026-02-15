@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -146,7 +147,40 @@ class VisualFlowGatewayHost:
 
         data = dict(input_data or {})
         scope = WorkspaceScope.from_input_data(data)
-        tool_executor = build_scoped_tool_executor(scope=scope) if scope is not None else None
+
+        # Tool execution policy: mirror bundle mode semantics.
+        #
+        # - passthrough (default): do not execute tools in-process; TOOL_CALLS yields a durable wait.
+        # - approval: execute safe tools locally; require explicit approval for dangerous tools.
+        # - local/local_all: execute all tools locally (dev-only; unsafe).
+        tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
+        local_executor: Any = None
+        if scope is not None:
+            local_executor = build_scoped_tool_executor(scope=scope)
+        else:
+            try:
+                from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
+                from abstractruntime.integrations.abstractcore.tool_executor import MappingToolExecutor
+            except Exception:
+                local_executor = None
+            else:
+                local_executor = MappingToolExecutor(build_default_tool_map())
+        if tool_mode in {"local", "local_all"}:
+            tool_executor = local_executor
+        elif tool_mode in {"approval", "local_approval", "local-approval"}:
+            try:
+                from abstractruntime.integrations.abstractcore.tool_executor import ApprovalToolExecutor, ToolApprovalPolicy
+            except Exception:
+                tool_executor = local_executor
+            else:
+                tool_executor = ApprovalToolExecutor(delegate=local_executor, policy=ToolApprovalPolicy()) if local_executor is not None else None
+        else:
+            try:
+                from abstractruntime.integrations.abstractcore.tool_executor import PassthroughToolExecutor
+            except Exception:
+                tool_executor = None
+            else:
+                tool_executor = PassthroughToolExecutor(mode="approval_required")
 
         vis_runner = create_visual_runner(
             visual_flow,
@@ -215,7 +249,34 @@ class VisualFlowGatewayHost:
 
         vars0 = getattr(run, "vars", None)
         scope = WorkspaceScope.from_input_data(vars0) if isinstance(vars0, dict) else None
-        tool_executor = build_scoped_tool_executor(scope=scope) if scope is not None else None
+        tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
+        local_executor: Any = None
+        if scope is not None:
+            local_executor = build_scoped_tool_executor(scope=scope)
+        else:
+            try:
+                from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
+                from abstractruntime.integrations.abstractcore.tool_executor import MappingToolExecutor
+            except Exception:
+                local_executor = None
+            else:
+                local_executor = MappingToolExecutor(build_default_tool_map())
+        if tool_mode in {"local", "local_all"}:
+            tool_executor = local_executor
+        elif tool_mode in {"approval", "local_approval", "local-approval"}:
+            try:
+                from abstractruntime.integrations.abstractcore.tool_executor import ApprovalToolExecutor, ToolApprovalPolicy
+            except Exception:
+                tool_executor = local_executor
+            else:
+                tool_executor = ApprovalToolExecutor(delegate=local_executor, policy=ToolApprovalPolicy()) if local_executor is not None else None
+        else:
+            try:
+                from abstractruntime.integrations.abstractcore.tool_executor import PassthroughToolExecutor
+            except Exception:
+                tool_executor = None
+            else:
+                tool_executor = PassthroughToolExecutor(mode="approval_required")
 
         runner = create_visual_runner(
             visual_flow,
