@@ -132,7 +132,7 @@ Enable (Telegram):
 - `ABSTRACT_TELEGRAM_BRIDGE=1`
 - `ABSTRACT_TELEGRAM_FLOW_ID=...` (required; shipped bundle: `telegram-agent@0.0.1:tg-agent-main`)
 - Outbound replies require tool execution + tool exposure:
-  - `ABSTRACTGATEWAY_TOOL_MODE=local`
+  - `ABSTRACTGATEWAY_TOOL_MODE=approval` (safe tools run; dangerous tools require `/approve`)
   - `ABSTRACT_ENABLE_TELEGRAM_TOOLS=1`
 - transport + credentials depend on configuration (see `src/abstractgateway/integrations/telegram_bridge.py`)
 - optional knobs:

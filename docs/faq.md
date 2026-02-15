@@ -181,7 +181,8 @@ Evidence: `_scan_flows_for_llm_defaults` + provider/model selection in `src/abst
 In bundle mode, tool execution is controlled by:
 
 - `ABSTRACTGATEWAY_TOOL_MODE=passthrough` (default): tools do **not** execute in-process; workflows enter a durable “approval required” wait.
-- `ABSTRACTGATEWAY_TOOL_MODE=local`: tools execute inside the gateway process (dev only; higher risk).
+- `ABSTRACTGATEWAY_TOOL_MODE=local` (or `local_all`): tools execute inside the gateway process (dev only; higher risk).
+- `ABSTRACTGATEWAY_TOOL_MODE=approval` (or `local_approval`): safe tools execute immediately; dangerous/unknown tools pause for explicit approval.
 
 Evidence: tool executor selection in `src/abstractgateway/hosts/bundle_host.py`.
 

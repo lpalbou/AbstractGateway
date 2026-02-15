@@ -48,6 +48,27 @@ def _command_base(text: str) -> str:
     return token.lower()
 
 
+def _approval_token(text: str) -> str:
+    """Normalize a user message into an approval token ("approve"/"reject"/"")."""
+    s = str(text or "").strip().lower()
+    if not s:
+        return ""
+    # Bot commands
+    if s.startswith("/"):
+        base = _command_base(s)
+        if base in {"/approve", "/ok", "/yes"}:
+            return "approve"
+        if base in {"/reject", "/deny", "/cancel", "/no"}:
+            return "reject"
+        return ""
+    # Plain text
+    if s in {"approve", "approved", "ok", "okay", "yes", "y"}:
+        return "approve"
+    if s in {"reject", "rejected", "deny", "denied", "cancel", "cancelled", "canceled", "no", "n"}:
+        return "reject"
+    return ""
+
+
 @dataclass(frozen=True)
 class TelegramBridgeConfig:
     enabled: bool
@@ -240,6 +261,7 @@ class TelegramBridge:
         self._state.setdefault("version", 1)
         self._state.setdefault("bindings", {})
         self._state.setdefault("session_revs", {})
+        self._state.setdefault("approval_prompts", {})
 
     def _save_state(self) -> None:
         path = self._cfg.state_path
@@ -250,6 +272,265 @@ class TelegramBridge:
             tmp.replace(path)
         except Exception:
             pass
+
+    # ---------------------------------------------------------------------
+    # Tool approvals (Telegram UX)
+    # ---------------------------------------------------------------------
+
+    def _approval_prompts(self) -> Dict[str, Any]:
+        prompts = self._state.get("approval_prompts")
+        if not isinstance(prompts, dict):
+            prompts = {}
+            self._state["approval_prompts"] = prompts
+        return prompts
+
+    def _format_tool_approval_prompt(self, *, tool_calls: list[Dict[str, Any]]) -> str:
+        def _compact_json(v: Any, *, max_chars: int) -> str:
+            try:
+                s = json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+            except Exception:
+                s = str(v)
+            if len(s) <= max_chars:
+                return s
+            return s[: max(0, max_chars - 16)] + "…(truncated)…"
+
+        lines: list[str] = [
+            "Tool approval required to continue.",
+            "",
+            "Requested tool calls:",
+        ]
+        for i, tc in enumerate(tool_calls[:8], start=1):
+            name = str(tc.get("name") or "").strip() or "unknown"
+            args = tc.get("arguments")
+            args_obj = dict(args) if isinstance(args, dict) else args
+            lines.append(f"{i}) {name} { _compact_json(args_obj, max_chars=800) }")
+        if len(tool_calls) > 8:
+            lines.append(f"…and {len(tool_calls) - 8} more")
+        lines.extend(
+            [
+                "",
+                "Reply with /approve (or 'approve') to run.",
+                "Reply with anything else to cancel.",
+            ]
+        )
+        # Telegram message hard cap ~4096 bytes; keep margin.
+        text = "\n".join(lines).strip()
+        return text[:3800] + "…" if len(text) > 3800 else text
+
+    def _send_text(self, *, chat_id: int, text: str) -> None:
+        """Best-effort: send a simple text message using the active transport."""
+        msg = str(text or "").strip()
+        if not msg:
+            return
+        if self._cfg.transport == "bot_api":
+            self._bot_send_text(chat_id=chat_id, text=msg)
+            return
+        try:
+            client = get_global_tdlib_client(start=True)
+            client.send(
+                {
+                    "@type": "sendMessage",
+                    "chat_id": int(chat_id),
+                    "input_message_content": {
+                        "@type": "inputMessageText",
+                        "text": {"@type": "formattedText", "text": msg},
+                        "disable_web_page_preview": True,
+                    },
+                }
+            )
+        except Exception:
+            pass
+
+    def _find_pending_tool_approval(self, *, session_id: str) -> Optional[Dict[str, Any]]:
+        """Return {run_id, wait_key, tool_calls} for the newest pending tool approval in a session."""
+        sid = str(session_id or "").strip()
+        if not sid:
+            return None
+
+        try:
+            runtime = Runtime(
+                run_store=self._runner.run_store,
+                ledger_store=self._runner.ledger_store,
+                artifact_store=self._runner.artifact_store,
+            )
+        except Exception:
+            return None
+
+        store = getattr(runtime, "run_store", None)
+        load_run = getattr(store, "load", None)
+        if not callable(load_run):
+            return None
+
+        candidate_ids: list[str] = []
+        list_index = getattr(store, "list_run_index", None)
+        if callable(list_index):
+            try:
+                rows = list_index(status=RunStatus.WAITING, session_id=sid, limit=200)
+            except TypeError:
+                rows = list_index(status=RunStatus.WAITING, limit=500)
+                if isinstance(rows, list):
+                    rows = [r for r in rows if isinstance(r, dict) and str(r.get("session_id") or "").strip() == sid]
+            except Exception:
+                rows = []
+            if isinstance(rows, list):
+                for r in rows:
+                    if isinstance(r, dict):
+                        rid = r.get("run_id")
+                        if isinstance(rid, str) and rid.strip():
+                            candidate_ids.append(rid.strip())
+
+        if not candidate_ids:
+            list_runs = getattr(store, "list_runs", None)
+            if not callable(list_runs):
+                return None
+            try:
+                runs = list_runs(session_id=sid, limit=2000)
+            except TypeError:
+                runs = list_runs(limit=5000)
+                runs = [r for r in runs if str(getattr(r, "session_id", "") or "").strip() == sid]
+            except Exception:
+                runs = []
+            for r in runs or []:
+                if getattr(r, "status", None) != RunStatus.WAITING:
+                    continue
+                rid = getattr(r, "run_id", None)
+                if isinstance(rid, str) and rid.strip():
+                    candidate_ids.append(rid.strip())
+
+        seen: set[str] = set()
+        for rid in candidate_ids:
+            if rid in seen:
+                continue
+            seen.add(rid)
+            try:
+                run = load_run(str(rid))
+            except Exception:
+                run = None
+            if run is None:
+                continue
+            if getattr(run, "status", None) != RunStatus.WAITING:
+                continue
+            waiting = getattr(run, "waiting", None)
+            if waiting is None:
+                continue
+            details = getattr(waiting, "details", None)
+            if not isinstance(details, dict):
+                continue
+            mode = str(details.get("mode") or "").strip().lower()
+            if mode != "approval_required":
+                continue
+            tool_calls = details.get("tool_calls")
+            if not isinstance(tool_calls, list) or not tool_calls:
+                continue
+            wait_key = getattr(waiting, "wait_key", None)
+            wait_key_s = str(wait_key or "").strip()
+            if not wait_key_s:
+                continue
+            return {"run_id": str(getattr(run, "run_id", "") or ""), "wait_key": wait_key_s, "tool_calls": list(tool_calls)}
+
+        return None
+
+    def _maybe_prompt_tool_approval(self, *, chat_id: int, session_id: str) -> bool:
+        pending = self._find_pending_tool_approval(session_id=session_id)
+        if pending is None:
+            return False
+        wait_key = str(pending.get("wait_key") or "").strip()
+        if not wait_key:
+            return False
+        with self._lock:
+            prompts = self._approval_prompts()
+            if wait_key in prompts:
+                return False
+            prompts[wait_key] = {
+                "chat_id": int(chat_id),
+                "session_id": str(session_id),
+                "run_id": str(pending.get("run_id") or ""),
+                "prompted_at": _utc_now_iso(),
+            }
+            self._save_state()
+        tool_calls = pending.get("tool_calls")
+        tool_calls_list = tool_calls if isinstance(tool_calls, list) else []
+        self._send_text(chat_id=int(chat_id), text=self._format_tool_approval_prompt(tool_calls=tool_calls_list))
+        return True
+
+    def _handle_tool_approval_response(
+        self,
+        *,
+        chat_id: int,
+        session_id: str,
+        text: str,
+    ) -> bool:
+        """Handle an approval reply. Returns True when the message was consumed."""
+        pending = self._find_pending_tool_approval(session_id=session_id)
+        if pending is None:
+            return False
+
+        token = _approval_token(text)
+        approve = token == "approve"
+
+        run_id = str(pending.get("run_id") or "").strip()
+        wait_key = str(pending.get("wait_key") or "").strip()
+        tool_calls_any = pending.get("tool_calls")
+        tool_calls: list[Dict[str, Any]] = [dict(x) for x in tool_calls_any if isinstance(x, dict)] if isinstance(tool_calls_any, list) else []
+
+        if not run_id or not wait_key:
+            return False
+
+        payload: Dict[str, Any]
+        if approve:
+            try:
+                from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
+                from abstractruntime.integrations.abstractcore.tool_executor import MappingToolExecutor
+
+                exec2 = MappingToolExecutor(build_default_tool_map())
+                payload = exec2.execute(tool_calls=tool_calls)
+            except Exception as e:
+                payload = {
+                    "mode": "executed",
+                    "results": [
+                        {
+                            "call_id": str(tc.get("call_id") or ""),
+                            "runtime_call_id": tc.get("runtime_call_id"),
+                            "name": str(tc.get("name") or ""),
+                            "success": False,
+                            "output": None,
+                            "error": f"Tool execution failed: {e}",
+                        }
+                        for tc in tool_calls
+                    ],
+                }
+        else:
+            payload = {
+                "mode": "executed",
+                "results": [
+                    {
+                        "call_id": str(tc.get("call_id") or ""),
+                        "runtime_call_id": tc.get("runtime_call_id"),
+                        "name": str(tc.get("name") or ""),
+                        "success": False,
+                        "output": None,
+                        "error": "User rejected tool call",
+                    }
+                    for tc in tool_calls
+                ],
+            }
+
+        try:
+            rt, wf = self._host.runtime_and_workflow_for_run(run_id)
+            rt.resume(workflow=wf, run_id=run_id, wait_key=wait_key, payload=payload, max_steps=0)
+        except Exception:
+            # If resume fails (stale wait), still consume the message to avoid loops.
+            pass
+
+        with self._lock:
+            self._approval_prompts().pop(wait_key, None)
+            self._save_state()
+
+        if approve:
+            self._send_text(chat_id=int(chat_id), text="Approved. Continuing…")
+        else:
+            self._send_text(chat_id=int(chat_id), text="Cancelled.")
+        return True
 
     def _stash_pending_media(
         self,
@@ -711,6 +992,12 @@ class TelegramBridge:
                         break
                     send_fn()
                     active = self._session_has_active_runs(session_id=str(session_id or ""))
+                    # If the workflow is blocked on a tool approval, prompt the user and stop typing.
+                    try:
+                        if self._maybe_prompt_tool_approval(chat_id=int(chat_id), session_id=str(session_id or "")):
+                            break
+                    except Exception:
+                        pass
                     if active is True:
                         observed_running = True
                     if active is False and not observed_running and (time.time() - float(started_at)) >= 30.0:
@@ -758,6 +1045,12 @@ class TelegramBridge:
         if _command_base(text_raw) in {"/reset", "/clear", "/new"}:
             self._handle_bot_reset(chat_id=chat_id, message_id=msg.get("message_id"))
             return
+
+        existing = self._binding_for_chat(chat_id)
+        if isinstance(existing, dict):
+            sid0 = str(existing.get("session_id") or "").strip()
+            if sid0 and self._handle_tool_approval_response(chat_id=chat_id, session_id=sid0, text=text_raw):
+                return
 
         binding = self._ensure_binding(chat_id=chat_id, from_user_id=from_uid)
         if binding is None:
@@ -1042,6 +1335,12 @@ class TelegramBridge:
         if _command_base(text) in {"/reset", "/clear", "/new"}:
             self._handle_tdlib_reset(chat_id=chat_id, message_id=msg.get("id"))
             return
+
+        existing = self._binding_for_chat(chat_id)
+        if isinstance(existing, dict):
+            sid0 = str(existing.get("session_id") or "").strip()
+            if sid0 and self._handle_tool_approval_response(chat_id=chat_id, session_id=sid0, text=text):
+                return
 
         binding = self._ensure_binding(chat_id=chat_id, from_user_id=from_uid)
         if binding is None:

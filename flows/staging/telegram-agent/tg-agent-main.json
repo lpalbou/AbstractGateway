@@ -501,16 +501,16 @@
     },
     {
       "id": "node-llm",
-      "type": "llm_call",
+      "type": "agent",
       "position": {
         "x": 40,
         "y": 520
       },
       "data": {
-        "nodeType": "llm_call",
-        "label": "Draft reply (LLM)",
-        "icon": "&#x1F4AD;",
-        "headerColor": "#3498DB",
+        "nodeType": "agent",
+        "label": "Agent",
+        "icon": "&#x1F916;",
+        "headerColor": "#4488FF",
         "inputs": [
           {
             "id": "exec-in",
@@ -526,6 +526,11 @@
             "id": "context",
             "label": "context",
             "type": "object"
+          },
+          {
+            "id": "memory",
+            "label": "memory",
+            "type": "memory"
           },
           {
             "id": "provider",
@@ -553,9 +558,29 @@
             "type": "tools"
           },
           {
+            "id": "max_iterations",
+            "label": "max_iterations",
+            "type": "number"
+          },
+          {
+            "id": "max_in_tokens",
+            "label": "max_in_tokens",
+            "type": "number"
+          },
+          {
             "id": "temperature",
             "label": "temperature",
             "type": "number"
+          },
+          {
+            "id": "seed",
+            "label": "seed",
+            "type": "number"
+          },
+          {
+            "id": "resp_schema",
+            "label": "resp_schema",
+            "type": "object"
           }
         ],
         "outputs": [
@@ -578,12 +603,32 @@
             "id": "meta",
             "label": "meta",
             "type": "object"
+          },
+          {
+            "id": "scratchpad",
+            "label": "scratchpad",
+            "type": "object"
           }
         ],
-        "effectConfig": {},
+        "agentConfig": {
+          "include_context": true,
+          "tools": [
+            "list_files",
+            "skim_folders",
+            "search_files",
+            "analyze_code",
+            "skim_files",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "web_search",
+            "fetch_url",
+            "execute_command",
+            "open_attachment"
+          ]
+        },
         "pinDefaults": {
           "use_context": true,
-          "tools": [],
           "temperature": 0.7,
           "system": "You are a helpful AI assistant chatting via Telegram. Reply in plain text and keep responses concise and friendly.\n\nOnly mention or describe attachments (images/audio/video/documents) if they are actually present for this message. If there are no attachments, do not claim you received any.\n\nIf the user sends media with no text, describe what you can infer from the media and ask one clarifying question if needed."
         }

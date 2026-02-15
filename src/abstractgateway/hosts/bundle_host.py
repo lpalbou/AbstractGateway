@@ -629,10 +629,19 @@ class WorkflowBundleGatewayHost:
                 ) from e
 
             tool_mode = str(_env("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
-            if tool_mode == "local":
+            if tool_mode in {"local", "local_all"}:
                 # Dev-only: execute the default tool map in-process without relying on the
                 # AbstractCore global registry (which is typically empty in gateway mode).
                 tool_executor: Any = MappingToolExecutor(build_default_tool_map())
+            elif tool_mode in {"approval", "local_approval", "local-approval"}:
+                # Local tool execution with explicit human approval for dangerous/unknown tools.
+                base_executor: Any = MappingToolExecutor(build_default_tool_map())
+                try:
+                    from abstractruntime.integrations.abstractcore.tool_executor import ApprovalToolExecutor, ToolApprovalPolicy
+
+                    tool_executor = ApprovalToolExecutor(delegate=base_executor, policy=ToolApprovalPolicy())
+                except Exception:
+                    tool_executor = base_executor
             else:
                 # Default safe mode: do not execute tools in-process; enter a durable wait instead.
                 tool_executor = PassthroughToolExecutor(mode="approval_required")
