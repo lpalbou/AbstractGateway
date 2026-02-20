@@ -150,10 +150,11 @@ class VisualFlowGatewayHost:
 
         # Tool execution policy: mirror bundle mode semantics.
         #
-        # - passthrough (default): do not execute tools in-process; TOOL_CALLS yields a durable wait.
-        # - approval: execute safe tools locally; require explicit approval for dangerous tools.
+        # - approval (default): execute safe tools locally; require explicit approval for dangerous/unknown tools.
+        # - passthrough: require explicit approval for *all* tools (then execute in-process on resume).
+        # - delegated: do not execute tools; TOOL_CALLS yields a durable JOB wait for external executors.
         # - local/local_all: execute all tools locally (dev-only; unsafe).
-        tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
+        tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower()
         local_executor: Any = None
         if scope is not None:
             local_executor = build_scoped_tool_executor(scope=scope)
@@ -174,13 +175,21 @@ class VisualFlowGatewayHost:
                 tool_executor = local_executor
             else:
                 tool_executor = ApprovalToolExecutor(delegate=local_executor, policy=ToolApprovalPolicy()) if local_executor is not None else None
-        else:
+        elif tool_mode in {"delegated", "delegate", "job"}:
             try:
                 from abstractruntime.integrations.abstractcore.tool_executor import PassthroughToolExecutor
             except Exception:
                 tool_executor = None
             else:
-                tool_executor = PassthroughToolExecutor(mode="approval_required")
+                tool_executor = PassthroughToolExecutor(mode="delegated")
+        else:
+            try:
+                from abstractruntime.integrations.abstractcore.tool_executor import ApprovalToolExecutor, ToolApprovalPolicy
+            except Exception:
+                tool_executor = None
+            else:
+                # Back-compat: "passthrough" means "approval required for all tools".
+                tool_executor = ApprovalToolExecutor(delegate=local_executor, policy=ToolApprovalPolicy(auto_approve_tools=set())) if local_executor is not None else None
 
         vis_runner = create_visual_runner(
             visual_flow,
@@ -249,7 +258,7 @@ class VisualFlowGatewayHost:
 
         vars0 = getattr(run, "vars", None)
         scope = WorkspaceScope.from_input_data(vars0) if isinstance(vars0, dict) else None
-        tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
+        tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower()
         local_executor: Any = None
         if scope is not None:
             local_executor = build_scoped_tool_executor(scope=scope)

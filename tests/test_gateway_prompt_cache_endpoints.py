@@ -161,8 +161,8 @@ class _StubPromptCacheProvider:
 
 
 class _StubGatewayLLMClient:
-    def __init__(self, provider: str, model: str, llm_kwargs: Optional[Dict[str, Any]] = None):
-        _ = (provider, model, llm_kwargs)
+    def __init__(self, provider: str, model: str, llm_kwargs: Optional[Dict[str, Any]] = None, artifact_store: Any = None):
+        _ = (provider, model, llm_kwargs, artifact_store)
         self._provider = _StubPromptCacheProvider(model=model)
         self._llm = self._provider
 
@@ -234,4 +234,3 @@ def test_gateway_prompt_cache_control_plane_roundtrip(tmp_path: Path, monkeypatc
         assert rc.status_code == 200, rc.text
         assert rc.json()["supported"] is True
         assert rc.json()["ok"] is True
-

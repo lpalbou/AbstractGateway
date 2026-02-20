@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -180,14 +181,10 @@ def _approval_token(text: str) -> str:
     return ""
 
 
-_TELEGRAM_PROTECTED_TOOLS: set[str] = {"send_telegram_message", "send_telegram_artifact"}
-
-
 @dataclass(frozen=True)
 class TelegramBridgeConfig:
     enabled: bool
     transport: str  # "tdlib" | "bot_api"
-    event_name: str
     session_prefix: str
     flow_id: str
     bundle_id: Optional[str]
@@ -235,26 +232,54 @@ class TelegramBridgeConfig:
     group_allowed_users: Optional[frozenset[int]] = None  # None -> fallback to allowed_users; empty -> allow any sender
     admin_users: frozenset[int] = frozenset()
 
-    # Tool permissions (Telegram UX)
-    #
-    # These defaults apply per-chat unless overridden via `/tools ...` commands.
-    tool_approve_all: bool = False
-    tool_allowed_tools: Optional[list[str]] = None  # None means "all"
-    tool_auto_approve_tools: Optional[list[str]] = None  # None means runtime defaults
-    tool_require_approval_tools: Optional[list[str]] = None  # None means runtime defaults
-    tool_blocked_tools: Optional[list[str]] = None
-
     @staticmethod
     def from_env(*, base_dir: Path) -> "TelegramBridgeConfig":
         enabled = _as_bool(os.getenv("ABSTRACT_TELEGRAM_BRIDGE"), False)
         transport_raw = str(os.getenv("ABSTRACT_TELEGRAM_TRANSPORT", "") or "").strip().lower()
         transport = "tdlib" if transport_raw in {"", "tdlib"} else "bot_api" if transport_raw in {"bot", "bot_api", "botapi"} else "tdlib"
-
-        event_name = str(os.getenv("ABSTRACT_TELEGRAM_EVENT_NAME", "") or "").strip() or "telegram.message"
         session_prefix = str(os.getenv("ABSTRACT_TELEGRAM_SESSION_PREFIX", "") or "").strip() or "telegram:"
 
         flow_id = str(os.getenv("ABSTRACT_TELEGRAM_FLOW_ID", "") or os.getenv("ABSTRACT_TELEGRAM_DEFAULT_FLOW_ID", "") or "").strip()
         bundle_id = str(os.getenv("ABSTRACT_TELEGRAM_BUNDLE_ID", "") or "").strip() or None
+
+        # Telegram is a thin client: start a new run per message (like AbstractCode/Web).
+        # Default to the same agent bundle entrypoint (abstractcode.agent.v1) when unset.
+        if not flow_id and not bundle_id:
+            bundle_id = "basic-agent"
+            flow_id = "81795ea9"
+        # Common convenience: user sets only flow_id to the basic-agent entrypoint id.
+        if flow_id == "81795ea9" and not bundle_id:
+            bundle_id = "basic-agent"
+        # Back-compat footgun: the shipped `telegram-agent@0.0.1:tg-agent-main` workflow is event-driven
+        # and does not produce a per-message assistant response. Telegram is thin-client only now, so
+        # automatically fall back to the shipped `basic-agent` entrypoint when this legacy flow is selected.
+        try:
+            flow_l = flow_id.lower()
+            bundle_l = str(bundle_id or "").strip().lower()
+        except Exception:
+            flow_l = ""
+            bundle_l = ""
+        legacy_flow_selected = False
+        try:
+            legacy_flow_selected = (
+                (bundle_l == "telegram-agent")
+                or flow_l.startswith("telegram-agent")
+                or ("telegram-agent" in flow_l)
+                or ("tg-agent-main" in flow_l)
+            )
+        except Exception:
+            legacy_flow_selected = False
+
+        if legacy_flow_selected:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Telegram bridge: legacy event-driven flow '%s' is not compatible with thin-client mode; "
+                "falling back to basic-agent (bundle_id=basic-agent flow_id=81795ea9).",
+                flow_id or (bundle_id or "telegram-agent"),
+            )
+            bundle_id = "basic-agent"
+            flow_id = "81795ea9"
 
         state_path = Path(os.getenv("ABSTRACT_TELEGRAM_STATE_PATH", "") or "").expanduser().resolve() if os.getenv("ABSTRACT_TELEGRAM_STATE_PATH") else (Path(base_dir) / "telegram_bridge_state.json")
 
@@ -333,26 +358,9 @@ class TelegramBridgeConfig:
 
         admin_users = frozenset(_parse_ints_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_ADMIN_USERS")))
 
-        tool_approve_all = _as_bool(os.getenv("ABSTRACT_TELEGRAM_APPROVE_ALL_TOOLS"), False)
-        tool_allowed_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_ALLOWED_TOOLS"))
-        tool_auto_approve_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_AUTO_APPROVE_TOOLS"))
-        tool_require_approval_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_REQUIRE_APPROVAL_TOOLS"))
-        tool_blocked_tools = _parse_lines_or_json_list(os.getenv("ABSTRACT_TELEGRAM_BLOCKED_TOOLS"))
-
-        # Interpret empty lists as "unset" to keep defaults predictable.
-        if not tool_allowed_tools:
-            tool_allowed_tools = None
-        if not tool_auto_approve_tools:
-            tool_auto_approve_tools = None
-        if not tool_require_approval_tools:
-            tool_require_approval_tools = None
-        if not tool_blocked_tools:
-            tool_blocked_tools = None
-
         return TelegramBridgeConfig(
             enabled=bool(enabled),
             transport=transport,
-            event_name=event_name,
             session_prefix=session_prefix,
             flow_id=flow_id,
             bundle_id=bundle_id,
@@ -377,11 +385,6 @@ class TelegramBridgeConfig:
             allowed_chats=frozenset(int(x) for x in allowed_chats if isinstance(x, int) and not isinstance(x, bool)),
             group_allowed_users=frozenset(int(x) for x in group_allowed_users if isinstance(x, int) and not isinstance(x, bool)) if isinstance(group_allowed_users, frozenset) else None,
             admin_users=frozenset(int(x) for x in admin_users if isinstance(x, int) and not isinstance(x, bool)),
-            tool_approve_all=bool(tool_approve_all),
-            tool_allowed_tools=list(tool_allowed_tools) if isinstance(tool_allowed_tools, list) else None,
-            tool_auto_approve_tools=list(tool_auto_approve_tools) if isinstance(tool_auto_approve_tools, list) else None,
-            tool_require_approval_tools=list(tool_require_approval_tools) if isinstance(tool_require_approval_tools, list) else None,
-            tool_blocked_tools=list(tool_blocked_tools) if isinstance(tool_blocked_tools, list) else None,
         )
 
 
@@ -432,11 +435,11 @@ class TelegramBridge:
         try:
             import logging
 
-            tm = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
+            tm = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower()
             if tm in {"local", "local_all", "local-all"}:
                 logging.getLogger(__name__).warning(
                     "Telegram bridge: ABSTRACTGATEWAY_TOOL_MODE=%s bypasses tool approvals; "
-                    "set ABSTRACTGATEWAY_TOOL_MODE=passthrough (recommended) or approval.",
+                    "set ABSTRACTGATEWAY_TOOL_MODE=approval (recommended) or passthrough.",
                     tm,
                 )
         except Exception:
@@ -531,7 +534,6 @@ class TelegramBridge:
         self._state.setdefault("bindings", {})
         self._state.setdefault("session_revs", {})
         self._state.setdefault("approval_prompts", {})
-        self._state.setdefault("tool_policies", {})
 
     def _save_state(self) -> None:
         path = self._cfg.state_path
@@ -1035,131 +1037,6 @@ class TelegramBridge:
     # Tool approvals (Telegram UX)
     # ---------------------------------------------------------------------
 
-    def _tool_policies(self) -> Dict[str, Any]:
-        pol = self._state.get("tool_policies")
-        if not isinstance(pol, dict):
-            pol = {}
-            self._state["tool_policies"] = pol
-        return pol
-
-    def _default_tool_policy(self) -> Dict[str, Any]:
-        """Default per-chat tool policy (operator-controlled via env)."""
-        auto: set[str] = set()
-        require: set[str] = set()
-        try:
-            from abstractruntime.integrations.abstractcore.tool_executor import ToolApprovalPolicy as _ToolApprovalPolicy
-
-            base = _ToolApprovalPolicy()
-            auto = set(getattr(base, "auto_approve_tools", set()) or set())
-            require = set(getattr(base, "require_approval_tools", set()) or set())
-        except Exception:
-            auto = set()
-            require = {"write_file", "edit_file", "execute_command"}
-
-        if isinstance(self._cfg.tool_auto_approve_tools, list):
-            auto = {str(t).strip() for t in self._cfg.tool_auto_approve_tools if isinstance(t, str) and str(t).strip()}
-        if isinstance(self._cfg.tool_require_approval_tools, list):
-            require = {str(t).strip() for t in self._cfg.tool_require_approval_tools if isinstance(t, str) and str(t).strip()}
-
-        allowed: Optional[set[str]] = None
-        if isinstance(self._cfg.tool_allowed_tools, list):
-            allowed = {str(t).strip() for t in self._cfg.tool_allowed_tools if isinstance(t, str) and str(t).strip()}
-            if not allowed:
-                allowed = None
-
-        blocked: set[str] = set()
-        if isinstance(self._cfg.tool_blocked_tools, list):
-            blocked = {str(t).strip() for t in self._cfg.tool_blocked_tools if isinstance(t, str) and str(t).strip()}
-
-        # Always allow + auto-approve the delivery tools so the bridge can keep responding.
-        if allowed is not None:
-            allowed |= set(_TELEGRAM_PROTECTED_TOOLS)
-        blocked -= set(_TELEGRAM_PROTECTED_TOOLS)
-        auto |= set(_TELEGRAM_PROTECTED_TOOLS)
-        require -= set(_TELEGRAM_PROTECTED_TOOLS)
-
-        return {
-            "version": 1,
-            "approve_all": bool(self._cfg.tool_approve_all),
-            "allowed_tools": sorted(allowed) if isinstance(allowed, set) else None,
-            "blocked_tools": sorted(blocked),
-            "auto_approve_tools": sorted(auto),
-            "require_approval_tools": sorted(require),
-        }
-
-    def _effective_tool_policy(self, *, chat_id: int) -> Dict[str, Any]:
-        default = self._default_tool_policy()
-        raw: Any = None
-        with self._lock:
-            raw = dict(self._tool_policies().get(str(chat_id)) or {}) if isinstance(self._tool_policies().get(str(chat_id)), dict) else None
-
-        if not isinstance(raw, dict):
-            return dict(default)
-
-        merged = dict(default)
-        # Shallow merge is enough; all leaves are JSON primitives / lists.
-        merged.update(raw)
-
-        approve_all = _as_bool(merged.get("approve_all"), default=bool(default.get("approve_all")))
-
-        allowed_tools_raw = merged.get("allowed_tools")
-        allowed: Optional[set[str]] = None
-        if allowed_tools_raw is None:
-            allowed = None
-        elif isinstance(allowed_tools_raw, list):
-            allowed = {str(t).strip() for t in allowed_tools_raw if isinstance(t, str) and str(t).strip()}
-            if not allowed:
-                allowed = None
-
-        blocked_raw = merged.get("blocked_tools")
-        blocked = {str(t).strip() for t in blocked_raw if isinstance(t, str) and str(t).strip()} if isinstance(blocked_raw, list) else set()
-
-        auto_raw = merged.get("auto_approve_tools")
-        auto = {str(t).strip() for t in auto_raw if isinstance(t, str) and str(t).strip()} if isinstance(auto_raw, list) else set()
-
-        req_raw = merged.get("require_approval_tools")
-        require = {str(t).strip() for t in req_raw if isinstance(t, str) and str(t).strip()} if isinstance(req_raw, list) else set()
-
-        if allowed is not None:
-            allowed |= set(_TELEGRAM_PROTECTED_TOOLS)
-        blocked -= set(_TELEGRAM_PROTECTED_TOOLS)
-        auto |= set(_TELEGRAM_PROTECTED_TOOLS)
-        require -= set(_TELEGRAM_PROTECTED_TOOLS)
-
-        return {
-            "version": 1,
-            "approve_all": bool(approve_all),
-            "allowed_tools": sorted(allowed) if isinstance(allowed, set) else None,
-            "blocked_tools": sorted(blocked),
-            "auto_approve_tools": sorted(auto),
-            "require_approval_tools": sorted(require),
-        }
-
-    def _save_tool_policy(self, *, chat_id: int, policy: Dict[str, Any]) -> None:
-        snap = dict(policy or {})
-        with self._lock:
-            self._tool_policies()[str(chat_id)] = snap
-            self._save_state()
-
-    def _clear_tool_policy(self, *, chat_id: int) -> None:
-        with self._lock:
-            self._tool_policies().pop(str(chat_id), None)
-            self._save_state()
-
-    def _tool_names_available(self) -> list[str]:
-        """Best-effort list of tool names (for `/tools list`)."""
-        names: set[str] = set()
-        try:
-            from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
-
-            names |= {str(k).strip() for k in (build_default_tool_map() or {}).keys() if isinstance(k, str) and str(k).strip()}
-        except Exception:
-            pass
-        # Runtime-owned tool (executed inside the runtime effect handler).
-        names.add("open_attachment")
-        names |= set(_TELEGRAM_PROTECTED_TOOLS)
-        return sorted(n for n in names if n)
-
     def _approval_prompts(self) -> Dict[str, Any]:
         prompts = self._state.get("approval_prompts")
         if not isinstance(prompts, dict):
@@ -1194,196 +1071,33 @@ class TelegramBridge:
                 "",
                 "Reply with /approve (or 'approve') to run.",
                 "Reply with anything else to cancel.",
-                "Send /tools to view or change tool permissions.",
+                "Send /tools for help.",
             ]
         )
         # Telegram message hard cap ~4096 bytes; keep margin.
         text = "\n".join(lines).strip()
         return text[:3800] + "…" if len(text) > 3800 else text
 
-    def _format_tools_policy_message(self, *, chat_id: int) -> str:
-        pol = self._effective_tool_policy(chat_id=chat_id)
-        allowed = pol.get("allowed_tools")
-        allowed_s = "all" if allowed is None else ", ".join(list(allowed)[:40]) + ("…" if isinstance(allowed, list) and len(allowed) > 40 else "")
-        blocked = pol.get("blocked_tools") or []
-        auto = pol.get("auto_approve_tools") or []
-        req = pol.get("require_approval_tools") or []
-        approve_all = bool(pol.get("approve_all"))
-        tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower() or "passthrough"
-
-        def _fmt_list(items: Any, *, max_items: int) -> str:
-            if not isinstance(items, list) or not items:
-                return "(none)"
-            s = ", ".join(items[:max_items])
-            return s + ("…" if len(items) > max_items else "")
-
-        lines = [
-            "Tool permissions (this chat):",
-            f"- gateway_tool_mode: {tool_mode}",
-            f"- approve_all: {str(approve_all).lower()}",
-            f"- allowed: {allowed_s or '(none)'}",
-            f"- blocked: {_fmt_list(blocked, max_items=24)}",
-            f"- auto-run: {_fmt_list(auto, max_items=24)}",
-            f"- require approval: {_fmt_list(req, max_items=24)}",
-        ]
-        if tool_mode in {"local", "local_all", "local-all"}:
-            lines.append("")
-            lines.append("Note: approvals are bypassed when gateway_tool_mode is `local` (dangerous).")
-            lines.append("Set `ABSTRACTGATEWAY_TOOL_MODE=passthrough` (recommended) or `approval`.")
-        lines.extend(
-            [
-            "",
-            "Commands:",
-            "- /tools safe | open | strict | reset",
-            "- /tools approve_all on|off",
-            "- /tools allow all | <tool...>",
-            "- /tools block <tool...> | /tools unblock <tool...>",
-            "- /tools auto <tool...> | /tools ask <tool...>",
-            "- /tools list",
-            ]
-        )
-        text = "\n".join(lines).strip()
-        return text[:3800] + "…" if len(text) > 3800 else text
-
     def _handle_tools_command(self, *, chat_id: int, from_user_id: Optional[int], text: str) -> bool:
-        """Handle `/tools ...` commands. Returns True when the message was consumed."""
+        """Handle `/tools` command (deprecated in thin-client mode).
+
+        We intentionally keep the Telegram bridge as a thin client: it should not maintain
+        per-chat tool allowlists. Tool approval is done via `/approve` and `/deny`.
+        """
+        del from_user_id
         base = _command_base(text)
         if base not in {"/tools", "/tool"}:
             return False
-
-        args = _command_args(text)
-        sub = args.split(maxsplit=1)[0].strip().lower() if args else ""
-        rest = args.split(maxsplit=1)[1].strip() if args and " " in args else ""
-
-        # Owner-only mutations (best-effort): allow viewing for anyone.
-        binding = self._binding_for_chat(chat_id)
-        owner = binding.get("owner_user_id") if isinstance(binding, dict) else None
-        is_owner = True
-        if isinstance(owner, int) and from_user_id is not None and int(from_user_id) != int(owner):
-            is_owner = False
-
-        if not sub or sub in {"help", "?"}:
-            self._send_text(chat_id=int(chat_id), text=self._format_tools_policy_message(chat_id=int(chat_id)))
-            return True
-
-        if sub == "list":
-            names = self._tool_names_available()
-            msg = "Available tools:\n" + "\n".join([f"- {n}" for n in names][:200])
-            self._send_text(chat_id=int(chat_id), text=msg[:3800] + "…" if len(msg) > 3800 else msg)
-            return True
-
-        if sub == "reset":
-            if not is_owner:
-                self._send_text(chat_id=int(chat_id), text="Only the chat owner can change tool permissions.")
-                return True
-            self._clear_tool_policy(chat_id=int(chat_id))
-            self._send_text(chat_id=int(chat_id), text="Tool permissions reset to defaults.")
-            return True
-
-        if sub in {"safe", "open", "strict"}:
-            if not is_owner:
-                self._send_text(chat_id=int(chat_id), text="Only the chat owner can change tool permissions.")
-                return True
-
-            default = self._default_tool_policy()
-            if sub == "safe":
-                pol = dict(default)
-            elif sub == "open":
-                pol = dict(default)
-                pol["approve_all"] = True
-                pol["allowed_tools"] = None
-                pol["blocked_tools"] = []
-            else:  # strict
-                pol = dict(default)
-                pol["approve_all"] = False
-                allow = set(pol.get("auto_approve_tools") or [])
-                allow |= set(_TELEGRAM_PROTECTED_TOOLS)
-                pol["allowed_tools"] = sorted(allow)
-                pol["blocked_tools"] = []
-                pol["require_approval_tools"] = []
-                pol["auto_approve_tools"] = sorted(allow)
-
-            self._save_tool_policy(chat_id=int(chat_id), policy=pol)
-            self._send_text(chat_id=int(chat_id), text=self._format_tools_policy_message(chat_id=int(chat_id)))
-            return True
-
-        if sub in {"approve_all", "approve-all"}:
-            if not is_owner:
-                self._send_text(chat_id=int(chat_id), text="Only the chat owner can change tool permissions.")
-                return True
-            token = str(rest or "").strip().lower()
-            val = True if token in {"1", "true", "yes", "on"} else False if token in {"0", "false", "no", "off"} else None
-            if val is None:
-                self._send_text(chat_id=int(chat_id), text="Usage: /tools approve_all on|off")
-                return True
-            pol = self._effective_tool_policy(chat_id=int(chat_id))
-            pol["approve_all"] = bool(val)
-            self._save_tool_policy(chat_id=int(chat_id), policy=pol)
-            self._send_text(chat_id=int(chat_id), text=self._format_tools_policy_message(chat_id=int(chat_id)))
-            return True
-
-        def _parse_tool_names(raw: str) -> list[str]:
-            if not raw:
-                return []
-            parts = re.split(r"[\\s,]+", raw.strip())
-            return [p for p in parts if p]
-
-        if sub in {"allow", "block", "unblock", "auto", "ask", "require"}:
-            if not is_owner:
-                self._send_text(chat_id=int(chat_id), text="Only the chat owner can change tool permissions.")
-                return True
-
-            pol = self._effective_tool_policy(chat_id=int(chat_id))
-            names = _parse_tool_names(rest)
-            if not names:
-                self._send_text(chat_id=int(chat_id), text=f"Usage: /tools {sub} <tool...>")
-                return True
-
-            allowed_tools = pol.get("allowed_tools")
-            allowed_set: Optional[set[str]] = None
-            if allowed_tools is None:
-                allowed_set = None
-            elif isinstance(allowed_tools, list):
-                allowed_set = {str(t).strip() for t in allowed_tools if isinstance(t, str) and str(t).strip()}
-                if not allowed_set:
-                    allowed_set = None
-
-            blocked_set = {str(t).strip() for t in (pol.get("blocked_tools") or []) if isinstance(t, str) and str(t).strip()}
-            auto_set = {str(t).strip() for t in (pol.get("auto_approve_tools") or []) if isinstance(t, str) and str(t).strip()}
-            req_set = {str(t).strip() for t in (pol.get("require_approval_tools") or []) if isinstance(t, str) and str(t).strip()}
-
-            if sub == "allow":
-                if any(n in {"*", "all"} for n in names):
-                    allowed_set = None
-                else:
-                    allowed_set = set(names)
-            elif sub == "block":
-                blocked_set |= set(names)
-            elif sub == "unblock":
-                blocked_set -= set(names)
-            elif sub == "auto":
-                auto_set |= set(names)
-                req_set -= set(names)
-            else:  # ask/require
-                req_set |= set(names)
-                auto_set -= set(names)
-
-            if allowed_set is not None:
-                allowed_set |= set(_TELEGRAM_PROTECTED_TOOLS)
-            blocked_set -= set(_TELEGRAM_PROTECTED_TOOLS)
-            auto_set |= set(_TELEGRAM_PROTECTED_TOOLS)
-            req_set -= set(_TELEGRAM_PROTECTED_TOOLS)
-
-            pol["allowed_tools"] = sorted(allowed_set) if isinstance(allowed_set, set) else None
-            pol["blocked_tools"] = sorted(blocked_set)
-            pol["auto_approve_tools"] = sorted(auto_set)
-            pol["require_approval_tools"] = sorted(req_set)
-            pol["approve_all"] = bool(pol.get("approve_all"))
-            self._save_tool_policy(chat_id=int(chat_id), policy=pol)
-            self._send_text(chat_id=int(chat_id), text=self._format_tools_policy_message(chat_id=int(chat_id)))
-            return True
-
-        self._send_text(chat_id=int(chat_id), text="Unknown /tools command. Send /tools for help.")
+        tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower() or "approval"
+        self._send_text(
+            chat_id=int(chat_id),
+            text=(
+                "Tool policy commands are disabled.\n"
+                "\n"
+                "When prompted, reply with /approve to run tools, or /deny to cancel.\n"
+                f"(gateway tool mode: {tool_mode})"
+            ),
+        )
         return True
 
 
@@ -1489,6 +1203,10 @@ class TelegramBridge:
             mode = str(details.get("mode") or "").strip().lower()
             if mode != "approval_required":
                 continue
+            exec_details = details.get("executor")
+            exec_kind = str(exec_details.get("kind") or "").strip().lower() if isinstance(exec_details, dict) else ""
+            if exec_kind != "tool_approval":
+                continue
             tool_calls = details.get("tool_calls")
             if not isinstance(tool_calls, list) or not tool_calls:
                 continue
@@ -1505,224 +1223,29 @@ class TelegramBridge:
 
         return None
 
-    def _resume_tool_wait(self, *, run_id: str, wait_key: str, payload: Dict[str, Any]) -> None:
+    def _resume_wait(self, *, run_id: str, wait_key: str, payload: Dict[str, Any]) -> bool:
         rid = str(run_id or "").strip()
         wk = str(wait_key or "").strip()
         if not rid or not wk:
-            return
+            return False
         try:
-            rt, wf = self._host.runtime_and_workflow_for_run(rid)
-            rt.resume(workflow=wf, run_id=rid, wait_key=wk, payload=dict(payload), max_steps=0)
+            # Prefer the GatewayRunner resume path so thin-client tool approvals are handled consistently.
+            apply = getattr(self._runner, "apply_run_control", None)
+            if callable(apply):
+                apply("resume", run_id=rid, payload={"wait_key": wk, "payload": dict(payload)}, apply_to_tree=False)
+            else:
+                apply2 = getattr(self._runner, "_apply_run_control", None)
+                if callable(apply2):
+                    apply2("resume", run_id=rid, payload={"wait_key": wk, "payload": dict(payload)}, apply_to_tree=False)
+                else:
+                    rt, wf = self._host.runtime_and_workflow_for_run(rid)
+                    rt.resume(workflow=wf, run_id=rid, wait_key=wk, payload=dict(payload), max_steps=0)
         except Exception:
-            return
+            return False
         with self._lock:
             self._approval_prompts().pop(wk, None)
             self._save_state()
-
-    def _tool_allowed_by_policy(self, *, tool_name: str, policy: Dict[str, Any]) -> bool:
-        name = str(tool_name or "").strip()
-        if not name:
-            return False
-        if name in _TELEGRAM_PROTECTED_TOOLS:
-            return True
-        blocked = policy.get("blocked_tools")
-        if isinstance(blocked, list) and name in blocked:
-            return False
-        allowed = policy.get("allowed_tools")
-        if isinstance(allowed, list) and allowed and name not in allowed:
-            return False
         return True
-
-    def _execute_tool_calls_with_policy(
-        self,
-        *,
-        tool_calls: list[Dict[str, Any]],
-        policy: Dict[str, Any],
-        approved: bool,
-        reject_error: str,
-    ) -> Dict[str, Any]:
-        results_by_index: Dict[int, Dict[str, Any]] = {}
-
-        def _err(tc: Dict[str, Any], message: str) -> Dict[str, Any]:
-            call_id = str(tc.get("call_id") or "")
-            runtime_call_id = tc.get("runtime_call_id")
-            name = str(tc.get("name") or "")
-            return {
-                "call_id": call_id,
-                "runtime_call_id": runtime_call_id,
-                "name": name,
-                "success": False,
-                "output": None,
-                "error": str(message or "Tool call failed"),
-            }
-
-        calls_to_exec: list[Dict[str, Any]] = []
-        exec_indexes: list[int] = []
-
-        for idx, tc in enumerate(list(tool_calls or [])):
-            if not isinstance(tc, dict):
-                results_by_index[idx] = {
-                    "call_id": "",
-                    "runtime_call_id": None,
-                    "name": "",
-                    "success": False,
-                    "output": None,
-                    "error": "Invalid tool call (expected an object)",
-                }
-                continue
-
-            name = str(tc.get("name") or "").strip()
-            if not approved:
-                results_by_index[idx] = _err(tc, reject_error)
-                continue
-
-            if not name:
-                results_by_index[idx] = _err(tc, "Tool call missing a valid name")
-                continue
-
-            if not self._tool_allowed_by_policy(tool_name=name, policy=policy):
-                results_by_index[idx] = _err(tc, f"Tool '{name}' is not allowed in this chat (send /tools to change).")
-                continue
-
-            calls_to_exec.append(dict(tc))
-            exec_indexes.append(int(idx))
-
-        if approved and calls_to_exec:
-            try:
-                from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
-                from abstractruntime.integrations.abstractcore.tool_executor import MappingToolExecutor
-
-                exec2 = MappingToolExecutor(build_default_tool_map())
-                out = exec2.execute(tool_calls=calls_to_exec)
-                exec_results = out.get("results") if isinstance(out, dict) else None
-                if isinstance(exec_results, list):
-                    for i2, r in enumerate(exec_results):
-                        idx = exec_indexes[i2] if i2 < len(exec_indexes) else None
-                        if idx is None:
-                            continue
-                        if isinstance(r, dict):
-                            results_by_index[int(idx)] = dict(r)
-                        else:
-                            results_by_index[int(idx)] = _err(calls_to_exec[i2], "Tool executor returned invalid result")
-                else:
-                    for idx, tc in zip(exec_indexes, calls_to_exec):
-                        results_by_index[int(idx)] = _err(tc, "Tool executor returned invalid results")
-            except Exception as e:
-                for idx, tc in zip(exec_indexes, calls_to_exec):
-                    results_by_index[int(idx)] = _err(tc, f"Tool execution failed: {e}")
-
-        merged: list[Dict[str, Any]] = []
-        for idx in range(len(tool_calls or [])):
-            r = results_by_index.get(idx)
-            if r is None:
-                r = {
-                    "call_id": "",
-                    "runtime_call_id": None,
-                    "name": "",
-                    "success": False,
-                    "output": None,
-                    "error": "Missing tool result",
-                }
-            merged.append(r)
-
-        return {"mode": "executed", "results": merged}
-
-    def _merge_tool_wait_results(self, *, pending: Dict[str, Any], host_payload: Dict[str, Any]) -> Dict[str, Any]:
-        details = pending.get("details")
-        if not isinstance(details, dict):
-            return dict(host_payload)
-
-        host_results = host_payload.get("results") if isinstance(host_payload, dict) else None
-        if not isinstance(host_results, list):
-            host_results = []
-
-        evidence = details.get("tool_calls_for_evidence")
-        if not isinstance(evidence, list) or not evidence:
-            # No mapping information: best-effort fall back to host results.
-            return {"mode": "executed", "results": list(host_results)}
-
-        # Determine the expected result length (original tool call count).
-        final_len: Optional[int] = None
-        raw_count = details.get("original_call_count")
-        if raw_count is not None and not isinstance(raw_count, bool):
-            try:
-                final_len = int(raw_count)
-            except Exception:
-                final_len = None
-        if final_len is None or final_len <= 0:
-            final_len = len(evidence)
-
-        results_by_index: Dict[int, Dict[str, Any]] = {}
-
-        def _int_key_map(obj: Any) -> Dict[int, Dict[str, Any]]:
-            out: Dict[int, Dict[str, Any]] = {}
-            if not isinstance(obj, dict):
-                return out
-            for k, v in obj.items():
-                try:
-                    idx = int(k)
-                except Exception:
-                    continue
-                if isinstance(v, dict):
-                    out[idx] = dict(v)
-            return out
-
-        results_by_index.update(_int_key_map(details.get("blocked_by_index")))
-        results_by_index.update(_int_key_map(details.get("pre_results_by_index")))
-
-        # Build mapping (call_id/runtime_call_id -> original index).
-        call_id_to_idx: Dict[str, int] = {}
-        runtime_call_id_to_idx: Dict[str, int] = {}
-        for idx, tc in enumerate(evidence):
-            if not isinstance(tc, dict):
-                continue
-            cid = str(tc.get("call_id") or "")
-            if cid:
-                call_id_to_idx.setdefault(cid, int(idx))
-            rcid = tc.get("runtime_call_id")
-            if rcid is not None:
-                rcid_s = str(rcid).strip()
-                if rcid_s:
-                    runtime_call_id_to_idx.setdefault(rcid_s, int(idx))
-
-        extras: list[Dict[str, Any]] = []
-        for r in host_results:
-            if not isinstance(r, dict):
-                continue
-            cid = str(r.get("call_id") or "")
-            rcid = r.get("runtime_call_id")
-            rcid_s = str(rcid).strip() if rcid is not None else ""
-            idx = call_id_to_idx.get(cid) if cid else None
-            if idx is None and rcid_s:
-                idx = runtime_call_id_to_idx.get(rcid_s)
-            if idx is None:
-                extras.append(dict(r))
-                continue
-            if idx in results_by_index:
-                continue
-            results_by_index[int(idx)] = dict(r)
-
-        merged: list[Dict[str, Any]] = []
-        for idx in range(int(final_len)):
-            fixed = results_by_index.get(idx)
-            if fixed is not None:
-                merged.append(fixed)
-                continue
-            if extras:
-                merged.append(extras.pop(0))
-                continue
-            merged.append(
-                {
-                    "call_id": "",
-                    "runtime_call_id": None,
-                    "name": "",
-                    "success": False,
-                    "output": None,
-                    "error": "Missing tool result",
-                }
-            )
-
-        return {"mode": "executed", "results": merged}
 
     def _maybe_handle_tool_wait(self, *, chat_id: int, session_id: str) -> bool:
         """Return True when waiting on user approval (prompted)."""
@@ -1734,42 +1257,6 @@ class TelegramBridge:
         tool_calls_any = pending.get("tool_calls")
         tool_calls: list[Dict[str, Any]] = [dict(x) for x in tool_calls_any if isinstance(x, dict)] if isinstance(tool_calls_any, list) else []
         if not wait_key or not run_id:
-            return False
-
-        policy = self._effective_tool_policy(chat_id=int(chat_id))
-        approve_all = bool(policy.get("approve_all"))
-
-        allowed_calls: list[Dict[str, Any]] = []
-        for tc in tool_calls:
-            name = str(tc.get("name") or "").strip()
-            if name and self._tool_allowed_by_policy(tool_name=name, policy=policy):
-                allowed_calls.append(tc)
-
-        requires_approval = True
-        if not allowed_calls:
-            requires_approval = False
-        elif approve_all:
-            requires_approval = False
-        else:
-            try:
-                from abstractruntime.integrations.abstractcore.tool_executor import ToolApprovalPolicy as _ToolApprovalPolicy
-
-                auto = set(policy.get("auto_approve_tools") or [])
-                req = set(policy.get("require_approval_tools") or [])
-                tap = _ToolApprovalPolicy(auto_approve_tools=auto, require_approval_tools=req)
-                requires_approval = bool(tap.requires_approval(allowed_calls))
-            except Exception:
-                requires_approval = True
-
-        if not requires_approval:
-            host_payload = self._execute_tool_calls_with_policy(
-                tool_calls=tool_calls,
-                policy=policy,
-                approved=True,
-                reject_error="",
-            )
-            payload = self._merge_tool_wait_results(pending=pending, host_payload=host_payload)
-            self._resume_tool_wait(run_id=run_id, wait_key=wait_key, payload=payload)
             return False
 
         with self._lock:
@@ -1809,22 +1296,17 @@ class TelegramBridge:
 
         run_id = str(pending.get("run_id") or "").strip()
         wait_key = str(pending.get("wait_key") or "").strip()
-        tool_calls_any = pending.get("tool_calls")
-        tool_calls: list[Dict[str, Any]] = [dict(x) for x in tool_calls_any if isinstance(x, dict)] if isinstance(tool_calls_any, list) else []
 
         if not run_id or not wait_key:
             return False
 
-        policy = self._effective_tool_policy(chat_id=int(chat_id))
         if approve:
-            host_payload = self._execute_tool_calls_with_policy(
-                tool_calls=tool_calls,
-                policy=policy,
-                approved=True,
-                reject_error="",
-            )
-            payload = self._merge_tool_wait_results(pending=pending, host_payload=host_payload)
-            self._resume_tool_wait(run_id=run_id, wait_key=wait_key, payload=payload)
+            # Thin-client semantics: do not execute tools in the bridge.
+            # The runtime executes pending tool calls on resume and stores {"mode":"executed","results":[...]}.
+            ok = self._resume_wait(run_id=run_id, wait_key=wait_key, payload={"approved": True})
+            if not ok:
+                self._send_text(chat_id=int(chat_id), text="Sorry — failed to resume.")
+                return True
             self._send_text(chat_id=int(chat_id), text="Approved. Continuing…")
             # The typing loop is stopped while waiting for approval. Restart it so we can:
             # - keep the "typing…" indicator alive if the workflow keeps running
@@ -1847,14 +1329,10 @@ class TelegramBridge:
                 pass
             return True
 
-        host_payload = self._execute_tool_calls_with_policy(
-            tool_calls=tool_calls,
-            policy=policy,
-            approved=False,
-            reject_error="User rejected tool call",
-        )
-        payload = self._merge_tool_wait_results(pending=pending, host_payload=host_payload)
-        self._resume_tool_wait(run_id=run_id, wait_key=wait_key, payload=payload)
+        ok = self._resume_wait(run_id=run_id, wait_key=wait_key, payload={"approved": False, "reason": "Denied by user"})
+        if not ok:
+            self._send_text(chat_id=int(chat_id), text="Sorry — failed to resume.")
+            return True
 
         self._send_text(chat_id=int(chat_id), text="Cancelled.")
         try:
@@ -1864,6 +1342,376 @@ class TelegramBridge:
                 self._start_typing_loop(chat_id, session_id=str(session_id or ""), send_fn=lambda: self._send_tdlib_typing(chat_id))
         except Exception:
             pass
+        return True
+
+    def _load_run_state(self, *, run_id: str) -> Any:
+        rid = str(run_id or "").strip()
+        if not rid:
+            return None
+        store = getattr(self._runner, "run_store", None)
+        if store is None:
+            store = getattr(self._host, "run_store", None)
+        load = getattr(store, "load", None)
+        if not callable(load):
+            return None
+        try:
+            return load(str(rid))
+        except Exception:
+            return None
+
+    def _run_status_str(self, run: Any) -> str:
+        if run is None:
+            return ""
+        status = getattr(run, "status", None)
+        if status is None and isinstance(run, dict):
+            status = run.get("status")
+        if isinstance(status, str):
+            return status.strip().lower()
+        val = getattr(status, "value", None)
+        if isinstance(val, str):
+            return val.strip().lower()
+        return str(status or "").strip().lower()
+
+    def _append_binding_history(self, *, binding: Dict[str, Any], role: str, content: str) -> None:
+        r = str(role or "").strip().lower()
+        if r not in {"user", "assistant", "system"}:
+            return
+        text = str(content or "").strip()
+        if not text:
+            return
+        keep = int(self._cfg.max_history_messages or 0) if isinstance(self._cfg.max_history_messages, int) else 30
+        if keep < 0:
+            keep = 0
+
+        with self._lock:
+            raw = binding.get("history")
+            hist: list[Dict[str, str]] = []
+            if isinstance(raw, list):
+                for item in raw:
+                    if not isinstance(item, dict):
+                        continue
+                    rr = str(item.get("role") or "").strip().lower()
+                    cc = str(item.get("content") or "")
+                    if rr in {"user", "assistant", "system"} and str(cc or "").strip():
+                        hist.append({"role": rr, "content": str(cc)})
+
+            hist.append({"role": r, "content": text})
+            if keep > 0 and len(hist) > keep:
+                hist = hist[-keep:]
+            if keep == 0:
+                hist = []
+
+            binding["history"] = hist
+            binding["updated_at"] = _utc_now_iso()
+            self._save_state()
+
+    def _context_messages_from_binding(self, *, binding: Dict[str, Any]) -> list[Dict[str, str]]:
+        raw = binding.get("history")
+        if not isinstance(raw, list):
+            return []
+        out: list[Dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "")
+            if role not in {"user", "assistant", "system"}:
+                continue
+            if not content.strip():
+                continue
+            out.append({"role": role, "content": content})
+        return out
+
+    def _extract_run_output_text(self, *, run: Any) -> str:
+        if run is None:
+            return ""
+
+        output = getattr(run, "output", None)
+        if output is None and isinstance(run, dict):
+            output = run.get("output")
+
+        if isinstance(output, dict):
+            for key in ("response", "answer", "message", "text", "content", "final_answer"):
+                v = output.get(key)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+
+        err = getattr(run, "error", None)
+        if err is None and isinstance(run, dict):
+            err = run.get("error")
+        if isinstance(err, str) and err.strip():
+            return f"Error: {err.strip()}"
+        return ""
+
+    def _event_name_from_wait_key(self, wait_key: str) -> str:
+        wk = str(wait_key or "").strip()
+        if not wk.startswith("evt:"):
+            return ""
+        parts = wk.split(":", 3)
+        if len(parts) < 4:
+            return ""
+        return str(parts[3] or "").strip()
+
+    def _find_pending_user_prompt(self, *, session_id: str) -> Optional[Dict[str, Any]]:
+        """Return a pending user prompt wait for a session (ASK_USER or abstract.ask-style WAIT_EVENT)."""
+        sid = str(session_id or "").strip()
+        if not sid:
+            return None
+
+        try:
+            runtime = Runtime(
+                run_store=self._runner.run_store,
+                ledger_store=self._runner.ledger_store,
+                artifact_store=self._runner.artifact_store,
+            )
+        except Exception:
+            return None
+
+        store = getattr(runtime, "run_store", None)
+        load_run = getattr(store, "load", None)
+        if not callable(load_run):
+            return None
+
+        candidate_ids: list[str] = []
+        list_index = getattr(store, "list_run_index", None)
+        if callable(list_index):
+            try:
+                rows = list_index(status=RunStatus.WAITING, session_id=sid, limit=50)
+            except TypeError:
+                try:
+                    rows = list_index(status=RunStatus.WAITING, limit=200)
+                    if isinstance(rows, list):
+                        rows = [r for r in rows if isinstance(r, dict) and str(r.get("session_id") or "").strip() == sid]
+                except Exception:
+                    rows = None
+            except Exception:
+                rows = None
+
+            if isinstance(rows, list):
+                for r in rows:
+                    if isinstance(r, dict):
+                        rid = r.get("run_id")
+                        if isinstance(rid, str) and rid.strip():
+                            candidate_ids.append(rid.strip())
+
+        if not candidate_ids:
+            list_runs = getattr(store, "list_runs", None)
+            if not callable(list_runs):
+                return None
+            try:
+                runs = list_runs(session_id=sid, limit=2000)
+            except TypeError:
+                runs = list_runs(limit=5000)
+                runs = [r for r in runs if str(getattr(r, "session_id", "") or "").strip() == sid]
+            except Exception:
+                runs = []
+            for r in runs or []:
+                if getattr(r, "status", None) != RunStatus.WAITING:
+                    continue
+                rid = getattr(r, "run_id", None)
+                if isinstance(rid, str) and rid.strip():
+                    candidate_ids.append(rid.strip())
+
+        seen: set[str] = set()
+        for rid in candidate_ids:
+            if rid in seen:
+                continue
+            seen.add(rid)
+            try:
+                run = load_run(str(rid))
+            except Exception:
+                run = None
+            if run is None:
+                continue
+            if getattr(run, "status", None) != RunStatus.WAITING:
+                continue
+            waiting = getattr(run, "waiting", None)
+            if waiting is None:
+                continue
+
+            reason = getattr(waiting, "reason", None)
+            reason_s = str(getattr(reason, "value", reason) or "").strip().lower()
+            wait_key = getattr(waiting, "wait_key", None)
+            wait_key_s = str(wait_key or "").strip()
+
+            prompt = getattr(waiting, "prompt", None)
+            prompt_s = str(prompt or "").strip() if isinstance(prompt, str) else ""
+            choices_any = getattr(waiting, "choices", None)
+            choices = [str(c).strip() for c in choices_any if isinstance(c, str) and str(c).strip()] if isinstance(choices_any, list) else []
+            allow_free_text = bool(getattr(waiting, "allow_free_text", True))
+
+            if not wait_key_s:
+                continue
+
+            if reason_s == str(getattr(WaitReason.USER, "value", "user") or "user").strip().lower():
+                return {
+                    "run_id": str(getattr(run, "run_id", "") or ""),
+                    "wait_key": wait_key_s,
+                    "reason": "user",
+                    "prompt": prompt_s,
+                    "choices": choices,
+                    "allow_free_text": bool(allow_free_text),
+                }
+
+            if reason_s == str(getattr(WaitReason.EVENT, "value", "event") or "event").strip().lower():
+                ev = self._event_name_from_wait_key(wait_key_s)
+                if ev == "abstract.ask" or prompt_s:
+                    return {
+                        "run_id": str(getattr(run, "run_id", "") or ""),
+                        "wait_key": wait_key_s,
+                        "reason": "event",
+                        "event_name": ev,
+                        "prompt": prompt_s,
+                        "choices": choices,
+                        "allow_free_text": bool(allow_free_text),
+                    }
+
+        return None
+
+    def _format_user_prompt(self, *, pending: Dict[str, Any]) -> str:
+        prompt = str(pending.get("prompt") or "").strip()
+        choices_any = pending.get("choices")
+        choices = [str(c).strip() for c in choices_any if isinstance(c, str) and str(c).strip()] if isinstance(choices_any, list) else []
+        allow_free_text = bool(pending.get("allow_free_text", True))
+
+        lines: list[str] = []
+        if prompt:
+            lines.append(prompt)
+        else:
+            lines.append("Please reply to continue.")
+        if choices:
+            lines.append("")
+            lines.append("Choices:")
+            for c in choices[:16]:
+                lines.append(f"- {c}")
+            if len(choices) > 16:
+                lines.append(f"…and {len(choices) - 16} more")
+        if not allow_free_text and choices:
+            lines.append("")
+            lines.append("Reply with one of the choices above.")
+        return ("\n".join(lines).strip())[:3800]
+
+    def _maybe_handle_user_wait(self, *, chat_id: int, session_id: str) -> bool:
+        pending = self._find_pending_user_prompt(session_id=session_id)
+        if pending is None:
+            return False
+
+        run_id = str(pending.get("run_id") or "").strip()
+        wait_key = str(pending.get("wait_key") or "").strip()
+        if not run_id or not wait_key:
+            return False
+
+        prompt_text = self._format_user_prompt(pending=dict(pending))
+
+        with self._lock:
+            binding = self._binding_for_chat(int(chat_id))
+            if isinstance(binding, dict):
+                binding["pending_user_wait"] = {"run_id": run_id, "wait_key": wait_key, "pending": dict(pending)}
+                binding["updated_at"] = _utc_now_iso()
+                self._save_state()
+
+        binding2 = self._binding_for_chat(int(chat_id))
+        if isinstance(binding2, dict):
+            self._append_binding_history(binding=binding2, role="assistant", content=prompt_text)
+
+        self._send_text(chat_id=int(chat_id), text=prompt_text)
+        return True
+
+    def _handle_user_wait_response(
+        self,
+        *,
+        chat_id: int,
+        session_id: str,
+        from_user_id: Optional[int],
+        text: str,
+    ) -> bool:
+        pending = self._find_pending_user_prompt(session_id=session_id)
+        if pending is None:
+            return False
+
+        # Best-effort owner check: prevent other chat participants from answering.
+        binding = self._binding_for_chat(chat_id)
+        owner = binding.get("owner_user_id") if isinstance(binding, dict) else None
+        if isinstance(owner, int) and from_user_id is not None and int(from_user_id) != int(owner):
+            return False
+
+        run_id = str(pending.get("run_id") or "").strip()
+        wait_key = str(pending.get("wait_key") or "").strip()
+        if not run_id or not wait_key:
+            return False
+
+        response = str(text or "").strip()
+        if not response:
+            return True
+
+        allow_free_text = bool(pending.get("allow_free_text", True))
+        choices_any = pending.get("choices")
+        choices = [str(c).strip() for c in choices_any if isinstance(c, str) and str(c).strip()] if isinstance(choices_any, list) else []
+        if (not allow_free_text) and choices:
+            ok = any(response.lower() == c.lower() for c in choices)
+            if not ok:
+                self._send_text(chat_id=int(chat_id), text=self._format_user_prompt(pending=dict(pending)))
+                return True
+
+        if isinstance(binding, dict):
+            self._append_binding_history(binding=binding, role="user", content=response)
+
+        # Resume with the same payload shape as AbstractCode/Web.
+        ok = self._resume_wait(run_id=str(run_id), wait_key=str(wait_key), payload={"response": response})
+        if not ok:
+            self._send_text(chat_id=int(chat_id), text="Sorry — failed to resume.")
+            return True
+
+        with self._lock:
+            if isinstance(binding, dict):
+                binding.pop("pending_user_wait", None)
+                binding["updated_at"] = _utc_now_iso()
+                self._save_state()
+
+        # Restart typing loop so tool waits / completion get handled.
+        try:
+            if self._cfg.transport == "bot_api":
+                self._start_typing_loop(chat_id, session_id=str(session_id or ""), send_fn=lambda: self._send_bot_typing(chat_id))
+            else:
+                self._start_typing_loop(chat_id, session_id=str(session_id or ""), send_fn=lambda: self._send_tdlib_typing(chat_id))
+        except Exception:
+            pass
+        return True
+
+    def _maybe_deliver_thin_run_output(self, *, chat_id: int, session_id: str) -> bool:
+        binding = self._binding_for_chat(chat_id)
+        if not isinstance(binding, dict):
+            return False
+        if str(binding.get("session_id") or "").strip() != str(session_id or "").strip():
+            return False
+
+        rid = str(binding.get("active_run_id") or "").strip()
+        if not rid:
+            return False
+
+        run = self._load_run_state(run_id=rid)
+        status = self._run_status_str(run)
+        if status not in {"completed", "failed", "cancelled"}:
+            return False
+
+        text = self._extract_run_output_text(run=run)
+        if not text.strip():
+            if status == "cancelled":
+                text = "Cancelled."
+            elif status == "failed":
+                text = "Sorry — the run failed."
+            else:
+                text = "Sorry, I couldn't generate a reply."
+
+        self._send_text(chat_id=int(chat_id), text=text)
+
+        # Append assistant message to local transcript (used as context for the next run).
+        self._append_binding_history(binding=binding, role="assistant", content=text)
+
+        with self._lock:
+            binding["active_run_id"] = None
+            binding["updated_at"] = _utc_now_iso()
+            self._save_state()
         return True
 
     def _stash_pending_media(
@@ -2163,38 +2011,12 @@ class TelegramBridge:
 
             rev = self._session_rev(chat_id)
             session_id = self._session_id_for_chat(chat_id=chat_id, rev=rev)
-            # Best-effort: cancel stale runs for this session to avoid duplicate listeners.
-            self._cancel_session_runs(session_id=session_id)
-            try:
-                # NOTE: actor_id MUST be "gateway" so the GatewayRunner tick loop
-                # picks up these runs. The Telegram origin is recorded in session_id
-                # (telegram:<chat_id>), the binding state, and every event payload.
-                input_data: Dict[str, Any] = {"telegram": {"chat_id": chat_id, "from_user_id": from_user_id}}
-                rt_overrides: Dict[str, Any] = {}
-                if isinstance(self._cfg.provider_override, str) and self._cfg.provider_override.strip():
-                    rt_overrides["provider"] = self._cfg.provider_override.strip().lower()
-                if isinstance(self._cfg.model_override, str) and self._cfg.model_override.strip():
-                    rt_overrides["model"] = self._cfg.model_override.strip()
-                if rt_overrides:
-                    input_data["_runtime"] = rt_overrides
-                if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages > 0:
-                    input_data["_limits"] = {"max_history_messages": int(self._cfg.max_history_messages)}
-                run_id = self._host.start_run(
-                    flow_id=self._cfg.flow_id,
-                    bundle_id=self._cfg.bundle_id,
-                    input_data=input_data,
-                    actor_id="gateway",
-                    session_id=session_id,
-                )
-            except Exception:
-                return None
-
             binding = {
                 "chat_id": chat_id,
                 "owner_user_id": int(from_user_id) if isinstance(from_user_id, int) and not isinstance(from_user_id, bool) else None,
                 "session_id": session_id,
                 "session_rev": int(rev),
-                "run_id": str(run_id),
+                "active_run_id": None,
                 "flow_id": self._cfg.flow_id,
                 "bundle_id": self._cfg.bundle_id,
                 "created_at": _utc_now_iso(),
@@ -2395,16 +2217,28 @@ class TelegramBridge:
                 while not self._stop.is_set():
                     with self._typing_lock:
                         deadline = self._typing_until.get(int(chat_id), 0.0)
-                    if time.time() >= float(deadline):
-                        break
-                    send_fn()
-                    active = self._session_has_active_runs(session_id=str(session_id or ""))
+                    if time.time() < float(deadline):
+                        send_fn()
                     # If the workflow is blocked on a tool approval, prompt the user and stop typing.
                     try:
                         if self._maybe_handle_tool_wait(chat_id=int(chat_id), session_id=str(session_id or "")):
                             break
                     except Exception:
                         pass
+                    # If the workflow is blocked on a user prompt, ask the user and stop typing.
+                    try:
+                        if self._maybe_handle_user_wait(chat_id=int(chat_id), session_id=str(session_id or "")):
+                            break
+                    except Exception:
+                        pass
+                    # Thin mode: deliver the completed output back to Telegram.
+                    try:
+                        if self._maybe_deliver_thin_run_output(chat_id=int(chat_id), session_id=str(session_id or "")):
+                            break
+                    except Exception:
+                        pass
+
+                    active = self._session_has_active_runs(session_id=str(session_id or ""))
                     if active is True:
                         observed_running = True
                     if active is False and not observed_running and (time.time() - float(started_at)) >= 30.0:
@@ -2474,13 +2308,16 @@ class TelegramBridge:
             sid0 = str(existing.get("session_id") or "").strip()
             if sid0 and self._handle_tool_approval_response(chat_id=chat_id, session_id=sid0, from_user_id=from_uid, text=text_raw):
                 return
+            if sid0 and self._handle_user_wait_response(chat_id=chat_id, session_id=sid0, from_user_id=from_uid, text=text_raw):
+                return
 
         binding = self._ensure_binding(chat_id=chat_id, from_user_id=from_uid)
         if binding is None:
             return
 
-        # Keep "typing..." indicator alive while the agent processes.
-        self._start_typing_loop(chat_id, session_id=str(binding.get("session_id") or ""), send_fn=lambda: self._send_bot_typing(chat_id))
+        session_id = str(binding.get("session_id") or "").strip()
+        if not session_id:
+            return
 
         tg_payload: Dict[str, Any] = {
             "transport": "bot_api",
@@ -2495,7 +2332,9 @@ class TelegramBridge:
         # Download and store media attachments (photos, documents, audio, video, stickers, etc.).
         media_refs: list[Dict[str, Any]] = []
         if self._cfg.store_media:
-            media_refs = self._extract_bot_media(msg, run_id=str(binding.get("run_id") or ""))
+            # Associate artifacts with the session_id so media can be reused across turns.
+            run_id_for_media = str(session_id)
+            media_refs = self._extract_bot_media(msg, run_id=run_id_for_media)
             if media_refs:
                 tg_payload["media"] = media_refs
 
@@ -2515,18 +2354,83 @@ class TelegramBridge:
         # If user sent media without text, stash it for the next message.
         if media_refs and not text_raw.strip():
             self._stash_pending_media(binding=binding, media=media_refs, message_id=msg.get("message_id") if isinstance(msg.get("message_id"), int) else None)
+            self._send_text(chat_id=int(chat_id), text="Got it. Send a message describing what you'd like me to do with that attachment.")
+            return
 
-        # Build event envelope: promote attachments to top-level so the agent adapter's
-        # extract_media_from_context() can find them (enables VLM image analysis).
-        event_payload: Dict[str, Any] = {"telegram": tg_payload, "attachments": list(media_refs)}
+        # Thin-client: start a new run per message (like AbstractCode/Web) and let the bridge
+        # deliver the final answer back to Telegram.
+        active = str(binding.get("active_run_id") or "").strip()
+        if active:
+            st = self._run_status_str(self._load_run_state(run_id=active))
+            if st and st not in {"completed", "failed", "cancelled"}:
+                self._send_text(chat_id=int(chat_id), text="I'm still working on your previous message. Please wait, or send /reset.")
+                return
 
-        self._runner.emit_event(
-            name=self._cfg.event_name,
-            session_id=str(binding.get("session_id") or ""),
-            scope="session",
-            payload=event_payload,
-            client_id="telegram",
-        )
+        input_data: Dict[str, Any] = {}
+        prompt = str(text_raw or "")
+        input_data["prompt"] = prompt
+        input_data["use_context"] = True
+
+        # Maintain a local transcript (like AbstractCode/Web) so each run can include the recent chat context.
+        self._append_binding_history(binding=binding, role="user", content=prompt)
+        ctx: Dict[str, Any] = {"task": prompt, "messages": self._context_messages_from_binding(binding=binding)}
+        if media_refs:
+            ctx["attachments"] = list(media_refs)
+            ctx["media"] = list(media_refs)
+            input_data["attachments"] = list(media_refs)
+        input_data["context"] = ctx
+
+        # Telegram UX: keep responses concise and plain text.
+        input_data["system"] = "You are a helpful AI assistant chatting via Telegram. Reply in plain text and keep responses concise and friendly."
+
+        # Run-scoped provider/model overrides (Telegram-only).
+        rt_overrides: Dict[str, Any] = {}
+        if isinstance(self._cfg.provider_override, str) and self._cfg.provider_override.strip():
+            rt_overrides["provider"] = self._cfg.provider_override.strip().lower()
+            input_data["provider"] = rt_overrides["provider"]
+        if isinstance(self._cfg.model_override, str) and self._cfg.model_override.strip():
+            rt_overrides["model"] = self._cfg.model_override.strip()
+            input_data["model"] = rt_overrides["model"]
+        if rt_overrides:
+            input_data["_runtime"] = rt_overrides
+
+        if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages > 0:
+            input_data["_limits"] = {"max_history_messages": int(self._cfg.max_history_messages)}
+
+        # Workspace policy: mimic the gateway HTTP API default by creating a per-run workspace.
+        try:
+            base = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR") or str(self._cfg.state_path.parent)).expanduser().resolve()
+            ws_base = base / "workspaces"
+            ws_base.mkdir(parents=True, exist_ok=True)
+            ws_dir = ws_base / uuid.uuid4().hex
+            ws_dir.mkdir(parents=True, exist_ok=True)
+            input_data.setdefault("workspace_root", str(ws_dir))
+        except Exception:
+            pass
+
+        # Attach telegram metadata for workflows that want it.
+        input_data["telegram"] = tg_payload
+
+        try:
+            run_id = self._host.start_run(
+                flow_id=self._cfg.flow_id,
+                bundle_id=self._cfg.bundle_id,
+                input_data=input_data,
+                actor_id="gateway",
+                session_id=session_id,
+            )
+        except Exception:
+            self._send_text(chat_id=int(chat_id), text="Sorry — failed to start the run.")
+            return
+
+        with self._lock:
+            binding["active_run_id"] = str(run_id)
+            binding["run_id"] = str(run_id)
+            binding.pop("pending_user_wait", None)
+            binding["updated_at"] = _utc_now_iso()
+            self._save_state()
+
+        self._start_typing_loop(chat_id, session_id=session_id, send_fn=lambda: self._send_bot_typing(chat_id))
 
         with self._lock:
             binding["updated_at"] = _utc_now_iso()
@@ -2786,21 +2690,27 @@ class TelegramBridge:
             sid0 = str(existing.get("session_id") or "").strip()
             if sid0 and self._handle_tool_approval_response(chat_id=chat_id, session_id=sid0, from_user_id=from_uid, text=text):
                 return
+            if sid0 and self._handle_user_wait_response(chat_id=chat_id, session_id=sid0, from_user_id=from_uid, text=text):
+                return
 
         binding = self._ensure_binding(chat_id=chat_id, from_user_id=from_uid)
         if binding is None:
             return
 
+        session_id = str(binding.get("session_id") or "").strip()
+        if not session_id:
+            return
+
         media: list[Dict[str, Any]] = []
         if ctype and ctype != "messageText" and self._cfg.store_media and isinstance(content, dict):
-            media = self._extract_tdlib_media(content, run_id=str(binding.get("run_id") or ""))
-
-        # Keep "typing..." indicator alive while the agent processes.
-        self._start_typing_loop(chat_id, session_id=str(binding.get("session_id") or ""), send_fn=lambda: self._send_tdlib_typing(chat_id))
+            run_id_for_media = str(session_id)
+            media = self._extract_tdlib_media(content, run_id=run_id_for_media)
 
         # If user sent media without text, stash it for the next message.
         if media and not text.strip():
             self._stash_pending_media(binding=binding, media=media, message_id=msg.get("id") if isinstance(msg.get("id"), int) else None)
+            self._send_text(chat_id=int(chat_id), text="Got it. Send a message describing what you'd like me to do with that attachment.")
+            return
 
         # If user sent text without media, reuse recent pending media (when it likely refers to the media).
         if (not media) and text.strip():
@@ -2813,7 +2723,7 @@ class TelegramBridge:
             if pending:
                 media = pending
 
-        tg_payload = {
+        tg_payload: Dict[str, Any] = {
             "transport": "tdlib",
             "chat_id": chat_id,
             "from_user_id": from_uid,
@@ -2823,17 +2733,80 @@ class TelegramBridge:
             "media": media,
         }
 
-        # Build event envelope: promote attachments to top-level so the agent adapter's
-        # extract_media_from_context() can find them (enables VLM image analysis).
-        event_payload: Dict[str, Any] = {"telegram": tg_payload, "attachments": list(media)}
+        # Thin-client: start a new run per message (like AbstractCode/Web) and let the bridge
+        # deliver the final answer back to Telegram.
+        active = str(binding.get("active_run_id") or "").strip()
+        if active:
+            st = self._run_status_str(self._load_run_state(run_id=active))
+            if st and st not in {"completed", "failed", "cancelled"}:
+                self._send_text(chat_id=int(chat_id), text="I'm still working on your previous message. Please wait, or send /reset.")
+                return
 
-        self._runner.emit_event(
-            name=self._cfg.event_name,
-            session_id=str(binding.get("session_id") or ""),
-            scope="session",
-            payload=event_payload,
-            client_id="telegram",
-        )
+        input_data: Dict[str, Any] = {}
+        prompt = str(text or "")
+        input_data["prompt"] = prompt
+        input_data["use_context"] = True
+
+        # Maintain a local transcript (like AbstractCode/Web) so each run can include the recent chat context.
+        self._append_binding_history(binding=binding, role="user", content=prompt)
+        ctx: Dict[str, Any] = {"task": prompt, "messages": self._context_messages_from_binding(binding=binding)}
+        if media:
+            ctx["attachments"] = list(media)
+            ctx["media"] = list(media)
+            input_data["attachments"] = list(media)
+        input_data["context"] = ctx
+
+        # Telegram UX: keep responses concise and plain text.
+        input_data["system"] = "You are a helpful AI assistant chatting via Telegram. Reply in plain text and keep responses concise and friendly."
+
+        # Run-scoped provider/model overrides (Telegram-only).
+        rt_overrides: Dict[str, Any] = {}
+        if isinstance(self._cfg.provider_override, str) and self._cfg.provider_override.strip():
+            rt_overrides["provider"] = self._cfg.provider_override.strip().lower()
+            input_data["provider"] = rt_overrides["provider"]
+        if isinstance(self._cfg.model_override, str) and self._cfg.model_override.strip():
+            rt_overrides["model"] = self._cfg.model_override.strip()
+            input_data["model"] = rt_overrides["model"]
+        if rt_overrides:
+            input_data["_runtime"] = rt_overrides
+
+        if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages > 0:
+            input_data["_limits"] = {"max_history_messages": int(self._cfg.max_history_messages)}
+
+        # Workspace policy: mimic the gateway HTTP API default by creating a per-run workspace.
+        try:
+            base = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR") or str(self._cfg.state_path.parent)).expanduser().resolve()
+            ws_base = base / "workspaces"
+            ws_base.mkdir(parents=True, exist_ok=True)
+            ws_dir = ws_base / uuid.uuid4().hex
+            ws_dir.mkdir(parents=True, exist_ok=True)
+            input_data.setdefault("workspace_root", str(ws_dir))
+        except Exception:
+            pass
+
+        # Attach telegram metadata for workflows that want it.
+        input_data["telegram"] = tg_payload
+
+        try:
+            run_id = self._host.start_run(
+                flow_id=self._cfg.flow_id,
+                bundle_id=self._cfg.bundle_id,
+                input_data=input_data,
+                actor_id="gateway",
+                session_id=session_id,
+            )
+        except Exception:
+            self._send_text(chat_id=int(chat_id), text="Sorry — failed to start the run.")
+            return
+
+        with self._lock:
+            binding["active_run_id"] = str(run_id)
+            binding["run_id"] = str(run_id)
+            binding.pop("pending_user_wait", None)
+            binding["updated_at"] = _utc_now_iso()
+            self._save_state()
+
+        self._start_typing_loop(chat_id, session_id=session_id, send_fn=lambda: self._send_tdlib_typing(chat_id))
 
         with self._lock:
             binding["updated_at"] = _utc_now_iso()

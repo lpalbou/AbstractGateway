@@ -126,20 +126,25 @@ Evidence: `_workspace_mounts()` and related policy helpers in `src/abstractgatew
 
 ## Bridges (Telegram, email)
 
-Background bridges can emit events into the runtime (e.g., “telegram.message”, “email.message”) and optionally auto-start workflows.
+Background bridges can ingest external messages and start durable runs (thin-client semantics), and may also emit events for specialized workflows.
 
 Enable (Telegram):
 - `ABSTRACT_TELEGRAM_BRIDGE=1`
-- `ABSTRACT_TELEGRAM_FLOW_ID=...` (required; shipped bundle: `telegram-agent@0.0.1:tg-agent-main`)
-- Outbound replies require tool execution + tool exposure:
-  - `ABSTRACTGATEWAY_TOOL_MODE=passthrough` (default) or `approval` (safe tools in-process; dangerous tools require `/approve`)
-  - `ABSTRACT_ENABLE_TELEGRAM_TOOLS=1`
-- transport + credentials depend on configuration (see `src/abstractgateway/integrations/telegram_bridge.py`)
+- transport + credentials depend on configuration (see `src/abstractgateway/integrations/telegram_bridge.py`):
+  - `ABSTRACT_TELEGRAM_TRANSPORT=bot_api|tdlib`
+  - `ABSTRACT_TELEGRAM_BOT_TOKEN=...` (Bot API)
+- Optional: override which workflow to run per message:
+  - `ABSTRACT_TELEGRAM_BUNDLE_ID=...`
+  - `ABSTRACT_TELEGRAM_FLOW_ID=...`
+  - Default (when unset): shipped `basic-agent` bundle entrypoint.
+- Tool approvals:
+  - `ABSTRACTGATEWAY_TOOL_MODE=approval` (default): safe tools run in-process; dangerous/unknown tools require `/approve` or `/deny`.
+  - `ABSTRACTGATEWAY_TOOL_MODE=passthrough`: approval required for *all* tools (including safe ones); after approval, the runtime executes the tool batch in-process.
+  - `ABSTRACTGATEWAY_TOOL_MODE=delegated`: tools are not executed locally; workflows enter a durable `JOB` wait for external executors.
 - optional knobs:
   - Telegram-only routing override: `ABSTRACT_TELEGRAM_MODEL` (and optionally `ABSTRACT_TELEGRAM_PROVIDER`)
   - Durable history limit: `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES`
   - `/reset` controls: `ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES`, `ABSTRACT_TELEGRAM_RESET_DELETE_MAX`, `ABSTRACT_TELEGRAM_RESET_MESSAGE`
-  - Tool permissions defaults: `ABSTRACT_TELEGRAM_APPROVE_ALL_TOOLS`, `ABSTRACT_TELEGRAM_ALLOWED_TOOLS`, `ABSTRACT_TELEGRAM_AUTO_APPROVE_TOOLS`, `ABSTRACT_TELEGRAM_REQUIRE_APPROVAL_TOOLS`, `ABSTRACT_TELEGRAM_BLOCKED_TOOLS` (chat command: `/tools`)
 
 Enable (Email):
 - `ABSTRACT_EMAIL_BRIDGE=1`

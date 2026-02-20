@@ -628,23 +628,34 @@ class WorkflowBundleGatewayHost:
                     "(and ensure `abstractcore` is importable)."
                 ) from e
 
-            tool_mode = str(_env("ABSTRACTGATEWAY_TOOL_MODE") or "passthrough").strip().lower()
+            # Tool execution policy:
+            # - approval (default): execute safe tools locally; require explicit approval for dangerous/unknown tools.
+            # - passthrough: require explicit approval for *all* tools (then execute in-process on resume).
+            # - delegated: do not execute tools; TOOL_CALLS yields a durable JOB wait for external executors.
+            # - local/local_all: execute all tools locally (dev-only; unsafe).
+            tool_mode = str(_env("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower()
+            # Always build a concrete in-process executor so thin-client approvals can execute tools
+            # inside the runtime (no bridge-owned tool execution).
+            base_executor: Any = MappingToolExecutor(build_default_tool_map())
             if tool_mode in {"local", "local_all"}:
-                # Dev-only: execute the default tool map in-process without relying on the
-                # AbstractCore global registry (which is typically empty in gateway mode).
-                tool_executor: Any = MappingToolExecutor(build_default_tool_map())
+                tool_executor = base_executor
             elif tool_mode in {"approval", "local_approval", "local-approval"}:
-                # Local tool execution with explicit human approval for dangerous/unknown tools.
-                base_executor: Any = MappingToolExecutor(build_default_tool_map())
                 try:
                     from abstractruntime.integrations.abstractcore.tool_executor import ApprovalToolExecutor, ToolApprovalPolicy
 
                     tool_executor = ApprovalToolExecutor(delegate=base_executor, policy=ToolApprovalPolicy())
                 except Exception:
                     tool_executor = base_executor
+            elif tool_mode in {"delegated", "delegate", "job"}:
+                tool_executor = PassthroughToolExecutor(mode="delegated")
             else:
-                # Default safe mode: do not execute tools in-process; enter a durable wait instead.
-                tool_executor = PassthroughToolExecutor(mode="approval_required")
+                # Back-compat: "passthrough" means "approval required for all tools".
+                try:
+                    from abstractruntime.integrations.abstractcore.tool_executor import ApprovalToolExecutor, ToolApprovalPolicy
+
+                    tool_executor = ApprovalToolExecutor(delegate=base_executor, policy=ToolApprovalPolicy(auto_approve_tools=set()))
+                except Exception:
+                    tool_executor = PassthroughToolExecutor(mode="approval_required")
 
             if needs_llm:
                 try:
@@ -718,6 +729,12 @@ class WorkflowBundleGatewayHost:
                         **extra_effect_handlers,
                     },
                 )
+                try:  # pragma: no cover
+                    setter = getattr(runtime, "set_tool_executor_for_resume", None)
+                    if callable(setter):
+                        setter(tool_executor)
+                except Exception:
+                    pass
         else:
             runtime = Runtime(
                 run_store=run_store,
