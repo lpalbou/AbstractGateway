@@ -115,6 +115,14 @@ The gateway exposes helpers used by thin clients and workflows:
 - File access: `GET /api/gateway/files/search|read|skim`
 - Attachments: `POST /api/gateway/attachments/ingest` and `POST /api/gateway/attachments/upload`
 
+Workspace scope is **operator-controlled at gateway launch**:
+
+- Default (safe): thin clients cannot expand filesystem scope. If a run is started without `workspace_root`, the gateway creates a per-run workspace under `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/<uuid>`, and filesystem-ish tool calls are scoped to that workspace (`workspace_access_mode=workspace_only`).
+- Allowlist additional roots for file helpers via `ABSTRACTGATEWAY_WORKSPACE_DIR` + `ABSTRACTGATEWAY_WORKSPACE_MOUNTS`.
+- Permissive mode (trusted machines only): enable client-provided `workspace_*` overrides (including `all_except_ignored`) via `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1` (or `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1`).
+
+Note: `/api/gateway/files/*` + `/api/gateway/attachments/ingest` ignore client-provided scope overrides unless client overrides are enabled.
+
 Server-side workspace mounts (operator-controlled):
 
 ```bash
@@ -122,7 +130,7 @@ Server-side workspace mounts (operator-controlled):
 export ABSTRACTGATEWAY_WORKSPACE_MOUNTS=$'repo=/abs/path/to/repo\\ndata=/abs/path/to/data'
 ```
 
-Evidence: `_workspace_mounts()` and related policy helpers in `src/abstractgateway/routes/gateway.py`.
+Evidence: `_workspace_mounts()` and related policy helpers in `src/abstractgateway/routes/gateway.py`, tests in `tests/test_gateway_workspace_policy_enforcement.py`.
 
 ## Bridges (Telegram, email)
 

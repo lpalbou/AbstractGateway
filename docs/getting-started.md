@@ -63,7 +63,7 @@ export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
-OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs`
+OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs` (use **Authorize** for bearer token)
 
 Smoke checks:
 

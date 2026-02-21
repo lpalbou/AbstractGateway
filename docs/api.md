@@ -6,7 +6,7 @@ The HTTP API is implemented with FastAPI under the `/api` prefix:
 
 The API is documented at runtime:
 - OpenAPI JSON: `GET /openapi.json`
-- Swagger UI: `GET /docs`
+- Swagger UI: `GET /docs` (use **Authorize** to paste the bearer token)
 
 Context:
 - In the AbstractFramework ecosystem, UIs and automations call this API to operate **AbstractRuntime** runs.

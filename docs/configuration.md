@@ -30,6 +30,22 @@ Optional (required by some workflows/features):
 - `ABSTRACTGATEWAY_WORKFLOW_SOURCE`: `bundle` (default) or `visualflow`  
   Evidence: `src/abstractgateway/service.py` (`create_default_gateway_service`)
 
+### Workspace policy (filesystem scope)
+
+The gateway enforces a server-side workspace policy so thin clients cannot expand filesystem access by sending arbitrary paths.
+
+Operator-controlled roots:
+- `ABSTRACTGATEWAY_WORKSPACE_DIR`: base directory used for `/api/gateway/files/*` helpers and to clamp run-provided `workspace_root` / `workspace_allowed_paths`.
+- `ABSTRACTGATEWAY_WORKSPACE_MOUNTS`: additional allowed roots, newline-separated `name=/abs/path`.
+
+Client scope overrides (permissive; trusted machines only):
+- `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1` (or `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1`) enables honoring client-provided `workspace_*` knobs, including `workspace_access_mode=all_except_ignored`.
+
+Discoverability:
+- `GET /api/gateway/workspace/policy` returns `{policy: {...}}` including whether client overrides are enabled (mount names only; no absolute paths).
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspace_mounts`, `_sanitize_run_workspace_policy`, `_client_workspace_scope_overrides_enabled`, `start_run`).
+
 ### Durability backend
 
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` (default) or `sqlite`  

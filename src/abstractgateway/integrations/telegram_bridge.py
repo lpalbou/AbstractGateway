@@ -180,6 +180,37 @@ def _approval_token(text: str) -> str:
         return "reject"
     return ""
 
+_TELEGRAM_TEXT_MAX_CHARS = 3800  # keep margin under Telegram hard cap (~4096)
+
+
+def _split_telegram_text(text: str, *, max_chars: int = _TELEGRAM_TEXT_MAX_CHARS) -> list[str]:
+    """Split long Telegram messages into safe chunks (best-effort)."""
+    s = str(text or "").strip()
+    if not s:
+        return []
+    if max_chars <= 0 or len(s) <= max_chars:
+        return [s]
+
+    out: list[str] = []
+    remaining = s
+    for _ in range(50):  # safety cap
+        if len(remaining) <= max_chars:
+            out.append(remaining)
+            return out
+        chunk = remaining[:max_chars]
+        # Prefer paragraph/newline/space boundaries.
+        split_at = max(chunk.rfind("\n\n"), chunk.rfind("\n"), chunk.rfind(" "))
+        if split_at >= 200:
+            out.append(chunk[:split_at].rstrip())
+            remaining = remaining[split_at:].lstrip()
+        else:
+            out.append(chunk.rstrip())
+            remaining = remaining[max_chars:].lstrip()
+
+    if remaining:
+        out.append(remaining[:max_chars].rstrip() + "…")
+    return [c for c in out if c.strip()]
+
 
 @dataclass(frozen=True)
 class TelegramBridgeConfig:
@@ -1076,7 +1107,7 @@ class TelegramBridge:
         )
         # Telegram message hard cap ~4096 bytes; keep margin.
         text = "\n".join(lines).strip()
-        return text[:3800] + "…" if len(text) > 3800 else text
+        return text[:_TELEGRAM_TEXT_MAX_CHARS] + "…" if len(text) > _TELEGRAM_TEXT_MAX_CHARS else text
 
     def _handle_tools_command(self, *, chat_id: int, from_user_id: Optional[int], text: str) -> bool:
         """Handle `/tools` command (deprecated in thin-client mode).
@@ -1106,24 +1137,32 @@ class TelegramBridge:
         msg = str(text or "").strip()
         if not msg:
             return
+        chunks = _split_telegram_text(msg, max_chars=_TELEGRAM_TEXT_MAX_CHARS)
+        if not chunks:
+            return
         if self._cfg.transport == "bot_api":
-            self._bot_send_text(chat_id=chat_id, text=msg)
+            for c in chunks:
+                self._bot_send_text(chat_id=chat_id, text=c)
             return
         try:
             client = get_global_tdlib_client(start=True)
-            client.send(
-                {
-                    "@type": "sendMessage",
-                    "chat_id": int(chat_id),
-                    "input_message_content": {
-                        "@type": "inputMessageText",
-                        "text": {"@type": "formattedText", "text": msg},
-                        "disable_web_page_preview": True,
-                    },
-                }
-            )
         except Exception:
-            pass
+            return
+        for c in chunks:
+            try:
+                client.send(
+                    {
+                        "@type": "sendMessage",
+                        "chat_id": int(chat_id),
+                        "input_message_content": {
+                            "@type": "inputMessageText",
+                            "text": {"@type": "formattedText", "text": c},
+                            "disable_web_page_preview": True,
+                        },
+                    }
+                )
+            except Exception:
+                continue
 
     def _find_pending_tool_approval(self, *, session_id: str) -> Optional[Dict[str, Any]]:
         """Return {run_id, wait_key, tool_calls} for the newest pending tool approval in a session."""
@@ -1435,6 +1474,13 @@ class TelegramBridge:
                 v = output.get(key)
                 if isinstance(v, str) and v.strip():
                     return v.strip()
+            v_err = output.get("error")
+            if isinstance(v_err, str) and v_err.strip():
+                return f"Error: {v_err.strip()}"
+            if output.get("success") is False:
+                v_res = output.get("result")
+                if isinstance(v_res, str) and v_res.strip():
+                    return f"Error: {v_res.strip()}"
 
         err = getattr(run, "error", None)
         if err is None and isinstance(run, dict):
