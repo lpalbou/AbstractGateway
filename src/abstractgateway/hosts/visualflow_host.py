@@ -198,6 +198,7 @@ class VisualFlowGatewayHost:
             ledger_store=self._ledger_store,
             artifact_store=self._artifact_store,
             tool_executor=tool_executor,
+            input_data=data,
         )
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
         run_id = str(vis_runner.start(data, actor_id=actor_id, session_id=sid))
@@ -287,6 +288,15 @@ class VisualFlowGatewayHost:
             else:
                 tool_executor = PassthroughToolExecutor(mode="approval_required")
 
+        input_defaults: Dict[str, Any] = {}
+        if isinstance(vars0, dict):
+            prov = vars0.get("provider")
+            if isinstance(prov, str) and prov.strip():
+                input_defaults["provider"] = prov.strip()
+            mod = vars0.get("model")
+            if isinstance(mod, str) and mod.strip():
+                input_defaults["model"] = mod.strip()
+
         runner = create_visual_runner(
             visual_flow,
             flows=self._flows,
@@ -294,6 +304,7 @@ class VisualFlowGatewayHost:
             ledger_store=self._ledger_store,
             artifact_store=self._artifact_store,
             tool_executor=tool_executor,
+            input_data=input_defaults or None,
         )
         runtime = runner.runtime
 

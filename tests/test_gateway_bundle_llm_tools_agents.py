@@ -796,3 +796,23 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
         assert payload.get("flow_id") == flow_id
         assert payload.get("workflow_id") == f"{bundle_id}@0.0.0:{flow_id}"
         assert payload.get("input_data") == {"prompt": "hi", "max_iterations": 7}
+        ws = payload.get("workspace")
+        assert isinstance(ws, dict)
+        assert isinstance(ws.get("workspace_root"), str) and ws["workspace_root"].strip()
+
+        # Regression: follow-ups can reuse the same gateway-owned workspace_root safely.
+        rstart2 = client.post(
+            "/api/gateway/runs/start",
+            json={
+                "bundle_id": bundle_id,
+                "flow_id": flow_id,
+                "input_data": {"prompt": "follow-up", "max_iterations": 7, "workspace_root": ws["workspace_root"]},
+            },
+            headers=headers,
+        )
+        assert rstart2.status_code == 200, rstart2.text
+        run_id2 = rstart2.json()["run_id"]
+
+        run1 = json.loads((runtime_dir / f"run_{run_id}.json").read_text(encoding="utf-8"))
+        run2 = json.loads((runtime_dir / f"run_{run_id2}.json").read_text(encoding="utf-8"))
+        assert (run1.get("vars") or {}).get("workspace_root") == (run2.get("vars") or {}).get("workspace_root")

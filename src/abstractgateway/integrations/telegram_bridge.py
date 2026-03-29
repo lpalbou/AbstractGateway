@@ -254,8 +254,11 @@ class TelegramBridgeConfig:
     #
     # DM policy: "disabled" | "open" | "allowlist" | "pairing"
     # Group policy: "disabled" | "open" | "allowlist"
-    dm_policy: str = "pairing"
-    group_policy: str = "allowlist"
+    # Defaults are fail-closed and minimize required configuration:
+    # - DMs: only explicit allowlist users are processed
+    # - Groups: disabled by default
+    dm_policy: str = "allowlist"
+    group_policy: str = "disabled"
     require_mention_in_groups: bool = True
     pairing_ttl_s: float = 3600.0
     allowed_users: frozenset[int] = frozenset()
@@ -267,7 +270,13 @@ class TelegramBridgeConfig:
     def from_env(*, base_dir: Path) -> "TelegramBridgeConfig":
         enabled = _as_bool(os.getenv("ABSTRACT_TELEGRAM_BRIDGE"), False)
         transport_raw = str(os.getenv("ABSTRACT_TELEGRAM_TRANSPORT", "") or "").strip().lower()
-        transport = "tdlib" if transport_raw in {"", "tdlib"} else "bot_api" if transport_raw in {"bot", "bot_api", "botapi"} else "tdlib"
+        if transport_raw in {"bot", "bot_api", "botapi"}:
+            transport = "bot_api"
+        elif transport_raw in {"tdlib"}:
+            transport = "tdlib"
+        else:
+            # Default to Bot API when a bot token is present (simple), otherwise TDLib.
+            transport = "bot_api" if str(os.getenv("ABSTRACT_TELEGRAM_BOT_TOKEN") or "").strip() else "tdlib"
         session_prefix = str(os.getenv("ABSTRACT_TELEGRAM_SESSION_PREFIX", "") or "").strip() or "telegram:"
 
         flow_id = str(os.getenv("ABSTRACT_TELEGRAM_FLOW_ID", "") or os.getenv("ABSTRACT_TELEGRAM_DEFAULT_FLOW_ID", "") or "").strip()
@@ -281,36 +290,6 @@ class TelegramBridgeConfig:
         # Common convenience: user sets only flow_id to the basic-agent entrypoint id.
         if flow_id == "81795ea9" and not bundle_id:
             bundle_id = "basic-agent"
-        # Back-compat footgun: the shipped `telegram-agent@0.0.1:tg-agent-main` workflow is event-driven
-        # and does not produce a per-message assistant response. Telegram is thin-client only now, so
-        # automatically fall back to the shipped `basic-agent` entrypoint when this legacy flow is selected.
-        try:
-            flow_l = flow_id.lower()
-            bundle_l = str(bundle_id or "").strip().lower()
-        except Exception:
-            flow_l = ""
-            bundle_l = ""
-        legacy_flow_selected = False
-        try:
-            legacy_flow_selected = (
-                (bundle_l == "telegram-agent")
-                or flow_l.startswith("telegram-agent")
-                or ("telegram-agent" in flow_l)
-                or ("tg-agent-main" in flow_l)
-            )
-        except Exception:
-            legacy_flow_selected = False
-
-        if legacy_flow_selected:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "Telegram bridge: legacy event-driven flow '%s' is not compatible with thin-client mode; "
-                "falling back to basic-agent (bundle_id=basic-agent flow_id=81795ea9).",
-                flow_id or (bundle_id or "telegram-agent"),
-            )
-            bundle_id = "basic-agent"
-            flow_id = "81795ea9"
 
         state_path = Path(os.getenv("ABSTRACT_TELEGRAM_STATE_PATH", "") or "").expanduser().resolve() if os.getenv("ABSTRACT_TELEGRAM_STATE_PATH") else (Path(base_dir) / "telegram_bridge_state.json")
 
@@ -358,7 +337,7 @@ class TelegramBridgeConfig:
         elif dm_policy_raw in {"allowlist"}:
             dm_policy = "allowlist"
         else:
-            dm_policy = "pairing"
+            dm_policy = "allowlist"
 
         group_policy_raw = str(os.getenv("ABSTRACT_TELEGRAM_GROUP_POLICY", "") or "").strip().lower()
         if group_policy_raw in {"allow_list", "allow-list", "whitelist"}:
@@ -370,7 +349,7 @@ class TelegramBridgeConfig:
         elif group_policy_raw in {"allowlist"}:
             group_policy = "allowlist"
         else:
-            group_policy = "allowlist"
+            group_policy = "disabled"
 
         require_mention_in_groups = _as_bool(os.getenv("ABSTRACT_TELEGRAM_REQUIRE_MENTION_IN_GROUPS"), True)
         try:
@@ -481,8 +460,8 @@ class TelegramBridge:
             import logging
 
             logger = logging.getLogger(__name__)
-            dm_pol = str(self._cfg.dm_policy or "").strip().lower() or "pairing"
-            grp_pol = str(self._cfg.group_policy or "").strip().lower() or "allowlist"
+            dm_pol = str(self._cfg.dm_policy or "").strip().lower() or "allowlist"
+            grp_pol = str(self._cfg.group_policy or "").strip().lower() or "disabled"
 
             if dm_pol == "open":
                 logger.warning("Telegram bridge: dm_policy=open allows any Telegram user to trigger runs (dangerous).")
@@ -497,12 +476,14 @@ class TelegramBridge:
             if dm_pol == "allowlist" and not (self._effective_allowed_users() or self._effective_allowed_chats()):
                 logger.warning(
                     "Telegram bridge: dm_policy=allowlist but no allowed users/chats are configured; "
-                    "all DMs will be ignored except /whoami. Set ABSTRACT_TELEGRAM_ALLOWED_USERS or use dm_policy=pairing."
+                    "all DMs will be ignored except /whoami. "
+                    "Set ABSTRACT_TELEGRAM_ALLOWED_USERS (recommended; use /whoami to discover IDs) or use dm_policy=pairing."
                 )
             if grp_pol == "allowlist" and not self._effective_allowed_chats():
                 logger.warning(
                     "Telegram bridge: group_policy=allowlist but ABSTRACT_TELEGRAM_ALLOWED_CHATS is empty; "
-                    "all group messages will be ignored (expected for secure defaults)."
+                    "all group messages will be ignored (expected for secure defaults). "
+                    "Set ABSTRACT_TELEGRAM_ALLOWED_CHATS to enable groups, or set ABSTRACT_TELEGRAM_GROUP_POLICY=disabled to silence."
                 )
         except Exception:
             pass
@@ -948,7 +929,7 @@ class TelegramBridge:
         allowed_chats = self._effective_allowed_chats()
 
         if kind == "dm":
-            pol = str(self._cfg.dm_policy or "pairing").strip().lower()
+            pol = str(self._cfg.dm_policy or "allowlist").strip().lower()
             if pol == "disabled":
                 self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="dm_disabled")
                 return False
@@ -969,7 +950,7 @@ class TelegramBridge:
             return False
 
         # Groups/channels
-        pol = str(self._cfg.group_policy or "allowlist").strip().lower()
+        pol = str(self._cfg.group_policy or "disabled").strip().lower()
         if pol == "disabled":
             self._log_unauthorized(chat_id=chat_id, from_user_id=uid, reason="group_disabled")
             return False
@@ -1000,6 +981,8 @@ class TelegramBridge:
             f"chat_kind: {str(chat_kind or '') or 'unknown'}",
             f"user_id: {uid if uid is not None else 'unknown'}",
         ]
+        if uid is not None:
+            lines.append(f'allow_dm: export ABSTRACT_TELEGRAM_ALLOWED_USERS="{uid}"')
         self._send_text(chat_id=int(chat_id), text="\n".join(lines))
 
     def _handle_pair_command(self, *, chat_id: int, from_user_id: Optional[int], text: str, chat_kind: str) -> None:
@@ -1942,7 +1925,7 @@ class TelegramBridge:
     def _collect_tracked_bot_message_ids(self, *, chat_id: int) -> list[int]:
         """Best-effort: collect sent Telegram message_ids tracked in run vars for this chat.
 
-        Shipped `telegram-agent` workflows store sent message ids in:
+        Some workflows store sent message ids in:
           `run.vars._runtime.telegram.sent_message_ids`
         """
         base_prefix = f"{self._cfg.session_prefix}{chat_id}"

@@ -76,9 +76,10 @@ Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.
   Used as defaults for LLM execution in bundle mode. If missing, the gateway may try to infer defaults from flow JSON; otherwise it errors.  
   Evidence: `src/abstractgateway/hosts/bundle_host.py` (`needs_llm`, `_scan_flows_for_llm_defaults`)
 - `ABSTRACTGATEWAY_TOOL_MODE`:
-  - `passthrough` (default): tool calls become a durable “approval required” wait
-  - `local` (or `local_all`): execute tools inside the gateway process (dev only; higher risk)
-  - `approval` (or `local_approval`): execute safe tools immediately; require explicit approval for dangerous/unknown tools
+  - `approval` (default): execute safe tools locally; require explicit approval for dangerous/unknown tools
+  - `passthrough`: require explicit approval for *all* tools (then execute in-process on resume)
+  - `delegated`: do not execute tools; tool calls yield a durable `JOB` wait for external executors
+  - `local` (or `local_all`): execute all tools inside the gateway process (dev only; higher risk)
   Evidence: `src/abstractgateway/hosts/bundle_host.py` (tool executor selection)
 
 ### Embeddings (optional)

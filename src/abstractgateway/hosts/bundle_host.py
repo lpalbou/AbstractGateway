@@ -206,6 +206,15 @@ def _node_type_from_raw(n: Any) -> str:
 
 def _scan_flows_for_llm_defaults(flows_by_id: Dict[str, Dict[str, Any]]) -> Optional[Tuple[str, str]]:
     """Return a best-effort (provider, model) pair from VisualFlow node configs."""
+    def _pair_from_mapping(raw: Any) -> Optional[Tuple[str, str]]:
+        if not isinstance(raw, dict):
+            return None
+        provider = raw.get("provider")
+        model = raw.get("model")
+        if isinstance(provider, str) and provider.strip() and isinstance(model, str) and model.strip():
+            return (provider.strip().lower(), model.strip())
+        return None
+
     for raw in (flows_by_id or {}).values():
         nodes = raw.get("nodes")
         if not isinstance(nodes, list):
@@ -218,19 +227,19 @@ def _scan_flows_for_llm_defaults(flows_by_id: Dict[str, Dict[str, Any]]) -> Opti
 
             if t == "llm_call":
                 cfg = data.get("effectConfig")
-                cfg = cfg if isinstance(cfg, dict) else {}
-                provider = cfg.get("provider")
-                model = cfg.get("model")
-                if isinstance(provider, str) and provider.strip() and isinstance(model, str) and model.strip():
-                    return (provider.strip().lower(), model.strip())
+                pair = _pair_from_mapping(cfg)
+                if pair is not None:
+                    return pair
 
             if t == "agent":
                 cfg = data.get("agentConfig")
-                cfg = cfg if isinstance(cfg, dict) else {}
-                provider = cfg.get("provider")
-                model = cfg.get("model")
-                if isinstance(provider, str) and provider.strip() and isinstance(model, str) and model.strip():
-                    return (provider.strip().lower(), model.strip())
+                pair = _pair_from_mapping(cfg)
+                if pair is not None:
+                    return pair
+
+            pair = _pair_from_mapping(data.get("pinDefaults"))
+            if pair is not None:
+                return pair
 
     return None
 

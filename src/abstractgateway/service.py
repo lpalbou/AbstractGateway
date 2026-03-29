@@ -264,6 +264,7 @@ def run_summary(run: Any) -> Dict[str, Any]:
         "session_id": getattr(run, "session_id", None),
         "parent_run_id": getattr(run, "parent_run_id", None),
         "error": getattr(run, "error", None),
+        "flow_warnings": None,
         # Best-effort pause metadata. We intentionally do not return full run.vars over HTTP.
         "paused": False,
         "pause_reason": None,
@@ -285,6 +286,22 @@ def run_summary(run: Any) -> Dict[str, Any]:
             out["pause_reason"] = control.get("pause_reason")
             out["paused_at"] = control.get("paused_at")
             out["resumed_at"] = control.get("resumed_at")
+    except Exception:
+        pass
+
+    try:
+        vars_obj = getattr(run, "vars", None)
+        raw_warnings = vars_obj.get("_flow_warnings") if isinstance(vars_obj, dict) else None
+        if isinstance(raw_warnings, list):
+            cleaned: list[str] = []
+            for w in raw_warnings:
+                if not isinstance(w, str):
+                    continue
+                s = w.strip()
+                if s:
+                    cleaned.append(s)
+            if cleaned:
+                out["flow_warnings"] = cleaned
     except Exception:
         pass
 

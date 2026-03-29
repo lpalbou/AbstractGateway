@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -109,6 +110,160 @@ class StartRunRequest(BaseModel):
 
 class StartRunResponse(BaseModel):
     run_id: str
+
+
+# ---------------------------------------------------------------------
+# VisualFlow storage + publishing (gateway-first)
+# ---------------------------------------------------------------------
+
+class VisualFlowCreateRequest(BaseModel):
+    """Create a VisualFlow JSON record (authoring-side)."""
+
+    name: str
+    description: str = ""
+    interfaces: List[str] = Field(default_factory=list)
+    nodes: List[Dict[str, Any]] = Field(default_factory=list)
+    edges: List[Dict[str, Any]] = Field(default_factory=list)
+    entryNode: Optional[str] = None
+
+
+class VisualFlowUpdateRequest(BaseModel):
+    """Update a VisualFlow JSON record (authoring-side)."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    interfaces: Optional[List[str]] = None
+    nodes: Optional[List[Dict[str, Any]]] = None
+    edges: Optional[List[Dict[str, Any]]] = None
+    entryNode: Optional[str] = None
+
+
+class PublishVisualFlowRequest(BaseModel):
+    bundle_id: Optional[str] = Field(default=None, description="Stable bundle identity (defaults to sanitized flow.name).")
+    bundle_version: Optional[str] = Field(default=None, description="Explicit bundle_version (leave empty to auto-bump).")
+    overwrite: bool = Field(default=False, description="If true, overwrite an existing bundle_id@version.")
+    reload_gateway: bool = Field(default=True, description="If true, reload gateway bundles after publish (best-effort).")
+
+
+class PublishVisualFlowResponse(BaseModel):
+    ok: bool
+    bundle_id: str
+    bundle_version: str
+    bundle_ref: str
+    bundle_path: str
+    gateway_reloaded: bool = False
+    gateway_reload_error: Optional[str] = None
+
+
+_VISUALFLOW_ID_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
+
+
+def _safe_visualflow_id(raw: str) -> str:
+    fid = str(raw or "").strip()
+    if not fid:
+        raise HTTPException(status_code=400, detail="flow_id is required")
+    if not _VISUALFLOW_ID_RE.match(fid) or fid in {".", ".."} or "/" in fid or "\\" in fid:
+        raise HTTPException(status_code=400, detail="flow_id contains unsafe characters")
+    return fid
+
+
+def _visualflows_dir(*, svc: Any) -> Path:
+    raw = os.getenv("ABSTRACTGATEWAY_VISUALFLOWS_DIR")
+    base = Path(raw).expanduser().resolve() if isinstance(raw, str) and raw.strip() else Path(svc.config.data_dir) / "visualflows"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create visualflows dir: {e}")
+    return base
+
+
+def _visualflow_path(*, svc: Any, flow_id: str) -> Path:
+    fid = _safe_visualflow_id(flow_id)
+    return _visualflows_dir(svc=svc) / f"{fid}.json"
+
+
+def _read_visualflow_json(path: Path) -> Dict[str, Any]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load flow file '{path}': {e}")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail=f"Flow file '{path}' is not a JSON object")
+    return data
+
+
+def _write_visualflow_json(path: Path, data: Dict[str, Any]) -> None:
+    try:
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
+        path.write_text(payload, encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write flow file '{path}': {e}")
+
+
+def _coerce_visualflow(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Best-effort VisualFlow validation + interface scaffolding."""
+    try:
+        from abstractflow.visual.interfaces import apply_visual_flow_interface_scaffold
+        from abstractflow.visual.models import VisualFlow
+    except Exception as e:
+        logger.warning("#FALLBACK: VisualFlow validation disabled (abstractflow not installed): %s", e)
+        return dict(raw)
+
+    try:
+        flow = VisualFlow(**raw)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: {e}")
+
+    try:
+        for iid in list(getattr(flow, "interfaces", []) or []):
+            apply_visual_flow_interface_scaffold(flow, str(iid), include_recommended=True)
+    except Exception as e:
+        logger.warning("#FALLBACK: VisualFlow interface scaffolding failed: %s", e)
+
+    return flow.model_dump()
+
+
+def _try_parse_semver(v: str) -> Optional[Tuple[int, int, int]]:
+    s = str(v or "").strip()
+    if not s:
+        return None
+    parts = [p.strip() for p in s.split(".")]
+    if not parts or any(not p for p in parts):
+        return None
+    nums: list[int] = []
+    for p in parts:
+        if not p.isdigit():
+            return None
+        nums.append(int(p))
+    while len(nums) < 3:
+        nums.append(0)
+    return (nums[0], nums[1], nums[2])
+
+
+def _bump_patch(v: str) -> str:
+    sem = _try_parse_semver(v)
+    if sem is not None:
+        return f"{sem[0]}.{sem[1]}.{sem[2] + 1}"
+    s = str(v or "").strip()
+    return f"{s}.1" if s else "0.0.1"
+
+
+def _latest_version(versions: list[Dict[str, str]]) -> Optional[str]:
+    if not versions:
+        return None
+    vers = [str(v.get("bundle_version") or "").strip() for v in versions if str(v.get("bundle_version") or "").strip()]
+    if not vers:
+        return None
+    if all(_try_parse_semver(v) is not None for v in vers):
+        return max(vers, key=lambda x: _try_parse_semver(x) or (0, 0, 0))
+    return max(versions, key=lambda x: (str(x.get("created_at") or ""), str(x.get("bundle_version") or ""))).get("bundle_version")
+
+
+def _origin_version(versions: list[Dict[str, str]]) -> Optional[str]:
+    if not versions:
+        return None
+    return min(versions, key=lambda x: (str(x.get("created_at") or ""), str(x.get("bundle_version") or ""))).get("bundle_version")
 
 
 class ScheduleRunRequest(BaseModel):
@@ -1211,6 +1366,15 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
     base = _workspace_root()
     mounts = _workspace_mounts()
     allowed_roots = [base] + list(mounts.values())
+    # Always allow gateway-owned per-run workspaces (even when the data_dir is outside the
+    # operator workspace root). This enables safe follow-ups to reuse the same workspace.
+    try:
+        data_dir_raw = str(os.getenv("ABSTRACTGATEWAY_DATA_DIR") or os.getenv("ABSTRACTFLOW_RUNTIME_DIR") or "").strip()
+        if data_dir_raw:
+            data_dir = Path(data_dir_raw).expanduser().resolve()
+            allowed_roots.append(data_dir / "workspaces")
+    except Exception:
+        pass
     root_for_rel = base
 
     # workspace_root: allow only under operator roots (workspace root + mounts).
@@ -2212,6 +2376,216 @@ def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], m
     return text
 
 
+@router.get("/visualflows")
+async def list_visualflows() -> List[Dict[str, Any]]:
+    """List VisualFlow JSON records stored in the gateway."""
+    svc = get_gateway_service()
+    base = _visualflows_dir(svc=svc)
+    items: list[Dict[str, Any]] = []
+    for p in sorted(base.glob("*.json")):
+        if not p.is_file():
+            continue
+        try:
+            data = _read_visualflow_json(p)
+        except HTTPException as e:
+            logger.warning("Skipping invalid visualflow file %s: %s", p, e.detail)
+            continue
+        if not isinstance(data.get("id"), str) or not str(data.get("id") or "").strip():
+            data["id"] = p.stem
+        items.append(data)
+    return items
+
+
+@router.post("/visualflows")
+async def create_visualflow(req: VisualFlowCreateRequest) -> Dict[str, Any]:
+    """Create a new VisualFlow JSON record."""
+    svc = get_gateway_service()
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    flow_id = str(uuid.uuid4())[:8]
+    raw: Dict[str, Any] = {
+        "id": flow_id,
+        "name": req.name,
+        "description": req.description,
+        "interfaces": list(req.interfaces or []),
+        "nodes": list(req.nodes or []),
+        "edges": list(req.edges or []),
+        "entryNode": req.entryNode,
+        "created_at": now,
+        "updated_at": now,
+    }
+    data = _coerce_visualflow(raw)
+    data["id"] = flow_id
+    data.setdefault("created_at", now)
+    data["updated_at"] = now
+    path = _visualflow_path(svc=svc, flow_id=flow_id)
+    _write_visualflow_json(path, data)
+    return data
+
+
+@router.get("/visualflows/{flow_id}")
+async def get_visualflow(flow_id: str) -> Dict[str, Any]:
+    """Fetch a VisualFlow JSON record by id."""
+    svc = get_gateway_service()
+    path = _visualflow_path(svc=svc, flow_id=flow_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
+    data = _read_visualflow_json(path)
+    data["id"] = str(flow_id)
+    return data
+
+
+@router.put("/visualflows/{flow_id}")
+async def update_visualflow(flow_id: str, req: VisualFlowUpdateRequest) -> Dict[str, Any]:
+    """Update an existing VisualFlow JSON record."""
+    svc = get_gateway_service()
+    path = _visualflow_path(svc=svc, flow_id=flow_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
+    raw = _read_visualflow_json(path)
+    if req.name is not None:
+        raw["name"] = req.name
+    if req.description is not None:
+        raw["description"] = req.description
+    if req.interfaces is not None:
+        raw["interfaces"] = list(req.interfaces or [])
+    if req.nodes is not None:
+        raw["nodes"] = list(req.nodes or [])
+    if req.edges is not None:
+        raw["edges"] = list(req.edges or [])
+    if req.entryNode is not None:
+        raw["entryNode"] = req.entryNode
+    raw["id"] = str(flow_id)
+    raw["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    data = _coerce_visualflow(raw)
+    data["id"] = str(flow_id)
+    data.setdefault("created_at", raw.get("created_at"))
+    data["updated_at"] = raw["updated_at"]
+    _write_visualflow_json(path, data)
+    return data
+
+
+@router.delete("/visualflows/{flow_id}")
+async def delete_visualflow(flow_id: str) -> Dict[str, Any]:
+    """Delete a VisualFlow JSON record."""
+    svc = get_gateway_service()
+    path = _visualflow_path(svc=svc, flow_id=flow_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
+    try:
+        path.unlink()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete flow file: {e}")
+    return {"status": "deleted", "id": str(flow_id)}
+
+
+@router.post("/visualflows/{flow_id}/publish", response_model=PublishVisualFlowResponse)
+async def publish_visualflow(flow_id: str, req: PublishVisualFlowRequest) -> PublishVisualFlowResponse:
+    """Compile a VisualFlow into a WorkflowBundle and install it into the gateway."""
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+    path = _visualflow_path(svc=svc, flow_id=flow_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
+    flow = _read_visualflow_json(path)
+
+    try:
+        from abstractruntime.workflow_bundle import WorkflowBundleRegistry, WorkflowBundleRegistryError
+        from abstractruntime.workflow_bundle.packer import pack_workflow_bundle
+        from abstractruntime.workflow_bundle.registry import sanitize_bundle_id
+    except Exception as e:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"WorkflowBundle tooling unavailable: {e}")
+
+    bundle_id = sanitize_bundle_id(str(req.bundle_id or "").strip()) or sanitize_bundle_id(str(flow.get("name") or "").strip()) or str(flow_id)
+    if not bundle_id:
+        raise HTTPException(status_code=400, detail="bundle_id is required")
+
+    reg = WorkflowBundleRegistry(getattr(host, "bundles_dir", None))
+    existing: list[Dict[str, str]] = []
+    try:
+        for b in reg.scan():
+            if getattr(b, "bundle_id", None) == bundle_id:
+                created = str(getattr(getattr(b, "manifest", None), "created_at", "") or "")
+                existing.append({"bundle_version": str(getattr(b, "bundle_version", "") or ""), "created_at": created})
+    except Exception:
+        existing = []
+
+    requested_ver = str(req.bundle_version or "").strip() if isinstance(req.bundle_version, str) and str(req.bundle_version).strip() else ""
+    if requested_ver:
+        if not req.overwrite and any(str(v.get("bundle_version") or "").strip() == requested_ver for v in existing):
+            raise HTTPException(status_code=400, detail=f"bundle_version '{requested_ver}' already exists for bundle '{bundle_id}'")
+        new_ver = requested_ver
+    else:
+        prev = _latest_version(existing)
+        new_ver = "0.0.0" if not prev else _bump_patch(prev)
+        if not req.overwrite and any(str(v.get("bundle_version") or "").strip() == new_ver for v in existing):
+            raise HTTPException(status_code=400, detail=f"bundle_version '{new_ver}' already exists for bundle '{bundle_id}'")
+
+    published_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    origin = _origin_version(existing) or _latest_version(existing)
+    metadata: Dict[str, Any] = {
+        "publisher": {"host": "abstractgateway", "published_at": published_at},
+        "source": {"root_flow_id": str(flow.get("id") or flow_id), "root_flow_name": str(flow.get("name") or ""), "root_flow_updated_at": str(flow.get("updated_at") or "")},
+        "lineage": {
+            "bundle_id": bundle_id,
+            "bundle_version": new_ver,
+            "origin_bundle_version": str(origin or new_ver),
+            **({"previous_bundle_version": str(_latest_version(existing))} if _latest_version(existing) else {}),
+        },
+    }
+
+    tmp_dir = (Path(svc.config.data_dir) / "tmp").resolve()
+    try:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create tmp dir: {e}")
+
+    fd, tmp_path = tempfile.mkstemp(prefix="visualflow_", suffix=".flow", dir=str(tmp_dir))
+    os.close(fd)
+    tmp = Path(tmp_path)
+    try:
+        pack_workflow_bundle(
+            root_flow_json=path,
+            out_path=tmp,
+            bundle_id=bundle_id,
+            bundle_version=new_ver,
+            flows_dir=_visualflows_dir(svc=svc),
+            metadata=metadata,
+        )
+        installed = reg.install(tmp, overwrite=bool(req.overwrite))
+    except WorkflowBundleRegistryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to publish bundle: {e}")
+    finally:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+
+    gateway_reloaded = False
+    gateway_reload_error: Optional[str] = None
+    if bool(req.reload_gateway):
+        reload_fn = getattr(host, "reload_bundles_from_disk", None)
+        if callable(reload_fn):
+            try:
+                reload_fn()
+                gateway_reloaded = True
+            except Exception as e:
+                gateway_reload_error = str(e)
+        else:
+            gateway_reload_error = "reload_bundles_from_disk is not available"
+
+    return PublishVisualFlowResponse(
+        ok=True,
+        bundle_id=str(installed.bundle_id),
+        bundle_version=str(installed.bundle_version),
+        bundle_ref=f"{installed.bundle_id}@{installed.bundle_version}",
+        bundle_path=str(installed.path),
+        gateway_reloaded=bool(gateway_reloaded),
+        gateway_reload_error=gateway_reload_error,
+    )
+
+
 @router.get("/bundles")
 async def list_bundles(
     all_versions: bool = Query(default=False, description="If true, return one item per bundle version."),
@@ -3191,6 +3565,72 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     - This endpoint is protected by the same gateway auth layer as other read endpoints.
     - We avoid returning full `run.vars`; when possible (bundle mode), we filter to the entrypoint pin ids.
     """
+
+    def _public_run_workspace_defaults(vars_obj: Dict[str, Any]) -> Dict[str, Any]:
+        """Return minimal workspace knobs needed to continue a run (e.g. Follow Up).
+
+        We prefer relative paths when they are under the operator workspace root to avoid
+        leaking absolute server paths to thin clients.
+        """
+
+        def _maybe_rel(raw: str) -> str:
+            text = str(raw or "").strip()
+            if not text:
+                return ""
+            try:
+                p = Path(text).expanduser()
+            except Exception:
+                return text
+            if not p.is_absolute():
+                return text
+            try:
+                resolved = p.resolve()
+            except Exception:
+                resolved = p
+            try:
+                base = _workspace_root()
+                rel = resolved.relative_to(base)
+                rel_s = rel.as_posix()
+                return rel_s if rel_s else "."
+            except Exception:
+                return str(resolved)
+
+        out: Dict[str, Any] = {}
+        for key in ("workspace_root", "workspace_access_mode", "workspace_allowed_paths", "workspace_ignored_paths"):
+            v = vars_obj.get(key)
+            if v is None:
+                continue
+            if isinstance(v, str):
+                s = v.strip()
+                if not s:
+                    continue
+                if key == "workspace_root":
+                    out[key] = _maybe_rel(s)
+                    continue
+                if key == "workspace_access_mode":
+                    out[key] = s
+                    continue
+                # allowed/ignored: normalize per-line to keep follow-ups safe + stable
+                lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+                if not lines:
+                    continue
+                out[key] = "\n".join([_maybe_rel(ln) for ln in lines])
+                continue
+            if isinstance(v, list):
+                items: list[str] = []
+                for x in v:
+                    sx = str(x or "").strip()
+                    if not sx:
+                        continue
+                    items.append(_maybe_rel(sx) if key != "workspace_access_mode" else sx)
+                if items:
+                    out[key] = items
+                continue
+            # Best-effort passthrough for unexpected shapes.
+            out[key] = v
+
+        return out
+
     svc = get_gateway_service()
     rs = svc.host.run_store
     try:
@@ -3204,6 +3644,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     vars_obj = getattr(run, "vars", None)
     if not isinstance(vars_obj, dict):
         vars_obj = {}
+    workspace_defaults = _public_run_workspace_defaults(vars_obj)
 
     # Scheduled wrapper runs: expose the target bundle/flow + the target input payload.
     try:
@@ -3243,6 +3684,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                             "flow_id": flow_id2,
                             "pin_ids": pin_ids,
                             "input_data": filtered,
+                            "workspace": workspace_defaults,
                         }
                 except Exception:
                     pass
@@ -3255,6 +3697,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                     "flow_id": flow_id2,
                     "pin_ids": [],
                     "input_data": target_vars if isinstance(target_vars, dict) else {},
+                    "workspace": workspace_defaults,
                 }
     except Exception:
         pass
@@ -3286,6 +3729,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                     "flow_id": flow_id,
                     "pin_ids": pin_ids,
                     "input_data": filtered,
+                    "workspace": workspace_defaults,
                 }
         except Exception:
             # Fall back to generic filtering below.
@@ -3300,6 +3744,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
         "flow_id": flow_id,
         "pin_ids": pin_ids,
         "input_data": filtered2,
+        "workspace": workspace_defaults,
     }
 
 
@@ -4262,13 +4707,15 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
 
     voice = getattr(req, "voice", None)
     fmt = str(getattr(req, "format", "wav") or "wav").strip().lower()
+    voice_name = str(voice).strip() if isinstance(voice, str) and voice.strip() else None
 
     try:
         vm = _get_gateway_voice_manager()
-        audio_bytes0 = vm.speak_to_bytes(
+        audio_bytes0 = await asyncio.to_thread(
+            vm.speak_to_bytes,
             text,
             format=fmt,
-            voice=str(voice) if isinstance(voice, str) and voice.strip() else None,
+            voice=voice_name,
         )
         if not isinstance(audio_bytes0, (bytes, bytearray)):
             raise TypeError("Voice backend returned non-bytes audio")
@@ -4300,12 +4747,18 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         "format": fmt,
         "session_id": str(getattr(run, "session_id", "") or ""),
     }
-    voice_str = str(voice or "").strip() if isinstance(voice, str) else ""
+    voice_str = str(voice_name or "").strip()
     if voice_str:
         tags["voice"] = voice_str
 
     try:
-        meta = store_fn(audio_bytes, content_type=content_type, run_id=str(getattr(run, "run_id", rid)), tags=tags)
+        meta = await asyncio.to_thread(
+            store_fn,
+            audio_bytes,
+            content_type=content_type,
+            run_id=str(getattr(run, "run_id", rid)),
+            tags=tags,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store TTS audio artifact: {e}")
 
@@ -4336,7 +4789,7 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.voice.tts", "scope": "run", "run_id": str(getattr(run, "run_id", rid)), "payload": payload})
         rec = StepRecord.start(run=run, node_id="gateway", effect=eff, idempotency_key=f"gateway:voice_tts:{request_id}")
         rec.finish_success({"emitted": True, "name": "abstract.voice.tts", "payload": payload})
-        svc.host.ledger_store.append(rec)
+        await asyncio.to_thread(svc.host.ledger_store.append, rec)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to persist TTS event: {e}")
 
@@ -4430,6 +4883,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         raise HTTPException(status_code=400, detail=f"audio_artifact must be audio/* (got '{content_type_in}')")
 
     language = getattr(req, "language", None)
+    language_hint = str(language).strip() if isinstance(language, str) and language.strip() else None
 
     load_fn = getattr(store, "load", None)
     if not callable(load_fn):
@@ -4448,9 +4902,10 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
 
     try:
         vm = _get_gateway_voice_manager()
-        text = vm.transcribe_from_bytes(
+        text = await asyncio.to_thread(
+            vm.transcribe_from_bytes,
             audio_bytes,
-            language=str(language) if isinstance(language, str) and language.strip() else None,
+            language=language_hint,
         )
         text = str(text or "")
     except HTTPException:
@@ -4475,7 +4930,8 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         "source_audio_artifact": str(audio_ref.get("$artifact")),
     }
     try:
-        meta = store_fn(
+        meta = await asyncio.to_thread(
+            store_fn,
             transcript_bytes,
             content_type="text/plain; charset=utf-8",
             run_id=str(getattr(run, "run_id", rid)),
@@ -4511,7 +4967,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.audio.transcript", "scope": "run", "run_id": str(getattr(run, "run_id", rid)), "payload": payload})
         rec = StepRecord.start(run=run, node_id="gateway", effect=eff, idempotency_key=f"gateway:audio_transcribe:{request_id}")
         rec.finish_success({"emitted": True, "name": "abstract.audio.transcript", "payload": payload})
-        svc.host.ledger_store.append(rec)
+        await asyncio.to_thread(svc.host.ledger_store.append, rec)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to persist transcript event: {e}")
 
@@ -4745,7 +5201,28 @@ async def discovery_tools() -> Dict[str, Any]:
             name = s.get("name")
             if isinstance(name, str) and name.strip():
                 items.append(dict(s))
-    return {"items": items}
+    tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower() or "approval"
+    return {"items": items, "tool_mode": tool_mode}
+
+
+@router.get("/semantics")
+async def get_semantics_registry() -> Dict[str, Any]:
+    """Return the active semantics registry (predicates/types)."""
+    try:
+        from abstractsemantics import load_semantics_registry  # type: ignore
+    except Exception as e:
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "Semantics registry is unavailable. "
+                f"Install abstractsemantics or configure ABSTRACTSEMANTICS_REGISTRY_PATH. ({e})"
+            ),
+        )
+
+    try:
+        return load_semantics_registry()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load semantics registry: {e}")
 
 
 @router.get("/discovery/capabilities")
@@ -10122,6 +10599,72 @@ def _gateway_runtime_llm_client() -> tuple[Optional[Any], Optional[str]]:
     return llm_client, None
 
 
+def _gateway_prompt_cache_empty_caps() -> Dict[str, Any]:
+    return {"supported": False, "mode": "none"}
+
+
+def _gateway_prompt_cache_client_capabilities(*, llm_client: Any, provider: str, model: str) -> Dict[str, Any]:
+    getter = getattr(llm_client, "get_prompt_cache_capabilities", None)
+    if not callable(getter):
+        return {"supported": False, "capabilities": _gateway_prompt_cache_empty_caps()}
+    try:
+        info = getter(provider=provider, model=model)
+    except Exception as e:
+        return {"supported": False, "error": str(e), "capabilities": _gateway_prompt_cache_empty_caps()}
+    if isinstance(info, dict):
+        caps = info.get("capabilities")
+        if isinstance(caps, dict):
+            return {"supported": bool(info.get("supported")), "capabilities": dict(caps), **({"error": str(info.get("error"))} if info.get("error") else {})}
+    return {"supported": False, "capabilities": _gateway_prompt_cache_empty_caps()}
+
+
+def _gateway_prompt_cache_client_call(
+    *,
+    llm_client: Any,
+    method_name: str,
+    operation: str,
+    provider: str,
+    model: str,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    caps_info = _gateway_prompt_cache_client_capabilities(llm_client=llm_client, provider=provider, model=model)
+    caps = caps_info.get("capabilities") if isinstance(caps_info, dict) else _gateway_prompt_cache_empty_caps()
+    if not isinstance(caps, dict):
+        caps = _gateway_prompt_cache_empty_caps()
+
+    fn = getattr(llm_client, method_name, None)
+    if not callable(fn):
+        return {
+            "supported": False,
+            "operation": operation,
+            "code": "prompt_cache_unsupported",
+            "error": "Runtime LLM client does not expose this prompt cache operation",
+            "capabilities": caps,
+        }
+
+    kwargs = dict(payload or {})
+    kwargs["provider"] = provider
+    kwargs["model"] = model
+    try:
+        result = fn(**kwargs)
+    except Exception as e:
+        return {
+            "supported": False,
+            "operation": operation,
+            "code": "prompt_cache_error",
+            "error": str(e),
+            "capabilities": caps,
+        }
+
+    if isinstance(result, dict):
+        result.setdefault("operation", operation)
+        result.setdefault("capabilities", caps)
+        return result
+    if isinstance(result, bool):
+        return {"supported": True, "operation": operation, "ok": bool(result), "capabilities": caps}
+    return {"supported": True, "operation": operation, "result": result, "capabilities": caps}
+
+
 def _gateway_prompt_cache_dir(*, provider: str, model: str) -> Path:
     svc = get_gateway_service()
     base = Path(getattr(getattr(svc, "stores", None), "base_dir", Path("."))).expanduser().resolve()
@@ -10174,150 +10717,167 @@ async def prompt_cache_stats(
 ) -> Dict[str, Any]:
     llm_client, err = _gateway_runtime_llm_client()
     if err:
-        return {"supported": False, "error": err}
+        return {
+            "supported": False,
+            "operation": "stats",
+            "code": "prompt_cache_unavailable",
+            "error": err,
+            "capabilities": _gateway_prompt_cache_empty_caps(),
+        }
+    return _gateway_prompt_cache_client_call(
+        llm_client=llm_client,
+        method_name="get_prompt_cache_stats",
+        operation="stats",
+        provider=provider,
+        model=model,
+    )
 
-    try:
-        getter = getattr(llm_client, "get_provider_instance", None)
-        if not callable(getter):
-            return {"supported": False, "error": "Runtime LLM client does not expose provider instances"}
-        prov = getter(provider=provider, model=model)
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
 
-    if prov is None:
-        return {"supported": False, "error": "Provider instance not available"}
-
-    try:
-        supported = bool(getattr(prov, "supports_prompt_cache", lambda: False)())
-    except Exception:
-        supported = False
-    if not supported:
-        return {"supported": False, "error": "Provider does not support prompt cache control in this deployment"}
-
-    try:
-        stats = getattr(prov, "get_prompt_cache_stats")() if hasattr(prov, "get_prompt_cache_stats") else {}
-        return {"supported": True, "stats": stats}
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
+@router.get("/prompt_cache/capabilities")
+async def prompt_cache_capabilities(
+    provider: str = Query(..., description="AbstractCore provider name"),
+    model: str = Query(..., description="Model id/name"),
+) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        return {
+            "supported": False,
+            "operation": "capabilities",
+            "error": err,
+            "capabilities": _gateway_prompt_cache_empty_caps(),
+        }
+    info = _gateway_prompt_cache_client_capabilities(llm_client=llm_client, provider=provider, model=model)
+    caps = info.get("capabilities") if isinstance(info, dict) else _gateway_prompt_cache_empty_caps()
+    return {
+        "supported": bool(info.get("supported") if isinstance(info, dict) else False),
+        "operation": "capabilities",
+        "capabilities": caps if isinstance(caps, dict) else _gateway_prompt_cache_empty_caps(),
+        **({"error": str(info.get("error"))} if isinstance(info, dict) and info.get("error") else {}),
+    }
 
 
 @router.post("/prompt_cache/set")
 async def prompt_cache_set(req: _GatewayPromptCacheSetRequest) -> Dict[str, Any]:
     llm_client, err = _gateway_runtime_llm_client()
     if err:
-        return {"supported": False, "error": err}
-    try:
-        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
-
-    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
-        return {"supported": False, "error": "Provider does not support prompt cache control"}
-    if not hasattr(prov, "prompt_cache_set"):
-        return {"supported": False, "error": "Provider does not expose prompt cache API"}
-    try:
-        ok = prov.prompt_cache_set(req.key, make_default=bool(req.make_default), ttl_s=req.ttl_s)
-        return {"supported": True, "ok": bool(ok)}
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
+        return {
+            "supported": False,
+            "operation": "set",
+            "code": "prompt_cache_unavailable",
+            "error": err,
+            "capabilities": _gateway_prompt_cache_empty_caps(),
+        }
+    return _gateway_prompt_cache_client_call(
+        llm_client=llm_client,
+        method_name="prompt_cache_set",
+        operation="set",
+        provider=req.provider,
+        model=req.model,
+        payload={"key": req.key, "make_default": bool(req.make_default), "ttl_s": req.ttl_s},
+    )
 
 
 @router.post("/prompt_cache/update")
 async def prompt_cache_update(req: _GatewayPromptCacheUpdateRequest) -> Dict[str, Any]:
     llm_client, err = _gateway_runtime_llm_client()
     if err:
-        return {"supported": False, "error": err}
-    try:
-        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
-
-    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
-        return {"supported": False, "error": "Provider does not support prompt cache control"}
-    if not hasattr(prov, "prompt_cache_update"):
-        return {"supported": False, "error": "Provider does not expose prompt cache API"}
-    try:
-        ok = prov.prompt_cache_update(
-            req.key,
-            prompt=str(req.prompt or ""),
-            messages=req.messages,
-            system_prompt=req.system_prompt,
-            tools=req.tools,
-            add_generation_prompt=bool(req.add_generation_prompt),
-            ttl_s=req.ttl_s,
-        )
-        return {"supported": True, "ok": bool(ok)}
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
+        return {
+            "supported": False,
+            "operation": "update",
+            "code": "prompt_cache_unavailable",
+            "error": err,
+            "capabilities": _gateway_prompt_cache_empty_caps(),
+        }
+    return _gateway_prompt_cache_client_call(
+        llm_client=llm_client,
+        method_name="prompt_cache_update",
+        operation="update",
+        provider=req.provider,
+        model=req.model,
+        payload={
+            "key": req.key,
+            "prompt": str(req.prompt or ""),
+            "messages": req.messages,
+            "system_prompt": req.system_prompt,
+            "tools": req.tools,
+            "add_generation_prompt": bool(req.add_generation_prompt),
+            "ttl_s": req.ttl_s,
+        },
+    )
 
 
 @router.post("/prompt_cache/fork")
 async def prompt_cache_fork(req: _GatewayPromptCacheForkRequest) -> Dict[str, Any]:
     llm_client, err = _gateway_runtime_llm_client()
     if err:
-        return {"supported": False, "error": err}
-    try:
-        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
-
-    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
-        return {"supported": False, "error": "Provider does not support prompt cache control"}
-    if not hasattr(prov, "prompt_cache_fork"):
-        return {"supported": False, "error": "Provider does not expose prompt cache API"}
-    try:
-        ok = prov.prompt_cache_fork(req.from_key, req.to_key, make_default=bool(req.make_default), ttl_s=req.ttl_s)
-        return {"supported": True, "ok": bool(ok)}
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
+        return {
+            "supported": False,
+            "operation": "fork",
+            "code": "prompt_cache_unavailable",
+            "error": err,
+            "capabilities": _gateway_prompt_cache_empty_caps(),
+        }
+    return _gateway_prompt_cache_client_call(
+        llm_client=llm_client,
+        method_name="prompt_cache_fork",
+        operation="fork",
+        provider=req.provider,
+        model=req.model,
+        payload={
+            "from_key": req.from_key,
+            "to_key": req.to_key,
+            "make_default": bool(req.make_default),
+            "ttl_s": req.ttl_s,
+        },
+    )
 
 
 @router.post("/prompt_cache/clear")
 async def prompt_cache_clear(req: _GatewayPromptCacheClearRequest) -> Dict[str, Any]:
     llm_client, err = _gateway_runtime_llm_client()
     if err:
-        return {"supported": False, "error": err}
-    try:
-        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
-
-    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
-        return {"supported": False, "error": "Provider does not support prompt cache control"}
-    if not hasattr(prov, "prompt_cache_clear"):
-        return {"supported": False, "error": "Provider does not expose prompt cache API"}
-    try:
-        ok = prov.prompt_cache_clear(req.key)
-        return {"supported": True, "ok": bool(ok)}
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
+        return {
+            "supported": False,
+            "operation": "clear",
+            "code": "prompt_cache_unavailable",
+            "error": err,
+            "capabilities": _gateway_prompt_cache_empty_caps(),
+        }
+    return _gateway_prompt_cache_client_call(
+        llm_client=llm_client,
+        method_name="prompt_cache_clear",
+        operation="clear",
+        provider=req.provider,
+        model=req.model,
+        payload={"key": req.key},
+    )
 
 
 @router.post("/prompt_cache/prepare_modules")
 async def prompt_cache_prepare_modules(req: _GatewayPromptCachePrepareModulesRequest) -> Dict[str, Any]:
     llm_client, err = _gateway_runtime_llm_client()
     if err:
-        return {"supported": False, "error": err}
-    try:
-        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
-
-    if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
-        return {"supported": False, "error": "Provider does not support prompt cache control"}
-    if not hasattr(prov, "prompt_cache_prepare_modules"):
-        return {"supported": False, "error": "Provider does not expose prompt cache module API"}
-    try:
-        result = prov.prompt_cache_prepare_modules(
-            namespace=req.namespace,
-            modules=req.modules,
-            make_default=bool(req.make_default),
-            ttl_s=req.ttl_s,
-            version=int(req.version),
-        )
-        return result if isinstance(result, dict) else {"supported": True, "result": result}
-    except Exception as e:
-        return {"supported": False, "error": str(e)}
+        return {
+            "supported": False,
+            "operation": "prepare_modules",
+            "code": "prompt_cache_unavailable",
+            "error": err,
+            "capabilities": _gateway_prompt_cache_empty_caps(),
+        }
+    return _gateway_prompt_cache_client_call(
+        llm_client=llm_client,
+        method_name="prompt_cache_prepare_modules",
+        operation="prepare_modules",
+        provider=req.provider,
+        model=req.model,
+        payload={
+            "namespace": req.namespace,
+            "modules": req.modules,
+            "make_default": bool(req.make_default),
+            "ttl_s": req.ttl_s,
+            "version": int(req.version),
+        },
+    )
 
 
 @router.get("/prompt_cache/saved")
@@ -10361,16 +10921,57 @@ async def prompt_cache_saved(
 async def prompt_cache_save(req: _GatewayPromptCacheSaveRequest) -> Dict[str, Any]:
     llm_client, err = _gateway_runtime_llm_client()
     if err:
-        return {"supported": False, "error": err}
+        return {
+            "supported": False,
+            "operation": "save",
+            "code": "prompt_cache_unavailable",
+            "error": err,
+            "capabilities": _gateway_prompt_cache_empty_caps(),
+        }
+    caps_info = _gateway_prompt_cache_client_capabilities(
+        llm_client=llm_client,
+        provider=req.provider,
+        model=req.model,
+    )
+    caps = caps_info.get("capabilities") if isinstance(caps_info, dict) else _gateway_prompt_cache_empty_caps()
+    if not isinstance(caps, dict):
+        caps = _gateway_prompt_cache_empty_caps()
     try:
-        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
+        getter = getattr(llm_client, "get_provider_instance", None)
+        if not callable(getter):
+            return {
+                "supported": False,
+                "operation": "save",
+                "code": "prompt_cache_unsupported",
+                "error": "Prompt cache save requires direct local provider access",
+                "capabilities": caps,
+            }
+        prov = getter(provider=req.provider, model=req.model)
     except Exception as e:
-        return {"supported": False, "error": str(e)}
+        return {
+            "supported": False,
+            "operation": "save",
+            "code": "prompt_cache_error",
+            "error": str(e),
+            "capabilities": caps,
+        }
 
     if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
-        return {"supported": False, "error": "Provider does not support prompt cache control"}
+        return {
+            "supported": False,
+            "operation": "save",
+            "code": "prompt_cache_unsupported",
+            "error": "Provider does not support prompt cache control",
+            "capabilities": caps,
+        }
     if not (_is_mlx_provider(prov) or _is_huggingface_gguf_provider(prov)):
-        return {"supported": False, "error": "Cache save is only supported for in-process providers (mlx, huggingface/gguf) in this release"}  # noqa: E501
+        return {
+            "supported": False,
+            "operation": "save",
+            "code": "prompt_cache_unsupported",
+            "error": "Cache save is only supported for in-process providers (mlx, huggingface/gguf) in this release",
+            "capabilities": caps,
+        }
 
     try:
         name = _safe_cache_label(req.name)
@@ -10387,12 +10988,21 @@ async def prompt_cache_save(req: _GatewayPromptCacheSaveRequest) -> Dict[str, An
 
     try:
         store = getattr(prov, "_prompt_cache_store", None)
-        cache_obj = store.get(key) if store is not None and hasattr(store, "get") else None
+        cache_value = store.get(key) if store is not None and hasattr(store, "get") else None
     except Exception:
-        cache_obj = None
+        cache_value = None
 
-    if cache_obj is None:
+    if cache_value is None:
         return {"supported": False, "error": f"No in-memory cache found for key '{key}'"}
+
+    cache_obj = cache_value
+    if _is_huggingface_gguf_provider(prov):
+        unwrap = getattr(prov, "_gguf_prompt_cache_unwrap", None)
+        if callable(unwrap):
+            try:
+                cache_obj = unwrap(cache_value)
+            except Exception:
+                cache_obj = None
 
     meta: Dict[str, Any] = {
         "schema": "abstractgateway-prompt-cache/v1",
@@ -10401,6 +11011,15 @@ async def prompt_cache_save(req: _GatewayPromptCacheSaveRequest) -> Dict[str, An
         "saved_at": datetime.datetime.now().astimezone().isoformat(),
         "key": key,
     }
+    if _is_huggingface_gguf_provider(prov):
+        export_state = getattr(prov, "_gguf_prompt_cache_export_state", None)
+        if callable(export_state):
+            try:
+                provider_state = export_state(cache_value)
+                if isinstance(provider_state, dict) and provider_state:
+                    meta["provider_state"] = provider_state
+            except Exception:
+                pass
 
     if _is_mlx_provider(prov):
         try:
@@ -10523,16 +11142,57 @@ async def prompt_cache_save(req: _GatewayPromptCacheSaveRequest) -> Dict[str, An
 async def prompt_cache_load(req: _GatewayPromptCacheLoadRequest) -> Dict[str, Any]:
     llm_client, err = _gateway_runtime_llm_client()
     if err:
-        return {"supported": False, "error": err}
+        return {
+            "supported": False,
+            "operation": "load",
+            "code": "prompt_cache_unavailable",
+            "error": err,
+            "capabilities": _gateway_prompt_cache_empty_caps(),
+        }
+    caps_info = _gateway_prompt_cache_client_capabilities(
+        llm_client=llm_client,
+        provider=req.provider,
+        model=req.model,
+    )
+    caps = caps_info.get("capabilities") if isinstance(caps_info, dict) else _gateway_prompt_cache_empty_caps()
+    if not isinstance(caps, dict):
+        caps = _gateway_prompt_cache_empty_caps()
     try:
-        prov = llm_client.get_provider_instance(provider=req.provider, model=req.model)
+        getter = getattr(llm_client, "get_provider_instance", None)
+        if not callable(getter):
+            return {
+                "supported": False,
+                "operation": "load",
+                "code": "prompt_cache_unsupported",
+                "error": "Prompt cache load requires direct local provider access",
+                "capabilities": caps,
+            }
+        prov = getter(provider=req.provider, model=req.model)
     except Exception as e:
-        return {"supported": False, "error": str(e)}
+        return {
+            "supported": False,
+            "operation": "load",
+            "code": "prompt_cache_error",
+            "error": str(e),
+            "capabilities": caps,
+        }
 
     if prov is None or not bool(getattr(prov, "supports_prompt_cache", lambda: False)()):
-        return {"supported": False, "error": "Provider does not support prompt cache control"}
+        return {
+            "supported": False,
+            "operation": "load",
+            "code": "prompt_cache_unsupported",
+            "error": "Provider does not support prompt cache control",
+            "capabilities": caps,
+        }
     if not (_is_mlx_provider(prov) or _is_huggingface_gguf_provider(prov)):
-        return {"supported": False, "error": "Cache load is only supported for in-process providers (mlx, huggingface/gguf) in this release"}  # noqa: E501
+        return {
+            "supported": False,
+            "operation": "load",
+            "code": "prompt_cache_unsupported",
+            "error": "Cache load is only supported for in-process providers (mlx, huggingface/gguf) in this release",
+            "capabilities": caps,
+        }
 
     try:
         name = _safe_cache_label(req.name)
@@ -10667,9 +11327,21 @@ async def prompt_cache_load(req: _GatewayPromptCacheLoadRequest) -> Dict[str, An
         store = getattr(prov, "_prompt_cache_store", None)
         if store is None or not hasattr(store, "set"):
             return {"supported": False, "error": "Provider does not expose an in-process cache store"}
+        loaded_value = loaded_cache
+        if _is_huggingface_gguf_provider(prov):
+            import_state = getattr(prov, "_gguf_prompt_cache_import_state", None)
+            provider_state = meta.get("provider_state") if isinstance(meta, dict) else None
+            if callable(import_state):
+                try:
+                    loaded_value = import_state(
+                        loaded_cache,
+                        provider_state if isinstance(provider_state, dict) else None,
+                    )
+                except Exception:
+                    loaded_value = loaded_cache
         store.set(
             key,
-            loaded_cache,
+            loaded_value,
             meta={
                 "backend": "mlx" if _is_mlx_provider(prov) else "llama_cpp",
                 "loaded_from": str(filename),

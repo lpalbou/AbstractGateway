@@ -483,3 +483,17 @@ def test_telegram_bridge_tdlib_extract_media_is_method(tmp_path: Path) -> None:
 
     bridge = _make_bridge(tmp_path=tmp_path, host=host, runner=runner, artifacts=artifacts, transport="bot_api")
     assert callable(getattr(bridge, "_extract_tdlib_media", None))
+
+
+def test_telegram_bridge_config_defaults_are_dm_allowlist_and_groups_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.integrations.telegram_bridge import TelegramBridgeConfig
+
+    monkeypatch.setenv("ABSTRACT_TELEGRAM_BRIDGE", "1")
+    monkeypatch.delenv("ABSTRACT_TELEGRAM_DM_POLICY", raising=False)
+    monkeypatch.delenv("ABSTRACT_TELEGRAM_GROUP_POLICY", raising=False)
+    monkeypatch.delenv("ABSTRACT_TELEGRAM_ALLOWED_USERS", raising=False)
+    monkeypatch.delenv("ABSTRACT_TELEGRAM_ALLOWED_CHATS", raising=False)
+
+    cfg = TelegramBridgeConfig.from_env(base_dir=tmp_path)
+    assert cfg.dm_policy == "allowlist"
+    assert cfg.group_policy == "disabled"

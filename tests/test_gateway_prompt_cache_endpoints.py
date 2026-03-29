@@ -173,12 +173,109 @@ class _StubGatewayLLMClient:
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {"max_tokens": 1024, "max_output_tokens": 256}
 
+    def get_prompt_cache_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        caps = self._provider.get_prompt_cache_capabilities()
+        return {"supported": bool(caps.supported), "operation": "capabilities", "capabilities": caps.to_dict()}
+
+    def get_prompt_cache_stats(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        caps = self._provider.get_prompt_cache_capabilities()
+        return {
+            "supported": True,
+            "operation": "stats",
+            "capabilities": caps.to_dict(),
+            "stats": self._provider.get_prompt_cache_stats(),
+        }
+
+    def prompt_cache_set(self, *, key: str, make_default: bool = True, ttl_s: Optional[float] = None, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        caps = self._provider.get_prompt_cache_capabilities()
+        ok = self._provider.prompt_cache_set(key, make_default=make_default, ttl_s=ttl_s)
+        return {"supported": True, "operation": "set", "ok": bool(ok), "capabilities": caps.to_dict()}
+
+    def prompt_cache_update(
+        self,
+        *,
+        key: str,
+        prompt: Optional[str] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        system_prompt: Optional[str] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        add_generation_prompt: bool = False,
+        ttl_s: Optional[float] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        _ = kwargs
+        caps = self._provider.get_prompt_cache_capabilities()
+        ok = self._provider.prompt_cache_update(
+            key,
+            prompt=str(prompt or ""),
+            messages=messages,
+            system_prompt=system_prompt,
+            tools=tools,
+            add_generation_prompt=add_generation_prompt,
+            ttl_s=ttl_s,
+        )
+        return {"supported": True, "operation": "update", "ok": bool(ok), "capabilities": caps.to_dict()}
+
+    def prompt_cache_fork(
+        self,
+        *,
+        from_key: str,
+        to_key: str,
+        make_default: bool = False,
+        ttl_s: Optional[float] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        _ = kwargs
+        caps = self._provider.get_prompt_cache_capabilities()
+        ok = self._provider.prompt_cache_fork(from_key, to_key, make_default=make_default, ttl_s=ttl_s)
+        return {"supported": True, "operation": "fork", "ok": bool(ok), "capabilities": caps.to_dict()}
+
+    def prompt_cache_clear(self, *, key: Optional[str] = None, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        caps = self._provider.get_prompt_cache_capabilities()
+        ok = self._provider.prompt_cache_clear(key)
+        return {"supported": True, "operation": "clear", "ok": bool(ok), "capabilities": caps.to_dict()}
+
+    def prompt_cache_prepare_modules(
+        self,
+        *,
+        namespace: str,
+        modules: List[Dict[str, Any]],
+        make_default: bool = False,
+        ttl_s: Optional[float] = None,
+        version: int = 1,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        _ = kwargs
+        result = self._provider.prompt_cache_prepare_modules(
+            namespace=namespace,
+            modules=modules,
+            make_default=make_default,
+            ttl_s=ttl_s,
+            version=version,
+        )
+        result.setdefault("operation", "prepare_modules")
+        result.setdefault("capabilities", self._provider.get_prompt_cache_capabilities().to_dict())
+        return result
+
     def generate(self, **kwargs: Any) -> Dict[str, Any]:
         _ = kwargs
         return {"content": "ok", "tool_calls": []}
 
+class _ProtocolOnlyGatewayLLMClient(_StubGatewayLLMClient):
+    def get_provider_instance(self, *, provider: str, model: str) -> Any:
+        raise AssertionError("gateway prompt-cache routes should not require provider instance access")
 
-def _make_client(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, dict[str, str]]:
+
+def _make_client(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    llm_client_cls: type[_StubGatewayLLMClient] = _StubGatewayLLMClient,
+) -> tuple[TestClient, dict[str, str]]:
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
     _write_llm_bundle(bundles_dir=bundles_dir, bundle_id="bundle-cache", flow_id="root")
@@ -193,7 +290,7 @@ def _make_client(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Te
     # Avoid loading real models: replace the in-process LLM client with a stub.
     from abstractruntime.integrations.abstractcore import factory as ac_factory
 
-    monkeypatch.setattr(ac_factory, "MultiLocalAbstractCoreLLMClient", _StubGatewayLLMClient)
+    monkeypatch.setattr(ac_factory, "MultiLocalAbstractCoreLLMClient", llm_client_cls)
 
     from abstractgateway.app import app
 
@@ -205,9 +302,15 @@ def _make_client(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Te
 def test_gateway_prompt_cache_control_plane_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
+        caps = client.get("/api/gateway/prompt_cache/capabilities?provider=stub&model=stub-model", headers=headers)
+        assert caps.status_code == 200, caps.text
+        assert caps.json()["supported"] is True
+        assert caps.json()["capabilities"]["mode"] == "local_control_plane"
+
         stats0 = client.get("/api/gateway/prompt_cache/stats?provider=stub&model=stub-model", headers=headers)
         assert stats0.status_code == 200, stats0.text
         assert stats0.json()["supported"] is True
+        assert stats0.json()["operation"] == "stats"
 
         r = client.post("/api/gateway/prompt_cache/set", json={"provider": "stub", "model": "stub-model", "key": "k1"}, headers=headers)
         assert r.status_code == 200, r.text
@@ -234,3 +337,31 @@ def test_gateway_prompt_cache_control_plane_roundtrip(tmp_path: Path, monkeypatc
         assert rc.status_code == 200, rc.text
         assert rc.json()["supported"] is True
         assert rc.json()["ok"] is True
+
+
+def test_gateway_prompt_cache_routes_use_runtime_client_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers = _make_client(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        llm_client_cls=_ProtocolOnlyGatewayLLMClient,
+    )
+    with client:
+        caps = client.get("/api/gateway/prompt_cache/capabilities?provider=stub&model=stub-model", headers=headers)
+        assert caps.status_code == 200, caps.text
+        assert caps.json()["supported"] is True
+
+        prepared = client.post(
+            "/api/gateway/prompt_cache/prepare_modules",
+            json={
+                "provider": "stub",
+                "model": "stub-model",
+                "namespace": "tenant:stub-model",
+                "modules": [{"module_id": "system", "system_prompt": "You are helpful"}],
+            },
+            headers=headers,
+        )
+        assert prepared.status_code == 200, prepared.text
+        body = prepared.json()
+        assert body["supported"] is True
+        assert body["operation"] == "prepare_modules"
+        assert body["capabilities"]["mode"] == "local_control_plane"

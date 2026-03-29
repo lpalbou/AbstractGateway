@@ -139,8 +139,11 @@ Background bridges can ingest external messages and start durable runs (thin-cli
 Enable (Telegram):
 - `ABSTRACT_TELEGRAM_BRIDGE=1`
 - transport + credentials depend on configuration (see `src/abstractgateway/integrations/telegram_bridge.py`):
-  - `ABSTRACT_TELEGRAM_TRANSPORT=bot_api|tdlib`
-  - `ABSTRACT_TELEGRAM_BOT_TOKEN=...` (Bot API)
+  - Bot API (default when token is present): `ABSTRACT_TELEGRAM_BOT_TOKEN=...`
+  - TDLib (E2EE): `ABSTRACT_TELEGRAM_TRANSPORT=tdlib` + TDLib setup
+- access control (fail-closed defaults):
+  - DMs default to allowlist: set `ABSTRACT_TELEGRAM_ALLOWED_USERS=...` (numeric Telegram user_id; discover via `/whoami`)
+  - Groups default to disabled (opt-in via `ABSTRACT_TELEGRAM_GROUP_POLICY=allowlist|open`)
 - Optional: override which workflow to run per message:
   - `ABSTRACT_TELEGRAM_BUNDLE_ID=...`
   - `ABSTRACT_TELEGRAM_FLOW_ID=...`

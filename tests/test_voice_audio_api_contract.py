@@ -218,3 +218,44 @@ def test_audio_transcribe_accepts_session_scoped_artifacts_for_any_run_in_sessio
         assert body.get("run_id") == run_id
         assert body.get("request_id") == "req-stt-1"
         assert body.get("text") == "hello world"
+
+
+@pytest.mark.basic
+def test_voice_tts_offloads_synthesis_to_threadpool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-voice-threadpool", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    headers = {"Authorization": f"Bearer {token}"}
+    offloaded: list[str] = []
+
+    async def _fake_to_thread(func, /, *args, **kwargs):
+        offloaded.append(getattr(func, "__name__", repr(func)))
+        return func(*args, **kwargs)
+
+    class _OkVoiceManager:
+        def speak_to_bytes(self, text: str, *, format: str = "wav", voice: str | None = None) -> bytes:  # noqa: ARG002
+            return f"tts:{text}".encode("utf-8")
+
+    monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", lambda: _OkVoiceManager())
+    monkeypatch.setattr(gateway_routes.asyncio, "to_thread", _fake_to_thread)
+
+    with TestClient(app) as client:
+        tts = client.post(
+            "/api/gateway/runs/session_memory_s1/voice/tts",
+            json={"text": "hello", "request_id": "req-tts-threadpool"},
+            headers=headers,
+        )
+        assert tts.status_code == 200, tts.text
+
+    assert "speak_to_bytes" in offloaded

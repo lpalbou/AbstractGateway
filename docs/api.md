@@ -180,6 +180,39 @@ These exist to help thin clients adapt to the deployed gateway.
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`discovery_capabilities`, `discovery_providers`).
 
+## Prompt-cache control plane (operator API)
+
+The gateway exposes prompt-cache operator endpoints under `/api/gateway/prompt_cache/*`.
+
+Core endpoints:
+
+- `GET /api/gateway/prompt_cache/capabilities?provider=...&model=...`
+- `GET /api/gateway/prompt_cache/stats?provider=...&model=...`
+- `POST /api/gateway/prompt_cache/set`
+- `POST /api/gateway/prompt_cache/update`
+- `POST /api/gateway/prompt_cache/fork`
+- `POST /api/gateway/prompt_cache/clear`
+- `POST /api/gateway/prompt_cache/prepare_modules`
+
+Behavior:
+
+- These routes use the runtime's AbstractCore prompt-cache client contract rather than directly depending on provider-instance access.
+- In local mode they delegate to the in-process provider.
+- In remote/hybrid mode they follow whatever `/acore/prompt_cache/*` surface the configured AbstractCore server exposes.
+- All core prompt-cache responses include `operation` and `capabilities`, with structured unsupported/error cases (`code="prompt_cache_unsupported"` / `code="prompt_cache_error"` / `code="prompt_cache_unavailable"`).
+
+Provider-specific persistence endpoints:
+
+- `GET /api/gateway/prompt_cache/saved`
+- `POST /api/gateway/prompt_cache/save`
+- `POST /api/gateway/prompt_cache/load`
+
+These remain explicitly local/provider-specific in this release:
+
+- `save` / `load` require direct local provider access.
+- Currently intended for in-process `mlx` and `huggingface` GGUF (`llama.cpp`) workers only.
+- GGUF save/load preserves both the raw llama.cpp cache and provider-side prompt-cache metadata so reloaded cache keys keep their module/history meaning.
+
 ## Email inbox (operator UI; optional)
 
 These endpoints power AbstractObserver’s **Inbox → Email** UI. They are **account-scoped**: the browser cannot supply arbitrary IMAP/SMTP host/user credentials. The gateway host must be configured with one or more email accounts (multi-account YAML or env vars).
