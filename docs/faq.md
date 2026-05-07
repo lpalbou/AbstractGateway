@@ -18,7 +18,7 @@ Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.p
 
 - **AbstractRuntime** (required): the durable run model + tick loop + stores (declared in `pyproject.toml`).
 - **AbstractGateway** (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in `src/abstractgateway/routes/gateway.py`).
-- **AbstractCore** (optional, via `abstractruntime[abstractcore]`): LLM/tool execution wiring used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
+- **AbstractCore** (optional, via `abstractruntime[abstractcore]` / `abstractruntime[multimodal]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed generated image/voice/audio capabilities used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).
 
 Related repos:
@@ -156,7 +156,7 @@ Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start
 Install AbstractRuntime’s AbstractCore integration (already included by `abstractgateway[http]`):
 
 ```bash
-pip install "abstractruntime[abstractcore]>=0.4.2"
+pip install "abstractruntime[abstractcore]>=0.4.6"
 ```
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/needs_tools`).
@@ -206,6 +206,35 @@ By default, the gateway allows AbstractVoice to download models on first use. If
 ```bash
 export ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS=1
 ```
+
+For remote/OpenAI-compatible voice backends, configure AbstractVoice's native
+environment variables in the gateway process, for example
+`ABSTRACTVOICE_TTS_ENGINE`, `ABSTRACTVOICE_STT_ENGINE`,
+`ABSTRACTVOICE_REMOTE_BASE_URL`, and `ABSTRACTVOICE_REMOTE_API_KEY`.
+
+### How do I enable generated images or Runtime-managed multimodal outputs?
+
+Use the server/multimodal profile:
+
+```bash
+pip install "abstractgateway[server]"
+```
+
+The profile includes `AbstractRuntime[multimodal]`, AbstractCore's
+`vision`/`voice`/`audio` extras, `abstractvision>=0.3.1`, and
+`abstractvoice>=0.9.0`. Configure image endpoints with
+`ABSTRACTVISION_BASE_URL`, `ABSTRACTVISION_API_KEY`, and
+`ABSTRACTVISION_MODEL_ID`; set `ABSTRACTVISION_BACKEND=diffusers` or `sdcpp`
+only for custom images that intentionally include those local engines.
+
+In 0.2.2, generated images are workflow/Core-backed. Gateway does not yet expose
+a direct `/api/gateway/images/generate` endpoint.
+
+### Does Gateway expose full cached-session orchestration?
+
+Not yet. The `/api/gateway/prompt_cache/*` routes expose provider/model
+prompt-cache controls when the active AbstractCore integration supports them.
+They do not yet provide a Gateway-owned CachedSession lifecycle API.
 
 ### My bundle fails with “Visual Agent nodes require AbstractAgent”
 

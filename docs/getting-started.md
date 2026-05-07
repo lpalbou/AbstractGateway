@@ -10,7 +10,7 @@ This guide gets a new installation running in **bundle mode** (recommended), the
 
 AbstractGateway is one component in the larger **AbstractFramework** ecosystem:
 - **AbstractRuntime** (required): durable runs + workflow registry + stores
-- **AbstractCore** (optional, via `abstractruntime[abstractcore]`): LLM/tool execution wiring used by many bundles
+- **AbstractCore** (optional, via `abstractruntime[abstractcore]` / `abstractruntime[multimodal]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed generated image/voice/audio capabilities used by many bundles
 
 Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
@@ -34,17 +34,26 @@ pip install abstractgateway
 # HTTP server (FastAPI + Uvicorn)
 pip install "abstractgateway[http]"
 
+# Turnkey server/container profile (HTTP + Runtime/Core multimodal + remote providers/tools/media)
+pip install "abstractgateway[server]"
+
 # Optional: voice/audio (TTS + STT endpoints)
 pip install "abstractgateway[voice]"
 
-# Or: batteries-included (HTTP + tools + voice + media + visualflow)
+# Optional: generative vision through AbstractCore's AbstractVision plugin
+pip install "abstractgateway[vision]"
+
+# Or: batteries-included (HTTP + tools + voice/audio + vision + media + visualflow)
 pip install "abstractgateway[all]"
 ```
 
 Optional (only if your workflows need it):
-- LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.2"` (already included by `abstractgateway[http]`)
+- LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.6"` (already included by `abstractgateway[http]`)
+- Runtime-managed generated images, generated voice, and STT inside workflows: `pip install "abstractruntime[multimodal]>=0.4.6"` (already included by `abstractgateway[server]`)
+- Server deployments with hosted providers / OpenAI-compatible endpoints: `pip install "abstractgateway[server]"`
 - Visual Agent nodes (bundle mode): `pip install abstractagent` (already included by `abstractgateway[http]`)
 - Voice/audio endpoints (TTS/STT): `pip install "abstractgateway[voice]"` (or `pip install abstractvoice`)
+- Generative vision: `pip install "abstractgateway[vision]"` (or `pip install abstractvision`)
 - `memory_kg_*` nodes (bundle mode): `pip install "abstractmemory[lancedb]"` (or `abstractmemory` + `lancedb`)
 
 ## 1) Run (bundle mode, file-backed stores)
@@ -126,6 +135,25 @@ abstractgateway runner
 abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
 ```
 
+## 3b) Docker / Compose
+
+For a containerized deployment with AbstractRuntime multimodal support,
+AbstractCore remote providers, workflow-backed AbstractVision image generation,
+and direct Gateway voice/audio endpoints included:
+
+```bash
+export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
+docker run --rm -p 127.0.0.1:8080:8080 \
+  -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
+  -v "$PWD/runtime/gateway:/data/gateway" \
+  -v "$PWD/flows/bundles:/data/flows:ro" \
+  ghcr.io/lpalbou/abstractgateway-server:0.2.2
+```
+
+See [deployment.md](./deployment.md) for Compose, provider keys, and image
+customization.
+
 ## 4) What’s stored in `ABSTRACTGATEWAY_DATA_DIR` (file backend)
 
 When `ABSTRACTGATEWAY_STORE_BACKEND=file` (default), the gateway persists (via `abstractruntime` stores):
@@ -178,6 +206,7 @@ abstractgateway migrate --from=file --to=sqlite \
 - FAQ: [faq.md](./faq.md)
 - Architecture: [architecture.md](./architecture.md)
 - Configuration (env vars + optional deps): [configuration.md](./configuration.md)
+- Deployment: [deployment.md](./deployment.md)
 - API overview: [api.md](./api.md)
 - Security: [security.md](./security.md)
 - Operator tooling (optional): [maintenance.md](./maintenance.md)

@@ -8,14 +8,20 @@ The base install (`pip install abstractgateway`) includes the runner + durable s
 
 Optional extras (see `pyproject.toml`):
 - `abstractgateway[http]`: FastAPI + Uvicorn (`abstractgateway serve`)
+- `abstractgateway[server]`: turnkey server/container profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed AbstractVision image generation, direct Gateway voice/audio endpoints, media/tool helpers, token counting, provider-level prompt-cache helpers, and compression
 - `abstractgateway[visualflow]`: VisualFlow JSON directory mode via `abstractflow`
 - `abstractgateway[telegram]`: Telegram bridge dependencies (AbstractRuntime’s AbstractCore integration)
-- `abstractgateway[voice]`: voice/audio endpoints (TTS + STT) via `abstractvoice`
-- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice + media + visualflow)
+- `abstractgateway[voice]`: voice/audio endpoints (TTS + STT) via AbstractVoice and AbstractCore's voice/audio plugin extras
+- `abstractgateway[vision]`: generative vision via AbstractCore's AbstractVision plugin
+- `abstractgateway[multimodal]`: Runtime/Core multimodal profile without HTTP server deps
+- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice/audio + vision + media + visualflow)
+- `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
 Optional (required by some workflows/features):
-- `abstractruntime[abstractcore]>=0.4.2`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`) — already included by `abstractgateway[http]`
+- `abstractruntime[abstractcore]>=0.4.6`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`) — already included by `abstractgateway[http]`
+- `abstractruntime[multimodal]>=0.4.6`: required for Runtime-managed multimodal outputs through AbstractCore workflows — included by `abstractgateway[server]`, `abstractgateway[multimodal]`, and `abstractgateway[all]`
+- `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.10`: recommended for server deployments that need hosted providers, OpenAI-compatible text provider routing, media parsing, tool helpers, token counting, provider-level prompt-cache controls, workflow-backed image generation, TTS, and STT — included by `abstractgateway[server]`
 - `abstractagent`: required for Visual Agent nodes (bundle mode) — already included by `abstractgateway[http]`
 - `abstractmemory[lancedb]` (or `abstractmemory` + `lancedb`): required for bundles that use `memory_kg_*` nodes
 
@@ -90,6 +96,41 @@ The gateway can expose an embeddings API if AbstractCore embedding deps are avai
   Persisted under `<DATA_DIR>/gateway_embeddings.json` for stability across restarts.  
   Evidence: `src/abstractgateway/embeddings_config.py`
 
+### Prompt cache controls (provider-dependent)
+
+Gateway prompt-cache endpoints are available when the AbstractCore integration
+for the active provider/model exposes them. Remote providers usually provide
+server-managed cache hints; local in-process providers can expose stronger
+control-plane operations when installed in a custom runtime image.
+These endpoints are provider/model controls, not a Gateway-owned CachedSession
+lifecycle API.
+
+- `GET /api/gateway/prompt_cache/capabilities`
+- `GET /api/gateway/prompt_cache/stats`
+- `POST /api/gateway/prompt_cache/set`
+- `POST /api/gateway/prompt_cache/update`
+- `POST /api/gateway/prompt_cache/fork`
+- `POST /api/gateway/prompt_cache/clear`
+- `POST /api/gateway/prompt_cache/prepare_modules`
+- `POST /api/gateway/prompt_cache/save` / `load` for supported local providers
+
+### Multimodal provider/plugin controls
+
+The `server`, `multimodal`, and `all` extras install the lightweight AbstractCore
+plugin surface for generated images, generated voice, STT, and future music/video
+capabilities. In 0.2.2, voice generation and transcription have direct Gateway
+endpoints; generated images are exposed through Runtime/Core workflows rather
+than a direct Gateway image-generation endpoint. Local heavy engines remain
+explicit opt-ins in the provider packages.
+
+- `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: default text model for bundle LLM nodes
+- `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`: OpenAI-compatible text endpoint for AbstractCore providers
+- `ABSTRACTVISION_BASE_URL` / `ABSTRACTVISION_API_KEY` / `ABSTRACTVISION_MODEL_ID`: OpenAI-compatible image endpoint used by AbstractVision
+- `ABSTRACTVISION_BACKEND`: `openai` / `diffusers` / `sdcpp` (`openai` means OpenAI-compatible HTTP)
+- `ABSTRACTVOICE_TTS_ENGINE` / `ABSTRACTVOICE_STT_ENGINE`: `auto`, local engines, or remote-compatible engines supported by AbstractVoice
+- `ABSTRACTVOICE_REMOTE_BASE_URL` / `ABSTRACTVOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice
+- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`
+
 ## CLI flags
 
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
@@ -105,5 +146,6 @@ Most-used:
 - Getting started: [getting-started.md](./getting-started.md)
 - FAQ: [faq.md](./faq.md)
 - Security configuration: [security.md](./security.md)
+- Deployment: [deployment.md](./deployment.md)
 - API overview: [api.md](./api.md)
 - Operator tooling env vars: [maintenance.md](./maintenance.md)

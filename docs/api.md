@@ -178,7 +178,22 @@ These exist to help thin clients adapt to the deployed gateway.
 - Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
 - Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
 
+The capabilities payload includes package presence (`abstractruntime`,
+`abstractcore`, `abstractvoice`, `abstractvision`), existing gateway helpers
+(`tools`, `visualflow`, `media`), and AbstractCore capability plugin status for
+`voice`, `audio`, `vision`, and future `music`.
+
 Evidence: `src/abstractgateway/routes/gateway.py` (`discovery_capabilities`, `discovery_providers`).
+
+## Optional multimodal scope
+
+Direct Gateway endpoints in this release:
+- `POST /api/gateway/runs/{run_id}/voice/tts`
+- `POST /api/gateway/runs/{run_id}/audio/transcribe`
+
+Generated images are available through Runtime/Core workflows when
+AbstractVision is installed and configured. Gateway does not yet expose a
+direct image-generation HTTP endpoint.
 
 ## Prompt-cache control plane (operator API)
 
@@ -200,6 +215,7 @@ Behavior:
 - In local mode they delegate to the in-process provider.
 - In remote/hybrid mode they follow whatever `/acore/prompt_cache/*` surface the configured AbstractCore server exposes.
 - All core prompt-cache responses include `operation` and `capabilities`, with structured unsupported/error cases (`code="prompt_cache_unsupported"` / `code="prompt_cache_error"` / `code="prompt_cache_unavailable"`).
+- These endpoints are provider/model controls, not a Gateway-owned CachedSession lifecycle API.
 
 Provider-specific persistence endpoints:
 

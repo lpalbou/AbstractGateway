@@ -1,0 +1,44 @@
+site_name: AbstractGateway
+site_description: Deployable HTTP/SSE gateway for durable AbstractRuntime runs.
+site_url: https://www.lpalbou.info/AbstractGateway/
+repo_url: https://github.com/lpalbou/abstractgateway
+repo_name: lpalbou/abstractgateway
+
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight
+
+plugins:
+  - search
+
+validation:
+  nav:
+    omitted_files: ignore
+  links:
+    not_found: ignore
+    unrecognized_links: ignore
+
+nav:
+  - Home: README.md
+  - Getting Started: getting-started.md
+  - Configuration: configuration.md
+  - Deployment: deployment.md
+  - API Overview: api.md
+  - Architecture: architecture.md
+  - Security: security.md
+  - Operator Tooling: maintenance.md
+  - FAQ: faq.md

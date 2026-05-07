@@ -179,3 +179,6 @@ web/runtime/
 
 my-folder/
 runtime/
+
+# Local publisher scratch bundle inspected during release prep.
+flows/bundles/article@dev.flow

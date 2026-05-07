@@ -50,6 +50,52 @@ _VOICE_MANAGER = None
 _VOICE_MANAGER_LOCK = threading.Lock()
 
 
+def _env_first(*keys: str, default: Optional[str] = None) -> Optional[str]:
+    for key in keys:
+        value = os.getenv(str(key))
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return default
+
+
+def _env_bool(*keys: str, default: bool = False) -> bool:
+    raw = _env_first(*keys)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(*keys: str) -> Optional[float]:
+    raw = _env_first(*keys)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except Exception:
+        return None
+
+
+def _optional_package_status(module_name: str, dist_name: Optional[str] = None) -> Dict[str, Any]:
+    try:
+        import importlib.metadata
+        import importlib.util
+
+        if importlib.util.find_spec(module_name) is None:
+            raise ModuleNotFoundError(f"No module named '{module_name}'")
+        version = None
+        for candidate in [dist_name, module_name]:
+            if not candidate:
+                continue
+            try:
+                version = importlib.metadata.version(candidate)
+                break
+            except Exception:
+                continue
+        return {"installed": True, "version": version}
+    except Exception as e:
+        return {"installed": False, "error": str(e)}
+
+
 def _get_gateway_voice_manager():
     """Return a process-wide voice manager (lazy, best-effort).
 
@@ -62,7 +108,10 @@ def _get_gateway_voice_manager():
             return _VOICE_MANAGER
 
         try:
-            from abstractvoice.vm.manager import VoiceManager
+            try:
+                from abstractvoice.voice_manager import VoiceManager
+            except Exception:
+                from abstractvoice.vm.manager import VoiceManager
         except Exception as e:
             raise HTTPException(
                 status_code=400,
@@ -72,16 +121,57 @@ def _get_gateway_voice_manager():
                 ),
             )
 
-        lang = str(os.getenv("ABSTRACTGATEWAY_VOICE_LANGUAGE", "") or "").strip() or "en"
-        allow_downloads_raw = str(os.getenv("ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS", "") or "").strip().lower()
-        if not allow_downloads_raw:
-            # Default to enabling downloads for a smoother first-run UX (new machines).
-            # Operators can disable by setting ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS=0.
-            allow_downloads = True
-        else:
-            allow_downloads = allow_downloads_raw in {"1", "true", "yes", "y", "on"}
+        # Prefer gateway-scoped env vars, but accept AbstractVoice's native names
+        # so the Gateway image can also act as an AbstractCore/AbstractVoice plugin host.
+        lang = _env_first("ABSTRACTGATEWAY_VOICE_LANGUAGE", "ABSTRACTVOICE_LANGUAGE", default="en") or "en"
+        vm_kwargs: Dict[str, Any] = {
+            "language": lang,
+            # Default to enabling downloads for a smoother first-run UX. Operators
+            # can disable by setting ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS=0.
+            "allow_downloads": _env_bool(
+                "ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS",
+                "ABSTRACTVOICE_ALLOW_DOWNLOADS",
+                default=True,
+            ),
+        }
 
-        _VOICE_MANAGER = VoiceManager(language=lang, allow_downloads=bool(allow_downloads))
+        optional_text: Dict[str, tuple[str, ...]] = {
+            "tts_engine": ("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE"),
+            "stt_engine": ("ABSTRACTGATEWAY_VOICE_STT_ENGINE", "ABSTRACTVOICE_STT_ENGINE"),
+            "tts_model": ("ABSTRACTGATEWAY_VOICE_TTS_MODEL", "ABSTRACTVOICE_TTS_MODEL"),
+            "stt_model": ("ABSTRACTGATEWAY_VOICE_STT_MODEL", "ABSTRACTVOICE_STT_MODEL"),
+            "whisper_model": ("ABSTRACTGATEWAY_VOICE_WHISPER_MODEL", "ABSTRACTVOICE_WHISPER_MODEL"),
+            "cloning_engine": ("ABSTRACTGATEWAY_VOICE_CLONING_ENGINE", "ABSTRACTVOICE_CLONING_ENGINE"),
+            "tts_delivery_mode": ("ABSTRACTGATEWAY_VOICE_TTS_DELIVERY_MODE", "ABSTRACTVOICE_TTS_DELIVERY_MODE"),
+            "remote_base_url": ("ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL", "ABSTRACTVOICE_REMOTE_BASE_URL"),
+            "remote_api_key": ("ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY", "ABSTRACTVOICE_REMOTE_API_KEY"),
+        }
+        for arg_name, keys in optional_text.items():
+            value = _env_first(*keys)
+            if value is not None:
+                vm_kwargs[arg_name] = value
+
+        remote_timeout = _env_float("ABSTRACTGATEWAY_VOICE_REMOTE_TIMEOUT_S", "ABSTRACTVOICE_REMOTE_TIMEOUT_S")
+        if remote_timeout is not None:
+            vm_kwargs["remote_timeout_s"] = remote_timeout
+
+        if _env_first("ABSTRACTGATEWAY_VOICE_DEBUG", "ABSTRACTVOICE_DEBUG") is not None:
+            vm_kwargs["debug_mode"] = _env_bool("ABSTRACTGATEWAY_VOICE_DEBUG", "ABSTRACTVOICE_DEBUG")
+        if _env_first("ABSTRACTGATEWAY_VOICE_CLONED_TTS_STREAMING", "ABSTRACTVOICE_CLONED_TTS_STREAMING") is not None:
+            vm_kwargs["cloned_tts_streaming"] = _env_bool(
+                "ABSTRACTGATEWAY_VOICE_CLONED_TTS_STREAMING",
+                "ABSTRACTVOICE_CLONED_TTS_STREAMING",
+                default=True,
+            )
+
+        try:
+            _VOICE_MANAGER = VoiceManager(**vm_kwargs)
+        except TypeError as e:
+            msg = str(e)
+            if "unexpected keyword" not in msg and "got an unexpected" not in msg:
+                raise
+            # Older AbstractVoice installs do not know the remote/provider kwargs.
+            _VOICE_MANAGER = VoiceManager(language=lang, allow_downloads=bool(vm_kwargs["allow_downloads"]))
         return _VOICE_MANAGER
 
 
@@ -5230,15 +5320,67 @@ async def discovery_capabilities() -> Dict[str, Any]:
     """List optional gateway capabilities for thin clients (best-effort)."""
     caps: Dict[str, Any] = {}
 
-    try:
-        import abstractvoice  # type: ignore
+    caps["abstractruntime"] = _optional_package_status("abstractruntime", "AbstractRuntime")
+    caps["abstractcore"] = _optional_package_status("abstractcore", "abstractcore")
+    caps["abstractvoice"] = _optional_package_status("abstractvoice", "abstractvoice")
+    caps["abstractvision"] = _optional_package_status("abstractvision", "abstractvision")
 
-        caps["voice"] = {"installed": True, "version": getattr(abstractvoice, "__version__", None)}
-    except Exception as e:
+    if bool(caps["abstractvoice"].get("installed")):
+        caps["voice"] = {
+            "installed": True,
+            "version": caps["abstractvoice"].get("version"),
+        }
+    else:
         caps["voice"] = {
             "installed": False,
-            "error": str(e),
+            "error": str(caps["abstractvoice"].get("error") or ""),
             "install_hint": 'pip install "abstractgateway[voice]" (or "abstractgateway[all]")',
+        }
+
+    try:
+        from abstractcore.capabilities import CapabilityRegistry  # type: ignore
+
+        preferred_backends: Dict[str, str] = {}
+        for capability in ["voice", "audio", "vision", "music"]:
+            value = _env_first(
+                f"ABSTRACTGATEWAY_{capability.upper()}_BACKEND",
+                f"ABSTRACTCORE_{capability.upper()}_BACKEND",
+            )
+            if value:
+                preferred_backends[capability] = value
+
+        owner = type("_GatewayCapabilityOwner", (), {"config": {}})()
+        status = CapabilityRegistry(owner, preferred_backends=preferred_backends).status()
+        plugin_caps = status.get("capabilities") if isinstance(status, dict) else {}
+        available: Dict[str, bool] = {}
+        if isinstance(plugin_caps, dict):
+            for capability in ["voice", "audio", "vision", "music"]:
+                data = plugin_caps.get(capability)
+                available[capability] = bool(data.get("available")) if isinstance(data, dict) else False
+        caps["capability_plugins"] = {
+            "installed": True,
+            "group": status.get("group") if isinstance(status, dict) else None,
+            "plugins_seen": status.get("plugins_seen") if isinstance(status, dict) else [],
+            "plugin_errors": status.get("plugin_errors") if isinstance(status, dict) else [],
+            "capabilities": plugin_caps if isinstance(plugin_caps, dict) else {},
+        }
+        caps["multimodal"] = {
+            "installed": bool(caps["abstractruntime"].get("installed")) and bool(caps["abstractcore"].get("installed")),
+            "capabilities": available,
+            "runtime_output_specs": _optional_package_status(
+                "abstractruntime.integrations.abstractcore.output_specs",
+                "AbstractRuntime",
+            ).get("installed"),
+        }
+    except Exception as e:
+        caps["capability_plugins"] = {
+            "installed": False,
+            "error": str(e),
+            "install_hint": 'pip install "abstractgateway[multimodal]"',
+        }
+        caps["multimodal"] = {
+            "installed": False,
+            "error": str(e),
         }
 
     try:

@@ -79,3 +79,10 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         for k in ("voice", "tools", "visualflow", "vision_fallback", "media"):
             assert isinstance(caps.get(k), dict)
             assert isinstance(caps[k].get("installed"), bool)
+        for k in ("abstractruntime", "abstractcore", "abstractvoice", "abstractvision", "multimodal", "capability_plugins"):
+            assert isinstance(caps.get(k), dict)
+            assert isinstance(caps[k].get("installed"), bool)
+        plugin_caps = caps["capability_plugins"].get("capabilities")
+        if isinstance(plugin_caps, dict):
+            for capability in ("voice", "audio", "vision", "music"):
+                assert isinstance(plugin_caps.get(capability), dict)

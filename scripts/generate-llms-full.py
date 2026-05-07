@@ -49,6 +49,10 @@ def _normalize_links(text: str, *, source_relpath: str) -> str:
     return _MD_LINK_RE.sub(repl, text)
 
 
+def _strip_trailing_line_spaces(text: str) -> str:
+    return "\n".join(line.rstrip(" \t") for line in text.split("\n"))
+
+
 def _read_utf8(path: Path) -> str:
     return path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
 
@@ -109,7 +113,7 @@ def main() -> None:
             continue
         chunks.append(f"## {rel}\n\n")
         body = _read_utf8(p).rstrip()
-        chunks.append(_normalize_links(body, source_relpath=rel))
+        chunks.append(_strip_trailing_line_spaces(_normalize_links(body, source_relpath=rel)))
         chunks.append("\n")
         if i != len(files_in_order) - 1:
             chunks.append("\n---\n\n")

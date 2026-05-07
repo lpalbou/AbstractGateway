@@ -7,7 +7,7 @@ Start here if you’re new to the project.
 AbstractGateway is one component in the larger AbstractFramework ecosystem:
 
 - **AbstractRuntime** (required): durable runs + stores
-- **AbstractCore** (optional, via `abstractruntime[abstractcore]`): LLM/tool execution wiring used by many bundles
+- **AbstractCore** (optional, via `abstractruntime[abstractcore]` or `abstractruntime[multimodal]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed generated image/voice/audio capabilities used by many bundles
 - Higher-level UIs (optional): AbstractFlow / AbstractObserver / AbstractCode / thin clients
 
 Related repos:
@@ -21,11 +21,14 @@ Related repos:
 - FAQ / troubleshooting: [faq.md](./faq.md)
 - Architecture (durable contract + components): [architecture.md](./architecture.md)
 - Configuration (env vars + install extras): [configuration.md](./configuration.md)
+- Deployment (Docker/GHCR/Compose): [deployment.md](./deployment.md)
 - API overview (client contract + OpenAPI): [api.md](./api.md)
 - Security guide (auth/origin/limits/audit log): [security.md](./security.md)
 - Operator tooling (triage/backlog/process manager): [maintenance.md](./maintenance.md)
 
 ## API docs (generated)
+
+Published static docs site: https://www.lpalbou.info/AbstractGateway/
 
 When the HTTP server is running (`abstractgateway serve`):
 - Health: `GET /api/health`

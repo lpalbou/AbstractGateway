@@ -15,7 +15,7 @@ Start here: [docs/getting-started.md](docs/getting-started.md)
 AbstractGateway is part of the **AbstractFramework** ecosystem:
 
 - **AbstractRuntime** (required): durable run model + workflow registry + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
-- **AbstractCore** (optional, via `abstractruntime[abstractcore]`): LLM/tool execution wiring used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
+- **AbstractCore** (optional, via `abstractruntime[abstractcore]` / `abstractruntime[multimodal]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed generated image/voice/audio capabilities used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractCode / AbstractObserver / thin clients (rendering + operations)
 
 Related repos:
@@ -50,6 +50,52 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
   "http://127.0.0.1:8080/api/gateway/bundles"
 ```
 
+## Docker server
+
+Release images are published to GHCR:
+
+```bash
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.2
+```
+
+The image installs `abstractgateway[server]`: HTTP server,
+`AbstractRuntime[multimodal]`, AbstractCore remote/commercial provider support,
+OpenAI-compatible text providers, workflow-backed image generation through
+AbstractVision, direct Gateway voice/audio endpoints through AbstractVoice,
+prompt-cache helpers, media/tool helpers, token counting, compression,
+AbstractAgent, and AbstractFlow compatibility.
+
+```bash
+export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
+docker run --rm --name abstractgateway-server \
+  -p 127.0.0.1:8080:8080 \
+  -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
+  -e ABSTRACTGATEWAY_PROVIDER="openai-compatible" \
+  -e ABSTRACTGATEWAY_MODEL="your-model" \
+  -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
+  -v "$PWD/runtime/gateway:/data/gateway" \
+  -v "$PWD/flows/bundles:/data/flows:ro" \
+  ghcr.io/lpalbou/abstractgateway-server:0.2.2
+```
+
+Compose and deployment details: [docs/deployment.md](docs/deployment.md).
+
+## 0.2.2 capability scope
+
+Direct Gateway APIs in this release:
+- `POST /api/gateway/runs/{run_id}/voice/tts`
+- `POST /api/gateway/runs/{run_id}/audio/transcribe`
+- `/api/gateway/prompt_cache/*` provider/model operator controls
+- `/api/gateway/discovery/capabilities` package and plugin discovery
+
+Workflow/Core-backed capabilities:
+- Generated images are available to Runtime/Core workflows through
+  AbstractVision when installed and configured.
+- Gateway does not yet expose a direct `/images/generate`-style HTTP endpoint.
+- Prompt-cache support depends on the active provider/model and is not a full
+  Gateway-owned CachedSession lifecycle API.
+
 ## Client contract (replay-first)
 
 - Clients **start runs**: `POST /api/gateway/runs/start`
@@ -81,9 +127,13 @@ pip install "abstractgateway[http]"
 ### Optional extras
 
 - `abstractgateway[visualflow]`: run VisualFlow JSON from a directory of `*.json` files (requires `abstractflow`)
+- `abstractgateway[server]`: container/server profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed AbstractVision image generation, direct Gateway voice/audio endpoints, media/tool helpers, tokens, and compression
 - `abstractgateway[telegram]`: Telegram bridge dependencies
-- `abstractgateway[voice]`: enable voice/audio endpoints (TTS/STT) via `abstractvoice`
-- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice + media + visualflow)
+- `abstractgateway[voice]`: enable voice/audio endpoints (TTS/STT) via AbstractVoice and AbstractCore's voice/audio plugin extras
+- `abstractgateway[vision]`: enable generative vision via AbstractCore's AbstractVision plugin
+- `abstractgateway[multimodal]`: Runtime/Core multimodal profile without the HTTP server deps
+- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice/audio + vision + media + visualflow)
+- `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local test/dev deps
 
 ### Bundle-dependent dependencies (only if your workflows need them)
@@ -93,7 +143,7 @@ pip install "abstractgateway[http]"
   - If you installed only the base package, install it explicitly:
 
 ```bash
-pip install "abstractruntime[abstractcore]>=0.4.2"
+pip install "abstractruntime[abstractcore]>=0.4.6"
 ```
 
 Visual Agent nodes require `abstractagent` (also included by `abstractgateway[http]`):
@@ -116,6 +166,8 @@ See [docs/getting-started.md](docs/getting-started.md) for running, split API/ru
 
 ## Docs
 
+Published docs site: https://www.lpalbou.info/AbstractGateway/
+
 ### Project docs
 
 - Changelog: [CHANGELOG.md](CHANGELOG.md) (compat: `CHANGELOD.md`)
@@ -130,6 +182,7 @@ See [docs/getting-started.md](docs/getting-started.md) for running, split API/ru
 - FAQ: [docs/faq.md](docs/faq.md)
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
+- Deployment: [docs/deployment.md](docs/deployment.md)
 - API overview: [docs/api.md](docs/api.md)
 - Security: [docs/security.md](docs/security.md)
 - Operator tooling (optional): [docs/maintenance.md](docs/maintenance.md)
