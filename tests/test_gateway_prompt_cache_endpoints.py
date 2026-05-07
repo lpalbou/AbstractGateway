@@ -270,6 +270,50 @@ class _ProtocolOnlyGatewayLLMClient(_StubGatewayLLMClient):
         raise AssertionError("gateway prompt-cache routes should not require provider instance access")
 
 
+class _KeyedGatewayLLMClient:
+    def __init__(self, provider: str, model: str, llm_kwargs: Optional[Dict[str, Any]] = None, artifact_store: Any = None):
+        _ = (provider, model, llm_kwargs, artifact_store)
+        self._llm = self
+
+    def get_model_capabilities(self) -> Dict[str, Any]:
+        return {"max_tokens": 1024, "max_output_tokens": 256}
+
+    def generate(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"content": "ok", "tool_calls": []}
+
+    def get_prompt_cache_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": True,
+            "operation": "capabilities",
+            "capabilities": {
+                "supported": True,
+                "mode": "keyed",
+                "supports_set": True,
+                "supports_clear": False,
+                "supports_update": False,
+                "supports_fork": False,
+                "supports_prepare_modules": False,
+                "supports_stats": False,
+                "supports_save": False,
+                "supports_load": False,
+                "supports_ttl": False,
+                "notes": ["server-managed keyed cache"],
+            },
+        }
+
+
+class _UnsupportedGatewayLLMClient(_KeyedGatewayLLMClient):
+    def get_prompt_cache_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": False,
+            "operation": "capabilities",
+            "capabilities": {"supported": False, "mode": "none"},
+        }
+
+
 def _make_client(
     *,
     tmp_path: Path,
@@ -365,3 +409,148 @@ def test_gateway_prompt_cache_routes_use_runtime_client_contract(tmp_path: Path,
         assert body["supported"] is True
         assert body["operation"] == "prepare_modules"
         assert body["capabilities"]["mode"] == "local_control_plane"
+
+
+def test_session_prompt_cache_namespace_is_stable_and_bounded() -> None:
+    from abstractgateway.routes.gateway import _session_prompt_cache_identity
+
+    first = _session_prompt_cache_identity(
+        session_id="../session/with/slashes",
+        bundle_id="bundle/example",
+        bundle_version="0.0.0",
+        flow_id="root:flow",
+        provider="mlx",
+        model="mlx-community/Qwen3-4B-4bit",
+        template_id="assistant.default",
+        version=1,
+    )
+    second = _session_prompt_cache_identity(
+        session_id="../session/with/slashes",
+        bundle_id="bundle/example",
+        bundle_version="0.0.0",
+        flow_id="root:flow",
+        provider="mlx",
+        model="mlx-community/Qwen3-4B-4bit",
+        template_id="assistant.default",
+        version=1,
+    )
+
+    assert first == second
+    assert first["namespace"].startswith("agw.pc.v1.")
+    assert "/" not in first["namespace"]
+    assert ".." not in first["namespace"]
+    assert len(first["namespace"]) <= 240
+    assert first["prompt_cache_key"].endswith(":session")
+
+
+def test_gateway_session_prompt_cache_lifecycle_local_control_plane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers = _make_client(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        llm_client_cls=_ProtocolOnlyGatewayLLMClient,
+    )
+    with client:
+        status = client.get(
+            "/api/gateway/sessions/chat-1/prompt_cache/status?provider=stub&model=stub-model&bundle_id=bundle-cache&flow_id=root&template_id=assistant.default",
+            headers=headers,
+        )
+        assert status.status_code == 200, status.text
+        status_body = status.json()
+        assert status_body["supported"] is True
+        assert status_body["mode"] == "local_control_plane"
+        assert status_body["runtime_hint"]["prompt_cache_key"] == status_body["prompt_cache_key"]
+
+        prepared = client.post(
+            "/api/gateway/sessions/chat-1/prompt_cache/prepare",
+            json={
+                "provider": "stub",
+                "model": "stub-model",
+                "bundle_id": "bundle-cache",
+                "flow_id": "root",
+                "template_id": "assistant.default",
+                "system_prompt": "You are helpful.",
+                "tools": [{"type": "function", "function": {"name": "search", "parameters": {"type": "object"}}}],
+                "make_default": True,
+            },
+            headers=headers,
+        )
+        assert prepared.status_code == 200, prepared.text
+        body = prepared.json()
+        assert body["supported"] is True
+        assert body["ok"] is True
+        assert body["prepared"] is True
+        assert body["mode"] == "local_control_plane"
+        assert body["prefix_cache_key"]
+        assert body["provider_responses"]["prepare_modules"]["final_cache_key"] == body["prefix_cache_key"]
+        assert body["provider_responses"]["fork"]["ok"] is True
+
+        stats = client.get("/api/gateway/prompt_cache/stats?provider=stub&model=stub-model", headers=headers)
+        assert stats.status_code == 200, stats.text
+        keys = (stats.json().get("stats") or {}).get("keys") or []
+        assert body["prompt_cache_key"] in keys
+
+        cleared = client.post(
+            "/api/gateway/sessions/chat-1/prompt_cache/clear",
+            json={"provider": "stub", "model": "stub-model", "bundle_id": "bundle-cache", "flow_id": "root", "template_id": "assistant.default"},
+            headers=headers,
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["ok"] is True
+
+        rebuilt = client.post(
+            "/api/gateway/sessions/chat-1/prompt_cache/rebuild",
+            json={
+                "provider": "stub",
+                "model": "stub-model",
+                "bundle_id": "bundle-cache",
+                "flow_id": "root",
+                "template_id": "assistant.default",
+                "modules": [{"module_id": "system", "system_prompt": "You are helpful."}],
+            },
+            headers=headers,
+        )
+        assert rebuilt.status_code == 200, rebuilt.text
+        assert rebuilt.json()["operation"] == "rebuild"
+        assert rebuilt.json()["ok"] is True
+
+
+def test_gateway_session_prompt_cache_keyed_provider_returns_runtime_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch, llm_client_cls=_KeyedGatewayLLMClient)
+    with client:
+        prepared = client.post(
+            "/api/gateway/sessions/chat-keyed/prompt_cache/prepare",
+            json={"provider": "remote", "model": "server-model", "bundle_id": "basic-agent", "flow_id": "root"},
+            headers=headers,
+        )
+        assert prepared.status_code == 200, prepared.text
+        body = prepared.json()
+        assert body["supported"] is True
+        assert body["ok"] is True
+        assert body["mode"] == "keyed"
+        assert body["prepared"] is False
+        assert body["code"] == "prompt_cache_key_hint_only"
+        assert body["runtime_hint"]["prompt_cache_key"] == body["prompt_cache_key"]
+
+        cleared = client.post(
+            "/api/gateway/sessions/chat-keyed/prompt_cache/clear",
+            json={"provider": "remote", "model": "server-model", "bundle_id": "basic-agent", "flow_id": "root"},
+            headers=headers,
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["ok"] is False
+        assert cleared.json()["code"] == "prompt_cache_clear_unsupported"
+
+
+def test_gateway_session_prompt_cache_unsupported_provider_is_structured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch, llm_client_cls=_UnsupportedGatewayLLMClient)
+    with client:
+        status = client.get(
+            "/api/gateway/sessions/chat-none/prompt_cache/status?provider=none&model=none-model&bundle_id=basic-agent&flow_id=root",
+            headers=headers,
+        )
+        assert status.status_code == 200, status.text
+        body = status.json()
+        assert body["supported"] is False
+        assert body["ok"] is False
+        assert body["mode"] == "unsupported"
+        assert body["code"] == "prompt_cache_unsupported"

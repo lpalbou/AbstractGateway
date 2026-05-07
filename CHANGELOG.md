@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-05-08
+
+### Added
+
+- Versioned thin-client capability contracts for Gateway common features, AbstractFlow editor/runtime support, AbstractAssistant media/cache controls, and AbstractCode-facing prompt-cache controls.
+- AbstractFlow gateway-first editor contract validation, including VisualFlow CRUD/publish/start/observe coverage and a bundled flow input-schema endpoint.
+- Gateway-owned session prompt-cache lifecycle routes:
+  - `GET /api/gateway/sessions/{session_id}/prompt_cache/status`
+  - `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
+  - `POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild`
+  - `POST /api/gateway/sessions/{session_id}/prompt_cache/clear`
+- Generated-media contract fields in capability discovery, including direct-vs-workflow generated-image availability.
+- Direct generated-image route, `POST /api/gateway/runs/{run_id}/images/generate`, backed by Runtime/Core image output selectors, artifact storage, and `abstract.media.image.generated` ledger events.
+- Backlog completion ledger for the capability contract, Flow editor contract, session prompt-cache lifecycle, and generated-media gateway contract.
+
+### Changed
+
+- Capability discovery now truthfully reports provider-level and session-level prompt-cache controls, plus direct Gateway voice/audio/image endpoints where configured.
+- API, configuration, deployment, Docker, README, FAQ, and LLM ingestion docs now describe generated images as both workflow-backed and directly available through the Gateway route when a Runtime/Core image backend is installed and configured.
+- Docker/Compose release examples now point at the `0.2.3` server image.
+
+### Fixed
+
+- Fixed stale release-facing docs that said Gateway had no direct image-generation endpoint after the direct route landed.
+- Fixed an order-dependent test import leak so the full local pytest suite can run cleanly after the AbstractFlow editor contract tests.
+
+### Notes
+
+- Direct image generation still depends on a configured Runtime/Core/AbstractVision-compatible backend; Gateway does not bundle heavy local image engines.
+- Session prompt-cache lifecycle is Gateway-owned naming and orchestration over provider/model controls. It is not a provider-independent local KV cache or full CachedSession persistence system.
+
 ## [0.2.2] - 2026-05-06
 
 ### Added

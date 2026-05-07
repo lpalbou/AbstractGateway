@@ -1121,6 +1121,78 @@ def _extract_entrypoint_inputs_from_visualflow(raw: Any) -> list[Dict[str, Any]]
     return out
 
 
+def _json_schema_for_visualflow_pin_type(pin_type: str) -> Dict[str, Any]:
+    """Return a small JSON Schema fragment for a VisualFlow pin type."""
+    raw = str(pin_type or "").strip()
+    t = raw.lower()
+    schema: Dict[str, Any] = {}
+    if t in {"string", "str", "text", "markdown", "path", "file", "directory"}:
+        schema["type"] = "string"
+    elif t in {"number", "float", "double"}:
+        schema["type"] = "number"
+    elif t in {"integer", "int"}:
+        schema["type"] = "integer"
+    elif t in {"boolean", "bool"}:
+        schema["type"] = "boolean"
+    elif t in {"array", "list"}:
+        schema["type"] = "array"
+    elif t in {"object", "dict", "map", "json"}:
+        schema["type"] = "object"
+
+    if raw:
+        schema["x-abstract-type"] = raw
+    return schema
+
+
+def _entrypoint_input_schema_from_visualflow(raw: Any) -> Dict[str, Any]:
+    """Build the versioned run input schema contract for a VisualFlow entrypoint."""
+    inputs = _extract_entrypoint_inputs_from_visualflow(raw)
+    properties: Dict[str, Any] = {}
+    required: list[str] = []
+    defaults: Dict[str, Any] = {}
+    pins: list[Dict[str, Any]] = []
+
+    for item in inputs:
+        if not isinstance(item, dict):
+            continue
+        pid = str(item.get("id") or "").strip()
+        if not pid:
+            continue
+        label = str(item.get("label") or pid).strip() or pid
+        pin_type = str(item.get("type") or "unknown").strip() or "unknown"
+        has_default = "default" in item
+
+        prop = _json_schema_for_visualflow_pin_type(pin_type)
+        if label and label != pid:
+            prop["title"] = label
+        if has_default:
+            prop["default"] = item.get("default")
+            defaults[pid] = item.get("default")
+        else:
+            required.append(pid)
+        properties[pid] = prop
+
+        pin = dict(item)
+        pin["required"] = not has_default
+        pin["schema"] = dict(prop)
+        pins.append(pin)
+
+    schema: Dict[str, Any] = {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": properties,
+    }
+    if required:
+        schema["required"] = required
+
+    return {
+        "version": 1,
+        "inputs": pins,
+        "defaults": defaults,
+        "input_data_schema": schema,
+    }
+
+
 def _extract_node_index_from_visualflow(raw: Any) -> Dict[str, Dict[str, Any]]:
     """Best-effort node metadata index {node_id -> {type,label,headerColor}}."""
     if not isinstance(raw, dict):
@@ -3017,7 +3089,30 @@ async def get_bundle_flow(
     """Return a VisualFlow JSON from a bundle (best-effort; intended for thin clients)."""
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    bid_base, selected_ver, fid, raw = _resolve_bundle_flow_json(
+        host=host,
+        bundle_id=bundle_id,
+        flow_id=flow_id,
+        bundle_version=bundle_version,
+    )
 
+    return {
+        "bundle_id": bid_base,
+        "bundle_version": selected_ver,
+        "bundle_ref": f"{bid_base}@{selected_ver}",
+        "flow_id": fid,
+        "workflow_id": f"{bid_base}@{selected_ver}:{fid}",
+        "flow": raw,
+    }
+
+
+def _resolve_bundle_flow_json(
+    *,
+    host: Any,
+    bundle_id: str,
+    flow_id: str,
+    bundle_version: Optional[str] = None,
+) -> Tuple[str, str, str, Dict[str, Any]]:
     bid = str(bundle_id or "").strip()
     if not bid:
         raise HTTPException(status_code=400, detail="bundle_id is required")
@@ -3058,13 +3153,32 @@ async def get_bundle_flow(
     if not isinstance(raw, dict):
         raise HTTPException(status_code=500, detail="Flow JSON is invalid")
 
+    return bid_base, str(selected_ver), fid, raw
+
+
+@router.get("/bundles/{bundle_id}/flows/{flow_id}/input_schema")
+async def get_bundle_flow_input_schema(
+    bundle_id: str,
+    flow_id: str,
+    bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to latest)."),
+) -> Dict[str, Any]:
+    """Return a stable Run Flow input schema for a bundled VisualFlow entrypoint."""
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+    bid_base, selected_ver, fid, raw = _resolve_bundle_flow_json(
+        host=host,
+        bundle_id=bundle_id,
+        flow_id=flow_id,
+        bundle_version=bundle_version,
+    )
+    schema = _entrypoint_input_schema_from_visualflow(raw)
     return {
         "bundle_id": bid_base,
         "bundle_version": selected_ver,
         "bundle_ref": f"{bid_base}@{selected_ver}",
         "flow_id": fid,
         "workflow_id": f"{bid_base}@{selected_ver}:{fid}",
-        "flow": raw,
+        **schema,
     }
 
 
@@ -4900,6 +5014,35 @@ class AudioTranscribeResponse(BaseModel):
     transcript_artifact: Dict[str, Any]
 
 
+class ImageGenerateRequest(BaseModel):
+    prompt: str = Field(..., max_length=20000, description="Image generation prompt.")
+    provider: Optional[str] = Field(default=None, max_length=80, description="Optional AbstractCore provider override.")
+    model: Optional[str] = Field(default=None, max_length=240, description="Optional image model id/name.")
+    size: Optional[str] = Field(default=None, max_length=32, description="Optional size selector such as 1024x1024.")
+    width: Optional[int] = Field(default=None, ge=1, le=8192, description="Optional image width.")
+    height: Optional[int] = Field(default=None, ge=1, le=8192, description="Optional image height.")
+    format: str = Field(default="png", max_length=16, description="Desired output format, usually png/jpeg/webp.")
+    negative_prompt: Optional[str] = Field(default=None, max_length=8000)
+    seed: Optional[int] = Field(default=None)
+    steps: Optional[int] = Field(default=None, ge=1, le=500)
+    guidance_scale: Optional[float] = Field(default=None)
+    quality: Optional[str] = Field(default=None, max_length=32)
+    style: Optional[str] = Field(default=None, max_length=64)
+    request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
+    extra: Optional[Dict[str, Any]] = Field(default=None, description="Optional provider-specific image-generation extras.")
+
+
+class ImageGenerateResponse(BaseModel):
+    ok: bool = Field(default=True)
+    supported: bool = Field(default=True)
+    run_id: str
+    request_id: str
+    image_artifact: Optional[Dict[str, Any]] = None
+    event_name: Optional[str] = None
+    code: Optional[str] = None
+    error: Optional[str] = None
+
+
 @router.post("/runs/{run_id}/audio/transcribe", response_model=AudioTranscribeResponse)
 async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTranscribeResponse:
     """Deterministic STT: transcribe an uploaded audio artifact into text + artifact + ledger event."""
@@ -5062,6 +5205,299 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         raise HTTPException(status_code=500, detail=f"Failed to persist transcript event: {e}")
 
     return AudioTranscribeResponse(ok=True, run_id=str(getattr(run, "run_id", rid)), request_id=request_id, text=text, transcript_artifact=transcript_ref)
+
+
+def _gateway_generated_image_content_type(fmt: str) -> Tuple[str, str]:
+    f = str(fmt or "png").strip().lower() or "png"
+    if f in {"jpg", "jpeg"}:
+        return "image/jpeg", "jpg"
+    if f in {"webp"}:
+        return "image/webp", "webp"
+    if f in {"png"}:
+        return "image/png", "png"
+    return f"image/{f}", f
+
+
+def _gateway_image_generation_max_bytes() -> int:
+    raw = _env_first("ABSTRACTGATEWAY_IMAGE_MAX_BYTES", "ABSTRACTCORE_IMAGE_MAX_BYTES")
+    try:
+        value = int(raw) if raw is not None else 20_000_000
+    except Exception:
+        value = 20_000_000
+    return max(1, min(value, 200_000_000))
+
+
+def _gateway_generated_media_llm_client(
+    *,
+    provider: Optional[str],
+    model: Optional[str],
+    artifact_store: Any,
+) -> tuple[Optional[Any], Optional[str]]:
+    """Return a shared runtime LLM client, or create a direct media client when the workflow is tools-only."""
+    llm_client, err = _gateway_runtime_llm_client()
+    if llm_client is not None:
+        return llm_client, None
+
+    provider_s = str(provider or _env_first("ABSTRACTGATEWAY_PROVIDER", "ABSTRACTFLOW_PROVIDER") or "").strip().lower()
+    model_s = str(model or _env_first("ABSTRACTGATEWAY_MODEL", "ABSTRACTFLOW_MODEL") or "").strip()
+    if not provider_s or not model_s:
+        return None, (
+            f"{err or 'Gateway runtime has no in-process AbstractCore LLM client.'} "
+            "Provide provider/model in the request or configure ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL."
+        )
+
+    try:
+        from abstractruntime.integrations.abstractcore import factory as ac_factory
+
+        cls = getattr(ac_factory, "MultiLocalAbstractCoreLLMClient")
+        return cls(provider=provider_s, model=model_s, llm_kwargs={}, artifact_store=artifact_store), None
+    except Exception as e:
+        return None, f"Failed to create AbstractCore generated-media LLM client: {e}"
+
+
+def _gateway_generated_image_ref_from_result(
+    *,
+    result: Any,
+    store: Any,
+    run_id: str,
+    request_id: str,
+    fmt: str,
+    session_id: str,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(result, dict):
+        return None
+    outputs = result.get("outputs")
+    if not isinstance(outputs, dict):
+        return None
+    images = outputs.get("image")
+    if not isinstance(images, list) or not images:
+        return None
+
+    content_type_default, fmt_norm = _gateway_generated_image_content_type(fmt)
+    max_bytes = _gateway_image_generation_max_bytes()
+    item0 = next((x for x in images if isinstance(x, dict)), None)
+    if not isinstance(item0, dict):
+        return None
+
+    content_type = str(item0.get("content_type") or content_type_default).strip() or content_type_default
+    ref0 = item0.get("artifact_ref") if isinstance(item0.get("artifact_ref"), dict) else {}
+    artifact_id = ""
+    if isinstance(ref0, dict):
+        artifact_id = str(ref0.get("$artifact") or ref0.get("artifact_id") or ref0.get("id") or "").strip()
+    if not artifact_id:
+        artifact_id = str(item0.get("$artifact") or item0.get("artifact_id") or item0.get("id") or "").strip()
+
+    data = item0.get("data")
+    if not artifact_id and isinstance(data, (bytes, bytearray)):
+        image_bytes = bytes(data)
+        if len(image_bytes) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Generated image is too large ({len(image_bytes)} bytes; max {max_bytes})")
+        store_fn = getattr(store, "store", None)
+        if not callable(store_fn):
+            raise HTTPException(status_code=500, detail="Artifact store does not support storing generated images")
+        sha256 = hashlib.sha256(image_bytes).hexdigest()
+        meta = store_fn(
+            image_bytes,
+            content_type=content_type,
+            run_id=run_id,
+            tags={
+                "kind": "generated_media",
+                "modality": "image",
+                "task": "image_generation",
+                "source": "gateway_direct_image",
+                "request_id": request_id,
+                "session_id": session_id,
+                "sha256": sha256,
+                "format": fmt_norm,
+            },
+        )
+        artifact_id = str(getattr(meta, "artifact_id", "") or "")
+        if not artifact_id and isinstance(meta, dict):
+            artifact_id = str(meta.get("artifact_id") or "")
+        if not artifact_id:
+            raise HTTPException(status_code=500, detail="Artifact store did not return an artifact_id for generated image")
+
+    if not artifact_id:
+        return None
+
+    size_bytes = item0.get("size_bytes")
+    if size_bytes is None and isinstance(ref0, dict):
+        size_bytes = ref0.get("size_bytes")
+    try:
+        size_i = int(size_bytes) if size_bytes is not None else None
+    except Exception:
+        size_i = None
+
+    sha256 = ""
+    load_fn = getattr(store, "load", None)
+    if callable(load_fn) and (size_i is None or size_i <= max_bytes):
+        try:
+            loaded = load_fn(str(artifact_id))
+            content = getattr(loaded, "content", b"") if loaded is not None else b""
+            if isinstance(content, (bytes, bytearray)):
+                blob = bytes(content)
+                sha256 = hashlib.sha256(blob).hexdigest()
+                size_i = len(blob)
+        except Exception:
+            sha256 = ""
+
+    out: Dict[str, Any] = {
+        "$artifact": artifact_id,
+        "content_type": content_type,
+        "filename": f"generated.{fmt_norm}",
+    }
+    if sha256:
+        out["sha256"] = sha256
+    if size_i is not None:
+        out["size_bytes"] = int(size_i)
+    return out
+
+
+@router.post("/runs/{run_id}/images/generate", response_model=ImageGenerateResponse)
+async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerateResponse:
+    """Generate an image through Runtime/Core output selectors, store it, and emit a durable event."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    prompt = str(getattr(req, "prompt", "") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    llm_client, err = _gateway_generated_media_llm_client(provider=req.provider, model=req.model, artifact_store=store)
+    if err:
+        return ImageGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            code="generated_image_unavailable",
+            error=err,
+        )
+
+    fmt = str(getattr(req, "format", "png") or "png").strip().lower() or "png"
+    session_id = str(getattr(run, "session_id", "") or "")
+    tags = {
+        "kind": "generated_media",
+        "modality": "image",
+        "task": "image_generation",
+        "source": "gateway_direct_image",
+        "request_id": request_id,
+        "session_id": session_id,
+        "format": fmt,
+    }
+    output_spec: Dict[str, Any] = {
+        "modality": "image",
+        "task": "image_generation",
+        "format": fmt,
+        "run_id": str(getattr(run, "run_id", rid)),
+        "tags": tags,
+    }
+    for key in ("size", "width", "height", "negative_prompt", "seed", "steps", "guidance_scale", "quality", "style"):
+        value = getattr(req, key, None)
+        if value is not None:
+            output_spec[key] = value
+    if isinstance(req.extra, dict) and req.extra:
+        output_spec["extra"] = dict(req.extra)
+    if isinstance(req.model, str) and req.model.strip():
+        output_spec["model"] = req.model.strip()
+
+    params: Dict[str, Any] = {
+        "output": output_spec,
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": session_id,
+        },
+    }
+    if isinstance(req.provider, str) and req.provider.strip():
+        params["_provider"] = req.provider.strip()
+    if isinstance(req.model, str) and req.model.strip():
+        params["_model"] = req.model.strip()
+
+    try:
+        result = await asyncio.to_thread(
+            llm_client.generate,
+            prompt=prompt,
+            messages=None,
+            system_prompt=None,
+            tools=None,
+            media=None,
+            params=params,
+        )
+    except Exception as e:
+        return ImageGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            code="generated_image_error",
+            error=str(e),
+        )
+
+    image_ref = _gateway_generated_image_ref_from_result(
+        result=result,
+        store=store,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        fmt=fmt,
+        session_id=session_id,
+    )
+    if not image_ref:
+        return ImageGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            code="generated_image_no_artifact",
+            error="Image generation completed without a stored image artifact.",
+        )
+
+    payload = {
+        "run_id": str(getattr(run, "run_id", rid)),
+        "request_id": request_id,
+        "prompt": prompt,
+        "provider": req.provider,
+        "model": req.model or (result.get("model") if isinstance(result, dict) else None),
+        "size": req.size,
+        "width": req.width,
+        "height": req.height,
+        "format": fmt,
+        "image_artifact": image_ref,
+    }
+
+    try:
+        eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.media.image.generated", "scope": "run", "run_id": str(getattr(run, "run_id", rid)), "payload": payload})
+        rec = StepRecord.start(run=run, node_id="gateway", effect=eff, idempotency_key=f"gateway:image_generate:{request_id}")
+        rec.finish_success({"emitted": True, "name": "abstract.media.image.generated", "payload": payload})
+        await asyncio.to_thread(svc.host.ledger_store.append, rec)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to persist generated image event: {e}")
+
+    return ImageGenerateResponse(
+        ok=True,
+        supported=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        image_artifact=image_ref,
+        event_name="abstract.media.image.generated",
+    )
 
 
 @router.post("/kg/query", response_model=KGQueryResponse)
@@ -5315,6 +5751,339 @@ async def get_semantics_registry() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to load semantics registry: {e}")
 
 
+def _api_gateway_path(path: str) -> str:
+    suffix = str(path or "").strip()
+    if not suffix.startswith("/"):
+        suffix = "/" + suffix
+    return f"/api/gateway{suffix}"
+
+
+def _plugin_capability(caps: Dict[str, Any], name: str) -> Dict[str, Any]:
+    plugins = caps.get("capability_plugins")
+    if not isinstance(plugins, dict):
+        return {}
+    all_caps = plugins.get("capabilities")
+    if not isinstance(all_caps, dict):
+        return {}
+    item = all_caps.get(str(name))
+    return dict(item) if isinstance(item, dict) else {}
+
+
+def _split_env_csv(raw: Optional[str]) -> list[str]:
+    if not isinstance(raw, str):
+        return []
+    out: list[str] = []
+    for part in re.split(r"[,;\n]", raw):
+        value = part.strip()
+        if value:
+            out.append(value)
+    return out
+
+
+def _voice_profile_descriptors() -> list[Dict[str, Any]]:
+    """Lightweight voice profile discovery without instantiating local engines."""
+    profiles: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(profile_id: str, *, label: Optional[str] = None, engine_id: Optional[str] = None, description: Optional[str] = None) -> None:
+        pid = str(profile_id or "").strip()
+        if not pid:
+            return
+        eng = str(engine_id or "").strip()
+        key = f"{eng}:{pid}".lower()
+        if key in seen:
+            return
+        seen.add(key)
+        item: Dict[str, Any] = {"id": pid, "label": str(label or pid).strip() or pid}
+        if eng:
+            item["engine_id"] = eng
+            item["qualified_id"] = f"{eng}:{pid}"
+        if isinstance(description, str) and description.strip():
+            item["description"] = description.strip()
+        profiles.append(item)
+
+    engine = _env_first("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE")
+    if isinstance(engine, str) and engine.strip() and engine.strip().lower() not in {"auto", "default"}:
+        try:
+            from abstractvoice.voice_profiles import get_builtin_voice_profiles  # type: ignore
+
+            for p in get_builtin_voice_profiles(engine):
+                _add(
+                    str(getattr(p, "profile_id", "") or ""),
+                    label=str(getattr(p, "label", "") or ""),
+                    engine_id=str(getattr(p, "engine_id", "") or engine),
+                    description=getattr(p, "description", None),
+                )
+        except Exception:
+            pass
+
+    voices = []
+    for key in (
+        "ABSTRACTGATEWAY_VOICE_TTS_VOICES",
+        "ABSTRACTVOICE_OPENAI_TTS_VOICES",
+        "ABSTRACTVOICE_OPENAI_COMPATIBLE_TTS_VOICES",
+        "ABSTRACTVOICE_REMOTE_TTS_VOICES",
+        "ABSTRACTVOICE_TTS_VOICE",
+    ):
+        voices.extend(_split_env_csv(os.getenv(key)))
+    for voice in voices:
+        _add(voice, engine_id=engine)
+
+    return profiles[:100]
+
+
+def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, Any]:
+    assert kind in {"tts", "stt"}
+    abstractvoice = caps.get("abstractvoice") if isinstance(caps.get("abstractvoice"), dict) else {}
+    plugin = _plugin_capability(caps, "voice" if kind == "tts" else "audio")
+    plugin_available = bool(plugin.get("available")) if plugin else None
+    installed = bool(abstractvoice.get("installed"))
+    available = bool(installed and (plugin_available is not False))
+    configured = bool(plugin_available) or bool(
+        _env_first(
+            "ABSTRACTGATEWAY_VOICE_TTS_ENGINE" if kind == "tts" else "ABSTRACTGATEWAY_VOICE_STT_ENGINE",
+            "ABSTRACTVOICE_TTS_ENGINE" if kind == "tts" else "ABSTRACTVOICE_STT_ENGINE",
+            "ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL",
+            "ABSTRACTVOICE_REMOTE_BASE_URL",
+        )
+    )
+
+    hint = ""
+    if not installed:
+        voice_cap = caps.get("voice") if isinstance(caps.get("voice"), dict) else {}
+        hint = str(voice_cap.get("install_hint") or 'pip install "abstractgateway[voice]" (or "abstractgateway[all]")')
+    elif plugin_available is False:
+        hint = str(plugin.get("install_hint") or "Configure AbstractVoice/AbstractCore voice or audio backend settings.")
+
+    if kind == "tts":
+        return {
+            "available": available,
+            "installed": installed,
+            "configured": configured,
+            "unsupported": not installed,
+            "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
+            "delivery_modes": ["artifact"],
+            "formats": ["wav", "mp3"],
+            "content_types": {"wav": "audio/wav", "mp3": "audio/mpeg"},
+            "voices": _voice_profile_descriptors(),
+            "streaming": False,
+            **({"selected_backend": plugin.get("selected_backend")} if plugin.get("selected_backend") else {}),
+            **({"install_hint": hint} if hint and not installed else {}),
+            **({"config_hint": hint} if hint and installed else {}),
+        }
+
+    policy = _server_workspace_policy_public()
+    return {
+        "available": available,
+        "installed": installed,
+        "configured": configured,
+        "unsupported": not installed,
+        "endpoint": _api_gateway_path("/runs/{run_id}/audio/transcribe"),
+        "input_modes": ["artifact"],
+        "upload_endpoint": _api_gateway_path("/attachments/upload"),
+        "content_types": ["audio/wav", "audio/mpeg", "audio/mp4", "audio/webm", "audio/ogg", "application/octet-stream"],
+        "languages": [],
+        "max_upload_bytes": int(policy.get("max_attachment_bytes") or 0),
+        **({"selected_backend": plugin.get("selected_backend")} if plugin.get("selected_backend") else {}),
+        **({"install_hint": hint} if hint and not installed else {}),
+        **({"config_hint": hint} if hint and installed else {}),
+    }
+
+
+def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
+    vision_plugin = _plugin_capability(caps, "vision")
+    abstractvision = caps.get("abstractvision") if isinstance(caps.get("abstractvision"), dict) else {}
+    workflow_image_available = bool(vision_plugin.get("available")) or bool(abstractvision.get("installed"))
+    direct_configured = workflow_image_available or bool(
+        _env_first(
+            "ABSTRACTCORE_SERVER_BASE_URL",
+            "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL",
+            "ABSTRACTVISION_BASE_URL",
+            "ABSTRACTVISION_API_KEY",
+            "ABSTRACTCORE_VISION_MODEL_ID",
+        )
+    )
+    return {
+        "generated_image": {
+            "workflow": {
+                "available": workflow_image_available,
+                "backend": vision_plugin.get("selected_backend") if isinstance(vision_plugin, dict) else None,
+                "event_contract": "workflow_artifact",
+                **(
+                    {"config_hint": str(vision_plugin.get("install_hint") or "Install/configure AbstractVision or an AbstractCore vision backend.")}
+                    if not workflow_image_available
+                    else {}
+                ),
+            },
+            "direct_endpoint": {
+                "available": direct_configured,
+                "route_available": True,
+                "endpoint": _api_gateway_path("/runs/{run_id}/images/generate"),
+                "event_name": "abstract.media.image.generated",
+                "formats": ["png", "jpeg", "webp"],
+                "max_image_bytes": _gateway_image_generation_max_bytes(),
+                **(
+                    {"config_hint": "Configure AbstractVision or an AbstractCore server with /v1/images/generations support."}
+                    if not direct_configured
+                    else {}
+                ),
+            },
+        },
+        "generated_voice": {
+            "direct_endpoint": {
+                "available": bool(_voice_contract_descriptor(caps, kind="tts").get("available")),
+                "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
+            },
+            "workflow": {"available": bool(_plugin_capability(caps, "voice").get("available"))},
+        },
+    }
+
+
+def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the versioned thin-client capability contract from cheap probes."""
+    prompt_cache_endpoints = {
+        "capabilities": _api_gateway_path("/prompt_cache/capabilities"),
+        "stats": _api_gateway_path("/prompt_cache/stats"),
+        "set": _api_gateway_path("/prompt_cache/set"),
+        "update": _api_gateway_path("/prompt_cache/update"),
+        "fork": _api_gateway_path("/prompt_cache/fork"),
+        "clear": _api_gateway_path("/prompt_cache/clear"),
+        "prepare_modules": _api_gateway_path("/prompt_cache/prepare_modules"),
+    }
+    flow_publish_available = bool((caps.get("visualflow") if isinstance(caps.get("visualflow"), dict) else {}).get("installed"))
+
+    common = {
+        "runs": {
+            "start": {"available": True, "endpoint": _api_gateway_path("/runs/start")},
+            "schedule": {"available": True, "endpoint": _api_gateway_path("/runs/schedule")},
+            "summary": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}")},
+            "list": {"available": True, "endpoint": _api_gateway_path("/runs")},
+            "commands": {
+                "available": True,
+                "endpoint": _api_gateway_path("/commands"),
+                "types": ["pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory"],
+            },
+        },
+        "ledger": {
+            "replay": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/ledger")},
+            "batch": {"available": True, "endpoint": _api_gateway_path("/runs/ledger/batch")},
+            "stream": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/ledger/stream"), "transport": "sse"},
+        },
+        "artifacts": {
+            "list": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts")},
+            "metadata": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}")},
+            "content": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}/content")},
+        },
+        "attachments": {
+            "upload": {"available": True, "endpoint": _api_gateway_path("/attachments/upload")},
+            "max_upload_bytes": int(_server_workspace_policy_public().get("max_attachment_bytes") or 0),
+        },
+        "workspace": {"policy_endpoint": _api_gateway_path("/workspace/policy")},
+        "discovery": {
+            "capabilities": _api_gateway_path("/discovery/capabilities"),
+            "providers": _api_gateway_path("/discovery/providers"),
+            "provider_models": _api_gateway_path("/discovery/providers/{provider_name}/models"),
+            "model_capabilities": _api_gateway_path("/discovery/models/capabilities"),
+            "tools": _api_gateway_path("/discovery/tools"),
+            "semantics": _api_gateway_path("/semantics"),
+        },
+        "prompt_cache": {
+            "provider_controls": True,
+            "session_lifecycle": True,
+            "endpoints": prompt_cache_endpoints,
+            "session_endpoints": {
+                "status": _api_gateway_path("/sessions/{session_id}/prompt_cache/status"),
+                "prepare": _api_gateway_path("/sessions/{session_id}/prompt_cache/prepare"),
+                "clear": _api_gateway_path("/sessions/{session_id}/prompt_cache/clear"),
+                "rebuild": _api_gateway_path("/sessions/{session_id}/prompt_cache/rebuild"),
+            },
+        },
+    }
+
+    flow_editor = {
+        "available": True,
+        "version": 1,
+        "visualflows": {
+            "crud": {
+                "available": True,
+                "collection_endpoint": _api_gateway_path("/visualflows"),
+                "item_endpoint": _api_gateway_path("/visualflows/{flow_id}"),
+            },
+            "publish": {
+                "available": flow_publish_available,
+                "endpoint": _api_gateway_path("/visualflows/{flow_id}/publish"),
+                **({} if flow_publish_available else {"install_hint": 'pip install "abstractgateway[visualflow]" (or "abstractgateway[all]")'}),
+            },
+        },
+        "bundles": {
+            "list": {"available": True, "endpoint": _api_gateway_path("/bundles")},
+            "inspect": {"available": True, "endpoint": _api_gateway_path("/bundles/{bundle_id}")},
+            "upload": {"available": True, "endpoint": _api_gateway_path("/bundles/upload")},
+            "reload": {"available": True, "endpoint": _api_gateway_path("/bundles/reload")},
+            "remove": {"available": True, "endpoint": _api_gateway_path("/bundles/{bundle_id}")},
+            "deprecate": {"available": True, "endpoint": _api_gateway_path("/bundles/{bundle_id}/deprecate")},
+            "undeprecate": {"available": True, "endpoint": _api_gateway_path("/bundles/{bundle_id}/undeprecate")},
+            "flow": {"available": True, "endpoint": _api_gateway_path("/bundles/{bundle_id}/flows/{flow_id}")},
+        },
+        "run_input_schema": {
+            "available": True,
+            "endpoint": _api_gateway_path("/bundles/{bundle_id}/flows/{flow_id}/input_schema"),
+            "version": 1,
+        },
+        "runs": common["runs"],
+        "ledger": common["ledger"],
+        "artifacts": common["artifacts"],
+        "helpers": {
+            "providers": common["discovery"]["providers"],
+            "tools": common["discovery"]["tools"],
+            "semantics": common["discovery"]["semantics"],
+            "workspace_policy": common["workspace"]["policy_endpoint"],
+            "kg_query": _api_gateway_path("/kg/query"),
+            "embeddings": _api_gateway_path("/embeddings"),
+        },
+    }
+
+    assistant_voice = {
+        "tts": _voice_contract_descriptor(caps, kind="tts"),
+        "stt": _voice_contract_descriptor(caps, kind="stt"),
+    }
+    assistant = {
+        "available": True,
+        "version": 1,
+        "runs": common["runs"],
+        "ledger": common["ledger"],
+        "artifacts": common["artifacts"],
+        "voice": assistant_voice,
+        "media": _generated_media_contract(caps),
+        "prompt_cache": {
+            "provider_controls": True,
+            "session_lifecycle": True,
+            "capabilities_endpoint": prompt_cache_endpoints["capabilities"],
+            "stats_endpoint": prompt_cache_endpoints["stats"],
+            "session_status_endpoint": _api_gateway_path("/sessions/{session_id}/prompt_cache/status"),
+            "session_prepare_endpoint": _api_gateway_path("/sessions/{session_id}/prompt_cache/prepare"),
+            "session_clear_endpoint": _api_gateway_path("/sessions/{session_id}/prompt_cache/clear"),
+            "session_rebuild_endpoint": _api_gateway_path("/sessions/{session_id}/prompt_cache/rebuild"),
+        },
+    }
+
+    return {
+        "version": 1,
+        "common": common,
+        "flow_editor": flow_editor,
+        "assistant": assistant,
+        "abstractcode": {
+            "available": True,
+            "version": 1,
+            "runs": common["runs"],
+            "ledger": common["ledger"],
+            "artifacts": common["artifacts"],
+            "workspace": common["workspace"],
+            "prompt_cache": assistant["prompt_cache"],
+        },
+    }
+
+
 @router.get("/discovery/capabilities")
 async def discovery_capabilities() -> Dict[str, Any]:
     """List optional gateway capabilities for thin clients (best-effort)."""
@@ -5426,6 +6195,8 @@ async def discovery_capabilities() -> Dict[str, Any]:
             caps["media"] = {"installed": True}
     except Exception as e:
         caps["media"] = {"installed": False, "error": str(e)}
+
+    caps["contracts"] = _build_client_capability_contracts(caps)
 
     return {"capabilities": caps}
 
@@ -10729,6 +11500,27 @@ class _GatewayPromptCacheLoadRequest(_GatewayPromptCacheTarget):
     clear_existing: bool = Field(default=False, description="If true, clear all in-process caches before loading")
 
 
+class _GatewaySessionPromptCacheTarget(_GatewayPromptCacheTarget):
+    bundle_id: Optional[str] = Field(default=None, max_length=160, description="Optional workflow bundle id.")
+    bundle_version: Optional[str] = Field(default=None, max_length=80, description="Optional workflow bundle version.")
+    flow_id: Optional[str] = Field(default=None, max_length=160, description="Optional workflow flow id.")
+    template_id: Optional[str] = Field(default=None, max_length=160, description="Optional stable assistant/agent template id.")
+    version: int = Field(default=1, ge=1, le=10, description="Session cache key/schema version.")
+
+
+class _GatewaySessionPromptCacheRequest(_GatewaySessionPromptCacheTarget):
+    modules: Optional[list[Dict[str, Any]]] = Field(
+        default=None,
+        description="Optional ordered PromptCacheModule dicts. If omitted, convenience fields are converted into stable modules.",
+    )
+    system_prompt: Optional[str] = Field(default=None, max_length=20000, description="Optional system prompt module.")
+    workflow_instructions: Optional[str] = Field(default=None, max_length=20000, description="Optional workflow instructions module.")
+    tools: Optional[list[Dict[str, Any]]] = Field(default=None, description="Optional tool schema module.")
+    pinned_attachments: Optional[list[Dict[str, Any]]] = Field(default=None, description="Optional pinned artifact refs included in the cache identity.")
+    make_default: bool = Field(default=False, description="Set the prepared session key as the provider default when supported.")
+    ttl_s: Optional[float] = Field(default=None, description="Optional provider TTL for prepared/forked keys.")
+
+
 def _gateway_runtime_llm_client() -> tuple[Optional[Any], Optional[str]]:
     svc = get_gateway_service()
     host = getattr(svc, "host", None)
@@ -10805,6 +11597,203 @@ def _gateway_prompt_cache_client_call(
     if isinstance(result, bool):
         return {"supported": True, "operation": operation, "ok": bool(result), "capabilities": caps}
     return {"supported": True, "operation": operation, "result": result, "capabilities": caps}
+
+
+def _session_cache_label(value: Any, *, fallback: str, max_len: int = 36) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return fallback
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", raw).strip("._-").lower()
+    if not safe:
+        return fallback
+    return safe[: max(1, int(max_len))].rstrip("._-") or fallback
+
+
+def _session_prompt_cache_identity(
+    *,
+    session_id: str,
+    provider: str,
+    model: str,
+    bundle_id: Optional[str] = None,
+    bundle_version: Optional[str] = None,
+    flow_id: Optional[str] = None,
+    template_id: Optional[str] = None,
+    version: int = 1,
+) -> Dict[str, Any]:
+    sid = str(session_id or "").strip()
+    prov = str(provider or "").strip()
+    mod = str(model or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    if not prov:
+        raise HTTPException(status_code=400, detail="provider is required")
+    if not mod:
+        raise HTTPException(status_code=400, detail="model is required")
+
+    identity = {
+        "session_id": sid,
+        "bundle_id": str(bundle_id or "").strip(),
+        "bundle_version": str(bundle_version or "").strip(),
+        "flow_id": str(flow_id or "").strip(),
+        "provider": prov,
+        "model": mod,
+        "template_id": str(template_id or "").strip(),
+        "version": int(version or 1),
+    }
+    raw = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    parts = [
+        f"s-{_session_cache_label(sid, fallback='session')}",
+        f"b-{_session_cache_label(bundle_id, fallback='bundle')}",
+        f"v-{_session_cache_label(bundle_version, fallback='latest', max_len=24)}",
+        f"f-{_session_cache_label(flow_id, fallback='flow')}",
+        f"t-{_session_cache_label(template_id, fallback='template')}",
+        f"p-{_session_cache_label(prov, fallback='provider', max_len=28)}",
+        f"m-{_session_cache_label(mod, fallback='model', max_len=48)}",
+    ]
+    namespace = f"agw.pc.v{int(version or 1)}." + ".".join(parts) + f".h-{digest[:16]}"
+    if len(namespace) > 240:
+        namespace = (
+            f"agw.pc.v{int(version or 1)}."
+            f"s-{_session_cache_label(sid, fallback='session')}."
+            f"p-{_session_cache_label(prov, fallback='provider', max_len=28)}."
+            f"h-{digest[:24]}"
+        )
+    key = f"{namespace}:session"
+    return {
+        "identity": identity,
+        "namespace": namespace,
+        "prompt_cache_key": key,
+        "digest": digest[:24],
+    }
+
+
+def _session_prompt_cache_mode(caps: Dict[str, Any]) -> str:
+    if not isinstance(caps, dict) or not bool(caps.get("supported")):
+        return "unsupported"
+    mode = str(caps.get("mode") or "").strip().lower()
+    if mode in {"keyed", "local_control_plane"}:
+        return mode
+    if bool(caps.get("supports_prepare_modules")) or bool(caps.get("supports_update")) or bool(caps.get("supports_fork")):
+        return "local_control_plane"
+    return "keyed"
+
+
+def _session_prompt_cache_runtime_hint(*, key: str, namespace: str, mode: str) -> Dict[str, Any]:
+    return {
+        "prompt_cache_key": key,
+        "_runtime": {
+            "prompt_cache": {
+                "key": key,
+                "namespace": namespace,
+                "mode": mode,
+                "version": 1,
+            }
+        },
+    }
+
+
+def _bounded_provider_payload(value: Any, *, max_bytes: int = 40000) -> Any:
+    try:
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return {"omitted": True, "reason": "provider response was not JSON-serializable"}
+    size = len(raw.encode("utf-8"))
+    if size <= int(max_bytes):
+        try:
+            return json.loads(raw)
+        except Exception:
+            return value
+    return {
+        "omitted": True,
+        "reason": "provider response exceeded session prompt-cache response budget",
+        "size_bytes": size,
+        "max_bytes": int(max_bytes),
+    }
+
+
+def _session_prompt_cache_base_payload(
+    *,
+    operation: str,
+    session_id: str,
+    req: _GatewaySessionPromptCacheTarget,
+    capabilities: Dict[str, Any],
+    error: Optional[str] = None,
+    code: Optional[str] = None,
+) -> Dict[str, Any]:
+    ident = _session_prompt_cache_identity(
+        session_id=session_id,
+        provider=req.provider,
+        model=req.model,
+        bundle_id=req.bundle_id,
+        bundle_version=req.bundle_version,
+        flow_id=req.flow_id,
+        template_id=req.template_id,
+        version=int(getattr(req, "version", 1) or 1),
+    )
+    caps = capabilities if isinstance(capabilities, dict) else _gateway_prompt_cache_empty_caps()
+    mode = _session_prompt_cache_mode(caps)
+    key = str(ident["prompt_cache_key"])
+    namespace = str(ident["namespace"])
+    return {
+        "supported": bool(caps.get("supported")),
+        "operation": operation,
+        "mode": mode,
+        "session_id": str(session_id),
+        "namespace": namespace,
+        "prompt_cache_key": key,
+        "runtime_hint": _session_prompt_cache_runtime_hint(key=key, namespace=namespace, mode=mode),
+        "identity": ident["identity"],
+        "capabilities": caps,
+        **({"code": code} if code else {}),
+        **({"error": error} if error else {}),
+    }
+
+
+def _validate_session_prompt_cache_modules(modules: Any) -> list[Dict[str, Any]]:
+    if modules is None:
+        return []
+    if not isinstance(modules, list):
+        raise HTTPException(status_code=400, detail="modules must be a list")
+    if len(modules) > 12:
+        raise HTTPException(status_code=400, detail="modules must contain at most 12 items")
+    try:
+        raw = json.dumps(modules, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except TypeError as e:
+        raise HTTPException(status_code=400, detail=f"modules must be JSON-serializable: {e}")
+    size = len(raw.encode("utf-8"))
+    if size > 256_000:
+        raise HTTPException(status_code=400, detail=f"modules payload is too large ({size} bytes; max 256000)")
+    parsed = json.loads(raw)
+    return [dict(m) for m in parsed if isinstance(m, dict)]
+
+
+def _session_prompt_cache_modules_from_request(req: _GatewaySessionPromptCacheRequest) -> list[Dict[str, Any]]:
+    if req.modules is not None:
+        return _validate_session_prompt_cache_modules(req.modules)
+
+    modules: list[Dict[str, Any]] = []
+    if isinstance(req.system_prompt, str) and req.system_prompt.strip():
+        modules.append({"module_id": "system", "system_prompt": req.system_prompt.strip(), "scope": "shared"})
+    if isinstance(req.workflow_instructions, str) and req.workflow_instructions.strip():
+        modules.append({"module_id": "workflow", "prompt": req.workflow_instructions.strip(), "scope": "shared"})
+    if isinstance(req.tools, list) and req.tools:
+        tools = _validate_session_prompt_cache_modules([{"tools": req.tools}])
+        tool_list = tools[0].get("tools") if tools else []
+        if isinstance(tool_list, list) and tool_list:
+            modules.append({"module_id": "tools", "tools": tool_list, "scope": "shared"})
+    if isinstance(req.pinned_attachments, list) and req.pinned_attachments:
+        pins = _validate_session_prompt_cache_modules([{"attachments": req.pinned_attachments}])
+        attachments = pins[0].get("attachments") if pins else []
+        if isinstance(attachments, list) and attachments:
+            modules.append(
+                {
+                    "module_id": "pinned_attachments",
+                    "prompt": json.dumps({"pinned_attachments": attachments}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                    "scope": "private",
+                }
+            )
+    return modules
 
 
 def _gateway_prompt_cache_dir(*, provider: str, model: str) -> Path:
@@ -11020,6 +12009,255 @@ async def prompt_cache_prepare_modules(req: _GatewayPromptCachePrepareModulesReq
             "version": int(req.version),
         },
     )
+
+
+@router.get("/sessions/{session_id}/prompt_cache/status")
+async def session_prompt_cache_status(
+    session_id: str,
+    provider: str = Query(..., description="AbstractCore provider name"),
+    model: str = Query(..., description="Model id/name"),
+    bundle_id: Optional[str] = Query(None, description="Optional workflow bundle id"),
+    bundle_version: Optional[str] = Query(None, description="Optional workflow bundle version"),
+    flow_id: Optional[str] = Query(None, description="Optional workflow flow id"),
+    template_id: Optional[str] = Query(None, description="Optional assistant/agent template id"),
+    version: int = Query(1, ge=1, le=10, description="Session cache key/schema version"),
+) -> Dict[str, Any]:
+    req = _GatewaySessionPromptCacheTarget(
+        provider=provider,
+        model=model,
+        bundle_id=bundle_id,
+        bundle_version=bundle_version,
+        flow_id=flow_id,
+        template_id=template_id,
+        version=version,
+    )
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        payload = _session_prompt_cache_base_payload(
+            operation="status",
+            session_id=session_id,
+            req=req,
+            capabilities=_gateway_prompt_cache_empty_caps(),
+            error=err,
+            code="prompt_cache_unavailable",
+        )
+        payload["ok"] = False
+        return payload
+
+    info = _gateway_prompt_cache_client_capabilities(llm_client=llm_client, provider=provider, model=model)
+    caps = info.get("capabilities") if isinstance(info, dict) else _gateway_prompt_cache_empty_caps()
+    if not isinstance(caps, dict):
+        caps = _gateway_prompt_cache_empty_caps()
+    payload = _session_prompt_cache_base_payload(
+        operation="status",
+        session_id=session_id,
+        req=req,
+        capabilities=caps,
+        error=str(info.get("error")) if isinstance(info, dict) and info.get("error") else None,
+        code=None if bool(caps.get("supported")) else "prompt_cache_unsupported",
+    )
+    payload["ok"] = bool(caps.get("supported"))
+    if bool(caps.get("supports_stats")):
+        stats = _gateway_prompt_cache_client_call(
+            llm_client=llm_client,
+            method_name="get_prompt_cache_stats",
+            operation="stats",
+            provider=provider,
+            model=model,
+        )
+        payload["stats"] = _bounded_provider_payload(stats.get("stats") if isinstance(stats, dict) and "stats" in stats else stats)
+    return payload
+
+
+@router.post("/sessions/{session_id}/prompt_cache/prepare")
+async def session_prompt_cache_prepare(session_id: str, req: _GatewaySessionPromptCacheRequest) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        payload = _session_prompt_cache_base_payload(
+            operation="prepare",
+            session_id=session_id,
+            req=req,
+            capabilities=_gateway_prompt_cache_empty_caps(),
+            error=err,
+            code="prompt_cache_unavailable",
+        )
+        payload["ok"] = False
+        return payload
+
+    info = _gateway_prompt_cache_client_capabilities(llm_client=llm_client, provider=req.provider, model=req.model)
+    caps = info.get("capabilities") if isinstance(info, dict) else _gateway_prompt_cache_empty_caps()
+    if not isinstance(caps, dict):
+        caps = _gateway_prompt_cache_empty_caps()
+    payload = _session_prompt_cache_base_payload(
+        operation="prepare",
+        session_id=session_id,
+        req=req,
+        capabilities=caps,
+        error=str(info.get("error")) if isinstance(info, dict) and info.get("error") else None,
+        code=None if bool(caps.get("supported")) else "prompt_cache_unsupported",
+    )
+    if not bool(caps.get("supported")):
+        payload["ok"] = False
+        return payload
+
+    modules = _session_prompt_cache_modules_from_request(req)
+    mode = str(payload.get("mode") or "unsupported")
+    provider_responses: Dict[str, Any] = {}
+    active_key = str(payload["prompt_cache_key"])
+    prefix_key: Optional[str] = None
+
+    if mode == "local_control_plane" and modules and bool(caps.get("supports_prepare_modules")):
+        prepared = _gateway_prompt_cache_client_call(
+            llm_client=llm_client,
+            method_name="prompt_cache_prepare_modules",
+            operation="prepare_modules",
+            provider=req.provider,
+            model=req.model,
+            payload={
+                "namespace": str(payload["namespace"]),
+                "modules": modules,
+                "make_default": False,
+                "ttl_s": req.ttl_s,
+                "version": int(req.version),
+            },
+        )
+        provider_responses["prepare_modules"] = _bounded_provider_payload(prepared)
+        if not bool(prepared.get("supported")):
+            payload.update({"ok": False, "code": str(prepared.get("code") or "prompt_cache_prepare_failed"), "provider_responses": provider_responses})
+            if prepared.get("error"):
+                payload["error"] = str(prepared.get("error"))
+            return payload
+
+        prefix_key0 = prepared.get("final_cache_key")
+        prefix_key = str(prefix_key0).strip() if isinstance(prefix_key0, str) and prefix_key0.strip() else None
+        if prefix_key and bool(caps.get("supports_fork")):
+            forked = _gateway_prompt_cache_client_call(
+                llm_client=llm_client,
+                method_name="prompt_cache_fork",
+                operation="fork",
+                provider=req.provider,
+                model=req.model,
+                payload={
+                    "from_key": prefix_key,
+                    "to_key": active_key,
+                    "make_default": bool(req.make_default),
+                    "ttl_s": req.ttl_s,
+                },
+            )
+            provider_responses["fork"] = _bounded_provider_payload(forked)
+            ok = bool(forked.get("supported")) and bool(forked.get("ok", True))
+            payload.update({"ok": ok, "prepared": ok, "prefix_cache_key": prefix_key, "provider_responses": provider_responses})
+            if not ok:
+                payload["code"] = str(forked.get("code") or "prompt_cache_fork_failed")
+                if forked.get("error"):
+                    payload["error"] = str(forked.get("error"))
+            return payload
+
+        if prefix_key:
+            active_key = prefix_key
+            payload["prompt_cache_key"] = active_key
+            payload["runtime_hint"] = _session_prompt_cache_runtime_hint(
+                key=active_key,
+                namespace=str(payload["namespace"]),
+                mode=mode,
+            )
+        payload.update({"ok": True, "prepared": True, "prefix_cache_key": prefix_key, "provider_responses": provider_responses})
+        return payload
+
+    if mode == "local_control_plane" and not modules and bool(caps.get("supports_set")):
+        selected = _gateway_prompt_cache_client_call(
+            llm_client=llm_client,
+            method_name="prompt_cache_set",
+            operation="set",
+            provider=req.provider,
+            model=req.model,
+            payload={"key": active_key, "make_default": bool(req.make_default), "ttl_s": req.ttl_s},
+        )
+        provider_responses["set"] = _bounded_provider_payload(selected)
+        ok = bool(selected.get("supported")) and bool(selected.get("ok", True))
+        payload.update({"ok": ok, "prepared": ok, "provider_responses": provider_responses})
+        if not ok:
+            payload["code"] = str(selected.get("code") or "prompt_cache_set_failed")
+            if selected.get("error"):
+                payload["error"] = str(selected.get("error"))
+        return payload
+
+    payload.update(
+        {
+            "ok": True,
+            "prepared": False,
+            "code": "prompt_cache_key_hint_only",
+            "hint": "Provider does not expose module preparation here; pass runtime_hint.prompt_cache_key with run input.",
+        }
+    )
+    return payload
+
+
+@router.post("/sessions/{session_id}/prompt_cache/clear")
+async def session_prompt_cache_clear(session_id: str, req: _GatewaySessionPromptCacheRequest) -> Dict[str, Any]:
+    llm_client, err = _gateway_runtime_llm_client()
+    if err:
+        payload = _session_prompt_cache_base_payload(
+            operation="clear",
+            session_id=session_id,
+            req=req,
+            capabilities=_gateway_prompt_cache_empty_caps(),
+            error=err,
+            code="prompt_cache_unavailable",
+        )
+        payload["ok"] = False
+        return payload
+
+    info = _gateway_prompt_cache_client_capabilities(llm_client=llm_client, provider=req.provider, model=req.model)
+    caps = info.get("capabilities") if isinstance(info, dict) else _gateway_prompt_cache_empty_caps()
+    if not isinstance(caps, dict):
+        caps = _gateway_prompt_cache_empty_caps()
+    payload = _session_prompt_cache_base_payload(
+        operation="clear",
+        session_id=session_id,
+        req=req,
+        capabilities=caps,
+        code=None if bool(caps.get("supported")) else "prompt_cache_unsupported",
+    )
+    if not bool(caps.get("supports_clear")):
+        payload.update(
+            {
+                "ok": False,
+                "code": "prompt_cache_clear_unsupported",
+                "error": "Provider does not support clearing prompt-cache keys through this control plane.",
+            }
+        )
+        return payload
+
+    cleared = _gateway_prompt_cache_client_call(
+        llm_client=llm_client,
+        method_name="prompt_cache_clear",
+        operation="clear",
+        provider=req.provider,
+        model=req.model,
+        payload={"key": str(payload["prompt_cache_key"])},
+    )
+    ok = bool(cleared.get("supported")) and bool(cleared.get("ok", True))
+    payload.update({"ok": ok, "cleared": ok, "provider_responses": {"clear": _bounded_provider_payload(cleared)}})
+    if not ok:
+        payload["code"] = str(cleared.get("code") or "prompt_cache_clear_failed")
+        if cleared.get("error"):
+            payload["error"] = str(cleared.get("error"))
+    return payload
+
+
+@router.post("/sessions/{session_id}/prompt_cache/rebuild")
+async def session_prompt_cache_rebuild(session_id: str, req: _GatewaySessionPromptCacheRequest) -> Dict[str, Any]:
+    cleared = await session_prompt_cache_clear(session_id=session_id, req=req)
+    prepared = await session_prompt_cache_prepare(session_id=session_id, req=req)
+    out = dict(prepared)
+    out["operation"] = "rebuild"
+    out["clear_result"] = _bounded_provider_payload(cleared)
+    out["prepare_result"] = _bounded_provider_payload(prepared)
+    out["ok"] = bool(prepared.get("ok"))
+    if not bool(cleared.get("ok")) and str(cleared.get("code") or "") not in {"prompt_cache_clear_failed"}:
+        out.setdefault("warnings", []).append("clear was unsupported or unavailable; rebuild returned a fresh prepare/key hint")
+    return out
 
 
 @router.get("/prompt_cache/saved")

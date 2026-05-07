@@ -183,17 +183,86 @@ The capabilities payload includes package presence (`abstractruntime`,
 (`tools`, `visualflow`, `media`), and AbstractCore capability plugin status for
 `voice`, `audio`, `vision`, and future `music`.
 
+It also includes a versioned thin-client contract:
+
+- `capabilities.contracts.version`: currently `1`
+- `capabilities.contracts.common`: shared run, ledger, artifact, attachment,
+  workspace, discovery, and provider prompt-cache controls
+- `capabilities.contracts.flow_editor`: the AbstractFlow editor/runtime surface
+- `capabilities.contracts.assistant`: assistant-facing voice/audio/media/cache
+  feature gates
+- `capabilities.contracts.abstractcode`: code-client run/history/workspace/cache
+  feature gates
+
+Contract booleans are intentionally conservative. Package `installed=true` is
+not the same thing as endpoint `available=true`; clients should branch on the
+versioned contract fields when enabling controls.
+
 Evidence: `src/abstractgateway/routes/gateway.py` (`discovery_capabilities`, `discovery_providers`).
+
+## AbstractFlow gateway-first editor contract
+
+The browser editor can use AbstractGateway as its runtime and storage host.
+
+Draft VisualFlow records:
+
+- `GET /api/gateway/visualflows`
+- `POST /api/gateway/visualflows`
+- `GET /api/gateway/visualflows/{flow_id}`
+- `PUT /api/gateway/visualflows/{flow_id}`
+- `DELETE /api/gateway/visualflows/{flow_id}`
+- `POST /api/gateway/visualflows/{flow_id}/publish`
+
+Bundle inspection and editor run-schema helpers:
+
+- `GET /api/gateway/bundles`
+- `GET /api/gateway/bundles/{bundle_id}`
+- `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}`
+- `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema`
+
+The input-schema endpoint returns a versioned payload with:
+
+- `version`
+- `bundle_id`, `bundle_version`, `bundle_ref`, `flow_id`, `workflow_id`
+- `inputs`: entrypoint input pins derived from the `on_flow_start` node
+- `defaults`: pin defaults from VisualFlow JSON
+- `input_data_schema`: a small JSON Schema object for the Run Flow modal
+
+Example:
+
+```bash
+curl -sS -H "$AUTH" \
+  "$BASE_URL/api/gateway/bundles/my-bundle/flows/ac-echo/input_schema"
+```
+
+The editor observes runs with the core lifecycle endpoints above:
+`/runs/start`, `/runs/{run_id}`, `/runs/{run_id}/ledger`,
+`/runs/{run_id}/ledger/stream`, `/runs/ledger/batch`,
+`/runs/{run_id}/input_data`, `/runs/{run_id}/history_bundle`, and
+`/runs/{run_id}/artifacts`.
 
 ## Optional multimodal scope
 
 Direct Gateway endpoints in this release:
 - `POST /api/gateway/runs/{run_id}/voice/tts`
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
+- `POST /api/gateway/runs/{run_id}/images/generate`
 
 Generated images are available through Runtime/Core workflows when
-AbstractVision is installed and configured. Gateway does not yet expose a
-direct image-generation HTTP endpoint.
+AbstractVision is installed and configured. Gateway also exposes a direct image
+generation endpoint that uses the Runtime/Core output-selector contract rather
+than a provider-specific image client. The route stores the generated image as a
+run artifact and emits `abstract.media.image.generated` with:
+
+- `run_id`, `request_id`, `prompt`
+- optional `provider`, `model`, `size`, `width`, `height`, and `format`
+- `image_artifact`: `{"$artifact", "content_type", "filename", "sha256", "size_bytes"}`
+
+If the active workflow runtime already has an AbstractCore LLM client, the route
+uses it. For tools-only workflows, the route can create a direct Runtime/Core
+client from request `provider`/`model` or `ABSTRACTGATEWAY_PROVIDER` /
+`ABSTRACTGATEWAY_MODEL`. Unsupported or unconfigured deployments return a
+structured `ok=false` response instead of a failed run.
 
 ## Prompt-cache control plane (operator API)
 
@@ -215,7 +284,27 @@ Behavior:
 - In local mode they delegate to the in-process provider.
 - In remote/hybrid mode they follow whatever `/acore/prompt_cache/*` surface the configured AbstractCore server exposes.
 - All core prompt-cache responses include `operation` and `capabilities`, with structured unsupported/error cases (`code="prompt_cache_unsupported"` / `code="prompt_cache_error"` / `code="prompt_cache_unavailable"`).
-- These endpoints are provider/model controls, not a Gateway-owned CachedSession lifecycle API.
+- These endpoints remain provider/model controls, not a Gateway-owned CachedSession persistence system.
+
+Session lifecycle endpoints:
+
+- `GET /api/gateway/sessions/{session_id}/prompt_cache/status`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear`
+
+These routes derive a deterministic bounded namespace/key from `session_id`,
+`bundle_id`, `bundle_version`, `flow_id`, `provider`, `model`, optional
+`template_id`, and `version`. They expose three honest modes:
+
+- `unsupported`: provider/model does not expose prompt-cache support; responses include `supported=false`, `ok=false`, and capabilities.
+- `keyed`: gateway returns a stable `runtime_hint`/`prompt_cache_key` for Runtime/Core injection, but does not claim module preparation occurred.
+- `local_control_plane`: gateway uses supported provider operations such as `prepare_modules`, `fork`, `set`, `clear`, and `stats`.
+
+`status` is read-only. `prepare` accepts optional modules (`system_prompt`,
+`workflow_instructions`, `tools`, `pinned_attachments`) and returns either
+provider operation results or a key hint. `rebuild` is clear-plus-prepare for
+providers that expose clear controls.
 
 Provider-specific persistence endpoints:
 

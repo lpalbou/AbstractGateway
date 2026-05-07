@@ -138,8 +138,9 @@ abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
 ## 3b) Docker / Compose
 
 For a containerized deployment with AbstractRuntime multimodal support,
-AbstractCore remote providers, workflow-backed AbstractVision image generation,
-and direct Gateway voice/audio endpoints included:
+AbstractCore remote providers, workflow-backed/direct AbstractVision image
+generation, direct Gateway voice/audio/image endpoints, and provider/session
+prompt-cache controls included:
 
 ```bash
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -148,7 +149,7 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.2
+  ghcr.io/lpalbou/abstractgateway-server:0.2.3
 ```
 
 See [deployment.md](./deployment.md) for Compose, provider keys, and image

@@ -55,15 +55,16 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
 Release images are published to GHCR:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.2
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.3
 ```
 
 The image installs `abstractgateway[server]`: HTTP server,
 `AbstractRuntime[multimodal]`, AbstractCore remote/commercial provider support,
-OpenAI-compatible text providers, workflow-backed image generation through
-AbstractVision, direct Gateway voice/audio endpoints through AbstractVoice,
-prompt-cache helpers, media/tool helpers, token counting, compression,
-AbstractAgent, and AbstractFlow compatibility.
+OpenAI-compatible text providers, workflow-backed and direct image generation
+through Runtime/Core/AbstractVision, direct Gateway voice/audio endpoints
+through AbstractVoice, provider/session prompt-cache helpers, media/tool
+helpers, token counting, compression, AbstractAgent, and AbstractFlow
+compatibility.
 
 ```bash
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -76,25 +77,28 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.2
+  ghcr.io/lpalbou/abstractgateway-server:0.2.3
 ```
 
 Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 
-## 0.2.2 capability scope
+## 0.2.3 capability scope
 
 Direct Gateway APIs in this release:
 - `POST /api/gateway/runs/{run_id}/voice/tts`
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
+- `POST /api/gateway/runs/{run_id}/images/generate`
 - `/api/gateway/prompt_cache/*` provider/model operator controls
-- `/api/gateway/discovery/capabilities` package and plugin discovery
+- `/api/gateway/sessions/{session_id}/prompt_cache/*` session lifecycle controls
+- `/api/gateway/discovery/capabilities` package, plugin, and thin-client contract discovery
 
 Workflow/Core-backed capabilities:
 - Generated images are available to Runtime/Core workflows through
-  AbstractVision when installed and configured.
-- Gateway does not yet expose a direct `/images/generate`-style HTTP endpoint.
-- Prompt-cache support depends on the active provider/model and is not a full
-  Gateway-owned CachedSession lifecycle API.
+  AbstractVision when installed and configured, and the direct Gateway image
+  route uses the same Runtime/Core image-generation contract.
+- Prompt-cache support depends on the active provider/model. Session lifecycle
+  routes provide Gateway-owned naming and orchestration, not a provider-
+  independent local KV cache.
 
 ## Client contract (replay-first)
 
@@ -127,7 +131,7 @@ pip install "abstractgateway[http]"
 ### Optional extras
 
 - `abstractgateway[visualflow]`: run VisualFlow JSON from a directory of `*.json` files (requires `abstractflow`)
-- `abstractgateway[server]`: container/server profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed AbstractVision image generation, direct Gateway voice/audio endpoints, media/tool helpers, tokens, and compression
+- `abstractgateway[server]`: container/server profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed/direct AbstractVision image generation, direct Gateway voice/audio/image endpoints, provider/session prompt-cache helpers, media/tool helpers, tokens, and compression
 - `abstractgateway[telegram]`: Telegram bridge dependencies
 - `abstractgateway[voice]`: enable voice/audio endpoints (TTS/STT) via AbstractVoice and AbstractCore's voice/audio plugin extras
 - `abstractgateway[vision]`: enable generative vision via AbstractCore's AbstractVision plugin

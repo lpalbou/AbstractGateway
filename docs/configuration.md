@@ -8,7 +8,7 @@ The base install (`pip install abstractgateway`) includes the runner + durable s
 
 Optional extras (see `pyproject.toml`):
 - `abstractgateway[http]`: FastAPI + Uvicorn (`abstractgateway serve`)
-- `abstractgateway[server]`: turnkey server/container profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed AbstractVision image generation, direct Gateway voice/audio endpoints, media/tool helpers, token counting, provider-level prompt-cache helpers, and compression
+- `abstractgateway[server]`: turnkey server/container profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed AbstractVision image generation, direct Gateway voice/audio/image endpoints, media/tool helpers, token counting, provider-level and session-level prompt-cache helpers, and compression
 - `abstractgateway[visualflow]`: VisualFlow JSON directory mode via `abstractflow`
 - `abstractgateway[telegram]`: Telegram bridge dependencies (AbstractRuntime’s AbstractCore integration)
 - `abstractgateway[voice]`: voice/audio endpoints (TTS + STT) via AbstractVoice and AbstractCore's voice/audio plugin extras
@@ -21,7 +21,7 @@ Optional extras (see `pyproject.toml`):
 Optional (required by some workflows/features):
 - `abstractruntime[abstractcore]>=0.4.6`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`) — already included by `abstractgateway[http]`
 - `abstractruntime[multimodal]>=0.4.6`: required for Runtime-managed multimodal outputs through AbstractCore workflows — included by `abstractgateway[server]`, `abstractgateway[multimodal]`, and `abstractgateway[all]`
-- `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.10`: recommended for server deployments that need hosted providers, OpenAI-compatible text provider routing, media parsing, tool helpers, token counting, provider-level prompt-cache controls, workflow-backed image generation, TTS, and STT — included by `abstractgateway[server]`
+- `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.10`: recommended for server deployments that need hosted providers, OpenAI-compatible text provider routing, media parsing, tool helpers, token counting, provider-level prompt-cache controls, workflow-backed/direct image generation, TTS, and STT — included by `abstractgateway[server]`
 - `abstractagent`: required for Visual Agent nodes (bundle mode) — already included by `abstractgateway[http]`
 - `abstractmemory[lancedb]` (or `abstractmemory` + `lancedb`): required for bundles that use `memory_kg_*` nodes
 
@@ -102,8 +102,9 @@ Gateway prompt-cache endpoints are available when the AbstractCore integration
 for the active provider/model exposes them. Remote providers usually provide
 server-managed cache hints; local in-process providers can expose stronger
 control-plane operations when installed in a custom runtime image.
-These endpoints are provider/model controls, not a Gateway-owned CachedSession
-lifecycle API.
+Provider-level endpoints remain available for operators, and session-level
+endpoints provide a deterministic gateway-owned namespace/key lifecycle for thin
+apps without pretending unsupported providers have local KV state.
 
 - `GET /api/gateway/prompt_cache/capabilities`
 - `GET /api/gateway/prompt_cache/stats`
@@ -113,15 +114,25 @@ lifecycle API.
 - `POST /api/gateway/prompt_cache/clear`
 - `POST /api/gateway/prompt_cache/prepare_modules`
 - `POST /api/gateway/prompt_cache/save` / `load` for supported local providers
+- `GET /api/gateway/sessions/{session_id}/prompt_cache/status`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear`
+
+Session lifecycle responses distinguish `unsupported`, `keyed`, and
+`local_control_plane` modes. Keyed providers receive a stable `runtime_hint`;
+local-control-plane providers can prepare, clear, and rebuild when their
+AbstractCore provider exposes those operations.
 
 ### Multimodal provider/plugin controls
 
 The `server`, `multimodal`, and `all` extras install the lightweight AbstractCore
 plugin surface for generated images, generated voice, STT, and future music/video
-capabilities. In 0.2.2, voice generation and transcription have direct Gateway
-endpoints; generated images are exposed through Runtime/Core workflows rather
-than a direct Gateway image-generation endpoint. Local heavy engines remain
-explicit opt-ins in the provider packages.
+capabilities. Voice generation, transcription, and generated images have direct Gateway
+endpoints; generated images are also exposed through Runtime/Core workflows and
+through `POST /api/gateway/runs/{run_id}/images/generate` when a Runtime/Core
+image backend is configured or provider/model are supplied on the request. Local
+heavy engines remain explicit opt-ins in the provider packages.
 
 - `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: default text model for bundle LLM nodes
 - `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`: OpenAI-compatible text endpoint for AbstractCore providers
@@ -129,7 +140,7 @@ explicit opt-ins in the provider packages.
 - `ABSTRACTVISION_BACKEND`: `openai` / `diffusers` / `sdcpp` (`openai` means OpenAI-compatible HTTP)
 - `ABSTRACTVOICE_TTS_ENGINE` / `ABSTRACTVOICE_STT_ENGINE`: `auto`, local engines, or remote-compatible engines supported by AbstractVoice
 - `ABSTRACTVOICE_REMOTE_BASE_URL` / `ABSTRACTVOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice
-- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`
+- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls
 
 ## CLI flags
 

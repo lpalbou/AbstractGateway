@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.2.2"
+version = "0.2.3"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,8 +30,8 @@ http = [
 
 # Turnkey HTTP server deployments. This mirrors the AbstractCore server image
 # profile: remote/commercial providers, OpenAI-compatible text routing,
-# workflow-backed vision, direct Gateway voice/audio, media parsing, token
-# counting, compression, prompt-cache helpers, and safe tool helpers, without
+# workflow-backed/direct vision, direct Gateway voice/audio/image, media parsing,
+# token counting, compression, prompt-cache helpers, and safe tool helpers, without
 # local model runtimes such as MLX/vLLM/HuggingFace.
 server = [
   "AbstractRuntime[multimodal]>=0.4.6",

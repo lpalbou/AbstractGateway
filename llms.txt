@@ -20,8 +20,8 @@ Multimodal notes:
 - Direct Gateway voice/audio durable endpoints (when `abstractvoice` is installed on the gateway host):
   - STT: `POST /api/gateway/runs/{run_id}/audio/transcribe`
   - TTS: `POST /api/gateway/runs/{run_id}/voice/tts`
-- Generated images are Runtime/Core workflow-backed through AbstractVision in this release; Gateway does not yet expose a direct image-generation HTTP endpoint.
-- `/api/gateway/prompt_cache/*` exposes provider/model prompt-cache controls, not a Gateway-owned CachedSession lifecycle API.
+- Generated images are available through Runtime/Core workflows and through the direct run-scoped route `POST /api/gateway/runs/{run_id}/images/generate` when an image backend is configured.
+- `/api/gateway/prompt_cache/*` exposes provider/model prompt-cache controls; `/api/gateway/sessions/{session_id}/prompt_cache/*` adds Gateway-owned session naming/status/prepare/clear/rebuild orchestration over those provider controls.
 
 Regeneration:
 - `python scripts/generate-llms-full.py` regenerates `llms-full.txt` from the Markdown doc links in this `llms.txt`.

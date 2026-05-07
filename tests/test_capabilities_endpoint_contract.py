@@ -86,3 +86,76 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         if isinstance(plugin_caps, dict):
             for capability in ("voice", "audio", "vision", "music"):
                 assert isinstance(plugin_caps.get(capability), dict)
+
+        contracts = caps.get("contracts")
+        assert isinstance(contracts, dict)
+        assert contracts.get("version") == 1
+
+        common = contracts.get("common")
+        assert isinstance(common, dict)
+        assert common.get("runs", {}).get("start", {}).get("endpoint") == "/api/gateway/runs/start"
+        assert common.get("ledger", {}).get("stream", {}).get("transport") == "sse"
+        assert common.get("artifacts", {}).get("content", {}).get("endpoint") == "/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content"
+        assert common.get("prompt_cache", {}).get("provider_controls") is True
+        assert common.get("prompt_cache", {}).get("session_lifecycle") is True
+        assert common.get("prompt_cache", {}).get("session_endpoints", {}).get("prepare") == "/api/gateway/sessions/{session_id}/prompt_cache/prepare"
+
+        flow_editor = contracts.get("flow_editor")
+        assert isinstance(flow_editor, dict)
+        assert flow_editor.get("version") == 1
+        assert flow_editor.get("available") is True
+        assert flow_editor.get("run_input_schema", {}).get("available") is True
+        assert flow_editor.get("run_input_schema", {}).get("endpoint") == "/api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema"
+
+        assistant = contracts.get("assistant")
+        assert isinstance(assistant, dict)
+        assert assistant.get("version") == 1
+        assert assistant.get("voice", {}).get("tts", {}).get("endpoint") == "/api/gateway/runs/{run_id}/voice/tts"
+        assert assistant.get("voice", {}).get("stt", {}).get("endpoint") == "/api/gateway/runs/{run_id}/audio/transcribe"
+        assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("route_available") is True
+        assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/generate"
+        assert assistant.get("prompt_cache", {}).get("provider_controls") is True
+        assert assistant.get("prompt_cache", {}).get("session_lifecycle") is True
+
+
+def test_client_capability_contracts_are_explicit_when_optional_features_are_missing() -> None:
+    from abstractgateway.routes.gateway import _build_client_capability_contracts
+
+    contracts = _build_client_capability_contracts(
+        {
+            "abstractvoice": {"installed": False, "error": "missing"},
+            "abstractvision": {"installed": False, "error": "missing"},
+            "voice": {"installed": False, "install_hint": 'pip install "abstractgateway[voice]"'},
+            "visualflow": {"installed": False, "error": "missing"},
+            "capability_plugins": {
+                "installed": True,
+                "capabilities": {
+                    "voice": {"available": False, "install_hint": "install voice"},
+                    "audio": {"available": False, "install_hint": "install audio"},
+                    "vision": {"available": False, "install_hint": "install vision"},
+                },
+            },
+        }
+    )
+
+    assert contracts["version"] == 1
+    tts = contracts["assistant"]["voice"]["tts"]
+    stt = contracts["assistant"]["voice"]["stt"]
+    assert tts["available"] is False
+    assert tts["installed"] is False
+    assert tts["unsupported"] is True
+    assert "install_hint" in tts
+    assert stt["available"] is False
+    assert stt["unsupported"] is True
+
+    media = contracts["assistant"]["media"]
+    assert media["generated_image"]["workflow"]["available"] is False
+    assert media["generated_image"]["direct_endpoint"]["route_available"] is True
+    assert media["generated_image"]["direct_endpoint"]["available"] is False
+    assert contracts["assistant"]["prompt_cache"]["provider_controls"] is True
+    assert contracts["assistant"]["prompt_cache"]["session_lifecycle"] is True
+
+    flow_editor = contracts["flow_editor"]
+    assert flow_editor["visualflows"]["crud"]["available"] is True
+    assert flow_editor["visualflows"]["publish"]["available"] is False
+    assert "install_hint" in flow_editor["visualflows"]["publish"]

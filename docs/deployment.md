@@ -10,7 +10,7 @@ and the remote-provider/multimodal AbstractCore stack together.
 Release images are published to GHCR:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.2
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.3
 ```
 
 The image installs `abstractgateway[server]`, which includes:
@@ -24,8 +24,9 @@ The image installs `abstractgateway[server]`, which includes:
 - FastAPI/Uvicorn
 
 This profile supports hosted/commercial providers, OpenAI-compatible text
-provider routing, workflow-backed image generation through AbstractVision, and
-direct Gateway voice/STT endpoints through AbstractVoice.
+provider routing, workflow-backed and direct image generation through
+Runtime/Core/AbstractVision, direct Gateway voice/STT endpoints through
+AbstractVoice, and provider/session prompt-cache controls.
 It intentionally stays dependency-light for heavy local model runtimes: MLX,
 vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
 engines, and future AbstractMusic engines should remain explicit opt-in image
@@ -106,10 +107,11 @@ separate: clients receive only the Gateway token, while provider keys stay in
 the server environment.
 
 Prompt-cache control endpoints are exposed under `/api/gateway/prompt_cache/*`
-where supported by the active provider/model. Remote providers typically expose
-server-managed cache hints; local in-process providers may expose stronger
-control-plane operations when installed in a custom image. They are not a
-Gateway-owned CachedSession lifecycle API.
+where supported by the active provider/model. Session lifecycle routes under
+`/api/gateway/sessions/{session_id}/prompt_cache/*` provide Gateway-owned
+naming/status/prepare/clear/rebuild orchestration on top of those provider
+controls. They are not a provider-independent local KV cache or full
+CachedSession persistence system.
 
 ## Local-source image
 
@@ -117,7 +119,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.2-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.3-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
