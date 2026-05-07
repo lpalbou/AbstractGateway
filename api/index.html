@@ -1,0 +1,1218 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/api/">
+      
+      
+        <link rel="prev" href="../deployment/">
+      
+      
+        <link rel="next" href="../architecture/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>API Overview - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#abstractgateway-api-overview" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API Overview
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#auth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auth
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-workflow-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core workflow lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core workflow lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-list-bundles-bundle-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1) List bundles (bundle mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-start-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2) Start a run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2b-schedule-a-run-bundle-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2b) Schedule a run (bundle mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-replay-the-ledger-cursor-based" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3) Replay the ledger (cursor-based)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3b-replay-ledgers-for-multiple-runs-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3b) Replay ledgers for multiple runs (batch)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-stream-ledger-updates-sse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4) Stream ledger updates (SSE)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#durable-commands-post-apigatewaycommands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Durable commands (POST /api/gateway/commands)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Durable commands (POST /api/gateway/commands)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pause-cancel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pause / cancel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resume-a-paused-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resume a paused run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resume-a-waiting-run-with-a-payload-wait-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resume a WAITING run with a payload (WAIT resume)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#emit-an-external-event" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emit an external event
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#beyond-the-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Beyond the core
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#discovery-endpoints-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discovery endpoints (optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optional-multimodal-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional multimodal scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prompt-cache-control-plane-operator-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prompt-cache control plane (operator API)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#email-inbox-operator-ui-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Email inbox (operator UI; optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#auth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auth
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-workflow-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core workflow lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core workflow lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-list-bundles-bundle-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1) List bundles (bundle mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-start-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2) Start a run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2b-schedule-a-run-bundle-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2b) Schedule a run (bundle mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-replay-the-ledger-cursor-based" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3) Replay the ledger (cursor-based)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3b-replay-ledgers-for-multiple-runs-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3b) Replay ledgers for multiple runs (batch)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-stream-ledger-updates-sse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4) Stream ledger updates (SSE)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#durable-commands-post-apigatewaycommands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Durable commands (POST /api/gateway/commands)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Durable commands (POST /api/gateway/commands)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pause-cancel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pause / cancel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resume-a-paused-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resume a paused run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resume-a-waiting-run-with-a-payload-wait-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resume a WAITING run with a payload (WAIT resume)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#emit-an-external-event" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emit an external event
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#beyond-the-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Beyond the core
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#discovery-endpoints-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discovery endpoints (optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optional-multimodal-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional multimodal scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prompt-cache-control-plane-operator-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prompt-cache control plane (operator API)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#email-inbox-operator-ui-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Email inbox (operator UI; optional)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="abstractgateway-api-overview">AbstractGateway — API overview<a class="headerlink" href="#abstractgateway-api-overview" title="Permanent link">&para;</a></h1>
+<p>The HTTP API is implemented with FastAPI under the <code>/api</code> prefix:
+- Health: <code>GET /api/health</code>
+- Gateway surface: <code>/api/gateway/*</code> (durable runs + operator tooling)</p>
+<p>The API is documented at runtime:
+- OpenAPI JSON: <code>GET /openapi.json</code>
+- Swagger UI: <code>GET /docs</code> (use <strong>Authorize</strong> to paste the bearer token)</p>
+<p>Context:
+- In the AbstractFramework ecosystem, UIs and automations call this API to operate <strong>AbstractRuntime</strong> runs.
+- Architecture diagram and core concepts: <a href="../architecture/">architecture.md</a></p>
+<h2 id="auth">Auth<a class="headerlink" href="#auth" title="Permanent link">&para;</a></h2>
+<p>By default, <code>/api/gateway/*</code> is protected by <code>GatewaySecurityMiddleware</code> (bearer token + origin allowlist).<br />
+See: <a href="../security/">security.md</a>.</p>
+<p>All examples below assume:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">BASE_URL</span><span class="o">=</span><span class="s2">&quot;http://127.0.0.1:8080&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">AUTH</span><span class="o">=</span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<h2 id="core-workflow-lifecycle">Core workflow lifecycle<a class="headerlink" href="#core-workflow-lifecycle" title="Permanent link">&para;</a></h2>
+<h3 id="1-list-bundles-bundle-mode">1) List bundles (bundle mode)<a class="headerlink" href="#1-list-bundles-bundle-mode" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/bundles&quot;</span>
+</code></pre></div>
+<p>Upload a bundle:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-F<span class="w"> </span><span class="s2">&quot;file=@./my-bundle@0.1.0.flow&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-F<span class="w"> </span><span class="s2">&quot;overwrite=false&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-F<span class="w"> </span><span class="s2">&quot;reload=true&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/bundles/upload&quot;</span>
+</code></pre></div>
+<h3 id="2-start-a-run">2) Start a run<a class="headerlink" href="#2-start-a-run" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;bundle_id&quot;:&quot;my-bundle&quot;,&quot;input_data&quot;:{&quot;prompt&quot;:&quot;Hello&quot;}}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/start&quot;</span>
+</code></pre></div>
+<p>If you need a specific entrypoint:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;bundle_id&quot;:&quot;my-bundle&quot;,&quot;flow_id&quot;:&quot;ac-echo&quot;,&quot;input_data&quot;:{&quot;prompt&quot;:&quot;Hello&quot;}}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/start&quot;</span>
+</code></pre></div>
+<p>Evidence: request/response models live in <code>src/abstractgateway/routes/gateway.py</code> (<code>StartRunRequest</code>, <code>start_run</code>).</p>
+<h3 id="2b-schedule-a-run-bundle-mode">2b) Schedule a run (bundle mode)<a class="headerlink" href="#2b-schedule-a-run-bundle-mode" title="Permanent link">&para;</a></h3>
+<p><code>POST /api/gateway/runs/schedule</code> starts a <strong>scheduled parent run</strong> that launches the target workflow as child runs over time.</p>
+<p>Example (run 3 times, every hour, starting now):</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;bundle_id&quot;:&quot;my-bundle&quot;,&quot;flow_id&quot;:&quot;ac-echo&quot;,&quot;input_data&quot;:{&quot;prompt&quot;:&quot;Ping&quot;},&quot;start_at&quot;:&quot;now&quot;,&quot;interval&quot;:&quot;1h&quot;,&quot;repeat_count&quot;:3,&quot;share_context&quot;:true,&quot;session_id&quot;:&quot;sess-1&quot;}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/schedule&quot;</span>
+</code></pre></div>
+<p>Notes:
+- <code>start_at</code>: ISO 8601 timestamp (recommended) or <code>"now"</code>.
+- <code>interval</code>: e.g. <code>"15m"</code>, <code>"1h"</code>, <code>"2d"</code>. If omitted, runs once.
+- <code>repeat_count</code>: if omitted and <code>interval</code> is set, repeats forever. Alternatively use <code>repeat_until</code> (ISO 8601).
+- To stop a schedule, cancel the scheduled parent run via <code>POST /api/gateway/commands</code> with type <code>cancel</code>.</p>
+<p>Evidence: <code>ScheduleRunRequest</code>, <code>start_scheduled_run</code> in <code>src/abstractgateway/routes/gateway.py</code>.</p>
+<h3 id="3-replay-the-ledger-cursor-based">3) Replay the ledger (cursor-based)<a class="headerlink" href="#3-replay-the-ledger-cursor-based" title="Permanent link">&para;</a></h3>
+<p>Ledger pages are replayed using <code>after</code> as “number of items already consumed”.</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/ledger?after=0&amp;limit=200&quot;</span>
+</code></pre></div>
+<p>Response shape:
+- <code>items</code>: list of durable ledger records
+- <code>next_after</code>: the next cursor to use</p>
+<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>get_ledger</code>).</p>
+<h3 id="3b-replay-ledgers-for-multiple-runs-batch">3b) Replay ledgers for multiple runs (batch)<a class="headerlink" href="#3b-replay-ledgers-for-multiple-runs-batch" title="Permanent link">&para;</a></h3>
+<p>Use <code>POST /api/gateway/runs/ledger/batch</code> to reduce request fanout when observing many runs/subflows.</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;limit&quot;:200,&quot;runs&quot;:[{&quot;run_id&quot;:&quot;&lt;run_id_1&gt;&quot;,&quot;after&quot;:0},{&quot;run_id&quot;:&quot;&lt;run_id_2&gt;&quot;,&quot;after&quot;:0}]}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/ledger/batch&quot;</span>
+</code></pre></div>
+<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>get_ledger_batch</code>).</p>
+<h3 id="4-stream-ledger-updates-sse">4) Stream ledger updates (SSE)<a class="headerlink" href="#4-stream-ledger-updates-sse" title="Permanent link">&para;</a></h3>
+<p>SSE is an optimization; clients should always be able to reconnect by replaying from the last <code>next_after</code>.</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-N<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/ledger/stream?after=0&quot;</span>
+</code></pre></div>
+<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>stream_ledger</code>).</p>
+<h2 id="durable-commands-post-apigatewaycommands">Durable commands (<code>POST /api/gateway/commands</code>)<a class="headerlink" href="#durable-commands-post-apigatewaycommands" title="Permanent link">&para;</a></h2>
+<p>Commands are appended to a durable inbox and applied asynchronously by the runner.</p>
+<p>Request fields (see <code>SubmitCommandRequest</code> in <code>src/abstractgateway/routes/gateway.py</code>):
+- <code>command_id</code>: client-supplied idempotency key (UUID recommended)
+- <code>run_id</code>: target run id (or session id for some event use-cases)
+- <code>type</code>: <code>pause|resume|cancel|emit_event|update_schedule|compact_memory</code>
+- <code>payload</code>: command-specific object</p>
+<h3 id="pause-cancel">Pause / cancel<a class="headerlink" href="#pause-cancel" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;command_id&quot;:&quot;&#39;</span><span class="s2">&quot;</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import uuid; print(uuid.uuid4())&#39;</span><span class="k">)</span><span class="s2">&quot;</span><span class="s1">&#39;&quot;, &quot;run_id&quot;:&quot;&lt;run_id&gt;&quot;, &quot;type&quot;:&quot;pause&quot;, &quot;payload&quot;:{&quot;reason&quot;:&quot;operator_pause&quot;}}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/commands&quot;</span>
+</code></pre></div>
+<h3 id="resume-a-paused-run">Resume a paused run<a class="headerlink" href="#resume-a-paused-run" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;command_id&quot;:&quot;&#39;</span><span class="s2">&quot;</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import uuid; print(uuid.uuid4())&#39;</span><span class="k">)</span><span class="s2">&quot;</span><span class="s1">&#39;&quot;, &quot;run_id&quot;:&quot;&lt;run_id&gt;&quot;, &quot;type&quot;:&quot;resume&quot;, &quot;payload&quot;:{}}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/commands&quot;</span>
+</code></pre></div>
+<h3 id="resume-a-waiting-run-with-a-payload-wait-resume">Resume a WAITING run with a payload (WAIT resume)<a class="headerlink" href="#resume-a-waiting-run-with-a-payload-wait-resume" title="Permanent link">&para;</a></h3>
+<p>When <code>payload.payload</code> is present, the runner interprets this as “resume a WAITING run with a durable payload”:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;command_id&quot;:&quot;&#39;</span><span class="s2">&quot;</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import uuid; print(uuid.uuid4())&#39;</span><span class="k">)</span><span class="s2">&quot;</span><span class="s1">&#39;&quot;, &quot;run_id&quot;:&quot;&lt;run_id&gt;&quot;, &quot;type&quot;:&quot;resume&quot;, &quot;payload&quot;:{&quot;wait_key&quot;:&quot;&lt;optional_wait_key&gt;&quot;, &quot;payload&quot;:{&quot;approved&quot;:true}}}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/commands&quot;</span>
+</code></pre></div>
+<p>Evidence: <code>src/abstractgateway/runner.py</code> (<code>_apply_command</code>, <code>_apply_run_control</code>).</p>
+<h3 id="emit-an-external-event">Emit an external event<a class="headerlink" href="#emit-an-external-event" title="Permanent link">&para;</a></h3>
+<p>Minimal form:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;command_id&quot;:&quot;&#39;</span><span class="s2">&quot;</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import uuid; print(uuid.uuid4())&#39;</span><span class="k">)</span><span class="s2">&quot;</span><span class="s1">&#39;&quot;, &quot;run_id&quot;:&quot;&lt;session_id&gt;&quot;, &quot;type&quot;:&quot;emit_event&quot;, &quot;payload&quot;:{&quot;name&quot;:&quot;chat.message&quot;,&quot;payload&quot;:{&quot;text&quot;:&quot;hi&quot;}}}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/commands&quot;</span>
+</code></pre></div>
+<p>Evidence: <code>src/abstractgateway/runner.py</code> (<code>_apply_emit_event</code>).</p>
+<h2 id="beyond-the-core">Beyond the core<a class="headerlink" href="#beyond-the-core" title="Permanent link">&para;</a></h2>
+<p><code>/api/gateway/*</code> also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).<br />
+See: <a href="../maintenance/">maintenance.md</a>.</p>
+<h2 id="discovery-endpoints-optional">Discovery endpoints (optional)<a class="headerlink" href="#discovery-endpoints-optional" title="Permanent link">&para;</a></h2>
+<p>These exist to help thin clients adapt to the deployed gateway.</p>
+<ul>
+<li>Capabilities (best-effort): <code>GET /api/gateway/discovery/capabilities</code></li>
+<li>Providers/models discovery (best-effort): <code>GET /api/gateway/discovery/providers</code>, <code>GET /api/gateway/discovery/providers/{provider}/models</code></li>
+</ul>
+<p>The capabilities payload includes package presence (<code>abstractruntime</code>,
+<code>abstractcore</code>, <code>abstractvoice</code>, <code>abstractvision</code>), existing gateway helpers
+(<code>tools</code>, <code>visualflow</code>, <code>media</code>), and AbstractCore capability plugin status for
+<code>voice</code>, <code>audio</code>, <code>vision</code>, and future <code>music</code>.</p>
+<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>discovery_capabilities</code>, <code>discovery_providers</code>).</p>
+<h2 id="optional-multimodal-scope">Optional multimodal scope<a class="headerlink" href="#optional-multimodal-scope" title="Permanent link">&para;</a></h2>
+<p>Direct Gateway endpoints in this release:
+- <code>POST /api/gateway/runs/{run_id}/voice/tts</code>
+- <code>POST /api/gateway/runs/{run_id}/audio/transcribe</code></p>
+<p>Generated images are available through Runtime/Core workflows when
+AbstractVision is installed and configured. Gateway does not yet expose a
+direct image-generation HTTP endpoint.</p>
+<h2 id="prompt-cache-control-plane-operator-api">Prompt-cache control plane (operator API)<a class="headerlink" href="#prompt-cache-control-plane-operator-api" title="Permanent link">&para;</a></h2>
+<p>The gateway exposes prompt-cache operator endpoints under <code>/api/gateway/prompt_cache/*</code>.</p>
+<p>Core endpoints:</p>
+<ul>
+<li><code>GET /api/gateway/prompt_cache/capabilities?provider=...&amp;model=...</code></li>
+<li><code>GET /api/gateway/prompt_cache/stats?provider=...&amp;model=...</code></li>
+<li><code>POST /api/gateway/prompt_cache/set</code></li>
+<li><code>POST /api/gateway/prompt_cache/update</code></li>
+<li><code>POST /api/gateway/prompt_cache/fork</code></li>
+<li><code>POST /api/gateway/prompt_cache/clear</code></li>
+<li><code>POST /api/gateway/prompt_cache/prepare_modules</code></li>
+</ul>
+<p>Behavior:</p>
+<ul>
+<li>These routes use the runtime's AbstractCore prompt-cache client contract rather than directly depending on provider-instance access.</li>
+<li>In local mode they delegate to the in-process provider.</li>
+<li>In remote/hybrid mode they follow whatever <code>/acore/prompt_cache/*</code> surface the configured AbstractCore server exposes.</li>
+<li>All core prompt-cache responses include <code>operation</code> and <code>capabilities</code>, with structured unsupported/error cases (<code>code="prompt_cache_unsupported"</code> / <code>code="prompt_cache_error"</code> / <code>code="prompt_cache_unavailable"</code>).</li>
+<li>These endpoints are provider/model controls, not a Gateway-owned CachedSession lifecycle API.</li>
+</ul>
+<p>Provider-specific persistence endpoints:</p>
+<ul>
+<li><code>GET /api/gateway/prompt_cache/saved</code></li>
+<li><code>POST /api/gateway/prompt_cache/save</code></li>
+<li><code>POST /api/gateway/prompt_cache/load</code></li>
+</ul>
+<p>These remain explicitly local/provider-specific in this release:</p>
+<ul>
+<li><code>save</code> / <code>load</code> require direct local provider access.</li>
+<li>Currently intended for in-process <code>mlx</code> and <code>huggingface</code> GGUF (<code>llama.cpp</code>) workers only.</li>
+<li>GGUF save/load preserves both the raw llama.cpp cache and provider-side prompt-cache metadata so reloaded cache keys keep their module/history meaning.</li>
+</ul>
+<h2 id="email-inbox-operator-ui-optional">Email inbox (operator UI; optional)<a class="headerlink" href="#email-inbox-operator-ui-optional" title="Permanent link">&para;</a></h2>
+<p>These endpoints power AbstractObserver’s <strong>Inbox → Email</strong> UI. They are <strong>account-scoped</strong>: the browser cannot supply arbitrary IMAP/SMTP host/user credentials. The gateway host must be configured with one or more email accounts (multi-account YAML or env vars).</p>
+<p>Endpoints:
+- <code>GET /api/gateway/email/accounts</code>
+- <code>GET /api/gateway/email/messages?account=…&amp;mailbox=…&amp;since=…&amp;status=…&amp;limit=…</code>
+- <code>GET /api/gateway/email/messages/{uid}?account=…&amp;mailbox=…&amp;max_body_chars=…</code>
+- <code>POST /api/gateway/email/send</code></p>
+<p>Examples:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/email/accounts&quot;</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/email/messages?status=unread&amp;since=7d&amp;limit=20&quot;</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/email/messages/12345?max_body_chars=20000&quot;</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;to&quot;:&quot;you@example.com&quot;,&quot;subject&quot;:&quot;Hello&quot;,&quot;body_text&quot;:&quot;Hi!&quot;}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/email/send&quot;</span>
+</code></pre></div>
+<p>Configuration notes (gateway host):
+- Multi-account: set <code>ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml</code> (recommended).
+- Single-account env fallback: set <code>ABSTRACT_EMAIL_IMAP_*</code> and/or <code>ABSTRACT_EMAIL_SMTP_*</code>.
+- The secret itself must be present in the env var referenced by <code>*_PASSWORD_ENV_VAR</code> (e.g. <code>EMAIL_PASSWORD=...</code>).</p>
+<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>/email/accounts|messages|send</code>) which proxies to <code>abstractcore.tools.comms_tools</code>.</p>
+<p>Troubleshooting and common questions: <a href="../faq/">faq.md</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

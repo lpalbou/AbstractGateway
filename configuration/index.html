@@ -1,0 +1,1035 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/configuration/">
+      
+      
+        <link rel="prev" href="../getting-started/">
+      
+      
+        <link rel="next" href="../deployment/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Configuration - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#abstractgateway-configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Configuration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#install-extras-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install extras (recommended)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core environment variables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core environment variables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#paths-workflow-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Paths + workflow source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspace-policy-filesystem-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspace policy (filesystem scope)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#durability-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Durability backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runner-tuning-advanced" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runner tuning (advanced)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llmtool-defaults-bundle-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM/tool defaults (bundle mode)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LLM/tool defaults (bundle mode)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#embeddings-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embeddings (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prompt-cache-controls-provider-dependent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prompt cache controls (provider-dependent)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multimodal-providerplugin-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multimodal provider/plugin controls
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI flags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#install-extras-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install extras (recommended)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core environment variables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core environment variables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#paths-workflow-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Paths + workflow source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspace-policy-filesystem-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspace policy (filesystem scope)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#durability-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Durability backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runner-tuning-advanced" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runner tuning (advanced)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llmtool-defaults-bundle-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM/tool defaults (bundle mode)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LLM/tool defaults (bundle mode)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#embeddings-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embeddings (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prompt-cache-controls-provider-dependent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prompt cache controls (provider-dependent)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multimodal-providerplugin-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multimodal provider/plugin controls
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI flags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="abstractgateway-configuration">AbstractGateway — Configuration<a class="headerlink" href="#abstractgateway-configuration" title="Permanent link">&para;</a></h1>
+<p>AbstractGateway is configured primarily via <strong>environment variables</strong> (plus a few CLI flags).</p>
+<h2 id="install-extras-recommended">Install extras (recommended)<a class="headerlink" href="#install-extras-recommended" title="Permanent link">&para;</a></h2>
+<p>The base install (<code>pip install abstractgateway</code>) includes the runner + durable stores + CLI.</p>
+<p>Optional extras (see <code>pyproject.toml</code>):
+- <code>abstractgateway[http]</code>: FastAPI + Uvicorn (<code>abstractgateway serve</code>)
+- <code>abstractgateway[server]</code>: turnkey server/container profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed AbstractVision image generation, direct Gateway voice/audio endpoints, media/tool helpers, token counting, provider-level prompt-cache helpers, and compression
+- <code>abstractgateway[visualflow]</code>: VisualFlow JSON directory mode via <code>abstractflow</code>
+- <code>abstractgateway[telegram]</code>: Telegram bridge dependencies (AbstractRuntime’s AbstractCore integration)
+- <code>abstractgateway[voice]</code>: voice/audio endpoints (TTS + STT) via AbstractVoice and AbstractCore's voice/audio plugin extras
+- <code>abstractgateway[vision]</code>: generative vision via AbstractCore's AbstractVision plugin
+- <code>abstractgateway[multimodal]</code>: Runtime/Core multimodal profile without HTTP server deps
+- <code>abstractgateway[all]</code>: batteries-included install (HTTP + tools + voice/audio + vision + media + visualflow)
+- <code>abstractgateway[docs]</code>: MkDocs site tooling
+- <code>abstractgateway[dev]</code>: local dev/test deps</p>
+<p>Optional (required by some workflows/features):
+- <code>abstractruntime[abstractcore]&gt;=0.4.6</code>: required to execute bundle workflows that contain LLM/tool nodes (see <code>src/abstractgateway/hosts/bundle_host.py</code>) — already included by <code>abstractgateway[http]</code>
+- <code>abstractruntime[multimodal]&gt;=0.4.6</code>: required for Runtime-managed multimodal outputs through AbstractCore workflows — included by <code>abstractgateway[server]</code>, <code>abstractgateway[multimodal]</code>, and <code>abstractgateway[all]</code>
+- <code>abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]&gt;=2.13.10</code>: recommended for server deployments that need hosted providers, OpenAI-compatible text provider routing, media parsing, tool helpers, token counting, provider-level prompt-cache controls, workflow-backed image generation, TTS, and STT — included by <code>abstractgateway[server]</code>
+- <code>abstractagent</code>: required for Visual Agent nodes (bundle mode) — already included by <code>abstractgateway[http]</code>
+- <code>abstractmemory[lancedb]</code> (or <code>abstractmemory</code> + <code>lancedb</code>): required for bundles that use <code>memory_kg_*</code> nodes</p>
+<h2 id="core-environment-variables">Core environment variables<a class="headerlink" href="#core-environment-variables" title="Permanent link">&para;</a></h2>
+<h3 id="paths-workflow-source">Paths + workflow source<a class="headerlink" href="#paths-workflow-source" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ABSTRACTGATEWAY_DATA_DIR</code>: durable data directory (default: <code>./runtime</code>)<br />
+  Evidence: <code>src/abstractgateway/config.py</code> (<code>GatewayHostConfig.from_env</code>)</li>
+<li><code>ABSTRACTGATEWAY_FLOWS_DIR</code>: workflows directory (default: <code>./flows</code>)<br />
+  Evidence: <code>src/abstractgateway/config.py</code></li>
+<li><code>ABSTRACTGATEWAY_WORKFLOW_SOURCE</code>: <code>bundle</code> (default) or <code>visualflow</code><br />
+  Evidence: <code>src/abstractgateway/service.py</code> (<code>create_default_gateway_service</code>)</li>
+</ul>
+<h3 id="workspace-policy-filesystem-scope">Workspace policy (filesystem scope)<a class="headerlink" href="#workspace-policy-filesystem-scope" title="Permanent link">&para;</a></h3>
+<p>The gateway enforces a server-side workspace policy so thin clients cannot expand filesystem access by sending arbitrary paths.</p>
+<p>Operator-controlled roots:
+- <code>ABSTRACTGATEWAY_WORKSPACE_DIR</code>: base directory used for <code>/api/gateway/files/*</code> helpers and to clamp run-provided <code>workspace_root</code> / <code>workspace_allowed_paths</code>.
+- <code>ABSTRACTGATEWAY_WORKSPACE_MOUNTS</code>: additional allowed roots, newline-separated <code>name=/abs/path</code>.</p>
+<p>Client scope overrides (permissive; trusted machines only):
+- <code>ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1</code> (or <code>ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1</code>) enables honoring client-provided <code>workspace_*</code> knobs, including <code>workspace_access_mode=all_except_ignored</code>.</p>
+<p>Discoverability:
+- <code>GET /api/gateway/workspace/policy</code> returns <code>{policy: {...}}</code> including whether client overrides are enabled (mount names only; no absolute paths).</p>
+<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>_workspace_root</code>, <code>_workspace_mounts</code>, <code>_sanitize_run_workspace_policy</code>, <code>_client_workspace_scope_overrides_enabled</code>, <code>start_run</code>).</p>
+<h3 id="durability-backend">Durability backend<a class="headerlink" href="#durability-backend" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ABSTRACTGATEWAY_STORE_BACKEND</code>: <code>file</code> (default) or <code>sqlite</code><br />
+  Evidence: <code>src/abstractgateway/service.py</code></li>
+<li><code>ABSTRACTGATEWAY_DB_PATH</code>: SQLite DB file path (optional; default: <code>&lt;DATA_DIR&gt;/gateway.sqlite3</code>)<br />
+  Evidence: <code>src/abstractgateway/stores.py</code> (<code>build_sqlite_stores</code>)
+  Note: for safety, when <code>ABSTRACTGATEWAY_STORE_BACKEND=sqlite</code>, the DB path must be <strong>under</strong> <code>ABSTRACTGATEWAY_DATA_DIR</code>.
+  The gateway fails fast if <code>ABSTRACTGATEWAY_DB_PATH</code> points elsewhere (prevents cross-wiring UAT/prod durable state).</li>
+</ul>
+<h3 id="runner-tuning-advanced">Runner tuning (advanced)<a class="headerlink" href="#runner-tuning-advanced" title="Permanent link">&para;</a></h3>
+<p>These map to <code>GatewayHostConfig</code> and <code>GatewayRunnerConfig</code>:
+- <code>ABSTRACTGATEWAY_RUNNER</code>: <code>1</code> (default) / <code>0</code> to disable runner in-process<br />
+  Evidence: <code>src/abstractgateway/config.py</code>, <code>src/abstractgateway/cli.py</code>
+- <code>ABSTRACTGATEWAY_POLL_S</code> (default <code>0.25</code>)
+- <code>ABSTRACTGATEWAY_COMMAND_BATCH_LIMIT</code> (default <code>200</code>)
+- <code>ABSTRACTGATEWAY_TICK_MAX_STEPS</code> (default <code>100</code>)
+- <code>ABSTRACTGATEWAY_TICK_WORKERS</code> (default <code>4</code>)
+- <code>ABSTRACTGATEWAY_RUN_SCAN_LIMIT</code> (default <code>200</code>)</p>
+<p>Evidence: <code>src/abstractgateway/config.py</code>, <code>src/abstractgateway/runner.py</code>.</p>
+<h2 id="llmtool-defaults-bundle-mode">LLM/tool defaults (bundle mode)<a class="headerlink" href="#llmtool-defaults-bundle-mode" title="Permanent link">&para;</a></h2>
+<p>Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_PROVIDER</code> / <code>ABSTRACTGATEWAY_MODEL</code><br />
+  Used as defaults for LLM execution in bundle mode. If missing, the gateway may try to infer defaults from flow JSON; otherwise it errors.<br />
+  Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (<code>needs_llm</code>, <code>_scan_flows_for_llm_defaults</code>)</li>
+<li><code>ABSTRACTGATEWAY_TOOL_MODE</code>:</li>
+<li><code>approval</code> (default): execute safe tools locally; require explicit approval for dangerous/unknown tools</li>
+<li><code>passthrough</code>: require explicit approval for <em>all</em> tools (then execute in-process on resume)</li>
+<li><code>delegated</code>: do not execute tools; tool calls yield a durable <code>JOB</code> wait for external executors</li>
+<li><code>local</code> (or <code>local_all</code>): execute all tools inside the gateway process (dev only; higher risk)
+  Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (tool executor selection)</li>
+</ul>
+<h3 id="embeddings-optional">Embeddings (optional)<a class="headerlink" href="#embeddings-optional" title="Permanent link">&para;</a></h3>
+<p>The gateway can expose an embeddings API if AbstractCore embedding deps are available.</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_EMBEDDING_PROVIDER</code> / <code>ABSTRACTGATEWAY_EMBEDDING_MODEL</code><br />
+  Persisted under <code>&lt;DATA_DIR&gt;/gateway_embeddings.json</code> for stability across restarts.<br />
+  Evidence: <code>src/abstractgateway/embeddings_config.py</code></li>
+</ul>
+<h3 id="prompt-cache-controls-provider-dependent">Prompt cache controls (provider-dependent)<a class="headerlink" href="#prompt-cache-controls-provider-dependent" title="Permanent link">&para;</a></h3>
+<p>Gateway prompt-cache endpoints are available when the AbstractCore integration
+for the active provider/model exposes them. Remote providers usually provide
+server-managed cache hints; local in-process providers can expose stronger
+control-plane operations when installed in a custom runtime image.
+These endpoints are provider/model controls, not a Gateway-owned CachedSession
+lifecycle API.</p>
+<ul>
+<li><code>GET /api/gateway/prompt_cache/capabilities</code></li>
+<li><code>GET /api/gateway/prompt_cache/stats</code></li>
+<li><code>POST /api/gateway/prompt_cache/set</code></li>
+<li><code>POST /api/gateway/prompt_cache/update</code></li>
+<li><code>POST /api/gateway/prompt_cache/fork</code></li>
+<li><code>POST /api/gateway/prompt_cache/clear</code></li>
+<li><code>POST /api/gateway/prompt_cache/prepare_modules</code></li>
+<li><code>POST /api/gateway/prompt_cache/save</code> / <code>load</code> for supported local providers</li>
+</ul>
+<h3 id="multimodal-providerplugin-controls">Multimodal provider/plugin controls<a class="headerlink" href="#multimodal-providerplugin-controls" title="Permanent link">&para;</a></h3>
+<p>The <code>server</code>, <code>multimodal</code>, and <code>all</code> extras install the lightweight AbstractCore
+plugin surface for generated images, generated voice, STT, and future music/video
+capabilities. In 0.2.2, voice generation and transcription have direct Gateway
+endpoints; generated images are exposed through Runtime/Core workflows rather
+than a direct Gateway image-generation endpoint. Local heavy engines remain
+explicit opt-ins in the provider packages.</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_PROVIDER</code> / <code>ABSTRACTGATEWAY_MODEL</code>: default text model for bundle LLM nodes</li>
+<li><code>OPENAI_COMPATIBLE_BASE_URL</code> / <code>OPENAI_COMPATIBLE_API_KEY</code>: OpenAI-compatible text endpoint for AbstractCore providers</li>
+<li><code>ABSTRACTVISION_BASE_URL</code> / <code>ABSTRACTVISION_API_KEY</code> / <code>ABSTRACTVISION_MODEL_ID</code>: OpenAI-compatible image endpoint used by AbstractVision</li>
+<li><code>ABSTRACTVISION_BACKEND</code>: <code>openai</code> / <code>diffusers</code> / <code>sdcpp</code> (<code>openai</code> means OpenAI-compatible HTTP)</li>
+<li><code>ABSTRACTVOICE_TTS_ENGINE</code> / <code>ABSTRACTVOICE_STT_ENGINE</code>: <code>auto</code>, local engines, or remote-compatible engines supported by AbstractVoice</li>
+<li><code>ABSTRACTVOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTVOICE_REMOTE_API_KEY</code>: remote voice endpoint used by AbstractVoice</li>
+<li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, and future <code>music</code></li>
+</ul>
+<h2 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h2>
+<p><code>abstractgateway --help</code> shows all subcommands (serve/runner/migrate/triage/…).</p>
+<p>Most-used:
+- <code>abstractgateway serve --host 127.0.0.1 --port 8080 [--no-runner] [--reload]</code><br />
+  Evidence: <code>src/abstractgateway/cli.py</code>
+- <code>abstractgateway runner</code> (worker only)
+- <code>abstractgateway migrate --from=file --to=sqlite --data-dir &lt;DIR&gt; --db-path &lt;FILE&gt;</code></p>
+<h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Getting started: <a href="../getting-started/">getting-started.md</a></li>
+<li>FAQ: <a href="../faq/">faq.md</a></li>
+<li>Security configuration: <a href="../security/">security.md</a></li>
+<li>Deployment: <a href="../deployment/">deployment.md</a></li>
+<li>API overview: <a href="../api/">api.md</a></li>
+<li>Operator tooling env vars: <a href="../maintenance/">maintenance.md</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
