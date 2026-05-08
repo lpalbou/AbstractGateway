@@ -420,7 +420,11 @@ def test_gateway_generate_run_summary_appends_to_ledger(tmp_path: Path, monkeypa
         assert r.status_code == 200, r.text
         run_id = r.json()["run_id"]
 
-        gen = client.post(f"/api/gateway/runs/{run_id}/summary", json={}, headers=headers)
+        gen = client.post(
+            f"/api/gateway/runs/{run_id}/summary",
+            json={"provider": "openai", "model": "gpt-test"},
+            headers=headers,
+        )
         assert gen.status_code == 200, gen.text
         body = gen.json()
         assert body.get("ok") is True
@@ -476,7 +480,12 @@ def test_gateway_run_chat_can_persist_to_ledger(tmp_path: Path, monkeypatch: pyt
 
         chat = client.post(
             f"/api/gateway/runs/{run_id}/chat",
-            json={"messages": [{"role": "user", "content": "What happened?"}], "persist": True},
+            json={
+                "provider": "openai",
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "What happened?"}],
+                "persist": True,
+            },
             headers=headers,
         )
         assert chat.status_code == 200, chat.text

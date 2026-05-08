@@ -42,7 +42,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvision>=0.3.3" in server
     assert "abstractvoice>=0.9.2" in server
 
-    assert extras["memory"] == ["AbstractMemory[lancedb]>=0.2.4"]
+    assert extras["memory"] == ["AbstractMemory[lancedb]>=0.2.6"]
     apple = "\n".join(extras["apple"])
     assert "AbstractRuntime[multimodal,all-apple]>=0.4.8" in apple
     assert "abstractagent[all-apple]>=0.3.5" in apple
@@ -50,7 +50,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvision[all-apple]>=0.3.3" in apple
     assert "abstractvoice[all-apple]>=0.9.2" in apple
     assert "abstractmusic[all-apple]>=0.1.1" in apple
-    assert "AbstractMemory[all-apple]>=0.2.4" in apple
+    assert "AbstractMemory[all-apple]>=0.2.6" in apple
     gpu = "\n".join(extras["gpu"])
     assert "AbstractRuntime[multimodal,all-gpu]>=0.4.8" in gpu
     assert "abstractagent[all-gpu]>=0.3.5" in gpu
@@ -58,16 +58,16 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvision[all-gpu]>=0.3.3" in gpu
     assert "abstractvoice[all-gpu]>=0.9.2" in gpu
     assert "abstractmusic[all-gpu]>=0.1.1" in gpu
-    assert "AbstractMemory[all-gpu]>=0.2.4" in gpu
+    assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
 
     nvidia = "\n".join(extras["server-nvidia"])
     assert "abstractcore[all-gpu,vision-diffusers]>=2.13.12" in nvidia
     assert "abstractvision[diffusers]>=0.3.3" in nvidia
     assert "abstractvoice[local]>=0.9.2" in nvidia
 
-    assert "AbstractMemory[all-apple]>=0.2.4" in extras["all-apple"]
+    assert "AbstractMemory[all-apple]>=0.2.6" in extras["all-apple"]
     for name in ("all-gpu", "server-nvidia", "dev", "all"):
-        expected = "AbstractMemory[all-gpu]>=0.2.4" if name == "all-gpu" else "AbstractMemory[lancedb]>=0.2.4"
+        expected = "AbstractMemory[all-gpu]>=0.2.6" if name == "all-gpu" else "AbstractMemory[lancedb]>=0.2.6"
         assert expected in extras[name]
 
 

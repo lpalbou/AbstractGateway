@@ -30,7 +30,7 @@ Optional (required by some workflows/features):
 - `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12`: recommended for server deployments that need hosted providers, OpenAI-compatible text provider routing, media parsing, tool helpers, token counting, provider-level prompt-cache controls, workflow-backed/direct image generation, TTS, STT, and catalog routes; included by `abstractgateway[server]`
 - `abstractcore[apple]>=2.13.12`, `abstractcore[gpu]>=2.13.12`, `abstractcore[all-apple]>=2.13.12`, or `abstractcore[all-gpu]>=2.13.12`: local hardware profiles; included by the matching Gateway profile. Gateway's own `apple` and `gpu` extras are full deployment aggregates.
 - `abstractagent`: required for Visual Agent nodes (bundle mode); included by `abstractgateway[server]` and aggregate profiles
-- `AbstractMemory[lancedb]>=0.2.4`: required for bundles that use `memory_kg_*` nodes with the default durable vector backend; included by `abstractgateway[memory]`, `abstractgateway[all]`, and aggregate profiles
+- `AbstractMemory[lancedb]>=0.2.6`: required for bundles that use `memory_kg_*` nodes with the default durable vector backend; included by `abstractgateway[memory]`, `abstractgateway[all]`, and aggregate profiles
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.

@@ -28,3 +28,12 @@ def _isolate_gateway_runtime_env(monkeypatch: pytest.MonkeyPatch, tmp_path_facto
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(base / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(base / "flows"))
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+
+
+@pytest.fixture(autouse=True)
+def _reset_gateway_service_between_tests(_isolate_gateway_runtime_env: None):
+    from abstractgateway.service import stop_gateway_runner
+
+    stop_gateway_runner()
+    yield
+    stop_gateway_runner()

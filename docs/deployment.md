@@ -26,7 +26,7 @@ The default image installs `abstractgateway[server,memory]`, which includes:
 
 - `AbstractRuntime[multimodal]`
 - `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]`
-- `AbstractMemory[lancedb]>=0.2.4`
+- `AbstractMemory[lancedb]>=0.2.6`
 - `abstractvision`
 - `abstractvoice`
 - `abstractagent`

@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Server, native Apple, native GPU, and NVIDIA profiles now require
   `abstractagent>=0.3.5`, so Gateway-hosted agent nodes resolve against the
   same Core/Runtime baseline as Gateway itself.
+- Release tests now reset Gateway's process-global service between cases and
+  pass explicit provider/model overrides for ledger summary/chat generation
+  tests.
 - Native Python hardware profiles are full deployment aggregates:
   `abstractgateway[apple]` and `abstractgateway[all-apple]` install the
   Apple-local stack and all relevant non-NVIDIA framework capabilities, while
@@ -54,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The default Docker server image now composes `abstractgateway[server,memory]`
   so KG workflows and `/kg/query` have the AbstractMemory/LanceDB store package
   available without making memory a base-package dependency.
-- The `memory` profile now depends on `AbstractMemory[lancedb]>=0.2.4`.
+- The `memory` profile now depends on `AbstractMemory[lancedb]>=0.2.6`.
 
 ### Fixed
 
