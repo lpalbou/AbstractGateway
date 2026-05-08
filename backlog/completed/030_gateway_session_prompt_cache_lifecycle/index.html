@@ -1,0 +1,935 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/backlog/completed/030_gateway_session_prompt_cache_lifecycle/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Planned: Gateway Session Prompt-Cache Lifecycle - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#planned-gateway-session-prompt-cache-lifecycle" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Planned: Gateway Session Prompt-Cache Lifecycle
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-code-reality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Code Reality
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-we-want-to-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What We Want To Do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#suggested-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggested Implementation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dependencies-and-related-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependencies And Related Tasks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expected-outcomes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expected Outcomes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Progress Checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guidance-for-the-implementing-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Guidance For The Implementing Agent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#completion-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completion Report
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="planned-gateway-session-prompt-cache-lifecycle">Planned: Gateway Session Prompt-Cache Lifecycle<a class="headerlink" href="#planned-gateway-session-prompt-cache-lifecycle" title="Permanent link">&para;</a></h1>
+<h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Created: 2026-05-08</li>
+<li>Status: Completed</li>
+<li>Completed: 2026-05-08</li>
+</ul>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>AbstractGateway already exposes provider-level prompt-cache operator endpoints.
+That is enough for expert debugging and some AbstractCode controls, but not yet
+enough for thin apps that think in sessions, workflows, providers, models, and
+stable agent templates.</p>
+<p>This item promotes and narrows the incoming session-cache proposal. The gateway
+should orchestrate a session lifecycle where the provider supports it, while
+remaining honest when only keyed/server-managed cache hints are possible.</p>
+<h2 id="current-code-reality">Current Code Reality<a class="headerlink" href="#current-code-reality" title="Permanent link">&para;</a></h2>
+<p>Inspected files and symbols:</p>
+<ul>
+<li><code>src/abstractgateway/routes/gateway.py</code></li>
+<li><code>_gateway_runtime_llm_client</code></li>
+<li><code>_gateway_prompt_cache_client_capabilities</code></li>
+<li><code>_gateway_prompt_cache_client_call</code></li>
+<li><code>/prompt_cache/stats</code></li>
+<li><code>/prompt_cache/capabilities</code></li>
+<li><code>/prompt_cache/set</code></li>
+<li><code>/prompt_cache/update</code></li>
+<li><code>/prompt_cache/fork</code></li>
+<li><code>/prompt_cache/clear</code></li>
+<li><code>/prompt_cache/prepare_modules</code></li>
+<li><code>/prompt_cache/saved</code></li>
+<li><code>/prompt_cache/save</code></li>
+<li><code>/prompt_cache/load</code></li>
+<li><code>start_run</code></li>
+<li><code>docs/api.md</code></li>
+<li><code>docs/configuration.md</code></li>
+<li><code>../abstractcode/web/src/lib/run_input.ts</code></li>
+<li><code>../abstractcode/web/src/ui/app.tsx</code></li>
+<li><code>../abstractcode/docs/api.md</code></li>
+<li><code>../abstractcode/docs/architecture.md</code></li>
+</ul>
+<p>What exists now:</p>
+<ul>
+<li>Provider-level prompt-cache control endpoints are implemented and documented.</li>
+<li>Local mode delegates to the in-process AbstractCore LLM client when available.</li>
+<li>Remote/hybrid mode follows whatever AbstractCore server prompt-cache surface is
+  configured.</li>
+<li><code>save</code> and <code>load</code> are explicitly local/provider-specific and currently aimed
+  at MLX and HuggingFace GGUF/llama.cpp workers.</li>
+<li>AbstractCode derives a stable <code>prompt_cache_key</code> and passes
+  <code>_runtime.prompt_cache</code> in run input. Runtime/Core inject provider-specific
+  cache hints where supported.</li>
+</ul>
+<p>What was missing or brittle before completion:</p>
+<ul>
+<li>There were no session-scoped Gateway endpoints such as
+  <code>/sessions/{session_id}/prompt_cache/status</code>.</li>
+<li>Gateway did not yet derive namespaces from <code>session_id</code>, <code>bundle_id</code>,
+  <code>flow_id</code>, <code>provider</code>, and <code>model</code>.</li>
+<li>Thin clients had to either call provider-level endpoints directly or derive keys
+  locally.</li>
+<li>Discovery had to report <code>session_lifecycle=false</code> until this task landed.</li>
+</ul>
+<h2 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h2>
+<p>Apps need cache controls at the session level, not the provider internals level.
+For example, an AbstractAssistant or AbstractFlow session should be able to ask:
+"is cache supported for this provider/model/workflow?", "prepare this session",
+"clear this session cache", and "what key/status should I show?".</p>
+<p>Without that gateway layer, clients leak provider-specific naming and lifecycle
+decisions.</p>
+<h2 id="what-we-want-to-do">What We Want To Do<a class="headerlink" href="#what-we-want-to-do" title="Permanent link">&para;</a></h2>
+<p>Add a Gateway-owned session prompt-cache lifecycle API that maps session/workflow
+identity onto existing Runtime/Core provider controls.</p>
+<p>Possible v1 routes:</p>
+<div class="highlight"><pre><span></span><code>GET  /api/gateway/sessions/{session_id}/prompt_cache/status
+POST /api/gateway/sessions/{session_id}/prompt_cache/prepare
+POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild
+POST /api/gateway/sessions/{session_id}/prompt_cache/clear
+</code></pre></div>
+<p>Each route should accept provider/model/workflow identity:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;bundle_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;basic-agent&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;flow_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;81795ea9&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;provider&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mlx&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mlx-community/Qwen3-4B-4bit&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;template_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;assistant.default&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+<h2 id="why">Why<a class="headerlink" href="#why" title="Permanent link">&para;</a></h2>
+<p>This gives thin clients a clean abstraction while preserving provider truth. It
+also makes MLX cache controls usable from gateway-first apps without each app
+inventing its own key convention.</p>
+<h2 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Use a deterministic namespace derived from bounded, sanitized fields:
+  <code>session_id</code>, <code>bundle_id</code>, <code>flow_id</code>, <code>provider</code>, <code>model</code>, and optional
+  <code>template_id</code> or workflow version.</li>
+<li>Do not expose unsafe raw filesystem paths or unbounded provider metadata.</li>
+<li>Use existing provider-level methods where possible:
+  <code>capabilities</code>, <code>set</code>, <code>prepare_modules</code>, <code>fork</code>, <code>update</code>, <code>clear</code>, <code>stats</code>.</li>
+<li>Support at least three honest modes:</li>
+<li><code>unsupported</code>: no provider prompt cache support.</li>
+<li><code>keyed</code>: stable <code>prompt_cache_key</code> can be supplied but module preparation is
+    not available.</li>
+<li><code>local_control_plane</code>: module/update/fork controls are available.</li>
+<li>Keep provider-level <code>/prompt_cache/*</code> endpoints intact.</li>
+<li>Return <code>supported=false</code> with capabilities and hints instead of failing normal
+  app workflows for unsupported providers.</li>
+<li>Update discovery to report <code>prompt_cache.session_lifecycle=true</code> only after
+  these routes exist and have tests.</li>
+<li>Preserve the distinction between provider cache controls and a full
+  Gateway-owned CachedSession HTTP API.</li>
+</ul>
+<h2 id="suggested-implementation">Suggested Implementation<a class="headerlink" href="#suggested-implementation" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Add Pydantic request/response models near the prompt-cache route section.</li>
+<li>Implement a small session-cache key helper that hashes long identity fields and
+  keeps labels readable but bounded.</li>
+<li>Implement <code>status</code> as the first endpoint. It should call provider/model
+  capabilities and compute the active namespace/key without mutating state.</li>
+<li>Implement <code>prepare</code> using <code>prepare_modules</code> when available; otherwise return a
+  stable key hint for runtime injection.</li>
+<li>Implement <code>clear</code> for the computed key. <code>rebuild</code> can initially be
+  clear-plus-prepare if that is all provider capabilities allow.</li>
+<li>Consider adding a run-start convenience later, but keep v1 explicit so clients
+  can decide when to prepare.</li>
+</ul>
+<h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Gateway session prompt-cache endpoints.</li>
+<li>Discovery update.</li>
+<li>Tests for unsupported, keyed, and local-control-plane providers using stubs.</li>
+<li>Docs in API/configuration.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Do not replace provider-level prompt-cache endpoints.</li>
+<li>Do not promise local KV persistence for remote providers.</li>
+<li>Do not make unsupported providers fail run start.</li>
+<li>Do not silently enable cache without a clear request or runtime input policy.</li>
+</ul>
+<h2 id="dependencies-and-related-tasks">Dependencies And Related Tasks<a class="headerlink" href="#dependencies-and-related-tasks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Depends on completed <code>docs/backlog/completed/010_versioned_client_capability_contract.md</code>.</li>
+<li>Related to AbstractCore/Runtime prompt-cache capabilities.</li>
+<li>Related to AbstractCode's current <code>_runtime.prompt_cache</code> key injection.</li>
+</ul>
+<h2 id="expected-outcomes">Expected Outcomes<a class="headerlink" href="#expected-outcomes" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A gateway-first app can show session cache status and actions without owning
+  provider internals.</li>
+<li>MLX local provider deployments can prepare/reuse/clear session cache keys
+  through Gateway.</li>
+<li>Server-managed/keyed providers receive stable cache keys when applicable.</li>
+<li>Unsupported providers report structured unsupported responses.</li>
+</ul>
+<h2 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A: Pure tests for namespace/key derivation and sanitization.</li>
+<li>A: Stub-provider tests for unsupported/keyed/local-control-plane responses.</li>
+<li>B: TestClient route tests for auth, status, prepare, clear, rebuild.</li>
+<li>B: Existing provider-level prompt-cache tests still pass.</li>
+<li>C: Manual MLX run when available: prepare cache, start repeated session turns,
+  inspect stats, save/load if supported.</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[x] Define session prompt-cache request/response models.</li>
+<li>[x] Add deterministic namespace/key helper.</li>
+<li>[x] Add <code>status</code>.</li>
+<li>[x] Add <code>prepare</code>.</li>
+<li>[x] Add <code>clear</code>.</li>
+<li>[x] Add <code>rebuild</code> or explicitly defer it with documented semantics.</li>
+<li>[x] Update discovery and docs.</li>
+<li>[x] Add A/B tests.</li>
+</ul>
+<h2 id="guidance-for-the-implementing-agent">Guidance For The Implementing Agent<a class="headerlink" href="#guidance-for-the-implementing-agent" title="Permanent link">&para;</a></h2>
+<p>Be conservative with claims. The gateway should make cache controls easier to
+use, not hide provider limitations. Prefer explicit structured unsupported
+responses over fallback behavior that makes clients think caching is active when
+it is not.</p>
+<h2 id="completion-report">Completion Report<a class="headerlink" href="#completion-report" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Completed: 2026-05-08</li>
+<li>Summary: Added Gateway session prompt-cache lifecycle routes on top of the existing provider-level prompt-cache control plane.</li>
+<li>Files/symbols touched: <code>src/abstractgateway/routes/gateway.py</code> (<code>_GatewaySessionPromptCacheTarget</code>, <code>_GatewaySessionPromptCacheRequest</code>, <code>_session_prompt_cache_identity</code>, <code>_session_prompt_cache_mode</code>, <code>_session_prompt_cache_runtime_hint</code>, <code>_session_prompt_cache_modules_from_request</code>, <code>session_prompt_cache_status</code>, <code>session_prompt_cache_prepare</code>, <code>session_prompt_cache_clear</code>, <code>session_prompt_cache_rebuild</code>, <code>_build_client_capability_contracts</code>), <code>tests/test_gateway_prompt_cache_endpoints.py</code>, <code>tests/test_capabilities_endpoint_contract.py</code>, <code>docs/api.md</code>, <code>docs/configuration.md</code>.</li>
+<li>Behavior changes: Gateway now exposes <code>GET /sessions/{session_id}/prompt_cache/status</code>, <code>POST /prepare</code>, <code>POST /clear</code>, and <code>POST /rebuild</code>. The routes derive a stable bounded namespace/key from session, bundle, flow, provider, model, template, and version fields; return structured unsupported responses; provide runtime hints for keyed/server-managed providers; and use local provider operations when <code>prepare_modules</code>, <code>fork</code>, <code>set</code>, <code>clear</code>, and <code>stats</code> are available.</li>
+<li>Tests: <code>PYTHONPATH=src python -m compileall -q src/abstractgateway/routes/gateway.py</code>; <code>PYTHONPATH=src pytest -q tests/test_capabilities_endpoint_contract.py tests/test_gateway_prompt_cache_endpoints.py tests/test_generated_media_gateway_contract.py</code>.</li>
+<li>Docs: Updated API and configuration docs with session lifecycle endpoints, modes, and the continued distinction from provider-specific cache persistence.</li>
+<li>Residual risks: Manual MLX cache warm/reuse/save/load validation was not run in this environment. Keyed remote providers still depend on Runtime/Core honoring the returned <code>runtime_hint</code>.</li>
+<li>Follow-ups: Consider a run-start convenience hook only after clients prove they need automatic prepare/inject behavior; keep v1 explicit for now.</li>
+<li>Priority impact: 030 is complete; prompt-cache discovery can truthfully advertise <code>session_lifecycle=true</code>.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

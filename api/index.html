@@ -569,6 +569,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#abstractflow-gateway-first-editor-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AbstractFlow gateway-first editor contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#optional-multimodal-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -921,6 +932,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#abstractflow-gateway-first-editor-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AbstractFlow gateway-first editor contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#optional-multimodal-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1089,14 +1111,76 @@ See: <a href="../maintenance/">maintenance.md</a>.</p>
 <code>abstractcore</code>, <code>abstractvoice</code>, <code>abstractvision</code>), existing gateway helpers
 (<code>tools</code>, <code>visualflow</code>, <code>media</code>), and AbstractCore capability plugin status for
 <code>voice</code>, <code>audio</code>, <code>vision</code>, and future <code>music</code>.</p>
+<p>It also includes a versioned thin-client contract:</p>
+<ul>
+<li><code>capabilities.contracts.version</code>: currently <code>1</code></li>
+<li><code>capabilities.contracts.common</code>: shared run, ledger, artifact, attachment,
+  workspace, discovery, and provider prompt-cache controls</li>
+<li><code>capabilities.contracts.flow_editor</code>: the AbstractFlow editor/runtime surface</li>
+<li><code>capabilities.contracts.assistant</code>: assistant-facing voice/audio/media/cache
+  feature gates</li>
+<li><code>capabilities.contracts.abstractcode</code>: code-client run/history/workspace/cache
+  feature gates</li>
+</ul>
+<p>Contract booleans are intentionally conservative. Package <code>installed=true</code> is
+not the same thing as endpoint <code>available=true</code>; clients should branch on the
+versioned contract fields when enabling controls.</p>
 <p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>discovery_capabilities</code>, <code>discovery_providers</code>).</p>
+<h2 id="abstractflow-gateway-first-editor-contract">AbstractFlow gateway-first editor contract<a class="headerlink" href="#abstractflow-gateway-first-editor-contract" title="Permanent link">&para;</a></h2>
+<p>The browser editor can use AbstractGateway as its runtime and storage host.</p>
+<p>Draft VisualFlow records:</p>
+<ul>
+<li><code>GET /api/gateway/visualflows</code></li>
+<li><code>POST /api/gateway/visualflows</code></li>
+<li><code>GET /api/gateway/visualflows/{flow_id}</code></li>
+<li><code>PUT /api/gateway/visualflows/{flow_id}</code></li>
+<li><code>DELETE /api/gateway/visualflows/{flow_id}</code></li>
+<li><code>POST /api/gateway/visualflows/{flow_id}/publish</code></li>
+</ul>
+<p>Bundle inspection and editor run-schema helpers:</p>
+<ul>
+<li><code>GET /api/gateway/bundles</code></li>
+<li><code>GET /api/gateway/bundles/{bundle_id}</code></li>
+<li><code>GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}</code></li>
+<li><code>GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema</code></li>
+</ul>
+<p>The input-schema endpoint returns a versioned payload with:</p>
+<ul>
+<li><code>version</code></li>
+<li><code>bundle_id</code>, <code>bundle_version</code>, <code>bundle_ref</code>, <code>flow_id</code>, <code>workflow_id</code></li>
+<li><code>inputs</code>: entrypoint input pins derived from the <code>on_flow_start</code> node</li>
+<li><code>defaults</code>: pin defaults from VisualFlow JSON</li>
+<li><code>input_data_schema</code>: a small JSON Schema object for the Run Flow modal</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/bundles/my-bundle/flows/ac-echo/input_schema&quot;</span>
+</code></pre></div>
+<p>The editor observes runs with the core lifecycle endpoints above:
+<code>/runs/start</code>, <code>/runs/{run_id}</code>, <code>/runs/{run_id}/ledger</code>,
+<code>/runs/{run_id}/ledger/stream</code>, <code>/runs/ledger/batch</code>,
+<code>/runs/{run_id}/input_data</code>, <code>/runs/{run_id}/history_bundle</code>, and
+<code>/runs/{run_id}/artifacts</code>.</p>
 <h2 id="optional-multimodal-scope">Optional multimodal scope<a class="headerlink" href="#optional-multimodal-scope" title="Permanent link">&para;</a></h2>
 <p>Direct Gateway endpoints in this release:
 - <code>POST /api/gateway/runs/{run_id}/voice/tts</code>
-- <code>POST /api/gateway/runs/{run_id}/audio/transcribe</code></p>
+- <code>POST /api/gateway/runs/{run_id}/audio/transcribe</code>
+- <code>POST /api/gateway/runs/{run_id}/images/generate</code></p>
 <p>Generated images are available through Runtime/Core workflows when
-AbstractVision is installed and configured. Gateway does not yet expose a
-direct image-generation HTTP endpoint.</p>
+AbstractVision is installed and configured. Gateway also exposes a direct image
+generation endpoint that uses the Runtime/Core output-selector contract rather
+than a provider-specific image client. The route stores the generated image as a
+run artifact and emits <code>abstract.media.image.generated</code> with:</p>
+<ul>
+<li><code>run_id</code>, <code>request_id</code>, <code>prompt</code></li>
+<li>optional <code>provider</code>, <code>model</code>, <code>size</code>, <code>width</code>, <code>height</code>, and <code>format</code></li>
+<li><code>image_artifact</code>: <code>{"$artifact", "content_type", "filename", "sha256", "size_bytes"}</code></li>
+</ul>
+<p>If the active workflow runtime already has an AbstractCore LLM client, the route
+uses it. For tools-only workflows, the route can create a direct Runtime/Core
+client from request <code>provider</code>/<code>model</code> or <code>ABSTRACTGATEWAY_PROVIDER</code> /
+<code>ABSTRACTGATEWAY_MODEL</code>. Unsupported or unconfigured deployments return a
+structured <code>ok=false</code> response instead of a failed run.</p>
 <h2 id="prompt-cache-control-plane-operator-api">Prompt-cache control plane (operator API)<a class="headerlink" href="#prompt-cache-control-plane-operator-api" title="Permanent link">&para;</a></h2>
 <p>The gateway exposes prompt-cache operator endpoints under <code>/api/gateway/prompt_cache/*</code>.</p>
 <p>Core endpoints:</p>
@@ -1115,8 +1199,27 @@ direct image-generation HTTP endpoint.</p>
 <li>In local mode they delegate to the in-process provider.</li>
 <li>In remote/hybrid mode they follow whatever <code>/acore/prompt_cache/*</code> surface the configured AbstractCore server exposes.</li>
 <li>All core prompt-cache responses include <code>operation</code> and <code>capabilities</code>, with structured unsupported/error cases (<code>code="prompt_cache_unsupported"</code> / <code>code="prompt_cache_error"</code> / <code>code="prompt_cache_unavailable"</code>).</li>
-<li>These endpoints are provider/model controls, not a Gateway-owned CachedSession lifecycle API.</li>
+<li>These endpoints remain provider/model controls, not a Gateway-owned CachedSession persistence system.</li>
 </ul>
+<p>Session lifecycle endpoints:</p>
+<ul>
+<li><code>GET /api/gateway/sessions/{session_id}/prompt_cache/status</code></li>
+<li><code>POST /api/gateway/sessions/{session_id}/prompt_cache/prepare</code></li>
+<li><code>POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild</code></li>
+<li><code>POST /api/gateway/sessions/{session_id}/prompt_cache/clear</code></li>
+</ul>
+<p>These routes derive a deterministic bounded namespace/key from <code>session_id</code>,
+<code>bundle_id</code>, <code>bundle_version</code>, <code>flow_id</code>, <code>provider</code>, <code>model</code>, optional
+<code>template_id</code>, and <code>version</code>. They expose three honest modes:</p>
+<ul>
+<li><code>unsupported</code>: provider/model does not expose prompt-cache support; responses include <code>supported=false</code>, <code>ok=false</code>, and capabilities.</li>
+<li><code>keyed</code>: gateway returns a stable <code>runtime_hint</code>/<code>prompt_cache_key</code> for Runtime/Core injection, but does not claim module preparation occurred.</li>
+<li><code>local_control_plane</code>: gateway uses supported provider operations such as <code>prepare_modules</code>, <code>fork</code>, <code>set</code>, <code>clear</code>, and <code>stats</code>.</li>
+</ul>
+<p><code>status</code> is read-only. <code>prepare</code> accepts optional modules (<code>system_prompt</code>,
+<code>workflow_instructions</code>, <code>tools</code>, <code>pinned_attachments</code>) and returns either
+provider operation results or a key hint. <code>rebuild</code> is clear-plus-prepare for
+providers that expose clear controls.</p>
 <p>Provider-specific persistence endpoints:</p>
 <ul>
 <li><code>GET /api/gateway/prompt_cache/saved</code></li>

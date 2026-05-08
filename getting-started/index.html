@@ -922,15 +922,16 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 </code></pre></div>
 <h2 id="3b-docker-compose">3b) Docker / Compose<a class="headerlink" href="#3b-docker-compose" title="Permanent link">&para;</a></h2>
 <p>For a containerized deployment with AbstractRuntime multimodal support,
-AbstractCore remote providers, workflow-backed AbstractVision image generation,
-and direct Gateway voice/audio endpoints included:</p>
+AbstractCore remote providers, workflow-backed/direct AbstractVision image
+generation, direct Gateway voice/audio/image endpoints, and provider/session
+prompt-cache controls included:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import secrets; print(secrets.token_urlsafe(32))&#39;</span><span class="k">)</span><span class="s2">&quot;</span>
 
 docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-p<span class="w"> </span><span class="m">127</span>.0.0.1:8080:8080<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway:/data/gateway&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/flows/bundles:/data/flows:ro&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.2
+<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.3
 </code></pre></div>
 <p>See <a href="../deployment/">deployment.md</a> for Compose, provider keys, and image
 customization.</p>
