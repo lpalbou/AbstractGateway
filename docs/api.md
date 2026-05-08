@@ -177,11 +177,18 @@ These exist to help thin clients adapt to the deployed gateway.
 
 - Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
 - Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
+- Dynamic capability catalogs: `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, `GET /api/gateway/vision/provider_models`
 
 The capabilities payload includes package presence (`abstractruntime`,
-`abstractcore`, `abstractvoice`, `abstractvision`), existing gateway helpers
-(`tools`, `visualflow`, `media`), and AbstractCore capability plugin status for
-`voice`, `audio`, `vision`, and future `music`.
+`abstractcore`, `abstractmemory`, `abstractvoice`, `abstractvision`), existing
+gateway helpers (`tools`, `visualflow`, `media`), memory-store readiness, and
+AbstractCore capability plugin status for `voice`, `audio`, `vision`, and
+future `music`.
+
+Provider discovery also reports the resolved default provider/model when one is
+configured. The resolver follows request values, Gateway env, and AbstractCore
+global defaults; if no pair exists, the response includes `default_error` rather
+than a hardcoded local model.
 
 It also includes a versioned thin-client contract:
 
@@ -247,6 +254,16 @@ Direct Gateway endpoints in this release:
 - `POST /api/gateway/runs/{run_id}/voice/tts`
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - `POST /api/gateway/runs/{run_id}/images/generate`
+- `GET /api/gateway/voice/voices`
+- `GET /api/gateway/audio/speech/models`
+- `GET /api/gateway/vision/provider_models`
+
+The catalog endpoints proxy AbstractCore Server routes when
+`ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL` or `ABSTRACTCORE_SERVER_BASE_URL`
+is configured. Gateway uses explicit Core auth settings for that hop and never
+reuses the Gateway bearer token as a Core/provider secret. Without a configured
+Core server, the voice/model routes return bounded static descriptors from
+Gateway and capability-package environment variables.
 
 Generated images are available through Runtime/Core workflows when
 AbstractVision is installed and configured. Gateway also exposes a direct image
@@ -263,6 +280,21 @@ uses it. For tools-only workflows, the route can create a direct Runtime/Core
 client from request `provider`/`model` or `ABSTRACTGATEWAY_PROVIDER` /
 `ABSTRACTGATEWAY_MODEL`. Unsupported or unconfigured deployments return a
 structured `ok=false` response instead of a failed run.
+
+## KG memory
+
+`POST /api/gateway/kg/query` queries the configured AbstractMemory TripleStore.
+Gateway resolves the store through:
+
+- `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory` (`sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`)
+- `ABSTRACTGATEWAY_MEMORY_STORE_PATH`
+- `ABSTRACTGATEWAY_MEMORY_REQUIRE_VECTOR`
+
+Structured queries work with LanceDB and in-memory stores. SQLite also works
+when the installed AbstractMemory build exposes `SQLiteTripleStore`. Semantic
+`query_text` requires a vector-capable backend plus configured Gateway
+embeddings; SQLite returns a clear 400 instead of pretending to support semantic
+recall.
 
 ## Prompt-cache control plane (operator API)
 

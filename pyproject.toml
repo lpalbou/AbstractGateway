@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.2.3"
+version = "0.2.4"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,20 +12,24 @@ license = { text = "MIT" }
 authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
-  "AbstractRuntime>=0.4.6",
+  "AbstractRuntime>=0.4.8",
 ]
 
 [project.optional-dependencies]
-# Runner-only deployments (no HTTP stack).
-runner = []
-
-# HTTP API deployments (FastAPI + Uvicorn + AbstractCore integration).
+# HTTP API deployments (FastAPI + Uvicorn). Runtime/Core multimodal support is
+# added by the `multimodal` and `server` profiles below.
 http = [
-  "AbstractRuntime[abstractcore]>=0.4.6",
-  "abstractagent>=0.3.1",
   "fastapi>=0.100.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]>=0.23.0",
+]
+
+# Runtime/Core multimodal profile without the HTTP server extras.
+multimodal = [
+  "AbstractRuntime[multimodal]>=0.4.8",
+  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12",
+  "abstractvision>=0.3.3",
+  "abstractvoice>=0.9.2",
 ]
 
 # Turnkey HTTP server deployments. This mirrors the AbstractCore server image
@@ -34,12 +38,100 @@ http = [
 # token counting, compression, prompt-cache helpers, and safe tool helpers, without
 # local model runtimes such as MLX/vLLM/HuggingFace.
 server = [
-  "AbstractRuntime[multimodal]>=0.4.6",
-  "abstractagent>=0.3.1",
-  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.10",
+  "AbstractRuntime[multimodal]>=0.4.8",
+  "abstractagent>=0.3.2",
+  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12",
   "abstractflow>=0.3.7",
-  "abstractvision>=0.3.1",
-  "abstractvoice>=0.9.0",
+  "abstractvision>=0.3.3",
+  "abstractvoice>=0.9.2",
+  "fastapi>=0.100.0",
+  "python-multipart>=0.0.6",
+  "uvicorn[standard]>=0.23.0",
+]
+
+# Gateway KG memory support. LanceDB remains the durable vector-capable default;
+# in-memory is selectable at runtime, and SQLite is available with compatible
+# AbstractMemory builds that expose SQLiteTripleStore.
+memory = [
+  "AbstractMemory[lancedb]>=0.2.4",
+]
+
+# Native Apple Gateway profile. This is for direct macOS Python installs, not
+# Docker, because MLX/Metal-backed engines need the host Apple runtime. As the
+# deployment entry point, Gateway's `apple` profile installs the full native
+# Apple stack and all relevant non-NVIDIA framework capabilities.
+apple = [
+  "AbstractRuntime[multimodal,all-apple]>=0.4.8",
+  "abstractagent[all-apple]>=0.3.2",
+  "abstractcore[all-apple]>=2.13.12",
+  "abstractflow>=0.3.7",
+  "abstractvision[all-apple]>=0.3.3",
+  "abstractvoice[all-apple]>=0.9.2",
+  "abstractmusic[all-apple]>=0.1.1",
+  "AbstractMemory[all-apple]>=0.2.4",
+  "fastapi>=0.100.0",
+  "python-multipart>=0.0.6",
+  "uvicorn[standard]>=0.23.0",
+]
+
+# Native GPU Gateway profile. Like `apple`, this is a full Python deployment
+# aggregate for local GPU hosts. Docker uses the explicit `server-nvidia`
+# profile instead of this generic Python profile.
+gpu = [
+  "AbstractRuntime[multimodal,all-gpu]>=0.4.8",
+  "abstractagent[all-gpu]>=0.3.2",
+  "abstractcore[all-gpu]>=2.13.12",
+  "abstractflow>=0.3.7",
+  "abstractvision[all-gpu]>=0.3.3",
+  "abstractvoice[all-gpu]>=0.9.2",
+  "abstractmusic[all-gpu]>=0.1.1",
+  "AbstractMemory[all-gpu]>=0.2.4",
+  "fastapi>=0.100.0",
+  "python-multipart>=0.0.6",
+  "uvicorn[standard]>=0.23.0",
+]
+
+# Native macOS aggregate profile for full local+remote Gateway installs.
+all-apple = [
+  "AbstractRuntime[multimodal,all-apple]>=0.4.8",
+  "abstractagent[all-apple]>=0.3.2",
+  "abstractcore[all-apple]>=2.13.12",
+  "abstractflow>=0.3.7",
+  "abstractvision[all-apple]>=0.3.3",
+  "abstractvoice[all-apple]>=0.9.2",
+  "abstractmusic[all-apple]>=0.1.1",
+  "AbstractMemory[all-apple]>=0.2.4",
+  "fastapi>=0.100.0",
+  "python-multipart>=0.0.6",
+  "uvicorn[standard]>=0.23.0",
+]
+
+# Full GPU aggregate profile for CUDA/ROCm-style local engine hosts.
+all-gpu = [
+  "AbstractRuntime[multimodal,all-gpu]>=0.4.8",
+  "abstractagent[all-gpu]>=0.3.2",
+  "abstractcore[all-gpu]>=2.13.12",
+  "abstractflow>=0.3.7",
+  "abstractvision[all-gpu]>=0.3.3",
+  "abstractvoice[all-gpu]>=0.9.2",
+  "abstractmusic[all-gpu]>=0.1.1",
+  "AbstractMemory[all-gpu]>=0.2.4",
+  "fastapi>=0.100.0",
+  "python-multipart>=0.0.6",
+  "uvicorn[standard]>=0.23.0",
+]
+
+# Full NVIDIA server image profile. This is intentionally separate from the
+# default image because vLLM, Torch/HuggingFace, local Diffusers, and local
+# voice engines are too heavy and platform-specific for the light server image.
+server-nvidia = [
+  "AbstractRuntime[multimodal]>=0.4.8",
+  "abstractagent>=0.3.2",
+  "abstractcore[all-gpu,vision-diffusers]>=2.13.12",
+  "abstractflow>=0.3.7",
+  "abstractvision[diffusers]>=0.3.3",
+  "abstractvoice[local]>=0.9.2",
+  "AbstractMemory[lancedb]>=0.2.4",
   "fastapi>=0.100.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]>=0.23.0",
@@ -47,16 +139,16 @@ server = [
 
 # Voice/audio capabilities (TTS + STT) via AbstractVoice.
 voice = [
-  "AbstractRuntime[abstractcore]>=0.4.6",
-  "abstractcore[voice,audio]>=2.13.10",
-  "abstractvoice>=0.9.0",
+  "AbstractRuntime[multimodal]>=0.4.8",
+  "abstractcore[voice,audio]>=2.13.12",
+  "abstractvoice>=0.9.2",
 ]
 
 # Generative vision capabilities via AbstractCore's AbstractVision plugin.
 vision = [
-  "AbstractRuntime[multimodal]>=0.4.6",
-  "abstractcore[vision]>=2.13.10",
-  "abstractvision>=0.3.1",
+  "AbstractRuntime[multimodal]>=0.4.8",
+  "abstractcore[vision]>=2.13.12",
+  "abstractvision>=0.3.3",
 ]
 
 # Optional support for starting runs from VisualFlow JSON (compiled via AbstractFlow).
@@ -65,13 +157,17 @@ visualflow = [
 ]
 telegram = [
   # Enables Telegram tools + TDLib wrapper via AbstractRuntime's AbstractCore integration.
-  "AbstractRuntime[abstractcore]>=0.4.6",
+  "AbstractRuntime[abstractcore]>=0.4.8",
 ]
 dev = [
   "pytest>=7.0.0",
   "httpx>=0.27.0",
-  "AbstractRuntime[abstractcore]>=0.4.6",
-  "abstractagent>=0.3.1",
+  "AbstractRuntime[multimodal]>=0.4.8",
+  "abstractagent>=0.3.2",
+  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12",
+  "AbstractMemory[lancedb]>=0.2.4",
+  "abstractvision>=0.3.3",
+  "abstractvoice>=0.9.2",
   "fastapi>=0.100.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]>=0.23.0",
@@ -82,23 +178,16 @@ docs = [
   "mkdocs-material>=9.0.0",
 ]
 
-# Runtime/Core multimodal profile without the HTTP server extras.
-multimodal = [
-  "AbstractRuntime[multimodal]>=0.4.6",
-  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.10",
-  "abstractvision>=0.3.1",
-  "abstractvoice>=0.9.0",
-]
-
 # Meta extra: everything needed for a "batteries-included" gateway.
 # Note: some capabilities still require runtime configuration (auth, model provider, optional downloads).
 all = [
-  "AbstractRuntime[multimodal]>=0.4.6",
-  "abstractagent>=0.3.1",
-  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.10",
+  "AbstractRuntime[multimodal]>=0.4.8",
+  "abstractagent>=0.3.2",
+  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12",
   "abstractflow>=0.3.7",
-  "abstractvision>=0.3.1",
-  "abstractvoice>=0.9.0",
+  "abstractvision>=0.3.3",
+  "abstractvoice>=0.9.2",
+  "AbstractMemory[lancedb]>=0.2.4",
   "fastapi>=0.100.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]>=0.23.0",
@@ -106,6 +195,7 @@ all = [
 
 [project.scripts]
 abstractgateway = "abstractgateway.cli:main"
+abstractgateway-config = "abstractgateway.config_cli:main"
 
 [project.urls]
 "GitHub" = "https://github.com/lpalbou/abstractgateway"

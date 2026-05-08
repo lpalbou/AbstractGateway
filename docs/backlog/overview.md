@@ -3,12 +3,14 @@
 ## Status
 
 AbstractGateway is a durable HTTP/SSE host for AbstractRuntime runs. The current
-0.2.3 surface already provides run start/schedule, durable commands, ledger
+0.2.4 surface already provides run start/schedule, durable commands, ledger
 replay/streaming, artifacts, VisualFlow CRUD/publish, workspace policy, provider
 and tool discovery, direct voice TTS, audio transcription, direct generated
 image artifacts/events, provider-level and session-level prompt-cache controls,
-optional embeddings/KG helpers, and a versioned thin-client capability contract
-for Flow, Assistant, Code, and shared Gateway features.
+optional embeddings/KG helpers with configurable memory stores, Core-backed
+voice/vision catalog proxy endpoints, explicit install/config profiles, and a
+versioned thin-client capability contract for Flow, Assistant, Code, and shared
+Gateway features.
 
 The next planning focus is to make the gateway a premium control plane for thin
 AI apps such as AbstractFlow, AbstractAssistant, and AbstractCode. The gateway
@@ -19,8 +21,8 @@ gateway packages.
 ## Counts
 
 - Planned: 0
-- Proposed: 1
-- Completed: 5
+- Proposed: 0
+- Completed: 8
 - Deprecated: 0
 - Recurrent: 0
 
@@ -30,12 +32,14 @@ gateway packages.
 - Completed: 020 AbstractFlow gateway-first editor contract and validation.
 - Completed: 030 Gateway-owned session prompt-cache lifecycle.
 - Completed: 040 Generated-media artifact and direct image contract.
+- Completed: install profiles and configuration entrypoint.
+- Completed: memory store resolver and TripleStore abstraction.
+- Completed: Core-backed Voice/Vision catalog proxy endpoints.
 
 ## Next Recommended Work
 
-No planned items remain. Next, review the proposed voice profile discovery item
-when clients need refreshable dynamic/remote voice catalogs beyond the current
-capability contract.
+No planned or proposed items remain. Next, watch client adoption of the new
+install/config, memory, and catalog contracts before expanding them.
 
 ## Planned Items
 
@@ -47,7 +51,7 @@ capability contract.
 
 | Item | Promotion criteria |
 | --- | --- |
-| [Dedicated voice profile discovery endpoint](proposed/2026-05-08_voice_profile_discovery_endpoint.md) | Promote when clients need refreshable dynamic/remote voice profile catalogs beyond lightweight capability discovery. |
+| - | None |
 
 The three incoming proposals were merged into completed/planned work:
 
@@ -64,6 +68,9 @@ The three incoming proposals were merged into completed/planned work:
 | AbstractFlow gateway-first editor contract | `planned/020_abstractflow_gateway_first_editor_contract.md` | [completed/020_abstractflow_gateway_first_editor_contract.md](completed/020_abstractflow_gateway_first_editor_contract.md) | Gateway now documents and tests the draft VisualFlow -> publish -> start -> observe editor path and exposes a first-class bundle flow input-schema route. | `PYTHONPATH=src pytest -q tests/test_capabilities_endpoint_contract.py tests/test_abstractflow_editor_gateway_contract.py tests/test_gateway_bundle_llm_tools_agents.py::test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs`; `PYTHONPATH=src pytest -q -m basic`. |
 | Gateway session prompt-cache lifecycle | `planned/030_gateway_session_prompt_cache_lifecycle.md` | [completed/030_gateway_session_prompt_cache_lifecycle.md](completed/030_gateway_session_prompt_cache_lifecycle.md) | Gateway now exposes session-scoped prompt-cache status, prepare, rebuild, and clear routes with deterministic bounded keys and honest unsupported/keyed/local-control-plane modes. | `PYTHONPATH=src python -m compileall -q src/abstractgateway/routes/gateway.py`; `PYTHONPATH=src pytest -q tests/test_capabilities_endpoint_contract.py tests/test_gateway_prompt_cache_endpoints.py tests/test_generated_media_gateway_contract.py`. |
 | Generated-media gateway contract | `planned/040_generated_media_gateway_contract.md` | [completed/040_generated_media_gateway_contract.md](completed/040_generated_media_gateway_contract.md) | Gateway now declares generated-image workflow/direct support and exposes `POST /runs/{run_id}/images/generate` with artifact storage and `abstract.media.image.generated` events. | `PYTHONPATH=src python -m compileall -q src/abstractgateway/routes/gateway.py`; `PYTHONPATH=src pytest -q tests/test_capabilities_endpoint_contract.py tests/test_gateway_prompt_cache_endpoints.py tests/test_generated_media_gateway_contract.py`. |
+| Gateway install profiles and configuration entrypoint | `proposed/2026-05-08_gateway_install_profiles_and_config_entrypoint.md` | [completed/2026-05-08_gateway_install_profiles_and_config_entrypoint.md](completed/2026-05-08_gateway_install_profiles_and_config_entrypoint.md) | Base install is minimal, dependency cascades live in explicit extras, `abstractgateway-config` was added, and Gateway-owned env is translated into Runtime state. | `PYTHONPATH=src pytest -q tests/test_gateway_install_profiles.py tests/test_gateway_config_cli.py tests/test_gateway_runtime_handoff.py`. |
+| Gateway memory store resolver and TripleStore abstraction | `proposed/2026-05-08_gateway_memory_store_resolver_and_triplestore_abstraction.md` | [completed/2026-05-08_gateway_memory_store_resolver_and_triplestore_abstraction.md](completed/2026-05-08_gateway_memory_store_resolver_and_triplestore_abstraction.md) | Bundle memory effects and `/kg/query` now use a shared resolver for LanceDB, in-memory, and SQLite-capable AbstractMemory builds with capability metadata. | `PYTHONPATH=src pytest -q tests/test_gateway_memory_store_resolver.py`. |
+| Core-backed Voice/Vision catalog proxy endpoints | `proposed/2026-05-08_voice_profile_discovery_endpoint.md` | [completed/2026-05-08_voice_profile_discovery_endpoint.md](completed/2026-05-08_voice_profile_discovery_endpoint.md) | Gateway now exposes voice, speech-model, and vision provider-model catalog endpoints that proxy AbstractCore catalog routes when configured and use static bounded fallback otherwise. | `PYTHONPATH=src pytest -q tests/test_gateway_capability_catalog_proxy.py`. |
 
 ## Planning Notes
 

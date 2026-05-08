@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-08
+
+### Added
+
+- Explicit install profiles for the Gateway package: minimal base,
+  `http`, `multimodal`, `server`, `memory`, `apple`, `gpu`, `all-apple`,
+  `all-gpu`, and `server-nvidia`.
+- `abstractgateway-config` plus `abstractgateway config` for operator status and
+  private `.env` bootstrap without taking ownership of AbstractCore provider
+  configuration.
+- Gateway memory store resolver for AbstractMemory-backed LanceDB, SQLite, and
+  in-memory stores, including `/kg/query` store metadata.
+- Core catalog proxy endpoints for thin clients:
+  `GET /api/gateway/voice/voices`,
+  `GET /api/gateway/audio/speech/models`, and
+  `GET /api/gateway/vision/provider_models`.
+- Added a `server-nvidia` extra plus an experimental CUDA/PyTorch-based
+  `abstractgateway-server-nvidia` Docker image recipe for full NVIDIA machines.
+- Release and manual GHCR image workflows now publish the light default server
+  image and attempt an experimental best-effort NVIDIA full image.
+
+### Changed
+
+- Base installs are now intentionally minimal again:
+  `AbstractRuntime>=0.4.8` only.
+- Server and multimodal profiles now use the aligned Runtime/Core/Voice/Vision
+  floors: `AbstractRuntime>=0.4.8`, `abstractcore>=2.13.12`,
+  `abstractvision>=0.3.3`, and `abstractvoice>=0.9.2`.
+- Native Python hardware profiles are full deployment aggregates:
+  `abstractgateway[apple]` and `abstractgateway[all-apple]` install the
+  Apple-local stack and all relevant non-NVIDIA framework capabilities, while
+  `abstractgateway[gpu]` and `abstractgateway[all-gpu]` install the matching
+  local GPU stack.
+- Gateway-owned runtime handoff now seeds `_runtime.prompt_cache`,
+  `_runtime.max_attachment_bytes`, and `_runtime.workflow_bundles_dir` from
+  Gateway configuration.
+- Gateway LLM helper defaults now resolve through the same deployment cascade as
+  runtime execution instead of hardcoded local model fallbacks.
+- Docker Compose local builds can override `ABSTRACTGATEWAY_EXTRAS`; the
+  default examples use port `8080`, and an NVIDIA compose overlay is available
+  for GPU hosts.
+- The default Docker server image now composes `abstractgateway[server,memory]`
+  so KG workflows and `/kg/query` have the AbstractMemory/LanceDB store package
+  available without making memory a base-package dependency.
+- The `memory` profile now depends on `AbstractMemory[lancedb]>=0.2.4`.
+
+### Fixed
+
+- `memory_kg_*` effects and `/kg/query` no longer assume LanceDB directly;
+  in-memory stores work, SQLite structured queries work when the installed
+  AbstractMemory build exposes `SQLiteTripleStore`, and semantic queries fail
+  clearly when the selected store has no vector/search capability.
+- Dynamic voice/audio/vision catalog discovery now delegates to the AbstractCore
+  server catalog boundary when configured, with bounded static fallback when it
+  is not.
+- Observer/chat/backlog/discovery helpers now return a clear provider/model
+  configuration error when no request, Gateway env, or AbstractCore default is
+  available.
+
+### Notes
+
+- The default Docker image remains the release-grade light, portable image for
+  `linux/amd64` and `linux/arm64`. The NVIDIA image is `linux/amd64` only and
+  is experimental/best-effort because vLLM/Torch/Diffusers dependency
+  resolution is much heavier than the default server profile and still needs a
+  CUDA host smoke gate before production positioning.
+- There is no practical MLX Docker image target for Apple Silicon today: MLX
+  depends on Apple's Metal stack and Docker Desktop runs Linux containers
+  without Metal/MPS device access. Apple local inference should stay native on
+  macOS, not containerized; the Gateway container can point at Docker Model
+  Runner, native LM Studio, `mlx_lm.server`, or Ollama OpenAI-compatible
+  endpoints via `model-runner.docker.internal` or `host.docker.internal`.
+
 ## [0.2.3] - 2026-05-08
 
 ### Added

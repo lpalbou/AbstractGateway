@@ -1,0 +1,20 @@
+services:
+  abstractgateway:
+    # Experimental CUDA overlay. Keep release-grade deployments on compose.yml
+    # until this image has a real CUDA build/smoke gate.
+    image: ghcr.io/lpalbou/abstractgateway-server-nvidia:${ABSTRACTGATEWAY_IMAGE_TAG:-0.2.4}
+    build:
+      context: ../..
+      dockerfile: docker/abstractgateway-server/Dockerfile.nvidia
+      args:
+        ABSTRACTGATEWAY_INSTALL_MODE: ${ABSTRACTGATEWAY_INSTALL_MODE:-pypi}
+        ABSTRACTGATEWAY_VERSION: ${ABSTRACTGATEWAY_VERSION:-0.2.4}
+        ABSTRACTGATEWAY_EXTRAS: ${ABSTRACTGATEWAY_EXTRAS:-server-nvidia}
+    gpus: all
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+      ABSTRACTVISION_BACKEND: ${ABSTRACTVISION_BACKEND:-diffusers}
+      ABSTRACTVISION_DIFFUSERS_DEVICE: ${ABSTRACTVISION_DIFFUSERS_DEVICE:-cuda}
+      ABSTRACTVISION_DIFFUSERS_ALLOW_DOWNLOAD: ${ABSTRACTVISION_DIFFUSERS_ALLOW_DOWNLOAD:-0}

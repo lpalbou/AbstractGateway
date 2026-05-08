@@ -30,7 +30,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +38,14 @@ from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore
 from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord, WaitReason
 
+from ..capability_catalog import CoreCatalogProxyError, core_catalog_base_url, fetch_core_catalog_json
+from ..memory_store import (
+    memory_backend_unavailable_reason,
+    memory_store_exists,
+    open_gateway_memory_store,
+    resolve_memory_store_config,
+)
+from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from .. import host_metrics
 from ..service import backlog_exec_runner_status, get_gateway_service, run_summary
 from ..workflow_deprecations import WorkflowDeprecatedError
@@ -49,7 +57,6 @@ logger = logging.getLogger(__name__)
 _VOICE_MANAGER = None
 _VOICE_MANAGER_LOCK = threading.Lock()
 
-
 def _env_first(*keys: str, default: Optional[str] = None) -> Optional[str]:
     for key in keys:
         value = os.getenv(str(key))
@@ -58,11 +65,19 @@ def _env_first(*keys: str, default: Optional[str] = None) -> Optional[str]:
     return default
 
 
-def _env_bool(*keys: str, default: bool = False) -> bool:
-    raw = _env_first(*keys)
-    if raw is None:
+def _env_bool(*keys: Any, default: bool = False) -> bool:
+    keys0 = list(keys)
+    if keys0 and isinstance(keys0[-1], bool):
+        default = bool(keys0.pop())
+    raw0 = _env_first(*(str(k) for k in keys0))
+    if raw0 is None:
         return bool(default)
-    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+    raw = str(raw0).strip().lower()
+    if raw in {"1", "true", "yes", "y", "on"}:
+        return True
+    if raw in {"0", "false", "no", "n", "off"}:
+        return False
+    return bool(default)
 
 
 def _env_float(*keys: str) -> Optional[float]:
@@ -73,6 +88,45 @@ def _env_float(*keys: str) -> Optional[float]:
         return float(raw)
     except Exception:
         return None
+
+
+def _resolve_gateway_provider_model_or_400(
+    *,
+    provider: Optional[str],
+    model: Optional[str],
+    purpose: str,
+) -> tuple[str, str]:
+    try:
+        return resolve_gateway_provider_model(provider=provider, model=model, purpose=purpose).require()
+    except ProviderModelConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _env_is_openai_base_url(value: Optional[str]) -> bool:
+    return "api.openai.com" in str(value or "").strip().lower()
+
+
+def _gateway_direct_image_configured() -> bool:
+    backend = str(_env_first("ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND", default="openai") or "openai")
+    backend = backend.strip().lower().replace("_", "-")
+
+    if backend in {"diffusers", "huggingface", "hf", "hf-diffusers"}:
+        return True
+    if backend in {"sdcpp", "sd-cpp", "stable-diffusion.cpp", "stable-diffusion-cpp"}:
+        return bool(_env_first("ABSTRACTVISION_SDCPP_MODEL", "ABSTRACTVISION_SDCPP_DIFFUSION_MODEL"))
+
+    base_url = _env_first("ABSTRACTVISION_BASE_URL", "OPENAI_BASE_URL")
+    api_key = _env_first("ABSTRACTVISION_API_KEY", "OPENAI_API_KEY")
+    if base_url:
+        if _env_is_openai_base_url(base_url):
+            return bool(api_key)
+        return True
+
+    # AbstractVision's OpenAI backend defaults to the hosted OpenAI base URL.
+    # That endpoint is only usable when an API key is present.
+    if backend in {"openai", ""}:
+        return bool(api_key)
+    return False
 
 
 def _optional_package_status(module_name: str, dist_name: Optional[str] = None) -> Dict[str, Any]:
@@ -548,6 +602,7 @@ class KGQueryResponse(BaseModel):
     count: int = 0
     items: list[Dict[str, Any]] = Field(default_factory=list)
     warnings: Optional[list[str]] = None
+    store: Optional[Dict[str, Any]] = None
 
 
 class ArtifactListItem(BaseModel):
@@ -4337,9 +4392,11 @@ async def generate_run_summary(run_id: str, req: GenerateRunSummaryRequest) -> G
         "per_run": per_run,
     }
 
-    # Defaults follow gateway provider/model env config.
-    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
-    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+    provider, model = _resolve_gateway_provider_model_or_400(
+        provider=req.provider,
+        model=req.model,
+        purpose="run summary generation",
+    )
 
     try:
         summary_text = await asyncio.to_thread(_generate_summary_text, provider=provider, model=model, context=context)
@@ -4550,9 +4607,11 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
         "ledger_excerpt_by_run": ledger_excerpt_by_run,
     }
 
-    # Defaults follow gateway provider/model env config.
-    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
-    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+    provider, model = _resolve_gateway_provider_model_or_400(
+        provider=req.provider,
+        model=req.model,
+        purpose="run chat generation",
+    )
     messages = list(req.messages or [])
 
     try:
@@ -4621,9 +4680,11 @@ async def save_chat_thread(run_id: str, req: SaveChatThreadRequest) -> SaveChatT
     workflow_id = str(getattr(run, "workflow_id", "") or "")
     include_subruns = bool(getattr(req, "include_subruns", True))
 
-    # Defaults follow gateway provider/model env config.
-    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
-    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+    provider, model = _resolve_gateway_provider_model_or_400(
+        provider=req.provider,
+        model=req.model,
+        purpose="chat thread persistence",
+    )
 
     created_at = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
     thread_id = str(uuid.uuid4())
@@ -5238,12 +5299,16 @@ def _gateway_generated_media_llm_client(
     if llm_client is not None:
         return llm_client, None
 
-    provider_s = str(provider or _env_first("ABSTRACTGATEWAY_PROVIDER", "ABSTRACTFLOW_PROVIDER") or "").strip().lower()
-    model_s = str(model or _env_first("ABSTRACTGATEWAY_MODEL", "ABSTRACTFLOW_MODEL") or "").strip()
-    if not provider_s or not model_s:
+    try:
+        provider_s, model_s = resolve_gateway_provider_model(
+            provider=provider,
+            model=model,
+            purpose="direct generated-media helper",
+        ).require()
+    except ProviderModelConfigError as e:
         return None, (
             f"{err or 'Gateway runtime has no in-process AbstractCore LLM client.'} "
-            "Provide provider/model in the request or configure ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL."
+            f"{e}"
         )
 
     try:
@@ -5523,19 +5588,33 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
     if owner_override and all_owners:
         raise HTTPException(status_code=400, detail="all_owners cannot be combined with owner_id")
 
-    store_path = Path(svc.stores.base_dir) / "abstractmemory" / "kg"
-    if not store_path.exists():
+    memory_config = resolve_memory_store_config(base_dir=Path(svc.stores.base_dir))
+    has_query_text = isinstance(req.query_text, str) and bool(req.query_text.strip())
+    if has_query_text and memory_config.backend == "sqlite":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Semantic KG query is not available for memory backend 'sqlite'. "
+                "Use a vector-capable backend with Gateway embeddings configured, or omit query_text."
+            ),
+        )
+    if not memory_store_exists(memory_config):
         return KGQueryResponse(
             ok=True,
             scope=scope,
             owner_id=None,
             count=0,
             items=[],
-            warnings=[f"KG store does not exist at {store_path} (no persisted assertions yet)."],
+            warnings=[
+                f"KG store does not exist at {memory_config.path} (no persisted assertions yet)."
+                if memory_config.path is not None
+                else "KG store is in-memory and no persisted assertions exist."
+            ],
+            store=memory_config.public_dict(),
         )
 
     try:
-        from abstractmemory import LanceDBTripleStore, TripleQuery  # type: ignore
+        from abstractmemory import TripleQuery  # type: ignore
     except Exception as e:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"AbstractMemory is not available: {e}")
 
@@ -5603,9 +5682,38 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
         return out
 
     store = None
+    store_info: Optional[Dict[str, Any]] = None
+    close_store = True
     try:
-        embedder = getattr(svc, "embeddings_client", None)
-        store = LanceDBTripleStore(store_path, embedder=embedder)
+        host_store_info = getattr(svc.host, "memory_store_info", None)
+        if (
+            memory_config.backend == "memory"
+            and isinstance(host_store_info, dict)
+            and str(host_store_info.get("backend") or "") == "memory"
+            and getattr(svc.host, "memory_store", None) is not None
+        ):
+            store = getattr(svc.host, "memory_store")
+            store_info = dict(host_store_info)
+            close_store = False
+        else:
+            embedder = getattr(svc, "embeddings_client", None)
+            try:
+                memory_resolution = open_gateway_memory_store(base_dir=Path(svc.stores.base_dir), embedder=embedder)
+            except RuntimeError as e:
+                raise HTTPException(status_code=500, detail=str(e)) from e
+            store = memory_resolution.store
+            store_info = memory_resolution.public_dict()
+
+        caps = store_info.get("capabilities") if isinstance(store_info, dict) else {}
+        if has_query_text and not bool((caps or {}).get("semantic_query")):
+            backend = str((store_info or {}).get("backend") or memory_config.backend)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Semantic KG query is not available for memory backend '{backend}'. "
+                    "Use a vector-capable backend with Gateway embeddings configured, or omit query_text."
+                ),
+            )
 
         if scope == "all":
             if all_owners:
@@ -5684,7 +5792,7 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
 
     finally:
         try:
-            if store is not None:
+            if store is not None and close_store:
                 store.close()
         except Exception:
             pass
@@ -5703,6 +5811,7 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
         count=len(items),
         items=items,
         warnings=warnings or None,
+        store=store_info or memory_config.public_dict(),
     )
 
 
@@ -5832,6 +5941,125 @@ def _voice_profile_descriptors() -> list[Dict[str, Any]]:
     return profiles[:100]
 
 
+def _utc_now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
+def _request_provider_api_key(request: Request) -> Optional[str]:
+    for header in ("x-abstractcore-provider-api-key", "x-provider-api-key"):
+        value = request.headers.get(header)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _core_catalog_or_raise(
+    path: str,
+    *,
+    request: Request,
+    query: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    try:
+        payload = fetch_core_catalog_json(path, query=query, provider_api_key=_request_provider_api_key(request))
+    except CoreCatalogProxyError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+    out = dict(payload)
+    out.setdefault("available", True)
+    out["source"] = "abstractcore_server"
+    out.setdefault("stale", False)
+    out.setdefault("error", None)
+    out["route_available"] = True
+    out["refreshed_at"] = _utc_now_iso()
+    return out
+
+
+def _static_voice_catalog_response() -> Dict[str, Any]:
+    profiles = _voice_profile_descriptors()
+    return {
+        "available": bool(profiles),
+        "route_available": True,
+        "profiles": profiles,
+        "models": [],
+        "source": "gateway_static",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+        **(
+            {}
+            if profiles
+            else {"config_hint": "Configure AbstractCore server catalog routes or ABSTRACTVOICE_* voice profile settings."}
+        ),
+    }
+
+
+def _static_speech_models_response() -> Dict[str, Any]:
+    values: list[str] = []
+    for key in (
+        "ABSTRACTGATEWAY_VOICE_TTS_MODEL",
+        "ABSTRACTVOICE_TTS_MODEL",
+        "ABSTRACTVOICE_OPENAI_TTS_MODEL",
+        "ABSTRACTVOICE_OPENAI_COMPATIBLE_TTS_MODEL",
+        "ABSTRACTVOICE_REMOTE_TTS_MODEL",
+    ):
+        values.extend(_split_env_csv(os.getenv(key)))
+    models = _dedupe_strings(values)
+    return {
+        "available": bool(models),
+        "route_available": True,
+        "models": models,
+        "source": "gateway_static",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+        **({} if models else {"config_hint": "Configure AbstractCore server catalog routes or ABSTRACTVOICE_* TTS model settings."}),
+    }
+
+
+def _static_vision_provider_models_response(*, task: Optional[str]) -> Dict[str, Any]:
+    values = _dedupe_strings(
+        [
+            str(os.getenv(key) or "").strip()
+            for key in (
+                "ABSTRACTCORE_VISION_MODEL_ID",
+                "ABSTRACTCORE_VISION_UPSTREAM_MODEL_ID",
+                "ABSTRACTVISION_MODEL_ID",
+                "ABSTRACTVISION_DIFFUSERS_MODEL_ID",
+                "ABSTRACTVISION_SDCPP_MODEL",
+                "ABSTRACTVISION_SDCPP_DIFFUSION_MODEL",
+            )
+        ]
+    )
+    models = [{"id": value, **({"task": task} if task else {})} for value in values]
+    return {
+        "available": bool(models),
+        "route_available": True,
+        "models": models,
+        "task": task,
+        "source": "gateway_static",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+        **(
+            {}
+            if models
+            else {"config_hint": "Configure AbstractCore server catalog routes or ABSTRACTVISION_* model settings."}
+        ),
+    }
+
+
 def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, Any]:
     assert kind in {"tts", "stt"}
     abstractvoice = caps.get("abstractvoice") if isinstance(caps.get("abstractvoice"), dict) else {}
@@ -5862,6 +6090,8 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
             "configured": configured,
             "unsupported": not installed,
             "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
+            "catalog_endpoint": _api_gateway_path("/voice/voices"),
+            "models_endpoint": _api_gateway_path("/audio/speech/models"),
             "delivery_modes": ["artifact"],
             "formats": ["wav", "mp3"],
             "content_types": {"wav": "audio/wav", "mp3": "audio/mpeg"},
@@ -5893,15 +6123,15 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
 def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
     vision_plugin = _plugin_capability(caps, "vision")
     abstractvision = caps.get("abstractvision") if isinstance(caps.get("abstractvision"), dict) else {}
-    workflow_image_available = bool(vision_plugin.get("available")) or bool(abstractvision.get("installed"))
-    direct_configured = workflow_image_available or bool(
+    direct_configured = _gateway_direct_image_configured() or bool(
         _env_first(
             "ABSTRACTCORE_SERVER_BASE_URL",
             "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL",
-            "ABSTRACTVISION_BASE_URL",
-            "ABSTRACTVISION_API_KEY",
             "ABSTRACTCORE_VISION_MODEL_ID",
         )
+    )
+    workflow_image_available = bool(
+        direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
     )
     return {
         "generated_image": {
@@ -5919,6 +6149,7 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "available": direct_configured,
                 "route_available": True,
                 "endpoint": _api_gateway_path("/runs/{run_id}/images/generate"),
+                "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
                 "event_name": "abstract.media.image.generated",
                 "formats": ["png", "jpeg", "webp"],
                 "max_image_bytes": _gateway_image_generation_max_bytes(),
@@ -5937,6 +6168,57 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
             "workflow": {"available": bool(_plugin_capability(caps, "voice").get("available"))},
         },
     }
+
+
+def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
+    abstractmemory = caps.get("abstractmemory") if isinstance(caps.get("abstractmemory"), dict) else {}
+    try:
+        base_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime")).expanduser().resolve()
+        cfg = resolve_memory_store_config(base_dir=base_dir)
+        backend = cfg.backend
+        embedder_configured = bool(
+            _env_first(
+                "ABSTRACTGATEWAY_EMBEDDING_PROVIDER",
+                "ABSTRACTFLOW_EMBEDDING_PROVIDER",
+                "ABSTRACTGATEWAY_EMBEDDING_MODEL",
+                "ABSTRACTFLOW_EMBEDDING_MODEL",
+            )
+        )
+        vector_capable = backend == "lancedb" or (backend == "memory" and embedder_configured)
+        backend_error = memory_backend_unavailable_reason(backend)
+        backend_ready = backend_error is None
+        return {
+            "installed": bool(abstractmemory.get("installed")),
+            "route_available": True,
+            "available": bool(abstractmemory.get("installed"))
+            and backend_ready
+            and (memory_store_exists(cfg) or backend == "memory"),
+            "endpoint": _api_gateway_path("/kg/query"),
+            "backend": backend,
+            "path": str(cfg.path) if cfg.path is not None else None,
+            "persistent": backend in {"lancedb", "sqlite"},
+            "structured_query": bool(abstractmemory.get("installed")) and backend_ready,
+            "semantic_query": bool(abstractmemory.get("installed"))
+            and backend_ready
+            and bool(vector_capable)
+            and bool(embedder_configured),
+            "vector_capable": bool(vector_capable),
+            "embedder_configured": bool(embedder_configured),
+            **({} if abstractmemory.get("installed") else {"install_hint": 'pip install "abstractgateway[memory]"'}),
+            **({} if backend_ready else {"error": backend_error}),
+            **(
+                {"config_hint": "Set ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb and configure Gateway embeddings for semantic KG queries."}
+                if backend != "lancedb" or not embedder_configured
+                else {}
+            ),
+        }
+    except Exception as e:
+        return {
+            "installed": bool(abstractmemory.get("installed")),
+            "route_available": True,
+            "available": False,
+            "error": str(e),
+        }
 
 
 def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
@@ -5984,6 +6266,9 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "providers": _api_gateway_path("/discovery/providers"),
             "provider_models": _api_gateway_path("/discovery/providers/{provider_name}/models"),
             "model_capabilities": _api_gateway_path("/discovery/models/capabilities"),
+            "voice_voices": _api_gateway_path("/voice/voices"),
+            "audio_speech_models": _api_gateway_path("/audio/speech/models"),
+            "vision_provider_models": _api_gateway_path("/vision/provider_models"),
             "tools": _api_gateway_path("/discovery/tools"),
             "semantics": _api_gateway_path("/semantics"),
         },
@@ -5998,6 +6283,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "rebuild": _api_gateway_path("/sessions/{session_id}/prompt_cache/rebuild"),
             },
         },
+        "memory": _memory_contract_descriptor(caps),
     }
 
     flow_editor = {
@@ -6091,6 +6377,7 @@ async def discovery_capabilities() -> Dict[str, Any]:
 
     caps["abstractruntime"] = _optional_package_status("abstractruntime", "AbstractRuntime")
     caps["abstractcore"] = _optional_package_status("abstractcore", "abstractcore")
+    caps["abstractmemory"] = _optional_package_status("abstractmemory", "AbstractMemory")
     caps["abstractvoice"] = _optional_package_status("abstractvoice", "abstractvoice")
     caps["abstractvision"] = _optional_package_status("abstractvision", "abstractvision")
 
@@ -6201,6 +6488,62 @@ async def discovery_capabilities() -> Dict[str, Any]:
     return {"capabilities": caps}
 
 
+@router.get("/voice/voices")
+async def voice_voices_catalog(
+    request: Request,
+    base_url: Optional[str] = Query(
+        default=None,
+        description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
+    ),
+) -> Dict[str, Any]:
+    """List dynamic TTS voices through AbstractCore catalog routes when configured."""
+    if core_catalog_base_url():
+        return _core_catalog_or_raise("/audio/voices", request=request, query={"base_url": base_url})
+    return _static_voice_catalog_response()
+
+
+@router.get("/audio/speech/models")
+async def audio_speech_models_catalog(
+    request: Request,
+    base_url: Optional[str] = Query(
+        default=None,
+        description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
+    ),
+) -> Dict[str, Any]:
+    """List TTS model ids through AbstractCore catalog routes when configured."""
+    if core_catalog_base_url():
+        return _core_catalog_or_raise("/audio/speech/models", request=request, query={"base_url": base_url})
+    return _static_speech_models_response()
+
+
+@router.get("/vision/provider_models")
+async def vision_provider_models_catalog(
+    request: Request,
+    task: Optional[str] = Query(
+        default=None,
+        description="Optional provider catalog task filter: text_to_image, image_to_image, text_to_video, or image_to_video.",
+    ),
+    base_url: Optional[str] = Query(
+        default=None,
+        description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
+    ),
+) -> Dict[str, Any]:
+    """List Vision provider model catalogs through AbstractCore when configured."""
+    task_value = str(task or "").strip() or None
+    if task_value and task_value not in {"text_to_image", "image_to_image", "text_to_video", "image_to_video"}:
+        raise HTTPException(
+            status_code=400,
+            detail="task must be one of: text_to_image, image_to_image, text_to_video, image_to_video",
+        )
+    if core_catalog_base_url():
+        return _core_catalog_or_raise(
+            "/vision/provider_models",
+            request=request,
+            query={"task": task_value, "base_url": base_url},
+        )
+    return _static_vision_provider_models_response(task=task_value)
+
+
 @router.get("/discovery/providers")
 async def discovery_providers(include_models: bool = Query(False, description="Include model lists (may be slow).")) -> Dict[str, Any]:
     """List available providers (and optionally their models) for UI helper dropdowns."""
@@ -6221,11 +6564,20 @@ async def discovery_providers(include_models: bool = Query(False, description="I
 
     items.sort(key=lambda x: str(x.get("name") or ""))
 
-    # Gateway-configured defaults (used by thin clients to preselect provider/model).
-    default_provider = str(os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
-    default_model = str(os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
-
-    return {"items": items, "default_provider": default_provider, "default_model": default_model}
+    defaults = resolve_gateway_provider_model(purpose="provider discovery defaults")
+    if defaults.provider and defaults.model:
+        return {
+            "items": items,
+            "default_provider": defaults.provider,
+            "default_model": defaults.model,
+            "default_source": defaults.source,
+        }
+    return {
+        "items": items,
+        "default_provider": None,
+        "default_model": None,
+        "default_error": defaults.error,
+    }
 
 
 @router.get("/discovery/providers/{provider_name}/models")
@@ -6486,17 +6838,6 @@ def _format_session_attachments_md(*, session_memory_run_id: str) -> str:
         lines.append(f"- …and {len(attachments) - 50} more")
 
     return "\n".join(lines)
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    raw = str(os.getenv(name, "") or "").strip().lower()
-    if not raw:
-        return bool(default)
-    if raw in {"1", "true", "yes", "on"}:
-        return True
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    return bool(default)
 
 
 def _report_attachment_candidates(report: Any, *, session_memory_run_id: str) -> list[Dict[str, str]]:
@@ -10745,9 +11086,11 @@ async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
 
     template_md = _read_backlog_template(repo_root)
 
-    # Defaults follow gateway provider/model env config.
-    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
-    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+    provider, model = _resolve_gateway_provider_model_or_400(
+        provider=req.provider,
+        model=req.model,
+        purpose="backlog assist",
+    )
 
     try:
         out = await asyncio.to_thread(
@@ -11172,9 +11515,11 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
     # Template is used as a style anchor in the prompt.
     template_md = _read_backlog_template(repo_root)
 
-    # Defaults follow gateway provider/model env config.
-    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
-    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+    provider, model = _resolve_gateway_provider_model_or_400(
+        provider=req.provider,
+        model=req.model,
+        purpose="backlog maintenance",
+    )
 
     # Build an agentic prompt (tools can read/search the repo + web).
     prompt = _build_backlog_maintain_agent_prompt(
@@ -11308,9 +11653,11 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
     if repo_root is None:
         raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
 
-    # Defaults follow gateway provider/model env config.
-    provider = str(req.provider or os.getenv("ABSTRACTGATEWAY_PROVIDER") or "lmstudio").strip() or "lmstudio"
-    model = str(req.model or os.getenv("ABSTRACTGATEWAY_MODEL") or "qwen/qwen3-next-80b").strip() or "qwen/qwen3-next-80b"
+    provider, model = _resolve_gateway_provider_model_or_400(
+        provider=req.provider,
+        model=req.model,
+        purpose="backlog advisor",
+    )
 
     focus_kind = str(req.focus_kind or "").strip() or None
     focus_type = str(req.focus_type or "").strip() or None

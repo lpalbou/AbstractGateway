@@ -13,6 +13,8 @@ from abstractruntime import Runtime, WorkflowRegistry, WorkflowSpec, persist_wor
 from abstractruntime.visualflow_compiler import compile_visualflow
 from abstractruntime.workflow_bundle import WorkflowBundle, WorkflowBundleError, open_workflow_bundle
 
+from ..memory_store import build_gateway_memory_embedder, open_gateway_memory_store
+from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from ..workflow_deprecations import WorkflowDeprecatedError, WorkflowDeprecationStore
 
 
@@ -197,6 +199,35 @@ def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def _bool_text(raw: Any) -> Optional[bool]:
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
+
+
+def _int_text(raw: Any) -> Optional[int]:
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except Exception:
+        return None
+    return value if value >= 0 else None
+
+
+def _ensure_runtime_namespace(vars_obj: Dict[str, Any]) -> Dict[str, Any]:
+    rt_ns = vars_obj.get("_runtime")
+    if not isinstance(rt_ns, dict):
+        rt_ns = {}
+        vars_obj["_runtime"] = rt_ns
+    return rt_ns
+
+
 def _node_type_from_raw(n: Any) -> str:
     if not isinstance(n, dict):
         return ""
@@ -335,6 +366,8 @@ class WorkflowBundleGatewayHost:
     specs: Dict[str, WorkflowSpec]
     event_listener_specs_by_root: Dict[str, list[str]]
     _default_bundle_id: Optional[str]
+    memory_store: Optional[Any] = None
+    memory_store_info: Optional[Dict[str, Any]] = None
     _lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
 
     @staticmethod
@@ -571,55 +604,33 @@ class WorkflowBundleGatewayHost:
         needs_memory_kg = any(_flow_uses_memory_kg(raw) for raw in flows_by_namespaced_id.values())
 
         extra_effect_handlers: Dict[Any, Any] = {}
+        memory_store_obj: Optional[Any] = None
+        memory_store_info: Optional[Dict[str, Any]] = None
         if needs_memory_kg:
             try:
-                from abstractmemory import LanceDBTripleStore
                 from abstractruntime.integrations.abstractmemory.effect_handlers import build_memory_kg_effect_handlers
                 from abstractruntime.storage.artifacts import utc_now_iso
             except Exception as e:  # pragma: no cover
                 raise WorkflowBundleError(
                     "Bundle uses memory_kg_* nodes but AbstractMemory integration is not available. "
-                    "Install `abstractmemory` (and optionally `abstractmemory[lancedb]`)."
+                    "Install `abstractgateway[memory]` or `AbstractMemory`."
                 ) from e
 
-            embedder = None
-            try:
-                from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient
-                from abstractgateway.embeddings_config import resolve_embedding_config
-
-                emb_provider, emb_model = resolve_embedding_config(base_dir=Path(data_root))
-                emb_client = AbstractCoreEmbeddingsClient(
-                    provider=str(emb_provider).strip().lower(),
-                    model=str(emb_model).strip(),
-                    manager_kwargs={
-                        "cache_dir": Path(data_root) / "abstractcore" / "embeddings",
-                        # Embeddings must be trustworthy for semantic retrieval; do not return zero vectors on failure.
-                        "strict": True,
-                    },
-                )
-
-                class _Embedder:
-                    def __init__(self, client: Any) -> None:
-                        self._client = client
-
-                    def embed_texts(self, texts):
-                        return self._client.embed_texts(texts).embeddings
-
-                embedder = _Embedder(emb_client)
-            except Exception:
-                embedder = None
+            embedder = build_gateway_memory_embedder(base_dir=Path(data_root))
 
             try:
-                store_path = Path(data_root) / "abstractmemory" / "kg"
-                store_path.parent.mkdir(parents=True, exist_ok=True)
-                store_obj = LanceDBTripleStore(store_path, embedder=embedder)
+                memory_resolution = open_gateway_memory_store(base_dir=Path(data_root), embedder=embedder)
+                memory_store_obj = memory_resolution.store
+                memory_store_info = memory_resolution.public_dict()
             except Exception as e:
                 raise WorkflowBundleError(
-                    "Bundle uses memory_kg_* nodes, which require a LanceDB-backed store. "
-                    "Install `lancedb` and ensure the gateway runs under the same environment."
+                    "Bundle uses memory_kg_* nodes, but Gateway could not open the configured AbstractMemory store. "
+                    f"{e}"
                 ) from e
+            for warning in list((memory_store_info or {}).get("warnings") or []):
+                logger.warning("Gateway memory store warning: %s", warning)
 
-            extra_effect_handlers = build_memory_kg_effect_handlers(store=store_obj, run_store=run_store, now_iso=utc_now_iso)
+            extra_effect_handlers = build_memory_kg_effect_handlers(store=memory_store_obj, run_store=run_store, now_iso=utc_now_iso)
 
         # Optional AbstractCore integration for LLM_CALL + TOOL_CALLS.
         if needs_llm or needs_tools:
@@ -675,39 +686,18 @@ class WorkflowBundleGatewayHost:
                         "Install `abstractruntime[abstractcore]`."
                     ) from e
 
-                provider = _env("ABSTRACTGATEWAY_PROVIDER") or _env("ABSTRACTFLOW_PROVIDER") or ""
-                model = _env("ABSTRACTGATEWAY_MODEL") or _env("ABSTRACTFLOW_MODEL") or ""
-                provider = provider.strip().lower()
-                model = model.strip()
-
-                if not provider or not model:
-                    detected = _scan_flows_for_llm_defaults(flows_by_namespaced_id)
-                    if detected is not None:
-                        provider, model = detected
-
-                if (not provider or not model):
-                    # Best-effort: fall back to AbstractCore config defaults (abstractcore --config).
-                    try:
-                        from abstractcore.config import get_config_manager  # type: ignore
-
-                        cfg = get_config_manager().config
-                        cfg_provider = str(getattr(cfg.default_models, "global_provider", "") or "").strip().lower()
-                        cfg_model = str(getattr(cfg.default_models, "global_model", "") or "").strip()
-                        if cfg_provider and cfg_model:
-                            if not provider and not model:
-                                provider, model = cfg_provider, cfg_model
-                            elif provider and not model and cfg_provider == provider:
-                                model = cfg_model
-                    except Exception:
-                        pass
-
-                if not provider or not model:
+                try:
+                    provider, model = resolve_gateway_provider_model(
+                        flow_defaults=_scan_flows_for_llm_defaults(flows_by_namespaced_id),
+                        purpose="bundle LLM execution",
+                    ).require()
+                except ProviderModelConfigError as e:
                     raise WorkflowBundleError(
                         "Bundle contains LLM nodes but no default provider/model is configured. "
                         "Set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL, configure defaults via "
                         "`abstractcore --config`, or ensure the flow JSON includes provider/model on at least "
                         "one llm_call/agent node."
-                    )
+                    ) from e
 
                 runtime = create_local_runtime(
                     provider=provider,
@@ -901,6 +891,8 @@ class WorkflowBundleGatewayHost:
             workflow_registry=wf_reg,
             specs=specs,
             event_listener_specs_by_root=event_listener_specs_by_root,
+            memory_store=memory_store_obj,
+            memory_store_info=memory_store_info,
             _default_bundle_id=default_bundle_id,
         )
 
@@ -933,14 +925,24 @@ class WorkflowBundleGatewayHost:
             artifact_store=self.artifact_store,
         )
         with self._lock:
+            old_memory_store = getattr(self, "memory_store", None)
             self.bundles = new_host.bundles
             self.latest_bundle_versions = new_host.latest_bundle_versions
             self.runtime = new_host.runtime
             self.workflow_registry = new_host.workflow_registry
             self.specs = new_host.specs
             self.event_listener_specs_by_root = new_host.event_listener_specs_by_root
+            self.memory_store = new_host.memory_store
+            self.memory_store_info = new_host.memory_store_info
             self._default_bundle_id = new_host._default_bundle_id
             self.deprecation_store = new_host.deprecation_store
+        try:
+            if old_memory_store is not None and old_memory_store is not getattr(self, "memory_store", None):
+                close = getattr(old_memory_store, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            pass
         bundle_ids = sorted([str(k) for k in (self.bundles or {}).keys() if isinstance(k, str)])
         return {"ok": True, "bundle_ids": bundle_ids, "count": len(bundle_ids)}
 
@@ -1059,6 +1061,23 @@ class WorkflowBundleGatewayHost:
             raise KeyError(f"Workflow '{workflow_id}' not found")
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
         vars0 = dict(input_data or {})
+        rt_ns = _ensure_runtime_namespace(vars0)
+
+        # Gateway-owned deployment settings are handed to Runtime explicitly as
+        # JSON-safe run state. Lower packages should not read ABSTRACTGATEWAY_*
+        # environment names directly.
+        prompt_cache_raw = _env("ABSTRACTGATEWAY_PROMPT_CACHE")
+        prompt_cache_enabled = _bool_text(prompt_cache_raw)
+        if prompt_cache_enabled is not None and not isinstance(rt_ns.get("prompt_cache"), dict):
+            rt_ns["prompt_cache"] = {"enabled": bool(prompt_cache_enabled), "version": 1}
+
+        max_attachment_bytes = _int_text(_env("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES"))
+        if max_attachment_bytes is not None and "max_attachment_bytes" not in rt_ns:
+            rt_ns["max_attachment_bytes"] = int(max_attachment_bytes)
+
+        if "workflow_bundles_dir" not in rt_ns:
+            rt_ns["workflow_bundles_dir"] = str(self.bundles_dir)
+
         # Best-effort: seed durable run vars with the gateway runtime defaults so VisualFlow
         # nodes (notably Agent nodes) can inherit provider/model without per-node wiring.
         try:
@@ -1069,10 +1088,6 @@ class WorkflowBundleGatewayHost:
             default_provider = None
             default_model = None
         if default_provider or default_model:
-            rt_ns = vars0.get("_runtime")
-            if not isinstance(rt_ns, dict):
-                rt_ns = {}
-                vars0["_runtime"] = rt_ns
             if isinstance(default_provider, str) and default_provider.strip() and not str(rt_ns.get("provider") or "").strip():
                 rt_ns["provider"] = default_provider.strip().lower()
             if isinstance(default_model, str) and default_model.strip() and not str(rt_ns.get("model") or "").strip():

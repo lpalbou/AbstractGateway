@@ -13,6 +13,7 @@ Key invariants / defaults (evidence in code):
 - Bundle mode is the default workflow source (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`) and loads `.flow` bundles from `ABSTRACTGATEWAY_FLOWS_DIR` (`src/abstractgateway/service.py`, `src/abstractgateway/hosts/bundle_host.py`).
 - SQLite safety invariant: when `ABSTRACTGATEWAY_STORE_BACKEND=sqlite`, the DB file (`ABSTRACTGATEWAY_DB_PATH`, default `<DATA_DIR>/gateway.sqlite3`) must be under `ABSTRACTGATEWAY_DATA_DIR` (fail-fast; prevents cross-wiring durable state) (`src/abstractgateway/config.py`).
 - The system is replay-first; SSE streams are an optimization, not a source of truth (`src/abstractgateway/routes/gateway.py`).
+- Gateway LLM helper defaults resolve explicit request values, Gateway env, optional flow pins, then AbstractCore config defaults; missing provider/model is a clear config error, not a hardcoded local fallback (`src/abstractgateway/provider_defaults.py`).
 - Optional operator endpoints include account-scoped email inbox routes (`/api/gateway/email/*`) used by AbstractObserver (Inbox → Email) (`src/abstractgateway/routes/gateway.py`).
 
 Multimodal notes:
@@ -21,7 +22,10 @@ Multimodal notes:
   - STT: `POST /api/gateway/runs/{run_id}/audio/transcribe`
   - TTS: `POST /api/gateway/runs/{run_id}/voice/tts`
 - Generated images are available through Runtime/Core workflows and through the direct run-scoped route `POST /api/gateway/runs/{run_id}/images/generate` when an image backend is configured.
+- Dynamic catalogs for thin clients are exposed at `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, and `GET /api/gateway/vision/provider_models`; they proxy AbstractCore Server catalog routes when configured.
+- KG memory is selected through Gateway env (`ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory`, plus `sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`) and queried through `POST /api/gateway/kg/query`; store implementations remain owned by AbstractMemory, and Gateway currently targets the compatible AbstractMemory 0.0.x TripleStore API.
 - `/api/gateway/prompt_cache/*` exposes provider/model prompt-cache controls; `/api/gateway/sessions/{session_id}/prompt_cache/*` adds Gateway-owned session naming/status/prepare/clear/rebuild orchestration over those provider controls.
+- Docker scope: `abstractgateway-server` is the release-grade lightweight `server,memory` image; `abstractgateway-server-nvidia` is experimental/best-effort until a CUDA smoke gate exists. Apple/MLX inference should run natively on macOS and be reached from the Gateway container via Docker Model Runner (`http://model-runner.docker.internal/engines/v1`) or a host bridge OpenAI-compatible URL.
 
 Regeneration:
 - `python scripts/generate-llms-full.py` regenerates `llms-full.txt` from the Markdown doc links in this `llms.txt`.
@@ -34,8 +38,8 @@ Compatibility note:
 
 - [AbstractFramework](https://github.com/lpalbou/AbstractFramework): ecosystem meta-repo (this gateway is one component)
 - [AbstractRuntime](https://github.com/lpalbou/abstractruntime): durable runs + tick loop + stores (required dependency)
-- [AbstractCore](https://github.com/lpalbou/abstractcore): LLM/tool/media integrations used by many bundles (via `abstractruntime[abstractcore]`)
-- [AbstractRuntime ↔ AbstractCore integration](./README.md): why some bundles need `abstractruntime[abstractcore]` (see “Bundle-dependent dependencies”)
+- [AbstractCore](https://github.com/lpalbou/abstractcore): LLM/tool/media integrations used by many bundles (optional through `abstractgateway[multimodal]` / `[server]`)
+- [AbstractRuntime ↔ AbstractCore integration](./README.md): why bundle LLM/tool nodes use the Runtime/Core integration
 - [AbstractFlow](https://github.com/lpalbou/abstractflow): authoring + bundling `.flow` WorkflowBundles (optional)
 
 ## Start here

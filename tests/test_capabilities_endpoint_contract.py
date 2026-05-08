@@ -118,8 +118,22 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert assistant.get("prompt_cache", {}).get("session_lifecycle") is True
 
 
-def test_client_capability_contracts_are_explicit_when_optional_features_are_missing() -> None:
+def test_client_capability_contracts_are_explicit_when_optional_features_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from abstractgateway.routes.gateway import _build_client_capability_contracts
+
+    for key in (
+        "ABSTRACTVISION_BACKEND",
+        "ABSTRACTVISION_BASE_URL",
+        "ABSTRACTVISION_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+        "ABSTRACTCORE_SERVER_BASE_URL",
+        "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL",
+        "ABSTRACTCORE_VISION_MODEL_ID",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
     contracts = _build_client_capability_contracts(
         {
@@ -159,3 +173,64 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert flow_editor["visualflows"]["crud"]["available"] is True
     assert flow_editor["visualflows"]["publish"]["available"] is False
     assert "install_hint" in flow_editor["visualflows"]["publish"]
+
+
+def test_generated_image_contract_separates_light_package_from_backend_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.routes.gateway import _build_client_capability_contracts
+
+    for key in (
+        "ABSTRACTVISION_BACKEND",
+        "ABSTRACTVISION_BASE_URL",
+        "ABSTRACTVISION_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+        "ABSTRACTCORE_SERVER_BASE_URL",
+        "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL",
+        "ABSTRACTCORE_VISION_MODEL_ID",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    contracts = _build_client_capability_contracts(
+        {
+            "abstractvoice": {"installed": True, "version": "0.9.0"},
+            "abstractvision": {"installed": True, "version": "0.3.1"},
+            "capability_plugins": {
+                "installed": True,
+                "capabilities": {
+                    "vision": {
+                        "available": False,
+                        "install_hint": "Configure AbstractVision or an AbstractCore vision backend.",
+                    },
+                },
+            },
+        }
+    )
+
+    media = contracts["assistant"]["media"]["generated_image"]
+    assert media["workflow"]["available"] is False
+    assert media["direct_endpoint"]["route_available"] is True
+    assert media["direct_endpoint"]["available"] is False
+    assert "config_hint" in media["direct_endpoint"]
+
+
+def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.routes.gateway import _build_client_capability_contracts
+
+    monkeypatch.delenv("ABSTRACTVISION_BASE_URL", raising=False)
+    monkeypatch.delenv("ABSTRACTVISION_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    contracts = _build_client_capability_contracts(
+        {
+            "abstractvision": {"installed": True, "version": "0.3.1"},
+            "capability_plugins": {
+                "installed": True,
+                "capabilities": {"vision": {"available": True, "selected_backend": "abstractvision:openai"}},
+            },
+        }
+    )
+
+    media = contracts["assistant"]["media"]["generated_image"]
+    assert media["workflow"]["available"] is True
+    assert media["direct_endpoint"]["available"] is True

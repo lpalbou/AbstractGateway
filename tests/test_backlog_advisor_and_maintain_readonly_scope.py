@@ -93,6 +93,8 @@ def test_backlog_advisor_readonly_tools_and_allowed_paths(tmp_path: Path, monkey
     repo_root = tmp_path / "repo"
     (repo_root / "docs" / "backlog").mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "stub")
+    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "stub-model")
 
     gateway_dir = tmp_path / "gateway_data"
     gateway_dir.mkdir(parents=True, exist_ok=True)
@@ -139,6 +141,8 @@ def test_backlog_maintain_readonly_tools_and_allowed_paths(tmp_path: Path, monke
     (backlog_root / "template.md").write_text("# {ID}-{Package}: {Title}\n", encoding="utf-8")
     (backlog_root / "proposed" / "672-framework-test.md").write_text("# 672-framework: [TASK] Test\n", encoding="utf-8")
     monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "stub")
+    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "stub-model")
 
     gateway_dir = tmp_path / "gateway_data"
     gateway_dir.mkdir(parents=True, exist_ok=True)
@@ -182,4 +186,3 @@ def test_backlog_maintain_readonly_tools_and_allowed_paths(tmp_path: Path, monke
     assert input_data.get("workspace_access_mode") == "workspace_or_allowed"
     allowed = list(input_data.get("workspace_allowed_paths") or [])
     assert str(gateway_dir.resolve()) in allowed
-

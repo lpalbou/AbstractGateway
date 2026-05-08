@@ -198,6 +198,8 @@ def test_gateway_start_wait_resume_completes(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
     monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "stub")
+    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "stub-model")
 
     # Contract: bundle mode must not require importing AbstractFlow at runtime.
     import sys
@@ -267,6 +269,8 @@ def test_gateway_ledger_batch_endpoint(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
     monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "stub")
+    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "stub-model")
 
     from abstractgateway.app import app
 

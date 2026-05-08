@@ -4,26 +4,52 @@ AbstractGateway is configured primarily via **environment variables** (plus a fe
 
 ## Install extras (recommended)
 
-The base install (`pip install abstractgateway`) includes the runner + durable stores + CLI.
+The base install (`pip install abstractgateway`) is the runner/control-plane
+profile: durable stores, CLI, and `AbstractRuntime`. Runtime/Core multimodal,
+HTTP, memory, and hardware-specific dependencies are explicit install profiles.
 
 Optional extras (see `pyproject.toml`):
 - `abstractgateway[http]`: FastAPI + Uvicorn (`abstractgateway serve`)
+- `abstractgateway[multimodal]`: Runtime/Core multimodal profile without HTTP server deps
 - `abstractgateway[server]`: turnkey server/container profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed AbstractVision image generation, direct Gateway voice/audio/image endpoints, media/tool helpers, token counting, provider-level and session-level prompt-cache helpers, and compression
+- `abstractgateway[memory]`: AbstractMemory TripleStore KG support with LanceDB as the default durable vector-capable backend; SQLite is available when the installed AbstractMemory build exposes `SQLiteTripleStore`
+- `abstractgateway[apple]` / `abstractgateway[all-apple]`: full native macOS Python profiles with Apple-local engines and all non-NVIDIA framework capabilities; these are for native macOS, not Docker
+- `abstractgateway[gpu]` / `abstractgateway[all-gpu]`: full native GPU Python profiles with local GPU engines and all relevant framework capabilities; Docker uses `server-nvidia` instead
+- `abstractgateway[server-nvidia]`: experimental full NVIDIA server profile with vLLM/HuggingFace, local Diffusers image generation, and local voice engines
 - `abstractgateway[visualflow]`: VisualFlow JSON directory mode via `abstractflow`
 - `abstractgateway[telegram]`: Telegram bridge dependencies (AbstractRuntime’s AbstractCore integration)
 - `abstractgateway[voice]`: voice/audio endpoints (TTS + STT) via AbstractVoice and AbstractCore's voice/audio plugin extras
 - `abstractgateway[vision]`: generative vision via AbstractCore's AbstractVision plugin
-- `abstractgateway[multimodal]`: Runtime/Core multimodal profile without HTTP server deps
 - `abstractgateway[all]`: batteries-included install (HTTP + tools + voice/audio + vision + media + visualflow)
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
 Optional (required by some workflows/features):
-- `abstractruntime[abstractcore]>=0.4.6`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`) — already included by `abstractgateway[http]`
-- `abstractruntime[multimodal]>=0.4.6`: required for Runtime-managed multimodal outputs through AbstractCore workflows — included by `abstractgateway[server]`, `abstractgateway[multimodal]`, and `abstractgateway[all]`
-- `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.10`: recommended for server deployments that need hosted providers, OpenAI-compatible text provider routing, media parsing, tool helpers, token counting, provider-level prompt-cache controls, workflow-backed/direct image generation, TTS, and STT — included by `abstractgateway[server]`
-- `abstractagent`: required for Visual Agent nodes (bundle mode) — already included by `abstractgateway[http]`
-- `abstractmemory[lancedb]` (or `abstractmemory` + `lancedb`): required for bundles that use `memory_kg_*` nodes
+- `AbstractRuntime[abstractcore]>=0.4.8`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`); included by `abstractgateway[multimodal]`, `abstractgateway[server]`, and aggregate profiles
+- `AbstractRuntime[multimodal]>=0.4.8`: required for Runtime-managed multimodal outputs through AbstractCore workflows; included by `abstractgateway[multimodal]`, `abstractgateway[server]`, and aggregate profiles
+- `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12`: recommended for server deployments that need hosted providers, OpenAI-compatible text provider routing, media parsing, tool helpers, token counting, provider-level prompt-cache controls, workflow-backed/direct image generation, TTS, STT, and catalog routes; included by `abstractgateway[server]`
+- `abstractcore[apple]>=2.13.12`, `abstractcore[gpu]>=2.13.12`, `abstractcore[all-apple]>=2.13.12`, or `abstractcore[all-gpu]>=2.13.12`: local hardware profiles; included by the matching Gateway profile. Gateway's own `apple` and `gpu` extras are full deployment aggregates.
+- `abstractagent`: required for Visual Agent nodes (bundle mode); included by `abstractgateway[server]` and aggregate profiles
+- `AbstractMemory[lancedb]>=0.2.4`: required for bundles that use `memory_kg_*` nodes with the default durable vector backend; included by `abstractgateway[memory]`, `abstractgateway[all]`, and aggregate profiles
+
+Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
+the newer memory-agent API directly.
+
+## Configuration helper
+
+Gateway has a first-class configuration helper:
+
+```bash
+abstractgateway-config status
+abstractgateway-config init --env-file .env
+abstractgateway config status --json
+```
+
+It reports Gateway auth/data/store/runtime defaults, Core-server handoff
+configuration, memory-store selection, and package readiness. `init` writes a
+private env file with a generated Gateway token. Provider API keys, provider
+base URLs, Core server settings, and global Core model defaults remain owned by
+`abstractcore-config`.
 
 ## Core environment variables
 
@@ -61,6 +87,25 @@ Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspac
   Note: for safety, when `ABSTRACTGATEWAY_STORE_BACKEND=sqlite`, the DB path must be **under** `ABSTRACTGATEWAY_DATA_DIR`.
   The gateway fails fast if `ABSTRACTGATEWAY_DB_PATH` points elsewhere (prevents cross-wiring UAT/prod durable state).
 
+### KG memory store
+
+Gateway selects an AbstractMemory TripleStore through a small resolver; it does
+not implement memory stores itself.
+
+- `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND`: `lancedb` (default), `memory`, or `sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`
+- `ABSTRACTGATEWAY_MEMORY_STORE_PATH`: optional explicit store path
+- `ABSTRACTGATEWAY_MEMORY_REQUIRE_VECTOR=1`: fail fast when the selected backend cannot satisfy semantic/vector recall
+
+Backend behavior:
+
+- `lancedb`: persistent and vector-capable; semantic `query_text` requires Gateway embeddings.
+- `sqlite`: persistent and structured-query only when `SQLiteTripleStore` is available; semantic `query_text` fails clearly.
+- `memory`: process-local test/dev backend; non-durable.
+
+The same resolver is used for bundle `memory_kg_*` nodes and
+`POST /api/gateway/kg/query`. Capability discovery reports memory backend,
+persistence, vector support, and embedder status.
+
 ### Runner tuning (advanced)
 
 These map to `GatewayHostConfig` and `GatewayRunnerConfig`:
@@ -79,8 +124,12 @@ Evidence: `src/abstractgateway/config.py`, `src/abstractgateway/runner.py`.
 Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.
 
 - `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`  
-  Used as defaults for LLM execution in bundle mode. If missing, the gateway may try to infer defaults from flow JSON; otherwise it errors.  
-  Evidence: `src/abstractgateway/hosts/bundle_host.py` (`needs_llm`, `_scan_flows_for_llm_defaults`)
+  Used as defaults for LLM execution and Gateway LLM helper endpoints. Resolution
+  order is: explicit request/provider-model pins, Gateway env, flow-pinned
+  defaults when compiling bundles, then AbstractCore global defaults from
+  `abstractcore-config`. If no pair is configured, helpers return a clear
+  configuration error instead of falling back to a hardcoded model.
+  Evidence: `src/abstractgateway/provider_defaults.py`, `src/abstractgateway/hosts/bundle_host.py`
 - `ABSTRACTGATEWAY_TOOL_MODE`:
   - `approval` (default): execute safe tools locally; require explicit approval for dangerous/unknown tools
   - `passthrough`: require explicit approval for *all* tools (then execute in-process on resume)
@@ -136,20 +185,35 @@ heavy engines remain explicit opt-ins in the provider packages.
 
 - `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: default text model for bundle LLM nodes
 - `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`: OpenAI-compatible text endpoint for AbstractCore providers
-- `ABSTRACTVISION_BASE_URL` / `ABSTRACTVISION_API_KEY` / `ABSTRACTVISION_MODEL_ID`: OpenAI-compatible image endpoint used by AbstractVision
-- `ABSTRACTVISION_BACKEND`: `openai` / `diffusers` / `sdcpp` (`openai` means OpenAI-compatible HTTP)
-- `ABSTRACTVOICE_TTS_ENGINE` / `ABSTRACTVOICE_STT_ENGINE`: `auto`, local engines, or remote-compatible engines supported by AbstractVoice
+  - Apple/MLX Docker deployments should point the lightweight Gateway container
+    at host-native inference, for example
+    `http://model-runner.docker.internal/engines/v1`,
+    `http://host.docker.internal:1234/v1`, or
+    `http://host.docker.internal:11434/v1`.
+- `ABSTRACTVISION_BASE_URL` / `ABSTRACTVISION_API_KEY` / `ABSTRACTVISION_MODEL_ID`: OpenAI or OpenAI-compatible image endpoint used by AbstractVision
+- `ABSTRACTVISION_BACKEND`: `openai` / `openai-compatible` / `diffusers` / `sdcpp`
+- `ABSTRACTVOICE_TTS_ENGINE` / `ABSTRACTVOICE_STT_ENGINE`: `openai`, `openai-compatible`, `auto`, or local engines supported by AbstractVoice
 - `ABSTRACTVOICE_REMOTE_BASE_URL` / `ABSTRACTVOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice
 - `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls
+- `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL` or `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
+- `GET /api/gateway/audio/speech/models`: proxies AbstractCore `/v1/audio/speech/models` when configured.
+- `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured.
+
+Core catalog proxy settings:
+
+- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL` (or `ABSTRACTCORE_SERVER_BASE_URL`): explicit Core server base URL for catalog proxying.
+- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN` / `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY` (or `ABSTRACTCORE_SERVER_API_KEY`): Core server auth token. This is separate from Gateway auth.
+- `ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S`: catalog proxy timeout (default `3.0` seconds).
 
 ## CLI flags
 
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve --host 127.0.0.1 --port 8080 [--no-runner] [--reload]`  
+- `abstractgateway serve --host 127.0.0.1 --port 8080 [--no-runner] [--reload]`
   Evidence: `src/abstractgateway/cli.py`
 - `abstractgateway runner` (worker only)
+- `abstractgateway config status --json`
 - `abstractgateway migrate --from=file --to=sqlite --data-dir <DIR> --db-path <FILE>`
 
 ## Related docs

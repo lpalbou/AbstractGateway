@@ -10,7 +10,7 @@ This guide gets a new installation running in **bundle mode** (recommended), the
 
 AbstractGateway is one component in the larger **AbstractFramework** ecosystem:
 - **AbstractRuntime** (required): durable runs + workflow registry + stores
-- **AbstractCore** (optional, via `abstractruntime[abstractcore]` / `abstractruntime[multimodal]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed generated image/voice/audio capabilities used by many bundles
+- **AbstractCore / AbstractVoice / AbstractVision** (optional via `abstractgateway[multimodal]` / `[server]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles
 
 Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
@@ -37,10 +37,16 @@ pip install "abstractgateway[http]"
 # Turnkey server/container profile (HTTP + Runtime/Core multimodal + remote providers/tools/media)
 pip install "abstractgateway[server]"
 
-# Optional: voice/audio (TTS + STT endpoints)
+# KG memory support (AbstractMemory TripleStore API; LanceDB default, SQLite if available)
+pip install "abstractgateway[memory]"
+
+# Experimental NVIDIA full profile (vLLM/HuggingFace + local Diffusers + local voice engines)
+pip install "abstractgateway[server-nvidia]"
+
+# Explicit voice/audio profile (TTS + STT endpoints)
 pip install "abstractgateway[voice]"
 
-# Optional: generative vision through AbstractCore's AbstractVision plugin
+# Explicit generative vision profile through AbstractCore's AbstractVision plugin
 pip install "abstractgateway[vision]"
 
 # Or: batteries-included (HTTP + tools + voice/audio + vision + media + visualflow)
@@ -48,13 +54,13 @@ pip install "abstractgateway[all]"
 ```
 
 Optional (only if your workflows need it):
-- LLM/tool nodes (bundle mode): `pip install "abstractruntime[abstractcore]>=0.4.6"` (already included by `abstractgateway[http]`)
-- Runtime-managed generated images, generated voice, and STT inside workflows: `pip install "abstractruntime[multimodal]>=0.4.6"` (already included by `abstractgateway[server]`)
+- LLM/tool nodes (bundle mode): `pip install "abstractgateway[multimodal]"` or `pip install "abstractgateway[server]"`
+- Runtime-managed generated images, generated voice, and STT inside workflows: `pip install "abstractgateway[multimodal]"` or `pip install "abstractgateway[server]"`
 - Server deployments with hosted providers / OpenAI-compatible endpoints: `pip install "abstractgateway[server]"`
-- Visual Agent nodes (bundle mode): `pip install abstractagent` (already included by `abstractgateway[http]`)
+- Visual Agent nodes (bundle mode): `pip install abstractagent` (already included by `abstractgateway[server]`)
 - Voice/audio endpoints (TTS/STT): `pip install "abstractgateway[voice]"` (or `pip install abstractvoice`)
 - Generative vision: `pip install "abstractgateway[vision]"` (or `pip install abstractvision`)
-- `memory_kg_*` nodes (bundle mode): `pip install "abstractmemory[lancedb]"` (or `abstractmemory` + `lancedb`)
+- `memory_kg_*` nodes (bundle mode): `pip install "abstractgateway[memory]"`
 
 ## 1) Run (bundle mode, file-backed stores)
 
@@ -93,6 +99,13 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
   -F "overwrite=false" \
   -F "reload=true" \
   "http://127.0.0.1:8080/api/gateway/bundles/upload"
+```
+
+You can also create a local env file and inspect readiness with:
+
+```bash
+abstractgateway-config init --env-file .env
+abstractgateway-config status
 ```
 
 ## 2) Start a run (bundle mode)
@@ -149,11 +162,27 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.3
+  ghcr.io/lpalbou/abstractgateway-server:0.2.4
 ```
 
 See [deployment.md](./deployment.md) for Compose, provider keys, and image
 customization.
+
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.4`
+with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
+It is experimental until a real CUDA build/smoke gate is part of release
+validation.
+Apple MLX inference should run natively on macOS rather than in Docker because
+Linux containers do not get access to Apple's Metal/MLX runtime. The container
+can still use native macOS inference through an OpenAI-compatible endpoint:
+point `OPENAI_COMPATIBLE_BASE_URL` at Docker Model Runner on
+`http://model-runner.docker.internal/engines/v1`, LM Studio on
+`http://host.docker.internal:1234/v1`, `mlx_lm.server`, or Ollama's
+OpenAI-compatible API on `http://host.docker.internal:11434/v1` when the
+native Ollama model path uses MLX. For native non-Docker installs, use
+`pip install "abstractgateway[apple]"` or `pip install "abstractgateway[all-apple]"`
+on Apple Silicon, and `pip install "abstractgateway[gpu]"` or
+`pip install "abstractgateway[all-gpu]"` on GPU workstations.
 
 ## 4) What’s stored in `ABSTRACTGATEWAY_DATA_DIR` (file backend)
 

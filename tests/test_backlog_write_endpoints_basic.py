@@ -72,6 +72,8 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
     _write_backlog_template(backlog_root / "template.md")
 
     monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "stub")
+    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "stub-model")
 
     app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
     with TestClient(app) as client:

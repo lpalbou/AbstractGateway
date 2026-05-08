@@ -4,26 +4,46 @@ This image packages the AbstractGateway HTTP/SSE server for durable
 AbstractRuntime runs:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway-server:0.2.3
+ghcr.io/lpalbou/abstractgateway-server:0.2.4
 ```
 
 Release images are published for `linux/amd64` and `linux/arm64`.
+A separate experimental full NVIDIA image is published best-effort for
+`linux/amd64`:
+
+```bash
+ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.4
+```
 
 The image installs:
 
 ```bash
-abstractgateway[server]==<version>
+abstractgateway[server,memory]==<version>
 ```
 
-The `server` extra includes `AbstractRuntime[multimodal]`, AbstractCore
+The default image composes the `server` and `memory` extras. It includes
+`AbstractRuntime[multimodal]`, AbstractCore
 remote/commercial provider support, OpenAI-compatible text provider routing,
 workflow-backed and direct image generation through Runtime/Core/AbstractVision,
 direct Gateway voice/audio endpoints through AbstractVoice, provider/session
-prompt-cache helpers, media parsing, tool helpers, token counting, compression
-helpers, FastAPI/Uvicorn, AbstractAgent, and AbstractFlow compatibility. It intentionally
-does not bundle
-local model runtimes such as MLX, vLLM, HuggingFace Transformers, local
-Diffusers/sdcpp vision backends, or local voice/music generation engines.
+prompt-cache helpers, KG memory via AbstractMemory/LanceDB, media parsing,
+tool helpers, token counting, compression helpers, FastAPI/Uvicorn,
+AbstractAgent, and AbstractFlow compatibility. It
+intentionally does not bundle local model runtimes such as MLX, vLLM,
+HuggingFace Transformers, local Diffusers/sdcpp vision backends, or local
+voice/music generation engines.
+
+The NVIDIA image installs `abstractgateway[server-nvidia]` on a CUDA/PyTorch
+base and adds vLLM/HuggingFace, local Diffusers image generation, and local
+voice engines. It is experimental until a real CUDA host build/smoke gate is
+part of release validation. Apple MLX inference is not packaged as a Docker image because
+Linux containers do not have access to Apple's Metal/MLX runtime. For Apple
+Silicon, run the MLX-capable service natively on macOS and point this container
+at its OpenAI-compatible endpoint. Docker Model Runner is reachable from
+containers at `http://model-runner.docker.internal/engines/v1`; LM Studio can
+serve local MLX models on `http://localhost:1234/v1`; Ollama can serve its
+OpenAI-compatible API on `http://localhost:11434/v1`, including builds/models
+that route through its native MLX runner.
 
 ## Run
 
@@ -40,11 +60,11 @@ PORTKEY_API_KEY=pk_...
 PORTKEY_CONFIG=pcfg_...
 OPENAI_COMPATIBLE_BASE_URL=http://host.docker.internal:1234/v1
 OPENAI_COMPATIBLE_API_KEY=optional
-ABSTRACTVISION_BASE_URL=http://host.docker.internal:8000/v1
+ABSTRACTVISION_BASE_URL=https://api.openai.com/v1
 ABSTRACTVISION_API_KEY=optional
 ABSTRACTVISION_MODEL_ID=gpt-image-1
-ABSTRACTVOICE_TTS_ENGINE=auto
-ABSTRACTVOICE_STT_ENGINE=auto
+ABSTRACTVOICE_TTS_ENGINE=openai
+ABSTRACTVOICE_STT_ENGINE=openai
 ABSTRACTVOICE_REMOTE_BASE_URL=
 ABSTRACTVOICE_REMOTE_API_KEY=
 ```
@@ -58,15 +78,16 @@ docker run --rm --name abstractgateway-server \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
   -v "$PWD/workspace:/workspace" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.3
+  ghcr.io/lpalbou/abstractgateway-server:0.2.4
 ```
 
 `ABSTRACTGATEWAY_AUTH_TOKEN` is the gateway bearer token. Clients send it as
 `Authorization: Bearer <token>`, including from Swagger UI's `Authorize`
 button. Provider keys stay inside the container.
 
-For local OpenAI-compatible endpoints such as LM Studio or Ollama's `/v1`
-server, point the container at a URL reachable from Docker:
+For local OpenAI-compatible text endpoints such as Docker Model Runner, LM
+Studio, `mlx_lm.server`, or Ollama's `/v1` server, point the container at a URL
+reachable from Docker:
 
 ```bash
 docker run --rm --name abstractgateway-server \
@@ -76,8 +97,13 @@ docker run --rm --name abstractgateway-server \
   -e ABSTRACTGATEWAY_MODEL="your-model" \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -e OPENAI_COMPATIBLE_API_KEY="$OPENAI_COMPATIBLE_API_KEY" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.3
+  ghcr.io/lpalbou/abstractgateway-server:0.2.4
 ```
+
+Use `http://model-runner.docker.internal/engines/v1` for Docker Model Runner,
+or `http://host.docker.internal:11434/v1` when routing through Ollama's
+OpenAI-compatible server. These text endpoints are not assumed to provide
+`/v1/images/generations`.
 
 ## Docker Compose
 
@@ -87,16 +113,28 @@ docker compose --env-file docker/abstractgateway-server/.env \
   -f docker/abstractgateway-server/compose.yml up -d
 ```
 
+On an NVIDIA host with the NVIDIA Container Toolkit, use the experimental
+overlay:
+
+```bash
+docker compose --env-file docker/abstractgateway-server/.env \
+  -f docker/abstractgateway-server/compose.yml \
+  -f docker/abstractgateway-server/compose.nvidia.yml up -d
+```
+
 Useful compose variables:
 
 - `ABSTRACTGATEWAY_PORT`: host port, default `8080`
 - `ABSTRACTGATEWAY_HOST_FLOWS_DIR`: host directory containing `*.flow` bundles
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` or `sqlite`
+- `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND`: `lancedb` or `memory`; `sqlite` works when the installed AbstractMemory build exposes `SQLiteTripleStore`
 - `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: defaults for bundles
 - `ABSTRACTGATEWAY_TOOL_MODE`: `approval`, `passthrough`, `delegated`, or local dev modes
 - `ABSTRACTGATEWAY_EMBEDDING_PROVIDER` / `ABSTRACTGATEWAY_EMBEDDING_MODEL`: optional embedding space
 - `ABSTRACTVISION_*`: AbstractVision image backend or OpenAI-compatible image endpoint
 - `ABSTRACTVOICE_*`: AbstractVoice TTS/STT backend, local/remote engine, and model controls
+- `ABSTRACTGATEWAY_EXTRAS`: build-time install extra for local image builds (`server,memory` or `server-nvidia`)
+- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL`: optional standalone Core server for dynamic voice/vision catalogs
 
 Release scope: TTS, STT, and generated images are direct Gateway endpoints.
 Generated images are also available through Runtime/Core workflows with
@@ -106,7 +144,7 @@ For unreleased local checkouts, build the image from this repository:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.3-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.4-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

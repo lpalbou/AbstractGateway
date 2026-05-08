@@ -1,9 +1,10 @@
-ARG PYTHON_VERSION=3.12
-FROM python:${PYTHON_VERSION}-slim
+ARG BASE_IMAGE=pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+ARG BASE_PLATFORM=linux/amd64
+FROM --platform=${BASE_PLATFORM} ${BASE_IMAGE}
 
 ARG ABSTRACTGATEWAY_VERSION
 ARG ABSTRACTGATEWAY_INSTALL_MODE=pypi
-ARG ABSTRACTGATEWAY_EXTRAS=server,memory
+ARG ABSTRACTGATEWAY_EXTRAS=server-nvidia
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -15,19 +16,26 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle \
     ABSTRACTGATEWAY_STORE_BACKEND=file \
     ABSTRACTGATEWAY_ALLOWED_ORIGINS=http://localhost:*,http://127.0.0.1:* \
-    ABSTRACTGATEWAY_EMBEDDING_PROVIDER=disabled
+    ABSTRACTGATEWAY_EMBEDDING_PROVIDER=disabled \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-RUN addgroup --system abstractgateway \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        ffmpeg \
+        libmagic1 \
+        libsndfile1 \
+    && addgroup --system abstractgateway \
     && adduser --system --ingroup abstractgateway --home /home/abstractgateway abstractgateway \
     && mkdir -p /data/gateway /data/flows /workspace \
-    && chown -R abstractgateway:abstractgateway /data /workspace
+    && chown -R abstractgateway:abstractgateway /data /workspace /home/abstractgateway
 
 COPY pyproject.toml README.md CHANGELOG.md /tmp/abstractgateway-src/
 COPY src /tmp/abstractgateway-src/src
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential libmagic1 \
-    && python -m pip install --upgrade pip \
+RUN python -m pip install --upgrade pip \
     && if [ "$ABSTRACTGATEWAY_INSTALL_MODE" = "local" ]; then \
         python -m pip install "/tmp/abstractgateway-src[${ABSTRACTGATEWAY_EXTRAS}]"; \
     else \
@@ -37,15 +45,14 @@ RUN apt-get update \
             python -m pip install "abstractgateway[${ABSTRACTGATEWAY_EXTRAS}]"; \
         fi; \
     fi \
-    && apt-get purge -y --auto-remove build-essential \
-    && rm -rf /var/lib/apt/lists/* /tmp/abstractgateway-src
+    && rm -rf /tmp/abstractgateway-src
 
 USER abstractgateway
 WORKDIR /home/abstractgateway
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\"PORT\", \"8080\")}/api/health', timeout=3).read()" || exit 1
 
 CMD ["sh", "-c", "abstractgateway serve --host \"${HOST:-0.0.0.0}\" --port \"${PORT:-8080}\""]

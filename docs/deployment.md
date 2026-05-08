@@ -7,16 +7,26 @@ and the remote-provider/multimodal AbstractCore stack together.
 
 ## Published image
 
-Release images are published to GHCR:
+Release images are published to GHCR. The default image is the light,
+portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.3
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.4
 ```
 
-The image installs `abstractgateway[server]`, which includes:
+NVIDIA hosts can try the experimental full GPU image when local
+vLLM/HuggingFace/Diffusers engines are wanted. This image is published
+best-effort until it has a real CUDA build and smoke gate:
+
+```bash
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.4
+```
+
+The default image installs `abstractgateway[server,memory]`, which includes:
 
 - `AbstractRuntime[multimodal]`
 - `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]`
+- `AbstractMemory[lancedb]>=0.2.4`
 - `abstractvision`
 - `abstractvoice`
 - `abstractagent`
@@ -29,8 +39,40 @@ Runtime/Core/AbstractVision, direct Gateway voice/STT endpoints through
 AbstractVoice, and provider/session prompt-cache controls.
 It intentionally stays dependency-light for heavy local model runtimes: MLX,
 vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
-engines, and future AbstractMusic engines should remain explicit opt-in image
-variants or sidecars.
+engines, and future AbstractMusic engines remain explicit opt-ins.
+
+The NVIDIA image installs `abstractgateway[server-nvidia]` and uses a
+CUDA/PyTorch base. It is experimental and release automation publishes it as
+best-effort for `linux/amd64`; the default image remains the release-grade
+portable `linux/amd64` and `linux/arm64` image. Treat the NVIDIA image as
+production-ready only after a CUDA host build/smoke gate is added and passes.
+
+### Apple Silicon / MLX
+
+There is no Apple/MLX Gateway Docker image target. MLX uses Apple's Metal
+stack, while Docker Desktop runs Linux containers without Metal/MPS device
+access. The supported Docker shape is a lightweight Gateway container calling a
+host-native OpenAI-compatible inference endpoint:
+
+```bash
+docker run --rm --name abstractgateway-server \
+  -p 127.0.0.1:8080:8080 \
+  -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
+  -e ABSTRACTGATEWAY_PROVIDER="openai-compatible" \
+  -e ABSTRACTGATEWAY_MODEL="your-model" \
+  -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
+  -v "$PWD/runtime/gateway:/data/gateway" \
+  -v "$PWD/flows/bundles:/data/flows:ro" \
+  ghcr.io/lpalbou/abstractgateway-server:0.2.4
+```
+
+Other host-native endpoints are also valid: LM Studio at
+`http://host.docker.internal:1234/v1`, Ollama's OpenAI-compatible API at
+`http://host.docker.internal:11434/v1`, or `mlx_lm.server` exposed on a host
+port. For fully native non-Docker installs with local engines, use
+`pip install "abstractgateway[apple]"` or `pip install "abstractgateway[all-apple]"`
+on Apple Silicon, and `pip install "abstractgateway[gpu]"` or
+`pip install "abstractgateway[all-gpu]"` on GPU workstations.
 
 ## Compose quickstart
 
@@ -42,6 +84,15 @@ cp docker/abstractgateway-server/.env.example docker/abstractgateway-server/.env
 python -c 'import secrets; print(secrets.token_urlsafe(32))'
 docker compose --env-file docker/abstractgateway-server/.env \
   -f docker/abstractgateway-server/compose.yml up -d
+```
+
+For the experimental NVIDIA image on a GPU host with the NVIDIA Container
+Toolkit:
+
+```bash
+docker compose --env-file docker/abstractgateway-server/.env \
+  -f docker/abstractgateway-server/compose.yml \
+  -f docker/abstractgateway-server/compose.nvidia.yml up -d
 ```
 
 The default compose profile binds to `127.0.0.1:8080`, mounts a durable Gateway
@@ -71,6 +122,7 @@ Common:
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` or `sqlite`
 - `ABSTRACTGATEWAY_DB_PATH`: SQLite file, when using `sqlite`
 - `ABSTRACTGATEWAY_RUNNER`: `1` for combined API+runner, `0` for API-only
+- `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND`: `lancedb` or `memory` for KG workflows and `/kg/query`; `sqlite` works when the installed AbstractMemory build exposes `SQLiteTripleStore`
 
 Provider keys and endpoints:
 
@@ -85,11 +137,17 @@ Provider keys and endpoints:
 
 Image/voice plugin endpoints:
 
-- `ABSTRACTVISION_BACKEND`: `openai` (OpenAI-compatible HTTP), `diffusers`, or `sdcpp`
-- `ABSTRACTVISION_BASE_URL` / `ABSTRACTVISION_API_KEY` / `ABSTRACTVISION_MODEL_ID`
-- `ABSTRACTVOICE_TTS_ENGINE` / `ABSTRACTVOICE_STT_ENGINE`
+- `ABSTRACTVISION_BACKEND`: `openai`, `openai-compatible`, `diffusers`, or `sdcpp`
+- `ABSTRACTVISION_BASE_URL` / `ABSTRACTVISION_API_KEY` / `ABSTRACTVISION_MODEL_ID` (OpenAI defaults are used by the server image)
+- `ABSTRACTVOICE_TTS_ENGINE` / `ABSTRACTVOICE_STT_ENGINE` (`openai` by default in the server image)
 - `ABSTRACTVOICE_REMOTE_BASE_URL` / `ABSTRACTVOICE_REMOTE_API_KEY`
 - `ABSTRACTVOICE_TTS_MODEL` / `ABSTRACTVOICE_STT_MODEL`
+
+Core catalog proxying:
+
+- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL`: explicit standalone Core server URL for voice/vision catalog routes
+- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN`: Core server auth token, separate from Gateway auth
+- `ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S`: timeout for catalog routes
 
 Filesystem/media controls from AbstractCore remain available:
 
@@ -119,7 +177,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.3-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.4-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

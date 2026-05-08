@@ -18,7 +18,7 @@ Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.p
 
 - **AbstractRuntime** (required): the durable run model + tick loop + stores (declared in `pyproject.toml`).
 - **AbstractGateway** (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in `src/abstractgateway/routes/gateway.py`).
-- **AbstractCore** (optional, via `abstractruntime[abstractcore]` / `abstractruntime[multimodal]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed generated image/voice/audio capabilities used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
+- **AbstractCore / AbstractVoice / AbstractVision** (optional via `abstractgateway[multimodal]` / `[server]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).
 
 Related repos:
@@ -153,11 +153,10 @@ Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start
 
 ### My bundle fails with “LLM/tool execution requires AbstractCore integration”
 
-Install AbstractRuntime’s AbstractCore integration (already included by `abstractgateway[http]`):
-
-```bash
-pip install "abstractruntime[abstractcore]>=0.4.6"
-```
+AbstractRuntime’s AbstractCore integration is included by
+`abstractgateway[multimodal]`, `abstractgateway[server]`, and aggregate
+profiles. If this error appears, verify the installed package set with
+`pip show AbstractRuntime abstractcore`.
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/needs_tools`).
 
@@ -221,11 +220,12 @@ pip install "abstractgateway[server]"
 ```
 
 The profile includes `AbstractRuntime[multimodal]`, AbstractCore's
-`vision`/`voice`/`audio` extras, `abstractvision>=0.3.1`, and
-`abstractvoice>=0.9.0`. Configure image endpoints with
-`ABSTRACTVISION_BASE_URL`, `ABSTRACTVISION_API_KEY`, and
-`ABSTRACTVISION_MODEL_ID`; set `ABSTRACTVISION_BACKEND=diffusers` or `sdcpp`
-only for custom images that intentionally include those local engines.
+`vision`/`voice`/`audio` extras, `abstractvision>=0.3.3`, and
+`abstractvoice>=0.9.2`. The server image defaults image and audio generation to
+OpenAI remote endpoints; set `OPENAI_API_KEY` (or the `ABSTRACTVISION_*` /
+`ABSTRACTVOICE_*` overrides) before expecting live generation to succeed. Use
+`ABSTRACTVISION_BACKEND=diffusers` or `sdcpp` only for custom images that
+intentionally include those local engines.
 
 Generated images are available both inside Runtime/Core workflows and through
 Gateway's direct run-scoped endpoint:
@@ -251,7 +251,8 @@ provider-independent local KV cache or full CachedSession persistence system.
 
 ### My bundle fails with “Visual Agent nodes require AbstractAgent”
 
-Install `abstractagent` (already included by `abstractgateway[http]`):
+Install `abstractagent` (already included by `abstractgateway[server]` and
+`abstractgateway[all]`):
 
 ```bash
 pip install abstractagent
@@ -261,13 +262,19 @@ Evidence: agent workflow registration in `src/abstractgateway/hosts/bundle_host.
 
 ### My bundle fails with “memory_kg_* nodes … install abstractmemory”
 
-`memory_kg_*` nodes require the AbstractMemory integration:
+`memory_kg_*` nodes require Gateway's AbstractMemory TripleStore integration:
 
 ```bash
-pip install "abstractmemory[lancedb]"
+pip install "abstractgateway[memory]"
 ```
 
-Evidence: memory KG wiring in `src/abstractgateway/hosts/bundle_host.py` (imports `abstractmemory` and `abstractruntime.integrations.abstractmemory`).
+Keep the default `lancedb` backend for durable vector-capable memory, use
+`memory` for process-local dev/test memory, or set
+`ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite` only when your installed
+AbstractMemory build exposes `SQLiteTripleStore`.
+
+Evidence: memory KG wiring in `src/abstractgateway/memory_store.py` and
+`src/abstractgateway/hosts/bundle_host.py`.
 
 ## Deployment
 

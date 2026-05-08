@@ -205,6 +205,9 @@ def main(argv: list[str] | None = None) -> None:
 
     runner = sub.add_parser("runner", help="Run the AbstractGateway runner worker (no HTTP)")
 
+    cfg_cmd = sub.add_parser("config", help="Run the AbstractGateway configuration helper")
+    cfg_cmd.add_argument("config_args", nargs=argparse.REMAINDER, help="Arguments forwarded to abstractgateway-config")
+
     tg = sub.add_parser("telegram-auth", help="One-time TDLib authentication bootstrap for Telegram Secret Chats (E2EE)")
     tg.add_argument("--timeout-s", type=float, default=120.0, help="Max seconds to wait for TDLib authorization (default: 120)")
 
@@ -400,6 +403,12 @@ def main(argv: list[str] | None = None) -> None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
             else:
                 os.environ["ABSTRACTGATEWAY_RUNNER"] = prev_runner_env
+        return
+
+    if args.cmd == "config":
+        from .config_cli import main as config_main
+
+        config_main(list(getattr(args, "config_args", []) or []))
         return
 
     if args.cmd == "telegram-auth":

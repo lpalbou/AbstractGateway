@@ -54,6 +54,23 @@ def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> Non
 
 
 @pytest.mark.basic
+def test_gateway_env_bool_supports_voice_multi_key_and_legacy_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.delenv("AGW_TEST_BOOL_A", raising=False)
+    monkeypatch.delenv("AGW_TEST_BOOL_B", raising=False)
+
+    assert gateway_routes._env_bool("AGW_TEST_BOOL_A", "AGW_TEST_BOOL_B", default=True) is True
+    assert gateway_routes._env_bool("AGW_TEST_BOOL_A", True) is True
+
+    monkeypatch.setenv("AGW_TEST_BOOL_B", "off")
+    assert gateway_routes._env_bool("AGW_TEST_BOOL_A", "AGW_TEST_BOOL_B", default=True) is False
+
+    monkeypatch.setenv("AGW_TEST_BOOL_A", "yes")
+    assert gateway_routes._env_bool("AGW_TEST_BOOL_A", "AGW_TEST_BOOL_B", default=False) is True
+
+
+@pytest.mark.basic
 def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
