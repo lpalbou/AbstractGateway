@@ -39,7 +39,7 @@ multimodal = [
 # local model runtimes such as MLX/vLLM/HuggingFace.
 server = [
   "AbstractRuntime[multimodal]>=0.4.8",
-  "abstractagent>=0.3.2",
+  "abstractagent>=0.3.5",
   "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12",
   "abstractflow>=0.3.7",
   "abstractvision>=0.3.3",
@@ -62,7 +62,7 @@ memory = [
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
   "AbstractRuntime[multimodal,all-apple]>=0.4.8",
-  "abstractagent[all-apple]>=0.3.2",
+  "abstractagent[all-apple]>=0.3.5",
   "abstractcore[all-apple]>=2.13.12",
   "abstractflow>=0.3.7",
   "abstractvision[all-apple]>=0.3.3",
@@ -79,7 +79,7 @@ apple = [
 # profile instead of this generic Python profile.
 gpu = [
   "AbstractRuntime[multimodal,all-gpu]>=0.4.8",
-  "abstractagent[all-gpu]>=0.3.2",
+  "abstractagent[all-gpu]>=0.3.5",
   "abstractcore[all-gpu]>=2.13.12",
   "abstractflow>=0.3.7",
   "abstractvision[all-gpu]>=0.3.3",
@@ -94,7 +94,7 @@ gpu = [
 # Native macOS aggregate profile for full local+remote Gateway installs.
 all-apple = [
   "AbstractRuntime[multimodal,all-apple]>=0.4.8",
-  "abstractagent[all-apple]>=0.3.2",
+  "abstractagent[all-apple]>=0.3.5",
   "abstractcore[all-apple]>=2.13.12",
   "abstractflow>=0.3.7",
   "abstractvision[all-apple]>=0.3.3",
@@ -109,7 +109,7 @@ all-apple = [
 # Full GPU aggregate profile for CUDA/ROCm-style local engine hosts.
 all-gpu = [
   "AbstractRuntime[multimodal,all-gpu]>=0.4.8",
-  "abstractagent[all-gpu]>=0.3.2",
+  "abstractagent[all-gpu]>=0.3.5",
   "abstractcore[all-gpu]>=2.13.12",
   "abstractflow>=0.3.7",
   "abstractvision[all-gpu]>=0.3.3",
@@ -126,7 +126,7 @@ all-gpu = [
 # voice engines are too heavy and platform-specific for the light server image.
 server-nvidia = [
   "AbstractRuntime[multimodal]>=0.4.8",
-  "abstractagent>=0.3.2",
+  "abstractagent>=0.3.5",
   "abstractcore[all-gpu,vision-diffusers]>=2.13.12",
   "abstractflow>=0.3.7",
   "abstractvision[diffusers]>=0.3.3",
@@ -163,7 +163,7 @@ dev = [
   "pytest>=7.0.0",
   "httpx>=0.27.0",
   "AbstractRuntime[multimodal]>=0.4.8",
-  "abstractagent>=0.3.2",
+  "abstractagent>=0.3.5",
   "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12",
   "AbstractMemory[lancedb]>=0.2.4",
   "abstractvision>=0.3.3",
@@ -182,7 +182,7 @@ docs = [
 # Note: some capabilities still require runtime configuration (auth, model provider, optional downloads).
 all = [
   "AbstractRuntime[multimodal]>=0.4.8",
-  "abstractagent>=0.3.2",
+  "abstractagent>=0.3.5",
   "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12",
   "abstractflow>=0.3.7",
   "abstractvision>=0.3.3",

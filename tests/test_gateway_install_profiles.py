@@ -45,7 +45,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert extras["memory"] == ["AbstractMemory[lancedb]>=0.2.4"]
     apple = "\n".join(extras["apple"])
     assert "AbstractRuntime[multimodal,all-apple]>=0.4.8" in apple
-    assert "abstractagent[all-apple]>=0.3.2" in apple
+    assert "abstractagent[all-apple]>=0.3.5" in apple
     assert "abstractcore[all-apple]>=2.13.12" in apple
     assert "abstractvision[all-apple]>=0.3.3" in apple
     assert "abstractvoice[all-apple]>=0.9.2" in apple
@@ -53,7 +53,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "AbstractMemory[all-apple]>=0.2.4" in apple
     gpu = "\n".join(extras["gpu"])
     assert "AbstractRuntime[multimodal,all-gpu]>=0.4.8" in gpu
-    assert "abstractagent[all-gpu]>=0.3.2" in gpu
+    assert "abstractagent[all-gpu]>=0.3.5" in gpu
     assert "abstractcore[all-gpu]>=2.13.12" in gpu
     assert "abstractvision[all-gpu]>=0.3.3" in gpu
     assert "abstractvoice[all-gpu]>=0.9.2" in gpu

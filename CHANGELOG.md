@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Server and multimodal profiles now use the aligned Runtime/Core/Voice/Vision
   floors: `AbstractRuntime>=0.4.8`, `abstractcore>=2.13.12`,
   `abstractvision>=0.3.3`, and `abstractvoice>=0.9.2`.
+- Server, native Apple, native GPU, and NVIDIA profiles now require
+  `abstractagent>=0.3.5`, so Gateway-hosted agent nodes resolve against the
+  same Core/Runtime baseline as Gateway itself.
 - Native Python hardware profiles are full deployment aggregates:
   `abstractgateway[apple]` and `abstractgateway[all-apple]` install the
   Apple-local stack and all relevant non-NVIDIA framework capabilities, while
