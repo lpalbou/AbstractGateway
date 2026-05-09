@@ -1297,7 +1297,7 @@ For the full API surface, rely on the live OpenAPI spec (<code>/openapi.json</co
 <ul>
 <li><strong>AbstractRuntime</strong> (required): the durable run model + tick loop + stores (declared in <code>pyproject.toml</code>).</li>
 <li><strong>AbstractGateway</strong> (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in <code>src/abstractgateway/routes/gateway.py</code>).</li>
-<li><strong>AbstractCore / AbstractVoice / AbstractVision</strong> (optional via <code>abstractgateway[multimodal]</code> / <code>[server]</code>): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
+<li><strong>AbstractCore / AbstractVoice / AbstractVision / AbstractMemory</strong> (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
 <li>Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).</li>
 </ul>
 <p>Related repos:
@@ -1318,7 +1318,7 @@ For the full API surface, rely on the live OpenAPI spec (<code>/openapi.json</co
 <li>versioning: bundles are addressed as <code>bundle_id@bundle_version</code></li>
 <li><strong>VisualFlow directory mode</strong> (<code>ABSTRACTGATEWAY_WORKFLOW_SOURCE=visualflow</code>):</li>
 <li>input: a directory of <code>*.json</code> VisualFlow files</li>
-<li>requires: <code>pip install "abstractgateway[visualflow]"</code></li>
+<li>requires: the base <code>pip install abstractgateway</code></li>
 </ul>
 <p>Evidence: <code>src/abstractgateway/service.py</code> (workflow source switch), <code>src/abstractgateway/hosts/bundle_host.py</code>, <code>src/abstractgateway/hosts/visualflow_host.py</code>.</p>
 <h2 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h2>
@@ -1393,9 +1393,8 @@ The background runner polls the inbox and applies commands asynchronously.</p>
 - or pass a namespaced <code>flow_id</code> like <code>bundle@version:flow</code> (this also works for selecting “latest” via <code>bundle:flow</code>)</p>
 <p>Evidence: bundle selection in <code>src/abstractgateway/hosts/bundle_host.py</code> (<code>start_run</code>).</p>
 <h3 id="my-bundle-fails-with-llmtool-execution-requires-abstractcore-integration">My bundle fails with “LLM/tool execution requires AbstractCore integration”<a class="headerlink" href="#my-bundle-fails-with-llmtool-execution-requires-abstractcore-integration" title="Permanent link">&para;</a></h3>
-<p>AbstractRuntime’s AbstractCore integration is included by
-<code>abstractgateway[multimodal]</code>, <code>abstractgateway[server]</code>, and aggregate
-profiles. If this error appears, verify the installed package set with
+<p>AbstractRuntime’s AbstractCore integration is included by the base
+<code>abstractgateway</code> install. If this error appears, verify the installed package set with
 <code>pip show AbstractRuntime abstractcore</code>.</p>
 <p>Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (imports under <code>needs_llm/needs_tools</code>).</p>
 <h3 id="my-bundle-fails-with-llm-nodes-but-no-default-providermodel-is-configured">My bundle fails with “LLM nodes but no default provider/model is configured”<a class="headerlink" href="#my-bundle-fails-with-llm-nodes-but-no-default-providermodel-is-configured" title="Permanent link">&para;</a></h3>
@@ -1417,11 +1416,10 @@ profiles. If this error appears, verify the installed package set with
 </ul>
 <p>Evidence: tool executor selection in <code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h3 id="why-do-voicetts-or-audiotranscribe-fail-with-capability-unavailable">Why do <code>/voice/tts</code> or <code>/audio/transcribe</code> fail with “capability unavailable”?<a class="headerlink" href="#why-do-voicetts-or-audiotranscribe-fail-with-capability-unavailable" title="Permanent link">&para;</a></h3>
-<p>Those endpoints are backed by <strong>AbstractVoice</strong> (<code>abstractvoice</code>). Install the voice extra:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[voice]&quot;</span>
-</code></pre></div>
-<p>Or use the batteries-included install:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[all]&quot;</span>
+<p>Those endpoints are backed by <strong>AbstractVoice</strong> (<code>abstractvoice</code>), which is
+included by the base <code>abstractgateway</code> install. Verify the installed package
+set with:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>show<span class="w"> </span>abstractgateway<span class="w"> </span>abstractvoice<span class="w"> </span>abstractcore
 </code></pre></div>
 <p>By default, the gateway allows AbstractVoice to download models on first use. If you disabled downloads (or want to enable them explicitly), set:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS</span><span class="o">=</span><span class="m">1</span>
@@ -1431,10 +1429,10 @@ environment variables in the gateway process, for example
 <code>ABSTRACTVOICE_TTS_ENGINE</code>, <code>ABSTRACTVOICE_STT_ENGINE</code>,
 <code>ABSTRACTVOICE_REMOTE_BASE_URL</code>, and <code>ABSTRACTVOICE_REMOTE_API_KEY</code>.</p>
 <h3 id="how-do-i-enable-generated-images-or-runtime-managed-multimodal-outputs">How do I enable generated images or Runtime-managed multimodal outputs?<a class="headerlink" href="#how-do-i-enable-generated-images-or-runtime-managed-multimodal-outputs" title="Permanent link">&para;</a></h3>
-<p>Use the server/multimodal profile:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[server]&quot;</span>
+<p>Use the base install:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>abstractgateway
 </code></pre></div>
-<p>The profile includes <code>AbstractRuntime[multimodal]</code>, AbstractCore's
+<p>The base install includes <code>AbstractRuntime[multimodal]</code>, AbstractCore's
 <code>vision</code>/<code>voice</code>/<code>audio</code> extras, <code>abstractvision&gt;=0.3.3</code>, and
 <code>abstractvoice&gt;=0.9.2</code>. The server image defaults image and audio generation to
 OpenAI remote endpoints; set <code>OPENAI_API_KEY</code> (or the <code>ABSTRACTVISION_*</code> /
@@ -1457,15 +1455,14 @@ rebuild, and clear using deterministic session keys.</p>
 <p>This is Gateway-owned naming and orchestration over provider controls, not a
 provider-independent local KV cache or full CachedSession persistence system.</p>
 <h3 id="my-bundle-fails-with-visual-agent-nodes-require-abstractagent">My bundle fails with “Visual Agent nodes require AbstractAgent”<a class="headerlink" href="#my-bundle-fails-with-visual-agent-nodes-require-abstractagent" title="Permanent link">&para;</a></h3>
-<p>Install <code>abstractagent</code> (already included by <code>abstractgateway[server]</code> and
-<code>abstractgateway[all]</code>):</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>abstractagent
+<p>AbstractAgent is included by the base <code>abstractgateway</code> install. Verify the
+installed package set with:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>show<span class="w"> </span>abstractgateway<span class="w"> </span>abstractagent
 </code></pre></div>
 <p>Evidence: agent workflow registration in <code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h3 id="my-bundle-fails-with-memory_kg_-nodes-install-abstractmemory">My bundle fails with “memory_kg_* nodes … install abstractmemory”<a class="headerlink" href="#my-bundle-fails-with-memory_kg_-nodes-install-abstractmemory" title="Permanent link">&para;</a></h3>
-<p><code>memory_kg_*</code> nodes require Gateway's AbstractMemory TripleStore integration:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[memory]&quot;</span>
-</code></pre></div>
+<p><code>memory_kg_*</code> nodes use Gateway's AbstractMemory TripleStore integration,
+included by the base <code>abstractgateway</code> install.</p>
 <p>Keep the default <code>lancedb</code> backend for durable vector-capable memory, use
 <code>memory</code> for process-local dev/test memory, or set
 <code>ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite</code> only when your installed

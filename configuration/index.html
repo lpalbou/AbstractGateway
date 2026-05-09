@@ -888,31 +888,27 @@
 <h1 id="abstractgateway-configuration">AbstractGateway — Configuration<a class="headerlink" href="#abstractgateway-configuration" title="Permanent link">&para;</a></h1>
 <p>AbstractGateway is configured primarily via <strong>environment variables</strong> (plus a few CLI flags).</p>
 <h2 id="install-extras-recommended">Install extras (recommended)<a class="headerlink" href="#install-extras-recommended" title="Permanent link">&para;</a></h2>
-<p>The base install (<code>pip install abstractgateway</code>) is the runner/control-plane
-profile: durable stores, CLI, and <code>AbstractRuntime</code>. Runtime/Core multimodal,
-HTTP, memory, and hardware-specific dependencies are explicit install profiles.</p>
+<p>The base install (<code>pip install abstractgateway</code>) is the remote-light server
+profile: HTTP/SSE, durable stores, AbstractRuntime multimodal, AbstractCore
+remote provider/media/tool support, AbstractVision, AbstractVoice,
+AbstractAgent, AbstractFlow compatibility, and AbstractMemory/LanceDB KG
+support.</p>
 <p>Optional extras (see <code>pyproject.toml</code>):
-- <code>abstractgateway[http]</code>: FastAPI + Uvicorn (<code>abstractgateway serve</code>)
-- <code>abstractgateway[multimodal]</code>: Runtime/Core multimodal profile without HTTP server deps
-- <code>abstractgateway[server]</code>: turnkey server/container profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed AbstractVision image generation, direct Gateway voice/audio/image endpoints, media/tool helpers, token counting, provider-level and session-level prompt-cache helpers, and compression
-- <code>abstractgateway[memory]</code>: AbstractMemory TripleStore KG support with LanceDB as the default durable vector-capable backend; SQLite is available when the installed AbstractMemory build exposes <code>SQLiteTripleStore</code>
-- <code>abstractgateway[apple]</code> / <code>abstractgateway[all-apple]</code>: full native macOS Python profiles with Apple-local engines and all non-NVIDIA framework capabilities; these are for native macOS, not Docker
-- <code>abstractgateway[gpu]</code> / <code>abstractgateway[all-gpu]</code>: full native GPU Python profiles with local GPU engines and all relevant framework capabilities; Docker uses <code>server-nvidia</code> instead
-- <code>abstractgateway[server-nvidia]</code>: experimental full NVIDIA server profile with vLLM/HuggingFace, local Diffusers image generation, and local voice engines
-- <code>abstractgateway[visualflow]</code>: VisualFlow JSON directory mode via <code>abstractflow</code>
-- <code>abstractgateway[telegram]</code>: Telegram bridge dependencies (AbstractRuntime’s AbstractCore integration)
-- <code>abstractgateway[voice]</code>: voice/audio endpoints (TTS + STT) via AbstractVoice and AbstractCore's voice/audio plugin extras
-- <code>abstractgateway[vision]</code>: generative vision via AbstractCore's AbstractVision plugin
-- <code>abstractgateway[all]</code>: batteries-included install (HTTP + tools + voice/audio + vision + media + visualflow)
+- <code>abstractgateway[apple]</code>: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
+- <code>abstractgateway[gpu]</code>: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
+- <code>abstractgateway[http]</code>, <code>[server]</code>, <code>[multimodal]</code>, <code>[memory]</code>, <code>[voice]</code>, <code>[vision]</code>, <code>[all]</code>: compatibility aliases because the base install now includes the remote-light server stack
+- <code>abstractgateway[server-nvidia]</code>: compatibility alias for the GPU profile used by older NVIDIA Docker commands
+- <code>abstractgateway[visualflow]</code>: compatibility alias; VisualFlow support is included by the base install
+- <code>abstractgateway[telegram]</code>: compatibility alias; Telegram bridge support uses base install dependencies
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
-<p>Optional (required by some workflows/features):
-- <code>AbstractRuntime[abstractcore]&gt;=0.4.8</code>: required to execute bundle workflows that contain LLM/tool nodes (see <code>src/abstractgateway/hosts/bundle_host.py</code>); included by <code>abstractgateway[multimodal]</code>, <code>abstractgateway[server]</code>, and aggregate profiles
-- <code>AbstractRuntime[multimodal]&gt;=0.4.8</code>: required for Runtime-managed multimodal outputs through AbstractCore workflows; included by <code>abstractgateway[multimodal]</code>, <code>abstractgateway[server]</code>, and aggregate profiles
-- <code>abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]&gt;=2.13.12</code>: recommended for server deployments that need hosted providers, OpenAI-compatible text provider routing, media parsing, tool helpers, token counting, provider-level prompt-cache controls, workflow-backed/direct image generation, TTS, STT, and catalog routes; included by <code>abstractgateway[server]</code>
-- <code>abstractcore[apple]&gt;=2.13.12</code>, <code>abstractcore[gpu]&gt;=2.13.12</code>, <code>abstractcore[all-apple]&gt;=2.13.12</code>, or <code>abstractcore[all-gpu]&gt;=2.13.12</code>: local hardware profiles; included by the matching Gateway profile. Gateway's own <code>apple</code> and <code>gpu</code> extras are full deployment aggregates.
-- <code>abstractagent</code>: required for Visual Agent nodes (bundle mode); included by <code>abstractgateway[server]</code> and aggregate profiles
-- <code>AbstractMemory[lancedb]&gt;=0.2.6</code>: required for bundles that use <code>memory_kg_*</code> nodes with the default durable vector backend; included by <code>abstractgateway[memory]</code>, <code>abstractgateway[all]</code>, and aggregate profiles</p>
+<p>Default dependency floors:
+- <code>AbstractRuntime[multimodal]&gt;=0.4.9</code>
+- <code>abstractagent&gt;=0.3.6</code>
+- <code>abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]&gt;=2.13.12</code>
+- <code>AbstractMemory[lancedb]&gt;=0.2.6</code>
+- <code>abstractvision&gt;=0.3.4</code>
+- <code>abstractvoice&gt;=0.9.2</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
 <h2 id="configuration-helper">Configuration helper<a class="headerlink" href="#configuration-helper" title="Permanent link">&para;</a></h2>

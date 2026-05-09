@@ -614,6 +614,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#2026-05-09-release-alignment-amendment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2026-05-09 Release Alignment Amendment
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -889,6 +900,29 @@ accepted.</p>
 <li>Updated docs to keep Gateway auth, Core server auth, provider credentials, and
   capability-package env vars separate.</li>
 <li>Added package metadata, config CLI, and Runtime handoff tests.</li>
+</ul>
+<h2 id="2026-05-09-release-alignment-amendment">2026-05-09 Release Alignment Amendment<a class="headerlink" href="#2026-05-09-release-alignment-amendment" title="Permanent link">&para;</a></h2>
+<p>The final release decision supersedes the earlier "minimal base" completion note:</p>
+<ul>
+<li>Base <code>abstractgateway</code> is the remote-light HTTP/SSE server install, not a
+  runner-only package. It includes Runtime multimodal support, Agent, Core
+  remote/provider/tool/media support, Flow compatibility, Vision, Voice,
+  AbstractMemory with LanceDB, FastAPI, and Uvicorn.</li>
+<li><code>abstractgateway[apple]</code> is the full native Apple Python deployment aggregate.</li>
+<li><code>abstractgateway[gpu]</code> is the full local/container GPU aggregate and the
+  profile used by the NVIDIA Docker image.</li>
+<li><code>http</code>, <code>server</code>, <code>multimodal</code>, <code>memory</code>, <code>voice</code>, <code>vision</code>, <code>visualflow</code>,
+  <code>telegram</code>, and <code>all</code> remain compatibility aliases because their light/server
+  dependencies are in the base package.</li>
+<li><code>server-nvidia</code> remains a compatibility alias for older Docker commands; new
+  builds should use the <code>gpu</code> profile.</li>
+<li>Runtime baseline is <code>AbstractRuntime&gt;=0.4.9</code>, which depends on light
+  <code>AbstractMemory&gt;=0.2.6</code>; Gateway still selects and installs the LanceDB
+  backend because it owns deployment/store selection.</li>
+<li>Gateway <code>0.2.6</code> raises the AbstractVision floor to <code>abstractvision&gt;=0.3.4</code>
+  so the GPU aggregate inherits the Vision-side
+  <code>stable-diffusion-cpp-python&lt;0.4.6</code> guard needed for Linux/NVIDIA image
+  builds.</li>
 </ul>
 
 

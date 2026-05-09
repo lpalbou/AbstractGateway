@@ -645,7 +645,7 @@
 <p>AbstractGateway is one component in the larger AbstractFramework ecosystem:</p>
 <ul>
 <li><strong>AbstractRuntime</strong> (required): durable runs + stores</li>
-<li><strong>AbstractCore / AbstractVoice / AbstractVision</strong> (optional via <code>abstractgateway[multimodal]</code> / <code>[server]</code>): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles</li>
+<li><strong>AbstractCore / AbstractVoice / AbstractVision / AbstractMemory</strong> (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles</li>
 <li>Higher-level UIs (optional): AbstractFlow / AbstractObserver / AbstractCode / thin clients</li>
 </ul>
 <p>Related repos:
