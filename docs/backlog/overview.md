@@ -3,7 +3,7 @@
 ## Status
 
 AbstractGateway is a durable HTTP/SSE host for AbstractRuntime runs. The current
-0.2.5 surface already provides run start/schedule, durable commands, ledger
+0.2.6 surface already provides run start/schedule, durable commands, ledger
 replay/streaming, artifacts, VisualFlow CRUD/publish, workspace policy, provider
 and tool discovery, direct voice TTS, audio transcription, direct generated
 image artifacts/events, provider-level and session-level prompt-cache controls,

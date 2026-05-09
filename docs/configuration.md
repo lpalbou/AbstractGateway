@@ -25,7 +25,7 @@ Default dependency floors:
 - `abstractagent>=0.3.6`
 - `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12`
 - `AbstractMemory[lancedb]>=0.2.6`
-- `abstractvision>=0.3.3`
+- `abstractvision>=0.3.4`
 - `abstractvoice>=0.9.2`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-05-09
+
+### Fixed
+
+- Raised the AbstractVision floor to `abstractvision>=0.3.4` across Gateway
+  install profiles so `abstractgateway[gpu]` and the NVIDIA image inherit the
+  stable-diffusion.cpp binding constraint that avoids the broken
+  `stable-diffusion-cpp-python==0.4.6` Linux sdist.
+- Updated release-facing Docker examples and package metadata from `0.2.5` to
+  `0.2.6`.
+
 ## [0.2.5] - 2026-05-09
 
 ### Changed

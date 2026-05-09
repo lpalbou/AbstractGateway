@@ -294,3 +294,7 @@ The final release decision supersedes the earlier "minimal base" completion note
 - Runtime baseline is `AbstractRuntime>=0.4.9`, which depends on light
   `AbstractMemory>=0.2.6`; Gateway still selects and installs the LanceDB
   backend because it owns deployment/store selection.
+- Gateway `0.2.6` raises the AbstractVision floor to `abstractvision>=0.3.4`
+  so the GPU aggregate inherits the Vision-side
+  `stable-diffusion-cpp-python<0.4.6` guard needed for Linux/NVIDIA image
+  builds.
