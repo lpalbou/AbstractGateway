@@ -613,7 +613,7 @@ class WorkflowBundleGatewayHost:
             except Exception as e:  # pragma: no cover
                 raise WorkflowBundleError(
                     "Bundle uses memory_kg_* nodes but AbstractMemory integration is not available. "
-                    "Install `abstractgateway[memory]` or `AbstractMemory`."
+                    "Install/repair with `pip install abstractgateway`."
                 ) from e
 
             embedder = build_gateway_memory_embedder(base_dir=Path(data_root))

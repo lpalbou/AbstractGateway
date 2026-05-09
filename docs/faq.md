@@ -18,7 +18,7 @@ Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.p
 
 - **AbstractRuntime** (required): the durable run model + tick loop + stores (declared in `pyproject.toml`).
 - **AbstractGateway** (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in `src/abstractgateway/routes/gateway.py`).
-- **AbstractCore / AbstractVoice / AbstractVision** (optional via `abstractgateway[multimodal]` / `[server]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
+- **AbstractCore / AbstractVoice / AbstractVision / AbstractMemory** (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).
 
 Related repos:
@@ -42,7 +42,7 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation), `src/
   - versioning: bundles are addressed as `bundle_id@bundle_version`
 - **VisualFlow directory mode** (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=visualflow`):
   - input: a directory of `*.json` VisualFlow files
-  - requires: `pip install "abstractgateway[visualflow]"`
+  - requires: the base `pip install abstractgateway`
 
 Evidence: `src/abstractgateway/service.py` (workflow source switch), `src/abstractgateway/hosts/bundle_host.py`, `src/abstractgateway/hosts/visualflow_host.py`.
 
@@ -153,9 +153,8 @@ Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start
 
 ### My bundle fails with “LLM/tool execution requires AbstractCore integration”
 
-AbstractRuntime’s AbstractCore integration is included by
-`abstractgateway[multimodal]`, `abstractgateway[server]`, and aggregate
-profiles. If this error appears, verify the installed package set with
+AbstractRuntime’s AbstractCore integration is included by the base
+`abstractgateway` install. If this error appears, verify the installed package set with
 `pip show AbstractRuntime abstractcore`.
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/needs_tools`).
@@ -188,16 +187,12 @@ Evidence: tool executor selection in `src/abstractgateway/hosts/bundle_host.py`.
 
 ### Why do `/voice/tts` or `/audio/transcribe` fail with “capability unavailable”?
 
-Those endpoints are backed by **AbstractVoice** (`abstractvoice`). Install the voice extra:
+Those endpoints are backed by **AbstractVoice** (`abstractvoice`), which is
+included by the base `abstractgateway` install. Verify the installed package
+set with:
 
 ```bash
-pip install "abstractgateway[voice]"
-```
-
-Or use the batteries-included install:
-
-```bash
-pip install "abstractgateway[all]"
+pip show abstractgateway abstractvoice abstractcore
 ```
 
 By default, the gateway allows AbstractVoice to download models on first use. If you disabled downloads (or want to enable them explicitly), set:
@@ -213,13 +208,13 @@ environment variables in the gateway process, for example
 
 ### How do I enable generated images or Runtime-managed multimodal outputs?
 
-Use the server/multimodal profile:
+Use the base install:
 
 ```bash
-pip install "abstractgateway[server]"
+pip install abstractgateway
 ```
 
-The profile includes `AbstractRuntime[multimodal]`, AbstractCore's
+The base install includes `AbstractRuntime[multimodal]`, AbstractCore's
 `vision`/`voice`/`audio` extras, `abstractvision>=0.3.3`, and
 `abstractvoice>=0.9.2`. The server image defaults image and audio generation to
 OpenAI remote endpoints; set `OPENAI_API_KEY` (or the `ABSTRACTVISION_*` /
@@ -251,22 +246,19 @@ provider-independent local KV cache or full CachedSession persistence system.
 
 ### My bundle fails with “Visual Agent nodes require AbstractAgent”
 
-Install `abstractagent` (already included by `abstractgateway[server]` and
-`abstractgateway[all]`):
+AbstractAgent is included by the base `abstractgateway` install. Verify the
+installed package set with:
 
 ```bash
-pip install abstractagent
+pip show abstractgateway abstractagent
 ```
 
 Evidence: agent workflow registration in `src/abstractgateway/hosts/bundle_host.py`.
 
 ### My bundle fails with “memory_kg_* nodes … install abstractmemory”
 
-`memory_kg_*` nodes require Gateway's AbstractMemory TripleStore integration:
-
-```bash
-pip install "abstractgateway[memory]"
-```
+`memory_kg_*` nodes use Gateway's AbstractMemory TripleStore integration,
+included by the base `abstractgateway` install.
 
 Keep the default `lancedb` backend for durable vector-capable memory, use
 `memory` for process-local dev/test memory, or set

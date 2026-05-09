@@ -261,7 +261,7 @@ jobs:
           build-args: |
             ABSTRACTGATEWAY_INSTALL_MODE=pypi
             ABSTRACTGATEWAY_VERSION=${{ needs.build.outputs.version }}
-            ABSTRACTGATEWAY_EXTRAS=server-nvidia
+            ABSTRACTGATEWAY_EXTRAS=gpu
           tags: |
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server-nvidia:${{ needs.build.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server-nvidia:latest

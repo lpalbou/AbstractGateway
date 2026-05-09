@@ -49,7 +49,7 @@ def _require_visualflow_deps() -> None:
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
             "VisualFlow execution requires the AbstractFlow compiler library (not the web UI). "
-            "Install: `pip install abstractgateway[visualflow]`"
+            "Install/repair with: `pip install abstractgateway`"
         ) from e
 
 

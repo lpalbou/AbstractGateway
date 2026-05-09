@@ -274,3 +274,23 @@ Implemented in Gateway only.
 - Updated docs to keep Gateway auth, Core server auth, provider credentials, and
   capability-package env vars separate.
 - Added package metadata, config CLI, and Runtime handoff tests.
+
+## 2026-05-09 Release Alignment Amendment
+
+The final release decision supersedes the earlier "minimal base" completion note:
+
+- Base `abstractgateway` is the remote-light HTTP/SSE server install, not a
+  runner-only package. It includes Runtime multimodal support, Agent, Core
+  remote/provider/tool/media support, Flow compatibility, Vision, Voice,
+  AbstractMemory with LanceDB, FastAPI, and Uvicorn.
+- `abstractgateway[apple]` is the full native Apple Python deployment aggregate.
+- `abstractgateway[gpu]` is the full local/container GPU aggregate and the
+  profile used by the NVIDIA Docker image.
+- `http`, `server`, `multimodal`, `memory`, `voice`, `vision`, `visualflow`,
+  `telegram`, and `all` remain compatibility aliases because their light/server
+  dependencies are in the base package.
+- `server-nvidia` remains a compatibility alias for older Docker commands; new
+  builds should use the `gpu` profile.
+- Runtime baseline is `AbstractRuntime>=0.4.9`, which depends on light
+  `AbstractMemory>=0.2.6`; Gateway still selects and installs the LanceDB
+  backend because it owns deployment/store selection.

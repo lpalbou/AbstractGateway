@@ -15,7 +15,7 @@ labels: bug
 - AbstractGateway version (`python -c "import abstractgateway; print(abstractgateway.__version__)"`):
 - Python version:
 - OS:
-- Install extras (if relevant): e.g. `abstractgateway[http]`, `abstractgateway[server]`, `abstractgateway[voice]`, `abstractgateway[vision]`, `abstractgateway[all]`
+- Install profile (if relevant): base `abstractgateway`, `abstractgateway[apple]`, or `abstractgateway[gpu]`
 - Workflow source (if relevant): bundle / visualflow
 
 ## Logs / stack trace

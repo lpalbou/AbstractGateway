@@ -91,7 +91,7 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
     def _unavailable_voice_manager():
         raise HTTPException(
             status_code=400,
-            detail='Voice/audio support is not available. Install with: pip install "abstractgateway[voice]" (or "abstractgateway[all]")',
+            detail="Voice/audio support is not available. Install/repair with: pip install abstractgateway",
         )
 
     monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", _unavailable_voice_manager)
@@ -104,7 +104,7 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
         # Capability unavailable: explicit error.
         tts_unavail = client.post("/api/gateway/runs/session_memory_s1/voice/tts", json={"text": "hello"}, headers=headers)
         assert tts_unavail.status_code == 400, tts_unavail.text
-        assert "abstractgateway[voice]" in str(tts_unavail.json().get("detail") or "").lower()
+        assert "pip install abstractgateway" in str(tts_unavail.json().get("detail") or "").lower()
 
         # Upload an audio artifact for STT.
         upload = client.post(
@@ -122,7 +122,7 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
             headers=headers,
         )
         assert stt_unavail.status_code == 400, stt_unavail.text
-        assert "abstractgateway[voice]" in str(stt_unavail.json().get("detail") or "").lower()
+        assert "pip install abstractgateway" in str(stt_unavail.json().get("detail") or "").lower()
 
     # Success path: deterministic stub voice manager.
     class _OkVoiceManager:

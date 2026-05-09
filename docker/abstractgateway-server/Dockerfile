@@ -3,7 +3,7 @@ FROM python:${PYTHON_VERSION}-slim
 
 ARG ABSTRACTGATEWAY_VERSION
 ARG ABSTRACTGATEWAY_INSTALL_MODE=pypi
-ARG ABSTRACTGATEWAY_EXTRAS=server,memory
+ARG ABSTRACTGATEWAY_EXTRAS=
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -29,12 +29,24 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libmagic1 \
     && python -m pip install --upgrade pip \
     && if [ "$ABSTRACTGATEWAY_INSTALL_MODE" = "local" ]; then \
-        python -m pip install "/tmp/abstractgateway-src[${ABSTRACTGATEWAY_EXTRAS}]"; \
+        if [ -n "$ABSTRACTGATEWAY_EXTRAS" ]; then \
+            python -m pip install "/tmp/abstractgateway-src[${ABSTRACTGATEWAY_EXTRAS}]"; \
+        else \
+            python -m pip install "/tmp/abstractgateway-src"; \
+        fi; \
     else \
         if [ -n "$ABSTRACTGATEWAY_VERSION" ]; then \
-            python -m pip install "abstractgateway[${ABSTRACTGATEWAY_EXTRAS}]==${ABSTRACTGATEWAY_VERSION}"; \
+            if [ -n "$ABSTRACTGATEWAY_EXTRAS" ]; then \
+                python -m pip install "abstractgateway[${ABSTRACTGATEWAY_EXTRAS}]==${ABSTRACTGATEWAY_VERSION}"; \
+            else \
+                python -m pip install "abstractgateway==${ABSTRACTGATEWAY_VERSION}"; \
+            fi; \
         else \
-            python -m pip install "abstractgateway[${ABSTRACTGATEWAY_EXTRAS}]"; \
+            if [ -n "$ABSTRACTGATEWAY_EXTRAS" ]; then \
+                python -m pip install "abstractgateway[${ABSTRACTGATEWAY_EXTRAS}]"; \
+            else \
+                python -m pip install "abstractgateway"; \
+            fi; \
         fi; \
     fi \
     && apt-get purge -y --auto-remove build-essential \

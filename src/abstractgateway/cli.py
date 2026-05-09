@@ -347,7 +347,7 @@ def main(argv: list[str] | None = None) -> None:
         except Exception as e:
             raise SystemExit(
                 "AbstractGateway HTTP server dependencies are missing.\n"
-                "Install with: `pip install \"abstractgateway[http]\"` (or from source: `pip install \".[http]\"`).\n"
+                "Install with: `pip install abstractgateway` (or from source: `pip install .`).\n"
                 f"(import failed: {e})"
             )
 
@@ -420,8 +420,8 @@ def main(argv: list[str] | None = None) -> None:
             from abstractcore.tools.telegram_tdlib import TdlibClient, TdlibConfig
         except Exception as e:
             raise SystemExit(
-                "TDLib bootstrap requires the optional Telegram dependencies. "
-                "Install with: `pip install \"abstractgateway[telegram]\"` "
+                "TDLib bootstrap requires Gateway's base AbstractCore tool integration. "
+                "Install/repair with: `pip install abstractgateway` "
                 f"(import failed: {e})"
             )
 

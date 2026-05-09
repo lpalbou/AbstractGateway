@@ -153,8 +153,8 @@ def _optional_package_status(module_name: str, dist_name: Optional[str] = None) 
 def _get_gateway_voice_manager():
     """Return a process-wide voice manager (lazy, best-effort).
 
-    This keeps gateway deployments dependency-light while allowing operators to
-    install optional voice/audio packages (abstractvoice) in the same env.
+    Gateway's base install includes remote-light voice/audio support. Hardware-
+    local engines are selected by the Gateway apple/gpu profiles.
     """
     global _VOICE_MANAGER
     with _VOICE_MANAGER_LOCK:
@@ -171,7 +171,7 @@ def _get_gateway_voice_manager():
                 status_code=400,
                 detail=(
                     f"Voice/audio support is not available: {e}. "
-                    'Install with: pip install "abstractgateway[voice]" (or "abstractgateway[all]")'
+                    'Install/repair with: pip install abstractgateway'
                 ),
             )
 
@@ -6079,7 +6079,7 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
     hint = ""
     if not installed:
         voice_cap = caps.get("voice") if isinstance(caps.get("voice"), dict) else {}
-        hint = str(voice_cap.get("install_hint") or 'pip install "abstractgateway[voice]" (or "abstractgateway[all]")')
+        hint = str(voice_cap.get("install_hint") or "pip install abstractgateway")
     elif plugin_available is False:
         hint = str(plugin.get("install_hint") or "Configure AbstractVoice/AbstractCore voice or audio backend settings.")
 
@@ -6204,7 +6204,7 @@ def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
             and bool(embedder_configured),
             "vector_capable": bool(vector_capable),
             "embedder_configured": bool(embedder_configured),
-            **({} if abstractmemory.get("installed") else {"install_hint": 'pip install "abstractgateway[memory]"'}),
+            **({} if abstractmemory.get("installed") else {"install_hint": "pip install abstractgateway"}),
             **({} if backend_ready else {"error": backend_error}),
             **(
                 {"config_hint": "Set ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb and configure Gateway embeddings for semantic KG queries."}
@@ -6298,7 +6298,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "publish": {
                 "available": flow_publish_available,
                 "endpoint": _api_gateway_path("/visualflows/{flow_id}/publish"),
-                **({} if flow_publish_available else {"install_hint": 'pip install "abstractgateway[visualflow]" (or "abstractgateway[all]")'}),
+                **({} if flow_publish_available else {"install_hint": "pip install abstractgateway"}),
             },
         },
         "bundles": {
@@ -6390,7 +6390,7 @@ async def discovery_capabilities() -> Dict[str, Any]:
         caps["voice"] = {
             "installed": False,
             "error": str(caps["abstractvoice"].get("error") or ""),
-            "install_hint": 'pip install "abstractgateway[voice]" (or "abstractgateway[all]")',
+            "install_hint": "pip install abstractgateway",
         }
 
     try:

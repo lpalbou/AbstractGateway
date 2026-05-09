@@ -1,6 +1,6 @@
 # AbstractGateway — Architecture
 
-> Status: implemented (v0.2.4)
+> Status: implemented (v0.2.5)
 > Last reviewed: 2026-05-08
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
@@ -15,7 +15,7 @@ This document describes the code in this repository (see **Evidence** links).
 AbstractGateway is designed to sit between **thin clients / UIs** and **AbstractRuntime**:
 - AbstractGateway: HTTP/SSE API + durability glue + baseline security (`src/abstractgateway/app.py`, `src/abstractgateway/routes/gateway.py`)
 - AbstractRuntime (required): run model + tick loop + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
-- AbstractCore / AbstractVoice / AbstractVision (optional via `abstractgateway[multimodal]` / `[server]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
+- AbstractCore / AbstractVoice / AbstractVision / AbstractMemory (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
 
 ## High-level shape
 
@@ -98,7 +98,7 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (`WorkflowBundleGatewayHost
 ### VisualFlow directory mode (compatibility)
 
 - Input: `*.json` VisualFlow files under `ABSTRACTGATEWAY_FLOWS_DIR`.
-- Requires the `abstractflow` compiler library (`pip install "abstractgateway[visualflow]"`).
+- Requires the `abstractflow` compiler library, included by the base `pip install abstractgateway`.
 
 Evidence: `src/abstractgateway/hosts/visualflow_host.py` (`_require_visualflow_deps`, `VisualFlowRegistry`).
 

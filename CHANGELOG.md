@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-09
+
+### Changed
+
+- Promoted the base `abstractgateway` install to the remote-light HTTP/SSE
+  server profile. It now includes Runtime multimodal support, AbstractAgent,
+  AbstractCore remote/media/tools/tokens/compression/vision/voice/audio,
+  AbstractVision, AbstractVoice, AbstractFlow compatibility,
+  AbstractMemory/LanceDB KG support, FastAPI, multipart uploads, and Uvicorn.
+- Raised Runtime and Agent floors to `AbstractRuntime>=0.4.9` and
+  `abstractagent>=0.3.6`.
+- Simplified install guidance around `abstractgateway`, `abstractgateway[apple]`,
+  and `abstractgateway[gpu]`. The older `http`, `server`, `multimodal`,
+  `memory`, `voice`, `vision`, `all`, and `server-nvidia` extras remain as
+  compatibility aliases.
+- The NVIDIA Docker image now installs `abstractgateway[gpu]`; `server-nvidia`
+  remains only as a compatibility alias.
+
 ## [0.2.4] - 2026-05-08
 
 ### Added

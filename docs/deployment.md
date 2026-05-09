@@ -11,7 +11,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.4
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.5
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -19,10 +19,10 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.4
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.5
 ```
 
-The default image installs `abstractgateway[server,memory]`, which includes:
+The default image installs the base `abstractgateway` package, which includes:
 
 - `AbstractRuntime[multimodal]`
 - `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]`
@@ -41,8 +41,8 @@ It intentionally stays dependency-light for heavy local model runtimes: MLX,
 vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
 engines, and future AbstractMusic engines remain explicit opt-ins.
 
-The NVIDIA image installs `abstractgateway[server-nvidia]` and uses a
-CUDA/PyTorch base. It is experimental and release automation publishes it as
+The NVIDIA image installs `abstractgateway[gpu]` and uses a CUDA/PyTorch base.
+It is experimental and release automation publishes it as
 best-effort for `linux/amd64`; the default image remains the release-grade
 portable `linux/amd64` and `linux/arm64` image. Treat the NVIDIA image as
 production-ready only after a CUDA host build/smoke gate is added and passes.
@@ -63,16 +63,15 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.4
+  ghcr.io/lpalbou/abstractgateway-server:0.2.5
 ```
 
 Other host-native endpoints are also valid: LM Studio at
 `http://host.docker.internal:1234/v1`, Ollama's OpenAI-compatible API at
 `http://host.docker.internal:11434/v1`, or `mlx_lm.server` exposed on a host
 port. For fully native non-Docker installs with local engines, use
-`pip install "abstractgateway[apple]"` or `pip install "abstractgateway[all-apple]"`
-on Apple Silicon, and `pip install "abstractgateway[gpu]"` or
-`pip install "abstractgateway[all-gpu]"` on GPU workstations.
+`pip install "abstractgateway[apple]"` on Apple Silicon, and
+`pip install "abstractgateway[gpu]"` on GPU workstations or NVIDIA Docker builds.
 
 ## Compose quickstart
 
@@ -177,7 +176,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.4-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.5-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

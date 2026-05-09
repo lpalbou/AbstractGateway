@@ -139,7 +139,7 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
         {
             "abstractvoice": {"installed": False, "error": "missing"},
             "abstractvision": {"installed": False, "error": "missing"},
-            "voice": {"installed": False, "install_hint": 'pip install "abstractgateway[voice]"'},
+            "voice": {"installed": False, "install_hint": "pip install abstractgateway"},
             "visualflow": {"installed": False, "error": "missing"},
             "capability_plugins": {
                 "installed": True,

@@ -12,9 +12,9 @@ This list is **non-exhaustive**. The canonical dependency list for this package 
 
 These are not required for the base gateway, but are used by optional modes/features:
 
-- **FastAPI** (via **Starlette**) + **Pydantic**: HTTP API surface and request/response models (`abstractgateway[http]`).
-- **Uvicorn**: ASGI server used by `abstractgateway serve` (`abstractgateway[http]`).
-- **python-multipart**: multipart upload support for bundle/attachment endpoints (`abstractgateway[http]`).
+- **FastAPI** (via **Starlette**) + **Pydantic**: HTTP API surface and request/response models (base install).
+- **Uvicorn**: ASGI server used by `abstractgateway serve` (base install).
+- **python-multipart**: multipart upload support for bundle/attachment endpoints (base install).
 - **AbstractFlow**: VisualFlow JSON directory mode and workflow authoring/bundling workflows (see `abstractgateway[visualflow]`).
 - **AbstractCore** integration (via `abstractruntime[abstractcore]`): LLM/tool execution wiring, embeddings client, Telegram TDLib wrapper.
 - **AbstractAgent**: Visual Agent nodes in bundle mode.

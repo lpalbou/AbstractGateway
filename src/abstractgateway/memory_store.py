@@ -124,8 +124,8 @@ def memory_backend_unavailable_reason(backend: str) -> Optional[str]:
         import abstractmemory  # type: ignore
     except Exception as e:  # pragma: no cover
         return (
-            "AbstractMemory is not available. Install `abstractgateway[memory]` "
-            f"or `AbstractMemory` in the same environment. Import error: {e}"
+            "AbstractMemory is not available. Install/repair the base Gateway environment "
+            f"with `pip install abstractgateway`. Import error: {e}"
         )
 
     if getattr(abstractmemory, class_name, None) is None:
@@ -141,7 +141,7 @@ def memory_backend_unavailable_reason(backend: str) -> Optional[str]:
         except Exception as e:
             return (
                 "Memory backend 'lancedb' requires the `lancedb` package. "
-                "Install `abstractgateway[memory]` or `AbstractMemory[lancedb]`. "
+                "Install/repair with `pip install abstractgateway` or `pip install AbstractMemory[lancedb]`. "
                 f"Import error: {e}"
             )
 

@@ -159,8 +159,8 @@ def create_default_gateway_service() -> GatewayService:
             from .integrations.telegram_bridge import TelegramBridge, TelegramBridgeConfig
         except Exception as e:
             raise RuntimeError(
-                "Telegram bridge is enabled (ABSTRACT_TELEGRAM_BRIDGE=1) but the optional Telegram dependencies are not installed. "
-                "Install with: `pip install \"abstractgateway[telegram]\"`"
+                "Telegram bridge is enabled (ABSTRACT_TELEGRAM_BRIDGE=1) but Gateway's Telegram integration could not be imported. "
+                "Install/repair the base Gateway environment with: `pip install abstractgateway`"
             ) from e
 
         tcfg = TelegramBridgeConfig.from_env(base_dir=cfg.data_dir)
