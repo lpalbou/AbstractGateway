@@ -244,7 +244,7 @@ jobs:
           provenance: false
           push: true
           build-args: |
-            ABSTRACTGATEWAY_INSTALL_MODE=pypi
+            ABSTRACTGATEWAY_INSTALL_MODE=local
             ABSTRACTGATEWAY_VERSION=${{ needs.build.outputs.version }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server:${{ needs.build.outputs.version }}
@@ -259,7 +259,7 @@ jobs:
           provenance: false
           push: true
           build-args: |
-            ABSTRACTGATEWAY_INSTALL_MODE=pypi
+            ABSTRACTGATEWAY_INSTALL_MODE=local
             ABSTRACTGATEWAY_VERSION=${{ needs.build.outputs.version }}
             ABSTRACTGATEWAY_EXTRAS=gpu
           tags: |
