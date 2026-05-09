@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stable-diffusion-cpp-python==0.4.6` Linux sdist.
 - Updated release-facing Docker examples and package metadata from `0.2.5` to
   `0.2.6`.
+- Release/CI installs now bypass the restored pip dependency cache for editable
+  dependency resolution, avoiding stale package indexes immediately after
+  lower-package releases.
 
 ## [0.2.5] - 2026-05-09
 
