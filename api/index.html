@@ -591,6 +591,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#kg-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        KG memory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#prompt-cache-control-plane-operator-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -954,6 +965,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#kg-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        KG memory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#prompt-cache-control-plane-operator-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1106,11 +1128,17 @@ See: <a href="../maintenance/">maintenance.md</a>.</p>
 <ul>
 <li>Capabilities (best-effort): <code>GET /api/gateway/discovery/capabilities</code></li>
 <li>Providers/models discovery (best-effort): <code>GET /api/gateway/discovery/providers</code>, <code>GET /api/gateway/discovery/providers/{provider}/models</code></li>
+<li>Dynamic capability catalogs: <code>GET /api/gateway/voice/voices</code>, <code>GET /api/gateway/audio/speech/models</code>, <code>GET /api/gateway/vision/provider_models</code></li>
 </ul>
 <p>The capabilities payload includes package presence (<code>abstractruntime</code>,
-<code>abstractcore</code>, <code>abstractvoice</code>, <code>abstractvision</code>), existing gateway helpers
-(<code>tools</code>, <code>visualflow</code>, <code>media</code>), and AbstractCore capability plugin status for
-<code>voice</code>, <code>audio</code>, <code>vision</code>, and future <code>music</code>.</p>
+<code>abstractcore</code>, <code>abstractmemory</code>, <code>abstractvoice</code>, <code>abstractvision</code>), existing
+gateway helpers (<code>tools</code>, <code>visualflow</code>, <code>media</code>), memory-store readiness, and
+AbstractCore capability plugin status for <code>voice</code>, <code>audio</code>, <code>vision</code>, and
+future <code>music</code>.</p>
+<p>Provider discovery also reports the resolved default provider/model when one is
+configured. The resolver follows request values, Gateway env, and AbstractCore
+global defaults; if no pair exists, the response includes <code>default_error</code> rather
+than a hardcoded local model.</p>
 <p>It also includes a versioned thin-client contract:</p>
 <ul>
 <li><code>capabilities.contracts.version</code>: currently <code>1</code></li>
@@ -1165,7 +1193,16 @@ versioned contract fields when enabling controls.</p>
 <p>Direct Gateway endpoints in this release:
 - <code>POST /api/gateway/runs/{run_id}/voice/tts</code>
 - <code>POST /api/gateway/runs/{run_id}/audio/transcribe</code>
-- <code>POST /api/gateway/runs/{run_id}/images/generate</code></p>
+- <code>POST /api/gateway/runs/{run_id}/images/generate</code>
+- <code>GET /api/gateway/voice/voices</code>
+- <code>GET /api/gateway/audio/speech/models</code>
+- <code>GET /api/gateway/vision/provider_models</code></p>
+<p>The catalog endpoints proxy AbstractCore Server routes when
+<code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL</code> or <code>ABSTRACTCORE_SERVER_BASE_URL</code>
+is configured. Gateway uses explicit Core auth settings for that hop and never
+reuses the Gateway bearer token as a Core/provider secret. Without a configured
+Core server, the voice/model routes return bounded static descriptors from
+Gateway and capability-package environment variables.</p>
 <p>Generated images are available through Runtime/Core workflows when
 AbstractVision is installed and configured. Gateway also exposes a direct image
 generation endpoint that uses the Runtime/Core output-selector contract rather
@@ -1181,6 +1218,19 @@ uses it. For tools-only workflows, the route can create a direct Runtime/Core
 client from request <code>provider</code>/<code>model</code> or <code>ABSTRACTGATEWAY_PROVIDER</code> /
 <code>ABSTRACTGATEWAY_MODEL</code>. Unsupported or unconfigured deployments return a
 structured <code>ok=false</code> response instead of a failed run.</p>
+<h2 id="kg-memory">KG memory<a class="headerlink" href="#kg-memory" title="Permanent link">&para;</a></h2>
+<p><code>POST /api/gateway/kg/query</code> queries the configured AbstractMemory TripleStore.
+Gateway resolves the store through:</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory</code> (<code>sqlite</code> when the installed AbstractMemory build exposes <code>SQLiteTripleStore</code>)</li>
+<li><code>ABSTRACTGATEWAY_MEMORY_STORE_PATH</code></li>
+<li><code>ABSTRACTGATEWAY_MEMORY_REQUIRE_VECTOR</code></li>
+</ul>
+<p>Structured queries work with LanceDB and in-memory stores. SQLite also works
+when the installed AbstractMemory build exposes <code>SQLiteTripleStore</code>. Semantic
+<code>query_text</code> requires a vector-capable backend plus configured Gateway
+embeddings; SQLite returns a clear 400 instead of pretending to support semantic
+recall.</p>
 <h2 id="prompt-cache-control-plane-operator-api">Prompt-cache control plane (operator API)<a class="headerlink" href="#prompt-cache-control-plane-operator-api" title="Permanent link">&para;</a></h2>
 <p>The gateway exposes prompt-cache operator endpoints under <code>/api/gateway/prompt_cache/*</code>.</p>
 <p>Core endpoints:</p>

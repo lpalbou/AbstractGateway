@@ -825,7 +825,7 @@
 <h2 id="abstractframework-ecosystem-context">AbstractFramework ecosystem (context)<a class="headerlink" href="#abstractframework-ecosystem-context" title="Permanent link">&para;</a></h2>
 <p>AbstractGateway is one component in the larger <strong>AbstractFramework</strong> ecosystem:
 - <strong>AbstractRuntime</strong> (required): durable runs + workflow registry + stores
-- <strong>AbstractCore</strong> (optional, via <code>abstractruntime[abstractcore]</code> / <code>abstractruntime[multimodal]</code>): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed generated image/voice/audio capabilities used by many bundles</p>
+- <strong>AbstractCore / AbstractVoice / AbstractVision</strong> (optional via <code>abstractgateway[multimodal]</code> / <code>[server]</code>): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles</p>
 <p>Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
 - AbstractCore: https://github.com/lpalbou/abstractcore
@@ -850,23 +850,29 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 <span class="c1"># Turnkey server/container profile (HTTP + Runtime/Core multimodal + remote providers/tools/media)</span>
 pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[server]&quot;</span>
 
-<span class="c1"># Optional: voice/audio (TTS + STT endpoints)</span>
+<span class="c1"># KG memory support (AbstractMemory TripleStore API; LanceDB default, SQLite if available)</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[memory]&quot;</span>
+
+<span class="c1"># Experimental NVIDIA full profile (vLLM/HuggingFace + local Diffusers + local voice engines)</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[server-nvidia]&quot;</span>
+
+<span class="c1"># Explicit voice/audio profile (TTS + STT endpoints)</span>
 pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[voice]&quot;</span>
 
-<span class="c1"># Optional: generative vision through AbstractCore&#39;s AbstractVision plugin</span>
+<span class="c1"># Explicit generative vision profile through AbstractCore&#39;s AbstractVision plugin</span>
 pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[vision]&quot;</span>
 
 <span class="c1"># Or: batteries-included (HTTP + tools + voice/audio + vision + media + visualflow)</span>
 pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[all]&quot;</span>
 </code></pre></div>
 <p>Optional (only if your workflows need it):
-- LLM/tool nodes (bundle mode): <code>pip install "abstractruntime[abstractcore]&gt;=0.4.6"</code> (already included by <code>abstractgateway[http]</code>)
-- Runtime-managed generated images, generated voice, and STT inside workflows: <code>pip install "abstractruntime[multimodal]&gt;=0.4.6"</code> (already included by <code>abstractgateway[server]</code>)
+- LLM/tool nodes (bundle mode): <code>pip install "abstractgateway[multimodal]"</code> or <code>pip install "abstractgateway[server]"</code>
+- Runtime-managed generated images, generated voice, and STT inside workflows: <code>pip install "abstractgateway[multimodal]"</code> or <code>pip install "abstractgateway[server]"</code>
 - Server deployments with hosted providers / OpenAI-compatible endpoints: <code>pip install "abstractgateway[server]"</code>
-- Visual Agent nodes (bundle mode): <code>pip install abstractagent</code> (already included by <code>abstractgateway[http]</code>)
+- Visual Agent nodes (bundle mode): <code>pip install abstractagent</code> (already included by <code>abstractgateway[server]</code>)
 - Voice/audio endpoints (TTS/STT): <code>pip install "abstractgateway[voice]"</code> (or <code>pip install abstractvoice</code>)
 - Generative vision: <code>pip install "abstractgateway[vision]"</code> (or <code>pip install abstractvision</code>)
-- <code>memory_kg_*</code> nodes (bundle mode): <code>pip install "abstractmemory[lancedb]"</code> (or <code>abstractmemory</code> + <code>lancedb</code>)</p>
+- <code>memory_kg_*</code> nodes (bundle mode): <code>pip install "abstractgateway[memory]"</code></p>
 <h2 id="1-run-bundle-mode-file-backed-stores">1) Run (bundle mode, file-backed stores)<a class="headerlink" href="#1-run-bundle-mode-file-backed-stores" title="Permanent link">&para;</a></h2>
 <p>File-backed stores are the default and easiest for dev.</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_WORKFLOW_SOURCE</span><span class="o">=</span>bundle
@@ -894,6 +900,10 @@ curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span
 <span class="w">  </span>-F<span class="w"> </span><span class="s2">&quot;overwrite=false&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-F<span class="w"> </span><span class="s2">&quot;reload=true&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s2">&quot;http://127.0.0.1:8080/api/gateway/bundles/upload&quot;</span>
+</code></pre></div>
+<p>You can also create a local env file and inspect readiness with:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>init<span class="w"> </span>--env-file<span class="w"> </span>.env
+abstractgateway-config<span class="w"> </span>status
 </code></pre></div>
 <h2 id="2-start-a-run-bundle-mode">2) Start a run (bundle mode)<a class="headerlink" href="#2-start-a-run-bundle-mode" title="Permanent link">&para;</a></h2>
 <p>First, discover entrypoints from <code>GET /api/gateway/bundles</code>. Then start a run:</p>
@@ -931,10 +941,25 @@ docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </
 <span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway:/data/gateway&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/flows/bundles:/data/flows:ro&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.3
+<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.4
 </code></pre></div>
 <p>See <a href="../deployment/">deployment.md</a> for Compose, provider keys, and image
 customization.</p>
+<p>NVIDIA hosts can try <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.4</code>
+with the compose overlay in <code>docker/abstractgateway-server/compose.nvidia.yml</code>.
+It is experimental until a real CUDA build/smoke gate is part of release
+validation.
+Apple MLX inference should run natively on macOS rather than in Docker because
+Linux containers do not get access to Apple's Metal/MLX runtime. The container
+can still use native macOS inference through an OpenAI-compatible endpoint:
+point <code>OPENAI_COMPATIBLE_BASE_URL</code> at Docker Model Runner on
+<code>http://model-runner.docker.internal/engines/v1</code>, LM Studio on
+<code>http://host.docker.internal:1234/v1</code>, <code>mlx_lm.server</code>, or Ollama's
+OpenAI-compatible API on <code>http://host.docker.internal:11434/v1</code> when the
+native Ollama model path uses MLX. For native non-Docker installs, use
+<code>pip install "abstractgateway[apple]"</code> or <code>pip install "abstractgateway[all-apple]"</code>
+on Apple Silicon, and <code>pip install "abstractgateway[gpu]"</code> or
+<code>pip install "abstractgateway[all-gpu]"</code> on GPU workstations.</p>
 <h2 id="4-whats-stored-in-abstractgateway_data_dir-file-backend">4) What’s stored in <code>ABSTRACTGATEWAY_DATA_DIR</code> (file backend)<a class="headerlink" href="#4-whats-stored-in-abstractgateway_data_dir-file-backend" title="Permanent link">&para;</a></h2>
 <p>When <code>ABSTRACTGATEWAY_STORE_BACKEND=file</code> (default), the gateway persists (via <code>abstractruntime</code> stores):
 - <code>run_&lt;run_id&gt;.json</code> (checkpointed run state)

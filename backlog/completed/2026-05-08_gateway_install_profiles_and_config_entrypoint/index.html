@@ -1,0 +1,955 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-08_gateway_install_profiles_and_config_entrypoint/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Proposed: Gateway Install Profiles And Configuration Entrypoint - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#proposed-gateway-install-profiles-and-configuration-entrypoint" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Proposed: Gateway Install Profiles And Configuration Entrypoint
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-code-reality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Code Reality
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proposed-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed Direction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-entrypoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Entrypoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-readiness-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capability Readiness Contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pending-changes-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pending Changes Guidance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#promotion-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Promotion Criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-ideas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation Ideas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#completion-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completion Report
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="proposed-gateway-install-profiles-and-configuration-entrypoint">Proposed: Gateway Install Profiles And Configuration Entrypoint<a class="headerlink" href="#proposed-gateway-install-profiles-and-configuration-entrypoint" title="Permanent link">&para;</a></h1>
+<h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Created: 2026-05-08</li>
+<li>Status: Completed</li>
+<li>Completed: 2026-05-08</li>
+</ul>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>AbstractGateway is the deployment composition root for durable agents and thin clients. It owns
+its own HTTP/SSE access, auth, CORS/origin policy, workflow bundles, durable stores, runner
+lifecycle, artifacts, workspace policy, tool approval policy, provider/model runtime defaults,
+embeddings, and capability readiness reporting.</p>
+<p>Gateway should compose AbstractRuntime, AbstractCore, AbstractAgent, AbstractVision, AbstractVoice,
+AbstractMemory, and AbstractSemantics. It should not absorb their internal responsibilities.</p>
+<h2 id="current-code-reality">Current Code Reality<a class="headerlink" href="#current-code-reality" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Gateway directly imports and hosts AbstractRuntime stores, commands, runner, bundles, and ledger.</li>
+<li>Bundle execution uses AbstractCore integration when workflows need LLMs, tools, media, or
+  generated outputs.</li>
+<li>Gateway falls back to AbstractCore config defaults when flow/provider pins are missing.</li>
+<li>Direct TTS/STT/image routes lazily use Voice/Vision/Core capability paths.</li>
+<li>Gateway security middleware already separates client-facing Gateway auth/origin policy from
+  provider credentials and Core internals.</li>
+<li>Pending changes make the bare Gateway package depend on <code>AbstractRuntime[multimodal]</code>,
+  <code>abstractvision</code>, and <code>abstractvoice</code>.</li>
+<li>Pending Docker changes add a remote-light server image and a <code>server-nvidia</code> image.</li>
+<li>AbstractCore <code>2.13.12</code> is now released on PyPI and its wheel metadata exposes the canonical
+  profile aliases <code>apple</code>, <code>gpu</code>, <code>all-apple</code>, and <code>all-gpu</code>.</li>
+<li>AbstractCore <code>2.13.12</code> also includes the Voice/Vision catalog-capable plugin floors:
+  <code>abstractvoice&gt;=0.9.2</code> and <code>abstractvision&gt;=0.3.3</code>.</li>
+<li>AbstractRuntime <code>0.4.8</code> is the Gateway-aligned Runtime baseline candidate. It raises its
+  AbstractCore extras to <code>abstractcore&gt;=2.13.12</code>, keeps Runtime free of Apple/GPU profile extras,
+  and removes direct Runtime reads of <code>ABSTRACTGATEWAY_*</code> environment variables.</li>
+<li>Gateway package metadata and docs still reference older floors in several places:
+  <code>abstractcore&gt;=2.13.10</code>, <code>abstractvision&gt;=0.3.1</code>, and <code>abstractvoice&gt;=0.9.0</code>.</li>
+</ul>
+<h2 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h2>
+<p>Gateway has two legitimate install personas:</p>
+<ul>
+<li>runner/control-plane library: durable host and CLI with minimal dependencies;</li>
+<li>deployable server: remote providers, multimodal capability plugins, tools, media, agent nodes,
+  and thin-client endpoints.</li>
+</ul>
+<p>Putting the full remote-light server dependency set into bare <code>pip install abstractgateway</code> removes
+the first persona. A <code>runner = []</code> extra cannot restore it because Python extras only add
+dependencies.</p>
+<p>There are also pending consistency risks:</p>
+<ul>
+<li>docs/compose examples moved toward port <code>8000</code>, while the CLI default remains <code>8080</code>;</li>
+<li><code>server-nvidia</code> is published with best-effort workflow settings but docs risk presenting it as
+  equivalent to the light image;</li>
+<li>profile naming currently uses <code>server-nvidia</code> but not the accepted <code>gpu</code> / <code>all-gpu</code> vocabulary;</li>
+<li>discovery can still confuse "package installed" with "backend configured and ready";</li>
+<li>memory KG workflows currently need the AbstractMemory 0.0.x <code>lancedb</code> extra, but Gateway has no explicit
+  memory extra.</li>
+</ul>
+<h2 id="proposed-direction">Proposed Direction<a class="headerlink" href="#proposed-direction" title="Permanent link">&para;</a></h2>
+<p>Keep Gateway as the composition root, but split the install profiles deliberately:</p>
+<ul>
+<li><code>abstractgateway</code>: minimal durable host/runner/CLI with <code>AbstractRuntime&gt;=0.4.8</code>.</li>
+<li><code>abstractgateway[http]</code>: FastAPI/Uvicorn HTTP surface.</li>
+<li><code>abstractgateway[multimodal]</code>: Runtime/Core multimodal integration plus light Vision/Voice
+  plugin packages.</li>
+<li><code>abstractgateway[server]</code>: recommended Docker/server profile: HTTP, Runtime multimodal,
+  AbstractCore remote/media/tools/tokens/compression/vision/voice/audio, AbstractAgent,
+  AbstractFlow bundle compatibility, AbstractVision, AbstractVoice, and Gateway endpoints.</li>
+<li><code>abstractgateway[memory]</code>: Gateway KG memory support with <code>AbstractMemory[lancedb]&gt;=0.2.4</code>.</li>
+<li><code>abstractgateway[apple]</code>: full native macOS Python deployment profile, cascading through
+  <code>abstractcore[all-apple]</code>, Runtime/Agent pass-through profiles, and package-owned Apple-relevant
+  capability extras.</li>
+<li><code>abstractgateway[gpu]</code>: full native GPU Python deployment profile, cascading through
+  <code>abstractcore[all-gpu]</code>, Runtime/Agent pass-through profiles, and package-owned GPU-relevant
+  capability extras.</li>
+<li><code>abstractgateway[all-apple]</code>: explicit aggregate spelling for the same native macOS deployment
+  intent as <code>apple</code>.</li>
+<li><code>abstractgateway[all-gpu]</code>: explicit aggregate spelling for the same native GPU deployment
+  intent as <code>gpu</code>.</li>
+<li><code>abstractgateway[server-nvidia]</code>: explicit NVIDIA Docker image profile. It is separate from the
+  generic Python <code>gpu</code> profile because container dependency and CUDA runtime constraints are a
+  Docker deployment concern.</li>
+</ul>
+<p>If maintainers prefer bare <code>pip install abstractgateway</code> to be the remote-light server profile, then
+rename the runner/control-plane install story rather than pretending <code>runner = []</code> is meaningful.</p>
+<p>Required dependency floors after Core and Runtime release:</p>
+<ul>
+<li><code>AbstractRuntime&gt;=0.4.8</code> for minimal Gateway.</li>
+<li><code>AbstractRuntime[multimodal]&gt;=0.4.8</code> for server/multimodal Gateway.</li>
+<li><code>abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]&gt;=2.13.12</code> for
+  remote-light server deployments.</li>
+<li><code>abstractcore[all-apple]&gt;=2.13.12</code> and <code>abstractcore[all-gpu]&gt;=2.13.12</code> for full native Gateway
+  hardware profiles; lower-level <code>abstractcore[apple]</code> and <code>abstractcore[gpu]</code> remain Core-only
+  local LLM aliases.</li>
+<li><code>abstractvision&gt;=0.3.3</code> and <code>abstractvoice&gt;=0.9.2</code> whenever Gateway depends on those packages
+  directly.</li>
+</ul>
+<h2 id="configuration-entrypoint">Configuration Entrypoint<a class="headerlink" href="#configuration-entrypoint" title="Permanent link">&para;</a></h2>
+<p>Add <code>abstractgateway-config</code> as a first-class CLI or subcommand.</p>
+<p>It should manage:</p>
+<ul>
+<li>Gateway auth token(s);</li>
+<li><code>ABSTRACTGATEWAY_DATA_DIR</code>;</li>
+<li>store backend and DB path;</li>
+<li>workflow source and bundles directory;</li>
+<li>prompt-cache defaults;</li>
+<li>attachment/session-media byte limits;</li>
+<li>allowed origins;</li>
+<li>runner mode;</li>
+<li>default provider/model for runs;</li>
+<li>tool approval mode;</li>
+<li>workspace root/mounts/policy;</li>
+<li>embedding provider/model;</li>
+<li>memory KG status;</li>
+<li>capability readiness status.</li>
+</ul>
+<p>It may call or guide <code>abstractcore-config</code> for provider API keys, provider base URLs, Core server
+settings, and Core media defaults. Gateway config should not duplicate Core provider internals.</p>
+<p>Recommended environment/config precedence:</p>
+<ol>
+<li>Explicit request/run values when Gateway policy permits them.</li>
+<li>Gateway deployment env/config for Gateway-owned concerns:
+   <code>ABSTRACTGATEWAY_AUTH_TOKEN(S)</code>, <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code>,
+   <code>ABSTRACTGATEWAY_DATA_DIR</code>, <code>ABSTRACTGATEWAY_STORE_BACKEND</code>, <code>ABSTRACTGATEWAY_DB_PATH</code>,
+   <code>ABSTRACTGATEWAY_FLOWS_DIR</code>, <code>ABSTRACTGATEWAY_RUNNER</code>, <code>ABSTRACTGATEWAY_TOOL_MODE</code>,
+   workspace env vars, Gateway provider/model defaults, embedding provider/model, memory backend,
+   and runner tuning.</li>
+<li>AbstractCore config/env for provider credentials, provider base URLs, Core default
+   provider/model, Core server auth, Core server allowlists, media/fetch/local-file policy, and
+   Core media defaults.</li>
+<li>Capability-package env for backend-specific settings:
+   <code>ABSTRACTVISION_*</code>, <code>ABSTRACTVOICE_*</code>, and future <code>ABSTRACTMUSIC_*</code>.</li>
+<li>Package defaults, with explicit <code>#FALLBACK</code> warnings when defaults are used because higher
+   layers omitted a value.</li>
+</ol>
+<p>Gateway should write run-level defaults into Runtime as JSON-safe state, such as
+<code>_runtime.provider</code>, <code>_runtime.model</code>, <code>_runtime.audio_policy</code>, <code>_runtime.prompt_cache</code>,
+<code>_runtime.max_attachment_bytes</code>, and workspace policy fields. Runtime and Agent nodes may read those
+values. Gateway should not force lower packages to read <code>ABSTRACTGATEWAY_*</code> directly.</p>
+<p>Runtime <code>0.4.7</code> makes this boundary stricter. Gateway-owned env vars must be translated by Gateway:</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_PROMPT_CACHE</code> should become <code>_runtime.prompt_cache</code> on runs/sessions where Gateway
+  wants automatic prompt-cache keys.</li>
+<li><code>ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES</code> should become <code>_runtime.max_attachment_bytes</code>, or
+  <code>TOOL_CALLS.payload.max_attachment_bytes</code> when Gateway needs a per-effect limit.</li>
+<li><code>ABSTRACTGATEWAY_FLOWS_DIR</code> should be passed as an explicit workflow bundle registry path, or
+  translated to the shared <code>ABSTRACTFRAMEWORK_WORKFLOWS_DIR</code> before Runtime registry construction.</li>
+</ul>
+<p>Core-server topology must be explicit:</p>
+<ul>
+<li>In-process Core: only Gateway's HTTP auth/CORS boundary is exposed to clients.</li>
+<li>Standalone Core server: Gateway must be configured with Core server URL and Core server auth
+  token/header explicitly.</li>
+<li>Gateway auth tokens must not be reused implicitly as Core server auth or upstream provider keys.</li>
+</ul>
+<h2 id="security-boundary">Security Boundary<a class="headerlink" href="#security-boundary" title="Permanent link">&para;</a></h2>
+<p>Gateway owns the public deployment envelope. That means the token(s) thin clients use, browser
+allowed origins, request/body/SSE limits, runner exposure, reverse proxy assumptions, audit posture,
+workspace policy, and tool approval policy are Gateway configuration.</p>
+<p>That does not make Gateway auth a master key for lower packages:</p>
+<ul>
+<li>Gateway auth protects Gateway routes only.</li>
+<li>AbstractCore server auth protects the standalone Core server only.</li>
+<li>Provider API keys and provider base URLs remain AbstractCore or capability-package configuration.</li>
+<li>Direct Gateway image/TTS/STT routes are Gateway-owned HTTP/artifact contracts, but backend
+  selection and provider secrets remain Core/Vision/Voice concerns.</li>
+</ul>
+<p>When Gateway embeds Core in-process, Core server CORS/auth settings are not exposed to thin clients.
+When Gateway calls or launches a standalone Core server, Gateway should pass explicit Core settings
+or client headers, such as the Core server URL and Core server <code>Authorization</code> token. It should not
+silently map <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> or <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> into Core settings.
+Sharing a generated service token between Gateway and Core may be offered only as an explicit
+deployment choice, not the default conceptual model.</p>
+<p>Capability packages normally receive outbound configuration only: provider credentials, base URLs,
+model ids, timeouts, cache paths, devices, and backend flags. CORS and bearer auth belong to the
+package only if that package intentionally exposes its own production server.</p>
+<h2 id="capability-readiness-contract">Capability Readiness Contract<a class="headerlink" href="#capability-readiness-contract" title="Permanent link">&para;</a></h2>
+<p>Gateway discovery should distinguish:</p>
+<ul>
+<li><code>installed</code>: import/package present;</li>
+<li><code>registered</code>: plugin/backend registered;</li>
+<li><code>configured</code>: required env/config present;</li>
+<li><code>ready</code>: a cheap non-generating preflight passes, or no preflight is needed;</li>
+<li><code>route_available</code>: Gateway HTTP route exists;</li>
+<li><code>available</code>: route and backend are usable now.</li>
+</ul>
+<p>This matters for thin clients. They should not enable image/audio/memory controls simply because a
+package was installed.</p>
+<h2 id="pending-changes-guidance">Pending Changes Guidance<a class="headerlink" href="#pending-changes-guidance" title="Permanent link">&para;</a></h2>
+<p>Keep:</p>
+<ul>
+<li>the light Docker server direction;</li>
+<li>the separate NVIDIA profile concept;</li>
+<li>Vision/Voice OpenAI default delegation to the capability packages;</li>
+<li>image readiness changes that separate route availability from backend config.</li>
+</ul>
+<p>Revise before merge:</p>
+<ul>
+<li>bare package dependencies: decide minimal base versus server-by-default;</li>
+<li><code>runner = []</code>: remove, rename, or document only after the base decision;</li>
+<li>profile vocabulary: keep <code>apple</code>, <code>gpu</code>, <code>all-apple</code>, and <code>all-gpu</code> as Python install profiles,
+  with Gateway <code>apple</code>/<code>gpu</code> treated as full native deployment aggregates; keep <code>server-nvidia</code> as
+  the explicit NVIDIA Docker profile;</li>
+<li>dependency floors: update Gateway to <code>abstractcore&gt;=2.13.12</code>, <code>abstractvision&gt;=0.3.3</code>, and
+  <code>abstractvoice&gt;=0.9.2</code>, and update Runtime to <code>AbstractRuntime&gt;=0.4.8</code> after that Runtime release
+  is published;</li>
+<li>port documentation versus CLI default;</li>
+<li><code>server-nvidia</code> docs: mark experimental until real build and smoke validation exist;</li>
+<li>add <code>memory</code> extra or document why Gateway KG workflows remain opt-in;</li>
+<li>discovery tests for installed-but-unconfigured Voice/Vision/Memory.</li>
+<li>helper/discovery paths that still hardcode provider/model fallbacks instead of using the same
+  Gateway-to-Core default resolver as runtime execution.</li>
+<li>env/config cascade tests proving Gateway-owned settings, Core settings, and capability-package
+  settings do not silently overwrite each other.</li>
+<li>Runtime handoff tests proving Gateway translates prompt-cache, attachment byte-limit, and flow
+  directory settings explicitly rather than relying on Runtime to read Gateway env names.</li>
+</ul>
+<p>Do not include:</p>
+<ul>
+<li>root stale pin updates without version alignment;</li>
+<li>unrelated app or AI-space changes;</li>
+<li>venvs, caches, backup clones, and generated site artifacts.</li>
+</ul>
+<h2 id="promotion-criteria">Promotion Criteria<a class="headerlink" href="#promotion-criteria" title="Permanent link">&para;</a></h2>
+<p>Promote this when the base install persona is chosen and the server/memory/GPU profile names are
+accepted.</p>
+<h2 id="validation-ideas">Validation Ideas<a class="headerlink" href="#validation-ideas" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Fresh venv install tests for <code>abstractgateway</code>, <code>abstractgateway[http]</code>,
+  <code>abstractgateway[server]</code>, <code>abstractgateway[memory]</code>, <code>abstractgateway[apple]</code>,
+  <code>abstractgateway[gpu]</code>, <code>abstractgateway[all-apple]</code>, <code>abstractgateway[all-gpu]</code>, and the
+  compatibility <code>abstractgateway[server-nvidia]</code>.</li>
+<li>Docker build smoke for the light image.</li>
+<li>CUDA host smoke before treating <code>server-nvidia</code> as stable.</li>
+<li>Capability discovery contract tests for missing keys, missing LanceDB, disabled embeddings, and
+  installed-but-unconfigured Vision/Voice.</li>
+<li>Package metadata tests proving the server profile pulls Core <code>2.13.12+</code>, Vision <code>0.3.3+</code>, Voice <code>0.9.2+</code>, Runtime <code>0.4.8+</code>, and does not pull local engines unless Apple/GPU/local profiles are
+  selected.</li>
+<li>Configuration-precedence tests for request overrides, Gateway provider/model defaults, Core
+  config fallback, and capability-package env fallback.</li>
+<li>Gateway-to-Runtime handoff tests for <code>_runtime.prompt_cache</code>, <code>_runtime.max_attachment_bytes</code>, and
+  explicit workflow bundle registry paths.</li>
+</ul>
+<h2 id="completion-report">Completion Report<a class="headerlink" href="#completion-report" title="Permanent link">&para;</a></h2>
+<p>Implemented in Gateway only.</p>
+<ul>
+<li>Base <code>abstractgateway</code> is now the minimal runner/control-plane profile with
+  <code>AbstractRuntime&gt;=0.4.8</code>.</li>
+<li>Added explicit cascading profiles: <code>http</code>, <code>multimodal</code>, <code>server</code>, <code>memory</code>,
+  <code>apple</code>, <code>gpu</code>, <code>all-apple</code>, <code>all-gpu</code>, <code>server-nvidia</code>, and <code>all</code>.</li>
+<li>Added the <code>abstractgateway-config</code> entrypoint and <code>abstractgateway config</code>
+  subcommand for status inspection and private env-file initialization.</li>
+<li>Added Gateway-to-Runtime JSON-safe handoff for prompt-cache enablement,
+  attachment limits, and workflow bundle directory state.</li>
+<li>Updated docs to keep Gateway auth, Core server auth, provider credentials, and
+  capability-package env vars separate.</li>
+<li>Added package metadata, config CLI, and Runtime handoff tests.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

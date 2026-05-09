@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/backlog/proposed/2026-05-08_voice_profile_discovery_endpoint/">
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-08_gateway_memory_store_resolver_and_triplestore_abstraction/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>Proposed: Dedicated Voice Profile Discovery Endpoint - AbstractGateway</title>
+        <title>Proposed: Gateway Memory Store Resolver And TripleStore Abstraction - AbstractGateway</title>
       
     
     
@@ -64,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#proposed-dedicated-voice-profile-discovery-endpoint" class="md-skip">
+        <a href="#proposed-gateway-memory-store-resolver-and-triplestore-abstraction" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Proposed: Dedicated Voice Profile Discovery Endpoint
+              Proposed: Gateway Memory Store Resolver And TripleStore Abstraction
             
           </span>
         </div>
@@ -505,10 +505,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#code-first-evidence" class="md-nav__link">
+  <a href="#current-code-reality" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Code-First Evidence
+        Current Code Reality
       
     </span>
   </a>
@@ -516,10 +516,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-this-might-matter" class="md-nav__link">
+  <a href="#problem" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why This Might Matter
+        Problem
       
     </span>
   </a>
@@ -527,10 +527,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#promotion-criteria" class="md-nav__link">
+  <a href="#proposed-direction" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Promotion Criteria
+        Proposed Direction
       
     </span>
   </a>
@@ -538,10 +538,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#possible-api" class="md-nav__link">
+  <a href="#capability-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Possible API
+        Capability Rules
       
     </span>
   </a>
@@ -560,10 +560,54 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dependencies-and-related-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependencies And Related Work
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#promotion-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Promotion Criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#validation-ideas" class="md-nav__link">
     <span class="md-ellipsis">
       
         Validation Ideas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guidance-for-implementing-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Guidance For Implementing Agents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#completion-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completion Report
       
     </span>
   </a>
@@ -590,55 +634,134 @@
   
 
 
-<h1 id="proposed-dedicated-voice-profile-discovery-endpoint">Proposed: Dedicated Voice Profile Discovery Endpoint<a class="headerlink" href="#proposed-dedicated-voice-profile-discovery-endpoint" title="Permanent link">&para;</a></h1>
+<h1 id="proposed-gateway-memory-store-resolver-and-triplestore-abstraction">Proposed: Gateway Memory Store Resolver And TripleStore Abstraction<a class="headerlink" href="#proposed-gateway-memory-store-resolver-and-triplestore-abstraction" title="Permanent link">&para;</a></h1>
 <h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Created: 2026-05-08</li>
-<li>Status: Proposed</li>
+<li>Status: Completed</li>
+<li>Completed: 2026-05-08</li>
 </ul>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p><code>GET /api/gateway/discovery/capabilities</code> now includes
-<code>capabilities.contracts.assistant.voice.tts.voices</code> as a lightweight,
-non-instantiating profile list. This is enough for static/built-in voice
-profiles and env-configured voice ids, but remote AbstractVoice deployments may
-load profiles dynamically from provider APIs.</p>
-<h2 id="code-first-evidence">Code-First Evidence<a class="headerlink" href="#code-first-evidence" title="Permanent link">&para;</a></h2>
+<p>Gateway hosts durable workflows and wires <code>memory_kg_*</code> effects to AbstractMemory. AbstractMemory
+already exposes store contracts and multiple store implementations. AbstractRuntime's memory effect
+handlers are store-protocol based and only require a store with <code>add(...)</code> and <code>query(...)</code>.</p>
+<p>Gateway currently bypasses that abstraction by constructing <code>LanceDBTripleStore</code> directly.</p>
+<h2 id="current-code-reality">Current Code Reality<a class="headerlink" href="#current-code-reality" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>src/abstractgateway/routes/gateway.py</code> now has <code>_voice_profile_descriptors</code>,
-  which deliberately avoids constructing <code>VoiceManager</code> or triggering remote
-  calls/downloads during general discovery.</li>
-<li>Direct TTS exists at <code>/api/gateway/runs/{run_id}/voice/tts</code>.</li>
-<li><code>abstractvoice</code> exposes profile APIs through <code>VoiceManager.get_profiles</code>, but
-  calling them can be backend-specific and may be slower than the general
-  capabilities endpoint should allow.</li>
+<li><code>src/abstractgateway/hosts/bundle_host.py</code> imports <code>LanceDBTripleStore</code> when a bundle uses
+  <code>memory_kg_*</code> nodes.</li>
+<li><code>src/abstractgateway/routes/gateway.py</code> imports <code>LanceDBTripleStore</code> for <code>/kg/query</code>.</li>
+<li><code>abstractruntime.integrations.abstractmemory.build_memory_kg_effect_handlers(...)</code> accepts a
+  generic store object with <code>add(...)</code> and <code>query(...)</code>.</li>
+<li>AbstractMemory's TripleStore API includes, depending on the installed build:</li>
+<li><code>InMemoryTripleStore</code>: dependency-free, volatile;</li>
+<li><code>SQLiteTripleStore</code>: dependency-free, persistent, structured-query only;</li>
+<li><code>LanceDBTripleStore</code>: optional dependency, persistent, vector-capable.</li>
+<li>AbstractMemory planned item <code>002_sqlite_database_compatibility_and_store_capabilities.md</code> already
+  proposes explicit store capability metadata.</li>
 </ul>
-<h2 id="why-this-might-matter">Why This Might Matter<a class="headerlink" href="#why-this-might-matter" title="Permanent link">&para;</a></h2>
-<p>Assistant and tray clients may eventually need a refreshable list of voice
-profiles for remote OpenAI-compatible voice services, cloned voices, or
-operator-managed profile catalogs.</p>
-<h2 id="promotion-criteria">Promotion Criteria<a class="headerlink" href="#promotion-criteria" title="Permanent link">&para;</a></h2>
+<h2 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h2>
+<p>Gateway's hardcoded LanceDB dependency makes the implementation say "memory requires LanceDB" even
+though the real contract is "Gateway's current persistent/vector memory backend is LanceDB."</p>
+<p>That creates three issues:</p>
 <ul>
-<li>A client needs profile refresh independent of general capability discovery.</li>
-<li>Dynamic/remote profiles are common enough that static discovery is visibly
-  insufficient.</li>
-<li>Gateway can bound latency and failure behavior cleanly, for example with a
-  short timeout and explicit <code>stale</code>/<code>error</code> fields.</li>
+<li>structured-only persistent KG memory cannot use SQLite through Gateway;</li>
+<li>install/profile docs overstate LanceDB as a universal requirement;</li>
+<li>future image memory is conflated with vector storage, even though image bytes should remain
+  artifact-backed and Memory should store references/provenance.</li>
 </ul>
-<h2 id="possible-api">Possible API<a class="headerlink" href="#possible-api" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>GET /api/gateway/voice/voices
-</code></pre></div>
-<p>The response should include <code>available</code>, <code>profiles</code>, <code>source</code>, <code>stale</code>,
-<code>refreshed_at</code>, and explicit install/config errors.</p>
+<h2 id="proposed-direction">Proposed Direction<a class="headerlink" href="#proposed-direction" title="Permanent link">&para;</a></h2>
+<p>Add a Gateway-owned memory store resolver that returns an AbstractMemory TripleStore plus explicit
+capability metadata.</p>
+<p>Suggested config surface:</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_MEMORY_STORE_BACKEND</code>: <code>lancedb</code>, <code>memory</code>/<code>inmemory</code>, or
+  <code>sqlite</code> when the installed AbstractMemory build exposes <code>SQLiteTripleStore</code>.</li>
+<li><code>ABSTRACTGATEWAY_MEMORY_STORE_PATH</code>: optional explicit store path.</li>
+<li><code>ABSTRACTGATEWAY_MEMORY_REQUIRE_VECTOR</code>: optional strict gate for deployments that promise
+  semantic recall.</li>
+</ul>
+<p>Initial defaults:</p>
+<ul>
+<li>default Gateway <code>memory</code> profile may still resolve to LanceDB because it is the only current
+  durable vector-capable AbstractMemory backend;</li>
+<li>structured-only deployments may select SQLite explicitly;</li>
+<li>in-memory should remain test/dev only and emit a readiness warning.</li>
+</ul>
+<p>Gateway should use the resolver in both:</p>
+<ul>
+<li>bundle host setup for <code>memory_kg_*</code> effects;</li>
+<li><code>/kg/query</code>.</li>
+</ul>
+<h2 id="capability-rules">Capability Rules<a class="headerlink" href="#capability-rules" title="Permanent link">&para;</a></h2>
+<p>Gateway should ask the resolver/store capability layer:</p>
+<ul>
+<li>is the store persistent?</li>
+<li>does it support structured KG queries?</li>
+<li>does it support semantic <code>query_text</code>?</li>
+<li>does it support direct <code>query_vector</code>?</li>
+<li>does it have an embedder configured?</li>
+</ul>
+<p>Then Gateway should enforce behavior:</p>
+<ul>
+<li><code>memory_kg_assert</code> can use any store with <code>add(...)</code>.</li>
+<li>structured <code>memory_kg_query</code> can use any store with <code>query(...)</code>.</li>
+<li>semantic <code>query_text</code> requires a vector-capable store and configured embedder.</li>
+<li><code>/kg/query?query_text=...</code> should fail clearly on SQLite or missing embeddings.</li>
+<li>image/media memory should store artifact refs and metadata without requiring vectors.</li>
+<li>image/media semantic search should require a vector-capable backend.</li>
+</ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Do not make general capabilities discovery instantiate heavy engines.</li>
-<li>Do not require this endpoint before direct TTS remains usable.</li>
+<li>Do not implement a new memory store in Gateway.</li>
+<li>Do not move AbstractMemory store classes into Gateway.</li>
+<li>Do not make SQLite pretend to support semantic/vector search.</li>
+<li>Do not store image/audio bytes in the triple store.</li>
+<li>Do not make LanceDB a dependency of the base Gateway install unless the chosen Gateway profile
+  explicitly promises persistent vector memory.</li>
 </ul>
+<h2 id="dependencies-and-related-work">Dependencies And Related Work<a class="headerlink" href="#dependencies-and-related-work" title="Permanent link">&para;</a></h2>
+<ul>
+<li>AbstractMemory planned item:</li>
+<li><code>docs/backlog/planned/002_sqlite_database_compatibility_and_store_capabilities.md</code></li>
+<li>AbstractMemory proposed item:</li>
+<li><code>docs/backlog/proposed/2026-05-08_gateway_memory_install_and_config_boundary.md</code></li>
+<li>Gateway install/config proposal:</li>
+<li><code>docs/backlog/proposed/2026-05-08_gateway_install_profiles_and_config_entrypoint.md</code></li>
+</ul>
+<h2 id="promotion-criteria">Promotion Criteria<a class="headerlink" href="#promotion-criteria" title="Permanent link">&para;</a></h2>
+<p>Promote before Gateway advertises persistent KG memory as part of a default server profile, or before
+SQLite-backed structured Gateway memory is expected to work.</p>
 <h2 id="validation-ideas">Validation Ideas<a class="headerlink" href="#validation-ideas" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Unit tests for static env/built-in profiles.</li>
-<li>Contract tests for unavailable AbstractVoice.</li>
-<li>Optional integration test with a stub <code>VoiceManager.get_profiles</code>.</li>
+<li>Unit test resolver selects LanceDB, SQLite, and in-memory from env/config.</li>
+<li>Bundle host test uses a fake TripleStore without importing LanceDB.</li>
+<li><code>/kg/query</code> structured query works with SQLite.</li>
+<li><code>/kg/query</code> semantic query fails clearly with SQLite.</li>
+<li>Semantic query works with LanceDB plus a stub embedder.</li>
+<li>Readiness output reports store backend, path, persistence, vector support, and embedder status.</li>
+<li>Install-profile tests prove base Gateway does not import LanceDB unless the memory/vector profile is
+  selected.</li>
+</ul>
+<h2 id="guidance-for-implementing-agents">Guidance For Implementing Agents<a class="headerlink" href="#guidance-for-implementing-agents" title="Permanent link">&para;</a></h2>
+<p>Start with the resolver boundary, not a broad memory refactor. Preserve the current LanceDB behavior
+as the default for vector memory, but make that a selected backend rather than an implicit import.</p>
+<h2 id="completion-report">Completion Report<a class="headerlink" href="#completion-report" title="Permanent link">&para;</a></h2>
+<p>Implemented in Gateway only.</p>
+<ul>
+<li>Added <code>src/abstractgateway/memory_store.py</code>, a Gateway-owned resolver for
+  <code>lancedb</code>, <code>memory</code>, and SQLite-capable AbstractMemory TripleStore backends.</li>
+<li>Bundle <code>memory_kg_*</code> wiring and <code>/api/gateway/kg/query</code> now use the same
+  resolver and capability metadata.</li>
+<li>SQLite-backed structured KG queries now work through Gateway when the
+  installed AbstractMemory build exposes <code>SQLiteTripleStore</code>.</li>
+<li>Semantic <code>query_text</code> fails clearly when the selected backend/embedder cannot
+  support vector retrieval.</li>
+<li>Capability discovery now reports memory backend, persistence, vector support,
+  and embedder status.</li>
+<li>Added resolver/endpoint tests covering default LanceDB config, selected-backend
+  class availability, SQLite structured queries when available, and SQLite
+  semantic-query rejection.</li>
 </ul>
 
 

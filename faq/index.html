@@ -1297,7 +1297,7 @@ For the full API surface, rely on the live OpenAPI spec (<code>/openapi.json</co
 <ul>
 <li><strong>AbstractRuntime</strong> (required): the durable run model + tick loop + stores (declared in <code>pyproject.toml</code>).</li>
 <li><strong>AbstractGateway</strong> (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in <code>src/abstractgateway/routes/gateway.py</code>).</li>
-<li><strong>AbstractCore</strong> (optional, via <code>abstractruntime[abstractcore]</code> / <code>abstractruntime[multimodal]</code>): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed generated image/voice/audio capabilities used by many bundles (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
+<li><strong>AbstractCore / AbstractVoice / AbstractVision</strong> (optional via <code>abstractgateway[multimodal]</code> / <code>[server]</code>): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
 <li>Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).</li>
 </ul>
 <p>Related repos:
@@ -1393,9 +1393,10 @@ The background runner polls the inbox and applies commands asynchronously.</p>
 - or pass a namespaced <code>flow_id</code> like <code>bundle@version:flow</code> (this also works for selecting “latest” via <code>bundle:flow</code>)</p>
 <p>Evidence: bundle selection in <code>src/abstractgateway/hosts/bundle_host.py</code> (<code>start_run</code>).</p>
 <h3 id="my-bundle-fails-with-llmtool-execution-requires-abstractcore-integration">My bundle fails with “LLM/tool execution requires AbstractCore integration”<a class="headerlink" href="#my-bundle-fails-with-llmtool-execution-requires-abstractcore-integration" title="Permanent link">&para;</a></h3>
-<p>Install AbstractRuntime’s AbstractCore integration (already included by <code>abstractgateway[http]</code>):</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractruntime[abstractcore]&gt;=0.4.6&quot;</span>
-</code></pre></div>
+<p>AbstractRuntime’s AbstractCore integration is included by
+<code>abstractgateway[multimodal]</code>, <code>abstractgateway[server]</code>, and aggregate
+profiles. If this error appears, verify the installed package set with
+<code>pip show AbstractRuntime abstractcore</code>.</p>
 <p>Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (imports under <code>needs_llm/needs_tools</code>).</p>
 <h3 id="my-bundle-fails-with-llm-nodes-but-no-default-providermodel-is-configured">My bundle fails with “LLM nodes but no default provider/model is configured”<a class="headerlink" href="#my-bundle-fails-with-llm-nodes-but-no-default-providermodel-is-configured" title="Permanent link">&para;</a></h3>
 <p>Provide defaults via env vars (most explicit):</p>
@@ -1434,11 +1435,12 @@ environment variables in the gateway process, for example
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[server]&quot;</span>
 </code></pre></div>
 <p>The profile includes <code>AbstractRuntime[multimodal]</code>, AbstractCore's
-<code>vision</code>/<code>voice</code>/<code>audio</code> extras, <code>abstractvision&gt;=0.3.1</code>, and
-<code>abstractvoice&gt;=0.9.0</code>. Configure image endpoints with
-<code>ABSTRACTVISION_BASE_URL</code>, <code>ABSTRACTVISION_API_KEY</code>, and
-<code>ABSTRACTVISION_MODEL_ID</code>; set <code>ABSTRACTVISION_BACKEND=diffusers</code> or <code>sdcpp</code>
-only for custom images that intentionally include those local engines.</p>
+<code>vision</code>/<code>voice</code>/<code>audio</code> extras, <code>abstractvision&gt;=0.3.3</code>, and
+<code>abstractvoice&gt;=0.9.2</code>. The server image defaults image and audio generation to
+OpenAI remote endpoints; set <code>OPENAI_API_KEY</code> (or the <code>ABSTRACTVISION_*</code> /
+<code>ABSTRACTVOICE_*</code> overrides) before expecting live generation to succeed. Use
+<code>ABSTRACTVISION_BACKEND=diffusers</code> or <code>sdcpp</code> only for custom images that
+intentionally include those local engines.</p>
 <p>Generated images are available both inside Runtime/Core workflows and through
 Gateway's direct run-scoped endpoint:</p>
 <div class="highlight"><pre><span></span><code>POST /api/gateway/runs/{run_id}/images/generate
@@ -1455,15 +1457,21 @@ rebuild, and clear using deterministic session keys.</p>
 <p>This is Gateway-owned naming and orchestration over provider controls, not a
 provider-independent local KV cache or full CachedSession persistence system.</p>
 <h3 id="my-bundle-fails-with-visual-agent-nodes-require-abstractagent">My bundle fails with “Visual Agent nodes require AbstractAgent”<a class="headerlink" href="#my-bundle-fails-with-visual-agent-nodes-require-abstractagent" title="Permanent link">&para;</a></h3>
-<p>Install <code>abstractagent</code> (already included by <code>abstractgateway[http]</code>):</p>
+<p>Install <code>abstractagent</code> (already included by <code>abstractgateway[server]</code> and
+<code>abstractgateway[all]</code>):</p>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>abstractagent
 </code></pre></div>
 <p>Evidence: agent workflow registration in <code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h3 id="my-bundle-fails-with-memory_kg_-nodes-install-abstractmemory">My bundle fails with “memory_kg_* nodes … install abstractmemory”<a class="headerlink" href="#my-bundle-fails-with-memory_kg_-nodes-install-abstractmemory" title="Permanent link">&para;</a></h3>
-<p><code>memory_kg_*</code> nodes require the AbstractMemory integration:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractmemory[lancedb]&quot;</span>
+<p><code>memory_kg_*</code> nodes require Gateway's AbstractMemory TripleStore integration:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[memory]&quot;</span>
 </code></pre></div>
-<p>Evidence: memory KG wiring in <code>src/abstractgateway/hosts/bundle_host.py</code> (imports <code>abstractmemory</code> and <code>abstractruntime.integrations.abstractmemory</code>).</p>
+<p>Keep the default <code>lancedb</code> backend for durable vector-capable memory, use
+<code>memory</code> for process-local dev/test memory, or set
+<code>ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite</code> only when your installed
+AbstractMemory build exposes <code>SQLiteTripleStore</code>.</p>
+<p>Evidence: memory KG wiring in <code>src/abstractgateway/memory_store.py</code> and
+<code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h2 id="deployment">Deployment<a class="headerlink" href="#deployment" title="Permanent link">&para;</a></h2>
 <h3 id="how-do-i-run-api-and-runner-as-separate-processes">How do I run API and runner as separate processes?<a class="headerlink" href="#how-do-i-run-api-and-runner-as-separate-processes" title="Permanent link">&para;</a></h3>
 <p>Run:</p>

@@ -373,6 +373,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Published image">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apple-silicon-mlx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple Silicon / MLX
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -597,6 +614,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Published image">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apple-silicon-mlx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple Silicon / MLX
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -669,13 +703,20 @@ container path is the recommended baseline for a single self-contained Gateway
 deployment because it packages the HTTP API, durable runner, AbstractRuntime,
 and the remote-provider/multimodal AbstractCore stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
-<p>Release images are published to GHCR:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server:0.2.3
+<p>Release images are published to GHCR. The default image is the light,
+portable server image:</p>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server:0.2.4
 </code></pre></div>
-<p>The image installs <code>abstractgateway[server]</code>, which includes:</p>
+<p>NVIDIA hosts can try the experimental full GPU image when local
+vLLM/HuggingFace/Diffusers engines are wanted. This image is published
+best-effort until it has a real CUDA build and smoke gate:</p>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.4
+</code></pre></div>
+<p>The default image installs <code>abstractgateway[server,memory]</code>, which includes:</p>
 <ul>
 <li><code>AbstractRuntime[multimodal]</code></li>
 <li><code>abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]</code></li>
+<li><code>AbstractMemory[lancedb]&gt;=0.2.6</code></li>
 <li><code>abstractvision</code></li>
 <li><code>abstractvoice</code></li>
 <li><code>abstractagent</code></li>
@@ -688,8 +729,34 @@ Runtime/Core/AbstractVision, direct Gateway voice/STT endpoints through
 AbstractVoice, and provider/session prompt-cache controls.
 It intentionally stays dependency-light for heavy local model runtimes: MLX,
 vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
-engines, and future AbstractMusic engines should remain explicit opt-in image
-variants or sidecars.</p>
+engines, and future AbstractMusic engines remain explicit opt-ins.</p>
+<p>The NVIDIA image installs <code>abstractgateway[server-nvidia]</code> and uses a
+CUDA/PyTorch base. It is experimental and release automation publishes it as
+best-effort for <code>linux/amd64</code>; the default image remains the release-grade
+portable <code>linux/amd64</code> and <code>linux/arm64</code> image. Treat the NVIDIA image as
+production-ready only after a CUDA host build/smoke gate is added and passes.</p>
+<h3 id="apple-silicon-mlx">Apple Silicon / MLX<a class="headerlink" href="#apple-silicon-mlx" title="Permanent link">&para;</a></h3>
+<p>There is no Apple/MLX Gateway Docker image target. MLX uses Apple's Metal
+stack, while Docker Desktop runs Linux containers without Metal/MPS device
+access. The supported Docker shape is a lightweight Gateway container calling a
+host-native OpenAI-compatible inference endpoint:</p>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--name<span class="w"> </span>abstractgateway-server<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-p<span class="w"> </span><span class="m">127</span>.0.0.1:8080:8080<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_PROVIDER</span><span class="o">=</span><span class="s2">&quot;openai-compatible&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_MODEL</span><span class="o">=</span><span class="s2">&quot;your-model&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">OPENAI_COMPATIBLE_BASE_URL</span><span class="o">=</span><span class="s2">&quot;http://model-runner.docker.internal/engines/v1&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway:/data/gateway&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/flows/bundles:/data/flows:ro&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.4
+</code></pre></div>
+<p>Other host-native endpoints are also valid: LM Studio at
+<code>http://host.docker.internal:1234/v1</code>, Ollama's OpenAI-compatible API at
+<code>http://host.docker.internal:11434/v1</code>, or <code>mlx_lm.server</code> exposed on a host
+port. For fully native non-Docker installs with local engines, use
+<code>pip install "abstractgateway[apple]"</code> or <code>pip install "abstractgateway[all-apple]"</code>
+on Apple Silicon, and <code>pip install "abstractgateway[gpu]"</code> or
+<code>pip install "abstractgateway[all-gpu]"</code> on GPU workstations.</p>
 <h2 id="compose-quickstart">Compose quickstart<a class="headerlink" href="#compose-quickstart" title="Permanent link">&para;</a></h2>
 <p>Create an env file from the template, set a strong token, then start the
 server:</p>
@@ -697,6 +764,12 @@ server:</p>
 python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import secrets; print(secrets.token_urlsafe(32))&#39;</span>
 docker<span class="w"> </span>compose<span class="w"> </span>--env-file<span class="w"> </span>docker/abstractgateway-server/.env<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>For the experimental NVIDIA image on a GPU host with the NVIDIA Container
+Toolkit:</p>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>compose<span class="w"> </span>--env-file<span class="w"> </span>docker/abstractgateway-server/.env<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.nvidia.yml<span class="w"> </span>up<span class="w"> </span>-d
 </code></pre></div>
 <p>The default compose profile binds to <code>127.0.0.1:8080</code>, mounts a durable Gateway
 data volume at <code>/data/gateway</code>, mounts bundles from <code>flows/bundles</code> at
@@ -720,6 +793,7 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Aut
 <li><code>ABSTRACTGATEWAY_STORE_BACKEND</code>: <code>file</code> or <code>sqlite</code></li>
 <li><code>ABSTRACTGATEWAY_DB_PATH</code>: SQLite file, when using <code>sqlite</code></li>
 <li><code>ABSTRACTGATEWAY_RUNNER</code>: <code>1</code> for combined API+runner, <code>0</code> for API-only</li>
+<li><code>ABSTRACTGATEWAY_MEMORY_STORE_BACKEND</code>: <code>lancedb</code> or <code>memory</code> for KG workflows and <code>/kg/query</code>; <code>sqlite</code> works when the installed AbstractMemory build exposes <code>SQLiteTripleStore</code></li>
 </ul>
 <p>Provider keys and endpoints:</p>
 <ul>
@@ -734,11 +808,17 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Aut
 </ul>
 <p>Image/voice plugin endpoints:</p>
 <ul>
-<li><code>ABSTRACTVISION_BACKEND</code>: <code>openai</code> (OpenAI-compatible HTTP), <code>diffusers</code>, or <code>sdcpp</code></li>
-<li><code>ABSTRACTVISION_BASE_URL</code> / <code>ABSTRACTVISION_API_KEY</code> / <code>ABSTRACTVISION_MODEL_ID</code></li>
-<li><code>ABSTRACTVOICE_TTS_ENGINE</code> / <code>ABSTRACTVOICE_STT_ENGINE</code></li>
+<li><code>ABSTRACTVISION_BACKEND</code>: <code>openai</code>, <code>openai-compatible</code>, <code>diffusers</code>, or <code>sdcpp</code></li>
+<li><code>ABSTRACTVISION_BASE_URL</code> / <code>ABSTRACTVISION_API_KEY</code> / <code>ABSTRACTVISION_MODEL_ID</code> (OpenAI defaults are used by the server image)</li>
+<li><code>ABSTRACTVOICE_TTS_ENGINE</code> / <code>ABSTRACTVOICE_STT_ENGINE</code> (<code>openai</code> by default in the server image)</li>
 <li><code>ABSTRACTVOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTVOICE_REMOTE_API_KEY</code></li>
 <li><code>ABSTRACTVOICE_TTS_MODEL</code> / <code>ABSTRACTVOICE_STT_MODEL</code></li>
+</ul>
+<p>Core catalog proxying:</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL</code>: explicit standalone Core server URL for voice/vision catalog routes</li>
+<li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN</code>: Core server auth token, separate from Gateway auth</li>
+<li><code>ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S</code>: timeout for catalog routes</li>
 </ul>
 <p>Filesystem/media controls from AbstractCore remain available:</p>
 <ul>
@@ -762,7 +842,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.3-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.4-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the

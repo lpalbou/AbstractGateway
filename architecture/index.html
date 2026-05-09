@@ -809,8 +809,8 @@
 
 <h1 id="abstractgateway-architecture">AbstractGateway — Architecture<a class="headerlink" href="#abstractgateway-architecture" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p>Status: implemented (v0.2.1)<br />
-Last reviewed: 2026-02-09</p>
+<p>Status: implemented (v0.2.4)
+Last reviewed: 2026-05-08</p>
 </blockquote>
 <p>AbstractGateway is a <strong>durable run gateway</strong> for AbstractRuntime:
 - <strong>Start runs</strong> (and optionally schedule them)
@@ -821,7 +821,7 @@ Last reviewed: 2026-02-09</p>
 <p>AbstractGateway is designed to sit between <strong>thin clients / UIs</strong> and <strong>AbstractRuntime</strong>:
 - AbstractGateway: HTTP/SSE API + durability glue + baseline security (<code>src/abstractgateway/app.py</code>, <code>src/abstractgateway/routes/gateway.py</code>)
 - AbstractRuntime (required): run model + tick loop + stores (<code>pyproject.toml</code>, <code>src/abstractgateway/runner.py</code>)
-- AbstractCore (optional, via <code>abstractruntime[abstractcore]</code> / <code>abstractruntime[multimodal]</code>): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed generated image/voice/audio capabilities used by many bundles (<code>src/abstractgateway/hosts/bundle_host.py</code>)</p>
+- AbstractCore / AbstractVoice / AbstractVision (optional via <code>abstractgateway[multimodal]</code> / <code>[server]</code>): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles (<code>src/abstractgateway/hosts/bundle_host.py</code>)</p>
 <h2 id="high-level-shape">High-level shape<a class="headerlink" href="#high-level-shape" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart LR
   subgraph Clients[&quot;Clients (thin/stateless UIs)&quot;]
