@@ -3793,25 +3793,47 @@ async def list_runs(
                 counts = raw if isinstance(raw, dict) else {}
         except Exception:
             counts = {}
+
+        def _coerce_ledger_count(raw: Any) -> Optional[int]:
+            try:
+                return int(raw)
+            except Exception:
+                return None
+
+        def _ledger_len_from_store(rid: str) -> Optional[int]:
+            count_fn = getattr(ledger_store, "count", None)
+            if callable(count_fn):
+                direct = _coerce_ledger_count(count_fn(rid))
+                if direct is not None:
+                    return direct
+            try:
+                records = ledger_store.list(rid)
+            except Exception:
+                return None
+            return int(len(records) if isinstance(records, list) else 0)
+
         for item in items:
             rid = str(item.get("run_id") or "").strip()
             if not rid:
                 continue
             if rid in counts:
+                ledger_len = _coerce_ledger_count(counts.get(rid))
+                if ledger_len is None:
+                    ledger_len = _ledger_len_from_store(rid)
+            else:
+                ledger_len = _ledger_len_from_store(rid)
+
+            status0 = str(item.get("status") or "").strip().lower()
+            if ledger_len == 0 and status0 in {"completed", "failed", "cancelled"}:
+                # Defensive fallback: some older/newer LedgerStore implementations
+                # can return 0 for terminal runs even when ledger rows are present.
                 try:
-                    item["ledger_len"] = int(counts.get(rid) or 0)
+                    ledger_entries = ledger_store.list(rid)
+                    if isinstance(ledger_entries, list):
+                        ledger_len = int(len(ledger_entries))
                 except Exception:
-                    item["ledger_len"] = None
-                continue
-            try:
-                count_fn = getattr(ledger_store, "count", None)
-                if callable(count_fn):
-                    item["ledger_len"] = int(count_fn(rid))
-                else:
-                    records = ledger_store.list(rid)
-                    item["ledger_len"] = int(len(records) if isinstance(records, list) else 0)
-            except Exception:
-                item["ledger_len"] = None
+                    pass
+            item["ledger_len"] = ledger_len
 
     return {"items": items}
 
