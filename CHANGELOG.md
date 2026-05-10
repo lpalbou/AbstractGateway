@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-05-10
+
+### Added
+
+- Capability discovery now advertises
+  `capabilities.contracts.common.runs.input_data` and
+  `capabilities.contracts.common.runs.history_bundle` so thin clients can
+  feature-detect the run input and RunHistoryBundle endpoints from the shared
+  Gateway contract.
+
 ## [0.2.7] - 2026-05-10
 
 ### Updated

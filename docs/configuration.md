@@ -190,7 +190,7 @@ heavy engines remain explicit opt-ins in the provider packages.
 - `ABSTRACTVISION_BACKEND`: `openai` / `openai-compatible` / `diffusers` / `sdcpp`
 - `ABSTRACTVOICE_TTS_ENGINE` / `ABSTRACTVOICE_STT_ENGINE`: `openai`, `openai-compatible`, `auto`, or local engines supported by AbstractVoice
 - `ABSTRACTVOICE_REMOTE_BASE_URL` / `ABSTRACTVOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice
-- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls
+- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls
 - `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL` or `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
 - `GET /api/gateway/audio/speech/models`: proxies AbstractCore `/v1/audio/speech/models` when configured.
 - `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured.

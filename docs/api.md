@@ -193,8 +193,9 @@ than a hardcoded local model.
 It also includes a versioned thin-client contract:
 
 - `capabilities.contracts.version`: currently `1`
-- `capabilities.contracts.common`: shared run, ledger, artifact, attachment,
-  workspace, discovery, and provider prompt-cache controls
+- `capabilities.contracts.common`: shared run start/list/summary/input/history,
+  ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
+  controls
 - `capabilities.contracts.flow_editor`: the AbstractFlow editor/runtime surface
 - `capabilities.contracts.assistant`: assistant-facing voice/audio/media/cache
   feature gates

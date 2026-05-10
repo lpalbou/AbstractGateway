@@ -142,13 +142,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.6
+  ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 See [deployment.md](./deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.6`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

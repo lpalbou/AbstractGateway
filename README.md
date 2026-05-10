@@ -56,7 +56,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.6
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -64,7 +64,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.6
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
@@ -86,7 +86,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.6
+  ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the
@@ -101,9 +101,11 @@ For native non-Docker installs with local engines, use
 
 Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 
-## 0.2.6 capability scope
+## 0.2.8 capability scope
 
 Direct Gateway APIs in this release:
+- `GET /api/gateway/runs/{run_id}/input_data`
+- `GET /api/gateway/runs/{run_id}/history_bundle`
 - `POST /api/gateway/runs/{run_id}/voice/tts`
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - `POST /api/gateway/runs/{run_id}/images/generate`

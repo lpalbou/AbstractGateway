@@ -94,6 +94,10 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         common = contracts.get("common")
         assert isinstance(common, dict)
         assert common.get("runs", {}).get("start", {}).get("endpoint") == "/api/gateway/runs/start"
+        assert common.get("runs", {}).get("input_data", {}).get("available") is True
+        assert common.get("runs", {}).get("input_data", {}).get("endpoint") == "/api/gateway/runs/{run_id}/input_data"
+        assert common.get("runs", {}).get("history_bundle", {}).get("available") is True
+        assert common.get("runs", {}).get("history_bundle", {}).get("endpoint") == "/api/gateway/runs/{run_id}/history_bundle"
         assert common.get("ledger", {}).get("stream", {}).get("transport") == "sse"
         assert common.get("artifacts", {}).get("content", {}).get("endpoint") == "/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content"
         assert common.get("prompt_cache", {}).get("provider_controls") is True
@@ -153,6 +157,17 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     )
 
     assert contracts["version"] == 1
+    assert contracts["common"]["runs"]["input_data"] == {
+        "available": True,
+        "endpoint": "/api/gateway/runs/{run_id}/input_data",
+    }
+    assert contracts["common"]["runs"]["history_bundle"] == {
+        "available": True,
+        "endpoint": "/api/gateway/runs/{run_id}/history_bundle",
+    }
+    assert contracts["flow_editor"]["runs"]["input_data"] == contracts["common"]["runs"]["input_data"]
+    assert contracts["assistant"]["runs"]["history_bundle"] == contracts["common"]["runs"]["history_bundle"]
+    assert contracts["abstractcode"]["runs"]["history_bundle"] == contracts["common"]["runs"]["history_bundle"]
     tts = contracts["assistant"]["voice"]["tts"]
     stt = contracts["assistant"]["voice"]["stt"]
     assert tts["available"] is False

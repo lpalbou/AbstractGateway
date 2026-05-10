@@ -25,7 +25,7 @@ Start here: [docs/getting-started.md](docs/getting-started.md)
 AbstractGateway is part of the **AbstractFramework** ecosystem:
 
 - **AbstractRuntime** (required): durable run model + workflow registry + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
-- **AbstractCore / AbstractVoice / AbstractVision** (optional via `abstractgateway[multimodal]` / `[server]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
+- **AbstractCore / AbstractVoice / AbstractVision / AbstractMemory** (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by Gateway bundles (`src/abstractgateway/hosts/bundle_host.py`)
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractCode / AbstractObserver / thin clients (rendering + operations)
 
 Related repos:
@@ -36,7 +36,7 @@ Related repos:
 ## Quickstart (HTTP server, bundle mode)
 
 ```bash
-pip install "abstractgateway[http]"
+pip install abstractgateway
 
 export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"   # *.flow dir (or a single .flow file)
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
@@ -66,7 +66,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.4
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -74,10 +74,10 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.4
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8
 ```
 
-The image installs `abstractgateway[server,memory]`: HTTP server,
+The image installs the base `abstractgateway` package: HTTP server,
 `AbstractRuntime[multimodal]`, AbstractCore remote/commercial provider support,
 OpenAI-compatible text providers, workflow-backed and direct image generation
 through Runtime/Core/AbstractVision, direct Gateway voice/audio endpoints
@@ -96,7 +96,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.4
+  ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the
@@ -105,14 +105,17 @@ lightweight Gateway container as the transport/control plane. Point
 as Docker Model Runner (`http://model-runner.docker.internal/engines/v1`), LM
 Studio (`http://host.docker.internal:1234/v1`), Ollama
 (`http://host.docker.internal:11434/v1`), or `mlx_lm.server` on a host port.
-For a non-Docker native macOS install with local engines, use
-`pip install "abstractgateway[all-apple]"`.
+For native non-Docker installs with local engines, use
+`pip install "abstractgateway[apple]"` on Apple Silicon, and
+`pip install "abstractgateway[gpu]"` on GPU workstations or NVIDIA Docker builds.
 
 Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 
-## 0.2.4 capability scope
+## 0.2.8 capability scope
 
 Direct Gateway APIs in this release:
+- `GET /api/gateway/runs/{run_id}/input_data`
+- `GET /api/gateway/runs/{run_id}/history_bundle`
 - `POST /api/gateway/runs/{run_id}/voice/tts`
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - `POST /api/gateway/runs/{run_id}/images/generate`
@@ -146,56 +149,32 @@ See [docs/api.md](docs/api.md) for curl examples and the live OpenAPI spec (`/op
 
 ## Install
 
-### Base (runner + stores + CLI)
+### Base remote-light server
 
 Requires Python `>=3.10` (see `pyproject.toml`).
+
+The base install is the remote-light HTTP/SSE server: Gateway, Runtime,
+Agent, Core remote provider/tool/media support, Flow compatibility, Vision,
+Voice, and LanceDB-backed Memory.
 
 ```bash
 pip install abstractgateway
 ```
 
-### HTTP API/SSE server (FastAPI + Uvicorn)
-
-```bash
-pip install "abstractgateway[http]"
-```
-
 ### Optional extras
 
-- `abstractgateway[visualflow]`: run VisualFlow JSON from a directory of `*.json` files (requires `abstractflow`)
-- `abstractgateway[server]`: container/server profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed/direct AbstractVision image generation, direct Gateway voice/audio/image endpoints, provider/session prompt-cache helpers, media/tool helpers, tokens, and compression
-- `abstractgateway[memory]`: AbstractMemory 0.0.x TripleStore KG support with LanceDB as the default durable vector-capable backend; in-memory is a runtime config choice, and SQLite is supported when the installed AbstractMemory build exposes `SQLiteTripleStore`
-- `abstractgateway[apple]` / `abstractgateway[gpu]`: hardware add-on profiles cascading to AbstractCore local-engine profiles
-- `abstractgateway[all-apple]` / `abstractgateway[all-gpu]`: full native macOS or GPU aggregate profiles
-- `abstractgateway[server-nvidia]`: experimental full NVIDIA profile with vLLM/HuggingFace, local Diffusers image generation, and local voice engines; used by the best-effort `abstractgateway-server-nvidia` image
-- `abstractgateway[telegram]`: Telegram bridge dependencies
-- `abstractgateway[voice]`: explicit voice/audio profile for TTS/STT via AbstractVoice and AbstractCore's voice/audio plugin extras
-- `abstractgateway[vision]`: explicit generative vision profile via AbstractCore's AbstractVision plugin
-- `abstractgateway[multimodal]`: Runtime/Core multimodal profile without the HTTP server deps
-- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice/audio + vision + media + visualflow)
+- `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities
+- `abstractgateway[gpu]`: full local GPU profile with vLLM/HuggingFace, local Diffusers image generation, local voice engines, music, and KG memory; this is also the NVIDIA Docker install profile
+- `abstractgateway[server]`, `[http]`, `[multimodal]`, `[memory]`, `[voice]`, `[vision]`, and `[all]`: compatibility aliases; the base package already includes the remote-light server stack
+- `abstractgateway[server-nvidia]`: compatibility alias for the GPU profile used by older NVIDIA Docker commands
+- `abstractgateway[telegram]` and `[visualflow]`: compatibility aliases; Telegram bridge and VisualFlow publishing use base install dependencies
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local test/dev deps
 
-### Bundle-dependent dependencies (only if your workflows need them)
-
-- LLM/tool nodes in bundle mode require AbstractRuntime’s AbstractCore integration.
-  - Install `abstractgateway[multimodal]`, `abstractgateway[server]`, or `abstractgateway[all]`.
-
-Visual Agent nodes require `abstractagent` (also included by `abstractgateway[server]` and `abstractgateway[all]`):
-
-```bash
-pip install abstractagent
-```
-
-KG memory nodes use Gateway's memory resolver:
-
-```bash
-pip install "abstractgateway[memory]"
-export ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb  # lancedb|memory; sqlite if available
-```
-
-Use `memory` for process-local dev/test stores. `sqlite` is supported when the
-installed AbstractMemory build exposes `SQLiteTripleStore`.
+KG memory nodes use Gateway's memory resolver. The default durable/vector
+backend is LanceDB; `memory` is process-local dev/test storage, and `sqlite` is
+structured-only when the installed AbstractMemory build exposes
+`SQLiteTripleStore`.
 
 Gateway has a first-class config helper:
 
@@ -252,7 +231,7 @@ Start here if you’re new to the project.
 AbstractGateway is one component in the larger AbstractFramework ecosystem:
 
 - **AbstractRuntime** (required): durable runs + stores
-- **AbstractCore / AbstractVoice / AbstractVision** (optional via `abstractgateway[multimodal]` / `[server]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles
+- **AbstractCore / AbstractVoice / AbstractVision / AbstractMemory** (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles
 - Higher-level UIs (optional): AbstractFlow / AbstractObserver / AbstractCode / thin clients
 
 Related repos:
@@ -304,7 +283,7 @@ This guide gets a new installation running in **bundle mode** (recommended), the
 
 AbstractGateway is one component in the larger **AbstractFramework** ecosystem:
 - **AbstractRuntime** (required): durable runs + workflow registry + stores
-- **AbstractCore / AbstractVoice / AbstractVision** (optional via `abstractgateway[multimodal]` / `[server]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles
+- **AbstractCore / AbstractVoice / AbstractVision / AbstractMemory** (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles
 
 Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
@@ -317,44 +296,24 @@ Related repos:
 - Workflow source:
   - **Bundle mode** (recommended): one `.flow` file or a directory of `*.flow` bundles
     - You can also upload bundles after startup via `POST /api/gateway/bundles/upload` (see below)
-  - **VisualFlow directory mode** (compat): a directory of `*.json` VisualFlow files (requires `abstractgateway[visualflow]`)
+  - **VisualFlow directory mode** (compat): a directory of `*.json` VisualFlow files; the base install includes the compiler dependency
 
 ## Install
 
 ```bash
-# Core package (runner + stores + CLI)
+# Remote-light server package (HTTP/SSE + runner + stores + Core remote stack + KG memory)
 pip install abstractgateway
 
-# HTTP server (FastAPI + Uvicorn)
-pip install "abstractgateway[http]"
+# Native Apple local engines
+pip install "abstractgateway[apple]"
 
-# Turnkey server/container profile (HTTP + Runtime/Core multimodal + remote providers/tools/media)
-pip install "abstractgateway[server]"
-
-# KG memory support (AbstractMemory 0.0.x TripleStore API; LanceDB default, SQLite if available)
-pip install "abstractgateway[memory]"
-
-# Experimental NVIDIA full profile (vLLM/HuggingFace + local Diffusers + local voice engines)
-pip install "abstractgateway[server-nvidia]"
-
-# Explicit voice/audio profile (TTS + STT endpoints)
-pip install "abstractgateway[voice]"
-
-# Explicit generative vision profile through AbstractCore's AbstractVision plugin
-pip install "abstractgateway[vision]"
-
-# Or: batteries-included (HTTP + tools + voice/audio + vision + media + visualflow)
-pip install "abstractgateway[all]"
+# Native/container GPU local engines, also used by the NVIDIA Docker image
+pip install "abstractgateway[gpu]"
 ```
 
-Optional (only if your workflows need it):
-- LLM/tool nodes (bundle mode): `pip install "abstractgateway[multimodal]"` or `pip install "abstractgateway[server]"`
-- Runtime-managed generated images, generated voice, and STT inside workflows: `pip install "abstractgateway[multimodal]"` or `pip install "abstractgateway[server]"`
-- Server deployments with hosted providers / OpenAI-compatible endpoints: `pip install "abstractgateway[server]"`
-- Visual Agent nodes (bundle mode): `pip install abstractagent` (already included by `abstractgateway[server]`)
-- Voice/audio endpoints (TTS/STT): `pip install "abstractgateway[voice]"` (or `pip install abstractvoice`)
-- Generative vision: `pip install "abstractgateway[vision]"` (or `pip install abstractvision`)
-- `memory_kg_*` nodes (bundle mode): `pip install "abstractgateway[memory]"`
+Compatibility extras such as `abstractgateway[http]`, `[server]`, `[memory]`,
+`[multimodal]`, `[voice]`, `[vision]`, and `[all]` remain accepted, but the
+base install already contains the remote-light server stack.
 
 ## 1) Run (bundle mode, file-backed stores)
 
@@ -456,13 +415,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.4
+  ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 See [deployment.md](docs/deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.4`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -473,8 +432,9 @@ point `OPENAI_COMPATIBLE_BASE_URL` at Docker Model Runner on
 `http://model-runner.docker.internal/engines/v1`, LM Studio on
 `http://host.docker.internal:1234/v1`, `mlx_lm.server`, or Ollama's
 OpenAI-compatible API on `http://host.docker.internal:11434/v1` when the
-native Ollama model path uses MLX. For native non-Docker macOS installs, use
-`pip install "abstractgateway[all-apple]"`.
+native Ollama model path uses MLX. For native non-Docker installs, use
+`pip install "abstractgateway[apple]"` on Apple Silicon, and
+`pip install "abstractgateway[gpu]"` on GPU workstations or NVIDIA Docker builds.
 
 ## 4) What’s stored in `ABSTRACTGATEWAY_DATA_DIR` (file backend)
 
@@ -546,6 +506,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-05-10
+
+### Added
+
+- Capability discovery now advertises
+  `capabilities.contracts.common.runs.input_data` and
+  `capabilities.contracts.common.runs.history_bundle` so thin clients can
+  feature-detect the run input and RunHistoryBundle endpoints from the shared
+  Gateway contract.
+
+## [0.2.7] - 2026-05-10
+
+### Updated
+
+- Bumped abstractagent floor to >=0.3.6 to match the new abstractagent release that requires abstractruntime>=0.4.9.
+
+## [0.2.6] - 2026-05-09
+
+### Fixed
+
+- Raised the AbstractVision floor to `abstractvision>=0.3.4` across Gateway
+  install profiles so `abstractgateway[gpu]` and the NVIDIA image inherit the
+  stable-diffusion.cpp binding constraint that avoids the broken
+  `stable-diffusion-cpp-python==0.4.6` Linux sdist.
+- Updated release-facing Docker examples and package metadata from `0.2.5` to
+  `0.2.6`.
+- Release/CI installs now bypass the restored pip dependency cache for editable
+  dependency resolution, avoiding stale package indexes immediately after
+  lower-package releases.
+
+## [0.2.5] - 2026-05-09
+
+### Changed
+
+- Promoted the base `abstractgateway` install to the remote-light HTTP/SSE
+  server profile. It now includes Runtime multimodal support, AbstractAgent,
+  AbstractCore remote/media/tools/tokens/compression/vision/voice/audio,
+  AbstractVision, AbstractVoice, AbstractFlow compatibility,
+  AbstractMemory/LanceDB KG support, FastAPI, multipart uploads, and Uvicorn.
+- Raised Runtime and Agent floors to `AbstractRuntime>=0.4.9` and
+  `abstractagent>=0.3.6`.
+- Simplified install guidance around `abstractgateway`, `abstractgateway[apple]`,
+  and `abstractgateway[gpu]`. The older `http`, `server`, `multimodal`,
+  `memory`, `voice`, `vision`, `all`, and `server-nvidia` extras remain as
+  compatibility aliases.
+- The NVIDIA Docker image now installs `abstractgateway[gpu]`; `server-nvidia`
+  remains only as a compatibility alias.
+
 ## [0.2.4] - 2026-05-08
 
 ### Added
@@ -570,10 +578,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Base installs are now intentionally minimal again:
-  `AbstractRuntime>=0.4.7` only.
+  `AbstractRuntime>=0.4.8` only.
 - Server and multimodal profiles now use the aligned Runtime/Core/Voice/Vision
-  floors: `AbstractRuntime>=0.4.7`, `abstractcore>=2.13.11`,
-  `abstractvision>=0.3.2`, and `abstractvoice>=0.9.1`.
+  floors: `AbstractRuntime>=0.4.8`, `abstractcore>=2.13.12`,
+  `abstractvision>=0.3.3`, and `abstractvoice>=0.9.2`.
+- Server, native Apple, native GPU, and NVIDIA profiles now require
+  `abstractagent>=0.3.5`, so Gateway-hosted agent nodes resolve against the
+  same Core/Runtime baseline as Gateway itself.
+- Release tests now reset Gateway's process-global service between cases and
+  pass explicit provider/model overrides for ledger summary/chat generation
+  tests.
+- Native Python hardware profiles are full deployment aggregates:
+  `abstractgateway[apple]` and `abstractgateway[all-apple]` install the
+  Apple-local stack and all relevant non-NVIDIA framework capabilities, while
+  `abstractgateway[gpu]` and `abstractgateway[all-gpu]` install the matching
+  local GPU stack.
 - Gateway-owned runtime handoff now seeds `_runtime.prompt_cache`,
   `_runtime.max_attachment_bytes`, and `_runtime.workflow_bundles_dir` from
   Gateway configuration.
@@ -585,8 +604,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The default Docker server image now composes `abstractgateway[server,memory]`
   so KG workflows and `/kg/query` have the AbstractMemory/LanceDB store package
   available without making memory a base-package dependency.
-- The `memory` profile now constrains AbstractMemory to the compatible 0.0.x
-  TripleStore API line instead of floating to newer incompatible releases.
+- The `memory` profile now depends on `AbstractMemory[lancedb]>=0.2.6`.
 
 ### Fixed
 
@@ -837,9 +855,9 @@ This list is **non-exhaustive**. The canonical dependency list for this package 
 
 These are not required for the base gateway, but are used by optional modes/features:
 
-- **FastAPI** (via **Starlette**) + **Pydantic**: HTTP API surface and request/response models (`abstractgateway[http]`).
-- **Uvicorn**: ASGI server used by `abstractgateway serve` (`abstractgateway[http]`).
-- **python-multipart**: multipart upload support for bundle/attachment endpoints (`abstractgateway[http]`).
+- **FastAPI** (via **Starlette**) + **Pydantic**: HTTP API surface and request/response models (base install).
+- **Uvicorn**: ASGI server used by `abstractgateway serve` (base install).
+- **python-multipart**: multipart upload support for bundle/attachment endpoints (base install).
 - **AbstractFlow**: VisualFlow JSON directory mode and workflow authoring/bundling workflows (see `abstractgateway[visualflow]`).
 - **AbstractCore** integration (via `abstractruntime[abstractcore]`): LLM/tool execution wiring, embeddings client, Telegram TDLib wrapper.
 - **AbstractAgent**: Visual Agent nodes in bundle mode.
@@ -1054,8 +1072,9 @@ than a hardcoded local model.
 It also includes a versioned thin-client contract:
 
 - `capabilities.contracts.version`: currently `1`
-- `capabilities.contracts.common`: shared run, ledger, artifact, attachment,
-  workspace, discovery, and provider prompt-cache controls
+- `capabilities.contracts.common`: shared run start/list/summary/input/history,
+  ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
+  controls
 - `capabilities.contracts.flow_editor`: the AbstractFlow editor/runtime surface
 - `capabilities.contracts.assistant`: assistant-facing voice/audio/media/cache
   feature gates
@@ -1413,36 +1432,32 @@ AbstractGateway is configured primarily via **environment variables** (plus a fe
 
 ## Install extras (recommended)
 
-The base install (`pip install abstractgateway`) is the runner/control-plane
-profile: durable stores, CLI, and `AbstractRuntime`. Runtime/Core multimodal,
-HTTP, memory, and hardware-specific dependencies are explicit install profiles.
+The base install (`pip install abstractgateway`) is the remote-light server
+profile: HTTP/SSE, durable stores, AbstractRuntime multimodal, AbstractCore
+remote provider/media/tool support, AbstractVision, AbstractVoice,
+AbstractAgent, AbstractFlow compatibility, and AbstractMemory/LanceDB KG
+support.
 
 Optional extras (see `pyproject.toml`):
-- `abstractgateway[http]`: FastAPI + Uvicorn (`abstractgateway serve`)
-- `abstractgateway[multimodal]`: Runtime/Core multimodal profile without HTTP server deps
-- `abstractgateway[server]`: turnkey server/container profile with AbstractRuntime multimodal support, AbstractCore remote providers, OpenAI-compatible text providers, workflow-backed AbstractVision image generation, direct Gateway voice/audio/image endpoints, media/tool helpers, token counting, provider-level and session-level prompt-cache helpers, and compression
-- `abstractgateway[memory]`: AbstractMemory 0.0.x TripleStore KG support with LanceDB as the default durable vector-capable backend; SQLite is available when the installed AbstractMemory build exposes `SQLiteTripleStore`
-- `abstractgateway[apple]` / `abstractgateway[gpu]`: hardware add-on profiles that cascade to AbstractCore local-engine extras
-- `abstractgateway[all-apple]` / `abstractgateway[all-gpu]`: full native macOS or GPU aggregate profiles; `all-apple` is for native macOS, not Docker
-- `abstractgateway[server-nvidia]`: experimental full NVIDIA server profile with vLLM/HuggingFace, local Diffusers image generation, and local voice engines
-- `abstractgateway[visualflow]`: VisualFlow JSON directory mode via `abstractflow`
-- `abstractgateway[telegram]`: Telegram bridge dependencies (AbstractRuntime’s AbstractCore integration)
-- `abstractgateway[voice]`: voice/audio endpoints (TTS + STT) via AbstractVoice and AbstractCore's voice/audio plugin extras
-- `abstractgateway[vision]`: generative vision via AbstractCore's AbstractVision plugin
-- `abstractgateway[all]`: batteries-included install (HTTP + tools + voice/audio + vision + media + visualflow)
+- `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
+- `abstractgateway[gpu]`: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
+- `abstractgateway[http]`, `[server]`, `[multimodal]`, `[memory]`, `[voice]`, `[vision]`, `[all]`: compatibility aliases because the base install now includes the remote-light server stack
+- `abstractgateway[server-nvidia]`: compatibility alias for the GPU profile used by older NVIDIA Docker commands
+- `abstractgateway[visualflow]`: compatibility alias; VisualFlow support is included by the base install
+- `abstractgateway[telegram]`: compatibility alias; Telegram bridge support uses base install dependencies
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
-Optional (required by some workflows/features):
-- `AbstractRuntime[abstractcore]>=0.4.7`: required to execute bundle workflows that contain LLM/tool nodes (see `src/abstractgateway/hosts/bundle_host.py`); included by `abstractgateway[multimodal]`, `abstractgateway[server]`, and aggregate profiles
-- `AbstractRuntime[multimodal]>=0.4.7`: required for Runtime-managed multimodal outputs through AbstractCore workflows; included by `abstractgateway[multimodal]`, `abstractgateway[server]`, and aggregate profiles
-- `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.11`: recommended for server deployments that need hosted providers, OpenAI-compatible text provider routing, media parsing, tool helpers, token counting, provider-level prompt-cache controls, workflow-backed/direct image generation, TTS, STT, and catalog routes; included by `abstractgateway[server]`
-- `abstractcore[apple]>=2.13.11`, `abstractcore[gpu]>=2.13.11`, `abstractcore[all-apple]>=2.13.11`, or `abstractcore[all-gpu]>=2.13.11`: local hardware profiles; included by the matching Gateway profile
-- `abstractagent`: required for Visual Agent nodes (bundle mode); included by `abstractgateway[server]` and aggregate profiles
-- `AbstractMemory[lancedb]>=0.0.2,<0.1.0`: required for bundles that use `memory_kg_*` nodes with the default durable vector backend; included by `abstractgateway[memory]`, `abstractgateway[all]`, and aggregate profiles
+Default dependency floors:
+- `AbstractRuntime[multimodal]>=0.4.9`
+- `abstractagent>=0.3.6`
+- `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12`
+- `AbstractMemory[lancedb]>=0.2.6`
+- `abstractvision>=0.3.4`
+- `abstractvoice>=0.9.2`
 
-Gateway's KG resolver currently targets AbstractMemory's 0.0.x TripleStore API.
-The newer AbstractMemory 0.1+ memory-agent API is not used by this release.
+Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
+the newer memory-agent API directly.
 
 ## Configuration helper
 
@@ -1603,7 +1618,7 @@ heavy engines remain explicit opt-ins in the provider packages.
 - `ABSTRACTVISION_BACKEND`: `openai` / `openai-compatible` / `diffusers` / `sdcpp`
 - `ABSTRACTVOICE_TTS_ENGINE` / `ABSTRACTVOICE_STT_ENGINE`: `openai`, `openai-compatible`, `auto`, or local engines supported by AbstractVoice
 - `ABSTRACTVOICE_REMOTE_BASE_URL` / `ABSTRACTVOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice
-- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls
+- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls
 - `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL` or `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
 - `GET /api/gateway/audio/speech/models`: proxies AbstractCore `/v1/audio/speech/models` when configured.
 - `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured.
@@ -1651,7 +1666,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.4
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -1659,14 +1674,14 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.4
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8
 ```
 
-The default image installs `abstractgateway[server,memory]`, which includes:
+The default image installs the base `abstractgateway` package, which includes:
 
 - `AbstractRuntime[multimodal]`
 - `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]`
-- `AbstractMemory[lancedb]>=0.0.2,<0.1.0`
+- `AbstractMemory[lancedb]>=0.2.6`
 - `abstractvision`
 - `abstractvoice`
 - `abstractagent`
@@ -1681,8 +1696,8 @@ It intentionally stays dependency-light for heavy local model runtimes: MLX,
 vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
 engines, and future AbstractMusic engines remain explicit opt-ins.
 
-The NVIDIA image installs `abstractgateway[server-nvidia]` and uses a
-CUDA/PyTorch base. It is experimental and release automation publishes it as
+The NVIDIA image installs `abstractgateway[gpu]` and uses a CUDA/PyTorch base.
+It is experimental and release automation publishes it as
 best-effort for `linux/amd64`; the default image remains the release-grade
 portable `linux/amd64` and `linux/arm64` image. Treat the NVIDIA image as
 production-ready only after a CUDA host build/smoke gate is added and passes.
@@ -1703,14 +1718,15 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.4
+  ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 Other host-native endpoints are also valid: LM Studio at
 `http://host.docker.internal:1234/v1`, Ollama's OpenAI-compatible API at
 `http://host.docker.internal:11434/v1`, or `mlx_lm.server` exposed on a host
-port. For a fully native non-Docker macOS install with local engines, use
-`pip install "abstractgateway[all-apple]"`.
+port. For fully native non-Docker installs with local engines, use
+`pip install "abstractgateway[apple]"` on Apple Silicon, and
+`pip install "abstractgateway[gpu]"` on GPU workstations or NVIDIA Docker builds.
 
 ## Compose quickstart
 
@@ -1815,7 +1831,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.4-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.8-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -1828,8 +1844,8 @@ PyPI release is available, matching the AbstractCore server image pattern.
 
 # AbstractGateway — Architecture
 
-> Status: implemented (v0.2.4)
-> Last reviewed: 2026-05-08
+> Status: implemented (v0.2.8)
+> Last reviewed: 2026-05-10
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
 - **Start runs** (and optionally schedule them)
@@ -1843,7 +1859,7 @@ This document describes the code in this repository (see **Evidence** links).
 AbstractGateway is designed to sit between **thin clients / UIs** and **AbstractRuntime**:
 - AbstractGateway: HTTP/SSE API + durability glue + baseline security (`src/abstractgateway/app.py`, `src/abstractgateway/routes/gateway.py`)
 - AbstractRuntime (required): run model + tick loop + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
-- AbstractCore / AbstractVoice / AbstractVision (optional via `abstractgateway[multimodal]` / `[server]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
+- AbstractCore / AbstractVoice / AbstractVision / AbstractMemory (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
 
 ## High-level shape
 
@@ -1926,7 +1942,7 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (`WorkflowBundleGatewayHost
 ### VisualFlow directory mode (compatibility)
 
 - Input: `*.json` VisualFlow files under `ABSTRACTGATEWAY_FLOWS_DIR`.
-- Requires the `abstractflow` compiler library (`pip install "abstractgateway[visualflow]"`).
+- Requires the `abstractflow` compiler library, included by the base `pip install abstractgateway`.
 
 Evidence: `src/abstractgateway/hosts/visualflow_host.py` (`_require_visualflow_deps`, `VisualFlowRegistry`).
 
@@ -1981,7 +1997,7 @@ Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.p
 
 - **AbstractRuntime** (required): the durable run model + tick loop + stores (declared in `pyproject.toml`).
 - **AbstractGateway** (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in `src/abstractgateway/routes/gateway.py`).
-- **AbstractCore / AbstractVoice / AbstractVision** (optional via `abstractgateway[multimodal]` / `[server]`): LLM/tool execution, provider-level prompt-cache controls, and workflow-backed/direct generated image/voice/audio capabilities used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
+- **AbstractCore / AbstractVoice / AbstractVision / AbstractMemory** (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).
 
 Related repos:
@@ -2005,7 +2021,7 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation), `src/
   - versioning: bundles are addressed as `bundle_id@bundle_version`
 - **VisualFlow directory mode** (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=visualflow`):
   - input: a directory of `*.json` VisualFlow files
-  - requires: `pip install "abstractgateway[visualflow]"`
+  - requires: the base `pip install abstractgateway`
 
 Evidence: `src/abstractgateway/service.py` (workflow source switch), `src/abstractgateway/hosts/bundle_host.py`, `src/abstractgateway/hosts/visualflow_host.py`.
 
@@ -2116,9 +2132,8 @@ Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start
 
 ### My bundle fails with “LLM/tool execution requires AbstractCore integration”
 
-AbstractRuntime’s AbstractCore integration is included by
-`abstractgateway[multimodal]`, `abstractgateway[server]`, and aggregate
-profiles. If this error appears, verify the installed package set with
+AbstractRuntime’s AbstractCore integration is included by the base
+`abstractgateway` install. If this error appears, verify the installed package set with
 `pip show AbstractRuntime abstractcore`.
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/needs_tools`).
@@ -2151,16 +2166,12 @@ Evidence: tool executor selection in `src/abstractgateway/hosts/bundle_host.py`.
 
 ### Why do `/voice/tts` or `/audio/transcribe` fail with “capability unavailable”?
 
-Those endpoints are backed by **AbstractVoice** (`abstractvoice`). Install the voice extra:
+Those endpoints are backed by **AbstractVoice** (`abstractvoice`), which is
+included by the base `abstractgateway` install. Verify the installed package
+set with:
 
 ```bash
-pip install "abstractgateway[voice]"
-```
-
-Or use the batteries-included install:
-
-```bash
-pip install "abstractgateway[all]"
+pip show abstractgateway abstractvoice abstractcore
 ```
 
 By default, the gateway allows AbstractVoice to download models on first use. If you disabled downloads (or want to enable them explicitly), set:
@@ -2176,15 +2187,15 @@ environment variables in the gateway process, for example
 
 ### How do I enable generated images or Runtime-managed multimodal outputs?
 
-Use the server/multimodal profile:
+Use the base install:
 
 ```bash
-pip install "abstractgateway[server]"
+pip install abstractgateway
 ```
 
-The profile includes `AbstractRuntime[multimodal]`, AbstractCore's
-`vision`/`voice`/`audio` extras, `abstractvision>=0.3.2`, and
-`abstractvoice>=0.9.1`. The server image defaults image and audio generation to
+The base install includes `AbstractRuntime[multimodal]`, AbstractCore's
+`vision`/`voice`/`audio` extras, `abstractvision>=0.3.3`, and
+`abstractvoice>=0.9.2`. The server image defaults image and audio generation to
 OpenAI remote endpoints; set `OPENAI_API_KEY` (or the `ABSTRACTVISION_*` /
 `ABSTRACTVOICE_*` overrides) before expecting live generation to succeed. Use
 `ABSTRACTVISION_BACKEND=diffusers` or `sdcpp` only for custom images that
@@ -2214,22 +2225,19 @@ provider-independent local KV cache or full CachedSession persistence system.
 
 ### My bundle fails with “Visual Agent nodes require AbstractAgent”
 
-Install `abstractagent` (already included by `abstractgateway[server]` and
-`abstractgateway[all]`):
+AbstractAgent is included by the base `abstractgateway` install. Verify the
+installed package set with:
 
 ```bash
-pip install abstractagent
+pip show abstractgateway abstractagent
 ```
 
 Evidence: agent workflow registration in `src/abstractgateway/hosts/bundle_host.py`.
 
 ### My bundle fails with “memory_kg_* nodes … install abstractmemory”
 
-`memory_kg_*` nodes require Gateway's AbstractMemory 0.0.x TripleStore integration:
-
-```bash
-pip install "abstractgateway[memory]"
-```
+`memory_kg_*` nodes use Gateway's AbstractMemory TripleStore integration,
+included by the base `abstractgateway` install.
 
 Keep the default `lancedb` backend for durable vector-capable memory, use
 `memory` for process-local dev/test memory, or set

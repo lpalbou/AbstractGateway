@@ -6240,6 +6240,8 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "schedule": {"available": True, "endpoint": _api_gateway_path("/runs/schedule")},
             "summary": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}")},
             "list": {"available": True, "endpoint": _api_gateway_path("/runs")},
+            "input_data": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/input_data")},
+            "history_bundle": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/history_bundle")},
             "commands": {
                 "available": True,
                 "endpoint": _api_gateway_path("/commands"),

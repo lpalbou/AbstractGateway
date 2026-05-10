@@ -4,7 +4,7 @@ This image packages the AbstractGateway HTTP/SSE server for durable
 AbstractRuntime runs:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway-server:0.2.6
+ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 Release images are published for `linux/amd64` and `linux/arm64`.
@@ -12,7 +12,7 @@ A separate experimental full NVIDIA image is published best-effort for
 `linux/amd64`:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.6
+ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8
 ```
 
 The image installs:
@@ -78,7 +78,7 @@ docker run --rm --name abstractgateway-server \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
   -v "$PWD/workspace:/workspace" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.6
+  ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 `ABSTRACTGATEWAY_AUTH_TOKEN` is the gateway bearer token. Clients send it as
@@ -97,7 +97,7 @@ docker run --rm --name abstractgateway-server \
   -e ABSTRACTGATEWAY_MODEL="your-model" \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -e OPENAI_COMPATIBLE_API_KEY="$OPENAI_COMPATIBLE_API_KEY" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.6
+  ghcr.io/lpalbou/abstractgateway-server:0.2.8
 ```
 
 Use `http://model-runner.docker.internal/engines/v1` for Docker Model Runner,
@@ -144,7 +144,7 @@ For unreleased local checkouts, build the image from this repository:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.6-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.8-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

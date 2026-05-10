@@ -3,14 +3,14 @@
 ## Status
 
 AbstractGateway is a durable HTTP/SSE host for AbstractRuntime runs. The current
-0.2.6 surface already provides run start/schedule, durable commands, ledger
-replay/streaming, artifacts, VisualFlow CRUD/publish, workspace policy, provider
-and tool discovery, direct voice TTS, audio transcription, direct generated
-image artifacts/events, provider-level and session-level prompt-cache controls,
-optional embeddings/KG helpers with configurable memory stores, Core-backed
-voice/vision catalog proxy endpoints, explicit install/config profiles, and a
-versioned thin-client capability contract for Flow, Assistant, Code, and shared
-Gateway features.
+0.2.8 surface already provides run start/schedule/input/history, durable
+commands, ledger replay/streaming, artifacts, VisualFlow CRUD/publish,
+workspace policy, provider and tool discovery, direct voice TTS, audio
+transcription, direct generated image artifacts/events, provider-level and
+session-level prompt-cache controls, optional embeddings/KG helpers with
+configurable memory stores, Core-backed voice/vision catalog proxy endpoints,
+explicit install/config profiles, and a versioned thin-client capability
+contract for Flow, Assistant, Code, and shared Gateway features.
 
 The next planning focus is to make the gateway a premium control plane for thin
 AI apps such as AbstractFlow, AbstractAssistant, and AbstractCode. The gateway

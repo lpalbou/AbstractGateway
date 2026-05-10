@@ -17,7 +17,7 @@ Key invariants / defaults (evidence in code):
 - Optional operator endpoints include account-scoped email inbox routes (`/api/gateway/email/*`) used by AbstractObserver (Inbox → Email) (`src/abstractgateway/routes/gateway.py`).
 
 Multimodal notes:
-- Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (best-effort; reports installed optional capabilities like `voice`, `tools`, `visualflow`, `vision_fallback`, `media`).
+- Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (best-effort; reports installed optional capabilities like `voice`, `tools`, `visualflow`, `vision_fallback`, `media`, plus the versioned shared run contract including input-data and history-bundle read endpoints).
 - Direct Gateway voice/audio durable endpoints (when `abstractvoice` is installed on the gateway host):
   - STT: `POST /api/gateway/runs/{run_id}/audio/transcribe`
   - TTS: `POST /api/gateway/runs/{run_id}/voice/tts`

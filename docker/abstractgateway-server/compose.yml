@@ -2,13 +2,13 @@ name: abstractgateway-server
 
 services:
   abstractgateway:
-    image: ghcr.io/lpalbou/abstractgateway-server:${ABSTRACTGATEWAY_IMAGE_TAG:-0.2.6}
+    image: ghcr.io/lpalbou/abstractgateway-server:${ABSTRACTGATEWAY_IMAGE_TAG:-0.2.8}
     build:
       context: ../..
       dockerfile: docker/abstractgateway-server/Dockerfile
       args:
         ABSTRACTGATEWAY_INSTALL_MODE: ${ABSTRACTGATEWAY_INSTALL_MODE:-pypi}
-        ABSTRACTGATEWAY_VERSION: ${ABSTRACTGATEWAY_VERSION:-0.2.6}
+        ABSTRACTGATEWAY_VERSION: ${ABSTRACTGATEWAY_VERSION:-0.2.8}
         ABSTRACTGATEWAY_EXTRAS: ${ABSTRACTGATEWAY_EXTRAS:-}
     ports:
       - "${ABSTRACTGATEWAY_BIND_HOST:-127.0.0.1}:${ABSTRACTGATEWAY_PORT:-8080}:8080"
