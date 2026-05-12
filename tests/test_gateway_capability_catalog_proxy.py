@@ -25,7 +25,7 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient
     return TestClient(app), {"Authorization": f"Bearer {token}"}
 
 
-def test_voice_catalog_uses_static_env_profiles_without_core_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_voice_catalog_uses_local_capability_profiles_without_core_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", raising=False)
     monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
     monkeypatch.setenv("ABSTRACTVOICE_OPENAI_TTS_VOICES", "coral,verse")
@@ -36,8 +36,9 @@ def test_voice_catalog_uses_static_env_profiles_without_core_server(tmp_path: Pa
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["source"] == "gateway_static"
-    ids = {item.get("id") for item in body["profiles"]}
+    assert body["source"] == "abstractvoice_local"
+    assert body["route_available"] is True
+    ids = {item.get("id") or item.get("profile_id") or item.get("voice_id") for item in body["profiles"]}
     assert {"coral", "verse"} <= ids
 
 
@@ -102,3 +103,58 @@ def test_vision_catalog_rejects_unknown_task(tmp_path: Path, monkeypatch: pytest
         resp = client.get("/api/gateway/vision/provider_models?task=unknown", headers=headers)
 
     assert resp.status_code == 400, resp.text
+
+
+def test_vision_models_catalog_proxies_configured_core_catalog_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Dict[str, Any]] = []
+
+    def fake_fetch(path: str, *, query: Optional[dict] = None, provider_api_key: Optional[str] = None) -> Dict[str, Any]:
+        calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key})
+        return {"available": True, "models": [{"model_id": "flux-local"}], "source": "abstractvision"}
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "fetch_core_catalog_json", fake_fetch)
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/vision/models", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "abstractcore_server"
+    assert body["route_available"] is True
+    assert body["models"] == [{"model_id": "flux-local"}]
+    assert calls == [{"path": "/vision/models", "query": {}, "provider_api_key": None}]
+
+
+def test_audio_transcription_models_catalog_proxies_configured_core_catalog_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Dict[str, Any]] = []
+
+    def fake_fetch(path: str, *, query: Optional[dict] = None, provider_api_key: Optional[str] = None) -> Dict[str, Any]:
+        calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key})
+        return {"available": True, "models": ["stt-test"], "source": "abstractvoice"}
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "fetch_core_catalog_json", fake_fetch)
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/audio/transcriptions/models", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "abstractcore_server"
+    assert body["models"] == ["stt-test"]
+    assert calls == [{"path": "/audio/transcriptions/models", "query": {}, "provider_api_key": None}]

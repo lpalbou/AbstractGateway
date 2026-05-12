@@ -25,7 +25,7 @@ def test_base_install_is_remote_light_server() -> None:
     deps = list(data["project"]["dependencies"])
 
     assert "AbstractRuntime[multimodal]>=0.4.9" in deps
-    assert "abstractagent>=0.3.6" in deps
+    assert "abstractagent>=0.3.7" in deps
     assert "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12" in deps
     assert "abstractflow>=0.3.7" in deps
     assert "abstractvision>=0.3.4" in deps
@@ -54,7 +54,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     apple = "\n".join(extras["apple"])
     assert "AbstractRuntime[multimodal,all-apple]>=0.4.9" in apple
-    assert "abstractagent[all-apple]>=0.3.6" in apple
+    assert "abstractagent[all-apple]>=0.3.7" in apple
     assert "abstractcore[all-apple]>=2.13.12" in apple
     assert "abstractvision[all-apple]>=0.3.4" in apple
     assert "abstractvoice[all-apple]>=0.9.2" in apple
@@ -62,7 +62,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "AbstractMemory[all-apple]>=0.2.6" in apple
     gpu = "\n".join(extras["gpu"])
     assert "AbstractRuntime[multimodal,all-gpu]>=0.4.9" in gpu
-    assert "abstractagent[all-gpu]>=0.3.6" in gpu
+    assert "abstractagent[all-gpu]>=0.3.7" in gpu
     assert "abstractcore[all-gpu]>=2.13.12" in gpu
     assert "abstractvision[all-gpu]>=0.3.4" in gpu
     assert "abstractvoice[all-gpu]>=0.9.2" in gpu

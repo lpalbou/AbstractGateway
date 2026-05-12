@@ -98,6 +98,8 @@ Studio (`http://host.docker.internal:1234/v1`), Ollama
 For native non-Docker installs with local engines, use
 `pip install "abstractgateway[apple]"` on Apple Silicon, and
 `pip install "abstractgateway[gpu]"` on GPU workstations or NVIDIA Docker builds.
+For a minimal Apple-local Gateway + Flow setup, see
+[docs/apple-local-gateway-flow.md](docs/apple-local-gateway-flow.md).
 
 Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 
@@ -111,7 +113,9 @@ Direct Gateway APIs in this release:
 - `POST /api/gateway/runs/{run_id}/images/generate`
 - `GET /api/gateway/voice/voices`
 - `GET /api/gateway/audio/speech/models`
+- `GET /api/gateway/audio/transcriptions/models`
 - `GET /api/gateway/vision/provider_models`
+- `GET /api/gateway/vision/models`
 - `/api/gateway/prompt_cache/*` provider/model operator controls
 - `/api/gateway/sessions/{session_id}/prompt_cache/*` session lifecycle controls
 - `/api/gateway/kg/query` with configurable `lancedb` or in-memory AbstractMemory stores, plus `sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`

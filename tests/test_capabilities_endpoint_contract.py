@@ -79,7 +79,7 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         for k in ("voice", "tools", "visualflow", "vision_fallback", "media"):
             assert isinstance(caps.get(k), dict)
             assert isinstance(caps[k].get("installed"), bool)
-        for k in ("abstractruntime", "abstractcore", "abstractvoice", "abstractvision", "multimodal", "capability_plugins"):
+        for k in ("abstractgateway", "abstractruntime", "abstractcore", "abstractvoice", "abstractvision", "multimodal", "capability_plugins"):
             assert isinstance(caps.get(k), dict)
             assert isinstance(caps[k].get("installed"), bool)
         plugin_caps = caps["capability_plugins"].get("capabilities")
@@ -100,6 +100,11 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert common.get("runs", {}).get("history_bundle", {}).get("endpoint") == "/api/gateway/runs/{run_id}/history_bundle"
         assert common.get("ledger", {}).get("stream", {}).get("transport") == "sse"
         assert common.get("artifacts", {}).get("content", {}).get("endpoint") == "/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content"
+        assert common.get("discovery", {}).get("voice_voices") == "/api/gateway/voice/voices"
+        assert common.get("discovery", {}).get("audio_speech_models") == "/api/gateway/audio/speech/models"
+        assert common.get("discovery", {}).get("audio_transcription_models") == "/api/gateway/audio/transcriptions/models"
+        assert common.get("discovery", {}).get("vision_provider_models") == "/api/gateway/vision/provider_models"
+        assert common.get("discovery", {}).get("vision_models") == "/api/gateway/vision/models"
         assert common.get("prompt_cache", {}).get("provider_controls") is True
         assert common.get("prompt_cache", {}).get("session_lifecycle") is True
         assert common.get("prompt_cache", {}).get("session_endpoints", {}).get("prepare") == "/api/gateway/sessions/{session_id}/prompt_cache/prepare"
@@ -110,6 +115,8 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert flow_editor.get("available") is True
         assert flow_editor.get("run_input_schema", {}).get("available") is True
         assert flow_editor.get("run_input_schema", {}).get("endpoint") == "/api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema"
+        assert flow_editor.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/generate"
+        assert flow_editor.get("media", {}).get("generated_voice", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/voice/tts"
 
         assistant = contracts.get("assistant")
         assert isinstance(assistant, dict)
@@ -188,6 +195,9 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert flow_editor["visualflows"]["crud"]["available"] is True
     assert flow_editor["visualflows"]["publish"]["available"] is False
     assert "install_hint" in flow_editor["visualflows"]["publish"]
+    assert flow_editor["media"] == contracts["assistant"]["media"]
+    assert contracts["common"]["discovery"]["vision_models"] == "/api/gateway/vision/models"
+    assert contracts["assistant"]["voice"]["stt"]["models_endpoint"] == "/api/gateway/audio/transcriptions/models"
 
 
 def test_generated_image_contract_separates_light_package_from_backend_config(monkeypatch: pytest.MonkeyPatch) -> None:

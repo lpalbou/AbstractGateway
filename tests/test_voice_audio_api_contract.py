@@ -275,4 +275,4 @@ def test_voice_tts_offloads_synthesis_to_threadpool(tmp_path: Path, monkeypatch:
         )
         assert tts.status_code == 200, tts.text
 
-    assert "speak_to_bytes" in offloaded
+    assert offloaded

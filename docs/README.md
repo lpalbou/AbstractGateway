@@ -21,6 +21,7 @@ Related repos:
 - FAQ / troubleshooting: [faq.md](./faq.md)
 - Architecture (durable contract + components): [architecture.md](./architecture.md)
 - Configuration (env vars + install extras): [configuration.md](./configuration.md)
+- Apple Silicon local Gateway + Flow quickstart: [apple-local-gateway-flow.md](./apple-local-gateway-flow.md)
 - Deployment (Docker/GHCR/Compose): [deployment.md](./deployment.md)
 - API overview (client contract + OpenAPI): [api.md](./api.md)
 - Security guide (auth/origin/limits/audit log): [security.md](./security.md)

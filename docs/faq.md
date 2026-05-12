@@ -215,11 +215,11 @@ pip install abstractgateway
 ```
 
 The base install includes `AbstractRuntime[multimodal]`, AbstractCore's
-`vision`/`voice`/`audio` extras, `abstractvision>=0.3.3`, and
-`abstractvoice>=0.9.2`. The server image defaults image and audio generation to
-OpenAI remote endpoints; set `OPENAI_API_KEY` (or the `ABSTRACTVISION_*` /
-`ABSTRACTVOICE_*` overrides) before expecting live generation to succeed. Use
-`ABSTRACTVISION_BACKEND=diffusers` or `sdcpp` only for custom images that
+`vision`/`voice`/`audio` extras, `abstractvision>=0.3.4`, and
+`abstractvoice>=0.9.3`. The server image defaults image and audio generation to
+OpenAI remote endpoints; set `OPENAI_API_KEY` (or the `ABSTRACTGATEWAY_VISION_*` /
+`ABSTRACTGATEWAY_VOICE_*` overrides) before expecting live generation to succeed. Use
+`ABSTRACTGATEWAY_VISION_BACKEND=diffusers` or `sdcpp` only for custom images that
 intentionally include those local engines.
 
 Generated images are available both inside Runtime/Core workflows and through

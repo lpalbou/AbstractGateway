@@ -286,7 +286,7 @@ class PublishVisualFlowRequest(BaseModel):
     bundle_id: Optional[str] = Field(default=None, description="Stable bundle identity (defaults to sanitized flow.name).")
     bundle_version: Optional[str] = Field(default=None, description="Explicit bundle_version (leave empty to auto-bump).")
     overwrite: bool = Field(default=False, description="If true, overwrite an existing bundle_id@version.")
-    reload_gateway: bool = Field(default=True, description="If true, reload gateway bundles after publish (best-effort).")
+    reload_gateway: bool = Field(default=True, description="If true, reload gateway bundles after publish before returning.")
 
 
 class PublishVisualFlowResponse(BaseModel):
@@ -2780,17 +2780,17 @@ async def publish_visualflow(flow_id: str, req: PublishVisualFlowRequest) -> Pub
             pass
 
     gateway_reloaded = False
-    gateway_reload_error: Optional[str] = None
     if bool(req.reload_gateway):
         reload_fn = getattr(host, "reload_bundles_from_disk", None)
-        if callable(reload_fn):
-            try:
-                reload_fn()
-                gateway_reloaded = True
-            except Exception as e:
-                gateway_reload_error = str(e)
-        else:
-            gateway_reload_error = "reload_bundles_from_disk is not available"
+        if not callable(reload_fn):
+            raise HTTPException(status_code=503, detail="Bundle reload is not supported on this gateway host")
+        try:
+            reload_fn()
+            gateway_reloaded = True
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Failed to reload bundles after publish: {e}")
+    else:
+        gateway_reloaded = False
 
     return PublishVisualFlowResponse(
         ok=True,
@@ -2799,7 +2799,7 @@ async def publish_visualflow(flow_id: str, req: PublishVisualFlowRequest) -> Pub
         bundle_ref=f"{installed.bundle_id}@{installed.bundle_version}",
         bundle_path=str(installed.path),
         gateway_reloaded=bool(gateway_reloaded),
-        gateway_reload_error=gateway_reload_error,
+        gateway_reload_error=None,
     )
 
 
@@ -3324,9 +3324,13 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
         )
     except WorkflowDeprecatedError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    except KeyError:
+    except KeyError as e:
         # Best-effort error message: in bundle mode, KeyError can refer to either a bundle or a flow.
-        msg = f"Flow '{flow_id}' not found" if flow_id else "Bundle not found"
+        msg = str(e).strip()
+        if msg and msg[0] in {"'", '"'} and msg[-1:] == msg[0]:
+            msg = msg[1:-1]
+        if not msg:
+            msg = f"Flow '{flow_id}' not found" if flow_id else "Bundle not found"
         raise HTTPException(status_code=404, detail=msg)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start run: {e}")
@@ -4954,7 +4958,9 @@ async def save_chat_thread(run_id: str, req: SaveChatThreadRequest) -> SaveChatT
 
 class VoiceTTSRequest(BaseModel):
     text: str = Field(..., description="Text to synthesize.")
-    voice: Optional[str] = Field(default=None, description="Optional voice selector (backend-specific).")
+    voice: Optional[str] = Field(default=None, description="Optional cloned voice selector (backend-specific).")
+    profile: Optional[str] = Field(default=None, description="Optional base/profile voice selector for the active TTS engine.")
+    model: Optional[str] = Field(default=None, description="Optional TTS model override for this synthesis request.")
     format: str = Field(default="wav", description="Audio container/codec (wav|mp3, backend-dependent).")
     request_id: Optional[str] = Field(default=None, description="Optional idempotency key (UUID recommended).")
 
@@ -4993,17 +4999,111 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         raise HTTPException(status_code=400, detail="text is required")
 
     voice = getattr(req, "voice", None)
+    profile = getattr(req, "profile", None)
+    model = getattr(req, "model", None)
     fmt = str(getattr(req, "format", "wav") or "wav").strip().lower()
     voice_name = str(voice).strip() if isinstance(voice, str) and voice.strip() else None
+    profile_name = str(profile).strip() if isinstance(profile, str) and profile.strip() else None
+    model_name = str(model).strip() if isinstance(model, str) and model.strip() else None
 
     try:
         vm = _get_gateway_voice_manager()
-        audio_bytes0 = await asyncio.to_thread(
-            vm.speak_to_bytes,
-            text,
-            format=fmt,
-            voice=voice_name,
-        )
+
+        def _synthesize() -> bytes:
+            with _VOICE_MANAGER_LOCK:
+                sentinel = object()
+                old_vm_model = getattr(vm, "tts_model", sentinel)
+                old_profile_id = ""
+                if profile_name and hasattr(vm, "get_active_profile"):
+                    try:
+                        old_profile = vm.get_active_profile(kind="tts")
+                        old_profile_id = str(getattr(old_profile, "profile_id", "") or "").strip()
+                    except Exception:
+                        old_profile_id = ""
+                adapter = getattr(vm, "tts_adapter", None)
+                old_adapter_model = getattr(adapter, "model_id", sentinel) if adapter is not None else sentinel
+                old_cloner = getattr(vm, "_voice_cloner", sentinel)
+                applied_profile = False
+                try:
+                    if model_name:
+                        try:
+                            setattr(vm, "tts_model", model_name)
+                        except Exception:
+                            pass
+                        if adapter is not None and hasattr(adapter, "model_id"):
+                            try:
+                                setattr(adapter, "model_id", model_name)
+                            except Exception:
+                                pass
+                        try:
+                            setattr(vm, "_voice_cloner", None)
+                        except Exception:
+                            pass
+                    if profile_name and hasattr(vm, "set_profile"):
+                        try:
+                            applied_profile = bool(vm.set_profile(profile_name, kind="tts"))
+                        except TypeError:
+                            try:
+                                applied_profile = bool(vm.set_profile(profile_name))
+                            except Exception:
+                                applied_profile = False
+                        except Exception:
+                            applied_profile = False
+                    return vm.speak_to_bytes(text, format=fmt, voice=None if applied_profile else voice_name)
+                finally:
+                    if applied_profile and old_profile_id and hasattr(vm, "set_profile"):
+                        try:
+                            vm.set_profile(old_profile_id, kind="tts")
+                        except TypeError:
+                            try:
+                                vm.set_profile(old_profile_id)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    elif applied_profile:
+                        try:
+                            active_adapter = getattr(vm, "tts_adapter", None)
+                            if active_adapter is not None and hasattr(active_adapter, "voice"):
+                                setattr(active_adapter, "voice", None)
+                        except Exception:
+                            pass
+                    if old_vm_model is sentinel:
+                        try:
+                            delattr(vm, "tts_model")
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            setattr(vm, "tts_model", old_vm_model)
+                        except Exception:
+                            pass
+                    if adapter is not None and old_adapter_model is not sentinel:
+                        try:
+                            setattr(adapter, "model_id", old_adapter_model)
+                        except Exception:
+                            pass
+                    elif model_name:
+                        try:
+                            new_adapter = getattr(vm, "tts_adapter", None)
+                            if new_adapter is not None and new_adapter is not adapter and hasattr(new_adapter, "model_id"):
+                                fallback_model = old_vm_model if old_vm_model is not sentinel else None
+                                setattr(new_adapter, "model_id", fallback_model)
+                        except Exception:
+                            pass
+                    if model_name:
+                        if old_cloner is sentinel:
+                            try:
+                                setattr(vm, "_voice_cloner", None)
+                            except Exception:
+                                pass
+                        else:
+                            try:
+                                setattr(vm, "_voice_cloner", old_cloner)
+                            except Exception:
+                                pass
+
+        audio_bytes0 = await asyncio.to_thread(_synthesize)
         if not isinstance(audio_bytes0, (bytes, bytearray)):
             raise TypeError("Voice backend returned non-bytes audio")
         audio_bytes = bytes(audio_bytes0)
@@ -5037,6 +5137,10 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     voice_str = str(voice_name or "").strip()
     if voice_str:
         tags["voice"] = voice_str
+    if profile_name:
+        tags["profile"] = profile_name
+    if model_name:
+        tags["model"] = model_name
 
     try:
         meta = await asyncio.to_thread(
@@ -5068,6 +5172,8 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         "request_id": request_id,
         "text": text,
         "voice": voice,
+        "profile": profile_name,
+        "model": model_name,
         "format": fmt,
         "audio_artifact": audio_ref,
     }
@@ -5086,6 +5192,7 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
 class AudioTranscribeRequest(BaseModel):
     audio_artifact: Dict[str, Any] = Field(..., description="Audio artifact ref dict like {'$artifact': '...'} (from /attachments/*).")
     language: Optional[str] = Field(default=None, description="Optional language hint (backend-specific).")
+    model: Optional[str] = Field(default=None, description="Optional STT model override for this transcription request.")
     request_id: Optional[str] = Field(default=None, description="Optional idempotency key (UUID recommended).")
 
 
@@ -5099,8 +5206,10 @@ class AudioTranscribeResponse(BaseModel):
 
 class ImageGenerateRequest(BaseModel):
     prompt: str = Field(..., max_length=20000, description="Image generation prompt.")
-    provider: Optional[str] = Field(default=None, max_length=80, description="Optional AbstractCore provider override.")
-    model: Optional[str] = Field(default=None, max_length=240, description="Optional image model id/name.")
+    provider: Optional[str] = Field(default=None, max_length=80, description="Optional LLM/runtime provider override.")
+    model: Optional[str] = Field(default=None, max_length=240, description="Optional LLM/runtime model override.")
+    image_provider: Optional[str] = Field(default=None, max_length=80, description="Optional image backend/provider override.")
+    image_model: Optional[str] = Field(default=None, max_length=240, description="Optional image model id/name.")
     size: Optional[str] = Field(default=None, max_length=32, description="Optional size selector such as 1024x1024.")
     width: Optional[int] = Field(default=None, ge=1, le=8192, description="Optional image width.")
     height: Optional[int] = Field(default=None, ge=1, le=8192, description="Optional image height.")
@@ -5200,6 +5309,8 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
 
     language = getattr(req, "language", None)
     language_hint = str(language).strip() if isinstance(language, str) and language.strip() else None
+    stt_model = getattr(req, "model", None)
+    stt_model_name = str(stt_model).strip() if isinstance(stt_model, str) and stt_model.strip() else None
 
     load_fn = getattr(store, "load", None)
     if not callable(load_fn):
@@ -5218,11 +5329,51 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
 
     try:
         vm = _get_gateway_voice_manager()
-        text = await asyncio.to_thread(
-            vm.transcribe_from_bytes,
-            audio_bytes,
-            language=language_hint,
-        )
+
+        def _transcribe() -> str:
+            with _VOICE_MANAGER_LOCK:
+                sentinel = object()
+                old_vm_model = getattr(vm, "stt_model", sentinel)
+                adapter = getattr(vm, "stt_adapter", None)
+                old_adapter_model = getattr(adapter, "model_id", sentinel) if adapter is not None else sentinel
+                try:
+                    if stt_model_name:
+                        try:
+                            setattr(vm, "stt_model", stt_model_name)
+                        except Exception:
+                            pass
+                        if adapter is not None and hasattr(adapter, "model_id"):
+                            try:
+                                setattr(adapter, "model_id", stt_model_name)
+                            except Exception:
+                                pass
+                    return str(vm.transcribe_from_bytes(audio_bytes, language=language_hint) or "")
+                finally:
+                    if old_vm_model is sentinel:
+                        try:
+                            delattr(vm, "stt_model")
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            setattr(vm, "stt_model", old_vm_model)
+                        except Exception:
+                            pass
+                    if adapter is not None and old_adapter_model is not sentinel:
+                        try:
+                            setattr(adapter, "model_id", old_adapter_model)
+                        except Exception:
+                            pass
+                    elif stt_model_name:
+                        try:
+                            new_adapter = getattr(vm, "stt_adapter", None)
+                            if new_adapter is not None and new_adapter is not adapter and hasattr(new_adapter, "model_id"):
+                                fallback_model = old_vm_model if old_vm_model is not sentinel else None
+                                setattr(new_adapter, "model_id", fallback_model)
+                        except Exception:
+                            pass
+
+        text = await asyncio.to_thread(_transcribe)
         text = str(text or "")
     except HTTPException:
         raise
@@ -5245,6 +5396,8 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         "session_id": str(getattr(run, "session_id", "") or ""),
         "source_audio_artifact": str(audio_ref.get("$artifact")),
     }
+    if stt_model_name:
+        tags["model"] = stt_model_name
     try:
         meta = await asyncio.to_thread(
             store_fn,
@@ -5275,6 +5428,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         "request_id": request_id,
         "audio_artifact": audio_ref,
         "language": language,
+        "model": stt_model_name,
         "text": text,
         "transcript_artifact": transcript_ref,
     }
@@ -5414,6 +5568,8 @@ def _gateway_generated_image_ref_from_result(
         size_i = int(size_bytes) if size_bytes is not None else None
     except Exception:
         size_i = None
+    if size_i is not None and size_i > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Generated image is too large ({size_i} bytes; max {max_bytes})")
 
     sha256 = ""
     load_fn = getattr(store, "load", None)
@@ -5423,8 +5579,12 @@ def _gateway_generated_image_ref_from_result(
             content = getattr(loaded, "content", b"") if loaded is not None else b""
             if isinstance(content, (bytes, bytearray)):
                 blob = bytes(content)
+                if len(blob) > max_bytes:
+                    raise HTTPException(status_code=413, detail=f"Generated image is too large ({len(blob)} bytes; max {max_bytes})")
                 sha256 = hashlib.sha256(blob).hexdigest()
                 size_i = len(blob)
+        except HTTPException:
+            raise
         except Exception:
             sha256 = ""
 
@@ -5502,8 +5662,12 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
             output_spec[key] = value
     if isinstance(req.extra, dict) and req.extra:
         output_spec["extra"] = dict(req.extra)
-    if isinstance(req.model, str) and req.model.strip():
-        output_spec["model"] = req.model.strip()
+    image_provider = str(getattr(req, "image_provider", "") or "").strip()
+    image_model = str(getattr(req, "image_model", "") or "").strip()
+    if image_provider:
+        output_spec["provider"] = image_provider
+    if image_model:
+        output_spec["model"] = image_model
 
     params: Dict[str, Any] = {
         "output": output_spec,
@@ -5560,8 +5724,10 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         "run_id": str(getattr(run, "run_id", rid)),
         "request_id": request_id,
         "prompt": prompt,
-        "provider": req.provider,
-        "model": req.model or (result.get("model") if isinstance(result, dict) else None),
+        "provider": image_provider or None,
+        "model": image_model or (result.get("model") if isinstance(result, dict) else None),
+        "runtime_provider": req.provider,
+        "runtime_model": req.model,
         "size": req.size,
         "width": req.width,
         "height": req.height,
@@ -5994,6 +6160,7 @@ def _core_catalog_or_raise(
     request: Request,
     query: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    query = {str(k): v for k, v in dict(query or {}).items() if v is not None}
     try:
         payload = fetch_core_catalog_json(path, query=query, provider_api_key=_request_provider_api_key(request))
     except CoreCatalogProxyError as e:
@@ -6042,6 +6209,7 @@ def _static_speech_models_response() -> Dict[str, Any]:
         "available": bool(models),
         "route_available": True,
         "models": models,
+        "active_model": models[0] if models else None,
         "source": "gateway_static",
         "stale": False,
         "refreshed_at": _utc_now_iso(),
@@ -6050,11 +6218,208 @@ def _static_speech_models_response() -> Dict[str, Any]:
     }
 
 
+def _static_transcription_models_response() -> Dict[str, Any]:
+    values: list[str] = []
+    for key in (
+        "ABSTRACTGATEWAY_VOICE_STT_MODEL",
+        "ABSTRACTVOICE_STT_MODEL",
+        "ABSTRACTVOICE_OPENAI_STT_MODEL",
+        "ABSTRACTVOICE_OPENAI_COMPATIBLE_STT_MODEL",
+        "ABSTRACTVOICE_REMOTE_STT_MODEL",
+    ):
+        values.extend(_split_env_csv(os.getenv(key)))
+    engine = str(_env_first("ABSTRACTGATEWAY_VOICE_STT_ENGINE", "ABSTRACTVOICE_STT_ENGINE") or "openai").strip().lower()
+    if engine in {"openai", "openai-compatible", "remote"}:
+        values.extend(["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"])
+    elif engine in {"faster_whisper", "faster-whisper", "whisper", "local"}:
+        values.extend(["tiny", "base", "small", "medium", "large-v2", "large-v3"])
+    models = _dedupe_strings(values)
+    return {
+        "available": bool(models),
+        "route_available": True,
+        "models": models,
+        "active_model": models[0] if models else None,
+        "source": "gateway_static",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+        **({} if models else {"config_hint": "Configure AbstractCore server catalog routes or ABSTRACTVOICE_* STT model settings."}),
+    }
+
+
+def _gateway_capability_owner_config(*, voice_base_url: Optional[str] = None, vision_base_url: Optional[str] = None) -> Dict[str, Any]:
+    cfg: Dict[str, Any] = {}
+    if isinstance(voice_base_url, str) and voice_base_url.strip():
+        cfg["voice_remote_base_url"] = voice_base_url.strip()
+    if isinstance(vision_base_url, str) and vision_base_url.strip():
+        cfg["vision_base_url"] = vision_base_url.strip()
+        cfg.setdefault("vision_backend", "openai-compatible")
+    for env_key, cfg_key in {
+        "ABSTRACTGATEWAY_VOICE_TTS_ENGINE": "voice_tts_engine",
+        "ABSTRACTGATEWAY_VOICE_STT_ENGINE": "voice_stt_engine",
+        "ABSTRACTGATEWAY_VOICE_TTS_MODEL": "voice_tts_model",
+        "ABSTRACTGATEWAY_VOICE_STT_MODEL": "voice_stt_model",
+        "ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL": "voice_remote_base_url",
+        "ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY": "voice_remote_api_key",
+        "ABSTRACTVOICE_TTS_ENGINE": "voice_tts_engine",
+        "ABSTRACTVOICE_STT_ENGINE": "voice_stt_engine",
+        "ABSTRACTVOICE_TTS_MODEL": "voice_tts_model",
+        "ABSTRACTVOICE_STT_MODEL": "voice_stt_model",
+        "ABSTRACTVOICE_REMOTE_BASE_URL": "voice_remote_base_url",
+        "ABSTRACTVOICE_REMOTE_API_KEY": "voice_remote_api_key",
+        "ABSTRACTGATEWAY_VISION_BACKEND": "vision_backend",
+        "ABSTRACTGATEWAY_VISION_BASE_URL": "vision_base_url",
+        "ABSTRACTGATEWAY_VISION_API_KEY": "vision_api_key",
+        "ABSTRACTGATEWAY_VISION_MODEL_ID": "vision_model_id",
+        "ABSTRACTGATEWAY_VISION_DIFFUSERS_MODEL_ID": "vision_model_id",
+        "ABSTRACTGATEWAY_VISION_DIFFUSERS_DEVICE": "vision_device",
+        "ABSTRACTGATEWAY_VISION_DIFFUSERS_TORCH_DTYPE": "vision_torch_dtype",
+        "ABSTRACTGATEWAY_VISION_SDCPP_MODEL": "vision_sdcpp_model",
+        "ABSTRACTGATEWAY_VISION_SDCPP_DIFFUSION_MODEL": "vision_sdcpp_diffusion_model",
+        "ABSTRACTGATEWAY_VISION_SDCPP_BIN": "vision_sdcpp_bin",
+        "ABSTRACTVISION_BACKEND": "vision_backend",
+        "ABSTRACTVISION_BASE_URL": "vision_base_url",
+        "ABSTRACTVISION_API_KEY": "vision_api_key",
+        "ABSTRACTVISION_MODEL_ID": "vision_model_id",
+        "ABSTRACTVISION_DIFFUSERS_MODEL_ID": "vision_model_id",
+        "ABSTRACTVISION_DIFFUSERS_DEVICE": "vision_device",
+        "ABSTRACTVISION_DIFFUSERS_TORCH_DTYPE": "vision_torch_dtype",
+        "ABSTRACTVISION_SDCPP_MODEL": "vision_sdcpp_model",
+        "ABSTRACTVISION_SDCPP_DIFFUSION_MODEL": "vision_sdcpp_diffusion_model",
+        "ABSTRACTVISION_SDCPP_BIN": "vision_sdcpp_bin",
+    }.items():
+        value = os.getenv(env_key)
+        if isinstance(value, str) and value.strip() and cfg_key not in cfg:
+            cfg[cfg_key] = value.strip()
+    return cfg
+
+
+def _gateway_capability_registry(*, voice_base_url: Optional[str] = None, vision_base_url: Optional[str] = None):
+    from abstractcore.capabilities import CapabilityRegistry  # type: ignore
+
+    preferred_backends: Dict[str, str] = {}
+    for capability in ["voice", "audio", "vision", "music"]:
+        value = _env_first(
+            f"ABSTRACTGATEWAY_{capability.upper()}_BACKEND",
+            f"ABSTRACTCORE_{capability.upper()}_BACKEND",
+        )
+        if value:
+            preferred_backends[capability] = value
+    owner = type("_GatewayCapabilityOwner", (), {"config": _gateway_capability_owner_config(voice_base_url=voice_base_url, vision_base_url=vision_base_url)})()
+    return CapabilityRegistry(owner, preferred_backends=preferred_backends)
+
+
+def _local_voice_catalog_response(*, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    try:
+        catalog = _gateway_capability_registry(voice_base_url=base_url).voice.voice_catalog()
+    except Exception:
+        return None
+    out = dict(catalog) if isinstance(catalog, dict) else {}
+    if not out:
+        return None
+    out.setdefault("kind", "tts")
+    out.setdefault("profiles", [])
+    out.setdefault("voices", out.get("profiles") if isinstance(out.get("profiles"), list) else [])
+    out.setdefault("models", out.get("tts_models") if isinstance(out.get("tts_models"), list) else [])
+    out["available"] = True
+    out["route_available"] = True
+    out["source"] = "abstractvoice_local"
+    out.setdefault("stale", False)
+    out.setdefault("error", None)
+    out["refreshed_at"] = _utc_now_iso()
+    return out
+
+
+def _local_speech_models_response(*, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    try:
+        models = _gateway_capability_registry(voice_base_url=base_url).voice.list_tts_models()
+    except Exception:
+        return None
+    cleaned = _dedupe_strings([str(x) for x in list(models or [])])
+    if not cleaned:
+        return None
+    return {
+        "available": True,
+        "route_available": True,
+        "models": cleaned,
+        "active_model": cleaned[0] if cleaned else None,
+        "source": "abstractvoice_local",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+    }
+
+
+def _local_transcription_models_response(*, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    try:
+        models = _gateway_capability_registry(voice_base_url=base_url).voice.list_stt_models()
+    except Exception:
+        return None
+    cleaned = _dedupe_strings([str(x) for x in list(models or [])])
+    if not cleaned:
+        return None
+    return {
+        "available": True,
+        "route_available": True,
+        "models": cleaned,
+        "active_model": cleaned[0] if cleaned else None,
+        "source": "abstractvoice_local",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+    }
+
+
+def _local_vision_provider_models_response(*, task: Optional[str], base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    try:
+        models = _gateway_capability_registry(vision_base_url=base_url).vision.list_provider_models(task=task)
+    except Exception:
+        return None
+    items = [dict(x) for x in list(models or []) if isinstance(x, dict)]
+    if not items:
+        return None
+    return {
+        "available": True,
+        "route_available": True,
+        "models": items,
+        "task": task,
+        "source": "abstractvision_local_provider",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+    }
+
+
+async def _local_cached_vision_models_response() -> Optional[Dict[str, Any]]:
+    try:
+        from abstractcore.server.vision_endpoints import list_cached_vision_models  # type: ignore
+    except Exception:
+        return None
+    try:
+        maybe = list_cached_vision_models()
+        if hasattr(maybe, "__await__"):
+            maybe = await maybe
+        out = dict(maybe) if isinstance(maybe, dict) else {}
+    except Exception:
+        return None
+    if not out:
+        return None
+    out["available"] = bool(out.get("models"))
+    out["route_available"] = True
+    out["source"] = "abstractvision_local_cache"
+    out.setdefault("stale", False)
+    out.setdefault("error", None)
+    out["refreshed_at"] = _utc_now_iso()
+    return out
+
+
 def _static_vision_provider_models_response(*, task: Optional[str]) -> Dict[str, Any]:
     values = _dedupe_strings(
         [
             str(os.getenv(key) or "").strip()
             for key in (
+                "OPENAI_IMAGE_MODEL_ID",
+                "OPENAI_IMAGE_MODEL",
                 "ABSTRACTCORE_VISION_MODEL_ID",
                 "ABSTRACTCORE_VISION_UPSTREAM_MODEL_ID",
                 "ABSTRACTVISION_MODEL_ID",
@@ -6114,6 +6479,13 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
             "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
             "catalog_endpoint": _api_gateway_path("/voice/voices"),
             "models_endpoint": _api_gateway_path("/audio/speech/models"),
+            "active_model": _env_first(
+                "ABSTRACTGATEWAY_VOICE_TTS_MODEL",
+                "ABSTRACTVOICE_TTS_MODEL",
+                "ABSTRACTVOICE_OPENAI_TTS_MODEL",
+                "ABSTRACTVOICE_OPENAI_COMPATIBLE_TTS_MODEL",
+                "ABSTRACTVOICE_REMOTE_TTS_MODEL",
+            ),
             "delivery_modes": ["artifact"],
             "formats": ["wav", "mp3"],
             "content_types": {"wav": "audio/wav", "mp3": "audio/mpeg"},
@@ -6131,6 +6503,14 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
         "configured": configured,
         "unsupported": not installed,
         "endpoint": _api_gateway_path("/runs/{run_id}/audio/transcribe"),
+        "models_endpoint": _api_gateway_path("/audio/transcriptions/models"),
+        "active_model": _env_first(
+            "ABSTRACTGATEWAY_VOICE_STT_MODEL",
+            "ABSTRACTVOICE_STT_MODEL",
+            "ABSTRACTVOICE_OPENAI_STT_MODEL",
+            "ABSTRACTVOICE_OPENAI_COMPATIBLE_STT_MODEL",
+            "ABSTRACTVOICE_REMOTE_STT_MODEL",
+        ),
         "input_modes": ["artifact"],
         "upload_endpoint": _api_gateway_path("/attachments/upload"),
         "content_types": ["audio/wav", "audio/mpeg", "audio/mp4", "audio/webm", "audio/ogg", "application/octet-stream"],
@@ -6172,6 +6552,7 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "route_available": True,
                 "endpoint": _api_gateway_path("/runs/{run_id}/images/generate"),
                 "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
+                "provider_models_task": "text_to_image",
                 "event_name": "abstract.media.image.generated",
                 "formats": ["png", "jpeg", "webp"],
                 "max_image_bytes": _gateway_image_generation_max_bytes(),
@@ -6292,7 +6673,9 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "model_capabilities": _api_gateway_path("/discovery/models/capabilities"),
             "voice_voices": _api_gateway_path("/voice/voices"),
             "audio_speech_models": _api_gateway_path("/audio/speech/models"),
+            "audio_transcription_models": _api_gateway_path("/audio/transcriptions/models"),
             "vision_provider_models": _api_gateway_path("/vision/provider_models"),
+            "vision_models": _api_gateway_path("/vision/models"),
             "tools": _api_gateway_path("/discovery/tools"),
             "semantics": _api_gateway_path("/semantics"),
         },
@@ -6309,6 +6692,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         },
         "memory": _memory_contract_descriptor(caps),
     }
+    generated_media = _generated_media_contract(caps)
 
     flow_editor = {
         "available": True,
@@ -6343,6 +6727,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "runs": common["runs"],
         "ledger": common["ledger"],
         "artifacts": common["artifacts"],
+        "media": generated_media,
         "helpers": {
             "providers": common["discovery"]["providers"],
             "tools": common["discovery"]["tools"],
@@ -6364,7 +6749,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "ledger": common["ledger"],
         "artifacts": common["artifacts"],
         "voice": assistant_voice,
-        "media": _generated_media_contract(caps),
+        "media": generated_media,
         "prompt_cache": {
             "provider_controls": True,
             "session_lifecycle": True,
@@ -6399,6 +6784,7 @@ async def discovery_capabilities() -> Dict[str, Any]:
     """List optional gateway capabilities for thin clients (best-effort)."""
     caps: Dict[str, Any] = {}
 
+    caps["abstractgateway"] = _optional_package_status("abstractgateway", "abstractgateway")
     caps["abstractruntime"] = _optional_package_status("abstractruntime", "AbstractRuntime")
     caps["abstractcore"] = _optional_package_status("abstractcore", "abstractcore")
     caps["abstractmemory"] = _optional_package_status("abstractmemory", "AbstractMemory")
@@ -6522,7 +6908,11 @@ async def voice_voices_catalog(
 ) -> Dict[str, Any]:
     """List dynamic TTS voices through AbstractCore catalog routes when configured."""
     if core_catalog_base_url():
-        return _core_catalog_or_raise("/audio/voices", request=request, query={"base_url": base_url})
+        query = {"base_url": base_url} if base_url else {}
+        return _core_catalog_or_raise("/audio/voices", request=request, query=query)
+    local = _local_voice_catalog_response(base_url=base_url)
+    if local is not None:
+        return local
     return _static_voice_catalog_response()
 
 
@@ -6536,8 +6926,30 @@ async def audio_speech_models_catalog(
 ) -> Dict[str, Any]:
     """List TTS model ids through AbstractCore catalog routes when configured."""
     if core_catalog_base_url():
-        return _core_catalog_or_raise("/audio/speech/models", request=request, query={"base_url": base_url})
+        query = {"base_url": base_url} if base_url else {}
+        return _core_catalog_or_raise("/audio/speech/models", request=request, query=query)
+    local = _local_speech_models_response(base_url=base_url)
+    if local is not None:
+        return local
     return _static_speech_models_response()
+
+
+@router.get("/audio/transcriptions/models")
+async def audio_transcription_models_catalog(
+    request: Request,
+    base_url: Optional[str] = Query(
+        default=None,
+        description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
+    ),
+) -> Dict[str, Any]:
+    """List STT model ids through AbstractCore catalog routes when configured."""
+    if core_catalog_base_url():
+        query = {"base_url": base_url} if base_url else {}
+        return _core_catalog_or_raise("/audio/transcriptions/models", request=request, query=query)
+    local = _local_transcription_models_response(base_url=base_url)
+    if local is not None:
+        return local
+    return _static_transcription_models_response()
 
 
 @router.get("/vision/provider_models")
@@ -6560,12 +6972,40 @@ async def vision_provider_models_catalog(
             detail="task must be one of: text_to_image, image_to_image, text_to_video, image_to_video",
         )
     if core_catalog_base_url():
+        query: Dict[str, Any] = {}
+        if task_value:
+            query["task"] = task_value
+        if base_url:
+            query["base_url"] = base_url
         return _core_catalog_or_raise(
             "/vision/provider_models",
             request=request,
-            query={"task": task_value, "base_url": base_url},
+            query=query,
         )
+    local = _local_vision_provider_models_response(task=task_value, base_url=base_url)
+    if local is not None:
+        return local
     return _static_vision_provider_models_response(task=task_value)
+
+
+@router.get("/vision/models")
+async def vision_models_catalog(request: Request) -> Dict[str, Any]:
+    """List cached/local AbstractVision models for Gateway thin clients."""
+    if core_catalog_base_url():
+        return _core_catalog_or_raise("/vision/models", request=request)
+    local = await _local_cached_vision_models_response()
+    if local is not None:
+        return local
+    return {
+        "available": False,
+        "route_available": True,
+        "models": [],
+        "source": "gateway_static",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+        "config_hint": "Install/configure abstractvision or set ABSTRACTCORE_SERVER_BASE_URL for Core vision model catalogs.",
+    }
 
 
 @router.get("/discovery/providers")

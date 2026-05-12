@@ -83,6 +83,10 @@ class _StubImageGatewayLLMClient:
         assert isinstance(output, dict)
         assert output.get("modality") == "image"
         assert output.get("task") == "image_generation"
+        assert output.get("provider") == "vision-provider"
+        assert output.get("model") == "vision-model"
+        assert params.get("_provider") == "stub"
+        assert params.get("_model") == "stub-chat"
         run_id = str(output.get("run_id") or "")
         tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
         meta = self.artifact_store.store(_PNG_BYTES, content_type="image/png", run_id=run_id, tags=tags)
@@ -159,7 +163,9 @@ def test_gateway_direct_image_generation_stores_artifact_and_emits_event(tmp_pat
             json={
                 "prompt": "a one pixel generated test image",
                 "provider": "stub",
-                "model": "stub-image",
+                "model": "stub-chat",
+                "image_provider": "vision-provider",
+                "image_model": "vision-model",
                 "format": "png",
                 "request_id": "img-1",
             },

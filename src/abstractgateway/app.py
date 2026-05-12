@@ -27,7 +27,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(
     title="AbstractGateway",
     description="Durable Run Gateway for AbstractRuntime (commands + ledger replay/stream).",
-    version="0.2.8",
+    version="0.2.9",
     lifespan=_lifespan,
 )
 

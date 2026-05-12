@@ -219,3 +219,45 @@ def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeyp
         delete = client.delete(f"/api/gateway/visualflows/{flow_id}", headers=headers)
         assert delete.status_code == 200, delete.text
         assert delete.json().get("status") == "deleted"
+
+
+@pytest.mark.basic
+def test_abstractflow_gateway_publish_fails_fast_when_reload_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    if importlib.util.find_spec("abstractflow") is None:
+        pytest.skip("abstractflow is not installed")
+
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+    from abstractgateway.service import get_gateway_service
+
+    headers = {"Authorization": "Bearer t"}
+    with TestClient(app) as client:
+        create = client.post("/api/gateway/visualflows", json=_editor_flow_payload(), headers=headers)
+        assert create.status_code == 200, create.text
+        flow_id = str(create.json().get("id") or "")
+        assert flow_id
+
+        svc = get_gateway_service()
+        host = getattr(svc, "host", None)
+        assert host is not None
+
+        def _broken_reload() -> None:
+            raise RuntimeError("simulated bundle reload failure")
+
+        monkeypatch.setattr(host, "reload_bundles_from_disk", _broken_reload)
+
+        publish = client.post(
+            f"/api/gateway/visualflows/{flow_id}/publish",
+            json={"bundle_id": "editor-contract", "bundle_version": "0.0.1", "overwrite": True, "reload_gateway": True},
+            headers=headers,
+        )
+        assert publish.status_code == 503, publish.text
+        assert "Failed to reload bundles after publish" in publish.text

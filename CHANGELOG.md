@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-05-12
+
+### Added
+- Gateway discovery now advertises `/api/gateway/audio/transcriptions/models` for STT catalog lookup.
+- Added local and proxied STT model catalog responses backed by AbstractCore/AbstractVoice.
+
+### Fixed
+- Gateway capability catalogs now map Gateway-scoped voice and vision env vars into the embedded capability registry, so local Gateway deployments expose configured voice/TTS/STT/image models without requiring duplicate lower-level env names.
+- Catalog proxy calls now omit unset optional query params instead of forwarding `None` values.
+
+### Changed
+- Raised dependency floors to Runtime `>=0.4.10`, Core `>=2.13.13`, Flow `>=0.3.10`, and Voice `>=0.9.3`.
+
 ## [0.2.8] - 2026-05-10
 
 ### Added
