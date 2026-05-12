@@ -1433,11 +1433,11 @@ environment variables in the gateway process, for example
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>abstractgateway
 </code></pre></div>
 <p>The base install includes <code>AbstractRuntime[multimodal]</code>, AbstractCore's
-<code>vision</code>/<code>voice</code>/<code>audio</code> extras, <code>abstractvision&gt;=0.3.3</code>, and
-<code>abstractvoice&gt;=0.9.2</code>. The server image defaults image and audio generation to
-OpenAI remote endpoints; set <code>OPENAI_API_KEY</code> (or the <code>ABSTRACTVISION_*</code> /
-<code>ABSTRACTVOICE_*</code> overrides) before expecting live generation to succeed. Use
-<code>ABSTRACTVISION_BACKEND=diffusers</code> or <code>sdcpp</code> only for custom images that
+<code>vision</code>/<code>voice</code>/<code>audio</code> extras, <code>abstractvision&gt;=0.3.4</code>, and
+<code>abstractvoice&gt;=0.9.3</code>. The server image defaults image and audio generation to
+OpenAI remote endpoints; set <code>OPENAI_API_KEY</code> (or the <code>ABSTRACTGATEWAY_VISION_*</code> /
+<code>ABSTRACTGATEWAY_VOICE_*</code> overrides) before expecting live generation to succeed. Use
+<code>ABSTRACTGATEWAY_VISION_BACKEND=diffusers</code> or <code>sdcpp</code> only for custom images that
 intentionally include those local engines.</p>
 <p>Generated images are available both inside Runtime/Core workflows and through
 Gateway's direct run-scoped endpoint:</p>

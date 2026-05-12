@@ -808,14 +808,14 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Aut
 <p>Image/voice plugin endpoints:</p>
 <ul>
 <li><code>ABSTRACTVISION_BACKEND</code>: <code>openai</code>, <code>openai-compatible</code>, <code>diffusers</code>, or <code>sdcpp</code></li>
-<li><code>ABSTRACTVISION_BASE_URL</code> / <code>ABSTRACTVISION_API_KEY</code> / <code>ABSTRACTVISION_MODEL_ID</code> (OpenAI defaults are used by the server image)</li>
-<li><code>ABSTRACTVOICE_TTS_ENGINE</code> / <code>ABSTRACTVOICE_STT_ENGINE</code> (<code>openai</code> by default in the server image)</li>
-<li><code>ABSTRACTVOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTVOICE_REMOTE_API_KEY</code></li>
-<li><code>ABSTRACTVOICE_TTS_MODEL</code> / <code>ABSTRACTVOICE_STT_MODEL</code></li>
+<li><code>ABSTRACTGATEWAY_VISION_BACKEND</code> / <code>ABSTRACTGATEWAY_VISION_BASE_URL</code> / <code>ABSTRACTGATEWAY_VISION_API_KEY</code> / <code>ABSTRACTGATEWAY_VISION_MODEL_ID</code> (legacy <code>ABSTRACTVISION_*</code> names still work)</li>
+<li><code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code> / <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code> (<code>openai</code> by default in the server image; legacy <code>ABSTRACTVOICE_*</code> names still work)</li>
+<li><code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code></li>
+<li><code>ABSTRACTGATEWAY_VOICE_TTS_MODEL</code> / <code>ABSTRACTGATEWAY_VOICE_STT_MODEL</code></li>
 </ul>
 <p>Core catalog proxying:</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL</code>: explicit standalone Core server URL for voice/vision catalog routes</li>
+<li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL</code>: explicit standalone Core server URL for voice, TTS/STT, and vision catalog routes</li>
 <li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN</code>: Core server auth token, separate from Gateway auth</li>
 <li><code>ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S</code>: timeout for catalog routes</li>
 </ul>

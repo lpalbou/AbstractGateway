@@ -903,12 +903,12 @@ support.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors:
-- <code>AbstractRuntime[multimodal]&gt;=0.4.9</code>
+- <code>AbstractRuntime[multimodal]&gt;=0.4.10</code>
 - <code>abstractagent&gt;=0.3.6</code>
-- <code>abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]&gt;=2.13.12</code>
+- <code>abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]&gt;=2.13.13</code>
 - <code>AbstractMemory[lancedb]&gt;=0.2.6</code>
 - <code>abstractvision&gt;=0.3.4</code>
-- <code>abstractvoice&gt;=0.9.2</code></p>
+- <code>abstractvoice&gt;=0.9.3</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
 <h2 id="configuration-helper">Configuration helper<a class="headerlink" href="#configuration-helper" title="Permanent link">&para;</a></h2>
@@ -1044,14 +1044,16 @@ heavy engines remain explicit opt-ins in the provider packages.</p>
     <code>http://model-runner.docker.internal/engines/v1</code>,
     <code>http://host.docker.internal:1234/v1</code>, or
     <code>http://host.docker.internal:11434/v1</code>.</li>
-<li><code>ABSTRACTVISION_BASE_URL</code> / <code>ABSTRACTVISION_API_KEY</code> / <code>ABSTRACTVISION_MODEL_ID</code>: OpenAI or OpenAI-compatible image endpoint used by AbstractVision</li>
-<li><code>ABSTRACTVISION_BACKEND</code>: <code>openai</code> / <code>openai-compatible</code> / <code>diffusers</code> / <code>sdcpp</code></li>
-<li><code>ABSTRACTVOICE_TTS_ENGINE</code> / <code>ABSTRACTVOICE_STT_ENGINE</code>: <code>openai</code>, <code>openai-compatible</code>, <code>auto</code>, or local engines supported by AbstractVoice</li>
-<li><code>ABSTRACTVOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTVOICE_REMOTE_API_KEY</code>: remote voice endpoint used by AbstractVoice</li>
+<li><code>ABSTRACTGATEWAY_VISION_BACKEND</code> / <code>ABSTRACTGATEWAY_VISION_BASE_URL</code> / <code>ABSTRACTGATEWAY_VISION_API_KEY</code> / <code>ABSTRACTGATEWAY_VISION_MODEL_ID</code>: Gateway-scoped image backend settings. Legacy <code>ABSTRACTVISION_*</code> names are still accepted by the lower package.</li>
+<li><code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code> / <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code>: Gateway-scoped voice engine settings. Legacy <code>ABSTRACTVOICE_*</code> names are still accepted by the lower package.</li>
+<li><code>ABSTRACTGATEWAY_VOICE_TTS_MODEL</code> / <code>ABSTRACTGATEWAY_VOICE_STT_MODEL</code>: Gateway-scoped TTS/STT model defaults.</li>
+<li><code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code>: remote voice endpoint used by AbstractVoice.</li>
 <li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, and future <code>music</code>; also returns <code>capabilities.contracts.version=1</code> with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls</li>
 <li><code>GET /api/gateway/voice/voices</code>: proxies AbstractCore <code>/v1/audio/voices</code> when <code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL</code> or <code>ABSTRACTCORE_SERVER_BASE_URL</code> is configured; otherwise returns static Gateway/env voice descriptors.</li>
 <li><code>GET /api/gateway/audio/speech/models</code>: proxies AbstractCore <code>/v1/audio/speech/models</code> when configured.</li>
+<li><code>GET /api/gateway/audio/transcriptions/models</code>: proxies AbstractCore <code>/v1/audio/transcriptions/models</code> when configured.</li>
 <li><code>GET /api/gateway/vision/provider_models</code>: proxies AbstractCore <code>/v1/vision/provider_models</code> when configured.</li>
+<li><code>GET /api/gateway/vision/models</code>: reports locally known/cached AbstractVision model ids when the in-process capability path is available.</li>
 </ul>
 <p>Core catalog proxy settings:</p>
 <ul>
