@@ -24,12 +24,12 @@ def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
 
-    assert "AbstractRuntime[multimodal]>=0.4.9" in deps
+    assert "AbstractRuntime[multimodal]>=0.4.10" in deps
     assert "abstractagent>=0.3.7" in deps
-    assert "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.12" in deps
-    assert "abstractflow>=0.3.7" in deps
+    assert "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.13" in deps
+    assert "abstractflow>=0.3.10" in deps
     assert "abstractvision>=0.3.4" in deps
-    assert "abstractvoice>=0.9.2" in deps
+    assert "abstractvoice>=0.9.3" in deps
     assert "AbstractMemory[lancedb]>=0.2.6" in deps
     assert "fastapi>=0.100.0" in deps
     assert "uvicorn[standard]>=0.23.0" in deps
@@ -53,19 +53,19 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "all-gpu" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[multimodal,all-apple]>=0.4.9" in apple
+    assert "AbstractRuntime[multimodal,all-apple]>=0.4.10" in apple
     assert "abstractagent[all-apple]>=0.3.7" in apple
-    assert "abstractcore[all-apple]>=2.13.12" in apple
+    assert "abstractcore[all-apple]>=2.13.13" in apple
     assert "abstractvision[all-apple]>=0.3.4" in apple
-    assert "abstractvoice[all-apple]>=0.9.2" in apple
+    assert "abstractvoice[all-apple]>=0.9.3" in apple
     assert "abstractmusic[all-apple]>=0.1.1" in apple
     assert "AbstractMemory[all-apple]>=0.2.6" in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[multimodal,all-gpu]>=0.4.9" in gpu
+    assert "AbstractRuntime[multimodal,all-gpu]>=0.4.10" in gpu
     assert "abstractagent[all-gpu]>=0.3.7" in gpu
-    assert "abstractcore[all-gpu]>=2.13.12" in gpu
+    assert "abstractcore[all-gpu]>=2.13.13" in gpu
     assert "abstractvision[all-gpu]>=0.3.4" in gpu
-    assert "abstractvoice[all-gpu]>=0.9.2" in gpu
+    assert "abstractvoice[all-gpu]>=0.9.3" in gpu
     assert "abstractmusic[all-gpu]>=0.1.1" in gpu
     assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
 

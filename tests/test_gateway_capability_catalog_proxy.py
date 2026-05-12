@@ -28,7 +28,20 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient
 def test_voice_catalog_uses_local_capability_profiles_without_core_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", raising=False)
     monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
-    monkeypatch.setenv("ABSTRACTVOICE_OPENAI_TTS_VOICES", "coral,verse")
+
+    class FakeVoice:
+        def voice_catalog(self) -> Dict[str, Any]:
+            return {
+                "profiles": [{"profile_id": "coral"}, {"profile_id": "verse"}],
+                "tts_models": ["gpt-4o-mini-tts"],
+            }
+
+    class FakeRegistry:
+        voice = FakeVoice()
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", lambda **_kwargs: FakeRegistry())
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -37,6 +50,34 @@ def test_voice_catalog_uses_local_capability_profiles_without_core_server(tmp_pa
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["source"] == "abstractvoice_local"
+    assert body["route_available"] is True
+    ids = {item.get("id") or item.get("profile_id") or item.get("voice_id") for item in body["profiles"]}
+    assert {"coral", "verse"} <= ids
+
+
+def test_voice_catalog_static_fallback_surfaces_configured_env_voices(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", raising=False)
+    monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
+    monkeypatch.setenv("ABSTRACTVOICE_OPENAI_TTS_VOICES", "coral,verse")
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(
+        gateway_routes,
+        "_gateway_capability_registry",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("local voice unavailable")),
+    )
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/voice/voices", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "gateway_static"
     assert body["route_available"] is True
     ids = {item.get("id") or item.get("profile_id") or item.get("voice_id") for item in body["profiles"]}
     assert {"coral", "verse"} <= ids
