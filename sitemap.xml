@@ -2,82 +2,82 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/api/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/apple-local-gateway-flow/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/architecture/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/configuration/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/deployment/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/faq/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/getting-started/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/maintenance/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/security/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/overview/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/001_openapi_swagger_auth/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/010_versioned_client_capability_contract/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/020_abstractflow_gateway_first_editor_contract/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/030_gateway_session_prompt_cache_lifecycle/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/040_generated_media_gateway_contract/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-08_gateway_install_profiles_and_config_entrypoint/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-08_gateway_memory_store_resolver_and_triplestore_abstraction/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-08_voice_profile_discovery_endpoint/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs/</loc>
-         <lastmod>2026-05-12</lastmod>
+         <lastmod>2026-05-13</lastmod>
     </url>
 </urlset>
