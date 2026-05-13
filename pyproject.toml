@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.2.9"
+version = "0.2.10"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,12 +12,12 @@ license = { text = "MIT" }
 authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
-  "AbstractRuntime[multimodal]>=0.4.10",
+  "AbstractRuntime[multimodal]>=0.4.11",
   "abstractagent>=0.3.7",
-  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.13",
-  "abstractflow>=0.3.10",
-  "abstractvision>=0.3.4",
-  "abstractvoice>=0.9.3",
+  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.14",
+  "abstractflow>=0.3.11",
+  "abstractvision>=0.3.5",
+  "abstractvoice>=0.9.4",
   "AbstractMemory[lancedb]>=0.2.6",
   "fastapi>=0.100.0",
   "python-multipart>=0.0.6",
@@ -37,11 +37,11 @@ memory = []
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[multimodal,all-apple]>=0.4.10",
+  "AbstractRuntime[multimodal,all-apple]>=0.4.11",
   "abstractagent[all-apple]>=0.3.7",
-  "abstractcore[all-apple]>=2.13.13",
-  "abstractvision[all-apple]>=0.3.4",
-  "abstractvoice[all-apple]>=0.9.3",
+  "abstractcore[all-apple]>=2.13.14",
+  "abstractvision[all-apple]>=0.3.5",
+  "abstractvoice[all-apple]>=0.9.4",
   "abstractmusic[all-apple]>=0.1.1",
   "AbstractMemory[all-apple]>=0.2.6",
 ]
@@ -49,33 +49,33 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[multimodal,all-gpu]>=0.4.10",
+  "AbstractRuntime[multimodal,all-gpu]>=0.4.11",
   "abstractagent[all-gpu]>=0.3.7",
-  "abstractcore[all-gpu]>=2.13.13",
-  "abstractvision[all-gpu]>=0.3.4",
-  "abstractvoice[all-gpu]>=0.9.3",
+  "abstractcore[all-gpu]>=2.13.14",
+  "abstractvision[all-gpu]>=0.3.5",
+  "abstractvoice[all-gpu]>=0.9.4",
   "abstractmusic[all-gpu]>=0.1.1",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]
 
 # Native macOS aggregate profile for full local+remote Gateway installs.
 all-apple = [
-  "AbstractRuntime[multimodal,all-apple]>=0.4.10",
+  "AbstractRuntime[multimodal,all-apple]>=0.4.11",
   "abstractagent[all-apple]>=0.3.7",
-  "abstractcore[all-apple]>=2.13.13",
-  "abstractvision[all-apple]>=0.3.4",
-  "abstractvoice[all-apple]>=0.9.3",
+  "abstractcore[all-apple]>=2.13.14",
+  "abstractvision[all-apple]>=0.3.5",
+  "abstractvoice[all-apple]>=0.9.4",
   "abstractmusic[all-apple]>=0.1.1",
   "AbstractMemory[all-apple]>=0.2.6",
 ]
 
 # Full GPU aggregate profile for CUDA/ROCm-style local engine hosts.
 all-gpu = [
-  "AbstractRuntime[multimodal,all-gpu]>=0.4.10",
+  "AbstractRuntime[multimodal,all-gpu]>=0.4.11",
   "abstractagent[all-gpu]>=0.3.7",
-  "abstractcore[all-gpu]>=2.13.13",
-  "abstractvision[all-gpu]>=0.3.4",
-  "abstractvoice[all-gpu]>=0.9.3",
+  "abstractcore[all-gpu]>=2.13.14",
+  "abstractvision[all-gpu]>=0.3.5",
+  "abstractvoice[all-gpu]>=0.9.4",
   "abstractmusic[all-gpu]>=0.1.1",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]
@@ -83,11 +83,11 @@ all-gpu = [
 # Compatibility alias for historical Docker builds. New NVIDIA Docker builds use
 # `abstractgateway[gpu]`.
 server-nvidia = [
-  "AbstractRuntime[multimodal,all-gpu]>=0.4.10",
+  "AbstractRuntime[multimodal,all-gpu]>=0.4.11",
   "abstractagent[all-gpu]>=0.3.7",
-  "abstractcore[all-gpu]>=2.13.13",
-  "abstractvision[all-gpu]>=0.3.4",
-  "abstractvoice[all-gpu]>=0.9.3",
+  "abstractcore[all-gpu]>=2.13.14",
+  "abstractvision[all-gpu]>=0.3.5",
+  "abstractvoice[all-gpu]>=0.9.4",
   "abstractmusic[all-gpu]>=0.1.1",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]

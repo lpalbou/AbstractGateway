@@ -6815,7 +6815,7 @@ async def discovery_capabilities() -> Dict[str, Any]:
             if value:
                 preferred_backends[capability] = value
 
-        owner = type("_GatewayCapabilityOwner", (), {"config": {}})()
+        owner = type("_GatewayCapabilityOwner", (), {"config": _gateway_capability_owner_config()})()
         status = CapabilityRegistry(owner, preferred_backends=preferred_backends).status()
         plugin_caps = status.get("capabilities") if isinstance(status, dict) else {}
         available: Dict[str, bool] = {}
