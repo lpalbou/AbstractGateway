@@ -49,7 +49,7 @@ def test_voice_catalog_uses_local_capability_profiles_without_core_server(tmp_pa
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["source"] == "abstractvoice_local"
+    assert body["source"] in {"abstractvoice_local", "gateway_merged"}
     assert body["route_available"] is True
     ids = {item.get("id") or item.get("profile_id") or item.get("voice_id") for item in body["profiles"]}
     assert {"coral", "verse"} <= ids
@@ -83,13 +83,44 @@ def test_voice_catalog_static_fallback_surfaces_configured_env_voices(
     assert {"coral", "verse"} <= ids
 
 
+def test_voice_catalog_static_fallback_surfaces_supertonic_builtin_profiles_without_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_module_available", lambda _name: False)
+
+    body = gateway_routes._static_voice_catalog_response(provider="supertonic")
+    profile_ids = {item.get("profile_id") for item in body["profiles"]}
+
+    assert body["source"] == "gateway_static"
+    assert body["available"] is True
+    assert body["tts_providers"] == ["supertonic"]
+    assert {"M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"} <= profile_ids
+    assert body["tts_models_by_provider"] == {"supertonic": ["supertonic-3"]}
+    assert body["tts_voices_by_provider"]["supertonic"] == ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]
+
+    speech_models = gateway_routes._static_speech_models_response(provider="supertonic")
+    assert speech_models["providers"] == ["supertonic"]
+    assert speech_models["models"] == ["supertonic-3"]
+
+    providers = gateway_routes._static_voice_providers_only_response()
+    assert "supertonic" in providers["tts_providers"]
+
+
 def test_voice_catalog_proxies_configured_core_catalog_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[Dict[str, Any]] = []
 
-    def fake_fetch(path: str, *, query: Optional[dict] = None, provider_api_key: Optional[str] = None) -> Dict[str, Any]:
+    def fake_fetch(
+        path: str,
+        *,
+        query: Optional[dict] = None,
+        provider_api_key: Optional[str] = None,
+        **_kwargs: Any,
+    ) -> Dict[str, Any]:
         calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key})
         return {"available": True, "profiles": [{"profile_id": "coral"}], "source": "abstractvoice"}
 
@@ -112,7 +143,7 @@ def test_voice_catalog_proxies_configured_core_catalog_route(
     assert calls == [
         {
             "path": "/audio/voices",
-            "query": {"base_url": "http://provider.test/v1"},
+            "query": {"base_url": "http://provider.test/v1", "providers_only": False},
             "provider_api_key": "provider-secret",
         }
     ]
@@ -138,6 +169,45 @@ def test_catalog_proxy_preserves_core_auth_error(tmp_path: Path, monkeypatch: py
     assert "core auth required" in resp.text
 
 
+def test_audio_model_catalogs_include_local_voice_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", raising=False)
+    monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
+
+    class FakeVoice:
+        def voice_catalog(self) -> Dict[str, Any]:
+            return {
+                "engine_id": "fake-tts",
+                "active_tts_provider": "fake-tts",
+                "active_stt_provider": "fake-stt",
+                "tts_providers": ["fake-tts"],
+                "stt_providers": ["fake-stt"],
+            }
+
+        def list_tts_models(self) -> list[str]:
+            return ["tts-test"]
+
+        def list_stt_models(self) -> list[str]:
+            return ["stt-test"]
+
+    class FakeRegistry:
+        voice = FakeVoice()
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", lambda **_kwargs: FakeRegistry())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        speech = client.get("/api/gateway/audio/speech/models", headers=headers)
+        transcription = client.get("/api/gateway/audio/transcriptions/models", headers=headers)
+
+    assert speech.status_code == 200, speech.text
+    assert transcription.status_code == 200, transcription.text
+    assert "fake-tts" in speech.json()["providers"]
+    assert transcription.json()["providers"] == ["fake-stt"]
+    assert transcription.json()["active_provider"] == "fake-stt"
+
+
 def test_vision_catalog_rejects_unknown_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -146,13 +216,43 @@ def test_vision_catalog_rejects_unknown_task(tmp_path: Path, monkeypatch: pytest
     assert resp.status_code == 400, resp.text
 
 
+def test_gateway_vision_catalog_routes_local_mflux_without_diffusers_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_has_local_mflux_preset", lambda model_id: str(model_id).endswith("FLUX.2-klein-9B"))
+
+    item = gateway_routes._gateway_vision_provider_model_item(
+        provider="huggingface",
+        model_id="black-forest-labs/FLUX.2-klein-9B",
+        task="text_to_image",
+    )
+
+    assert item["provider"] == "mflux"
+    assert item["backend"] == "mflux"
+    assert item["model"] == "black-forest-labs/FLUX.2-klein-9B"
+    assert item["routed_model"] == "black-forest-labs/FLUX.2-klein-9B"
+    assert not str(item["model"]).startswith("diffusers/")
+
+
+def test_gateway_direct_image_available_with_downloaded_mflux(monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.delenv("ABSTRACTVISION_BACKEND", raising=False)
+    monkeypatch.delenv("ABSTRACTCORE_VISION_BACKEND", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ABSTRACTVISION_API_KEY", raising=False)
+    monkeypatch.setattr(gateway_routes, "_gateway_has_local_mflux_preset", lambda model_id: model_id == "")
+
+    assert gateway_routes._gateway_direct_image_configured() is True
+
+
 def test_vision_models_catalog_proxies_configured_core_catalog_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[Dict[str, Any]] = []
 
-    def fake_fetch(path: str, *, query: Optional[dict] = None, provider_api_key: Optional[str] = None) -> Dict[str, Any]:
+    def fake_fetch(path: str, *, query: Optional[dict] = None, provider_api_key: Optional[str] = None, **_kwargs: Any) -> Dict[str, Any]:
         calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key})
         return {"available": True, "models": [{"model_id": "flux-local"}], "source": "abstractvision"}
 
@@ -180,7 +280,7 @@ def test_audio_transcription_models_catalog_proxies_configured_core_catalog_rout
 ) -> None:
     calls: list[Dict[str, Any]] = []
 
-    def fake_fetch(path: str, *, query: Optional[dict] = None, provider_api_key: Optional[str] = None) -> Dict[str, Any]:
+    def fake_fetch(path: str, *, query: Optional[dict] = None, provider_api_key: Optional[str] = None, **_kwargs: Any) -> Dict[str, Any]:
         calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key})
         return {"available": True, "models": ["stt-test"], "source": "abstractvoice"}
 

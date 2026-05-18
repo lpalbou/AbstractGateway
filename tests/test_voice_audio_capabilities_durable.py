@@ -74,14 +74,19 @@ def test_gateway_voice_audio_durable_artifacts_and_ledger_survive_restart(tmp_pa
     tts_audio = b"tts-bytes"
     transcript_text = "hello from stt"
 
-    class _OkVoiceManager:
-        def speak_to_bytes(self, _text: str, *, format: str = "wav", voice: str | None = None) -> bytes:  # noqa: ARG002
+    class _VoiceCapability:
+        def tts(self, _text: str, **_kwargs):
             return tts_audio
 
-        def transcribe_from_bytes(self, _audio_bytes: bytes, *, language: str | None = None) -> str:  # noqa: ARG002
+    class _AudioCapability:
+        def transcribe(self, _audio, **_kwargs):
             return transcript_text
 
-    monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", lambda: _OkVoiceManager())
+    class _Registry:
+        voice = _VoiceCapability()
+        audio = _AudioCapability()
+
+    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", lambda **_kwargs: _Registry())
 
     run_id = "session_memory_s1"
     transcript_artifact_id: str

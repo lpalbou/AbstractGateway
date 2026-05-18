@@ -92,7 +92,7 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
             {"name": "ollama", "models": ["llama3"] if include_models else []},
         ],
     )
-    monkeypatch.setattr(provider_registry, "get_available_models_for_provider", lambda _name: ["m1", "m2"])
+    monkeypatch.setattr(provider_registry, "get_available_models_for_provider", lambda _name, **_kwargs: ["m1", "m2"])
 
     monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "ollama")
     monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "llama3")
@@ -122,6 +122,39 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
         assert models.status_code == 200, models.text
         assert models.json().get("provider") == "lmstudio"
         assert models.json().get("models") == ["m1", "m2"]
+
+
+def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", "http://core.test")
+    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "lmstudio")
+    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "qwen")
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    calls: list[dict] = []
+
+    def fake_fetch(path: str, *, query=None, provider_api_key=None, timeout_s=None, v1=True):
+        calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key, "v1": v1})
+        if path == "/providers":
+            return {"providers": [{"name": "lmstudio", "models": []}]}
+        if path == "/models":
+            return {"object": "list", "data": [{"id": "lmstudio/qwen"}, {"id": "lmstudio/qwen2"}]}
+        return {}
+
+    monkeypatch.setattr(gateway_routes, "fetch_core_catalog_json", fake_fetch)
+
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        providers = client.get("/api/gateway/discovery/providers?include_models=false", headers=headers)
+        assert providers.status_code == 200, providers.text
+        assert [item.get("name") for item in providers.json().get("items") or []] == ["lmstudio"]
+
+        models = client.get("/api/gateway/discovery/providers/lmstudio/models", headers=headers)
+        assert models.status_code == 200, models.text
+        assert models.json().get("models") == ["qwen", "qwen2"]
+
+    assert calls[0] == {"path": "/providers", "query": {"include_models": False}, "provider_api_key": None, "v1": False}
+    assert calls[1] == {"path": "/models", "query": {"provider": "lmstudio"}, "provider_api_key": None, "v1": True}
 
 
 def test_discovery_model_capabilities(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

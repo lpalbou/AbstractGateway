@@ -53,6 +53,35 @@ def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> Non
         zf.writestr(f"flows/{flow_id}.json", json.dumps(flow, indent=2))
 
 
+def _patch_gateway_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+    gateway_routes,
+    *,
+    tts_bytes: bytes = b"tts:hello",
+    transcript: str = "hello world",
+    calls: dict | None = None,
+) -> None:
+    calls = calls if calls is not None else {}
+    calls.setdefault("tts", [])
+    calls.setdefault("stt", [])
+
+    class _VoiceCapability:
+        def tts(self, text: str, **kwargs):
+            calls["tts"].append({"text": text, **kwargs})
+            return tts_bytes
+
+    class _AudioCapability:
+        def transcribe(self, audio, **kwargs):
+            calls["stt"].append({"audio": audio, **kwargs})
+            return transcript
+
+    class _Registry:
+        voice = _VoiceCapability()
+        audio = _AudioCapability()
+
+    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", lambda **_kwargs: _Registry())
+
+
 @pytest.mark.basic
 def test_gateway_env_bool_supports_voice_multi_key_and_legacy_default(monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.routes.gateway as gateway_routes
@@ -88,13 +117,13 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
 
     headers = {"Authorization": f"Bearer {token}"}
 
-    def _unavailable_voice_manager():
+    def _unavailable_registry(**_kwargs):
         raise HTTPException(
             status_code=400,
             detail="Voice/audio support is not available. Install/repair with: pip install abstractgateway",
         )
 
-    monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", _unavailable_voice_manager)
+    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", _unavailable_registry)
 
     with TestClient(app) as client:
         # Auth required.
@@ -124,15 +153,7 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
         assert stt_unavail.status_code == 400, stt_unavail.text
         assert "pip install abstractgateway" in str(stt_unavail.json().get("detail") or "").lower()
 
-    # Success path: deterministic stub voice manager.
-    class _OkVoiceManager:
-        def speak_to_bytes(self, text: str, *, format: str = "wav", voice: str | None = None) -> bytes:  # noqa: ARG002
-            return f"tts:{text}".encode("utf-8")
-
-        def transcribe_from_bytes(self, _audio_bytes: bytes, *, language: str | None = None) -> str:  # noqa: ARG002
-            return "hello world"
-
-    monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", lambda: _OkVoiceManager())
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:hello", transcript="hello world")
 
     with TestClient(app) as client2:
         upload2 = client2.post(
@@ -192,14 +213,7 @@ def test_audio_transcribe_accepts_session_scoped_artifacts_for_any_run_in_sessio
 
     headers = {"Authorization": f"Bearer {token}"}
 
-    class _OkVoiceManager:
-        def speak_to_bytes(self, text: str, *, format: str = "wav", voice: str | None = None) -> bytes:  # noqa: ARG002
-            return f"tts:{text}".encode("utf-8")
-
-        def transcribe_from_bytes(self, _audio_bytes: bytes, *, language: str | None = None) -> str:  # noqa: ARG002
-            return "hello world"
-
-    monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", lambda: _OkVoiceManager())
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, transcript="hello world")
 
     with TestClient(app) as client:
         # Start a normal run with session_id=s1.
@@ -260,11 +274,7 @@ def test_voice_tts_offloads_synthesis_to_threadpool(tmp_path: Path, monkeypatch:
         offloaded.append(getattr(func, "__name__", repr(func)))
         return func(*args, **kwargs)
 
-    class _OkVoiceManager:
-        def speak_to_bytes(self, text: str, *, format: str = "wav", voice: str | None = None) -> bytes:  # noqa: ARG002
-            return f"tts:{text}".encode("utf-8")
-
-    monkeypatch.setattr(gateway_routes, "_get_gateway_voice_manager", lambda: _OkVoiceManager())
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:hello")
     monkeypatch.setattr(gateway_routes.asyncio, "to_thread", _fake_to_thread)
 
     with TestClient(app) as client:
@@ -276,3 +286,76 @@ def test_voice_tts_offloads_synthesis_to_threadpool(tmp_path: Path, monkeypatch:
         assert tts.status_code == 200, tts.text
 
     assert offloaded
+
+
+@pytest.mark.basic
+def test_voice_tts_treats_selected_profile_voice_as_profile_not_clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-voice-profile-routing", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    headers = {"Authorization": f"Bearer {token}"}
+    calls: dict = {}
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:hello:wav", calls=calls)
+
+    with TestClient(app) as client:
+        tts = client.post(
+            "/api/gateway/runs/session_memory_s1/voice/tts",
+            json={"text": "hello", "voice": "amy", "request_id": "req-tts-profile"},
+            headers=headers,
+        )
+
+    assert tts.status_code == 200, tts.text
+    assert calls["tts"][0]["voice"] == "amy"
+    assert calls["tts"][0]["profile"] is None
+    body = tts.json()
+    assert body["audio_artifact"]["content_type"] == "audio/wav"
+
+
+@pytest.mark.basic
+def test_voice_tts_applies_explicit_provider_before_profile_voice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-voice-provider-routing", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    headers = {"Authorization": f"Bearer {token}"}
+    calls: dict = {}
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:hello:wav", calls=calls)
+
+    with TestClient(app) as client:
+        tts = client.post(
+            "/api/gateway/runs/session_memory_s1/voice/tts",
+            json={
+                "text": "hello",
+                "provider": "supertonic",
+                "model": "supertonic-3",
+                "voice": "M1",
+                "request_id": "req-tts-provider-profile",
+            },
+            headers=headers,
+        )
+
+    assert tts.status_code == 200, tts.text
+    assert calls["tts"][0]["provider"] == "supertonic"
+    assert calls["tts"][0]["model"] == "supertonic-3"
+    assert calls["tts"][0]["voice"] == "M1"

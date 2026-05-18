@@ -38,28 +38,36 @@ def _core_catalog_token() -> Optional[str]:
     )
 
 
-def _timeout_s() -> float:
+def _timeout_s(default: float = 3.0) -> float:
     raw = _env_first("ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S", "ABSTRACTCORE_CATALOG_TIMEOUT_S")
     if raw is None:
-        return 3.0
+        return float(default)
     try:
         return max(0.1, min(30.0, float(raw)))
     except Exception:
-        return 3.0
+        return float(default)
 
 
-def _join_core_v1_url(base_url: str, path: str) -> str:
+def _join_core_url(base_url: str, path: str, *, v1: bool = True) -> str:
     base = str(base_url or "").strip().rstrip("/")
     if not base:
         raise CoreCatalogProxyError(status_code=503, detail="AbstractCore server base URL is not configured")
     suffix = str(path or "").strip()
     if not suffix.startswith("/"):
         suffix = "/" + suffix
+    if not v1:
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        return base + suffix
     if base.endswith("/v1"):
         return base + suffix
     if suffix.startswith("/v1/") or suffix == "/v1":
         return base + suffix
     return base + "/v1" + suffix
+
+
+def _join_core_v1_url(base_url: str, path: str) -> str:
+    return _join_core_url(base_url, path, v1=True)
 
 
 def _decode_error_body(raw: bytes) -> Any:
@@ -76,6 +84,8 @@ def fetch_core_catalog_json(
     *,
     query: Optional[Mapping[str, Any]] = None,
     provider_api_key: Optional[str] = None,
+    timeout_s: Optional[float] = None,
+    v1: bool = True,
 ) -> Dict[str, Any]:
     """Fetch a catalog route from the configured AbstractCore server."""
 
@@ -83,7 +93,7 @@ def fetch_core_catalog_json(
     if not base_url:
         raise CoreCatalogProxyError(status_code=503, detail="AbstractCore server base URL is not configured")
 
-    url = _join_core_v1_url(base_url, path)
+    url = _join_core_url(base_url, path, v1=bool(v1))
     params: Dict[str, str] = {}
     for key, value in dict(query or {}).items():
         if value is None:
@@ -103,7 +113,7 @@ def fetch_core_catalog_json(
 
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=_timeout_s()) as resp:  # noqa: S310 - operator-configured URL
+        with urllib.request.urlopen(req, timeout=float(timeout_s) if timeout_s is not None else _timeout_s()) as resp:  # noqa: S310 - operator-configured URL
             raw = resp.read(2_000_001)
             if len(raw) > 2_000_000:
                 raise CoreCatalogProxyError(status_code=502, detail="AbstractCore catalog response is too large")

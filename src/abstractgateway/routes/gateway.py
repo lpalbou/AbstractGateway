@@ -57,6 +57,22 @@ logger = logging.getLogger(__name__)
 _VOICE_MANAGER = None
 _VOICE_MANAGER_LOCK = threading.Lock()
 
+
+@router.get("/ping")
+async def gateway_ping() -> Dict[str, Any]:
+    """Cheap authenticated gateway reachability probe.
+
+    Thin clients must not use capability/model discovery as their login check:
+    discovery can legitimately skip offline providers or time out optional
+    remote integrations. This route validates Gateway reachability/auth only.
+    """
+    return {
+        "ok": True,
+        "status": "healthy",
+        "service": "abstractgateway",
+        "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+
 def _env_first(*keys: str, default: Optional[str] = None) -> Optional[str]:
     for key in keys:
         value = os.getenv(str(key))
@@ -90,6 +106,83 @@ def _env_float(*keys: str) -> Optional[float]:
         return None
 
 
+def _discovery_timeout_s(default: float = 1.5) -> float:
+    raw = _env_float(
+        "ABSTRACTGATEWAY_DISCOVERY_TIMEOUT_S",
+        "ABSTRACTCORE_DISCOVERY_TIMEOUT_S",
+    )
+    value = raw if raw is not None else float(default)
+    try:
+        value = float(value)
+    except Exception:
+        value = float(default)
+    if value <= 0:
+        value = float(default)
+    return max(0.2, min(value, 10.0))
+
+
+def _provider_models_timeout_s(default: float = 30.0) -> float:
+    raw = _env_float(
+        "ABSTRACTGATEWAY_PROVIDER_MODELS_TIMEOUT_S",
+        "ABSTRACTCORE_PROVIDER_MODELS_TIMEOUT_S",
+        "ABSTRACTGATEWAY_DISCOVERY_MODEL_TIMEOUT_S",
+        "ABSTRACTCORE_DISCOVERY_MODEL_TIMEOUT_S",
+    )
+    value = raw if raw is not None else float(default)
+    try:
+        value = float(value)
+    except Exception:
+        value = float(default)
+    if value <= 0:
+        value = float(default)
+    return max(1.0, min(value, 60.0))
+
+
+def _catalog_timeout_s(default: float = 30.0) -> float:
+    raw = _env_float(
+        "ABSTRACTGATEWAY_CATALOG_TIMEOUT_S",
+        "ABSTRACTGATEWAY_MEDIA_CATALOG_TIMEOUT_S",
+        "ABSTRACTCORE_CATALOG_TIMEOUT_S",
+    )
+    value = raw if raw is not None else float(default)
+    try:
+        value = float(value)
+    except Exception:
+        value = float(default)
+    if value <= 0:
+        value = float(default)
+    return max(1.0, min(value, 60.0))
+
+
+async def _catalog_call(label: str, fn, *, timeout_s: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    timeout = _catalog_timeout_s() if timeout_s is None else float(timeout_s)
+    try:
+        value = await asyncio.wait_for(asyncio.to_thread(fn), timeout=timeout)
+    except asyncio.TimeoutError:
+        return {
+            "available": False,
+            "route_available": True,
+            "models": [],
+            "providers": [],
+            "source": "gateway_timeout",
+            "stale": True,
+            "refreshed_at": _utc_now_iso(),
+            "error": f"{label} catalog timed out after {timeout:g}s",
+        }
+    except Exception as e:
+        return {
+            "available": False,
+            "route_available": True,
+            "models": [],
+            "providers": [],
+            "source": "gateway_error",
+            "stale": True,
+            "refreshed_at": _utc_now_iso(),
+            "error": str(e),
+        }
+    return value if isinstance(value, dict) else None
+
+
 def _resolve_gateway_provider_model_or_400(
     *,
     provider: Optional[str],
@@ -110,10 +203,16 @@ def _gateway_direct_image_configured() -> bool:
     backend = str(_env_first("ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND", default="openai") or "openai")
     backend = backend.strip().lower().replace("_", "-")
 
+    if backend in {"mflux", "m-flux"}:
+        if _env_first("ABSTRACTVISION_MFLUX_MODEL", "ABSTRACTGATEWAY_VISION_MFLUX_MODEL", "ABSTRACTVISION_MODEL_ID"):
+            return True
+        return _gateway_has_local_mflux_preset("")
     if backend in {"diffusers", "huggingface", "hf", "hf-diffusers"}:
         return True
     if backend in {"sdcpp", "sd-cpp", "stable-diffusion.cpp", "stable-diffusion-cpp"}:
         return bool(_env_first("ABSTRACTVISION_SDCPP_MODEL", "ABSTRACTVISION_SDCPP_DIFFUSION_MODEL"))
+    if _gateway_has_local_mflux_preset(""):
+        return True
 
     base_url = _env_first("ABSTRACTVISION_BASE_URL", "OPENAI_BASE_URL")
     api_key = _env_first("ABSTRACTVISION_API_KEY", "OPENAI_API_KEY")
@@ -263,6 +362,8 @@ class StartRunResponse(BaseModel):
 class VisualFlowCreateRequest(BaseModel):
     """Create a VisualFlow JSON record (authoring-side)."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     description: str = ""
     interfaces: List[str] = Field(default_factory=list)
@@ -273,6 +374,8 @@ class VisualFlowCreateRequest(BaseModel):
 
 class VisualFlowUpdateRequest(BaseModel):
     """Update a VisualFlow JSON record (authoring-side)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None
     description: Optional[str] = None
@@ -346,26 +449,88 @@ def _write_visualflow_json(path: Path, data: Dict[str, Any]) -> None:
 
 
 def _coerce_visualflow(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Best-effort VisualFlow validation + interface scaffolding."""
-    try:
-        from abstractflow.visual.interfaces import apply_visual_flow_interface_scaffold
-        from abstractflow.visual.models import VisualFlow
-    except Exception as e:
-        logger.warning("#FALLBACK: VisualFlow validation disabled (abstractflow not installed): %s", e)
-        return dict(raw)
+    """Validate VisualFlow authoring JSON shape without owning node semantics."""
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: root must be an object")
 
-    try:
-        flow = VisualFlow(**raw)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: {e}")
+    out = dict(raw)
 
-    try:
-        for iid in list(getattr(flow, "interfaces", []) or []):
-            apply_visual_flow_interface_scaffold(flow, str(iid), include_recommended=True)
-    except Exception as e:
-        logger.warning("#FALLBACK: VisualFlow interface scaffolding failed: %s", e)
+    flow_id = out.get("id")
+    if flow_id is not None and (not isinstance(flow_id, str) or not flow_id.strip()):
+        raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: id must be a non-empty string")
 
-    return flow.model_dump()
+    name = out.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: name is required")
+
+    description = out.get("description")
+    if description is not None and not isinstance(description, str):
+        raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: description must be a string")
+
+    interfaces = out.get("interfaces")
+    if interfaces is None:
+        out["interfaces"] = []
+    elif not isinstance(interfaces, list) or any(not isinstance(item, str) for item in interfaces):
+        raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: interfaces must be a list of strings")
+
+    entry_node = out.get("entryNode")
+    if entry_node is not None and (not isinstance(entry_node, str) or not entry_node.strip()):
+        raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: entryNode must be a non-empty string")
+
+    nodes = raw.get("nodes")
+    if not isinstance(nodes, list):
+        raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: nodes must be a list")
+    node_ids: set[str] = set()
+    for idx, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: nodes.{idx} must be an object")
+        node_id = node.get("id")
+        node_type = node.get("type")
+        if not isinstance(node_id, str) or not node_id.strip():
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: nodes.{idx}.id is required")
+        if node_id in node_ids:
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: duplicate node id '{node_id}'")
+        node_ids.add(node_id)
+        if not isinstance(node_type, str) or not node_type.strip():
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: nodes.{idx}.type is required")
+        position = node.get("position")
+        if position is not None and not isinstance(position, dict):
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: nodes.{idx}.position must be an object")
+        data = node.get("data")
+        if data is not None and not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: nodes.{idx}.data must be an object")
+        for key in ("inputs", "outputs"):
+            pins = node.get(key)
+            if pins is not None and not isinstance(pins, list):
+                raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: nodes.{idx}.{key} must be a list")
+
+    edges = raw.get("edges")
+    if not isinstance(edges, list):
+        raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: edges must be a list")
+    edge_ids: set[str] = set()
+    for idx, edge in enumerate(edges):
+        if not isinstance(edge, dict):
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: edges.{idx} must be an object")
+        edge_id = edge.get("id")
+        if edge_id is not None:
+            if not isinstance(edge_id, str) or not edge_id.strip():
+                raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: edges.{idx}.id must be a non-empty string")
+            if edge_id in edge_ids:
+                raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: duplicate edge id '{edge_id}'")
+            edge_ids.add(edge_id)
+        for key in ("source", "target", "sourceHandle", "targetHandle"):
+            value = edge.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: edges.{idx}.{key} is required")
+        if edge.get("source") not in node_ids:
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: edges.{idx}.source references unknown node")
+        if edge.get("target") not in node_ids:
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: edges.{idx}.target references unknown node")
+        animated = edge.get("animated")
+        if animated is not None and not isinstance(animated, bool):
+            raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: edges.{idx}.animated must be a boolean")
+
+    return out
 
 
 def _try_parse_semver(v: str) -> Optional[Tuple[int, int, int]]:
@@ -1181,7 +1346,23 @@ def _json_schema_for_visualflow_pin_type(pin_type: str) -> Dict[str, Any]:
     raw = str(pin_type or "").strip()
     t = raw.lower()
     schema: Dict[str, Any] = {}
-    if t in {"string", "str", "text", "markdown", "path", "file", "directory"}:
+    if t in {
+        "string",
+        "str",
+        "text",
+        "markdown",
+        "path",
+        "file",
+        "directory",
+        "provider",
+        "model",
+        "provider_text",
+        "model_text",
+        "provider_image",
+        "model_image",
+        "provider_voice",
+        "model_voice",
+    }:
         schema["type"] = "string"
     elif t in {"number", "float", "double"}:
         schema["type"] = "number"
@@ -4958,10 +5139,15 @@ async def save_chat_thread(run_id: str, req: SaveChatThreadRequest) -> SaveChatT
 
 class VoiceTTSRequest(BaseModel):
     text: str = Field(..., description="Text to synthesize.")
+    provider: Optional[str] = Field(default=None, description="Optional TTS provider/engine selector for this synthesis request.")
     voice: Optional[str] = Field(default=None, description="Optional cloned voice selector (backend-specific).")
     profile: Optional[str] = Field(default=None, description="Optional base/profile voice selector for the active TTS engine.")
     model: Optional[str] = Field(default=None, description="Optional TTS model override for this synthesis request.")
     format: str = Field(default="wav", description="Audio container/codec (wav|mp3, backend-dependent).")
+    speed: Optional[float] = Field(default=None, description="Optional speech speed multiplier when supported by the backend.")
+    quality_preset: Optional[str] = Field(default=None, description="Optional AbstractVoice quality preset: low, standard, or high.")
+    quality: Optional[str] = Field(default=None, description="Compatibility alias for quality_preset.")
+    instructions: Optional[str] = Field(default=None, description="Optional expressive/style instructions for backends that support them.")
     request_id: Optional[str] = Field(default=None, description="Optional idempotency key (UUID recommended).")
 
 
@@ -4970,6 +5156,97 @@ class VoiceTTSResponse(BaseModel):
     run_id: str
     request_id: str
     audio_artifact: Dict[str, Any]
+
+def _voice_manager_has_tts_profile(vm: Any, profile_id: str) -> bool:
+    requested = str(profile_id or "").strip()
+    if not requested:
+        return False
+    requested_l = requested.lower()
+
+    def _matches(value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        values = {text.lower()}
+        if text.lower().endswith(".onnx"):
+            values.add(text.lower()[: -len(".onnx")])
+        return requested_l in values
+
+    try:
+        if hasattr(vm, "get_profiles"):
+            for item in list(vm.get_profiles(kind="tts") or []):
+                if isinstance(item, dict):
+                    values = [
+                        item.get("profile_id"),
+                        item.get("id"),
+                        item.get("voice_id"),
+                        item.get("voice"),
+                        item.get("name"),
+                    ]
+                    params = item.get("params")
+                    if isinstance(params, dict):
+                        values.extend([params.get("voice"), params.get("model"), params.get("model_filename"), params.get("language")])
+                else:
+                    values = [
+                        getattr(item, "profile_id", None),
+                        getattr(item, "id", None),
+                        getattr(item, "voice_id", None),
+                        getattr(item, "voice", None),
+                        getattr(item, "name", None),
+                    ]
+                    params = getattr(item, "params", None)
+                    if isinstance(params, dict):
+                        values.extend([params.get("voice"), params.get("model"), params.get("model_filename"), params.get("language")])
+                if any(_matches(value) for value in values):
+                    return True
+    except Exception:
+        pass
+
+    try:
+        catalog = vm.list_available_models() if hasattr(vm, "list_available_models") else {}
+    except Exception:
+        catalog = {}
+    if isinstance(catalog, dict):
+        for language, voices in catalog.items():
+            if _matches(language):
+                return True
+            if not isinstance(voices, dict):
+                continue
+            for voice_key, raw in voices.items():
+                values = [voice_key, language]
+                if isinstance(raw, dict):
+                    values.extend([raw.get("profile_id"), raw.get("voice_id"), raw.get("voice"), raw.get("model"), raw.get("model_id"), raw.get("model_filename"), raw.get("name")])
+                if any(_matches(value) for value in values):
+                    return True
+
+    return False
+
+
+def _voice_provider_aliases(value: Any) -> set[str]:
+    text = str(value or "").strip().lower().replace("_", "-")
+    if not text:
+        return set()
+    aliases = {text, text.replace("-", "_")}
+    if text in {"remote", "compatible", "proxy"}:
+        aliases.update({"openai-compatible", "openai_compatible"})
+    if text in {"f5-tts", "f5tts", "openf5", "open-f5"}:
+        aliases.update({"f5_tts"})
+    return aliases
+
+
+def _voice_manager_tts_provider_aliases(vm: Any) -> set[str]:
+    adapter = getattr(vm, "tts_adapter", None)
+    aliases: set[str] = set()
+    for value in (
+        getattr(adapter, "engine_id", None),
+        getattr(adapter, "provider", None),
+        getattr(vm, "_abstractvoice_tts_engine", None),
+        getattr(vm, "_tts_engine_name", None),
+        getattr(vm, "_tts_engine_preference", None),
+    ):
+        aliases.update(_voice_provider_aliases(value))
+    return aliases
+
 
 @router.post("/runs/{run_id}/voice/tts", response_model=VoiceTTSResponse)
 async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
@@ -5001,107 +5278,32 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     voice = getattr(req, "voice", None)
     profile = getattr(req, "profile", None)
     model = getattr(req, "model", None)
+    provider = getattr(req, "provider", None)
     fmt = str(getattr(req, "format", "wav") or "wav").strip().lower()
+    quality_preset = str(getattr(req, "quality_preset", None) or getattr(req, "quality", None) or "").strip()
+    instructions = str(getattr(req, "instructions", "") or "").strip()
+    speed = getattr(req, "speed", None)
     voice_name = str(voice).strip() if isinstance(voice, str) and voice.strip() else None
     profile_name = str(profile).strip() if isinstance(profile, str) and profile.strip() else None
     model_name = str(model).strip() if isinstance(model, str) and model.strip() else None
+    provider_name = str(provider).strip() if isinstance(provider, str) and provider.strip() else None
+    effective_profile_name = profile_name
 
     try:
-        vm = _get_gateway_voice_manager()
+        voice_capability = _gateway_capability_registry().voice
 
-        def _synthesize() -> bytes:
-            with _VOICE_MANAGER_LOCK:
-                sentinel = object()
-                old_vm_model = getattr(vm, "tts_model", sentinel)
-                old_profile_id = ""
-                if profile_name and hasattr(vm, "get_active_profile"):
-                    try:
-                        old_profile = vm.get_active_profile(kind="tts")
-                        old_profile_id = str(getattr(old_profile, "profile_id", "") or "").strip()
-                    except Exception:
-                        old_profile_id = ""
-                adapter = getattr(vm, "tts_adapter", None)
-                old_adapter_model = getattr(adapter, "model_id", sentinel) if adapter is not None else sentinel
-                old_cloner = getattr(vm, "_voice_cloner", sentinel)
-                applied_profile = False
-                try:
-                    if model_name:
-                        try:
-                            setattr(vm, "tts_model", model_name)
-                        except Exception:
-                            pass
-                        if adapter is not None and hasattr(adapter, "model_id"):
-                            try:
-                                setattr(adapter, "model_id", model_name)
-                            except Exception:
-                                pass
-                        try:
-                            setattr(vm, "_voice_cloner", None)
-                        except Exception:
-                            pass
-                    if profile_name and hasattr(vm, "set_profile"):
-                        try:
-                            applied_profile = bool(vm.set_profile(profile_name, kind="tts"))
-                        except TypeError:
-                            try:
-                                applied_profile = bool(vm.set_profile(profile_name))
-                            except Exception:
-                                applied_profile = False
-                        except Exception:
-                            applied_profile = False
-                    return vm.speak_to_bytes(text, format=fmt, voice=None if applied_profile else voice_name)
-                finally:
-                    if applied_profile and old_profile_id and hasattr(vm, "set_profile"):
-                        try:
-                            vm.set_profile(old_profile_id, kind="tts")
-                        except TypeError:
-                            try:
-                                vm.set_profile(old_profile_id)
-                            except Exception:
-                                pass
-                        except Exception:
-                            pass
-                    elif applied_profile:
-                        try:
-                            active_adapter = getattr(vm, "tts_adapter", None)
-                            if active_adapter is not None and hasattr(active_adapter, "voice"):
-                                setattr(active_adapter, "voice", None)
-                        except Exception:
-                            pass
-                    if old_vm_model is sentinel:
-                        try:
-                            delattr(vm, "tts_model")
-                        except Exception:
-                            pass
-                    else:
-                        try:
-                            setattr(vm, "tts_model", old_vm_model)
-                        except Exception:
-                            pass
-                    if adapter is not None and old_adapter_model is not sentinel:
-                        try:
-                            setattr(adapter, "model_id", old_adapter_model)
-                        except Exception:
-                            pass
-                    elif model_name:
-                        try:
-                            new_adapter = getattr(vm, "tts_adapter", None)
-                            if new_adapter is not None and new_adapter is not adapter and hasattr(new_adapter, "model_id"):
-                                fallback_model = old_vm_model if old_vm_model is not sentinel else None
-                                setattr(new_adapter, "model_id", fallback_model)
-                        except Exception:
-                            pass
-                    if model_name:
-                        if old_cloner is sentinel:
-                            try:
-                                setattr(vm, "_voice_cloner", None)
-                            except Exception:
-                                pass
-                        else:
-                            try:
-                                setattr(vm, "_voice_cloner", old_cloner)
-                            except Exception:
-                                pass
+        def _synthesize() -> Any:
+            return voice_capability.tts(
+                text,
+                voice=voice_name,
+                profile=profile_name,
+                model=model_name,
+                provider=provider_name,
+                format=fmt,
+                speed=speed,
+                quality_preset=quality_preset or None,
+                instructions=instructions or None,
+            )
 
         audio_bytes0 = await asyncio.to_thread(_synthesize)
         if not isinstance(audio_bytes0, (bytes, bytearray)):
@@ -5137,10 +5339,16 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     voice_str = str(voice_name or "").strip()
     if voice_str:
         tags["voice"] = voice_str
-    if profile_name:
-        tags["profile"] = profile_name
+    if provider_name:
+        tags["provider"] = provider_name
+    if effective_profile_name:
+        tags["profile"] = effective_profile_name
     if model_name:
         tags["model"] = model_name
+    if quality_preset:
+        tags["quality_preset"] = quality_preset
+    if speed is not None:
+        tags["speed"] = str(speed)
 
     try:
         meta = await asyncio.to_thread(
@@ -5171,10 +5379,14 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         "run_id": str(getattr(run, "run_id", rid)),
         "request_id": request_id,
         "text": text,
+        "provider": provider_name,
         "voice": voice,
-        "profile": profile_name,
+        "profile": effective_profile_name,
         "model": model_name,
         "format": fmt,
+        "speed": speed,
+        "quality_preset": quality_preset or None,
+        "instructions": instructions or None,
         "audio_artifact": audio_ref,
     }
 
@@ -5192,6 +5404,7 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
 class AudioTranscribeRequest(BaseModel):
     audio_artifact: Dict[str, Any] = Field(..., description="Audio artifact ref dict like {'$artifact': '...'} (from /attachments/*).")
     language: Optional[str] = Field(default=None, description="Optional language hint (backend-specific).")
+    provider: Optional[str] = Field(default=None, description="Optional STT provider/engine selector for this transcription request.")
     model: Optional[str] = Field(default=None, description="Optional STT model override for this transcription request.")
     request_id: Optional[str] = Field(default=None, description="Optional idempotency key (UUID recommended).")
 
@@ -5309,6 +5522,8 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
 
     language = getattr(req, "language", None)
     language_hint = str(language).strip() if isinstance(language, str) and language.strip() else None
+    stt_provider = getattr(req, "provider", None)
+    stt_provider_name = str(stt_provider).strip() if isinstance(stt_provider, str) and stt_provider.strip() else None
     stt_model = getattr(req, "model", None)
     stt_model_name = str(stt_model).strip() if isinstance(stt_model, str) and stt_model.strip() else None
 
@@ -5328,50 +5543,16 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
     audio_bytes = bytes(audio_bytes0)
 
     try:
-        vm = _get_gateway_voice_manager()
-
         def _transcribe() -> str:
-            with _VOICE_MANAGER_LOCK:
-                sentinel = object()
-                old_vm_model = getattr(vm, "stt_model", sentinel)
-                adapter = getattr(vm, "stt_adapter", None)
-                old_adapter_model = getattr(adapter, "model_id", sentinel) if adapter is not None else sentinel
-                try:
-                    if stt_model_name:
-                        try:
-                            setattr(vm, "stt_model", stt_model_name)
-                        except Exception:
-                            pass
-                        if adapter is not None and hasattr(adapter, "model_id"):
-                            try:
-                                setattr(adapter, "model_id", stt_model_name)
-                            except Exception:
-                                pass
-                    return str(vm.transcribe_from_bytes(audio_bytes, language=language_hint) or "")
-                finally:
-                    if old_vm_model is sentinel:
-                        try:
-                            delattr(vm, "stt_model")
-                        except Exception:
-                            pass
-                    else:
-                        try:
-                            setattr(vm, "stt_model", old_vm_model)
-                        except Exception:
-                            pass
-                    if adapter is not None and old_adapter_model is not sentinel:
-                        try:
-                            setattr(adapter, "model_id", old_adapter_model)
-                        except Exception:
-                            pass
-                    elif stt_model_name:
-                        try:
-                            new_adapter = getattr(vm, "stt_adapter", None)
-                            if new_adapter is not None and new_adapter is not adapter and hasattr(new_adapter, "model_id"):
-                                fallback_model = old_vm_model if old_vm_model is not sentinel else None
-                                setattr(new_adapter, "model_id", fallback_model)
-                        except Exception:
-                            pass
+            return str(
+                _gateway_capability_registry().audio.transcribe(
+                    audio_bytes,
+                    language=language_hint,
+                    provider=stt_provider_name,
+                    model=stt_model_name,
+                )
+                or ""
+            )
 
         text = await asyncio.to_thread(_transcribe)
         text = str(text or "")
@@ -5396,6 +5577,8 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         "session_id": str(getattr(run, "session_id", "") or ""),
         "source_audio_artifact": str(audio_ref.get("$artifact")),
     }
+    if stt_provider_name:
+        tags["provider"] = stt_provider_name
     if stt_model_name:
         tags["model"] = stt_model_name
     try:
@@ -5428,6 +5611,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         "request_id": request_id,
         "audio_artifact": audio_ref,
         "language": language,
+        "provider": stt_provider_name,
         "model": stt_model_name,
         "text": text,
         "transcript_artifact": transcript_ref,
@@ -6129,6 +6313,147 @@ def _voice_profile_descriptors() -> list[Dict[str, Any]]:
     return profiles[:100]
 
 
+def _voice_record_provider(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    tags = item.get("tags") if isinstance(item.get("tags"), dict) else {}
+    params = item.get("params") if isinstance(item.get("params"), dict) else {}
+    return str(
+        item.get("provider")
+        or tags.get("provider")
+        or params.get("provider")
+        or params.get("engine")
+        or params.get("engine_id")
+        or item.get("engine")
+        or item.get("engine_id")
+        or tags.get("engine_id")
+        or ""
+    ).strip()
+
+
+def _voice_record_model(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    params = item.get("params") if isinstance(item.get("params"), dict) else {}
+    return str(
+        item.get("model")
+        or item.get("model_id")
+        or params.get("model")
+        or params.get("model_id")
+        or params.get("model_filename")
+        or ""
+    ).strip()
+
+
+def _voice_record_key(item: Any) -> str:
+    if not isinstance(item, dict):
+        return str(item)
+    provider = _voice_record_provider(item).lower()
+    record_id = str(
+        item.get("qualified_id")
+        or item.get("id")
+        or item.get("voice_id")
+        or item.get("profile_id")
+        or item.get("label")
+        or ""
+    ).strip().lower()
+    model = _voice_record_model(item).lower()
+    return f"{provider}:{record_id}:{model}"
+
+
+def _builtin_voice_profile_records(engine: str) -> list[Dict[str, Any]]:
+    engine_id = str(engine or "").strip().lower()
+    if not engine_id:
+        return []
+    try:
+        from abstractvoice.voice_profiles import get_builtin_voice_profiles  # type: ignore
+    except Exception:
+        return []
+    records: list[Dict[str, Any]] = []
+    try:
+        profiles = get_builtin_voice_profiles(engine_id)
+    except Exception:
+        return []
+    for profile in profiles:
+        profile_id = str(getattr(profile, "profile_id", "") or "").strip()
+        if not profile_id:
+            continue
+        params = getattr(profile, "params", None)
+        tags = getattr(profile, "tags", None)
+        item: Dict[str, Any] = {
+            "id": profile_id,
+            "profile_id": profile_id,
+            "label": str(getattr(profile, "label", "") or profile_id).strip() or profile_id,
+            "description": getattr(profile, "description", None),
+            "provider": engine_id,
+            "engine_id": engine_id,
+            "qualified_id": f"{engine_id}:{profile_id}",
+            "params": dict(params) if isinstance(params, dict) else {},
+            "tags": dict(tags) if isinstance(tags, dict) else {},
+        }
+        item["params"].setdefault("provider", engine_id)
+        item["params"].setdefault("engine", engine_id)
+        item["params"].setdefault("engine_id", engine_id)
+        item["tags"].setdefault("provider", engine_id)
+        item["tags"].setdefault("engine_id", engine_id)
+        records.append(item)
+    return records
+
+
+def _has_builtin_voice_profiles(engine: str) -> bool:
+    return bool(_builtin_voice_profile_records(engine))
+
+
+def _piper_voice_profile_records() -> tuple[list[Dict[str, Any]], list[str]]:
+    try:
+        from abstractvoice.adapters.tts_piper import PiperTTSAdapter  # type: ignore
+    except Exception:
+        return [], []
+    raw_models = getattr(PiperTTSAdapter, "PIPER_MODELS", {})
+    if not isinstance(raw_models, dict):
+        return [], []
+    records: list[Dict[str, Any]] = []
+    model_ids: list[str] = []
+    for language, value in raw_models.items():
+        if not isinstance(value, (list, tuple)) or len(value) < 2:
+            continue
+        model_id = str(value[1] or "").strip()
+        if not model_id:
+            continue
+        model_ids.append(model_id)
+        parts = model_id.split("-")
+        voice_id = parts[1] if len(parts) >= 2 and parts[1] else model_id
+        language_id = str(language or "").strip()
+        record = {
+            "id": voice_id,
+            "profile_id": voice_id,
+            "voice_id": voice_id,
+            "label": f"Piper {voice_id}",
+            "provider": "piper",
+            "engine_id": "piper",
+            "model": model_id,
+            "model_id": model_id,
+            "qualified_id": f"piper:{voice_id}",
+            "params": {
+                "provider": "piper",
+                "engine": "piper",
+                "engine_id": "piper",
+                "voice": voice_id,
+                "model": model_id,
+                "model_id": model_id,
+                "model_filename": model_id,
+                "language": language_id,
+            },
+            "tags": {
+                "provider": "piper",
+                "engine_id": "piper",
+                "language": language_id,
+            },
+        }
+        records.append(record)
+    return records, _dedupe_strings(model_ids)
+
+
 def _utc_now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -6146,6 +6471,59 @@ def _dedupe_strings(values: list[str]) -> list[str]:
     return out
 
 
+def _provider_string_map(value: Any) -> Dict[str, list[str]]:
+    out: Dict[str, list[str]] = {}
+    if not isinstance(value, dict):
+        return out
+    for provider, raw_values in value.items():
+        provider_id = str(provider or "").strip()
+        if not provider_id:
+            continue
+        values: list[str] = []
+        if isinstance(raw_values, str):
+            values = [raw_values]
+        elif isinstance(raw_values, list):
+            for item in raw_values:
+                if isinstance(item, str) and item.strip():
+                    values.append(item.strip())
+                elif isinstance(item, dict):
+                    for key in ("model", "model_id", "id", "name"):
+                        model_id = item.get(key)
+                        if isinstance(model_id, str) and model_id.strip():
+                            values.append(model_id.strip())
+                            break
+        cleaned = _dedupe_strings(values)
+        if cleaned:
+            out[provider_id] = cleaned
+    return out
+
+
+def _provider_models_from_mapping(mapping: Dict[str, list[str]]) -> list[Dict[str, str]]:
+    rows: list[Dict[str, str]] = []
+    for provider, models in mapping.items():
+        provider_id = str(provider or "").strip()
+        if not provider_id:
+            continue
+        for model in models:
+            model_id = str(model or "").strip()
+            if model_id:
+                rows.append({"provider": provider_id, "model": model_id, "id": f"{provider_id}/{model_id}"})
+    return rows
+
+
+def _vision_models_by_provider(models: list[Dict[str, Any]]) -> Dict[str, list[str]]:
+    out: Dict[str, list[str]] = {}
+    for item in models:
+        provider = str(item.get("provider") or item.get("owned_by") or item.get("backend") or "").strip()
+        model = str(item.get("model") or item.get("routed_model") or item.get("model_id") or item.get("id") or "").strip()
+        if not provider or not model:
+            continue
+        current = out.setdefault(provider, [])
+        if model.lower() not in {m.lower() for m in current}:
+            current.append(model)
+    return out
+
+
 def _request_provider_api_key(request: Request) -> Optional[str]:
     for header in ("x-abstractcore-provider-api-key", "x-provider-api-key"):
         value = request.headers.get(header)
@@ -6159,10 +6537,18 @@ def _core_catalog_or_raise(
     *,
     request: Request,
     query: Optional[Dict[str, Any]] = None,
+    timeout_s: Optional[float] = None,
+    v1: bool = True,
 ) -> Dict[str, Any]:
     query = {str(k): v for k, v in dict(query or {}).items() if v is not None}
     try:
-        payload = fetch_core_catalog_json(path, query=query, provider_api_key=_request_provider_api_key(request))
+        payload = fetch_core_catalog_json(
+            path,
+            query=query,
+            provider_api_key=_request_provider_api_key(request),
+            timeout_s=timeout_s,
+            v1=v1,
+        )
     except CoreCatalogProxyError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     out = dict(payload)
@@ -6175,26 +6561,174 @@ def _core_catalog_or_raise(
     return out
 
 
-def _static_voice_catalog_response() -> Dict[str, Any]:
-    profiles = _voice_profile_descriptors()
+def _voice_catalog_controls() -> Dict[str, Any]:
     return {
-        "available": bool(profiles),
+        "speed": {"supported": True, "min": 0.5, "max": 2.0, "default": 1.0},
+        "quality_preset": {"supported": True, "values": ["low", "standard", "high"], "default": "standard"},
+        "instructions": {"supported": True},
+        "profile": {"supported": True},
+        "voice_clone": {"supported": True},
+    }
+
+
+def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, Any]:
+    wanted = str(provider or "").strip().lower()
+    profiles: list[Dict[str, Any]] = []
+    tts_models_by_provider: Dict[str, list[str]] = {}
+    tts_profiles_by_provider: Dict[str, list[str]] = {}
+    tts_voices_by_provider: Dict[str, list[str]] = {}
+    tts_providers: list[str] = []
+
+    def include(engine: str) -> bool:
+        return not wanted or wanted == engine
+
+    def add_provider(engine: str) -> None:
+        if engine not in tts_providers:
+            tts_providers.append(engine)
+
+    if include("openai") and _env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY"):
+        add_provider("openai")
+        openai_profiles = [
+            {"id": voice, "profile_id": voice, "voice_id": voice, "label": voice, "provider": "openai", "engine_id": "openai", "qualified_id": f"openai:{voice}", "params": {"provider": "openai", "engine": "openai", "voice": voice}, "tags": {"provider": "openai", "engine_id": "openai"}}
+            for voice in ["alloy", "ash", "ballad", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse", "cedar"]
+        ]
+        profiles.extend(openai_profiles)
+        tts_models_by_provider["openai"] = _dedupe_strings(
+            _split_env_csv(os.getenv("ABSTRACTVOICE_OPENAI_TTS_MODEL"))
+            + _split_env_csv(os.getenv("ABSTRACTGATEWAY_VOICE_TTS_MODEL"))
+            + ["tts-1", "tts-1-hd", "gpt-4o-mini-tts"]
+        )
+        tts_profiles_by_provider["openai"] = [str(item["id"]) for item in openai_profiles]
+        tts_voices_by_provider["openai"] = [str(item["id"]) for item in openai_profiles]
+
+    if include("piper") and (_module_available("piper") or _module_available("piper_phonemize")):
+        piper_profiles, piper_models = _piper_voice_profile_records()
+        if piper_profiles or piper_models:
+            add_provider("piper")
+            profiles.extend(piper_profiles)
+            tts_models_by_provider["piper"] = piper_models
+            tts_profiles_by_provider["piper"] = [str(item["id"]) for item in piper_profiles]
+            tts_voices_by_provider["piper"] = [str(item["id"]) for item in piper_profiles]
+
+    if include("omnivoice") and _module_available("omnivoice"):
+        omni_profiles = _builtin_voice_profile_records("omnivoice")
+        add_provider("omnivoice")
+        profiles.extend(omni_profiles)
+        tts_profiles_by_provider["omnivoice"] = [str(item["id"]) for item in omni_profiles]
+        tts_voices_by_provider["omnivoice"] = [str(item["id"]) for item in omni_profiles]
+
+    if include("supertonic"):
+        supertonic_profiles = _builtin_voice_profile_records("supertonic")
+    else:
+        supertonic_profiles = []
+    if include("supertonic") and (supertonic_profiles or _module_available("onnxruntime")):
+        add_provider("supertonic")
+        profiles.extend(supertonic_profiles)
+        tts_models_by_provider["supertonic"] = ["supertonic-3"]
+        tts_profiles_by_provider["supertonic"] = [str(item["id"]) for item in supertonic_profiles]
+        tts_voices_by_provider["supertonic"] = [str(item["id"]) for item in supertonic_profiles]
+
+    env_profiles = _voice_profile_descriptors()
+    for item in env_profiles:
+        engine = _voice_record_provider(item).lower()
+        if wanted and engine and engine != wanted:
+            continue
+        profiles.append(item)
+        if engine:
+            add_provider(engine)
+
+    deduped_profiles: list[Dict[str, Any]] = []
+    seen_profiles: set[str] = set()
+    for item in profiles:
+        key = _voice_record_key(item)
+        if key in seen_profiles:
+            continue
+        seen_profiles.add(key)
+        deduped_profiles.append(item)
+    models = _dedupe_strings([model for values in tts_models_by_provider.values() for model in values])
+    return {
+        "available": bool(deduped_profiles or models or tts_providers),
         "route_available": True,
-        "profiles": profiles,
-        "models": [],
+        "profiles": deduped_profiles,
+        "voices": deduped_profiles,
+        "cloned_voices": [],
+        "models": models,
+        "tts_models": models,
+        "tts_providers": tts_providers,
+        "providers": tts_providers,
+        "tts_models_by_provider": tts_models_by_provider,
+        "tts_profiles_by_provider": tts_profiles_by_provider,
+        "tts_voices_by_provider": tts_voices_by_provider,
+        "controls": _voice_catalog_controls(),
         "source": "gateway_static",
         "stale": False,
         "refreshed_at": _utc_now_iso(),
         "error": None,
         **(
             {}
-            if profiles
+            if deduped_profiles or models or tts_providers
             else {"config_hint": "Configure AbstractCore server catalog routes or ABSTRACTVOICE_* voice profile settings."}
         ),
     }
 
 
-def _static_speech_models_response() -> Dict[str, Any]:
+def _module_available(module_name: str) -> bool:
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
+
+
+def _static_voice_providers_only_response() -> Dict[str, Any]:
+    tts_providers: List[str] = []
+    stt_providers: List[str] = []
+
+    def add(target: List[str], value: Optional[str]) -> None:
+        text = str(value or "").strip().lower().replace("_", "-")
+        if text and text not in target:
+            target.append(text)
+
+    add(tts_providers, _env_first("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE"))
+    add(stt_providers, _env_first("ABSTRACTGATEWAY_VOICE_STT_ENGINE", "ABSTRACTVOICE_STT_ENGINE"))
+    if _env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY"):
+        add(tts_providers, "openai")
+        add(stt_providers, "openai")
+    if _env_first("ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL", "ABSTRACTVOICE_REMOTE_BASE_URL"):
+        add(tts_providers, "openai-compatible")
+        add(stt_providers, "openai-compatible")
+    if _module_available("piper") or _module_available("piper_phonemize"):
+        add(tts_providers, "piper")
+    if _module_available("omnivoice"):
+        add(tts_providers, "omnivoice")
+    if _module_available("onnxruntime") or _has_builtin_voice_profiles("supertonic"):
+        add(tts_providers, "supertonic")
+    if _module_available("torch") and _module_available("transformers"):
+        add(tts_providers, "audiodit")
+    if _module_available("f5_tts"):
+        add(tts_providers, "f5-tts")
+    if _module_available("faster_whisper") or _module_available("whisper"):
+        add(stt_providers, "faster-whisper")
+
+    return {
+        "kind": "voice_providers",
+        "available": bool(tts_providers or stt_providers),
+        "route_available": True,
+        "providers": tts_providers,
+        "tts_providers": tts_providers,
+        "stt_providers": stt_providers,
+        "profiles": [],
+        "voices": [],
+        "cloned_voices": [],
+        "source": "gateway_static_providers",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+    }
+
+
+def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, Any]:
     values: list[str] = []
     for key in (
         "ABSTRACTGATEWAY_VOICE_TTS_MODEL",
@@ -6204,12 +6738,35 @@ def _static_speech_models_response() -> Dict[str, Any]:
         "ABSTRACTVOICE_REMOTE_TTS_MODEL",
     ):
         values.extend(_split_env_csv(os.getenv(key)))
-    models = _dedupe_strings(values)
+    engine = str(_env_first("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE") or "").strip()
+    provider_key = str(provider or engine or "").strip().lower()
+    models_by_provider: Dict[str, list[str]] = {}
+    if not provider_key or provider_key == "openai":
+        openai_values = _dedupe_strings(values + ["tts-1", "tts-1-hd", "gpt-4o-mini-tts"])
+        if openai_values and (_env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY") or provider_key == "openai"):
+            models_by_provider["openai"] = openai_values
+    if (not provider_key or provider_key == "piper") and (_module_available("piper") or _module_available("piper_phonemize")):
+        _, piper_models = _piper_voice_profile_records()
+        if piper_models:
+            models_by_provider["piper"] = piper_models
+    if (not provider_key or provider_key == "supertonic") and (
+        _module_available("onnxruntime") or _has_builtin_voice_profiles("supertonic")
+    ):
+        models_by_provider["supertonic"] = ["supertonic-3"]
+    if not provider_key and engine and values:
+        models_by_provider.setdefault(engine.lower(), _dedupe_strings(values))
+    models = _dedupe_strings([model for provider_models in models_by_provider.values() for model in provider_models])
+    providers = _dedupe_strings(list(models_by_provider.keys()))
     return {
         "available": bool(models),
         "route_available": True,
         "models": models,
         "active_model": models[0] if models else None,
+        "providers": providers,
+        "active_provider": providers[0] if providers else None,
+        "models_by_provider": models_by_provider,
+        "tts_models_by_provider": models_by_provider,
+        "controls": _voice_catalog_controls(),
         "source": "gateway_static",
         "stale": False,
         "refreshed_at": _utc_now_iso(),
@@ -6234,11 +6791,14 @@ def _static_transcription_models_response() -> Dict[str, Any]:
     elif engine in {"faster_whisper", "faster-whisper", "whisper", "local"}:
         values.extend(["tiny", "base", "small", "medium", "large-v2", "large-v3"])
     models = _dedupe_strings(values)
+    providers = _dedupe_strings([engine])
     return {
         "available": bool(models),
         "route_available": True,
         "models": models,
         "active_model": models[0] if models else None,
+        "providers": providers,
+        "active_provider": providers[0] if providers else None,
         "source": "gateway_static",
         "stale": False,
         "refreshed_at": _utc_now_iso(),
@@ -6272,6 +6832,11 @@ def _gateway_capability_owner_config(*, voice_base_url: Optional[str] = None, vi
         "ABSTRACTGATEWAY_VISION_API_KEY": "vision_api_key",
         "ABSTRACTGATEWAY_VISION_MODEL_ID": "vision_model_id",
         "ABSTRACTGATEWAY_VISION_DIFFUSERS_MODEL_ID": "vision_model_id",
+        "ABSTRACTGATEWAY_VISION_MFLUX_MODEL": "vision_mflux_model",
+        "ABSTRACTGATEWAY_VISION_MFLUX_BASE_MODEL": "vision_mflux_base_model",
+        "ABSTRACTGATEWAY_VISION_MODEL_DIR": "vision_model_dir",
+        "ABSTRACTGATEWAY_VISION_MFLUX_QUANTIZE": "vision_mflux_quantize",
+        "ABSTRACTGATEWAY_VISION_MFLUX_ALLOW_DOWNLOAD": "vision_mflux_allow_download",
         "ABSTRACTGATEWAY_VISION_DIFFUSERS_DEVICE": "vision_device",
         "ABSTRACTGATEWAY_VISION_DIFFUSERS_TORCH_DTYPE": "vision_torch_dtype",
         "ABSTRACTGATEWAY_VISION_SDCPP_MODEL": "vision_sdcpp_model",
@@ -6282,6 +6847,11 @@ def _gateway_capability_owner_config(*, voice_base_url: Optional[str] = None, vi
         "ABSTRACTVISION_API_KEY": "vision_api_key",
         "ABSTRACTVISION_MODEL_ID": "vision_model_id",
         "ABSTRACTVISION_DIFFUSERS_MODEL_ID": "vision_model_id",
+        "ABSTRACTVISION_MFLUX_MODEL": "vision_mflux_model",
+        "ABSTRACTVISION_MFLUX_BASE_MODEL": "vision_mflux_base_model",
+        "ABSTRACTVISION_MODEL_DIR": "vision_model_dir",
+        "ABSTRACTVISION_MFLUX_QUANTIZE": "vision_mflux_quantize",
+        "ABSTRACTVISION_MFLUX_ALLOW_DOWNLOAD": "vision_mflux_allow_download",
         "ABSTRACTVISION_DIFFUSERS_DEVICE": "vision_device",
         "ABSTRACTVISION_DIFFUSERS_TORCH_DTYPE": "vision_torch_dtype",
         "ABSTRACTVISION_SDCPP_MODEL": "vision_sdcpp_model",
@@ -6321,6 +6891,16 @@ def _local_voice_catalog_response(*, base_url: Optional[str] = None) -> Optional
     out.setdefault("profiles", [])
     out.setdefault("voices", out.get("profiles") if isinstance(out.get("profiles"), list) else [])
     out.setdefault("models", out.get("tts_models") if isinstance(out.get("tts_models"), list) else [])
+    out.setdefault(
+        "controls",
+        {
+            "speed": {"supported": True, "min": 0.5, "max": 2.0, "default": 1.0},
+            "quality_preset": {"supported": True, "values": ["low", "standard", "high"], "default": "standard"},
+            "instructions": {"supported": True},
+            "profile": {"supported": True},
+            "voice_clone": {"supported": True},
+        },
+    )
     out["available"] = True
     out["route_available"] = True
     out["source"] = "abstractvoice_local"
@@ -6332,17 +6912,45 @@ def _local_voice_catalog_response(*, base_url: Optional[str] = None) -> Optional
 
 def _local_speech_models_response(*, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
     try:
-        models = _gateway_capability_registry(voice_base_url=base_url).voice.list_tts_models()
+        voice = _gateway_capability_registry(voice_base_url=base_url).voice
+        catalog = voice.voice_catalog() if hasattr(voice, "voice_catalog") else {}
+        models = voice.list_tts_models()
     except Exception:
         return None
-    cleaned = _dedupe_strings([str(x) for x in list(models or [])])
-    if not cleaned:
-        return None
+    if not isinstance(catalog, dict):
+        catalog = {}
+    models_by_provider = _provider_string_map(catalog.get("tts_models_by_provider"))
+    cleaned = _dedupe_strings(
+        [str(x) for values in models_by_provider.values() for x in values]
+        + [str(x) for x in list(models or [])]
+    )
+    providers = _dedupe_strings(
+        [str(x) for x in list(catalog.get("tts_providers") or []) if isinstance(x, str)]
+        + list(models_by_provider.keys())
+    )
+    active_provider = str(catalog.get("active_tts_provider") or catalog.get("engine_id") or "").strip() if isinstance(catalog, dict) else ""
+    if cleaned and not models_by_provider and (active_provider or providers):
+        models_by_provider[active_provider or providers[0]] = cleaned
     return {
-        "available": True,
+        "available": bool(cleaned or providers),
         "route_available": True,
         "models": cleaned,
         "active_model": cleaned[0] if cleaned else None,
+        "providers": providers,
+        "available_providers": list(catalog.get("available_tts_providers") or providers)
+        if isinstance(catalog.get("available_tts_providers"), list)
+        else providers,
+        "active_provider": active_provider or (providers[0] if providers else None),
+        "models_by_provider": models_by_provider,
+        "tts_models_by_provider": models_by_provider,
+        "provider_models": _provider_models_from_mapping(models_by_provider),
+        "controls": {
+            "speed": {"supported": True, "min": 0.5, "max": 2.0, "default": 1.0},
+            "quality_preset": {"supported": True, "values": ["low", "standard", "high"], "default": "standard"},
+            "instructions": {"supported": True},
+            "profile": {"supported": True},
+            "voice_clone": {"supported": True},
+        },
         "source": "abstractvoice_local",
         "stale": False,
         "refreshed_at": _utc_now_iso(),
@@ -6352,17 +6960,38 @@ def _local_speech_models_response(*, base_url: Optional[str] = None) -> Optional
 
 def _local_transcription_models_response(*, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
     try:
-        models = _gateway_capability_registry(voice_base_url=base_url).voice.list_stt_models()
+        voice = _gateway_capability_registry(voice_base_url=base_url).voice
+        catalog = voice.voice_catalog() if hasattr(voice, "voice_catalog") else {}
+        models = voice.list_stt_models()
     except Exception:
         return None
-    cleaned = _dedupe_strings([str(x) for x in list(models or [])])
-    if not cleaned:
-        return None
+    if not isinstance(catalog, dict):
+        catalog = {}
+    models_by_provider = _provider_string_map(catalog.get("stt_models_by_provider"))
+    cleaned = _dedupe_strings(
+        [str(x) for values in models_by_provider.values() for x in values]
+        + [str(x) for x in list(models or [])]
+    )
+    providers = _dedupe_strings(
+        [str(x) for x in list(catalog.get("stt_providers") or []) if isinstance(x, str)]
+        + list(models_by_provider.keys())
+    )
+    active_provider = str(catalog.get("active_stt_provider") or "").strip() if isinstance(catalog, dict) else ""
+    if cleaned and not models_by_provider and (active_provider or providers):
+        models_by_provider[active_provider or providers[0]] = cleaned
     return {
-        "available": True,
+        "available": bool(cleaned or providers),
         "route_available": True,
         "models": cleaned,
         "active_model": cleaned[0] if cleaned else None,
+        "providers": providers,
+        "available_providers": list(catalog.get("available_stt_providers") or providers)
+        if isinstance(catalog.get("available_stt_providers"), list)
+        else providers,
+        "active_provider": active_provider or (providers[0] if providers else None),
+        "models_by_provider": models_by_provider,
+        "stt_models_by_provider": models_by_provider,
+        "provider_models": _provider_models_from_mapping(models_by_provider),
         "source": "abstractvoice_local",
         "stale": False,
         "refreshed_at": _utc_now_iso(),
@@ -6370,19 +6999,50 @@ def _local_transcription_models_response(*, base_url: Optional[str] = None) -> O
     }
 
 
-def _local_vision_provider_models_response(*, task: Optional[str], base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def _local_vision_provider_models_response(
+    *,
+    task: Optional[str],
+    base_url: Optional[str] = None,
+    include_models: bool = True,
+) -> Optional[Dict[str, Any]]:
     try:
-        models = _gateway_capability_registry(vision_base_url=base_url).vision.list_provider_models(task=task)
+        vision = _gateway_capability_registry(vision_base_url=base_url).vision
+        availability: Dict[str, Any] = {}
+        if hasattr(vision, "available_providers"):
+            try:
+                raw_availability = vision.available_providers(task=task)
+                if isinstance(raw_availability, dict):
+                    availability = dict(raw_availability)
+            except Exception:
+                availability = {}
+        models = vision.list_provider_models(task=task) if include_models else []
     except Exception:
         return None
     items = [dict(x) for x in list(models or []) if isinstance(x, dict)]
-    if not items:
-        return None
+    models_by_provider = _vision_models_by_provider(items)
+    providers = _dedupe_strings(
+        [str(x) for x in list(availability.get("providers") or []) if isinstance(x, str)]
+        + list(models_by_provider.keys())
+    )
+    available_providers = _dedupe_strings(
+        [str(x) for x in list(availability.get("available_providers") or []) if isinstance(x, str)]
+    )
+    if not available_providers:
+        available_providers = list(providers)
+    if available_providers and models_by_provider:
+        allowed = {p.lower() for p in available_providers}
+        models_by_provider = {k: v for k, v in models_by_provider.items() if k.lower() in allowed}
     return {
-        "available": True,
+        "available": bool(items or providers or available_providers),
         "route_available": True,
         "models": items,
         "task": task,
+        "providers": providers or available_providers,
+        "available_providers": available_providers or providers,
+        "models_by_provider": models_by_provider,
+        "provider_models": _provider_models_from_mapping(models_by_provider),
+        "details": availability.get("details") if isinstance(availability.get("details"), dict) else {},
+        "backend_id": getattr(vision, "backend_id", None),
         "source": "abstractvision_local_provider",
         "stale": False,
         "refreshed_at": _utc_now_iso(),
@@ -6413,27 +7073,518 @@ async def _local_cached_vision_models_response() -> Optional[Dict[str, Any]]:
     return out
 
 
-def _static_vision_provider_models_response(*, task: Optional[str]) -> Dict[str, Any]:
-    values = _dedupe_strings(
-        [
-            str(os.getenv(key) or "").strip()
-            for key in (
-                "OPENAI_IMAGE_MODEL_ID",
-                "OPENAI_IMAGE_MODEL",
-                "ABSTRACTCORE_VISION_MODEL_ID",
-                "ABSTRACTCORE_VISION_UPSTREAM_MODEL_ID",
-                "ABSTRACTVISION_MODEL_ID",
-                "ABSTRACTVISION_DIFFUSERS_MODEL_ID",
-                "ABSTRACTVISION_SDCPP_MODEL",
-                "ABSTRACTVISION_SDCPP_DIFFUSION_MODEL",
-            )
-        ]
-    )
-    models = [{"id": value, **({"task": task} if task else {})} for value in values]
+def _gateway_looks_like_hf_repo_id(value: str) -> bool:
+    s = str(value or "").strip()
+    if not s or "://" in s or s.startswith(("./", "../", "/", "~")):
+        return False
+    parts = s.split("/")
+    return len(parts) == 2 and bool(parts[0]) and bool(parts[1])
+
+
+def _gateway_has_local_mflux_preset(model_id: str) -> bool:
+    try:
+        from abstractvision.model_downloads import default_download_root, find_model_preset, model_presets  # type: ignore
+
+        root = default_download_root()
+        if str(model_id or "").strip():
+            presets = [find_model_preset(str(model_id), target="mlx", engine="mflux", require_8bit=True)]
+        else:
+            presets = model_presets(target="mlx", engine="mflux")
+        for preset in presets:
+            local_dir = root / preset.local_dir_name
+            if local_dir.exists() and any(local_dir.rglob("*.safetensors")):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _gateway_vision_parameter_metadata(*, provider: str, model_id: str) -> Dict[str, Any]:
+    provider_key = str(provider or "").strip().lower().replace("_", "-")
+    model_key = str(model_id or "").strip().lower()
+    if provider_key in {"mflux", "m-flux"} and ("flux.2-klein" in model_key or "flux2-klein" in model_key):
+        defaults = {"steps": 4, "guidance_scale": 1.0}
+        constraints = {
+            "steps": {"min": 2},
+            "guidance_scale": {"const": 1.0},
+            "negative_prompt": {"supported": False},
+        }
+        return {
+            "parameter_defaults": defaults,
+            "parameter_constraints": constraints,
+            "parameters": {"defaults": defaults, "constraints": constraints},
+        }
+    return {}
+
+
+def _gateway_vision_provider_model_item(*, provider: str, model_id: str, task: Optional[str], configured: bool = False, cached: bool = False) -> Dict[str, Any]:
+    mid = str(model_id or "").strip()
+    provider_s = str(provider or "").strip() or "openai-compatible"
+    provider_l = provider_s.lower().replace("_", "-")
+    if mid.startswith("mflux/"):
+        provider_l = "mflux"
+        provider_s = "mflux"
+        mid = mid.split("/", 1)[1].strip()
+    if provider_l in {"mflux", "m-flux"} or _gateway_has_local_mflux_preset(mid):
+        display_provider = "mflux"
+        routed = mid
+        backend = "mflux"
+    elif provider_l in {"huggingface", "hf", "diffusers", "hf-diffusers"} or _gateway_looks_like_hf_repo_id(mid):
+        display_provider = "huggingface" if provider_l in {"huggingface", "hf", "hf-diffusers"} or _gateway_looks_like_hf_repo_id(mid) else provider_s
+        routed = mid if mid.startswith("diffusers/") else f"diffusers/{mid}"
+        backend = "diffusers"
+    elif provider_l in {"sdcpp", "sd-cpp", "stable-diffusion.cpp", "stable-diffusion-cpp"}:
+        display_provider = provider_s
+        routed = mid if mid.startswith("sdcpp/") else f"sdcpp/{mid}"
+        backend = "sdcpp"
+    else:
+        display_provider = provider_s
+        routed = mid if mid.startswith("openai-compatible/") else f"openai-compatible/{mid}"
+        backend = "openai-compatible"
+    caps = [str(task)] if task else ["text_to_image", "image_generation"]
+    parameter_metadata = _gateway_vision_parameter_metadata(provider=display_provider, model_id=mid)
+    return {
+        "id": mid.removeprefix("mflux/").removeprefix("diffusers/").removeprefix("openai-compatible/"),
+        "model": routed,
+        "provider": display_provider,
+        "backend": backend,
+        "routed_model": routed,
+        "object": "model",
+        "owned_by": display_provider,
+        "capabilities": caps,
+        **parameter_metadata,
+        "raw": {
+            "id": mid.removeprefix("mflux/").removeprefix("diffusers/").removeprefix("openai-compatible/"),
+            "provider": display_provider,
+            "backend": backend,
+            "routed_model": routed,
+            **parameter_metadata,
+            **({"configured": True} if configured else {}),
+            **({"local_cached": True} if cached else {}),
+        },
+    }
+
+
+def _provider_models_from_cached_vision_response(cached: Optional[Dict[str, Any]], *, task: Optional[str]) -> Dict[str, Any]:
+    models: list[Dict[str, Any]] = []
+    values = cached.get("models") if isinstance(cached, dict) else None
+    if isinstance(values, list):
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id") or item.get("model") or "").strip()
+            if not model_id:
+                continue
+            tasks = item.get("tasks")
+            if task and isinstance(tasks, list) and task not in [str(t) for t in tasks]:
+                continue
+            provider = str(item.get("provider") or "huggingface").strip() or "huggingface"
+            entry = _gateway_vision_provider_model_item(provider=provider, model_id=model_id, task=task, cached=True)
+            raw = entry.get("raw")
+            if isinstance(raw, dict):
+                raw.update(item)
+                raw["routed_model"] = entry.get("routed_model")
+            models.append(entry)
+    models_by_provider = _vision_models_by_provider(models)
     return {
         "available": bool(models),
         "route_available": True,
         "models": models,
+        "models_by_provider": models_by_provider,
+        "provider_models": _provider_models_from_mapping(models_by_provider),
+        "providers": list(models_by_provider.keys()),
+        "available_providers": list(models_by_provider.keys()),
+        "task": task,
+        "source": "abstractvision_local_cache",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+    }
+
+
+def _merge_vision_provider_model_responses(*responses: Optional[Dict[str, Any]], task: Optional[str]) -> Dict[str, Any]:
+    models: list[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    errors: list[str] = []
+    providers: list[str] = []
+    available_providers: list[str] = []
+    for response in responses:
+        if not isinstance(response, dict):
+            continue
+        err = response.get("error")
+        if isinstance(err, str) and err.strip():
+            errors.append(err.strip())
+        providers.extend(str(x) for x in response.get("providers") or [] if isinstance(x, str))
+        available_providers.extend(str(x) for x in response.get("available_providers") or [] if isinstance(x, str))
+        items = response.get("models")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            provider = str(item.get("provider") or item.get("owned_by") or "").strip()
+            model = str(item.get("model") or item.get("routed_model") or item.get("id") or "").strip()
+            if not model:
+                continue
+            key = (provider, model)
+            if key in seen:
+                continue
+            seen.add(key)
+            models.append(dict(item))
+    models_by_provider = _vision_models_by_provider(models)
+    providers = _dedupe_strings(providers + list(models_by_provider.keys()))
+    available_providers = _dedupe_strings(available_providers) or providers
+    return {
+        "available": bool(models or providers or available_providers),
+        "route_available": True,
+        "models": models,
+        "models_by_provider": models_by_provider,
+        "provider_models": _provider_models_from_mapping(models_by_provider),
+        "providers": providers or available_providers,
+        "available_providers": available_providers or providers,
+        "task": task,
+        "source": "abstractvision_gateway_provider_catalog",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": "; ".join(errors) if errors and not models else None,
+    }
+
+
+def _filter_vision_provider_models_response(
+    response: Dict[str, Any],
+    *,
+    provider: Optional[str],
+    providers_only: bool,
+) -> Dict[str, Any]:
+    wanted = str(provider or "").strip().lower()
+    items = response.get("models")
+    models = [dict(x) for x in items if isinstance(x, dict)] if isinstance(items, list) else []
+    models_by_provider = _provider_string_map(response.get("models_by_provider"))
+    if not models_by_provider:
+        models_by_provider = _vision_models_by_provider(models)
+    if wanted:
+        models = [
+            item
+            for item in models
+            if str(item.get("provider") or item.get("owned_by") or "").strip().lower() == wanted
+        ]
+        models_by_provider = {
+            key: values for key, values in models_by_provider.items() if str(key or "").strip().lower() == wanted
+        }
+    providers = _dedupe_strings(
+        [str(x) for x in response.get("providers") or [] if isinstance(x, str)]
+        + [str(x) for x in response.get("available_providers") or [] if isinstance(x, str)]
+        + list(models_by_provider.keys())
+        + [
+            str(item.get("provider") or item.get("owned_by") or "").strip()
+            for item in models
+            if str(item.get("provider") or item.get("owned_by") or "").strip()
+        ]
+    )
+    if wanted:
+        providers = [p for p in providers if p.lower() == wanted]
+    out = dict(response)
+    out["providers"] = providers
+    out["available_providers"] = [
+        p
+        for p in _dedupe_strings([str(x) for x in response.get("available_providers") or [] if isinstance(x, str)] or providers)
+        if not wanted or p.lower() == wanted
+    ] or providers
+    out["models_by_provider"] = models_by_provider
+    out["provider_models"] = _provider_models_from_mapping(models_by_provider)
+    if providers_only:
+        out["models"] = []
+        out["available"] = bool(providers or out.get("available_providers"))
+    else:
+        out["models"] = models
+        out["available"] = bool(models or models_by_provider)
+    return out
+
+
+def _provider_filtered_values(payload: Dict[str, Any], provider: Optional[str], *map_keys: str) -> list[str]:
+    wanted = str(provider or "").strip().lower()
+    values: list[str] = []
+    for key in map_keys:
+        mapping = payload.get(key)
+        if not isinstance(mapping, dict):
+            continue
+        if wanted:
+            for map_provider, map_values in mapping.items():
+                if str(map_provider or "").strip().lower() != wanted:
+                    continue
+                values.extend(str(x).strip() for x in (map_values or []) if isinstance(x, str) and str(x).strip())
+        else:
+            for map_values in mapping.values():
+                values.extend(str(x).strip() for x in (map_values or []) if isinstance(x, str) and str(x).strip())
+    return _dedupe_strings(values)
+
+
+def _filter_provider_model_catalog_response(
+    response: Dict[str, Any],
+    *,
+    provider: Optional[str],
+    model_keys: tuple[str, ...],
+) -> Dict[str, Any]:
+    wanted = str(provider or "").strip()
+    if not wanted:
+        return response
+    models = _provider_filtered_values(response, wanted, *model_keys)
+    if not models:
+        active = str(response.get("active_provider") or response.get("provider") or "").strip().lower()
+        if active == wanted.lower():
+            raw = response.get("models")
+            models = _dedupe_strings([str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]) if isinstance(raw, list) else []
+    out = dict(response)
+    out["provider"] = wanted
+    out["providers"] = [wanted] if models else []
+    out["models"] = models
+    out["available"] = bool(models)
+    return out
+
+
+def _merge_provider_model_catalog_responses(
+    *responses: Optional[Dict[str, Any]],
+    model_keys: tuple[str, ...],
+) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {
+        "available": False,
+        "route_available": True,
+        "models": [],
+        "providers": [],
+        "source": "gateway_merged",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+    }
+    for key in model_keys:
+        merged[key] = {}
+    for response in responses:
+        if not isinstance(response, dict):
+            continue
+        merged["available"] = bool(merged.get("available") or response.get("available"))
+        for key in ("models", "providers"):
+            values = response.get(key)
+            if isinstance(values, list):
+                merged[key] = _dedupe_strings(list(merged.get(key) or []) + [str(x) for x in values if isinstance(x, str)])
+        for key in model_keys:
+            mapping = response.get(key)
+            if not isinstance(mapping, dict):
+                continue
+            target = merged.setdefault(key, {})
+            for provider_key, provider_models in mapping.items():
+                provider_text = str(provider_key or "").strip()
+                if not provider_text or not isinstance(provider_models, list):
+                    continue
+                current = target.get(provider_text) if isinstance(target, dict) else []
+                target[provider_text] = _dedupe_strings(
+                    [str(x) for x in (current or []) if isinstance(x, str)]
+                    + [str(x) for x in provider_models if isinstance(x, str)]
+                )
+    merged["available"] = bool(merged.get("available") or merged.get("models") or merged.get("providers"))
+    return merged
+
+
+def _filter_voice_catalog_response(
+    response: Dict[str, Any],
+    *,
+    provider: Optional[str],
+    model: Optional[str],
+    providers_only: bool,
+) -> Dict[str, Any]:
+    wanted_provider = str(provider or "").strip().lower()
+    wanted_model = str(model or "").strip().lower()
+    out = dict(response)
+    record_values: list[Any] = []
+    for key in ("profiles", "voices", "cloned_voices"):
+        values = response.get(key)
+        if isinstance(values, list):
+            record_values.extend(values)
+    derived_providers = [
+        _voice_record_provider(item)
+        for item in record_values
+        if isinstance(item, dict) and _voice_record_provider(item)
+    ]
+    map_providers: list[str] = []
+    for key in ("tts_models_by_provider", "tts_voices_by_provider", "tts_profiles_by_provider"):
+        mapping = response.get(key)
+        if isinstance(mapping, dict):
+            map_providers.extend(str(k).strip() for k in mapping.keys() if str(k).strip())
+    providers = _dedupe_strings(
+        [
+            str(x).strip()
+            for x in list(response.get("tts_providers") or response.get("providers") or []) + derived_providers + map_providers
+            if isinstance(x, str) and str(x).strip()
+        ]
+    )
+    stt_providers = _dedupe_strings(
+        [str(x).strip() for x in (response.get("stt_providers") or []) if isinstance(x, str) and str(x).strip()]
+    )
+    if wanted_provider:
+        providers = [p for p in providers if p.lower() == wanted_provider]
+        stt_providers = [p for p in stt_providers if p.lower() == wanted_provider]
+
+    def keep_record(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return not wanted_provider and not wanted_model
+        item_provider = _voice_record_provider(item).lower()
+        item_model = _voice_record_model(item).lower()
+        if wanted_provider and item_provider and item_provider != wanted_provider:
+            return False
+        if wanted_model and item_model and item_model != wanted_model:
+            return False
+        return True
+
+    if providers_only:
+        out["providers"] = providers
+        out["tts_providers"] = providers
+        out["stt_providers"] = stt_providers
+        out["profiles"] = []
+        out["voices"] = []
+        out["cloned_voices"] = []
+        out["available"] = bool(providers or stt_providers)
+        return out
+
+    for key in ("profiles", "voices", "cloned_voices"):
+        values = response.get(key)
+        if isinstance(values, list):
+            out[key] = [item for item in values if keep_record(item)]
+    for key in ("tts_models_by_provider", "stt_models_by_provider", "tts_voices_by_provider", "tts_profiles_by_provider"):
+        mapping = response.get(key)
+        if isinstance(mapping, dict) and wanted_provider:
+            out[key] = {k: v for k, v in mapping.items() if str(k).strip().lower() == wanted_provider}
+    if wanted_provider:
+        tts_models = _provider_filtered_values(response, wanted_provider, "tts_models_by_provider", "models_by_provider")
+        stt_models = _provider_filtered_values(response, wanted_provider, "stt_models_by_provider")
+        if not tts_models and str(response.get("active_provider") or response.get("provider") or "").strip().lower() == wanted_provider:
+            raw = response.get("tts_models") or response.get("models")
+            tts_models = _dedupe_strings([str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]) if isinstance(raw, list) else []
+        if not stt_models and str(response.get("active_stt_provider") or "").strip().lower() == wanted_provider:
+            raw = response.get("stt_models")
+            stt_models = _dedupe_strings([str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]) if isinstance(raw, list) else []
+        out["models"] = tts_models
+        out["tts_models"] = tts_models
+        if "stt_models" in out or stt_models:
+            out["stt_models"] = stt_models
+    out["providers"] = providers or out.get("providers") or []
+    out["tts_providers"] = providers or out.get("tts_providers") or []
+    out["stt_providers"] = stt_providers or out.get("stt_providers") or []
+    return out
+
+
+def _merge_voice_catalog_responses(*responses: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {
+        "available": False,
+        "route_available": True,
+        "profiles": [],
+        "voices": [],
+        "cloned_voices": [],
+        "models": [],
+        "tts_models": [],
+        "stt_models": [],
+        "providers": [],
+        "tts_providers": [],
+        "stt_providers": [],
+        "tts_models_by_provider": {},
+        "stt_models_by_provider": {},
+        "tts_voices_by_provider": {},
+        "tts_profiles_by_provider": {},
+        "controls": _voice_catalog_controls(),
+        "source": "gateway_merged",
+        "stale": False,
+        "refreshed_at": _utc_now_iso(),
+        "error": None,
+    }
+    seen_records: Dict[str, set[str]] = {"profiles": set(), "voices": set(), "cloned_voices": set()}
+    for response in responses:
+        if not isinstance(response, dict):
+            continue
+        merged["available"] = bool(merged.get("available") or response.get("available"))
+        for key in ("profiles", "voices", "cloned_voices"):
+            values = response.get(key)
+            if not isinstance(values, list):
+                continue
+            target = merged.setdefault(key, [])
+            for item in values:
+                record_key = _voice_record_key(item)
+                if record_key in seen_records[key]:
+                    continue
+                seen_records[key].add(record_key)
+                target.append(item)
+        for key in ("models", "tts_models", "stt_models", "providers", "tts_providers", "stt_providers"):
+            values = response.get(key)
+            if isinstance(values, list):
+                merged[key] = _dedupe_strings(list(merged.get(key) or []) + [str(x) for x in values if isinstance(x, str)])
+        for key in ("tts_models_by_provider", "stt_models_by_provider", "tts_voices_by_provider", "tts_profiles_by_provider"):
+            mapping = response.get(key)
+            if not isinstance(mapping, dict):
+                continue
+            target_map = merged.setdefault(key, {})
+            for map_provider, map_values in mapping.items():
+                provider_key = str(map_provider or "").strip()
+                if not provider_key:
+                    continue
+                current = target_map.get(provider_key) if isinstance(target_map, dict) else []
+                if isinstance(map_values, list):
+                    target_map[provider_key] = _dedupe_strings(
+                        [str(x) for x in (current or []) if isinstance(x, str)]
+                        + [str(x) for x in map_values if isinstance(x, str)]
+                    )
+        if isinstance(response.get("controls"), dict):
+            merged["controls"] = {**dict(merged.get("controls") or {}), **dict(response.get("controls") or {})}
+    merged["available"] = bool(
+        merged.get("available")
+        or merged.get("profiles")
+        or merged.get("voices")
+        or merged.get("cloned_voices")
+        or merged.get("models")
+        or merged.get("tts_models")
+        or merged.get("stt_models")
+        or merged.get("providers")
+        or merged.get("tts_providers")
+        or merged.get("stt_providers")
+    )
+    return merged
+
+
+def _static_vision_provider_models_response(*, task: Optional[str]) -> Dict[str, Any]:
+    pairs: list[tuple[str, str]] = []
+    configured_backend = str(_env_first("ABSTRACTGATEWAY_VISION_BACKEND", "ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND") or "").strip().lower().replace("_", "-")
+    for key, provider in (
+        ("OPENAI_IMAGE_MODEL_ID", "openai"),
+        ("OPENAI_IMAGE_MODEL", "openai"),
+        ("ABSTRACTCORE_VISION_UPSTREAM_MODEL_ID", "openai-compatible"),
+        ("ABSTRACTCORE_VISION_MODEL_ID", "mflux" if configured_backend in {"mflux", "m-flux"} else "openai-compatible"),
+        ("ABSTRACTCORE_VISION_MFLUX_MODEL", "mflux"),
+        ("ABSTRACTGATEWAY_VISION_MFLUX_MODEL", "mflux"),
+        ("ABSTRACTVISION_MFLUX_MODEL", "mflux"),
+        ("ABSTRACTGATEWAY_VISION_MODEL_ID", "mflux" if configured_backend in {"mflux", "m-flux"} else "openai-compatible"),
+        ("ABSTRACTVISION_MODEL_ID", "mflux" if configured_backend in {"mflux", "m-flux"} else "openai-compatible"),
+        ("ABSTRACTVISION_DIFFUSERS_MODEL_ID", "huggingface"),
+        ("ABSTRACTVISION_SDCPP_MODEL", "sdcpp"),
+        ("ABSTRACTVISION_SDCPP_DIFFUSION_MODEL", "sdcpp"),
+    ):
+        value = str(os.getenv(key) or "").strip()
+        if value:
+            pairs.append((provider, value))
+    if not any(provider == "openai" for provider, _ in pairs) and str(os.getenv("OPENAI_API_KEY") or os.getenv("ABSTRACTVISION_API_KEY") or "").strip():
+        pairs.append(("openai", "gpt-image-1"))
+    seen_values: set[tuple[str, str]] = set()
+    models: list[Dict[str, Any]] = []
+    for provider, value in pairs:
+        key = (provider, value)
+        if key in seen_values:
+            continue
+        seen_values.add(key)
+        models.append(_gateway_vision_provider_model_item(provider=provider, model_id=value, task=task, configured=True))
+    models_by_provider = _vision_models_by_provider(models)
+    return {
+        "available": bool(models),
+        "route_available": True,
+        "models": models,
+        "models_by_provider": models_by_provider,
+        "provider_models": _provider_models_from_mapping(models_by_provider),
+        "providers": list(models_by_provider.keys()),
+        "available_providers": list(models_by_provider.keys()),
         "task": task,
         "source": "gateway_static",
         "stale": False,
@@ -6489,6 +7640,13 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
             "delivery_modes": ["artifact"],
             "formats": ["wav", "mp3"],
             "content_types": {"wav": "audio/wav", "mp3": "audio/mpeg"},
+            "controls": {
+                "speed": {"supported": True, "min": 0.5, "max": 2.0, "default": 1.0},
+                "quality_preset": {"supported": True, "values": ["low", "standard", "high"], "default": "standard"},
+                "instructions": {"supported": True},
+                "profile": {"supported": True},
+                "voice_clone": {"supported": True},
+            },
             "voices": _voice_profile_descriptors(),
             "streaming": False,
             **({"selected_backend": plugin.get("selected_backend")} if plugin.get("selected_backend") else {}),
@@ -6905,15 +8063,40 @@ async def voice_voices_catalog(
         default=None,
         description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
     ),
+    provider: Optional[str] = Query(default=None, description="Optional TTS provider/engine filter."),
+    model: Optional[str] = Query(default=None, description="Optional TTS model/language filter."),
+    providers_only: bool = Query(default=False, description="Return provider names without model/voice lists."),
 ) -> Dict[str, Any]:
     """List dynamic TTS voices through AbstractCore catalog routes when configured."""
     if core_catalog_base_url():
-        query = {"base_url": base_url} if base_url else {}
-        return _core_catalog_or_raise("/audio/voices", request=request, query=query)
-    local = _local_voice_catalog_response(base_url=base_url)
+        query = {"base_url": base_url, "provider": provider, "model": model, "providers_only": providers_only}
+        return _filter_voice_catalog_response(
+            _core_catalog_or_raise(
+                "/audio/voices",
+                request=request,
+                query=query,
+                timeout_s=_catalog_timeout_s(5.0 if providers_only else 30.0),
+            ),
+            provider=provider,
+            model=model,
+            providers_only=providers_only,
+        )
+    local = await _catalog_call(
+        "voice voices",
+        lambda: _local_voice_catalog_response(base_url=base_url),
+        timeout_s=_catalog_timeout_s(5.0 if providers_only else 30.0),
+    )
     if local is not None:
-        return local
-    return _static_voice_catalog_response()
+        return _filter_voice_catalog_response(local, provider=provider, model=model, providers_only=providers_only)
+    if providers_only:
+        return _filter_voice_catalog_response(
+            _static_voice_providers_only_response(),
+            provider=provider,
+            model=model,
+            providers_only=True,
+        )
+    static = _static_voice_catalog_response(provider=provider)
+    return _filter_voice_catalog_response(static, provider=provider, model=model, providers_only=providers_only)
 
 
 @router.get("/audio/speech/models")
@@ -6923,15 +8106,32 @@ async def audio_speech_models_catalog(
         default=None,
         description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
     ),
+    provider: Optional[str] = Query(default=None, description="Optional TTS provider/engine filter."),
 ) -> Dict[str, Any]:
     """List TTS model ids through AbstractCore catalog routes when configured."""
     if core_catalog_base_url():
-        query = {"base_url": base_url} if base_url else {}
-        return _core_catalog_or_raise("/audio/speech/models", request=request, query=query)
-    local = _local_speech_models_response(base_url=base_url)
+        query = {"base_url": base_url, "provider": provider}
+        return _filter_provider_model_catalog_response(
+            _core_catalog_or_raise("/audio/speech/models", request=request, query=query, timeout_s=_provider_models_timeout_s()),
+            provider=provider,
+            model_keys=("models_by_provider", "tts_models_by_provider"),
+        )
+    local = await _catalog_call(
+        "audio speech models",
+        lambda: _local_speech_models_response(base_url=base_url),
+        timeout_s=_provider_models_timeout_s(),
+    )
     if local is not None:
-        return local
-    return _static_speech_models_response()
+        return _filter_provider_model_catalog_response(
+            local,
+            provider=provider,
+            model_keys=("models_by_provider", "tts_models_by_provider"),
+        )
+    return _filter_provider_model_catalog_response(
+        _static_speech_models_response(provider=provider),
+        provider=provider,
+        model_keys=("models_by_provider", "tts_models_by_provider"),
+    )
 
 
 @router.get("/audio/transcriptions/models")
@@ -6941,15 +8141,29 @@ async def audio_transcription_models_catalog(
         default=None,
         description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
     ),
+    provider: Optional[str] = Query(default=None, description="Optional STT provider/engine filter."),
 ) -> Dict[str, Any]:
     """List STT model ids through AbstractCore catalog routes when configured."""
     if core_catalog_base_url():
-        query = {"base_url": base_url} if base_url else {}
-        return _core_catalog_or_raise("/audio/transcriptions/models", request=request, query=query)
-    local = _local_transcription_models_response(base_url=base_url)
+        query = {"base_url": base_url, "provider": provider}
+        return _filter_provider_model_catalog_response(
+            _core_catalog_or_raise(
+                "/audio/transcriptions/models",
+                request=request,
+                query=query,
+                timeout_s=_provider_models_timeout_s(),
+            ),
+            provider=provider,
+            model_keys=("models_by_provider", "stt_models_by_provider"),
+        )
+    local = await _catalog_call(
+        "audio transcription models",
+        lambda: _local_transcription_models_response(base_url=base_url),
+        timeout_s=_provider_models_timeout_s(),
+    )
     if local is not None:
-        return local
-    return _static_transcription_models_response()
+        return _filter_provider_model_catalog_response(local, provider=provider, model_keys=("models_by_provider", "stt_models_by_provider"))
+    return _filter_provider_model_catalog_response(_static_transcription_models_response(), provider=provider, model_keys=("models_by_provider", "stt_models_by_provider"))
 
 
 @router.get("/vision/provider_models")
@@ -6963,6 +8177,8 @@ async def vision_provider_models_catalog(
         default=None,
         description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
     ),
+    provider: Optional[str] = Query(default=None, description="Optional image provider/backend filter."),
+    providers_only: bool = Query(default=False, description="Return provider names without model lists."),
 ) -> Dict[str, Any]:
     """List Vision provider model catalogs through AbstractCore when configured."""
     task_value = str(task or "").strip() or None
@@ -6977,15 +8193,62 @@ async def vision_provider_models_catalog(
             query["task"] = task_value
         if base_url:
             query["base_url"] = base_url
-        return _core_catalog_or_raise(
-            "/vision/provider_models",
-            request=request,
-            query=query,
+        if provider:
+            query["provider"] = provider
+        if providers_only:
+            query["providers_only"] = True
+        return _filter_vision_provider_models_response(
+            _core_catalog_or_raise(
+                "/vision/provider_models",
+                request=request,
+                query=query,
+                timeout_s=_catalog_timeout_s(5.0 if providers_only else 30.0),
+            ),
+            provider=provider,
+            providers_only=providers_only,
         )
-    local = _local_vision_provider_models_response(task=task_value, base_url=base_url)
+    if providers_only:
+        local_provider_only = await _catalog_call(
+            "vision providers",
+            lambda: _local_vision_provider_models_response(task=task_value, base_url=base_url, include_models=False),
+            timeout_s=_catalog_timeout_s(5.0),
+        )
+        if local_provider_only is not None:
+            return _filter_vision_provider_models_response(
+                local_provider_only,
+                provider=provider,
+                providers_only=True,
+            )
+        return _filter_vision_provider_models_response(
+            _merge_vision_provider_model_responses(
+                _provider_models_from_cached_vision_response(
+                    await _local_cached_vision_models_response(),
+                    task=task_value,
+                ),
+                _static_vision_provider_models_response(task=task_value),
+                task=task_value,
+            ),
+            provider=provider,
+            providers_only=True,
+        )
+    provider_key = str(provider or "").strip().lower().replace("_", "-")
+    local_timeout_s = 5.0 if provider_key in {"openai", "openai-compatible"} else _provider_models_timeout_s()
+    local = await _catalog_call(
+        "vision provider models",
+        lambda: _local_vision_provider_models_response(task=task_value, base_url=base_url, include_models=True),
+        timeout_s=local_timeout_s,
+    )
     if local is not None:
-        return local
-    return _static_vision_provider_models_response(task=task_value)
+        filtered_local = _filter_vision_provider_models_response(local, provider=provider, providers_only=providers_only)
+        if filtered_local.get("models") or filtered_local.get("providers") or filtered_local.get("available_providers"):
+            return filtered_local
+    cached = _provider_models_from_cached_vision_response(await _local_cached_vision_models_response(), task=task_value)
+    static = _static_vision_provider_models_response(task=task_value)
+    return _filter_vision_provider_models_response(
+        _merge_vision_provider_model_responses(cached, static, task=task_value),
+        provider=provider,
+        providers_only=providers_only,
+    )
 
 
 @router.get("/vision/models")
@@ -7009,14 +8272,27 @@ async def vision_models_catalog(request: Request) -> Dict[str, Any]:
 
 
 @router.get("/discovery/providers")
-async def discovery_providers(include_models: bool = Query(False, description="Include model lists (may be slow).")) -> Dict[str, Any]:
+async def discovery_providers(
+    request: Request,
+    include_models: bool = Query(False, description="Include model lists (may be slow)."),
+) -> Dict[str, Any]:
     """List available providers (and optionally their models) for UI helper dropdowns."""
-    try:
-        from abstractcore.providers.registry import get_all_providers_with_models
+    if core_catalog_base_url():
+        payload = _core_catalog_or_raise(
+            "/providers",
+            request=request,
+            query={"include_models": bool(include_models)},
+            timeout_s=_provider_models_timeout_s() if include_models else _discovery_timeout_s(),
+            v1=False,
+        )
+        providers = payload.get("providers")
+    else:
+        try:
+            from abstractcore.providers.registry import get_all_providers_with_models
 
-        providers = get_all_providers_with_models(include_models=bool(include_models))
-    except Exception as e:
-        return {"items": [], "error": str(e)}
+            providers = get_all_providers_with_models(include_models=bool(include_models))
+        except Exception as e:
+            return {"items": [], "error": str(e)}
 
     items: list[Dict[str, Any]] = []
     if isinstance(providers, list):
@@ -7045,16 +8321,42 @@ async def discovery_providers(include_models: bool = Query(False, description="I
 
 
 @router.get("/discovery/providers/{provider_name}/models")
-async def discovery_provider_models(provider_name: str) -> Dict[str, Any]:
+async def discovery_provider_models(request: Request, provider_name: str) -> Dict[str, Any]:
     """List available models for a provider (best-effort; may require provider connectivity)."""
     prov = str(provider_name or "").strip()
     if not prov:
         raise HTTPException(status_code=400, detail="provider_name is required")
 
+    if core_catalog_base_url():
+        payload = _core_catalog_or_raise(
+            "/models",
+            request=request,
+            query={"provider": prov},
+            timeout_s=_provider_models_timeout_s(),
+        )
+        data = payload.get("data")
+        out: list[str] = []
+        if isinstance(data, list):
+            prefix = f"{prov.lower()}/"
+            for item in data:
+                model_id = ""
+                if isinstance(item, str):
+                    model_id = item.strip()
+                elif isinstance(item, dict):
+                    model_id = str(item.get("id") or item.get("model") or item.get("name") or "").strip()
+                if not model_id:
+                    continue
+                if model_id.lower().startswith(prefix):
+                    model_id = model_id[len(prov) + 1 :]
+                out.append(model_id)
+        out = _dedupe_strings(out)
+        out.sort()
+        return {"provider": prov, "models": out}
+
     try:
         from abstractcore.providers.registry import get_available_models_for_provider
 
-        models = get_available_models_for_provider(prov)
+        models = get_available_models_for_provider(prov, timeout=_provider_models_timeout_s())
         if not isinstance(models, list):
             models = []
         out = [str(m) for m in models if isinstance(m, str) and str(m).strip()]

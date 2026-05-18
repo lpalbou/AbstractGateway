@@ -83,8 +83,8 @@ class _StubImageGatewayLLMClient:
         assert isinstance(output, dict)
         assert output.get("modality") == "image"
         assert output.get("task") == "image_generation"
-        assert output.get("provider") == "vision-provider"
-        assert output.get("model") == "vision-model"
+        assert output.get("provider") == "mflux"
+        assert output.get("model") == "flux2-klein-4b"
         assert params.get("_provider") == "stub"
         assert params.get("_model") == "stub-chat"
         run_id = str(output.get("run_id") or "")
@@ -164,8 +164,8 @@ def test_gateway_direct_image_generation_stores_artifact_and_emits_event(tmp_pat
                 "prompt": "a one pixel generated test image",
                 "provider": "stub",
                 "model": "stub-chat",
-                "image_provider": "vision-provider",
-                "image_model": "vision-model",
+                "image_provider": "mflux",
+                "image_model": "flux2-klein-4b",
                 "format": "png",
                 "request_id": "img-1",
             },
