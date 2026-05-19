@@ -26,7 +26,7 @@ def test_base_install_is_remote_light_server() -> None:
 
     assert "AbstractRuntime[multimodal]>=0.4.12" in deps
     assert "abstractagent>=0.3.7" in deps
-    assert "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.15" in deps
+    assert "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio,embeddings]>=2.13.15" in deps
     assert "abstractflow>=0.3.11" in deps
     assert "abstractvision>=0.3.6" in deps
     assert "abstractvoice>=0.10.3" in deps
@@ -55,7 +55,9 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     apple = "\n".join(extras["apple"])
     assert "AbstractRuntime[multimodal,all-apple]>=0.4.12" in apple
     assert "abstractagent[all-apple]>=0.3.7" in apple
+    assert "abstractagent[apple]" not in apple
     assert "abstractcore[all-apple]>=2.13.15" in apple
+    assert "abstractcore[apple]" not in apple
     assert "abstractvision[all-apple]>=0.3.6" in apple
     assert "abstractvoice[all-apple]>=0.10.3" in apple
     assert "abstractmusic[all-apple]>=0.1.1" in apple
@@ -68,6 +70,9 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice[all-gpu]>=0.10.3" in gpu
     assert "abstractmusic[all-gpu]>=0.1.1" in gpu
     assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
+
+    assert extras["all-apple"] == extras["apple"]
+    assert extras["all-gpu"] == extras["gpu"]
 
     nvidia = "\n".join(extras["server-nvidia"])
     assert nvidia == gpu

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.2.11"
+version = "0.2.12"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,7 +14,7 @@ authors = [{ name = "Laurent-Philippe Albou" }]
 dependencies = [
   "AbstractRuntime[multimodal]>=0.4.12",
   "abstractagent>=0.3.7",
-  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.15",
+  "abstractcore[remote,media,tools,tokens,compression,vision,voice,audio,embeddings]>=2.13.15",
   "abstractflow>=0.3.11",
   "abstractvision>=0.3.6",
   "abstractvoice>=0.10.3",
