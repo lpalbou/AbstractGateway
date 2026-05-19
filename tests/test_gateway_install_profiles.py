@@ -23,7 +23,7 @@ def _pyproject() -> dict:
 def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
-    assert "AbstractRuntime[multimodal]>=0.4.13" in deps
+    assert "AbstractRuntime[multimodal]>=0.4.14" in deps
     assert "abstractagent>=0.3.7" in deps
     assert "abstractcore[remote,tools,tokens,vision,voice,audio]>=2.13.15" in deps
     assert "abstractflow>=0.3.11" in deps
@@ -35,6 +35,9 @@ def test_base_install_is_remote_light_server() -> None:
     assert "setuptools<82.0.0,>=80.10.2" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
+    assert "openai<2.0.0,>=1.109.1" in deps
+    assert "httpx<1.0.0,>=0.28.1" in deps
+    assert "anyio<5.0.0,>=4.12.1" in deps
     assert "Pillow<13.0.0,>=10.0.0" in deps
     assert "pymupdf4llm<1.0.0,>=0.0.20" in deps
     assert "pymupdf-layout<2.0.0,>=1.26.6" in deps
@@ -63,7 +66,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "all-gpu" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[multimodal,all-apple]>=0.4.13" in apple
+    assert "AbstractRuntime[multimodal,all-apple]>=0.4.14" in apple
     assert "abstractagent[all-apple]>=0.3.7" in apple
     assert "abstractagent[apple]" not in apple
     assert "abstractcore[all-apple]>=2.13.15" in apple
@@ -73,7 +76,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractmusic[all-apple]>=0.1.2" in apple
     assert "AbstractMemory[all-apple]>=0.2.6" in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[multimodal,all-gpu]>=0.4.13" in gpu
+    assert "AbstractRuntime[multimodal,all-gpu]>=0.4.14" in gpu
     assert "abstractagent[all-gpu]>=0.3.7" in gpu
     assert "abstractcore[all-gpu]>=2.13.15" in gpu
     assert "abstractvision[all-gpu]>=0.3.6" in gpu
