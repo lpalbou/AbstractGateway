@@ -15,7 +15,7 @@ def _stderr(line: str) -> None:
 
 
 def _resolve_default_console_level() -> int:
-    """Return the framework's default console log level (ERROR-only by default)."""
+    """Return Gateway's default console log level (ERROR-only by default)."""
     level_map: dict[str, int] = {
         "DEBUG": logging.DEBUG,
         "INFO": logging.INFO,
@@ -24,13 +24,11 @@ def _resolve_default_console_level() -> int:
         "CRITICAL": logging.CRITICAL,
         "NONE": logging.CRITICAL + 10,
     }
-    try:
-        from abstractcore.config import get_config_manager  # type: ignore
-
-        lvl = str(get_config_manager().config.logging.console_level or "").strip().upper()
-        return level_map.get(lvl, logging.ERROR)
-    except Exception:
-        return logging.ERROR
+    for key in ("ABSTRACTGATEWAY_CONSOLE_LOG_LEVEL", "ABSTRACTGATEWAY_LOG_LEVEL", "LOG_LEVEL"):
+        lvl = str(os.getenv(key) or "").strip().upper()
+        if lvl:
+            return level_map.get(lvl, logging.ERROR)
+    return logging.ERROR
 
 
 def _uvicorn_log_level(console_level: int) -> str:
@@ -46,16 +44,10 @@ def _uvicorn_log_level(console_level: int) -> str:
 
 
 def _configure_console_logging(level: int) -> None:
-    """Best-effort console logging config aligned with AbstractCore's default format."""
+    """Best-effort console logging config aligned with Gateway's default format."""
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     datefmt = "%H:%M:%S"
-    try:
-        # Prefer AbstractCore's colored formatter when available to keep a consistent UX.
-        from abstractcore.utils.structured_logging import ColoredFormatter  # type: ignore
-
-        formatter: logging.Formatter = ColoredFormatter(fmt, datefmt=datefmt)
-    except Exception:
-        formatter = logging.Formatter(fmt, datefmt=datefmt)
+    formatter = logging.Formatter(fmt, datefmt=datefmt)
     root = logging.getLogger()
     if root.handlers:
         for h in list(root.handlers):
@@ -78,7 +70,7 @@ def _configure_console_logging(level: int) -> None:
 
 
 def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) -> dict:
-    """Return a uvicorn log_config dict aligned with AbstractCore-style formatting.
+    """Return a uvicorn log_config dict aligned with Gateway-style formatting.
 
     Note: access logs must use uvicorn's AccessFormatter so fields like client_addr/request_line/status_code
     are derived correctly from the positional args tuple.
@@ -97,15 +89,7 @@ def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) 
 
     fmts = log_config.setdefault("formatters", {})
 
-    try:
-        from abstractcore.utils.structured_logging import ColoredFormatter  # type: ignore
-
-        _ = ColoredFormatter  # silence unused import for type checkers
-        default_formatter_path = "abstractcore.utils.structured_logging.ColoredFormatter"
-    except Exception:
-        default_formatter_path = "uvicorn.logging.DefaultFormatter"
-
-    fmts["default"] = {"()": default_formatter_path, "fmt": default_fmt, "datefmt": datefmt}
+    fmts["default"] = {"()": "uvicorn.logging.DefaultFormatter", "fmt": default_fmt, "datefmt": datefmt}
     fmts["access"] = {"()": "uvicorn.logging.AccessFormatter", "fmt": access_fmt, "datefmt": datefmt}
 
     if silence_gpu_metrics_access_log:
@@ -417,47 +401,30 @@ def main(argv: list[str] | None = None) -> None:
         import getpass
 
         try:
-            from abstractcore.tools.telegram_tdlib import TdlibClient, TdlibConfig
+            from abstractruntime.integrations.abstractcore import bootstrap_telegram_auth_from_env
         except Exception as e:
             raise SystemExit(
-                "TDLib bootstrap requires Gateway's base AbstractCore tool integration. "
+                "TDLib bootstrap requires Gateway's Runtime Telegram integration. "
                 "Install/repair with: `pip install abstractgateway` "
                 f"(import failed: {e})"
             )
 
-        try:
-            base_cfg = TdlibConfig.from_env()
-        except Exception as e:
-            raise SystemExit(f"Missing/invalid Telegram env config: {e}")
-
         code = input("Telegram login code (leave blank if not needed): ").strip() or None
         pw = getpass.getpass("Telegram 2FA password (leave blank if none): ").strip() or None
 
-        cfg = TdlibConfig(
-            api_id=base_cfg.api_id,
-            api_hash=base_cfg.api_hash,
-            phone=base_cfg.phone,
-            database_directory=base_cfg.database_directory,
-            files_directory=base_cfg.files_directory,
-            database_encryption_key=base_cfg.database_encryption_key,
-            use_secret_chats=base_cfg.use_secret_chats,
-            login_code=code or base_cfg.login_code,
-            two_factor_password=pw or base_cfg.two_factor_password,
-        )
-
-        client = TdlibClient(config=cfg)
-        client.start()
         try:
-            ok = client.wait_until_ready(timeout_s=float(args.timeout_s))
-            if not ok:
-                err = client.last_error or "Timed out waiting for TDLib authorization"
-                raise SystemExit(err)
-            print("TDLib authorization: OK (session stored in TDLib database directory).")
-        finally:
-            try:
-                client.stop()
-            except Exception:
-                pass
+            payload = bootstrap_telegram_auth_from_env(
+                login_code=code,
+                two_factor_password=pw,
+                timeout_s=float(args.timeout_s),
+            )
+        except Exception as e:
+            raise SystemExit(str(e)) from e
+
+        if not bool(payload.get("success")) or not bool(payload.get("ready")):
+            raise SystemExit(str(payload.get("error") or "Timed out waiting for TDLib authorization"))
+
+        print("TDLib authorization: OK (session stored in TDLib database directory).")
         return
 
     if args.cmd == "migrate":

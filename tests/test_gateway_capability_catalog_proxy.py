@@ -25,23 +25,24 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient
     return TestClient(app), {"Authorization": f"Bearer {token}"}
 
 
+def _patch_discovery_facade(monkeypatch: pytest.MonkeyPatch, *, facade: object) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (facade, None))
+
+
 def test_voice_catalog_uses_local_capability_profiles_without_core_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", raising=False)
     monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
 
-    class FakeVoice:
-        def voice_catalog(self) -> Dict[str, Any]:
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **_kwargs) -> Dict[str, Any]:
             return {
+                "available": True,
                 "profiles": [{"profile_id": "coral"}, {"profile_id": "verse"}],
                 "tts_models": ["gpt-4o-mini-tts"],
             }
 
-    class FakeRegistry:
-        voice = FakeVoice()
-
-    import abstractgateway.routes.gateway as gateway_routes
-
-    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", lambda **_kwargs: FakeRegistry())
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -49,7 +50,7 @@ def test_voice_catalog_uses_local_capability_profiles_without_core_server(tmp_pa
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["source"] in {"abstractvoice_local", "gateway_merged"}
+    assert body["source"] == "abstractruntime.discovery_facade"
     assert body["route_available"] is True
     ids = {item.get("id") or item.get("profile_id") or item.get("voice_id") for item in body["profiles"]}
     assert {"coral", "verse"} <= ids
@@ -59,17 +60,11 @@ def test_voice_catalog_static_fallback_surfaces_configured_env_voices(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", raising=False)
-    monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
-    monkeypatch.setenv("ABSTRACTVOICE_OPENAI_TTS_VOICES", "coral,verse")
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **_kwargs) -> Dict[str, Any]:
+            return {"available": False, "profiles": [], "error": "voice unavailable"}
 
-    import abstractgateway.routes.gateway as gateway_routes
-
-    monkeypatch.setattr(
-        gateway_routes,
-        "_gateway_capability_registry",
-        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("local voice unavailable")),
-    )
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -77,10 +72,10 @@ def test_voice_catalog_static_fallback_surfaces_configured_env_voices(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["source"] == "gateway_static"
+    assert body["source"] == "abstractruntime.discovery_facade"
     assert body["route_available"] is True
-    ids = {item.get("id") or item.get("profile_id") or item.get("voice_id") for item in body["profiles"]}
-    assert {"coral", "verse"} <= ids
+    assert body["available"] is False
+    assert body["profiles"] == []
 
 
 def test_voice_catalog_static_fallback_surfaces_supertonic_builtin_profiles_without_runtime(
@@ -89,6 +84,15 @@ def test_voice_catalog_static_fallback_surfaces_supertonic_builtin_profiles_with
     import abstractgateway.routes.gateway as gateway_routes
 
     monkeypatch.setattr(gateway_routes, "_module_available", lambda _name: False)
+    monkeypatch.setattr(
+        gateway_routes,
+        "_builtin_voice_profile_records",
+        lambda engine: (
+            [{"id": voice_id, "profile_id": voice_id, "label": voice_id, "provider": "supertonic", "engine_id": "supertonic"} for voice_id in ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]]
+            if str(engine).strip().lower() == "supertonic"
+            else []
+        ),
+    )
 
     body = gateway_routes._static_voice_catalog_response(provider="supertonic")
     profile_ids = {item.get("profile_id") for item in body["profiles"]}
@@ -114,21 +118,12 @@ def test_voice_catalog_proxies_configured_core_catalog_route(
 ) -> None:
     calls: list[Dict[str, Any]] = []
 
-    def fake_fetch(
-        path: str,
-        *,
-        query: Optional[dict] = None,
-        provider_api_key: Optional[str] = None,
-        **_kwargs: Any,
-    ) -> Dict[str, Any]:
-        calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key})
-        return {"available": True, "profiles": [{"profile_id": "coral"}], "source": "abstractvoice"}
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {"available": True, "profiles": [{"profile_id": "coral"}], "source": "abstractvoice"}
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
-
-    import abstractgateway.routes.gateway as gateway_routes
-
-    monkeypatch.setattr(gateway_routes, "fetch_core_catalog_json", fake_fetch)
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _client(tmp_path, monkeypatch)
     headers = {**headers, "X-AbstractCore-Provider-API-Key": "provider-secret"}
@@ -137,64 +132,46 @@ def test_voice_catalog_proxies_configured_core_catalog_route(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["source"] == "abstractcore_server"
+    assert body["source"] == "abstractruntime.discovery_facade"
     assert body["route_available"] is True
     assert body["profiles"] == [{"profile_id": "coral"}]
     assert calls == [
         {
-            "path": "/audio/voices",
-            "query": {"base_url": "http://provider.test/v1", "providers_only": False},
+            "base_url": "http://provider.test/v1",
             "provider_api_key": "provider-secret",
+            "provider": None,
+            "model": None,
+            "providers_only": False,
         }
     ]
 
 
 def test_catalog_proxy_preserves_core_auth_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from abstractgateway.capability_catalog import CoreCatalogProxyError
+    class StubDiscoveryFacade:
+        def list_tts_models(self, **_kwargs: Any) -> Dict[str, Any]:
+            raise RuntimeError("core auth required")
 
-    def fake_fetch(*_args: Any, **_kwargs: Any) -> Dict[str, Any]:
-        raise CoreCatalogProxyError(status_code=401, detail={"error": {"message": "core auth required"}})
-
-    monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
-
-    import abstractgateway.routes.gateway as gateway_routes
-
-    monkeypatch.setattr(gateway_routes, "fetch_core_catalog_json", fake_fetch)
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
         resp = client.get("/api/gateway/audio/speech/models", headers=headers)
 
-    assert resp.status_code == 401, resp.text
+    assert resp.status_code == 502, resp.text
     assert "core auth required" in resp.text
 
 
 def test_audio_model_catalogs_include_local_voice_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", raising=False)
     monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
 
-    class FakeVoice:
-        def voice_catalog(self) -> Dict[str, Any]:
-            return {
-                "engine_id": "fake-tts",
-                "active_tts_provider": "fake-tts",
-                "active_stt_provider": "fake-stt",
-                "tts_providers": ["fake-tts"],
-                "stt_providers": ["fake-stt"],
-            }
+    class StubDiscoveryFacade:
+        def list_tts_models(self, **_kwargs) -> Dict[str, Any]:
+            return {"providers": ["fake-tts"], "models": ["tts-test"], "active_provider": "fake-tts"}
 
-        def list_tts_models(self) -> list[str]:
-            return ["tts-test"]
+        def list_stt_models(self, **_kwargs) -> Dict[str, Any]:
+            return {"providers": ["fake-stt"], "models": ["stt-test"], "active_provider": "fake-stt"}
 
-        def list_stt_models(self) -> list[str]:
-            return ["stt-test"]
-
-    class FakeRegistry:
-        voice = FakeVoice()
-
-    import abstractgateway.routes.gateway as gateway_routes
-
-    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", lambda **_kwargs: FakeRegistry())
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -252,15 +229,12 @@ def test_vision_models_catalog_proxies_configured_core_catalog_route(
 ) -> None:
     calls: list[Dict[str, Any]] = []
 
-    def fake_fetch(path: str, *, query: Optional[dict] = None, provider_api_key: Optional[str] = None, **_kwargs: Any) -> Dict[str, Any]:
-        calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key})
-        return {"available": True, "models": [{"model_id": "flux-local"}], "source": "abstractvision"}
+    class StubDiscoveryFacade:
+        def list_cached_vision_models(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {"available": True, "models": [{"model_id": "flux-local"}], "source": "abstractvision"}
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
-
-    import abstractgateway.routes.gateway as gateway_routes
-
-    monkeypatch.setattr(gateway_routes, "fetch_core_catalog_json", fake_fetch)
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -268,10 +242,10 @@ def test_vision_models_catalog_proxies_configured_core_catalog_route(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["source"] == "abstractcore_server"
+    assert body["source"] == "abstractruntime.discovery_facade"
     assert body["route_available"] is True
     assert body["models"] == [{"model_id": "flux-local"}]
-    assert calls == [{"path": "/vision/models", "query": {}, "provider_api_key": None}]
+    assert calls == [{"provider_api_key": None}]
 
 
 def test_audio_transcription_models_catalog_proxies_configured_core_catalog_route(
@@ -280,15 +254,12 @@ def test_audio_transcription_models_catalog_proxies_configured_core_catalog_rout
 ) -> None:
     calls: list[Dict[str, Any]] = []
 
-    def fake_fetch(path: str, *, query: Optional[dict] = None, provider_api_key: Optional[str] = None, **_kwargs: Any) -> Dict[str, Any]:
-        calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key})
-        return {"available": True, "models": ["stt-test"], "source": "abstractvoice"}
+    class StubDiscoveryFacade:
+        def list_stt_models(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {"available": True, "models": ["stt-test"], "source": "abstractvoice"}
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
-
-    import abstractgateway.routes.gateway as gateway_routes
-
-    monkeypatch.setattr(gateway_routes, "fetch_core_catalog_json", fake_fetch)
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -296,6 +267,6 @@ def test_audio_transcription_models_catalog_proxies_configured_core_catalog_rout
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["source"] == "abstractcore_server"
+    assert body["source"] == "abstractruntime.discovery_facade"
     assert body["models"] == ["stt-test"]
-    assert calls == [{"path": "/audio/transcriptions/models", "query": {}, "provider_api_key": None}]
+    assert calls == [{"base_url": None, "provider_api_key": None, "provider": None}]

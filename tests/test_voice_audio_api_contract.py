@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Dict
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 
@@ -65,21 +66,79 @@ def _patch_gateway_capabilities(
     calls.setdefault("tts", [])
     calls.setdefault("stt", [])
 
-    class _VoiceCapability:
-        def tts(self, text: str, **kwargs):
-            calls["tts"].append({"text": text, **kwargs})
-            return tts_bytes
+    from abstractruntime.core.models import RunStatus
 
-    class _AudioCapability:
-        def transcribe(self, audio, **kwargs):
-            calls["stt"].append({"audio": audio, **kwargs})
-            return transcript
+    class _RunFacade:
+        def generate_voice(self, parent_run_id: str, *, text: str, output: Dict[str, Any], params: Dict[str, Any], child_vars=None):
+            child_run_id = "child-tts-1"
+            calls["tts"].append(
+                {
+                    "parent_run_id": parent_run_id,
+                    "text": text,
+                    "voice": output.get("voice"),
+                    "profile": output.get("profile"),
+                    "provider": output.get("provider"),
+                    "model": output.get("model"),
+                    "format": output.get("format"),
+                    "speed": output.get("speed"),
+                    "quality_preset": output.get("quality_preset"),
+                    "instructions": output.get("instructions"),
+                    "params": params,
+                    "child_vars": child_vars,
+                }
+            )
+            svc = gateway_routes.get_gateway_service()
+            store = svc.stores.artifact_store
+            meta = store.store(tts_bytes, content_type="audio/wav", run_id=child_run_id, tags={"kind": "generated_media", "modality": "voice"})
+            return SimpleNamespace(
+                run_id=child_run_id,
+                status=RunStatus.COMPLETED,
+                error=None,
+                output={
+                    "result": {
+                        "outputs": {
+                            "voice": [
+                                {
+                                    "modality": "voice",
+                                    "task": "tts",
+                                    "provider": output.get("provider"),
+                                    "model": output.get("model"),
+                                    "voice": output.get("voice"),
+                                    "profile": output.get("profile"),
+                                    "content_type": "audio/wav",
+                                    "format": "wav",
+                                    "artifact_ref": {
+                                        "$artifact": meta.artifact_id,
+                                        "artifact_id": meta.artifact_id,
+                                        "content_type": "audio/wav",
+                                        "size_bytes": len(tts_bytes),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
 
-    class _Registry:
-        voice = _VoiceCapability()
-        audio = _AudioCapability()
+        def transcribe_audio(self, parent_run_id: str, *, media, prompt=None, output=None, params=None, child_vars=None):
+            calls["stt"].append(
+                {
+                    "parent_run_id": parent_run_id,
+                    "media": media,
+                    "prompt": prompt,
+                    "output": dict(output or {}),
+                    "params": params,
+                    "child_vars": child_vars,
+                }
+            )
+            return SimpleNamespace(
+                run_id="child-stt-1",
+                status=RunStatus.COMPLETED,
+                error=None,
+                output={"result": {"text": transcript}},
+            )
 
-    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", lambda **_kwargs: _Registry())
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (_RunFacade(), None))
 
 
 @pytest.mark.basic
@@ -117,13 +176,11 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
 
     headers = {"Authorization": f"Bearer {token}"}
 
-    def _unavailable_registry(**_kwargs):
-        raise HTTPException(
-            status_code=400,
-            detail="Voice/audio support is not available. Install/repair with: pip install abstractgateway",
-        )
-
-    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", _unavailable_registry)
+    monkeypatch.setattr(
+        gateway_routes,
+        "_gateway_abstractcore_run_facade",
+        lambda: (None, "Voice/audio support is not available. Install/repair with: pip install abstractgateway"),
+    )
 
     with TestClient(app) as client:
         # Auth required.
@@ -132,7 +189,7 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
 
         # Capability unavailable: explicit error.
         tts_unavail = client.post("/api/gateway/runs/session_memory_s1/voice/tts", json={"text": "hello"}, headers=headers)
-        assert tts_unavail.status_code == 400, tts_unavail.text
+        assert tts_unavail.status_code == 503, tts_unavail.text
         assert "pip install abstractgateway" in str(tts_unavail.json().get("detail") or "").lower()
 
         # Upload an audio artifact for STT.
@@ -150,7 +207,7 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
             json={"audio_artifact": audio_ref},
             headers=headers,
         )
-        assert stt_unavail.status_code == 400, stt_unavail.text
+        assert stt_unavail.status_code == 503, stt_unavail.text
         assert "pip install abstractgateway" in str(stt_unavail.json().get("detail") or "").lower()
 
     _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:hello", transcript="hello world")

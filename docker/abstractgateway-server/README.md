@@ -4,7 +4,7 @@ This image packages the AbstractGateway HTTP/SSE server for durable
 AbstractRuntime runs:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway-server:0.2.8
+ghcr.io/lpalbou/abstractgateway-server:0.2.15
 ```
 
 Release images are published for `linux/amd64` and `linux/arm64`.
@@ -12,7 +12,7 @@ A separate experimental full NVIDIA image is published best-effort for
 `linux/amd64`:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8
+ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15
 ```
 
 The image installs:
@@ -22,13 +22,12 @@ abstractgateway==<version>
 ```
 
 The default image uses the base remote-light server install. It includes
-`AbstractRuntime[multimodal]`, AbstractCore
-remote/commercial provider support, OpenAI-compatible text provider routing,
-workflow-backed and direct image generation through Runtime/Core/AbstractVision,
-direct Gateway voice/audio endpoints through AbstractVoice, provider/session
-prompt-cache helpers, KG memory via AbstractMemory/LanceDB, media parsing,
-tool helpers, token counting, compression helpers, FastAPI/Uvicorn,
-AbstractAgent, and AbstractFlow compatibility. It
+`AbstractRuntime[multimodal,mcp-worker]`, Runtime-owned provider/media/tool
+facades, OpenAI-compatible text provider routing, workflow-backed and direct
+image generation through Runtime, direct Gateway voice/audio endpoints,
+provider/session prompt-cache helpers, KG memory via AbstractMemory/LanceDB,
+media parsing, tool helpers, token counting, compression helpers,
+FastAPI/Uvicorn, AbstractAgent, and AbstractFlow compatibility. It
 intentionally does not bundle local model runtimes such as MLX, vLLM,
 HuggingFace Transformers, local Diffusers/sdcpp vision backends, or local
 voice/music generation engines.
@@ -78,7 +77,7 @@ docker run --rm --name abstractgateway-server \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
   -v "$PWD/workspace:/workspace" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.8
+  ghcr.io/lpalbou/abstractgateway-server:0.2.15
 ```
 
 `ABSTRACTGATEWAY_AUTH_TOKEN` is the gateway bearer token. Clients send it as
@@ -97,7 +96,7 @@ docker run --rm --name abstractgateway-server \
   -e ABSTRACTGATEWAY_MODEL="your-model" \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -e OPENAI_COMPATIBLE_API_KEY="$OPENAI_COMPATIBLE_API_KEY" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.8
+  ghcr.io/lpalbou/abstractgateway-server:0.2.15
 ```
 
 Use `http://model-runner.docker.internal/engines/v1` for Docker Model Runner,
@@ -134,17 +133,17 @@ Useful compose variables:
 - `ABSTRACTVISION_*`: AbstractVision image backend or OpenAI-compatible image endpoint
 - `ABSTRACTVOICE_*`: AbstractVoice TTS/STT backend, local/remote engine, and model controls
 - `ABSTRACTGATEWAY_EXTRAS`: build-time install extra for local image builds (empty for the default image, `gpu` for NVIDIA)
-- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL`: optional standalone Core server for dynamic voice/vision catalogs
+- `ABSTRACTCORE_SERVER_BASE_URL`: optional standalone Core server for dynamic voice/vision catalogs
 
 Release scope: TTS, STT, and generated images are direct Gateway endpoints.
-Generated images are also available through Runtime/Core workflows with
-AbstractVision installed and configured.
+Generated images are also available through Runtime workflows with a configured
+image backend.
 
 For unreleased local checkouts, build the image from this repository:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.8-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.15-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

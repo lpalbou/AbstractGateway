@@ -13,7 +13,7 @@ def test_gateway_config_status_reports_boundaries(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "gateway-token")
-    monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+    monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
     monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN", "core-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_MEMORY_STORE_BACKEND", "sqlite")
 
@@ -48,6 +48,8 @@ def test_gateway_config_init_writes_private_env_file(tmp_path: Path, capsys: pyt
             "sqlite",
             "--memory-backend",
             "sqlite",
+            "--core-server-url",
+            "http://core.test/v1",
         ]
     )
 
@@ -55,6 +57,8 @@ def test_gateway_config_init_writes_private_env_file(tmp_path: Path, capsys: pyt
     assert "ABSTRACTGATEWAY_AUTH_TOKEN=secret-token" in text
     assert "ABSTRACTGATEWAY_STORE_BACKEND=sqlite" in text
     assert "ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite" in text
+    assert "ABSTRACTCORE_SERVER_BASE_URL=http://core.test/v1" in text
+    assert "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL" not in text
     assert "abstractcore-config" in text
 
     mode = stat.S_IMODE(env_file.stat().st_mode)

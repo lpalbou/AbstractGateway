@@ -200,38 +200,14 @@ class EmailBridgeConfig:
     def from_env(*, base_dir: Path) -> "EmailBridgeConfig":
         enabled = _as_bool(os.getenv("ABSTRACT_EMAIL_BRIDGE"), False)
 
-        # Defaults from AbstractCore config system (best-effort).
-        cfg_smtp_host = ""
-        cfg_smtp_username = ""
-        cfg_smtp_password_env_var = "EMAIL_PASSWORD"
-        cfg_imap_host = ""
-        cfg_imap_username = ""
-        cfg_imap_password_env_var = "EMAIL_PASSWORD"
-        cfg_imap_folder = "INBOX"
-        try:
-            from abstractcore.config.manager import get_config_manager  # type: ignore
-
-            core_cfg = get_config_manager().config
-            email_cfg = getattr(core_cfg, "email", None)
-            if email_cfg is not None:
-                cfg_smtp_host = str(getattr(email_cfg, "smtp_host", "") or "")
-                cfg_smtp_username = str(getattr(email_cfg, "smtp_username", "") or "")
-                cfg_smtp_password_env_var = str(getattr(email_cfg, "smtp_password_env_var", "") or "") or "EMAIL_PASSWORD"
-                cfg_imap_host = str(getattr(email_cfg, "imap_host", "") or "")
-                cfg_imap_username = str(getattr(email_cfg, "imap_username", "") or "")
-                cfg_imap_password_env_var = str(getattr(email_cfg, "imap_password_env_var", "") or "") or "EMAIL_PASSWORD"
-                cfg_imap_folder = str(getattr(email_cfg, "imap_folder", "") or "") or "INBOX"
-        except Exception:
-            pass
-
         event_name = str(os.getenv("ABSTRACT_EMAIL_EVENT_NAME", "") or "").strip() or "email.message"
         session_prefix = str(os.getenv("ABSTRACT_EMAIL_SESSION_PREFIX", "") or "").strip() or "email:"
 
         account = str(os.getenv("ABSTRACT_EMAIL_ACCOUNT", "") or "").strip()
-        imap_host = str(os.getenv("ABSTRACT_EMAIL_IMAP_HOST", "") or cfg_imap_host or "").strip()
-        imap_username = str(os.getenv("ABSTRACT_EMAIL_IMAP_USERNAME", "") or cfg_imap_username or "").strip()
-        imap_password_env_var = str(os.getenv("ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR", "") or cfg_imap_password_env_var or "").strip() or "EMAIL_PASSWORD"
-        imap_folder = str(os.getenv("ABSTRACT_EMAIL_IMAP_FOLDER", "") or cfg_imap_folder or "").strip() or "INBOX"
+        imap_host = str(os.getenv("ABSTRACT_EMAIL_IMAP_HOST", "") or "").strip()
+        imap_username = str(os.getenv("ABSTRACT_EMAIL_IMAP_USERNAME", "") or "").strip()
+        imap_password_env_var = str(os.getenv("ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR", "") or "").strip() or "EMAIL_PASSWORD"
+        imap_folder = str(os.getenv("ABSTRACT_EMAIL_IMAP_FOLDER", "") or "").strip() or "INBOX"
 
         poll_seconds = float(os.getenv("ABSTRACT_EMAIL_POLL_SECONDS", "60") or "60")
         imap_port = _as_int(os.getenv("ABSTRACT_EMAIL_IMAP_PORT"), 993)
@@ -255,7 +231,7 @@ class EmailBridgeConfig:
 
         # Use outbound defaults as a fallback account label if no explicit account is set.
         if not account:
-            account = str(os.getenv("ABSTRACT_EMAIL_FROM", "") or cfg_smtp_username or imap_username or "default").strip()
+            account = str(os.getenv("ABSTRACT_EMAIL_FROM", "") or imap_username or "default").strip()
 
         return EmailBridgeConfig(
             enabled=bool(enabled),

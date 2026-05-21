@@ -106,8 +106,16 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert common.get("discovery", {}).get("vision_provider_models") == "/api/gateway/vision/provider_models"
         assert common.get("discovery", {}).get("vision_models") == "/api/gateway/vision/models"
         assert common.get("prompt_cache", {}).get("provider_controls") is True
+        assert isinstance(common.get("prompt_cache", {}).get("provider_controls_available"), bool)
         assert common.get("prompt_cache", {}).get("session_lifecycle") is True
+        assert isinstance(common.get("prompt_cache", {}).get("session_lifecycle_available"), bool)
         assert common.get("prompt_cache", {}).get("session_endpoints", {}).get("prepare") == "/api/gateway/sessions/{session_id}/prompt_cache/prepare"
+        residency = common.get("model_residency")
+        assert isinstance(residency, dict)
+        assert residency.get("route_available") is True
+        assert residency.get("endpoints", {}).get("loaded") == "/api/gateway/models/loaded"
+        assert residency.get("endpoints", {}).get("load") == "/api/gateway/models/load"
+        assert residency.get("endpoints", {}).get("unload") == "/api/gateway/models/unload"
 
         flow_editor = contracts.get("flow_editor")
         assert isinstance(flow_editor, dict)
@@ -132,7 +140,7 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
 def test_client_capability_contracts_are_explicit_when_optional_features_are_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from abstractgateway.routes.gateway import _build_client_capability_contracts
+    import abstractgateway.routes.gateway as gateway_routes
 
     for key in (
         "ABSTRACTVISION_BACKEND",
@@ -141,12 +149,22 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
         "OPENAI_BASE_URL",
         "OPENAI_API_KEY",
         "ABSTRACTCORE_SERVER_BASE_URL",
-        "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL",
         "ABSTRACTCORE_VISION_MODEL_ID",
     ):
         monkeypatch.delenv(key, raising=False)
 
-    contracts = _build_client_capability_contracts(
+    monkeypatch.setattr(
+        gateway_routes,
+        "_gateway_abstractcore_run_facade",
+        lambda: (None, "Gateway runtime is not wired to AbstractCore durable media helpers."),
+    )
+    monkeypatch.setattr(
+        gateway_routes,
+        "_gateway_abstractcore_host_facade",
+        lambda: (None, "Gateway runtime is not wired to AbstractCore host controls."),
+    )
+
+    contracts = gateway_routes._build_client_capability_contracts(
         {
             "abstractvoice": {"installed": False, "error": "missing"},
             "abstractvision": {"installed": False, "error": "missing"},
@@ -186,10 +204,23 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
 
     media = contracts["assistant"]["media"]
     assert media["generated_image"]["workflow"]["available"] is False
-    assert media["generated_image"]["direct_endpoint"]["route_available"] is True
+    assert media["generated_image"]["direct_endpoint"]["route_available"] is False
     assert media["generated_image"]["direct_endpoint"]["available"] is False
     assert contracts["assistant"]["prompt_cache"]["provider_controls"] is True
+    assert contracts["assistant"]["prompt_cache"]["provider_controls_available"] is False
     assert contracts["assistant"]["prompt_cache"]["session_lifecycle"] is True
+    assert contracts["assistant"]["prompt_cache"]["session_lifecycle_available"] is False
+    residency = contracts["common"]["model_residency"]
+    assert residency["route_available"] is True
+    assert residency["available"] is False
+    assert residency["source"] == "abstractruntime.host_facade"
+    assert residency["supports"]["text_generation"] is True
+    assert residency["supports"]["image_generation"] is True
+    assert residency["supports"]["tts"] is True
+    assert residency["supports"]["stt"] is True
+    assert residency["endpoints"]["loaded"] == "/api/gateway/models/loaded"
+    assert contracts["flow_editor"]["model_residency"] == residency
+    assert contracts["assistant"]["model_residency"] == residency
 
     flow_editor = contracts["flow_editor"]
     assert flow_editor["visualflows"]["crud"]["available"] is True
@@ -201,7 +232,7 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
 
 
 def test_generated_image_contract_separates_light_package_from_backend_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    from abstractgateway.routes.gateway import _build_client_capability_contracts
+    import abstractgateway.routes.gateway as gateway_routes
 
     for key in (
         "ABSTRACTVISION_BACKEND",
@@ -210,12 +241,17 @@ def test_generated_image_contract_separates_light_package_from_backend_config(mo
         "OPENAI_BASE_URL",
         "OPENAI_API_KEY",
         "ABSTRACTCORE_SERVER_BASE_URL",
-        "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL",
         "ABSTRACTCORE_VISION_MODEL_ID",
     ):
         monkeypatch.delenv(key, raising=False)
 
-    contracts = _build_client_capability_contracts(
+    monkeypatch.setattr(
+        gateway_routes,
+        "_gateway_abstractcore_run_facade",
+        lambda: (None, "Gateway runtime is not wired to AbstractCore durable media helpers."),
+    )
+
+    contracts = gateway_routes._build_client_capability_contracts(
         {
             "abstractvoice": {"installed": True, "version": "0.9.0"},
             "abstractvision": {"installed": True, "version": "0.3.1"},
@@ -233,20 +269,22 @@ def test_generated_image_contract_separates_light_package_from_backend_config(mo
 
     media = contracts["assistant"]["media"]["generated_image"]
     assert media["workflow"]["available"] is False
-    assert media["direct_endpoint"]["route_available"] is True
+    assert media["direct_endpoint"]["route_available"] is False
     assert media["direct_endpoint"]["available"] is False
     assert "config_hint" in media["direct_endpoint"]
 
 
 def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    from abstractgateway.routes.gateway import _build_client_capability_contracts
+    import abstractgateway.routes.gateway as gateway_routes
 
     monkeypatch.delenv("ABSTRACTVISION_BASE_URL", raising=False)
     monkeypatch.delenv("ABSTRACTVISION_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    contracts = _build_client_capability_contracts(
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (object(), None))
+
+    contracts = gateway_routes._build_client_capability_contracts(
         {
             "abstractvision": {"installed": True, "version": "0.3.1"},
             "capability_plugins": {
@@ -259,3 +297,35 @@ def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch
     media = contracts["assistant"]["media"]["generated_image"]
     assert media["workflow"]["available"] is True
     assert media["direct_endpoint"]["available"] is True
+
+
+def test_model_residency_contract_advertises_configured_core_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (object(), None))
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (object(), None))
+
+    contracts = gateway_routes._build_client_capability_contracts({})
+    residency = contracts["common"]["model_residency"]
+    media = contracts["assistant"]["media"]["generated_image"]
+
+    assert residency["route_available"] is True
+    assert residency["available"] is True
+    assert residency["source"] == "abstractruntime.host_facade"
+    assert residency["supports"]["image_generation"] is True
+    assert residency["supports"]["tts"] is True
+    assert residency["supports"]["stt"] is True
+    assert residency["tasks"] == ["text_generation", "image_generation", "tts", "stt"]
+    assert residency["endpoints"] == {
+        "loaded": "/api/gateway/models/loaded",
+        "load": "/api/gateway/models/load",
+        "unload": "/api/gateway/models/unload",
+    }
+    assert contracts["flow_editor"]["model_residency"] == residency
+    assert contracts["assistant"]["model_residency"] == residency
+    assert contracts["assistant"]["prompt_cache"]["provider_controls_available"] is True
+    assert contracts["assistant"]["prompt_cache"]["session_lifecycle_available"] is True
+    assert media["direct_endpoint"]["available"] is True
+    assert media["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/generate"

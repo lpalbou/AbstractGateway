@@ -10,7 +10,7 @@ This guide gets a new installation running in **bundle mode** (recommended), the
 
 AbstractGateway is one component in the larger **AbstractFramework** ecosystem:
 - **AbstractRuntime** (required): durable runs + workflow registry + stores
-- **AbstractCore / AbstractVoice / AbstractVision / AbstractMemory** (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles
+- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution
 
 Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
@@ -28,7 +28,7 @@ Related repos:
 ## Install
 
 ```bash
-# Remote-light server package (HTTP/SSE + runner + stores + Core remote stack + KG memory)
+# Remote-light server package (HTTP/SSE + runner + stores + Runtime multimodal stack + KG memory)
 pip install abstractgateway
 
 # Native Apple local engines
@@ -130,10 +130,9 @@ abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
 
 ## 3b) Docker / Compose
 
-For a containerized deployment with AbstractRuntime multimodal support,
-AbstractCore remote providers, workflow-backed/direct AbstractVision image
-generation, direct Gateway voice/audio/image endpoints, and provider/session
-prompt-cache controls included:
+For a containerized deployment with `AbstractRuntime[multimodal,mcp-worker]`,
+Runtime-owned provider/media/tool support, direct Gateway voice/audio/image
+endpoints, and provider/session prompt-cache controls included:
 
 ```bash
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -142,13 +141,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.8
+  ghcr.io/lpalbou/abstractgateway-server:0.2.15
 ```
 
 See [deployment.md](./deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

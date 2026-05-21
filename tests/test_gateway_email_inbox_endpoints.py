@@ -9,12 +9,11 @@ def test_gateway_email_inbox_endpoints_contract(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
 
-    from abstractcore.tools import comms_tools
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
 
-    monkeypatch.setattr(
-        comms_tools,
-        "list_email_accounts",
-        lambda: {
+    def _list_email_accounts() -> dict:
+        return {
             "success": True,
             "source": "yaml",
             "config_path": "configs/emails.yaml",
@@ -39,13 +38,10 @@ def test_gateway_email_inbox_endpoints_contract(monkeypatch: pytest.MonkeyPatch)
                     "smtp_password_set": True,
                 },
             ],
-        },
-    )
+        }
 
-    monkeypatch.setattr(
-        comms_tools,
-        "list_emails",
-        lambda **kwargs: {
+    def _list_emails(**kwargs: object) -> dict:
+        return {
             "success": True,
             "account": kwargs.get("account") or "default",
             "mailbox": kwargs.get("mailbox") or "INBOX",
@@ -68,13 +64,10 @@ def test_gateway_email_inbox_endpoints_contract(monkeypatch: pytest.MonkeyPatch)
                     "size": 42,
                 }
             ],
-        },
-    )
+        }
 
-    monkeypatch.setattr(
-        comms_tools,
-        "read_email",
-        lambda **kwargs: {
+    def _read_email(**kwargs: object) -> dict:
+        return {
             "success": True,
             "account": kwargs.get("account") or "default",
             "mailbox": kwargs.get("mailbox") or "INBOX",
@@ -90,13 +83,10 @@ def test_gateway_email_inbox_endpoints_contract(monkeypatch: pytest.MonkeyPatch)
             "body_text": "Hi",
             "body_html": "<p>Hi</p>",
             "attachments": [{"filename": "a.txt", "content_type": "text/plain"}],
-        },
-    )
+        }
 
-    monkeypatch.setattr(
-        comms_tools,
-        "send_email",
-        lambda **kwargs: {
+    def _send_email(**kwargs: object) -> dict:
+        return {
             "success": True,
             "account": kwargs.get("account") or "default",
             "message_id": "<sent@example.com>",
@@ -105,10 +95,13 @@ def test_gateway_email_inbox_endpoints_contract(monkeypatch: pytest.MonkeyPatch)
             "cc": [],
             "bcc": [],
             "smtp": {"host": "smtp.example.com", "port": 587, "username": "alpha@example.com", "starttls": True},
-        },
-    )
+        }
 
-    from abstractgateway.app import app
+    monkeypatch.setattr(
+        gateway_routes,
+        "_require_runtime_email_helpers",
+        lambda: (_list_email_accounts, _list_emails, _read_email, _send_email),
+    )
 
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {token}"}
@@ -147,4 +140,3 @@ def test_gateway_email_inbox_endpoints_contract(monkeypatch: pytest.MonkeyPatch)
     assert payload4["account"] == "default"
     assert payload4["from"] == "alpha@example.com"
     assert payload4["to"] == ["to@example.com"]
-

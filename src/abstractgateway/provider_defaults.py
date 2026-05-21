@@ -40,42 +40,10 @@ def _env_first(*keys: str) -> Optional[str]:
     return None
 
 
-def _lookup(raw: Any, *keys: str) -> Optional[str]:
-    for key in keys:
-        if isinstance(raw, dict):
-            value = raw.get(key)
-        else:
-            value = getattr(raw, key, None)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def _abstractcore_config_defaults() -> tuple[Optional[str], Optional[str]]:
-    try:
-        from abstractcore.config import get_config_manager  # type: ignore
-
-        cfg = get_config_manager().config
-    except Exception:
-        return None, None
-
-    default_models = getattr(cfg, "default_models", None)
-    provider = _lookup(default_models, "global_provider", "provider", "default_provider")
-    model = _lookup(default_models, "global_model", "model", "default_model")
-
-    if not provider:
-        provider = _lookup(cfg, "global_provider", "provider", "default_provider")
-    if not model:
-        model = _lookup(cfg, "global_model", "model", "default_model")
-
-    return _clean_provider(provider), _clean_model(model)
-
-
 def provider_model_config_error(*, purpose: str = "LLM helper") -> str:
     return (
         f"No provider/model is configured for {purpose}. Provide provider and model in the request, "
-        "set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL, or configure AbstractCore defaults "
-        "with abstractcore-config."
+        "set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL, or supply flow defaults."
     )
 
 
@@ -114,19 +82,6 @@ def resolve_gateway_provider_model(
             elif model_s and not provider_s and model_s == flow_model:
                 provider_s = flow_provider
                 source = source or "flow_defaults"
-
-    if not provider_s or not model_s:
-        cfg_provider, cfg_model = _abstractcore_config_defaults()
-        if cfg_provider and cfg_model:
-            if not provider_s and not model_s:
-                provider_s, model_s = cfg_provider, cfg_model
-                source = "abstractcore_config"
-            elif provider_s and not model_s and provider_s == cfg_provider:
-                model_s = cfg_model
-                source = source or "abstractcore_config"
-            elif model_s and not provider_s and model_s == cfg_model:
-                provider_s = cfg_provider
-                source = source or "abstractcore_config"
 
     if provider_s and model_s:
         return ProviderModelResolution(provider=provider_s, model=model_s, source=source or "resolved")

@@ -30,6 +30,11 @@ CLI helpers:
 - `abstractgateway triage-reports` (scan inbox → decision queue; optional draft writing)
 - `abstractgateway triage-apply <decision_id> approve|reject|defer`
 
+Notification helpers used by `triage-reports --notify`:
+- Telegram: `ABSTRACT_BACKLOG_TELEGRAM_CHAT_ID` or `ABSTRACT_TRIAGE_TELEGRAM_CHAT_ID`
+- Email recipients: `ABSTRACT_BACKLOG_EMAIL_TO` or `ABSTRACT_TRIAGE_EMAIL_TO`
+- Optional email account override: `ABSTRACT_BACKLOG_EMAIL_ACCOUNT` or `ABSTRACT_TRIAGE_EMAIL_ACCOUNT`
+
 Evidence: CLI wiring in `src/abstractgateway/cli.py`.
 
 ## Backlog browsing/editing (repo-dependent)
@@ -171,13 +176,13 @@ If email accounts are configured on the gateway host, the gateway exposes accoun
 - `GET /api/gateway/email/messages/{uid}`
 - `POST /api/gateway/email/send`
 
-These endpoints proxy to AbstractCore comms tools and never accept arbitrary IMAP/SMTP host/user secrets from the browser.
+These endpoints proxy through Gateway's Runtime comms facade and never accept arbitrary IMAP/SMTP host/user secrets from the browser.
 
 Configuration notes:
 - Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
 - Single-account env fallback: `ABSTRACT_EMAIL_IMAP_*` / `ABSTRACT_EMAIL_SMTP_*`.
 
-Evidence: `/api/gateway/email/*` routes in `src/abstractgateway/routes/gateway.py` which call `abstractcore.tools.comms_tools`.
+Evidence: `/api/gateway/email/*` routes in `src/abstractgateway/routes/gateway.py` which call the Runtime AbstractCore comms facade.
 
 ## Related docs
 

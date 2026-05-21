@@ -161,8 +161,15 @@ class _StubPromptCacheProvider:
 
 
 class _StubGatewayLLMClient:
-    def __init__(self, provider: str, model: str, llm_kwargs: Optional[Dict[str, Any]] = None, artifact_store: Any = None):
-        _ = (provider, model, llm_kwargs, artifact_store)
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        llm_kwargs: Optional[Dict[str, Any]] = None,
+        artifact_store: Any = None,
+        **kwargs: Any,
+    ):
+        _ = (provider, model, llm_kwargs, artifact_store, kwargs)
         self._provider = _StubPromptCacheProvider(model=model)
         self._llm = self._provider
 
@@ -261,6 +268,62 @@ class _StubGatewayLLMClient:
         result.setdefault("capabilities", self._provider.get_prompt_cache_capabilities().to_dict())
         return result
 
+    def upsert_text_bloc(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "upsert_text", "record": {"bloc_id": 1, "sha256": "stub-sha"}}
+
+    def get_bloc_record(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "record", "record": {"bloc_id": 1, "sha256": "stub-sha"}}
+
+    def list_blocs(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "list", "records": [{"bloc_id": 1, "sha256": "stub-sha"}]}
+
+    def get_bloc_kv_manifest(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_manifest", "manifest": {"binding_id": "bind-stub", "key": "work:stub"}}
+
+    def ensure_bloc_kv_artifact(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_ensure", "artifact": {"artifact_path": "/tmp/stub.kv", "binding_id": "bind-stub"}}
+
+    def load_bloc_kv_artifact(self, **kwargs: Any) -> Dict[str, Any]:
+        key = kwargs.get("key") or kwargs.get("stable_cache_key") or "work:stub"
+        return {
+            "ok": True,
+            "operation": "kv_load",
+            "artifact": {"key": key, "prompt_cache_binding": {"binding_id": "bind-stub", "key": key}},
+        }
+
+    def list_bloc_kv_artifacts(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_list", "artifacts": [{"artifact_path": "/tmp/stub.kv", "provider": "stub", "model": "stub-model"}]}
+
+    def delete_bloc_kv_artifact(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_delete", "result": {"deleted": True}}
+
+    def prune_bloc_kv_artifacts(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_prune", "results": [{"deleted": True, "artifact_path": "/tmp/stub.kv"}]}
+
+    def delete_bloc(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "delete", "result": {"deleted": True, "record": {"bloc_id": 1, "sha256": "stub-sha"}}}
+
+    def list_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "list_loaded", "models": []}
+
+    def load_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "load"}
+
+    def unload_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "unload"}
+
     def generate(self, **kwargs: Any) -> Dict[str, Any]:
         _ = kwargs
         return {"content": "ok", "tool_calls": []}
@@ -271,8 +334,15 @@ class _ProtocolOnlyGatewayLLMClient(_StubGatewayLLMClient):
 
 
 class _KeyedGatewayLLMClient:
-    def __init__(self, provider: str, model: str, llm_kwargs: Optional[Dict[str, Any]] = None, artifact_store: Any = None):
-        _ = (provider, model, llm_kwargs, artifact_store)
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        llm_kwargs: Optional[Dict[str, Any]] = None,
+        artifact_store: Any = None,
+        **kwargs: Any,
+    ):
+        _ = (provider, model, llm_kwargs, artifact_store, kwargs)
         self._llm = self
 
     def get_model_capabilities(self) -> Dict[str, Any]:
@@ -302,6 +372,91 @@ class _KeyedGatewayLLMClient:
                 "notes": ["server-managed keyed cache"],
             },
         }
+
+    def get_prompt_cache_stats(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        caps = self.get_prompt_cache_capabilities()["capabilities"]
+        return {"supported": True, "operation": "stats", "capabilities": caps, "stats": {"keys": []}}
+
+    def prompt_cache_set(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"supported": False, "operation": "set", "capabilities": self.get_prompt_cache_capabilities()["capabilities"]}
+
+    def prompt_cache_update(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"supported": False, "operation": "update", "capabilities": self.get_prompt_cache_capabilities()["capabilities"]}
+
+    def prompt_cache_fork(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"supported": False, "operation": "fork", "capabilities": self.get_prompt_cache_capabilities()["capabilities"]}
+
+    def prompt_cache_clear(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"supported": False, "operation": "clear", "capabilities": self.get_prompt_cache_capabilities()["capabilities"]}
+
+    def prompt_cache_prepare_modules(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": False,
+            "operation": "prepare_modules",
+            "capabilities": self.get_prompt_cache_capabilities()["capabilities"],
+        }
+
+    def upsert_text_bloc(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "upsert_text", "record": {"bloc_id": 1, "sha256": "stub-sha"}}
+
+    def get_bloc_record(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "record", "record": {"bloc_id": 1, "sha256": "stub-sha"}}
+
+    def list_blocs(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "list", "records": [{"bloc_id": 1, "sha256": "stub-sha"}]}
+
+    def get_bloc_kv_manifest(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_manifest", "manifest": {"binding_id": "bind-stub", "key": "work:stub"}}
+
+    def ensure_bloc_kv_artifact(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_ensure", "artifact": {"artifact_path": "/tmp/stub.kv", "binding_id": "bind-stub"}}
+
+    def load_bloc_kv_artifact(self, **kwargs: Any) -> Dict[str, Any]:
+        key = kwargs.get("key") or kwargs.get("stable_cache_key") or "work:stub"
+        return {
+            "ok": True,
+            "operation": "kv_load",
+            "artifact": {"key": key, "prompt_cache_binding": {"binding_id": "bind-stub", "key": key}},
+        }
+
+    def list_bloc_kv_artifacts(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_list", "artifacts": [{"artifact_path": "/tmp/stub.kv", "provider": "stub", "model": "stub-model"}]}
+
+    def delete_bloc_kv_artifact(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_delete", "result": {"deleted": True}}
+
+    def prune_bloc_kv_artifacts(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "kv_prune", "results": [{"deleted": True, "artifact_path": "/tmp/stub.kv"}]}
+
+    def delete_bloc(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "delete", "result": {"deleted": True, "record": {"bloc_id": 1, "sha256": "stub-sha"}}}
+
+    def list_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "list_loaded", "models": []}
+
+    def load_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "load"}
+
+    def unload_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {"ok": True, "operation": "unload"}
 
 
 class _UnsupportedGatewayLLMClient(_KeyedGatewayLLMClient):

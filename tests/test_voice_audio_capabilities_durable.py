@@ -4,6 +4,8 @@ import hashlib
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -68,25 +70,57 @@ def test_gateway_voice_audio_durable_artifacts_and_ledger_survive_restart(tmp_pa
 
     from abstractgateway.app import app
     import abstractgateway.routes.gateway as gateway_routes
+    from abstractruntime.core.models import RunStatus
 
     headers = {"Authorization": f"Bearer {token}"}
 
     tts_audio = b"tts-bytes"
     transcript_text = "hello from stt"
 
-    class _VoiceCapability:
-        def tts(self, _text: str, **_kwargs):
-            return tts_audio
+    class _RunFacade:
+        def generate_voice(self, parent_run_id: str, *, text: str, output: dict[str, Any], params: dict[str, Any], child_vars=None):
+            _ = (text, params, child_vars)
+            child_run_id = "child-tts-durable"
+            store = gateway_routes.get_gateway_service().stores.artifact_store
+            meta = store.store(tts_audio, content_type="audio/wav", run_id=child_run_id, tags={"kind": "generated_media", "modality": "voice"})
+            return SimpleNamespace(
+                run_id=child_run_id,
+                status=RunStatus.COMPLETED,
+                error=None,
+                output={
+                    "result": {
+                        "outputs": {
+                            "voice": [
+                                {
+                                    "modality": "voice",
+                                    "task": "tts",
+                                    "provider": output.get("provider"),
+                                    "model": output.get("model"),
+                                    "content_type": "audio/wav",
+                                    "format": "wav",
+                                    "artifact_ref": {
+                                        "$artifact": meta.artifact_id,
+                                        "artifact_id": meta.artifact_id,
+                                        "content_type": "audio/wav",
+                                        "size_bytes": len(tts_audio),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
 
-    class _AudioCapability:
-        def transcribe(self, _audio, **_kwargs):
-            return transcript_text
+        def transcribe_audio(self, parent_run_id: str, *, media, prompt=None, output=None, params=None, child_vars=None):
+            _ = (parent_run_id, media, prompt, output, params, child_vars)
+            return SimpleNamespace(
+                run_id="child-stt-durable",
+                status=RunStatus.COMPLETED,
+                error=None,
+                output={"result": {"text": transcript_text}},
+            )
 
-    class _Registry:
-        voice = _VoiceCapability()
-        audio = _AudioCapability()
-
-    monkeypatch.setattr(gateway_routes, "_gateway_capability_registry", lambda **_kwargs: _Registry())
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (_RunFacade(), None))
 
     run_id = "session_memory_s1"
     transcript_artifact_id: str
@@ -141,21 +175,17 @@ def test_gateway_voice_audio_durable_artifacts_and_ledger_survive_restart(tmp_pa
         assert tts_content.status_code == 200, tts_content.text
         assert tts_content.content == tts_audio
 
-        # Ledger includes both events.
+        # Parent ledger remains clean; the durable truth is the child run id returned by the direct routes.
         ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=500", headers=headers)
         assert ledger.status_code == 200, ledger.text
         items = ledger.json().get("items") or []
-        emitted: set[str] = set()
-        for it in items:
-            eff = it.get("effect") if isinstance(it, dict) else None
-            if not isinstance(eff, dict) or eff.get("type") != "emit_event":
-                continue
-            payload = eff.get("payload")
-            if isinstance(payload, dict):
-                name = payload.get("name")
-                if isinstance(name, str) and name:
-                    emitted.add(name)
-        assert {"abstract.audio.transcript", "abstract.voice.tts"} <= emitted
+        emitted = {
+            ((it.get("effect") or {}).get("payload") or {}).get("name")
+            for it in items
+            if isinstance(it, dict) and isinstance(it.get("effect"), dict)
+        }
+        assert "abstract.audio.transcript" not in emitted
+        assert "abstract.voice.tts" not in emitted
 
     # Restart simulation: new TestClient should reload file-backed stores.
     with TestClient(app) as client2:
@@ -168,26 +198,15 @@ def test_gateway_voice_audio_durable_artifacts_and_ledger_survive_restart(tmp_pa
         assert tts_content2.status_code == 200, tts_content2.text
         assert tts_content2.content == tts_audio
 
-        # Ledger replay still contains events.
+        # Parent ledger replay still stays free of synthetic media events after restart.
         ledger2 = client2.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=500", headers=headers)
         assert ledger2.status_code == 200, ledger2.text
         items2 = ledger2.json().get("items") or []
-
-        def _names(items: list[object]) -> set[str]:
-            out: set[str] = set()
-            for it in items:
-                eff = it.get("effect") if isinstance(it, dict) else None
-                if not isinstance(eff, dict):
-                    continue
-                if eff.get("type") != "emit_event":
-                    continue
-                payload = eff.get("payload")
-                if isinstance(payload, dict):
-                    name = payload.get("name")
-                    if isinstance(name, str) and name:
-                        out.add(name)
-            return out
-
-        names2 = _names(items2)
-        assert {"abstract.audio.transcript", "abstract.voice.tts"} <= names2
+        names2 = {
+            ((it.get("effect") or {}).get("payload") or {}).get("name")
+            for it in items2
+            if isinstance(it, dict) and isinstance(it.get("effect"), dict)
+        }
+        assert "abstract.audio.transcript" not in names2
+        assert "abstract.voice.tts" not in names2
         assert transcript_sha256 == hashlib.sha256(transcript_text.encode("utf-8")).hexdigest()

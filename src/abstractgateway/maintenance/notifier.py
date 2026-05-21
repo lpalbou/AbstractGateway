@@ -27,17 +27,15 @@ def _telegram_chat_id() -> Optional[int]:
     except Exception:
         return None
 
-
 def send_telegram_notification(*, text: str) -> Tuple[bool, Optional[str]]:
     chat_id = _telegram_chat_id()
     if chat_id is None:
         return False, "Missing/invalid TELEGRAM_CHAT_ID"
 
-    # Prefer the framework tool (supports TDLib Secret Chats when configured).
     try:
-        from abstractcore.tools.telegram_tools import send_telegram_message  # type: ignore
+        from abstractruntime.integrations.abstractcore import send_telegram_message
     except Exception as e:
-        return False, f"Telegram tools unavailable: {e}"
+        return False, f"Telegram helpers unavailable: {e}"
 
     try:
         out: Dict[str, Any] = send_telegram_message(chat_id=chat_id, text=str(text or ""))
@@ -60,42 +58,28 @@ def _email_recipients() -> List[str]:
     return parts
 
 
+def _email_account() -> Optional[str]:
+    return (
+        _env("ABSTRACT_BACKLOG_EMAIL_ACCOUNT", "ABSTRACTGATEWAY_BACKLOG_EMAIL_ACCOUNT")
+        or _env("ABSTRACT_TRIAGE_EMAIL_ACCOUNT", "ABSTRACTGATEWAY_TRIAGE_EMAIL_ACCOUNT")
+        or _env("ABSTRACT_EMAIL_DEFAULT_ACCOUNT")
+        or _env("ABSTRACT_EMAIL_ACCOUNT_NAME")
+    )
+
+
 def send_email_notification(*, subject: str, body_text: str) -> Tuple[bool, Optional[str]]:
     to = _email_recipients()
     if not to:
         return False, "Missing EMAIL_TO recipients"
 
-    smtp_host = (
-        _env("ABSTRACT_BACKLOG_EMAIL_SMTP_HOST", "ABSTRACTGATEWAY_BACKLOG_EMAIL_SMTP_HOST")
-        or _env("ABSTRACT_TRIAGE_EMAIL_SMTP_HOST", "ABSTRACTGATEWAY_TRIAGE_EMAIL_SMTP_HOST")
-        or _env("ABSTRACT_EMAIL_SMTP_HOST")
-        or ""
-    )
-    username = (
-        _env("ABSTRACT_BACKLOG_EMAIL_USERNAME", "ABSTRACTGATEWAY_BACKLOG_EMAIL_USERNAME")
-        or _env("ABSTRACT_TRIAGE_EMAIL_USERNAME", "ABSTRACTGATEWAY_TRIAGE_EMAIL_USERNAME")
-        or _env("ABSTRACT_EMAIL_SMTP_USERNAME")
-        or ""
-    )
-    password_env_var = (
-        _env("ABSTRACT_BACKLOG_EMAIL_PASSWORD_ENV_VAR", "ABSTRACTGATEWAY_BACKLOG_EMAIL_PASSWORD_ENV_VAR")
-        or _env("ABSTRACT_TRIAGE_EMAIL_PASSWORD_ENV_VAR", "ABSTRACTGATEWAY_TRIAGE_EMAIL_PASSWORD_ENV_VAR")
-        or _env("ABSTRACT_EMAIL_SMTP_PASSWORD_ENV_VAR")
-        or ""
-    )
-
-    # Prefer the framework tool (secrets via env var indirection).
     try:
-        from abstractcore.tools.comms_tools import send_email  # type: ignore
+        from abstractruntime.integrations.abstractcore import send_email
     except Exception as e:
-        return False, f"Email tools unavailable: {e}"
+        return False, f"Email helpers unavailable: {e}"
 
     try:
         out: Dict[str, Any] = send_email(
-            smtp_host=smtp_host or None,
-            username=username or None,
-            password_env_var=password_env_var or None,
-            from_email=_env("ABSTRACT_EMAIL_FROM"),
+            account=_email_account(),
             to=to,
             subject=str(subject or ""),
             body_text=str(body_text or ""),

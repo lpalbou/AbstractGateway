@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import types
+import getpass
 
 import pytest
 
@@ -111,3 +112,27 @@ def test_cli_serve_refuses_weak_token_on_public_bind(monkeypatch: pytest.MonkeyP
     with pytest.raises(SystemExit) as e:
         gateway_cli.main(["serve", "--host", "0.0.0.0", "--port", "9999", "--no-runner"])
     assert "Refusing to start" in str(e.value)
+
+
+@pytest.mark.basic
+def test_cli_telegram_auth_uses_runtime_bootstrap(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from abstractgateway import cli as gateway_cli
+    from abstractruntime.integrations import abstractcore as runtime_abstractcore
+
+    called: dict[str, object] = {}
+
+    def _bootstrap(*, login_code: str | None = None, two_factor_password: str | None = None, timeout_s: float = 30.0) -> dict[str, object]:
+        called["login_code"] = login_code
+        called["two_factor_password"] = two_factor_password
+        called["timeout_s"] = timeout_s
+        return {"success": True, "ready": True}
+
+    monkeypatch.setattr(runtime_abstractcore, "bootstrap_telegram_auth_from_env", _bootstrap)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "12345")
+    monkeypatch.setattr(getpass, "getpass", lambda _prompt="": "secret")
+
+    gateway_cli.main(["telegram-auth", "--timeout-s", "9"])
+
+    out = capsys.readouterr().out
+    assert "TDLib authorization: OK" in out
+    assert called == {"login_code": "12345", "two_factor_password": "secret", "timeout_s": 9.0}

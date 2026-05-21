@@ -71,6 +71,12 @@ def _make_client(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Te
     return client, headers
 
 
+def _patch_discovery_facade(monkeypatch: pytest.MonkeyPatch, *, facade: object) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (facade, None))
+
+
 def test_discovery_requires_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
@@ -82,20 +88,26 @@ def test_discovery_requires_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 
 def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from abstractcore.providers import registry as provider_registry
-
-    monkeypatch.setattr(
-        provider_registry,
-        "get_all_providers_with_models",
-        lambda include_models=False: [
-            {"name": "lmstudio", "models": ["qwen"] if include_models else []},
-            {"name": "ollama", "models": ["llama3"] if include_models else []},
-        ],
-    )
-    monkeypatch.setattr(provider_registry, "get_available_models_for_provider", lambda _name, **_kwargs: ["m1", "m2"])
-
     monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "ollama")
     monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "llama3")
+
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **_kwargs):
+            items = [
+                {"name": "lmstudio", "models": ["qwen"] if include_models else []},
+                {"name": "ollama", "models": ["llama3"] if include_models else []},
+            ]
+            return {
+                "items": items,
+                "default_provider": "ollama",
+                "default_model": "llama3",
+            }
+
+        def list_provider_models(self, provider_name: str, **_kwargs):
+            assert provider_name == "lmstudio"
+            return {"provider": "lmstudio", "models": ["m1", "m2"]}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
@@ -125,23 +137,21 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
 
 
 def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL", "http://core.test")
     monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "lmstudio")
     monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "qwen")
 
-    import abstractgateway.routes.gateway as gateway_routes
-
     calls: list[dict] = []
 
-    def fake_fetch(path: str, *, query=None, provider_api_key=None, timeout_s=None, v1=True):
-        calls.append({"path": path, "query": dict(query or {}), "provider_api_key": provider_api_key, "v1": v1})
-        if path == "/providers":
-            return {"providers": [{"name": "lmstudio", "models": []}]}
-        if path == "/models":
-            return {"object": "list", "data": [{"id": "lmstudio/qwen"}, {"id": "lmstudio/qwen2"}]}
-        return {}
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **kwargs):
+            calls.append({"method": "list_providers", "include_models": include_models, **kwargs})
+            return {"items": [{"name": "lmstudio", "models": []}]}
 
-    monkeypatch.setattr(gateway_routes, "fetch_core_catalog_json", fake_fetch)
+        def list_provider_models(self, provider_name: str, **kwargs):
+            calls.append({"method": "list_provider_models", "provider_name": provider_name, **kwargs})
+            return {"provider": "lmstudio", "models": ["qwen", "qwen2"]}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
@@ -153,14 +163,19 @@ def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, mon
         assert models.status_code == 200, models.text
         assert models.json().get("models") == ["qwen", "qwen2"]
 
-    assert calls[0] == {"path": "/providers", "query": {"include_models": False}, "provider_api_key": None, "v1": False}
-    assert calls[1] == {"path": "/models", "query": {"provider": "lmstudio"}, "provider_api_key": None, "v1": True}
+    assert calls == [
+        {"method": "list_providers", "include_models": False, "provider_api_key": None},
+        {"method": "list_provider_models", "provider_name": "lmstudio", "provider_api_key": None, "timeout_s": 30.0},
+    ]
 
 
 def test_discovery_model_capabilities(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from abstractcore.architectures import detection
+    class StubDiscoveryFacade:
+        def get_model_capabilities(self, model_name: str):
+            assert model_name == "qwen3-next-80b"
+            return {"model": model_name, "capabilities": {"max_tokens": 123, "max_output_tokens": 45}}
 
-    monkeypatch.setattr(detection, "get_model_capabilities", lambda _name: {"max_tokens": 123, "max_output_tokens": 45})
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:

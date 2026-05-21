@@ -1,7 +1,7 @@
 # AbstractGateway — Architecture
 
-> Status: implemented (v0.2.8)
-> Last reviewed: 2026-05-10
+> Status: implemented (v0.2.15)
+> Last reviewed: 2026-05-21
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
 - **Start runs** (and optionally schedule them)
@@ -15,7 +15,7 @@ This document describes the code in this repository (see **Evidence** links).
 AbstractGateway is designed to sit between **thin clients / UIs** and **AbstractRuntime**:
 - AbstractGateway: HTTP/SSE API + durability glue + baseline security (`src/abstractgateway/app.py`, `src/abstractgateway/routes/gateway.py`)
 - AbstractRuntime (required): run model + tick loop + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
-- AbstractCore / AbstractVoice / AbstractVision / AbstractMemory (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles (`src/abstractgateway/hosts/bundle_host.py`)
+- AbstractRuntime + transitive capability packages (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`)
 
 ## High-level shape
 

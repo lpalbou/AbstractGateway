@@ -18,7 +18,7 @@ Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.p
 
 - **AbstractRuntime** (required): the durable run model + tick loop + stores (declared in `pyproject.toml`).
 - **AbstractGateway** (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in `src/abstractgateway/routes/gateway.py`).
-- **AbstractCore / AbstractVoice / AbstractVision / AbstractMemory** (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles (`src/abstractgateway/hosts/bundle_host.py`).
+- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`).
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).
 
 Related repos:
@@ -169,8 +169,8 @@ export ABSTRACTGATEWAY_MODEL="..."
 ```
 
 Alternatives:
-- Configure global defaults via AbstractCore config (`abstractcore --config`, inspect with `abstractcore --status`).
 - Pin provider/model on at least one `llm_call` or `agent` node; the gateway scans the flow JSON for defaults.
+- Set Gateway env defaults before startup and keep provider secrets/base URLs in `abstractcore-config`.
 
 Evidence: `_scan_flows_for_llm_defaults` + provider/model selection in `src/abstractgateway/hosts/bundle_host.py`.
 
@@ -187,24 +187,26 @@ Evidence: tool executor selection in `src/abstractgateway/hosts/bundle_host.py`.
 
 ### Why do `/voice/tts` or `/audio/transcribe` fail with “capability unavailable”?
 
-Those endpoints are backed by **AbstractVoice** (`abstractvoice`), which is
-included by the base `abstractgateway` install. Verify the installed package
-set with:
+Those endpoints are surfaced through Runtime's voice/audio integration path and
+the required capability packages are included by the base `abstractgateway`
+install. Verify the installed package set with:
 
 ```bash
-pip show abstractgateway abstractvoice abstractcore
+pip show abstractgateway AbstractRuntime abstractcore
 ```
 
-By default, the gateway allows AbstractVoice to download models on first use. If you disabled downloads (or want to enable them explicitly), set:
+By default, the gateway allows the configured voice backend to download models on first use. If you disabled downloads (or want to enable them explicitly), set:
 
 ```bash
 export ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS=1
 ```
 
-For remote/OpenAI-compatible voice backends, configure AbstractVoice's native
+For remote/OpenAI-compatible voice backends, configure the Gateway-scoped voice
 environment variables in the gateway process, for example
-`ABSTRACTVOICE_TTS_ENGINE`, `ABSTRACTVOICE_STT_ENGINE`,
-`ABSTRACTVOICE_REMOTE_BASE_URL`, and `ABSTRACTVOICE_REMOTE_API_KEY`.
+`ABSTRACTGATEWAY_VOICE_TTS_ENGINE`, `ABSTRACTGATEWAY_VOICE_STT_ENGINE`,
+`ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL`, and
+`ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY` (legacy `ABSTRACTVOICE_*` names still
+work).
 
 ### How do I enable generated images or Runtime-managed multimodal outputs?
 
@@ -214,15 +216,15 @@ Use the base install:
 pip install abstractgateway
 ```
 
-The base install includes `AbstractRuntime[multimodal]`, AbstractCore's
-`vision`/`voice`/`audio` extras, `abstractvision>=0.3.4`, and
-`abstractvoice>=0.9.3`. The server image defaults image and audio generation to
-OpenAI remote endpoints; set `OPENAI_API_KEY` (or the `ABSTRACTGATEWAY_VISION_*` /
-`ABSTRACTGATEWAY_VOICE_*` overrides) before expecting live generation to succeed. Use
-`ABSTRACTGATEWAY_VISION_BACKEND=diffusers` or `sdcpp` only for custom images that
-intentionally include those local engines.
+The base install includes `AbstractRuntime[multimodal,mcp-worker]` plus the
+Runtime-owned media/tool integration stack. The server image defaults image and
+audio generation to OpenAI remote endpoints; set `OPENAI_API_KEY` (or the
+`ABSTRACTGATEWAY_VISION_*` / `ABSTRACTGATEWAY_VOICE_*` overrides) before
+expecting live generation to succeed. Use
+`ABSTRACTGATEWAY_VISION_BACKEND=diffusers` or `sdcpp` only for custom images
+that intentionally include those local engines.
 
-Generated images are available both inside Runtime/Core workflows and through
+Generated images are available both inside Runtime workflows and through
 Gateway's direct run-scoped endpoint:
 
 ```text
@@ -230,8 +232,8 @@ POST /api/gateway/runs/{run_id}/images/generate
 ```
 
 The direct endpoint uses Runtime/Core image-generation selectors and stores the
-result as a run artifact, so it still requires a configured
-AbstractVision-compatible backend.
+result as a run artifact, so it still requires a configured Runtime-compatible
+image backend.
 
 ### What does Gateway session prompt-cache orchestration include?
 

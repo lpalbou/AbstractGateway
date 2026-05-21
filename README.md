@@ -15,7 +15,7 @@ Start here: [docs/getting-started.md](docs/getting-started.md)
 AbstractGateway is part of the **AbstractFramework** ecosystem:
 
 - **AbstractRuntime** (required): durable run model + workflow registry + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
-- **AbstractCore / AbstractVoice / AbstractVision / AbstractMemory** (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by Gateway bundles (`src/abstractgateway/hosts/bundle_host.py`)
+- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`)
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractCode / AbstractObserver / thin clients (rendering + operations)
 
 Related repos:
@@ -56,7 +56,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.8
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.15
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -64,16 +64,15 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
-`AbstractRuntime[multimodal]`, AbstractCore remote/commercial provider support,
-OpenAI-compatible text providers, workflow-backed and direct image generation
-through Runtime/Core/AbstractVision, direct Gateway voice/audio endpoints
-through AbstractVoice, provider/session prompt-cache helpers, media/tool
-helpers, token counting, compression, AbstractMemory/LanceDB KG support,
-AbstractAgent, and AbstractFlow compatibility.
+`AbstractRuntime[multimodal,mcp-worker]`, Runtime-owned provider/media/tool
+facades, OpenAI-compatible text providers, workflow-backed and direct image,
+voice, and audio routes surfaced through Runtime, provider/session prompt-cache
+helpers, AbstractMemory/LanceDB KG support, AbstractAgent, and AbstractFlow
+compatibility.
 
 ```bash
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -86,7 +85,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.8
+  ghcr.io/lpalbou/abstractgateway-server:0.2.15
 ```
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the
@@ -103,7 +102,7 @@ For a minimal Apple-local Gateway + Flow setup, see
 
 Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 
-## 0.2.8 capability scope
+## 0.2.15 capability scope
 
 Direct Gateway APIs in this release:
 - `GET /api/gateway/runs/{run_id}/input_data`
@@ -122,9 +121,9 @@ Direct Gateway APIs in this release:
 - `/api/gateway/discovery/capabilities` package, plugin, and thin-client contract discovery
 
 Workflow/Core-backed capabilities:
-- Generated images are available to Runtime/Core workflows through
-  AbstractVision when installed and configured, and the direct Gateway image
-  route uses the same Runtime/Core image-generation contract.
+- Generated images are available to Runtime workflows through Runtime's image
+  backend integrations, and the direct Gateway image route uses the same
+  Runtime/Core image-generation contract.
 - Prompt-cache support depends on the active provider/model. Session lifecycle
   routes provide Gateway-owned naming and orchestration, not a provider-
   independent local KV cache.
@@ -148,8 +147,8 @@ See [docs/api.md](docs/api.md) for curl examples and the live OpenAPI spec (`/op
 Requires Python `>=3.10` (see `pyproject.toml`).
 
 The base install is the remote-light HTTP/SSE server: Gateway, Runtime,
-Agent, Core remote provider/tool/media support, Flow compatibility, Vision,
-Voice, and LanceDB-backed Memory.
+Agent, Flow compatibility, Runtime-owned provider/tool/media facades, and
+LanceDB-backed Memory.
 
 ```bash
 pip install abstractgateway

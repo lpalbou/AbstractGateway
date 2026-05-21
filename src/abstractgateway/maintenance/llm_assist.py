@@ -36,15 +36,7 @@ def _json_from_text(text: str) -> Optional[Dict[str, Any]]:
 
 
 def load_llm_assist_config() -> Dict[str, Any]:
-    """Load maintenance LLM config (best-effort).
-
-    Precedence:
-    1) env vars (override)
-    2) AbstractCore config system (if available)
-
-    This keeps triage configurable while remaining dependency-light when AbstractCore
-    isn't installed in a runner-only deployment.
-    """
+    """Load maintenance LLM config from environment variables."""
 
     base_url = ""
     model = ""
@@ -53,32 +45,6 @@ def load_llm_assist_config() -> Dict[str, Any]:
     max_tokens = 800
     use_llm = False
 
-    # AbstractCore config (best-effort).
-    try:
-        from abstractcore.config.manager import get_config_manager  # type: ignore
-
-        cfg = get_config_manager().config
-        m = getattr(cfg, "maintenance", None)
-        if m is not None:
-            use_llm = bool(getattr(m, "triage_llm_enabled", False))
-            base_url = str(getattr(m, "triage_llm_base_url", "") or "")
-            model = str(getattr(m, "triage_llm_model", "") or "")
-            try:
-                temperature = float(getattr(m, "triage_llm_temperature", 0.2))
-            except Exception:
-                temperature = 0.2
-            try:
-                timeout_s = float(getattr(m, "triage_llm_timeout_s", 30.0))
-            except Exception:
-                timeout_s = 30.0
-            try:
-                max_tokens = int(getattr(m, "triage_llm_max_tokens", 800))
-            except Exception:
-                max_tokens = 800
-    except Exception:
-        pass
-
-    # Env overrides.
     enabled = str(_env("ABSTRACT_TRIAGE_LLM", "ABSTRACTGATEWAY_TRIAGE_LLM") or "").strip().lower()
     if enabled:
         use_llm = enabled in {"1", "true", "yes", "on"}

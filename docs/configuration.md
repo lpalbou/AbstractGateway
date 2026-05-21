@@ -5,10 +5,9 @@ AbstractGateway is configured primarily via **environment variables** (plus a fe
 ## Install extras (recommended)
 
 The base install (`pip install abstractgateway`) is the remote-light server
-profile: HTTP/SSE, durable stores, AbstractRuntime multimodal, AbstractCore
-remote provider/media/tool support, AbstractVision, AbstractVoice,
-AbstractAgent, AbstractFlow compatibility, and AbstractMemory/LanceDB KG
-support.
+profile: HTTP/SSE, durable stores, `AbstractRuntime[multimodal,mcp-worker]`,
+Runtime-owned provider/media/tool support, AbstractAgent, AbstractFlow
+compatibility, and AbstractMemory/LanceDB KG support.
 
 Optional extras (see `pyproject.toml`):
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
@@ -21,12 +20,9 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal]>=0.4.10`
+- `AbstractRuntime[multimodal,mcp-worker]>=0.4.19`
 - `abstractagent>=0.3.6`
-- `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]>=2.13.13`
 - `AbstractMemory[lancedb]>=0.2.6`
-- `abstractvision>=0.3.4`
-- `abstractvoice>=0.9.3`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.
@@ -44,8 +40,7 @@ abstractgateway config status --json
 It reports Gateway auth/data/store/runtime defaults, Core-server handoff
 configuration, memory-store selection, and package readiness. `init` writes a
 private env file with a generated Gateway token. Provider API keys, provider
-base URLs, Core server settings, and global Core model defaults remain owned by
-`abstractcore-config`.
+base URLs and Core server settings remain owned by `abstractcore-config`.
 
 ## Core environment variables
 
@@ -122,9 +117,9 @@ Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.
 - `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`  
   Used as defaults for LLM execution and Gateway LLM helper endpoints. Resolution
   order is: explicit request/provider-model pins, Gateway env, flow-pinned
-  defaults when compiling bundles, then AbstractCore global defaults from
-  `abstractcore-config`. If no pair is configured, helpers return a clear
-  configuration error instead of falling back to a hardcoded model.
+  defaults when compiling bundles. If no pair is configured, helpers return a
+  clear configuration error instead of falling back to a hardcoded model or a
+  separate AbstractCore config file.
   Evidence: `src/abstractgateway/provider_defaults.py`, `src/abstractgateway/hosts/bundle_host.py`
 - `ABSTRACTGATEWAY_TOOL_MODE`:
   - `approval` (default): execute safe tools locally; require explicit approval for dangerous/unknown tools
@@ -158,6 +153,16 @@ apps without pretending unsupported providers have local KV state.
 - `POST /api/gateway/prompt_cache/fork`
 - `POST /api/gateway/prompt_cache/clear`
 - `POST /api/gateway/prompt_cache/prepare_modules`
+- `POST /api/gateway/blocs/upsert_text`
+- `GET /api/gateway/blocs/record`
+- `GET /api/gateway/blocs`
+- `POST /api/gateway/blocs/delete`
+- `GET /api/gateway/blocs/kv/manifest`
+- `GET /api/gateway/blocs/kv/list`
+- `POST /api/gateway/blocs/kv/ensure`
+- `POST /api/gateway/blocs/kv/load`
+- `POST /api/gateway/blocs/kv/delete`
+- `POST /api/gateway/blocs/kv/prune`
 - `POST /api/gateway/prompt_cache/save` / `load` for supported local providers
 - `GET /api/gateway/sessions/{session_id}/prompt_cache/status`
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
@@ -168,6 +173,12 @@ Session lifecycle responses distinguish `unsupported`, `keyed`, and
 `local_control_plane` modes. Keyed providers receive a stable `runtime_hint`;
 local-control-plane providers can prepare, clear, and rebuild when their
 AbstractCore provider exposes those operations.
+
+Treat the three prompt-cache surfaces separately:
+
+- `/prompt_cache/*`: provider/model prompt-cache controls
+- `/sessions/{session_id}/prompt_cache/*`: gateway-owned volatile session lifecycle
+- `/blocs/*`: durable exact-reuse bloc/KV contract that returns `prompt_cache_binding`
 
 ### Multimodal provider/plugin controls
 
@@ -191,7 +202,7 @@ heavy engines remain explicit opt-ins in the provider packages.
 - `ABSTRACTGATEWAY_VOICE_TTS_MODEL` / `ABSTRACTGATEWAY_VOICE_STT_MODEL`: Gateway-scoped TTS/STT model defaults.
 - `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL` / `ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice.
 - `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls
-- `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL` or `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
+- `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
 - `GET /api/gateway/audio/speech/models`: proxies AbstractCore `/v1/audio/speech/models` when configured.
 - `GET /api/gateway/audio/transcriptions/models`: proxies AbstractCore `/v1/audio/transcriptions/models` when configured.
 - `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured.
@@ -199,7 +210,7 @@ heavy engines remain explicit opt-ins in the provider packages.
 
 Core catalog proxy settings:
 
-- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL` (or `ABSTRACTCORE_SERVER_BASE_URL`): explicit Core server base URL for catalog proxying.
+- `ABSTRACTCORE_SERVER_BASE_URL`: explicit Core server base URL for catalog proxying.
 - `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN` / `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY` (or `ABSTRACTCORE_SERVER_API_KEY`): Core server auth token. This is separate from Gateway auth.
 - `ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S`: catalog proxy timeout (default `3.0` seconds).
 

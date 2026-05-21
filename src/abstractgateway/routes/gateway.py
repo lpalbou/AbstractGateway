@@ -38,7 +38,6 @@ from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore
 from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord, WaitReason
 
-from ..capability_catalog import CoreCatalogProxyError, core_catalog_base_url, fetch_core_catalog_json
 from ..memory_store import (
     memory_backend_unavailable_reason,
     memory_store_exists,
@@ -48,14 +47,12 @@ from ..memory_store import (
 from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from .. import host_metrics
 from ..service import backlog_exec_runner_status, get_gateway_service, run_summary
+from ..workspace_tools import AbstractIgnore, read_file as read_workspace_file, skim_files as skim_workspace_files
 from ..workflow_deprecations import WorkflowDeprecatedError
 
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
 logger = logging.getLogger(__name__)
-
-_VOICE_MANAGER = None
-_VOICE_MANAGER_LOCK = threading.Lock()
 
 
 @router.get("/ping")
@@ -200,6 +197,9 @@ def _env_is_openai_base_url(value: Optional[str]) -> bool:
 
 
 def _gateway_direct_image_configured() -> bool:
+    if _env_first("ABSTRACTCORE_SERVER_BASE_URL"):
+        return True
+
     backend = str(_env_first("ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND", default="openai") or "openai")
     backend = backend.strip().lower().replace("_", "-")
 
@@ -247,85 +247,6 @@ def _optional_package_status(module_name: str, dist_name: Optional[str] = None) 
         return {"installed": True, "version": version}
     except Exception as e:
         return {"installed": False, "error": str(e)}
-
-
-def _get_gateway_voice_manager():
-    """Return a process-wide voice manager (lazy, best-effort).
-
-    Gateway's base install includes remote-light voice/audio support. Hardware-
-    local engines are selected by the Gateway apple/gpu profiles.
-    """
-    global _VOICE_MANAGER
-    with _VOICE_MANAGER_LOCK:
-        if _VOICE_MANAGER is not None:
-            return _VOICE_MANAGER
-
-        try:
-            try:
-                from abstractvoice.voice_manager import VoiceManager
-            except Exception:
-                from abstractvoice.vm.manager import VoiceManager
-        except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Voice/audio support is not available: {e}. "
-                    'Install/repair with: pip install abstractgateway'
-                ),
-            )
-
-        # Prefer gateway-scoped env vars, but accept AbstractVoice's native names
-        # so the Gateway image can also act as an AbstractCore/AbstractVoice plugin host.
-        lang = _env_first("ABSTRACTGATEWAY_VOICE_LANGUAGE", "ABSTRACTVOICE_LANGUAGE", default="en") or "en"
-        vm_kwargs: Dict[str, Any] = {
-            "language": lang,
-            # Default to enabling downloads for a smoother first-run UX. Operators
-            # can disable by setting ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS=0.
-            "allow_downloads": _env_bool(
-                "ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS",
-                "ABSTRACTVOICE_ALLOW_DOWNLOADS",
-                default=True,
-            ),
-        }
-
-        optional_text: Dict[str, tuple[str, ...]] = {
-            "tts_engine": ("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE"),
-            "stt_engine": ("ABSTRACTGATEWAY_VOICE_STT_ENGINE", "ABSTRACTVOICE_STT_ENGINE"),
-            "tts_model": ("ABSTRACTGATEWAY_VOICE_TTS_MODEL", "ABSTRACTVOICE_TTS_MODEL"),
-            "stt_model": ("ABSTRACTGATEWAY_VOICE_STT_MODEL", "ABSTRACTVOICE_STT_MODEL"),
-            "whisper_model": ("ABSTRACTGATEWAY_VOICE_WHISPER_MODEL", "ABSTRACTVOICE_WHISPER_MODEL"),
-            "cloning_engine": ("ABSTRACTGATEWAY_VOICE_CLONING_ENGINE", "ABSTRACTVOICE_CLONING_ENGINE"),
-            "tts_delivery_mode": ("ABSTRACTGATEWAY_VOICE_TTS_DELIVERY_MODE", "ABSTRACTVOICE_TTS_DELIVERY_MODE"),
-            "remote_base_url": ("ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL", "ABSTRACTVOICE_REMOTE_BASE_URL"),
-            "remote_api_key": ("ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY", "ABSTRACTVOICE_REMOTE_API_KEY"),
-        }
-        for arg_name, keys in optional_text.items():
-            value = _env_first(*keys)
-            if value is not None:
-                vm_kwargs[arg_name] = value
-
-        remote_timeout = _env_float("ABSTRACTGATEWAY_VOICE_REMOTE_TIMEOUT_S", "ABSTRACTVOICE_REMOTE_TIMEOUT_S")
-        if remote_timeout is not None:
-            vm_kwargs["remote_timeout_s"] = remote_timeout
-
-        if _env_first("ABSTRACTGATEWAY_VOICE_DEBUG", "ABSTRACTVOICE_DEBUG") is not None:
-            vm_kwargs["debug_mode"] = _env_bool("ABSTRACTGATEWAY_VOICE_DEBUG", "ABSTRACTVOICE_DEBUG")
-        if _env_first("ABSTRACTGATEWAY_VOICE_CLONED_TTS_STREAMING", "ABSTRACTVOICE_CLONED_TTS_STREAMING") is not None:
-            vm_kwargs["cloned_tts_streaming"] = _env_bool(
-                "ABSTRACTGATEWAY_VOICE_CLONED_TTS_STREAMING",
-                "ABSTRACTVOICE_CLONED_TTS_STREAMING",
-                default=True,
-            )
-
-        try:
-            _VOICE_MANAGER = VoiceManager(**vm_kwargs)
-        except TypeError as e:
-            msg = str(e)
-            if "unexpected keyword" not in msg and "got an unexpected" not in msg:
-                raise
-            # Older AbstractVoice installs do not know the remote/provider kwargs.
-            _VOICE_MANAGER = VoiceManager(language=lang, allow_downloads=bool(vm_kwargs["allow_downloads"]))
-        return _VOICE_MANAGER
 
 
 class StartRunRequest(BaseModel):
@@ -2115,8 +2036,6 @@ def _get_tool_specs_by_name(*, ttl_s: float = 30.0) -> Dict[str, Dict[str, Any]]
 
 
 def _build_file_index(*, base: Path, max_files: int) -> list[str]:
-    from abstractcore.tools.abstractignore import AbstractIgnore
-
     ignore = AbstractIgnore.for_path(base)
     out: list[str] = []
 
@@ -2154,12 +2073,7 @@ def _build_file_index_for_root(
     `.resolve()` calls inside the hot loop; `os.walk(root)` already yields absolute paths
     rooted under `root` (which itself is resolved by callers).
     """
-    try:
-        from abstractcore.tools.abstractignore import AbstractIgnore
-
-        ignore = AbstractIgnore.for_path(root)
-    except Exception:
-        ignore = None
+    ignore = AbstractIgnore.for_path(root)
 
     try:
         root_abs = root.resolve()
@@ -5155,102 +5069,13 @@ class VoiceTTSResponse(BaseModel):
     ok: bool = Field(default=True)
     run_id: str
     request_id: str
+    child_run_id: Optional[str] = None
     audio_artifact: Dict[str, Any]
-
-def _voice_manager_has_tts_profile(vm: Any, profile_id: str) -> bool:
-    requested = str(profile_id or "").strip()
-    if not requested:
-        return False
-    requested_l = requested.lower()
-
-    def _matches(value: Any) -> bool:
-        text = str(value or "").strip()
-        if not text:
-            return False
-        values = {text.lower()}
-        if text.lower().endswith(".onnx"):
-            values.add(text.lower()[: -len(".onnx")])
-        return requested_l in values
-
-    try:
-        if hasattr(vm, "get_profiles"):
-            for item in list(vm.get_profiles(kind="tts") or []):
-                if isinstance(item, dict):
-                    values = [
-                        item.get("profile_id"),
-                        item.get("id"),
-                        item.get("voice_id"),
-                        item.get("voice"),
-                        item.get("name"),
-                    ]
-                    params = item.get("params")
-                    if isinstance(params, dict):
-                        values.extend([params.get("voice"), params.get("model"), params.get("model_filename"), params.get("language")])
-                else:
-                    values = [
-                        getattr(item, "profile_id", None),
-                        getattr(item, "id", None),
-                        getattr(item, "voice_id", None),
-                        getattr(item, "voice", None),
-                        getattr(item, "name", None),
-                    ]
-                    params = getattr(item, "params", None)
-                    if isinstance(params, dict):
-                        values.extend([params.get("voice"), params.get("model"), params.get("model_filename"), params.get("language")])
-                if any(_matches(value) for value in values):
-                    return True
-    except Exception:
-        pass
-
-    try:
-        catalog = vm.list_available_models() if hasattr(vm, "list_available_models") else {}
-    except Exception:
-        catalog = {}
-    if isinstance(catalog, dict):
-        for language, voices in catalog.items():
-            if _matches(language):
-                return True
-            if not isinstance(voices, dict):
-                continue
-            for voice_key, raw in voices.items():
-                values = [voice_key, language]
-                if isinstance(raw, dict):
-                    values.extend([raw.get("profile_id"), raw.get("voice_id"), raw.get("voice"), raw.get("model"), raw.get("model_id"), raw.get("model_filename"), raw.get("name")])
-                if any(_matches(value) for value in values):
-                    return True
-
-    return False
-
-
-def _voice_provider_aliases(value: Any) -> set[str]:
-    text = str(value or "").strip().lower().replace("_", "-")
-    if not text:
-        return set()
-    aliases = {text, text.replace("-", "_")}
-    if text in {"remote", "compatible", "proxy"}:
-        aliases.update({"openai-compatible", "openai_compatible"})
-    if text in {"f5-tts", "f5tts", "openf5", "open-f5"}:
-        aliases.update({"f5_tts"})
-    return aliases
-
-
-def _voice_manager_tts_provider_aliases(vm: Any) -> set[str]:
-    adapter = getattr(vm, "tts_adapter", None)
-    aliases: set[str] = set()
-    for value in (
-        getattr(adapter, "engine_id", None),
-        getattr(adapter, "provider", None),
-        getattr(vm, "_abstractvoice_tts_engine", None),
-        getattr(vm, "_tts_engine_name", None),
-        getattr(vm, "_tts_engine_preference", None),
-    ):
-        aliases.update(_voice_provider_aliases(value))
-    return aliases
 
 
 @router.post("/runs/{run_id}/voice/tts", response_model=VoiceTTSResponse)
 async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
-    """Deterministic TTS: store audio as artifact + emit a durable ledger event."""
+    """Delegate TTS to Runtime-owned durable child execution."""
     svc = get_gateway_service()
     rs = svc.host.run_store
     rid = str(run_id or "").strip()
@@ -5288,35 +5113,9 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     model_name = str(model).strip() if isinstance(model, str) and model.strip() else None
     provider_name = str(provider).strip() if isinstance(provider, str) and provider.strip() else None
     effective_profile_name = profile_name
-
-    try:
-        voice_capability = _gateway_capability_registry().voice
-
-        def _synthesize() -> Any:
-            return voice_capability.tts(
-                text,
-                voice=voice_name,
-                profile=profile_name,
-                model=model_name,
-                provider=provider_name,
-                format=fmt,
-                speed=speed,
-                quality_preset=quality_preset or None,
-                instructions=instructions or None,
-            )
-
-        audio_bytes0 = await asyncio.to_thread(_synthesize)
-        if not isinstance(audio_bytes0, (bytes, bytearray)):
-            raise TypeError("Voice backend returned non-bytes audio")
-        audio_bytes = bytes(audio_bytes0)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
-
-    store_fn = getattr(store, "store", None)
-    if not callable(store_fn):
-        raise HTTPException(status_code=500, detail="Artifact store does not support storing bytes")
+    run_facade, err = _gateway_abstractcore_run_facade()
+    if err or run_facade is None:
+        raise HTTPException(status_code=503, detail=err or "Gateway runtime does not expose AbstractCore durable media helpers.")
 
     if fmt in {"wav", "wave"}:
         content_type = "audio/wav"
@@ -5328,77 +5127,74 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         content_type = "application/octet-stream"
         filename = f"tts.{fmt}" if fmt else "tts.bin"
 
-    sha256 = hashlib.sha256(audio_bytes).hexdigest()
-    tags: Dict[str, str] = {
-        "kind": "voice_tts",
-        "request_id": request_id,
-        "sha256": sha256,
+    output_spec: Dict[str, Any] = {
+        "modality": "voice",
+        "task": "tts",
         "format": fmt,
-        "session_id": str(getattr(run, "session_id", "") or ""),
     }
-    voice_str = str(voice_name or "").strip()
-    if voice_str:
-        tags["voice"] = voice_str
-    if provider_name:
-        tags["provider"] = provider_name
+    if voice_name:
+        output_spec["voice"] = voice_name
     if effective_profile_name:
-        tags["profile"] = effective_profile_name
+        output_spec["profile"] = effective_profile_name
     if model_name:
-        tags["model"] = model_name
-    if quality_preset:
-        tags["quality_preset"] = quality_preset
+        output_spec["model"] = model_name
+    if provider_name:
+        output_spec["provider"] = provider_name
     if speed is not None:
-        tags["speed"] = str(speed)
+        output_spec["speed"] = speed
+    if quality_preset:
+        output_spec["quality_preset"] = quality_preset
+    if instructions:
+        output_spec["instructions"] = instructions
+
+    params = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": str(getattr(run, "session_id", "") or ""),
+            "request_id": request_id,
+        }
+    }
 
     try:
-        meta = await asyncio.to_thread(
-            store_fn,
-            audio_bytes,
-            content_type=content_type,
-            run_id=str(getattr(run, "run_id", rid)),
-            tags=tags,
+        child = await asyncio.to_thread(
+            run_facade.generate_voice,
+            str(getattr(run, "run_id", rid)),
+            text=text,
+            output=output_spec,
+            params=params,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to store TTS audio artifact: {e}")
+        raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
 
-    artifact_id = str(getattr(meta, "artifact_id", "") or "") if meta is not None else ""
-    if not artifact_id:
-        artifact_id = str(meta.get("artifact_id", "") or "") if isinstance(meta, dict) else ""
-    if not artifact_id:
-        raise HTTPException(status_code=500, detail="Artifact store did not return an artifact_id for TTS audio")
+    result = _gateway_completed_child_result(child, operation="TTS")
+    voice_outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
+    items = voice_outputs.get("voice") if isinstance(voice_outputs, dict) else None
+    item = next((entry for entry in items if isinstance(entry, dict)), None) if isinstance(items, list) else None
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=500, detail="TTS completed without an audio artifact")
+    audio_ref = _gateway_generated_artifact_ref_from_item(
+        item,
+        store=store,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        session_id=str(getattr(run, "session_id", "") or ""),
+        fallback_content_type=content_type,
+        fallback_filename=filename,
+        modality="voice",
+        task="tts",
+        source="gateway_direct_tts",
+    )
+    if not isinstance(audio_ref, dict):
+        raise HTTPException(status_code=500, detail="TTS completed without a stored audio artifact")
 
-    audio_ref: Dict[str, Any] = {
-        "$artifact": artifact_id,
-        "content_type": content_type,
-        "filename": filename,
-        "sha256": sha256,
-        "size_bytes": len(audio_bytes),
-    }
-
-    payload = {
-        "run_id": str(getattr(run, "run_id", rid)),
-        "request_id": request_id,
-        "text": text,
-        "provider": provider_name,
-        "voice": voice,
-        "profile": effective_profile_name,
-        "model": model_name,
-        "format": fmt,
-        "speed": speed,
-        "quality_preset": quality_preset or None,
-        "instructions": instructions or None,
-        "audio_artifact": audio_ref,
-    }
-
-    try:
-        eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.voice.tts", "scope": "run", "run_id": str(getattr(run, "run_id", rid)), "payload": payload})
-        rec = StepRecord.start(run=run, node_id="gateway", effect=eff, idempotency_key=f"gateway:voice_tts:{request_id}")
-        rec.finish_success({"emitted": True, "name": "abstract.voice.tts", "payload": payload})
-        await asyncio.to_thread(svc.host.ledger_store.append, rec)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to persist TTS event: {e}")
-
-    return VoiceTTSResponse(ok=True, run_id=str(getattr(run, "run_id", rid)), request_id=request_id, audio_artifact=audio_ref)
+    return VoiceTTSResponse(
+        ok=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        child_run_id=str(child.run_id),
+        audio_artifact=audio_ref,
+    )
 
 
 class AudioTranscribeRequest(BaseModel):
@@ -5413,6 +5209,7 @@ class AudioTranscribeResponse(BaseModel):
     ok: bool = Field(default=True)
     run_id: str
     request_id: str
+    child_run_id: Optional[str] = None
     text: str
     transcript_artifact: Dict[str, Any]
 
@@ -5442,6 +5239,7 @@ class ImageGenerateResponse(BaseModel):
     supported: bool = Field(default=True)
     run_id: str
     request_id: str
+    child_run_id: Optional[str] = None
     image_artifact: Optional[Dict[str, Any]] = None
     event_name: Optional[str] = None
     code: Optional[str] = None
@@ -5450,7 +5248,7 @@ class ImageGenerateResponse(BaseModel):
 
 @router.post("/runs/{run_id}/audio/transcribe", response_model=AudioTranscribeResponse)
 async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTranscribeResponse:
-    """Deterministic STT: transcribe an uploaded audio artifact into text + artifact + ledger event."""
+    """Delegate STT to Runtime-owned durable child execution."""
     svc = get_gateway_service()
     rs = svc.host.run_store
     rid = str(run_id or "").strip()
@@ -5527,39 +5325,41 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
     stt_model = getattr(req, "model", None)
     stt_model_name = str(stt_model).strip() if isinstance(stt_model, str) and stt_model.strip() else None
 
-    load_fn = getattr(store, "load", None)
-    if not callable(load_fn):
-        raise HTTPException(status_code=400, detail="Artifact store does not support content reads")
+    run_facade, err = _gateway_abstractcore_run_facade()
+    if err or run_facade is None:
+        raise HTTPException(status_code=503, detail=err or "Gateway runtime does not expose AbstractCore durable media helpers.")
+
+    output_spec: Dict[str, Any] = {"modality": "text", "task": "transcription"}
+    if language_hint:
+        output_spec["language"] = language_hint
+    if stt_provider_name:
+        output_spec["provider"] = stt_provider_name
+    if stt_model_name:
+        output_spec["model"] = stt_model_name
+
+    params = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": str(getattr(run, "session_id", "") or ""),
+            "request_id": request_id,
+        }
+    }
+
     try:
-        artifact_in = load_fn(str(audio_artifact_id))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load audio artifact content: {e}")
-    if artifact_in is None:
-        raise HTTPException(status_code=404, detail="audio_artifact not found")
-
-    audio_bytes0 = getattr(artifact_in, "content", b"") or b""
-    if not isinstance(audio_bytes0, (bytes, bytearray)):
-        raise HTTPException(status_code=500, detail="audio_artifact content is not bytes")
-    audio_bytes = bytes(audio_bytes0)
-
-    try:
-        def _transcribe() -> str:
-            return str(
-                _gateway_capability_registry().audio.transcribe(
-                    audio_bytes,
-                    language=language_hint,
-                    provider=stt_provider_name,
-                    model=stt_model_name,
-                )
-                or ""
-            )
-
-        text = await asyncio.to_thread(_transcribe)
-        text = str(text or "")
-    except HTTPException:
-        raise
+        child = await asyncio.to_thread(
+            run_facade.transcribe_audio,
+            str(getattr(run, "run_id", rid)),
+            media=audio_ref,
+            prompt=None,
+            output=output_spec,
+            params=params,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"STT failed: {e}")
+
+    result = _gateway_completed_child_result(child, operation="STT")
+    text = str(result.get("content") or result.get("text") or "")
 
     # Store transcript as an artifact (durable; avoids inlining large strings in ledger-only mode).
     store_fn = getattr(store, "store", None)
@@ -5606,26 +5406,14 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         "size_bytes": len(transcript_bytes),
     }
 
-    payload = {
-        "run_id": str(getattr(run, "run_id", rid)),
-        "request_id": request_id,
-        "audio_artifact": audio_ref,
-        "language": language,
-        "provider": stt_provider_name,
-        "model": stt_model_name,
-        "text": text,
-        "transcript_artifact": transcript_ref,
-    }
-
-    try:
-        eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.audio.transcript", "scope": "run", "run_id": str(getattr(run, "run_id", rid)), "payload": payload})
-        rec = StepRecord.start(run=run, node_id="gateway", effect=eff, idempotency_key=f"gateway:audio_transcribe:{request_id}")
-        rec.finish_success({"emitted": True, "name": "abstract.audio.transcript", "payload": payload})
-        await asyncio.to_thread(svc.host.ledger_store.append, rec)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to persist transcript event: {e}")
-
-    return AudioTranscribeResponse(ok=True, run_id=str(getattr(run, "run_id", rid)), request_id=request_id, text=text, transcript_artifact=transcript_ref)
+    return AudioTranscribeResponse(
+        ok=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        child_run_id=str(child.run_id),
+        text=text,
+        transcript_artifact=transcript_ref,
+    )
 
 
 def _gateway_generated_image_content_type(fmt: str) -> Tuple[str, str]:
@@ -5648,36 +5436,81 @@ def _gateway_image_generation_max_bytes() -> int:
     return max(1, min(value, 200_000_000))
 
 
-def _gateway_generated_media_llm_client(
+def _artifact_meta_value(meta: Any, key: str) -> Any:
+    if isinstance(meta, dict):
+        return meta.get(key)
+    return getattr(meta, key, None)
+
+
+def _artifact_id_from_meta(meta: Any) -> str:
+    return str(_artifact_meta_value(meta, "artifact_id") or "").strip()
+
+
+def _artifact_tags_from_meta(meta: Any) -> Dict[str, Any]:
+    tags = _artifact_meta_value(meta, "tags")
+    return dict(tags) if isinstance(tags, dict) else {}
+
+
+def _artifact_content_bytes(store: Any, artifact_id: str) -> Optional[bytes]:
+    load_fn = getattr(store, "load", None)
+    if not callable(load_fn):
+        return None
+    loaded = load_fn(str(artifact_id))
+    if loaded is None:
+        return None
+    content = _artifact_meta_value(loaded, "content")
+    if isinstance(content, (bytes, bytearray)):
+        return bytes(content)
+    return None
+
+
+def _gateway_project_artifact_to_parent_run(
     *,
-    provider: Optional[str],
-    model: Optional[str],
-    artifact_store: Any,
-) -> tuple[Optional[Any], Optional[str]]:
-    """Return a shared runtime LLM client, or create a direct media client when the workflow is tools-only."""
-    llm_client, err = _gateway_runtime_llm_client()
-    if llm_client is not None:
-        return llm_client, None
+    store: Any,
+    artifact_id: str,
+    run_id: str,
+    content_type: str,
+    tags: Dict[str, Any],
+) -> tuple[str, Any, Optional[bytes]]:
+    meta_fn = getattr(store, "get_metadata", None)
+    meta = None
+    if callable(meta_fn):
+        try:
+            meta = meta_fn(str(artifact_id))
+        except Exception:
+            meta = None
 
-    try:
-        provider_s, model_s = resolve_gateway_provider_model(
-            provider=provider,
-            model=model,
-            purpose="direct generated-media helper",
-        ).require()
-    except ProviderModelConfigError as e:
-        return None, (
-            f"{err or 'Gateway runtime has no in-process AbstractCore LLM client.'} "
-            f"{e}"
-        )
+    meta_run_id = str(_artifact_meta_value(meta, "run_id") or "").strip()
+    if meta_run_id and meta_run_id != str(run_id):
+        blob = _artifact_content_bytes(store, str(artifact_id))
+        if blob is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Generated media artifact is not accessible from the parent run",
+            )
+        store_fn = getattr(store, "store", None)
+        if not callable(store_fn):
+            raise HTTPException(
+                status_code=500,
+                detail="Artifact store does not support storing generated media for parent-run access",
+            )
+        merged_tags = _artifact_tags_from_meta(meta)
+        merged_tags.update({str(k): v for k, v in tags.items() if v not in (None, "")})
+        merged_tags.setdefault("projected_from_artifact_id", str(artifact_id))
+        merged_tags.setdefault("projected_from_run_id", meta_run_id)
+        try:
+            meta = store_fn(blob, content_type=content_type, run_id=str(run_id), tags=merged_tags)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to project generated media artifact into parent run: {e}") from e
+        new_artifact_id = _artifact_id_from_meta(meta)
+        if not new_artifact_id:
+            raise HTTPException(
+                status_code=500,
+                detail="Artifact store did not return an artifact_id for projected generated media",
+            )
+        return new_artifact_id, meta, blob
 
-    try:
-        from abstractruntime.integrations.abstractcore import factory as ac_factory
-
-        cls = getattr(ac_factory, "MultiLocalAbstractCoreLLMClient")
-        return cls(provider=provider_s, model=model_s, llm_kwargs={}, artifact_store=artifact_store), None
-    except Exception as e:
-        return None, f"Failed to create AbstractCore generated-media LLM client: {e}"
+    return str(artifact_id), meta, None
 
 
 def _gateway_generated_image_ref_from_result(
@@ -5755,22 +5588,55 @@ def _gateway_generated_image_ref_from_result(
     if size_i is not None and size_i > max_bytes:
         raise HTTPException(status_code=413, detail=f"Generated image is too large ({size_i} bytes; max {max_bytes})")
 
+    artifact_id, meta, projected_blob = _gateway_project_artifact_to_parent_run(
+        store=store,
+        artifact_id=str(artifact_id),
+        run_id=str(run_id),
+        content_type=content_type,
+        tags={
+            "kind": "generated_media",
+            "modality": "image",
+            "task": "image_generation",
+            "source": "gateway_direct_image",
+            "request_id": request_id,
+            "session_id": session_id,
+            "format": fmt_norm,
+        },
+    )
+    if meta is not None:
+        meta_content_type = str(_artifact_meta_value(meta, "content_type") or "").strip()
+        if meta_content_type:
+            content_type = meta_content_type
+        if size_i is None:
+            raw_size = _artifact_meta_value(meta, "size_bytes")
+            try:
+                size_i = int(raw_size) if raw_size is not None else None
+            except Exception:
+                size_i = None
+
     sha256 = ""
-    load_fn = getattr(store, "load", None)
-    if callable(load_fn) and (size_i is None or size_i <= max_bytes):
-        try:
-            loaded = load_fn(str(artifact_id))
-            content = getattr(loaded, "content", b"") if loaded is not None else b""
-            if isinstance(content, (bytes, bytearray)):
-                blob = bytes(content)
-                if len(blob) > max_bytes:
-                    raise HTTPException(status_code=413, detail=f"Generated image is too large ({len(blob)} bytes; max {max_bytes})")
-                sha256 = hashlib.sha256(blob).hexdigest()
-                size_i = len(blob)
-        except HTTPException:
-            raise
-        except Exception:
-            sha256 = ""
+    if isinstance(projected_blob, (bytes, bytearray)):
+        blob = bytes(projected_blob)
+        if len(blob) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Generated image is too large ({len(blob)} bytes; max {max_bytes})")
+        sha256 = hashlib.sha256(blob).hexdigest()
+        size_i = len(blob)
+    else:
+        load_fn = getattr(store, "load", None)
+        if callable(load_fn) and (size_i is None or size_i <= max_bytes):
+            try:
+                loaded = load_fn(str(artifact_id))
+                content = getattr(loaded, "content", b"") if loaded is not None else b""
+                if isinstance(content, (bytes, bytearray)):
+                    blob = bytes(content)
+                    if len(blob) > max_bytes:
+                        raise HTTPException(status_code=413, detail=f"Generated image is too large ({len(blob)} bytes; max {max_bytes})")
+                    sha256 = hashlib.sha256(blob).hexdigest()
+                    size_i = len(blob)
+            except HTTPException:
+                raise
+            except Exception:
+                sha256 = ""
 
     out: Dict[str, Any] = {
         "$artifact": artifact_id,
@@ -5784,9 +5650,110 @@ def _gateway_generated_image_ref_from_result(
     return out
 
 
+def _gateway_generated_artifact_ref_from_item(
+    item: Dict[str, Any],
+    *,
+    store: Any,
+    run_id: str,
+    request_id: str,
+    session_id: str,
+    fallback_content_type: str,
+    fallback_filename: str,
+    modality: str,
+    task: str,
+    source: str,
+) -> Optional[Dict[str, Any]]:
+    ref = item.get("artifact_ref") if isinstance(item.get("artifact_ref"), dict) else None
+    artifact_id = ""
+    if isinstance(ref, dict):
+        artifact_id = str(ref.get("$artifact") or ref.get("artifact_id") or ref.get("id") or "").strip()
+    if not artifact_id:
+        artifact_id = str(item.get("$artifact") or item.get("artifact_id") or item.get("id") or "").strip()
+    if not artifact_id:
+        return None
+
+    content_type = ""
+    size_bytes: Optional[int] = None
+    if isinstance(ref, dict):
+        content_type = str(ref.get("content_type") or "").strip()
+        try:
+            size_bytes = int(ref.get("size_bytes")) if ref.get("size_bytes") is not None else None
+        except Exception:
+            size_bytes = None
+    if not content_type:
+        content_type = str(item.get("content_type") or "").strip() or fallback_content_type
+
+    artifact_id, meta, projected_blob = _gateway_project_artifact_to_parent_run(
+        store=store,
+        artifact_id=str(artifact_id),
+        run_id=str(run_id),
+        content_type=content_type,
+        tags={
+            "kind": "generated_media",
+            "modality": modality,
+            "task": task,
+            "source": source,
+            "request_id": request_id,
+            "session_id": session_id,
+        },
+    )
+    if meta is not None:
+        meta_content_type = str(_artifact_meta_value(meta, "content_type") or "").strip()
+        if meta_content_type:
+            content_type = meta_content_type
+        if size_bytes is None:
+            raw_size = _artifact_meta_value(meta, "size_bytes")
+            try:
+                size_bytes = int(raw_size) if raw_size is not None else None
+            except Exception:
+                size_bytes = None
+
+    sha256 = ""
+    if isinstance(projected_blob, (bytes, bytearray)):
+        blob = bytes(projected_blob)
+        sha256 = hashlib.sha256(blob).hexdigest()
+        size_bytes = len(blob)
+    else:
+        load_fn = getattr(store, "load", None)
+        if callable(load_fn):
+            try:
+                loaded = load_fn(str(artifact_id))
+                content = getattr(loaded, "content", b"") if loaded is not None else b""
+                if isinstance(content, (bytes, bytearray)):
+                    blob = bytes(content)
+                    sha256 = hashlib.sha256(blob).hexdigest()
+                    if size_bytes is None:
+                        size_bytes = len(blob)
+            except Exception:
+                pass
+
+    out: Dict[str, Any] = {
+        "$artifact": artifact_id,
+        "content_type": content_type or fallback_content_type,
+        "filename": fallback_filename,
+    }
+    if size_bytes is not None:
+        out["size_bytes"] = int(size_bytes)
+    if sha256:
+        out["sha256"] = sha256
+    return out
+
+
+def _gateway_completed_child_result(child: RunState, *, operation: str) -> Dict[str, Any]:
+    if child.status != RunStatus.COMPLETED:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{operation} child run did not complete successfully: {child.error or child.status.value}",
+        )
+    result = child.output.get("result") if isinstance(child.output, dict) else None
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=500, detail=f"{operation} child run completed without a structured result")
+    return result
+
+
 @router.post("/runs/{run_id}/images/generate", response_model=ImageGenerateResponse)
 async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerateResponse:
-    """Generate an image through Runtime/Core output selectors, store it, and emit a durable event."""
+    """Delegate image generation to Runtime-owned durable child execution."""
     svc = get_gateway_service()
     rs = svc.host.run_store
     rid = str(run_id or "").strip()
@@ -5811,15 +5778,16 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
 
-    llm_client, err = _gateway_generated_media_llm_client(provider=req.provider, model=req.model, artifact_store=store)
-    if err:
+    run_facade, err = _gateway_abstractcore_run_facade()
+    if err or run_facade is None:
         return ImageGenerateResponse(
             ok=False,
             supported=False,
             run_id=str(getattr(run, "run_id", rid)),
             request_id=request_id,
+            child_run_id=None,
             code="generated_image_unavailable",
-            error=err,
+            error=err or "Gateway runtime does not expose AbstractCore durable media helpers.",
         )
 
     fmt = str(getattr(req, "format", "png") or "png").strip().lower() or "png"
@@ -5854,27 +5822,32 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         output_spec["model"] = image_model
 
     params: Dict[str, Any] = {
-        "output": output_spec,
         "trace_metadata": {
             "run_id": str(getattr(run, "run_id", rid)),
             "workflow_id": str(getattr(run, "workflow_id", "") or ""),
             "session_id": session_id,
+            "request_id": request_id,
         },
     }
-    if isinstance(req.provider, str) and req.provider.strip():
-        params["_provider"] = req.provider.strip()
-    if isinstance(req.model, str) and req.model.strip():
-        params["_model"] = req.model.strip()
+    child_vars: Optional[Dict[str, Any]] = None
+    runtime_provider = str(getattr(req, "provider", "") or "").strip()
+    runtime_model = str(getattr(req, "model", "") or "").strip()
+    if runtime_provider or runtime_model:
+        runtime_ns: Dict[str, Any] = {}
+        if runtime_provider:
+            runtime_ns["provider"] = runtime_provider
+        if runtime_model:
+            runtime_ns["model"] = runtime_model
+        child_vars = {"_runtime": runtime_ns}
 
     try:
-        result = await asyncio.to_thread(
-            llm_client.generate,
+        child = await asyncio.to_thread(
+            run_facade.generate_image,
+            str(getattr(run, "run_id", rid)),
             prompt=prompt,
-            messages=None,
-            system_prompt=None,
-            tools=None,
-            media=None,
+            output=output_spec,
             params=params,
+            child_vars=child_vars,
         )
     except Exception as e:
         return ImageGenerateResponse(
@@ -5882,10 +5855,12 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
             supported=False,
             run_id=str(getattr(run, "run_id", rid)),
             request_id=request_id,
+            child_run_id=None,
             code="generated_image_error",
             error=str(e),
         )
 
+    result = _gateway_completed_child_result(child, operation="image generation")
     image_ref = _gateway_generated_image_ref_from_result(
         result=result,
         store=store,
@@ -5900,40 +5875,19 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
             supported=False,
             run_id=str(getattr(run, "run_id", rid)),
             request_id=request_id,
+            child_run_id=str(child.run_id),
             code="generated_image_no_artifact",
             error="Image generation completed without a stored image artifact.",
         )
-
-    payload = {
-        "run_id": str(getattr(run, "run_id", rid)),
-        "request_id": request_id,
-        "prompt": prompt,
-        "provider": image_provider or None,
-        "model": image_model or (result.get("model") if isinstance(result, dict) else None),
-        "runtime_provider": req.provider,
-        "runtime_model": req.model,
-        "size": req.size,
-        "width": req.width,
-        "height": req.height,
-        "format": fmt,
-        "image_artifact": image_ref,
-    }
-
-    try:
-        eff = Effect(type=EffectType.EMIT_EVENT, payload={"name": "abstract.media.image.generated", "scope": "run", "run_id": str(getattr(run, "run_id", rid)), "payload": payload})
-        rec = StepRecord.start(run=run, node_id="gateway", effect=eff, idempotency_key=f"gateway:image_generate:{request_id}")
-        rec.finish_success({"emitted": True, "name": "abstract.media.image.generated", "payload": payload})
-        await asyncio.to_thread(svc.host.ledger_store.append, rec)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to persist generated image event: {e}")
 
     return ImageGenerateResponse(
         ok=True,
         supported=True,
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
+        child_run_id=str(child.run_id),
         image_artifact=image_ref,
-        event_name="abstract.media.image.generated",
+        event_name=None,
     )
 
 
@@ -6262,7 +6216,7 @@ def _split_env_csv(raw: Optional[str]) -> list[str]:
 
 
 def _voice_profile_descriptors() -> list[Dict[str, Any]]:
-    """Lightweight voice profile discovery without instantiating local engines."""
+    """Best-effort voice profile discovery without importing provider packages."""
     profiles: list[Dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -6284,19 +6238,15 @@ def _voice_profile_descriptors() -> list[Dict[str, Any]]:
         profiles.append(item)
 
     engine = _env_first("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE")
-    if isinstance(engine, str) and engine.strip() and engine.strip().lower() not in {"auto", "default"}:
-        try:
-            from abstractvoice.voice_profiles import get_builtin_voice_profiles  # type: ignore
-
-            for p in get_builtin_voice_profiles(engine):
-                _add(
-                    str(getattr(p, "profile_id", "") or ""),
-                    label=str(getattr(p, "label", "") or ""),
-                    engine_id=str(getattr(p, "engine_id", "") or engine),
-                    description=getattr(p, "description", None),
-                )
-        except Exception:
-            pass
+    engine_id = str(engine or "").strip().lower()
+    if engine_id and engine_id not in {"auto", "default"}:
+        for item in _builtin_voice_profile_records(engine_id):
+            _add(
+                str(item.get("profile_id") or item.get("id") or ""),
+                label=str(item.get("label") or ""),
+                engine_id=str(item.get("engine_id") or engine_id),
+                description=item.get("description") if isinstance(item.get("description"), str) else None,
+            )
 
     voices = []
     for key in (
@@ -6365,93 +6315,37 @@ def _builtin_voice_profile_records(engine: str) -> list[Dict[str, Any]]:
     engine_id = str(engine or "").strip().lower()
     if not engine_id:
         return []
-    try:
-        from abstractvoice.voice_profiles import get_builtin_voice_profiles  # type: ignore
-    except Exception:
-        return []
+    builtins: Dict[str, list[str]] = {
+        "supertonic": ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"],
+    }
+    voice_ids = builtins.get(engine_id, [])
     records: list[Dict[str, Any]] = []
-    try:
-        profiles = get_builtin_voice_profiles(engine_id)
-    except Exception:
-        return []
-    for profile in profiles:
-        profile_id = str(getattr(profile, "profile_id", "") or "").strip()
-        if not profile_id:
-            continue
-        params = getattr(profile, "params", None)
-        tags = getattr(profile, "tags", None)
-        item: Dict[str, Any] = {
-            "id": profile_id,
-            "profile_id": profile_id,
-            "label": str(getattr(profile, "label", "") or profile_id).strip() or profile_id,
-            "description": getattr(profile, "description", None),
-            "provider": engine_id,
-            "engine_id": engine_id,
-            "qualified_id": f"{engine_id}:{profile_id}",
-            "params": dict(params) if isinstance(params, dict) else {},
-            "tags": dict(tags) if isinstance(tags, dict) else {},
-        }
-        item["params"].setdefault("provider", engine_id)
-        item["params"].setdefault("engine", engine_id)
-        item["params"].setdefault("engine_id", engine_id)
-        item["tags"].setdefault("provider", engine_id)
-        item["tags"].setdefault("engine_id", engine_id)
-        records.append(item)
+    for profile_id in voice_ids:
+        records.append(
+            {
+                "id": profile_id,
+                "profile_id": profile_id,
+                "label": profile_id,
+                "provider": engine_id,
+                "engine_id": engine_id,
+                "qualified_id": f"{engine_id}:{profile_id}",
+                "params": {
+                    "provider": engine_id,
+                    "engine": engine_id,
+                    "engine_id": engine_id,
+                    "voice": profile_id,
+                },
+                "tags": {
+                    "provider": engine_id,
+                    "engine_id": engine_id,
+                },
+            }
+        )
     return records
 
 
 def _has_builtin_voice_profiles(engine: str) -> bool:
     return bool(_builtin_voice_profile_records(engine))
-
-
-def _piper_voice_profile_records() -> tuple[list[Dict[str, Any]], list[str]]:
-    try:
-        from abstractvoice.adapters.tts_piper import PiperTTSAdapter  # type: ignore
-    except Exception:
-        return [], []
-    raw_models = getattr(PiperTTSAdapter, "PIPER_MODELS", {})
-    if not isinstance(raw_models, dict):
-        return [], []
-    records: list[Dict[str, Any]] = []
-    model_ids: list[str] = []
-    for language, value in raw_models.items():
-        if not isinstance(value, (list, tuple)) or len(value) < 2:
-            continue
-        model_id = str(value[1] or "").strip()
-        if not model_id:
-            continue
-        model_ids.append(model_id)
-        parts = model_id.split("-")
-        voice_id = parts[1] if len(parts) >= 2 and parts[1] else model_id
-        language_id = str(language or "").strip()
-        record = {
-            "id": voice_id,
-            "profile_id": voice_id,
-            "voice_id": voice_id,
-            "label": f"Piper {voice_id}",
-            "provider": "piper",
-            "engine_id": "piper",
-            "model": model_id,
-            "model_id": model_id,
-            "qualified_id": f"piper:{voice_id}",
-            "params": {
-                "provider": "piper",
-                "engine": "piper",
-                "engine_id": "piper",
-                "voice": voice_id,
-                "model": model_id,
-                "model_id": model_id,
-                "model_filename": model_id,
-                "language": language_id,
-            },
-            "tags": {
-                "provider": "piper",
-                "engine_id": "piper",
-                "language": language_id,
-            },
-        }
-        records.append(record)
-    return records, _dedupe_strings(model_ids)
 
 
 def _utc_now_iso() -> str:
@@ -6532,32 +6426,59 @@ def _request_provider_api_key(request: Request) -> Optional[str]:
     return None
 
 
-def _core_catalog_or_raise(
-    path: str,
-    *,
-    request: Request,
-    query: Optional[Dict[str, Any]] = None,
-    timeout_s: Optional[float] = None,
-    v1: bool = True,
-) -> Dict[str, Any]:
-    query = {str(k): v for k, v in dict(query or {}).items() if v is not None}
+def _gateway_runtime() -> tuple[Optional[Any], Optional[str]]:
+    svc = get_gateway_service()
+    host = getattr(svc, "host", None)
+    runtime = getattr(host, "runtime", None)
+    if runtime is None:
+        return None, "Gateway host does not expose a shared runtime."
+    return runtime, None
+
+
+def _gateway_abstractcore_host_facade() -> tuple[Optional[Any], Optional[str]]:
+    runtime, err = _gateway_runtime()
+    if err:
+        return None, err
     try:
-        payload = fetch_core_catalog_json(
-            path,
-            query=query,
-            provider_api_key=_request_provider_api_key(request),
-            timeout_s=timeout_s,
-            v1=v1,
-        )
-    except CoreCatalogProxyError as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
-    out = dict(payload)
-    out.setdefault("available", True)
-    out["source"] = "abstractcore_server"
+        from abstractruntime.integrations.abstractcore import get_abstractcore_host_facade
+
+        return get_abstractcore_host_facade(runtime), None
+    except Exception as e:
+        return None, f"Gateway runtime is not wired to AbstractCore host controls: {e}"
+
+
+def _gateway_abstractcore_discovery_facade() -> tuple[Optional[Any], Optional[str]]:
+    runtime, err = _gateway_runtime()
+    if err:
+        return None, err
+    try:
+        from abstractruntime.integrations.abstractcore import get_abstractcore_discovery_facade
+
+        return get_abstractcore_discovery_facade(runtime), None
+    except Exception as e:
+        return None, f"Gateway runtime is not wired to AbstractCore discovery helpers: {e}"
+
+
+def _gateway_abstractcore_run_facade() -> tuple[Optional[Any], Optional[str]]:
+    runtime, err = _gateway_runtime()
+    if err:
+        return None, err
+    try:
+        from abstractruntime.integrations.abstractcore import get_abstractcore_run_facade
+
+        return get_abstractcore_run_facade(runtime), None
+    except Exception as e:
+        return None, f"Gateway runtime is not wired to AbstractCore durable media helpers: {e}"
+
+
+def _runtime_discovery_payload(payload: Any, *, source: str = "abstractruntime.discovery_facade") -> Dict[str, Any]:
+    out = dict(payload) if isinstance(payload, dict) else {}
+    out.setdefault("route_available", True)
+    out.setdefault("available", bool(out))
+    out["source"] = source
     out.setdefault("stale", False)
     out.setdefault("error", None)
-    out["route_available"] = True
-    out["refreshed_at"] = _utc_now_iso()
+    out.setdefault("refreshed_at", _utc_now_iso())
     return out
 
 
@@ -6602,13 +6523,7 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         tts_voices_by_provider["openai"] = [str(item["id"]) for item in openai_profiles]
 
     if include("piper") and (_module_available("piper") or _module_available("piper_phonemize")):
-        piper_profiles, piper_models = _piper_voice_profile_records()
-        if piper_profiles or piper_models:
-            add_provider("piper")
-            profiles.extend(piper_profiles)
-            tts_models_by_provider["piper"] = piper_models
-            tts_profiles_by_provider["piper"] = [str(item["id"]) for item in piper_profiles]
-            tts_voices_by_provider["piper"] = [str(item["id"]) for item in piper_profiles]
+        add_provider("piper")
 
     if include("omnivoice") and _module_available("omnivoice"):
         omni_profiles = _builtin_voice_profile_records("omnivoice")
@@ -6745,10 +6660,6 @@ def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, 
         openai_values = _dedupe_strings(values + ["tts-1", "tts-1-hd", "gpt-4o-mini-tts"])
         if openai_values and (_env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY") or provider_key == "openai"):
             models_by_provider["openai"] = openai_values
-    if (not provider_key or provider_key == "piper") and (_module_available("piper") or _module_available("piper_phonemize")):
-        _, piper_models = _piper_voice_profile_records()
-        if piper_models:
-            models_by_provider["piper"] = piper_models
     if (not provider_key or provider_key == "supertonic") and (
         _module_available("onnxruntime") or _has_builtin_voice_profiles("supertonic")
     ):
@@ -6807,272 +6718,6 @@ def _static_transcription_models_response() -> Dict[str, Any]:
     }
 
 
-def _gateway_capability_owner_config(*, voice_base_url: Optional[str] = None, vision_base_url: Optional[str] = None) -> Dict[str, Any]:
-    cfg: Dict[str, Any] = {}
-    if isinstance(voice_base_url, str) and voice_base_url.strip():
-        cfg["voice_remote_base_url"] = voice_base_url.strip()
-    if isinstance(vision_base_url, str) and vision_base_url.strip():
-        cfg["vision_base_url"] = vision_base_url.strip()
-        cfg.setdefault("vision_backend", "openai-compatible")
-    for env_key, cfg_key in {
-        "ABSTRACTGATEWAY_VOICE_TTS_ENGINE": "voice_tts_engine",
-        "ABSTRACTGATEWAY_VOICE_STT_ENGINE": "voice_stt_engine",
-        "ABSTRACTGATEWAY_VOICE_TTS_MODEL": "voice_tts_model",
-        "ABSTRACTGATEWAY_VOICE_STT_MODEL": "voice_stt_model",
-        "ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL": "voice_remote_base_url",
-        "ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY": "voice_remote_api_key",
-        "ABSTRACTVOICE_TTS_ENGINE": "voice_tts_engine",
-        "ABSTRACTVOICE_STT_ENGINE": "voice_stt_engine",
-        "ABSTRACTVOICE_TTS_MODEL": "voice_tts_model",
-        "ABSTRACTVOICE_STT_MODEL": "voice_stt_model",
-        "ABSTRACTVOICE_REMOTE_BASE_URL": "voice_remote_base_url",
-        "ABSTRACTVOICE_REMOTE_API_KEY": "voice_remote_api_key",
-        "ABSTRACTGATEWAY_VISION_BACKEND": "vision_backend",
-        "ABSTRACTGATEWAY_VISION_BASE_URL": "vision_base_url",
-        "ABSTRACTGATEWAY_VISION_API_KEY": "vision_api_key",
-        "ABSTRACTGATEWAY_VISION_MODEL_ID": "vision_model_id",
-        "ABSTRACTGATEWAY_VISION_DIFFUSERS_MODEL_ID": "vision_model_id",
-        "ABSTRACTGATEWAY_VISION_MFLUX_MODEL": "vision_mflux_model",
-        "ABSTRACTGATEWAY_VISION_MFLUX_BASE_MODEL": "vision_mflux_base_model",
-        "ABSTRACTGATEWAY_VISION_MODEL_DIR": "vision_model_dir",
-        "ABSTRACTGATEWAY_VISION_MFLUX_QUANTIZE": "vision_mflux_quantize",
-        "ABSTRACTGATEWAY_VISION_MFLUX_ALLOW_DOWNLOAD": "vision_mflux_allow_download",
-        "ABSTRACTGATEWAY_VISION_DIFFUSERS_DEVICE": "vision_device",
-        "ABSTRACTGATEWAY_VISION_DIFFUSERS_TORCH_DTYPE": "vision_torch_dtype",
-        "ABSTRACTGATEWAY_VISION_SDCPP_MODEL": "vision_sdcpp_model",
-        "ABSTRACTGATEWAY_VISION_SDCPP_DIFFUSION_MODEL": "vision_sdcpp_diffusion_model",
-        "ABSTRACTGATEWAY_VISION_SDCPP_BIN": "vision_sdcpp_bin",
-        "ABSTRACTVISION_BACKEND": "vision_backend",
-        "ABSTRACTVISION_BASE_URL": "vision_base_url",
-        "ABSTRACTVISION_API_KEY": "vision_api_key",
-        "ABSTRACTVISION_MODEL_ID": "vision_model_id",
-        "ABSTRACTVISION_DIFFUSERS_MODEL_ID": "vision_model_id",
-        "ABSTRACTVISION_MFLUX_MODEL": "vision_mflux_model",
-        "ABSTRACTVISION_MFLUX_BASE_MODEL": "vision_mflux_base_model",
-        "ABSTRACTVISION_MODEL_DIR": "vision_model_dir",
-        "ABSTRACTVISION_MFLUX_QUANTIZE": "vision_mflux_quantize",
-        "ABSTRACTVISION_MFLUX_ALLOW_DOWNLOAD": "vision_mflux_allow_download",
-        "ABSTRACTVISION_DIFFUSERS_DEVICE": "vision_device",
-        "ABSTRACTVISION_DIFFUSERS_TORCH_DTYPE": "vision_torch_dtype",
-        "ABSTRACTVISION_SDCPP_MODEL": "vision_sdcpp_model",
-        "ABSTRACTVISION_SDCPP_DIFFUSION_MODEL": "vision_sdcpp_diffusion_model",
-        "ABSTRACTVISION_SDCPP_BIN": "vision_sdcpp_bin",
-    }.items():
-        value = os.getenv(env_key)
-        if isinstance(value, str) and value.strip() and cfg_key not in cfg:
-            cfg[cfg_key] = value.strip()
-    return cfg
-
-
-def _gateway_capability_registry(*, voice_base_url: Optional[str] = None, vision_base_url: Optional[str] = None):
-    from abstractcore.capabilities import CapabilityRegistry  # type: ignore
-
-    preferred_backends: Dict[str, str] = {}
-    for capability in ["voice", "audio", "vision", "music"]:
-        value = _env_first(
-            f"ABSTRACTGATEWAY_{capability.upper()}_BACKEND",
-            f"ABSTRACTCORE_{capability.upper()}_BACKEND",
-        )
-        if value:
-            preferred_backends[capability] = value
-    owner = type("_GatewayCapabilityOwner", (), {"config": _gateway_capability_owner_config(voice_base_url=voice_base_url, vision_base_url=vision_base_url)})()
-    return CapabilityRegistry(owner, preferred_backends=preferred_backends)
-
-
-def _local_voice_catalog_response(*, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    try:
-        catalog = _gateway_capability_registry(voice_base_url=base_url).voice.voice_catalog()
-    except Exception:
-        return None
-    out = dict(catalog) if isinstance(catalog, dict) else {}
-    if not out:
-        return None
-    out.setdefault("kind", "tts")
-    out.setdefault("profiles", [])
-    out.setdefault("voices", out.get("profiles") if isinstance(out.get("profiles"), list) else [])
-    out.setdefault("models", out.get("tts_models") if isinstance(out.get("tts_models"), list) else [])
-    out.setdefault(
-        "controls",
-        {
-            "speed": {"supported": True, "min": 0.5, "max": 2.0, "default": 1.0},
-            "quality_preset": {"supported": True, "values": ["low", "standard", "high"], "default": "standard"},
-            "instructions": {"supported": True},
-            "profile": {"supported": True},
-            "voice_clone": {"supported": True},
-        },
-    )
-    out["available"] = True
-    out["route_available"] = True
-    out["source"] = "abstractvoice_local"
-    out.setdefault("stale", False)
-    out.setdefault("error", None)
-    out["refreshed_at"] = _utc_now_iso()
-    return out
-
-
-def _local_speech_models_response(*, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    try:
-        voice = _gateway_capability_registry(voice_base_url=base_url).voice
-        catalog = voice.voice_catalog() if hasattr(voice, "voice_catalog") else {}
-        models = voice.list_tts_models()
-    except Exception:
-        return None
-    if not isinstance(catalog, dict):
-        catalog = {}
-    models_by_provider = _provider_string_map(catalog.get("tts_models_by_provider"))
-    cleaned = _dedupe_strings(
-        [str(x) for values in models_by_provider.values() for x in values]
-        + [str(x) for x in list(models or [])]
-    )
-    providers = _dedupe_strings(
-        [str(x) for x in list(catalog.get("tts_providers") or []) if isinstance(x, str)]
-        + list(models_by_provider.keys())
-    )
-    active_provider = str(catalog.get("active_tts_provider") or catalog.get("engine_id") or "").strip() if isinstance(catalog, dict) else ""
-    if cleaned and not models_by_provider and (active_provider or providers):
-        models_by_provider[active_provider or providers[0]] = cleaned
-    return {
-        "available": bool(cleaned or providers),
-        "route_available": True,
-        "models": cleaned,
-        "active_model": cleaned[0] if cleaned else None,
-        "providers": providers,
-        "available_providers": list(catalog.get("available_tts_providers") or providers)
-        if isinstance(catalog.get("available_tts_providers"), list)
-        else providers,
-        "active_provider": active_provider or (providers[0] if providers else None),
-        "models_by_provider": models_by_provider,
-        "tts_models_by_provider": models_by_provider,
-        "provider_models": _provider_models_from_mapping(models_by_provider),
-        "controls": {
-            "speed": {"supported": True, "min": 0.5, "max": 2.0, "default": 1.0},
-            "quality_preset": {"supported": True, "values": ["low", "standard", "high"], "default": "standard"},
-            "instructions": {"supported": True},
-            "profile": {"supported": True},
-            "voice_clone": {"supported": True},
-        },
-        "source": "abstractvoice_local",
-        "stale": False,
-        "refreshed_at": _utc_now_iso(),
-        "error": None,
-    }
-
-
-def _local_transcription_models_response(*, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    try:
-        voice = _gateway_capability_registry(voice_base_url=base_url).voice
-        catalog = voice.voice_catalog() if hasattr(voice, "voice_catalog") else {}
-        models = voice.list_stt_models()
-    except Exception:
-        return None
-    if not isinstance(catalog, dict):
-        catalog = {}
-    models_by_provider = _provider_string_map(catalog.get("stt_models_by_provider"))
-    cleaned = _dedupe_strings(
-        [str(x) for values in models_by_provider.values() for x in values]
-        + [str(x) for x in list(models or [])]
-    )
-    providers = _dedupe_strings(
-        [str(x) for x in list(catalog.get("stt_providers") or []) if isinstance(x, str)]
-        + list(models_by_provider.keys())
-    )
-    active_provider = str(catalog.get("active_stt_provider") or "").strip() if isinstance(catalog, dict) else ""
-    if cleaned and not models_by_provider and (active_provider or providers):
-        models_by_provider[active_provider or providers[0]] = cleaned
-    return {
-        "available": bool(cleaned or providers),
-        "route_available": True,
-        "models": cleaned,
-        "active_model": cleaned[0] if cleaned else None,
-        "providers": providers,
-        "available_providers": list(catalog.get("available_stt_providers") or providers)
-        if isinstance(catalog.get("available_stt_providers"), list)
-        else providers,
-        "active_provider": active_provider or (providers[0] if providers else None),
-        "models_by_provider": models_by_provider,
-        "stt_models_by_provider": models_by_provider,
-        "provider_models": _provider_models_from_mapping(models_by_provider),
-        "source": "abstractvoice_local",
-        "stale": False,
-        "refreshed_at": _utc_now_iso(),
-        "error": None,
-    }
-
-
-def _local_vision_provider_models_response(
-    *,
-    task: Optional[str],
-    base_url: Optional[str] = None,
-    include_models: bool = True,
-) -> Optional[Dict[str, Any]]:
-    try:
-        vision = _gateway_capability_registry(vision_base_url=base_url).vision
-        availability: Dict[str, Any] = {}
-        if hasattr(vision, "available_providers"):
-            try:
-                raw_availability = vision.available_providers(task=task)
-                if isinstance(raw_availability, dict):
-                    availability = dict(raw_availability)
-            except Exception:
-                availability = {}
-        models = vision.list_provider_models(task=task) if include_models else []
-    except Exception:
-        return None
-    items = [dict(x) for x in list(models or []) if isinstance(x, dict)]
-    models_by_provider = _vision_models_by_provider(items)
-    providers = _dedupe_strings(
-        [str(x) for x in list(availability.get("providers") or []) if isinstance(x, str)]
-        + list(models_by_provider.keys())
-    )
-    available_providers = _dedupe_strings(
-        [str(x) for x in list(availability.get("available_providers") or []) if isinstance(x, str)]
-    )
-    if not available_providers:
-        available_providers = list(providers)
-    if available_providers and models_by_provider:
-        allowed = {p.lower() for p in available_providers}
-        models_by_provider = {k: v for k, v in models_by_provider.items() if k.lower() in allowed}
-    return {
-        "available": bool(items or providers or available_providers),
-        "route_available": True,
-        "models": items,
-        "task": task,
-        "providers": providers or available_providers,
-        "available_providers": available_providers or providers,
-        "models_by_provider": models_by_provider,
-        "provider_models": _provider_models_from_mapping(models_by_provider),
-        "details": availability.get("details") if isinstance(availability.get("details"), dict) else {},
-        "backend_id": getattr(vision, "backend_id", None),
-        "source": "abstractvision_local_provider",
-        "stale": False,
-        "refreshed_at": _utc_now_iso(),
-        "error": None,
-    }
-
-
-async def _local_cached_vision_models_response() -> Optional[Dict[str, Any]]:
-    try:
-        from abstractcore.server.vision_endpoints import list_cached_vision_models  # type: ignore
-    except Exception:
-        return None
-    try:
-        maybe = list_cached_vision_models()
-        if hasattr(maybe, "__await__"):
-            maybe = await maybe
-        out = dict(maybe) if isinstance(maybe, dict) else {}
-    except Exception:
-        return None
-    if not out:
-        return None
-    out["available"] = bool(out.get("models"))
-    out["route_available"] = True
-    out["source"] = "abstractvision_local_cache"
-    out.setdefault("stale", False)
-    out.setdefault("error", None)
-    out["refreshed_at"] = _utc_now_iso()
-    return out
-
-
 def _gateway_looks_like_hf_repo_id(value: str) -> bool:
     s = str(value or "").strip()
     if not s or "://" in s or s.startswith(("./", "../", "/", "~")):
@@ -7082,20 +6727,9 @@ def _gateway_looks_like_hf_repo_id(value: str) -> bool:
 
 
 def _gateway_has_local_mflux_preset(model_id: str) -> bool:
-    try:
-        from abstractvision.model_downloads import default_download_root, find_model_preset, model_presets  # type: ignore
-
-        root = default_download_root()
-        if str(model_id or "").strip():
-            presets = [find_model_preset(str(model_id), target="mlx", engine="mflux", require_8bit=True)]
-        else:
-            presets = model_presets(target="mlx", engine="mflux")
-        for preset in presets:
-            local_dir = root / preset.local_dir_name
-            if local_dir.exists() and any(local_dir.rglob("*.safetensors")):
-                return True
-    except Exception:
-        return False
+    _ = model_id
+    # Gateway no longer probes provider package internals for local model state.
+    # Runtime discovery/model-residency surfaces are the supported source of truth.
     return False
 
 
@@ -7604,18 +7238,23 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
     plugin = _plugin_capability(caps, "voice" if kind == "tts" else "audio")
     plugin_available = bool(plugin.get("available")) if plugin else None
     installed = bool(abstractvoice.get("installed"))
-    available = bool(installed and (plugin_available is not False))
+    run_facade, run_err = _gateway_abstractcore_run_facade()
+    route_available = run_facade is not None and not run_err
     configured = bool(plugin_available) or bool(
         _env_first(
             "ABSTRACTGATEWAY_VOICE_TTS_ENGINE" if kind == "tts" else "ABSTRACTGATEWAY_VOICE_STT_ENGINE",
             "ABSTRACTVOICE_TTS_ENGINE" if kind == "tts" else "ABSTRACTVOICE_STT_ENGINE",
             "ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL",
             "ABSTRACTVOICE_REMOTE_BASE_URL",
+            "ABSTRACTCORE_SERVER_BASE_URL",
         )
     )
+    available = bool(route_available and configured and installed and (plugin_available is not False))
 
     hint = ""
-    if not installed:
+    if not route_available:
+        hint = str(run_err or "Gateway runtime is not wired to AbstractCore durable media helpers.")
+    elif not installed:
         voice_cap = caps.get("voice") if isinstance(caps.get("voice"), dict) else {}
         hint = str(voice_cap.get("install_hint") or "pip install abstractgateway")
     elif plugin_available is False:
@@ -7624,6 +7263,7 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
     if kind == "tts":
         return {
             "available": available,
+            "route_available": route_available,
             "installed": installed,
             "configured": configured,
             "unsupported": not installed,
@@ -7649,6 +7289,8 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
             },
             "voices": _voice_profile_descriptors(),
             "streaming": False,
+            "durability": "runtime_child_run",
+            "returns_child_run_id": True,
             **({"selected_backend": plugin.get("selected_backend")} if plugin.get("selected_backend") else {}),
             **({"install_hint": hint} if hint and not installed else {}),
             **({"config_hint": hint} if hint and installed else {}),
@@ -7657,6 +7299,7 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
     policy = _server_workspace_policy_public()
     return {
         "available": available,
+        "route_available": route_available,
         "installed": installed,
         "configured": configured,
         "unsupported": not installed,
@@ -7674,6 +7317,8 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
         "content_types": ["audio/wav", "audio/mpeg", "audio/mp4", "audio/webm", "audio/ogg", "application/octet-stream"],
         "languages": [],
         "max_upload_bytes": int(policy.get("max_attachment_bytes") or 0),
+        "durability": "runtime_child_run",
+        "returns_child_run_id": True,
         **({"selected_backend": plugin.get("selected_backend")} if plugin.get("selected_backend") else {}),
         **({"install_hint": hint} if hint and not installed else {}),
         **({"config_hint": hint} if hint and installed else {}),
@@ -7683,16 +7328,13 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
 def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
     vision_plugin = _plugin_capability(caps, "vision")
     abstractvision = caps.get("abstractvision") if isinstance(caps.get("abstractvision"), dict) else {}
-    direct_configured = _gateway_direct_image_configured() or bool(
-        _env_first(
-            "ABSTRACTCORE_SERVER_BASE_URL",
-            "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL",
-            "ABSTRACTCORE_VISION_MODEL_ID",
-        )
-    )
+    run_facade, run_err = _gateway_abstractcore_run_facade()
+    direct_route_available = run_facade is not None and not run_err
+    direct_configured = bool(direct_route_available and _gateway_direct_image_configured())
     workflow_image_available = bool(
-        direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
+        direct_route_available and direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
     )
+    voice_direct = _voice_contract_descriptor(caps, kind="tts")
     return {
         "generated_image": {
             "workflow": {
@@ -7707,28 +7349,35 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
             },
             "direct_endpoint": {
                 "available": direct_configured,
-                "route_available": True,
+                "route_available": direct_route_available,
                 "endpoint": _api_gateway_path("/runs/{run_id}/images/generate"),
                 "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
                 "provider_models_task": "text_to_image",
-                "event_name": "abstract.media.image.generated",
+                "durability": "runtime_child_run",
+                "returns_child_run_id": True,
                 "formats": ["png", "jpeg", "webp"],
                 "max_image_bytes": _gateway_image_generation_max_bytes(),
                 **(
-                    {"config_hint": "Configure AbstractVision or an AbstractCore server with /v1/images/generations support."}
+                    {"config_hint": str(run_err or "Gateway runtime is not wired to AbstractCore durable media helpers.")}
+                    if not direct_route_available
+                    else {"config_hint": "Configure AbstractVision or an AbstractCore-backed image runtime for generated images."}
                     if not direct_configured
                     else {}
                 ),
             },
         },
-        "generated_voice": {
-            "direct_endpoint": {
-                "available": bool(_voice_contract_descriptor(caps, kind="tts").get("available")),
-                "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
+            "generated_voice": {
+                "direct_endpoint": {
+                    "available": bool(voice_direct.get("available")),
+                    "route_available": bool(voice_direct.get("route_available")),
+                    "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
+                    "durability": "runtime_child_run",
+                    "returns_child_run_id": True,
+                    **({"config_hint": str(voice_direct.get("config_hint"))} if voice_direct.get("config_hint") else {}),
+                },
+                "workflow": {"available": bool(_plugin_capability(caps, "voice").get("available"))},
             },
-            "workflow": {"available": bool(_plugin_capability(caps, "voice").get("available"))},
-        },
-    }
+        }
 
 
 def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
@@ -7784,6 +7433,8 @@ def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
 
 def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
     """Build the versioned thin-client capability contract from cheap probes."""
+    prompt_cache_control, prompt_cache_err = _gateway_abstractcore_host_facade()
+    prompt_cache_available = bool(prompt_cache_control is not None and not prompt_cache_err)
     prompt_cache_endpoints = {
         "capabilities": _api_gateway_path("/prompt_cache/capabilities"),
         "stats": _api_gateway_path("/prompt_cache/stats"),
@@ -7793,6 +7444,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "clear": _api_gateway_path("/prompt_cache/clear"),
         "prepare_modules": _api_gateway_path("/prompt_cache/prepare_modules"),
     }
+    durable_blocs = _gateway_durable_bloc_contract_descriptor()
     flow_publish_available = bool((caps.get("visualflow") if isinstance(caps.get("visualflow"), dict) else {}).get("installed"))
 
     common = {
@@ -7839,7 +7491,10 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         },
         "prompt_cache": {
             "provider_controls": True,
+            "provider_controls_available": prompt_cache_available,
             "session_lifecycle": True,
+            "session_lifecycle_available": prompt_cache_available,
+            "durable_blocs": durable_blocs,
             "endpoints": prompt_cache_endpoints,
             "session_endpoints": {
                 "status": _api_gateway_path("/sessions/{session_id}/prompt_cache/status"),
@@ -7848,6 +7503,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "rebuild": _api_gateway_path("/sessions/{session_id}/prompt_cache/rebuild"),
             },
         },
+        "model_residency": _gateway_model_residency_contract_descriptor(),
         "memory": _memory_contract_descriptor(caps),
     }
     generated_media = _generated_media_contract(caps)
@@ -7885,6 +7541,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "runs": common["runs"],
         "ledger": common["ledger"],
         "artifacts": common["artifacts"],
+        "model_residency": common["model_residency"],
         "media": generated_media,
         "helpers": {
             "providers": common["discovery"]["providers"],
@@ -7908,9 +7565,13 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "artifacts": common["artifacts"],
         "voice": assistant_voice,
         "media": generated_media,
+        "model_residency": common["model_residency"],
         "prompt_cache": {
             "provider_controls": True,
+            "provider_controls_available": prompt_cache_available,
             "session_lifecycle": True,
+            "session_lifecycle_available": prompt_cache_available,
+            "durable_blocs": durable_blocs,
             "capabilities_endpoint": prompt_cache_endpoints["capabilities"],
             "stats_endpoint": prompt_cache_endpoints["stats"],
             "session_status_endpoint": _api_gateway_path("/sessions/{session_id}/prompt_cache/status"),
@@ -7932,6 +7593,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "ledger": common["ledger"],
             "artifacts": common["artifacts"],
             "workspace": common["workspace"],
+            "model_residency": common["model_residency"],
             "prompt_cache": assistant["prompt_cache"],
         },
     }
@@ -7961,51 +7623,31 @@ async def discovery_capabilities() -> Dict[str, Any]:
             "install_hint": "pip install abstractgateway",
         }
 
-    try:
-        from abstractcore.capabilities import CapabilityRegistry  # type: ignore
-
-        preferred_backends: Dict[str, str] = {}
-        for capability in ["voice", "audio", "vision", "music"]:
-            value = _env_first(
-                f"ABSTRACTGATEWAY_{capability.upper()}_BACKEND",
-                f"ABSTRACTCORE_{capability.upper()}_BACKEND",
-            )
-            if value:
-                preferred_backends[capability] = value
-
-        owner = type("_GatewayCapabilityOwner", (), {"config": _gateway_capability_owner_config()})()
-        status = CapabilityRegistry(owner, preferred_backends=preferred_backends).status()
-        plugin_caps = status.get("capabilities") if isinstance(status, dict) else {}
-        available: Dict[str, bool] = {}
-        if isinstance(plugin_caps, dict):
-            for capability in ["voice", "audio", "vision", "music"]:
-                data = plugin_caps.get(capability)
-                available[capability] = bool(data.get("available")) if isinstance(data, dict) else False
-        caps["capability_plugins"] = {
-            "installed": True,
-            "group": status.get("group") if isinstance(status, dict) else None,
-            "plugins_seen": status.get("plugins_seen") if isinstance(status, dict) else [],
-            "plugin_errors": status.get("plugin_errors") if isinstance(status, dict) else [],
-            "capabilities": plugin_caps if isinstance(plugin_caps, dict) else {},
-        }
-        caps["multimodal"] = {
-            "installed": bool(caps["abstractruntime"].get("installed")) and bool(caps["abstractcore"].get("installed")),
-            "capabilities": available,
-            "runtime_output_specs": _optional_package_status(
-                "abstractruntime.integrations.abstractcore.output_specs",
-                "AbstractRuntime",
-            ).get("installed"),
-        }
-    except Exception as e:
-        caps["capability_plugins"] = {
-            "installed": False,
-            "error": str(e),
-            "install_hint": 'pip install "abstractgateway[multimodal]"',
-        }
-        caps["multimodal"] = {
-            "installed": False,
-            "error": str(e),
-        }
+    host_facade, host_err = _gateway_abstractcore_host_facade()
+    discovery_facade, discovery_err = _gateway_abstractcore_discovery_facade()
+    run_facade, run_err = _gateway_abstractcore_run_facade()
+    plugin_errors = [str(err) for err in (host_err, discovery_err, run_err) if isinstance(err, str) and err.strip()]
+    plugin_caps = {
+        "voice": {"available": bool(run_facade is not None and not run_err)},
+        "audio": {"available": bool(run_facade is not None and not run_err)},
+        "vision": {"available": bool((run_facade is not None and not run_err) or (discovery_facade is not None and not discovery_err))},
+        "music": {"available": False},
+    }
+    caps["capability_plugins"] = {
+        "installed": bool(caps["abstractruntime"].get("installed")) and bool(caps["abstractcore"].get("installed")),
+        "group": "abstractruntime.integrations.abstractcore",
+        "plugins_seen": [],
+        "plugin_errors": plugin_errors,
+        "capabilities": plugin_caps,
+    }
+    caps["multimodal"] = {
+        "installed": bool(caps["abstractruntime"].get("installed")) and bool(caps["abstractcore"].get("installed")),
+        "capabilities": {name: bool(data.get("available")) for name, data in plugin_caps.items()},
+        "runtime_output_specs": _optional_package_status(
+            "abstractruntime.integrations.abstractcore.output_specs",
+            "AbstractRuntime",
+        ).get("installed"),
+    }
 
     try:
         from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
@@ -8030,26 +7672,8 @@ async def discovery_capabilities() -> Dict[str, Any]:
     except Exception as e:
         caps["visualflow"] = {"installed": False, "error": str(e)}
 
-    # This is not a separate extra, but some clients (e.g. AbstractCode) surface the presence of a vision fallback.
-    try:
-        import abstractcore.media.vision_fallback  # type: ignore  # noqa: F401
-
-        caps["vision_fallback"] = {"installed": True}
-    except Exception as e:
-        caps["vision_fallback"] = {"installed": False, "error": str(e)}
-
-    # AbstractCore media stack (images/docs). Some modules import without optional deps; report readiness.
-    try:
-        from abstractcore.media.auto_handler import AutoMediaHandler  # type: ignore
-
-        h = AutoMediaHandler(enable_events=False)
-        avail = getattr(h, "_available_processors", None)
-        if isinstance(avail, dict):
-            caps["media"] = {"installed": True, "available_processors": {str(k): bool(v) for k, v in avail.items()}}
-        else:
-            caps["media"] = {"installed": True}
-    except Exception as e:
-        caps["media"] = {"installed": False, "error": str(e)}
+    caps["vision_fallback"] = {"installed": bool(caps["abstractcore"].get("installed"))}
+    caps["media"] = {"installed": bool(caps["abstractcore"].get("installed"))}
 
     caps["contracts"] = _build_client_capability_contracts(caps)
 
@@ -8067,36 +7691,47 @@ async def voice_voices_catalog(
     model: Optional[str] = Query(default=None, description="Optional TTS model/language filter."),
     providers_only: bool = Query(default=False, description="Return provider names without model/voice lists."),
 ) -> Dict[str, Any]:
-    """List dynamic TTS voices through AbstractCore catalog routes when configured."""
-    if core_catalog_base_url():
-        query = {"base_url": base_url, "provider": provider, "model": model, "providers_only": providers_only}
+    """List TTS voices through the Gateway Runtime discovery facade."""
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
         return _filter_voice_catalog_response(
-            _core_catalog_or_raise(
-                "/audio/voices",
-                request=request,
-                query=query,
-                timeout_s=_catalog_timeout_s(5.0 if providers_only else 30.0),
+            _runtime_discovery_payload(
+                {
+                    "available": False,
+                    "profiles": [],
+                    "voices": [],
+                    "cloned_voices": [],
+                    "models": [],
+                    "tts_models": [],
+                    "providers": [],
+                    "tts_providers": [],
+                    "tts_models_by_provider": {},
+                    "tts_profiles_by_provider": {},
+                    "tts_voices_by_provider": {},
+                    "controls": _voice_catalog_controls(),
+                    "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+                }
             ),
             provider=provider,
             model=model,
             providers_only=providers_only,
         )
-    local = await _catalog_call(
-        "voice voices",
-        lambda: _local_voice_catalog_response(base_url=base_url),
-        timeout_s=_catalog_timeout_s(5.0 if providers_only else 30.0),
-    )
-    if local is not None:
-        return _filter_voice_catalog_response(local, provider=provider, model=model, providers_only=providers_only)
-    if providers_only:
-        return _filter_voice_catalog_response(
-            _static_voice_providers_only_response(),
+    try:
+        payload = discovery.get_voice_catalog(
+            base_url=base_url,
+            provider_api_key=_request_provider_api_key(request),
             provider=provider,
             model=model,
-            providers_only=True,
+            providers_only=providers_only,
         )
-    static = _static_voice_catalog_response(provider=provider)
-    return _filter_voice_catalog_response(static, provider=provider, model=model, providers_only=providers_only)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return _filter_voice_catalog_response(
+        _runtime_discovery_payload(payload),
+        provider=provider,
+        model=model,
+        providers_only=providers_only,
+    )
 
 
 @router.get("/audio/speech/models")
@@ -8108,27 +7743,33 @@ async def audio_speech_models_catalog(
     ),
     provider: Optional[str] = Query(default=None, description="Optional TTS provider/engine filter."),
 ) -> Dict[str, Any]:
-    """List TTS model ids through AbstractCore catalog routes when configured."""
-    if core_catalog_base_url():
-        query = {"base_url": base_url, "provider": provider}
+    """List TTS model ids through the Gateway Runtime discovery facade."""
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
         return _filter_provider_model_catalog_response(
-            _core_catalog_or_raise("/audio/speech/models", request=request, query=query, timeout_s=_provider_models_timeout_s()),
+            _runtime_discovery_payload(
+                {
+                    "available": False,
+                    "models": [],
+                    "providers": [],
+                    "models_by_provider": {},
+                    "tts_models_by_provider": {},
+                    "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+                }
+            ),
             provider=provider,
             model_keys=("models_by_provider", "tts_models_by_provider"),
         )
-    local = await _catalog_call(
-        "audio speech models",
-        lambda: _local_speech_models_response(base_url=base_url),
-        timeout_s=_provider_models_timeout_s(),
-    )
-    if local is not None:
-        return _filter_provider_model_catalog_response(
-            local,
+    try:
+        payload = discovery.list_tts_models(
+            base_url=base_url,
+            provider_api_key=_request_provider_api_key(request),
             provider=provider,
-            model_keys=("models_by_provider", "tts_models_by_provider"),
         )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
     return _filter_provider_model_catalog_response(
-        _static_speech_models_response(provider=provider),
+        _runtime_discovery_payload(payload),
         provider=provider,
         model_keys=("models_by_provider", "tts_models_by_provider"),
     )
@@ -8143,27 +7784,36 @@ async def audio_transcription_models_catalog(
     ),
     provider: Optional[str] = Query(default=None, description="Optional STT provider/engine filter."),
 ) -> Dict[str, Any]:
-    """List STT model ids through AbstractCore catalog routes when configured."""
-    if core_catalog_base_url():
-        query = {"base_url": base_url, "provider": provider}
+    """List STT model ids through the Gateway Runtime discovery facade."""
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
         return _filter_provider_model_catalog_response(
-            _core_catalog_or_raise(
-                "/audio/transcriptions/models",
-                request=request,
-                query=query,
-                timeout_s=_provider_models_timeout_s(),
+            _runtime_discovery_payload(
+                {
+                    "available": False,
+                    "models": [],
+                    "providers": [],
+                    "models_by_provider": {},
+                    "stt_models_by_provider": {},
+                    "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+                }
             ),
             provider=provider,
             model_keys=("models_by_provider", "stt_models_by_provider"),
         )
-    local = await _catalog_call(
-        "audio transcription models",
-        lambda: _local_transcription_models_response(base_url=base_url),
-        timeout_s=_provider_models_timeout_s(),
+    try:
+        payload = discovery.list_stt_models(
+            base_url=base_url,
+            provider_api_key=_request_provider_api_key(request),
+            provider=provider,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return _filter_provider_model_catalog_response(
+        _runtime_discovery_payload(payload),
+        provider=provider,
+        model_keys=("models_by_provider", "stt_models_by_provider"),
     )
-    if local is not None:
-        return _filter_provider_model_catalog_response(local, provider=provider, model_keys=("models_by_provider", "stt_models_by_provider"))
-    return _filter_provider_model_catalog_response(_static_transcription_models_response(), provider=provider, model_keys=("models_by_provider", "stt_models_by_provider"))
 
 
 @router.get("/vision/provider_models")
@@ -8180,72 +7830,43 @@ async def vision_provider_models_catalog(
     provider: Optional[str] = Query(default=None, description="Optional image provider/backend filter."),
     providers_only: bool = Query(default=False, description="Return provider names without model lists."),
 ) -> Dict[str, Any]:
-    """List Vision provider model catalogs through AbstractCore when configured."""
+    """List Vision provider model catalogs through the Gateway Runtime discovery facade."""
     task_value = str(task or "").strip() or None
     if task_value and task_value not in {"text_to_image", "image_to_image", "text_to_video", "image_to_video"}:
         raise HTTPException(
             status_code=400,
             detail="task must be one of: text_to_image, image_to_image, text_to_video, image_to_video",
         )
-    if core_catalog_base_url():
-        query: Dict[str, Any] = {}
-        if task_value:
-            query["task"] = task_value
-        if base_url:
-            query["base_url"] = base_url
-        if provider:
-            query["provider"] = provider
-        if providers_only:
-            query["providers_only"] = True
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
         return _filter_vision_provider_models_response(
-            _core_catalog_or_raise(
-                "/vision/provider_models",
-                request=request,
-                query=query,
-                timeout_s=_catalog_timeout_s(5.0 if providers_only else 30.0),
+            _runtime_discovery_payload(
+                {
+                    "available": False,
+                    "models": [],
+                    "providers": [],
+                    "available_providers": [],
+                    "models_by_provider": {},
+                    "provider_models": [],
+                    "task": task_value,
+                    "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+                }
             ),
             provider=provider,
             providers_only=providers_only,
         )
-    if providers_only:
-        local_provider_only = await _catalog_call(
-            "vision providers",
-            lambda: _local_vision_provider_models_response(task=task_value, base_url=base_url, include_models=False),
-            timeout_s=_catalog_timeout_s(5.0),
-        )
-        if local_provider_only is not None:
-            return _filter_vision_provider_models_response(
-                local_provider_only,
-                provider=provider,
-                providers_only=True,
-            )
-        return _filter_vision_provider_models_response(
-            _merge_vision_provider_model_responses(
-                _provider_models_from_cached_vision_response(
-                    await _local_cached_vision_models_response(),
-                    task=task_value,
-                ),
-                _static_vision_provider_models_response(task=task_value),
-                task=task_value,
-            ),
+    try:
+        payload = discovery.list_vision_provider_models(
+            task=task_value,
+            base_url=base_url,
+            provider_api_key=_request_provider_api_key(request),
             provider=provider,
-            providers_only=True,
+            providers_only=providers_only,
         )
-    provider_key = str(provider or "").strip().lower().replace("_", "-")
-    local_timeout_s = 5.0 if provider_key in {"openai", "openai-compatible"} else _provider_models_timeout_s()
-    local = await _catalog_call(
-        "vision provider models",
-        lambda: _local_vision_provider_models_response(task=task_value, base_url=base_url, include_models=True),
-        timeout_s=local_timeout_s,
-    )
-    if local is not None:
-        filtered_local = _filter_vision_provider_models_response(local, provider=provider, providers_only=providers_only)
-        if filtered_local.get("models") or filtered_local.get("providers") or filtered_local.get("available_providers"):
-            return filtered_local
-    cached = _provider_models_from_cached_vision_response(await _local_cached_vision_models_response(), task=task_value)
-    static = _static_vision_provider_models_response(task=task_value)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
     return _filter_vision_provider_models_response(
-        _merge_vision_provider_model_responses(cached, static, task=task_value),
+        _runtime_discovery_payload(payload),
         provider=provider,
         providers_only=providers_only,
     )
@@ -8253,22 +7874,24 @@ async def vision_provider_models_catalog(
 
 @router.get("/vision/models")
 async def vision_models_catalog(request: Request) -> Dict[str, Any]:
-    """List cached/local AbstractVision models for Gateway thin clients."""
-    if core_catalog_base_url():
-        return _core_catalog_or_raise("/vision/models", request=request)
-    local = await _local_cached_vision_models_response()
-    if local is not None:
-        return local
-    return {
-        "available": False,
-        "route_available": True,
-        "models": [],
-        "source": "gateway_static",
-        "stale": False,
-        "refreshed_at": _utc_now_iso(),
-        "error": None,
-        "config_hint": "Install/configure abstractvision or set ABSTRACTCORE_SERVER_BASE_URL for Core vision model catalogs.",
-    }
+    """List cached/local AbstractVision models through the Gateway Runtime discovery facade."""
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
+        return _runtime_discovery_payload(
+            {
+                "available": False,
+                "models": [],
+                "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+                "config_hint": "Gateway runtime must be wired to AbstractCore discovery helpers for vision model catalogs.",
+            }
+        )
+    try:
+        payload = discovery.list_cached_vision_models(
+            provider_api_key=_request_provider_api_key(request),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return _runtime_discovery_payload(payload)
 
 
 @router.get("/discovery/providers")
@@ -8277,26 +7900,22 @@ async def discovery_providers(
     include_models: bool = Query(False, description="Include model lists (may be slow)."),
 ) -> Dict[str, Any]:
     """List available providers (and optionally their models) for UI helper dropdowns."""
-    if core_catalog_base_url():
-        payload = _core_catalog_or_raise(
-            "/providers",
-            request=request,
-            query={"include_models": bool(include_models)},
-            timeout_s=_provider_models_timeout_s() if include_models else _discovery_timeout_s(),
-            v1=False,
-        )
-        providers = payload.get("providers")
-    else:
-        try:
-            from abstractcore.providers.registry import get_all_providers_with_models
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
+        return {"items": [], "error": err or "Gateway runtime does not expose AbstractCore discovery helpers."}
 
-            providers = get_all_providers_with_models(include_models=bool(include_models))
-        except Exception as e:
-            return {"items": [], "error": str(e)}
+    try:
+        payload = discovery.list_providers(
+            include_models=bool(include_models),
+            provider_api_key=_request_provider_api_key(request),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    items_raw = payload.get("items") if isinstance(payload, dict) else None
 
     items: list[Dict[str, Any]] = []
-    if isinstance(providers, list):
-        for p in providers:
+    if isinstance(items_raw, list):
+        for p in items_raw:
             if isinstance(p, dict):
                 name = p.get("name")
                 if isinstance(name, str) and name.strip():
@@ -8304,6 +7923,15 @@ async def discovery_providers(
 
     items.sort(key=lambda x: str(x.get("name") or ""))
 
+    default_provider = payload.get("default_provider") if isinstance(payload, dict) else None
+    default_model = payload.get("default_model") if isinstance(payload, dict) else None
+    if isinstance(default_provider, str) and default_provider.strip() and isinstance(default_model, str) and default_model.strip():
+        return {
+            "items": items,
+            "default_provider": default_provider,
+            "default_model": default_model,
+            "default_source": payload.get("source") if isinstance(payload, dict) else None,
+        }
     defaults = resolve_gateway_provider_model(purpose="provider discovery defaults")
     if defaults.provider and defaults.model:
         return {
@@ -8316,7 +7944,7 @@ async def discovery_providers(
         "items": items,
         "default_provider": None,
         "default_model": None,
-        "default_error": defaults.error,
+        "default_error": (payload.get("error") if isinstance(payload, dict) else None) or defaults.error,
     }
 
 
@@ -8326,44 +7954,25 @@ async def discovery_provider_models(request: Request, provider_name: str) -> Dic
     prov = str(provider_name or "").strip()
     if not prov:
         raise HTTPException(status_code=400, detail="provider_name is required")
-
-    if core_catalog_base_url():
-        payload = _core_catalog_or_raise(
-            "/models",
-            request=request,
-            query={"provider": prov},
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
+        return {"provider": prov, "models": [], "error": err or "Gateway runtime does not expose AbstractCore discovery helpers."}
+    try:
+        payload = discovery.list_provider_models(
+            prov,
+            provider_api_key=_request_provider_api_key(request),
             timeout_s=_provider_models_timeout_s(),
         )
-        data = payload.get("data")
-        out: list[str] = []
-        if isinstance(data, list):
-            prefix = f"{prov.lower()}/"
-            for item in data:
-                model_id = ""
-                if isinstance(item, str):
-                    model_id = item.strip()
-                elif isinstance(item, dict):
-                    model_id = str(item.get("id") or item.get("model") or item.get("name") or "").strip()
-                if not model_id:
-                    continue
-                if model_id.lower().startswith(prefix):
-                    model_id = model_id[len(prov) + 1 :]
-                out.append(model_id)
-        out = _dedupe_strings(out)
-        out.sort()
-        return {"provider": prov, "models": out}
-
-    try:
-        from abstractcore.providers.registry import get_available_models_for_provider
-
-        models = get_available_models_for_provider(prov, timeout=_provider_models_timeout_s())
-        if not isinstance(models, list):
-            models = []
-        out = [str(m) for m in models if isinstance(m, str) and str(m).strip()]
-        out.sort()
-        return {"provider": prov, "models": out}
     except Exception as e:
-        return {"provider": prov, "models": [], "error": str(e)}
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    models = payload.get("models") if isinstance(payload, dict) else None
+    out = [str(m) for m in models if isinstance(m, str) and str(m).strip()] if isinstance(models, list) else []
+    out = _dedupe_strings(out)
+    out.sort()
+    body: Dict[str, Any] = {"provider": prov, "models": out}
+    if isinstance(payload, dict) and payload.get("error"):
+        body["error"] = str(payload.get("error"))
+    return body
 
 
 @router.get("/discovery/models/capabilities")
@@ -8372,16 +7981,19 @@ async def discovery_model_capabilities(model_name: str = Query(..., description=
     name = str(model_name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="model_name is required")
-
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
+        return {"model": name, "capabilities": {}, "error": err or "Gateway runtime does not expose AbstractCore discovery helpers."}
     try:
-        from abstractcore.architectures.detection import get_model_capabilities
-
-        caps = get_model_capabilities(name)
-        if not isinstance(caps, dict):
-            caps = {}
-        return {"model": name, "capabilities": caps}
+        payload = discovery.get_model_capabilities(name)
     except Exception as e:
-        return {"model": name, "capabilities": {}, "error": str(e)}
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    out = dict(payload) if isinstance(payload, dict) else {"model": name, "capabilities": {}}
+    out.setdefault("model", name)
+    caps = out.get("capabilities")
+    if not isinstance(caps, dict):
+        out["capabilities"] = {}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -10211,15 +9823,12 @@ async def get_feature_request_content(filename: str) -> ReportContentResponse:
     return ReportContentResponse(report_type="feature", filename=safe, relpath=f"feature_requests/{safe}", content=content)
 
 
-def _require_email_tools():
+def _require_runtime_email_helpers() -> tuple[Any, Any, Any, Any]:
     try:
-        from abstractcore.tools.comms_tools import list_email_accounts as tool_list_email_accounts
-        from abstractcore.tools.comms_tools import list_emails as tool_list_emails
-        from abstractcore.tools.comms_tools import read_email as tool_read_email
-        from abstractcore.tools.comms_tools import send_email as tool_send_email
+        from abstractruntime.integrations.abstractcore import list_email_accounts, list_emails, read_email, send_email
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Email tools are not available: {e}") from e
-    return tool_list_email_accounts, tool_list_emails, tool_read_email, tool_send_email
+        raise HTTPException(status_code=503, detail=f"Email helpers are not available: {e}") from e
+    return list_email_accounts, list_emails, read_email, send_email
 
 
 def _email_tool_payload_or_error(payload: Any) -> Dict[str, Any]:
@@ -10245,8 +9854,8 @@ def _email_tool_payload_or_error(payload: Any) -> Dict[str, Any]:
 
 @router.get("/email/accounts", response_model=EmailAccountsResponse)
 async def email_list_accounts() -> EmailAccountsResponse:
-    tool_list_email_accounts, _tool_list_emails, _tool_read_email, _tool_send_email = _require_email_tools()
-    payload = _email_tool_payload_or_error(tool_list_email_accounts())
+    list_email_accounts, _list_emails, _read_email, _send_email = _require_runtime_email_helpers()
+    payload = _email_tool_payload_or_error(list_email_accounts())
     items: list[EmailAccountInfo] = []
     for raw in payload.get("accounts") or []:
         if not isinstance(raw, dict):
@@ -10279,9 +9888,9 @@ async def email_list_messages(
     status: str = Query(default="all", description="all|unread|read"),
     limit: int = Query(default=20, ge=1, le=200),
 ) -> EmailListResponse:
-    _tool_list_email_accounts, tool_list_emails, _tool_read_email, _tool_send_email = _require_email_tools()
+    _list_email_accounts, list_emails, _read_email, _send_email = _require_runtime_email_helpers()
     payload = _email_tool_payload_or_error(
-        tool_list_emails(
+        list_emails(
             account=str(account or "").strip() or None,
             mailbox=str(mailbox or "").strip() or None,
             since=str(since or "").strip() or None,
@@ -10335,9 +9944,9 @@ async def email_read_message(
     mailbox: str = Query(default="", description="Optional mailbox override (default: account config or INBOX)."),
     max_body_chars: int = Query(default=20000, ge=1000, le=200000),
 ) -> EmailReadResponse:
-    _tool_list_email_accounts, _tool_list_emails, tool_read_email, _tool_send_email = _require_email_tools()
+    _list_email_accounts, _list_emails, read_email, _send_email = _require_runtime_email_helpers()
     payload = _email_tool_payload_or_error(
-        tool_read_email(
+        read_email(
             uid=str(uid or "").strip(),
             account=str(account or "").strip() or None,
             mailbox=str(mailbox or "").strip() or None,
@@ -10376,9 +9985,9 @@ async def email_read_message(
 
 @router.post("/email/send", response_model=EmailSendResponse)
 async def email_send_message(req: EmailSendRequest) -> EmailSendResponse:
-    _tool_list_email_accounts, _tool_list_emails, _tool_read_email, tool_send_email = _require_email_tools()
+    _list_email_accounts, _list_emails, _read_email, send_email = _require_runtime_email_helpers()
     payload = _email_tool_payload_or_error(
-        tool_send_email(
+        send_email(
             to=req.to,
             subject=str(req.subject or ""),
             account=str(req.account or "").strip() or None,
@@ -13613,6 +13222,85 @@ class _GatewayPromptCacheLoadRequest(_GatewayPromptCacheTarget):
     clear_existing: bool = Field(default=False, description="If true, clear all in-process caches before loading")
 
 
+class _GatewayBlocTarget(BaseModel):
+    sha256: Optional[str] = Field(default=None, description="Optional durable bloc sha256 selector.")
+    bloc_id: Optional[int] = Field(default=None, description="Optional durable bloc numeric identifier.")
+    runtime_id: Optional[str] = Field(default=None, description="Optional loaded runtime identifier used to disambiguate local live state.")
+    provider: Optional[str] = Field(default=None, description="Optional provider filter or target for KV operations.")
+    model: Optional[str] = Field(default=None, description="Optional model filter or target for KV operations.")
+    base_url: Optional[str] = Field(default=None, description="Optional upstream provider base URL forwarded to AbstractCore.")
+    timeout_s: Optional[float] = Field(default=None, description="Optional timeout forwarded to Runtime/Core.")
+
+
+class _GatewayUpsertTextBlocRequest(BaseModel):
+    path: str = Field(..., description="Logical path/name for the durable text bloc.")
+    content: str = Field(..., description="Text content stored in the bloc.")
+    sha256: Optional[str] = Field(default=None, description="Optional caller-provided stable digest.")
+    content_sha256: Optional[str] = Field(default=None, description="Optional content-only digest.")
+    media_type: str = Field(default="text", description="Logical media type stored in the bloc record.")
+    size_bytes: Optional[int] = Field(default=None, description="Optional known content size in bytes.")
+    mtime_ns: Optional[int] = Field(default=None, description="Optional source mtime in nanoseconds.")
+    format: Optional[str] = Field(default=None, description="Optional format label such as text/plain or markdown.")
+    estimated_tokens: Optional[int] = Field(default=None, description="Optional estimated token count for the text.")
+    relpath_base: Optional[str] = Field(default=None, description="Optional logical base path used for normalization.")
+    summary: Optional[str] = Field(default=None, description="Optional short human summary of the bloc.")
+    keywords: Optional[list[str]] = Field(default=None, description="Optional search keywords for the bloc.")
+
+
+class _GatewayBlocKVEnsureRequest(_GatewayBlocTarget):
+    artifact_path: Optional[str] = Field(default=None, description="Optional exact artifact path returned by prior list/manifest calls.")
+    force_rebuild: bool = Field(default=False, description="Force regeneration of the KV artifact.")
+    debug: bool = Field(default=False, description="Request extra Runtime/Core diagnostics where supported.")
+
+
+class _GatewayBlocKVLoadRequest(_GatewayBlocKVEnsureRequest):
+    stable_cache_key: Optional[str] = Field(default=None, description="Optional stable key used when loading the artifact.")
+    key: Optional[str] = Field(default=None, description="Optional explicit destination cache key.")
+    make_default: bool = Field(default=False, description="Set the loaded key as the provider default when supported.")
+
+
+class _GatewayBlocKVDeleteRequest(_GatewayBlocTarget):
+    artifact_path: Optional[str] = Field(default=None, description="Exact artifact path to delete.")
+    clear_loaded: bool = Field(default=False, description="Also clear matching live loaded cache state when Runtime can see it.")
+    force: bool = Field(default=False, description="Explicitly confirm the deletion action when the lower layer requires it.")
+    dry_run: bool = Field(default=False, description="Preview deletion without mutating anything.")
+    debug: bool = Field(default=False, description="Request extra Runtime/Core diagnostics where supported.")
+
+
+class _GatewayBlocKVPruneRequest(_GatewayBlocTarget):
+    clear_loaded: bool = Field(default=False, description="Also clear matching live loaded cache state when Runtime can see it.")
+    force: bool = Field(default=False, description="Explicitly confirm the prune action when the lower layer requires it.")
+    dry_run: bool = Field(default=False, description="Preview prune results without mutating anything.")
+    debug: bool = Field(default=False, description="Request extra Runtime/Core diagnostics where supported.")
+
+
+class _GatewayBlocDeleteRequest(_GatewayBlocTarget):
+    delete_kv: bool = Field(default=True, description="Delete derived KV artifacts along with the durable text bloc.")
+    clear_loaded: bool = Field(default=False, description="Also clear matching live loaded cache state when Runtime can see it.")
+    force: bool = Field(default=False, description="Explicitly confirm the delete action when the lower layer requires it.")
+    dry_run: bool = Field(default=False, description="Preview delete results without mutating anything.")
+
+
+class _GatewayModelResidencyLoadRequest(BaseModel):
+    task: Optional[str] = Field(default=None, description="Residency task, for example text_generation or image_generation.")
+    provider: Optional[str] = Field(default=None, description="Provider id for the runtime to load.")
+    model: Optional[str] = Field(default=None, description="Model id for the runtime to load.")
+    options: Optional[Dict[str, Any]] = Field(default=None, description="Task/provider-specific load options.")
+    pin: bool = Field(default=True, description="Keep the runtime resident until it is explicitly unloaded.")
+    base_url: Optional[str] = Field(default=None, description="Optional upstream provider base URL forwarded to AbstractCore.")
+    timeout_s: Optional[float] = Field(default=None, description="Optional provider load timeout forwarded to AbstractCore.")
+
+
+class _GatewayModelResidencyUnloadRequest(BaseModel):
+    task: Optional[str] = Field(default=None, description="Optional residency task filter.")
+    runtime_id: Optional[str] = Field(default=None, description="Runtime identifier returned by load/list.")
+    provider: Optional[str] = Field(default=None, description="Provider id for the runtime to unload.")
+    model: Optional[str] = Field(default=None, description="Model id for the runtime to unload.")
+    options: Optional[Dict[str, Any]] = Field(default=None, description="Task/provider-specific unload options.")
+    base_url: Optional[str] = Field(default=None, description="Optional upstream provider base URL used to disambiguate the runtime.")
+    timeout_s: Optional[float] = Field(default=None, description="Optional provider unload timeout forwarded to AbstractCore.")
+
+
 class _GatewaySessionPromptCacheTarget(_GatewayPromptCacheTarget):
     bundle_id: Optional[str] = Field(default=None, max_length=160, description="Optional workflow bundle id.")
     bundle_version: Optional[str] = Field(default=None, max_length=80, description="Optional workflow bundle version.")
@@ -13635,15 +13323,203 @@ class _GatewaySessionPromptCacheRequest(_GatewaySessionPromptCacheTarget):
 
 
 def _gateway_runtime_llm_client() -> tuple[Optional[Any], Optional[str]]:
-    svc = get_gateway_service()
-    host = getattr(svc, "host", None)
-    runtime = getattr(host, "runtime", None)
+    runtime, err = _gateway_runtime()
+    if err:
+        return None, err
+    assert runtime is not None
     if runtime is None:
-        return None, "Gateway host does not expose a shared runtime (prompt caching is unavailable in this mode)."
+        return None, "Gateway host does not expose a shared runtime."
     llm_client = getattr(runtime, "_abstractcore_llm_client", None)
     if llm_client is None:
-        return None, "Gateway runtime has no in-process AbstractCore LLM client (no local KV cache state to manage)."
+        return None, "Gateway runtime has no AbstractCore LLM client."
     return llm_client, None
+
+
+def _gateway_model_residency_contract_descriptor() -> Dict[str, Any]:
+    facade, err = _gateway_abstractcore_host_facade()
+    available = facade is not None
+    endpoints = {
+        "loaded": _api_gateway_path("/models/loaded"),
+        "load": _api_gateway_path("/models/load"),
+        "unload": _api_gateway_path("/models/unload"),
+    }
+    return {
+        "route_available": True,
+        "available": available,
+        "source": "abstractruntime.host_facade",
+        "endpoints": endpoints,
+        "tasks": ["text_generation", "image_generation", "tts", "stt"],
+        "supports": {
+            "text_generation": True,
+            "image_generation": True,
+            "tts": True,
+            "stt": True,
+        },
+        "ledger": "workflow model_residency effects are ledgered by Runtime; operator model routes are not ledger commands",
+        **({"config_hint": err} if err else {}),
+    }
+
+
+def _gateway_durable_bloc_contract_descriptor() -> Dict[str, Any]:
+    facade, err = _gateway_abstractcore_host_facade()
+    endpoints = {
+        "upsert_text": _api_gateway_path("/blocs/upsert_text"),
+        "record": _api_gateway_path("/blocs/record"),
+        "list": _api_gateway_path("/blocs"),
+        "delete": _api_gateway_path("/blocs/delete"),
+        "kv_manifest": _api_gateway_path("/blocs/kv/manifest"),
+        "kv_list": _api_gateway_path("/blocs/kv/list"),
+        "kv_ensure": _api_gateway_path("/blocs/kv/ensure"),
+        "kv_load": _api_gateway_path("/blocs/kv/load"),
+        "kv_delete": _api_gateway_path("/blocs/kv/delete"),
+        "kv_prune": _api_gateway_path("/blocs/kv/prune"),
+    }
+    required = (
+        "upsert_text_bloc",
+        "get_bloc_record",
+        "list_blocs",
+        "get_bloc_kv_manifest",
+        "ensure_bloc_kv_artifact",
+        "load_bloc_kv_artifact",
+    )
+    lifecycle = (
+        "list_bloc_kv_artifacts",
+        "delete_bloc_kv_artifact",
+        "prune_bloc_kv_artifacts",
+        "delete_bloc",
+    )
+    available = facade is not None and all(callable(getattr(facade, name, None)) for name in required)
+    lifecycle_available = facade is not None and all(callable(getattr(facade, name, None)) for name in lifecycle)
+    return {
+        "route_available": True,
+        "available": bool(available),
+        "lifecycle_available": bool(lifecycle_available),
+        "source": "abstractruntime.host_facade",
+        "endpoints": endpoints,
+        "stable_identifiers": ["bloc_id", "sha256"],
+        "exact_reuse_binding_param": "prompt_cache_binding",
+        "ledger": "durable bloc routes are host operator controls; use prompt_cache_binding in Runtime run execution for ledgered exact reuse",
+        **({"config_hint": err} if err else {}),
+    }
+
+
+def _gateway_bloc_unavailable(*, operation: str, error: str) -> Dict[str, Any]:
+    return {
+        "ok": False,
+        "supported": False,
+        "operation": operation,
+        "code": "bloc_unavailable",
+        "error": error,
+        "source": "abstractruntime.host_facade",
+        "route_available": True,
+    }
+
+
+def _gateway_bloc_client_call(
+    *,
+    method_name: str,
+    operation: str,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
+        return _gateway_bloc_unavailable(
+            operation=operation,
+            error=err or "Gateway runtime does not expose AbstractCore durable bloc controls.",
+        )
+
+    fn = getattr(control, method_name, None)
+    if not callable(fn):
+        return _gateway_bloc_unavailable(
+            operation=operation,
+            error=f"Gateway runtime does not expose durable bloc operation `{method_name}`.",
+        )
+
+    try:
+        result = fn(**dict(payload or {}))
+    except Exception as e:
+        return {
+            "ok": False,
+            "supported": False,
+            "operation": operation,
+            "code": "bloc_error",
+            "error": str(e),
+            "source": "abstractruntime.host_facade",
+            "route_available": True,
+        }
+
+    out = dict(result) if isinstance(result, dict) else {"ok": True, "data": result}
+    out.setdefault("operation", operation)
+    out.setdefault("supported", True)
+    out.setdefault("source", "abstractruntime.host_facade")
+    out.setdefault("route_available", True)
+    return out
+
+
+def _gateway_model_residency_unavailable(*, operation: str, error: str) -> Dict[str, Any]:
+    return {
+        "ok": False,
+        "supported": False,
+        "operation": operation,
+        "code": "model_residency_unavailable",
+        "error": error,
+    }
+
+
+def _gateway_model_residency_client_call(
+    *,
+    method_name: str,
+    operation: str,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
+        return _gateway_model_residency_unavailable(
+            operation=operation,
+            error=err or "Gateway runtime does not expose AbstractCore model residency controls.",
+        )
+
+    fn = getattr(control, method_name, None)
+    if not callable(fn):
+        return _gateway_model_residency_unavailable(
+            operation=operation,
+            error="Gateway runtime does not expose model residency controls.",
+        )
+
+    try:
+        result = fn(**dict(payload or {}))
+    except Exception as e:
+        return {
+            "ok": False,
+            "supported": False,
+            "operation": operation,
+            "code": "model_residency_error",
+            "error": str(e),
+        }
+    if isinstance(result, dict):
+        result.setdefault("operation", operation)
+        return result
+    return {"ok": True, "supported": True, "operation": operation, "data": result}
+
+
+def _normalize_gateway_model_residency_response(payload: Dict[str, Any], *, operation: str) -> Dict[str, Any]:
+    out = dict(payload)
+    out.setdefault("operation", operation)
+    out.setdefault("source", "abstractruntime.host_facade")
+    out.setdefault("route_available", True)
+    if operation == "list_loaded" and "models" not in out:
+        for key in ("data", "loaded", "runtimes"):
+            if isinstance(out.get(key), list):
+                out["models"] = out[key]
+                break
+    return out
+
+
+def _model_dump_excluding_none(model: BaseModel) -> Dict[str, Any]:
+    try:
+        return dict(model.model_dump(exclude_none=True))
+    except AttributeError:  # pragma: no cover - pydantic v1 compatibility
+        return dict(model.dict(exclude_none=True))
 
 
 def _gateway_prompt_cache_empty_caps() -> Dict[str, Any]:
@@ -13954,22 +13830,281 @@ def _is_huggingface_gguf_provider(obj: Any) -> bool:
         return False
 
 
+@router.get("/models/loaded")
+async def model_residency_loaded(
+    request: Request,
+    task: Optional[str] = Query(None, description="Optional residency task filter."),
+    provider: Optional[str] = Query(None, description="Optional provider filter."),
+    model: Optional[str] = Query(None, description="Optional model filter."),
+    base_url: Optional[str] = Query(None, description="Optional upstream provider base URL filter."),
+) -> Dict[str, Any]:
+    _ = request
+    query = {
+        "task": task,
+        "provider": provider,
+        "model": model,
+        "base_url": base_url,
+    }
+    payload = {k: v for k, v in query.items() if v is not None and str(v).strip()}
+    return _normalize_gateway_model_residency_response(
+        _gateway_model_residency_client_call(
+            method_name="list_model_residency",
+            operation="list_loaded",
+            payload=payload,
+        ),
+        operation="list_loaded",
+    )
+
+
+@router.post("/models/load")
+async def model_residency_load(request: Request, req: _GatewayModelResidencyLoadRequest) -> Dict[str, Any]:
+    _ = request
+    body = _model_dump_excluding_none(req)
+    body.setdefault("task", "text_generation")
+    return _normalize_gateway_model_residency_response(
+        _gateway_model_residency_client_call(
+            method_name="load_model_residency",
+            operation="load",
+            payload=body,
+        ),
+        operation="load",
+    )
+
+
+@router.post("/models/unload")
+async def model_residency_unload(request: Request, req: _GatewayModelResidencyUnloadRequest) -> Dict[str, Any]:
+    _ = request
+    body = _model_dump_excluding_none(req)
+    return _normalize_gateway_model_residency_response(
+        _gateway_model_residency_client_call(
+            method_name="unload_model_residency",
+            operation="unload",
+            payload=body,
+        ),
+        operation="unload",
+    )
+
+
+@router.post("/blocs/upsert_text")
+async def bloc_upsert_text(request: Request, req: _GatewayUpsertTextBlocRequest) -> Dict[str, Any]:
+    body = _model_dump_excluding_none(req)
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        body["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="upsert_text_bloc",
+        operation="upsert_text",
+        payload=body,
+    )
+
+
+@router.get("/blocs/record")
+async def bloc_record(
+    request: Request,
+    sha256: Optional[str] = Query(None, description="Optional durable bloc sha256 selector."),
+    bloc_id: Optional[int] = Query(None, description="Optional durable bloc numeric identifier."),
+    runtime_id: Optional[str] = Query(None, description="Optional loaded runtime identifier used to disambiguate local live state."),
+    provider: Optional[str] = Query(None, description="Optional provider selector."),
+    model: Optional[str] = Query(None, description="Optional model selector."),
+    base_url: Optional[str] = Query(None, description="Optional upstream provider base URL forwarded to Runtime/Core."),
+    timeout_s: Optional[float] = Query(None, description="Optional timeout forwarded to Runtime/Core."),
+) -> Dict[str, Any]:
+    _ = request
+    payload = {
+        "sha256": sha256,
+        "bloc_id": bloc_id,
+        "runtime_id": runtime_id,
+        "provider": provider,
+        "model": model,
+        "base_url": base_url,
+        "timeout_s": timeout_s,
+    }
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        payload["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="get_bloc_record",
+        operation="record",
+        payload={k: v for k, v in payload.items() if v is not None and (not isinstance(v, str) or v.strip())},
+    )
+
+
+@router.get("/blocs")
+async def bloc_list(
+    request: Request,
+    sha256: Optional[str] = Query(None, description="Optional durable bloc sha256 selector."),
+    bloc_id: Optional[int] = Query(None, description="Optional durable bloc numeric identifier."),
+    runtime_id: Optional[str] = Query(None, description="Optional loaded runtime identifier used to disambiguate local live state."),
+    provider: Optional[str] = Query(None, description="Optional provider selector."),
+    model: Optional[str] = Query(None, description="Optional model selector."),
+    base_url: Optional[str] = Query(None, description="Optional upstream provider base URL forwarded to Runtime/Core."),
+    timeout_s: Optional[float] = Query(None, description="Optional timeout forwarded to Runtime/Core."),
+) -> Dict[str, Any]:
+    _ = request
+    payload = {
+        "sha256": sha256,
+        "bloc_id": bloc_id,
+        "runtime_id": runtime_id,
+        "provider": provider,
+        "model": model,
+        "base_url": base_url,
+        "timeout_s": timeout_s,
+    }
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        payload["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="list_blocs",
+        operation="list",
+        payload={k: v for k, v in payload.items() if v is not None and (not isinstance(v, str) or v.strip())},
+    )
+
+
+@router.post("/blocs/delete")
+async def bloc_delete(request: Request, req: _GatewayBlocDeleteRequest) -> Dict[str, Any]:
+    body = _model_dump_excluding_none(req)
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        body["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="delete_bloc",
+        operation="delete",
+        payload=body,
+    )
+
+
+@router.get("/blocs/kv/manifest")
+async def bloc_kv_manifest(
+    request: Request,
+    sha256: Optional[str] = Query(None, description="Optional durable bloc sha256 selector."),
+    bloc_id: Optional[int] = Query(None, description="Optional durable bloc numeric identifier."),
+    artifact_path: Optional[str] = Query(None, description="Optional exact artifact path returned by prior list calls."),
+    runtime_id: Optional[str] = Query(None, description="Optional loaded runtime identifier used to disambiguate local live state."),
+    provider: Optional[str] = Query(None, description="Optional provider selector."),
+    model: Optional[str] = Query(None, description="Optional model selector."),
+    base_url: Optional[str] = Query(None, description="Optional upstream provider base URL forwarded to Runtime/Core."),
+    timeout_s: Optional[float] = Query(None, description="Optional timeout forwarded to Runtime/Core."),
+) -> Dict[str, Any]:
+    _ = request
+    payload = {
+        "sha256": sha256,
+        "bloc_id": bloc_id,
+        "artifact_path": artifact_path,
+        "runtime_id": runtime_id,
+        "provider": provider,
+        "model": model,
+        "base_url": base_url,
+        "timeout_s": timeout_s,
+    }
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        payload["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="get_bloc_kv_manifest",
+        operation="kv_manifest",
+        payload={k: v for k, v in payload.items() if v is not None and (not isinstance(v, str) or v.strip())},
+    )
+
+
+@router.get("/blocs/kv/list")
+async def bloc_kv_list(
+    request: Request,
+    sha256: Optional[str] = Query(None, description="Optional durable bloc sha256 selector."),
+    bloc_id: Optional[int] = Query(None, description="Optional durable bloc numeric identifier."),
+    runtime_id: Optional[str] = Query(None, description="Optional loaded runtime identifier used to disambiguate local live state."),
+    provider: Optional[str] = Query(None, description="Optional provider filter."),
+    model: Optional[str] = Query(None, description="Optional model filter."),
+    base_url: Optional[str] = Query(None, description="Optional upstream provider base URL forwarded to Runtime/Core."),
+    timeout_s: Optional[float] = Query(None, description="Optional timeout forwarded to Runtime/Core."),
+) -> Dict[str, Any]:
+    _ = request
+    payload = {
+        "sha256": sha256,
+        "bloc_id": bloc_id,
+        "runtime_id": runtime_id,
+        "provider": provider,
+        "model": model,
+        "base_url": base_url,
+        "timeout_s": timeout_s,
+    }
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        payload["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="list_bloc_kv_artifacts",
+        operation="kv_list",
+        payload={k: v for k, v in payload.items() if v is not None and (not isinstance(v, str) or v.strip())},
+    )
+
+
+@router.post("/blocs/kv/ensure")
+async def bloc_kv_ensure(request: Request, req: _GatewayBlocKVEnsureRequest) -> Dict[str, Any]:
+    body = _model_dump_excluding_none(req)
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        body["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="ensure_bloc_kv_artifact",
+        operation="kv_ensure",
+        payload=body,
+    )
+
+
+@router.post("/blocs/kv/load")
+async def bloc_kv_load(request: Request, req: _GatewayBlocKVLoadRequest) -> Dict[str, Any]:
+    body = _model_dump_excluding_none(req)
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        body["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="load_bloc_kv_artifact",
+        operation="kv_load",
+        payload=body,
+    )
+
+
+@router.post("/blocs/kv/delete")
+async def bloc_kv_delete(request: Request, req: _GatewayBlocKVDeleteRequest) -> Dict[str, Any]:
+    body = _model_dump_excluding_none(req)
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        body["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="delete_bloc_kv_artifact",
+        operation="kv_delete",
+        payload=body,
+    )
+
+
+@router.post("/blocs/kv/prune")
+async def bloc_kv_prune(request: Request, req: _GatewayBlocKVPruneRequest) -> Dict[str, Any]:
+    body = _model_dump_excluding_none(req)
+    provider_api_key = _request_provider_api_key(request)
+    if provider_api_key:
+        body["provider_api_key"] = provider_api_key
+    return _gateway_bloc_client_call(
+        method_name="prune_bloc_kv_artifacts",
+        operation="kv_prune",
+        payload=body,
+    )
+
+
 @router.get("/prompt_cache/stats")
 async def prompt_cache_stats(
     provider: str = Query(..., description="AbstractCore provider name"),
     model: str = Query(..., description="Model id/name"),
 ) -> Dict[str, Any]:
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         return {
             "supported": False,
             "operation": "stats",
             "code": "prompt_cache_unavailable",
-            "error": err,
+            "error": err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             "capabilities": _gateway_prompt_cache_empty_caps(),
         }
     return _gateway_prompt_cache_client_call(
-        llm_client=llm_client,
+        llm_client=control,
         method_name="get_prompt_cache_stats",
         operation="stats",
         provider=provider,
@@ -13982,15 +14117,15 @@ async def prompt_cache_capabilities(
     provider: str = Query(..., description="AbstractCore provider name"),
     model: str = Query(..., description="Model id/name"),
 ) -> Dict[str, Any]:
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         return {
             "supported": False,
             "operation": "capabilities",
-            "error": err,
+            "error": err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             "capabilities": _gateway_prompt_cache_empty_caps(),
         }
-    info = _gateway_prompt_cache_client_capabilities(llm_client=llm_client, provider=provider, model=model)
+    info = _gateway_prompt_cache_client_capabilities(llm_client=control, provider=provider, model=model)
     caps = info.get("capabilities") if isinstance(info, dict) else _gateway_prompt_cache_empty_caps()
     return {
         "supported": bool(info.get("supported") if isinstance(info, dict) else False),
@@ -14002,17 +14137,17 @@ async def prompt_cache_capabilities(
 
 @router.post("/prompt_cache/set")
 async def prompt_cache_set(req: _GatewayPromptCacheSetRequest) -> Dict[str, Any]:
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         return {
             "supported": False,
             "operation": "set",
             "code": "prompt_cache_unavailable",
-            "error": err,
+            "error": err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             "capabilities": _gateway_prompt_cache_empty_caps(),
         }
     return _gateway_prompt_cache_client_call(
-        llm_client=llm_client,
+        llm_client=control,
         method_name="prompt_cache_set",
         operation="set",
         provider=req.provider,
@@ -14023,17 +14158,17 @@ async def prompt_cache_set(req: _GatewayPromptCacheSetRequest) -> Dict[str, Any]
 
 @router.post("/prompt_cache/update")
 async def prompt_cache_update(req: _GatewayPromptCacheUpdateRequest) -> Dict[str, Any]:
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         return {
             "supported": False,
             "operation": "update",
             "code": "prompt_cache_unavailable",
-            "error": err,
+            "error": err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             "capabilities": _gateway_prompt_cache_empty_caps(),
         }
     return _gateway_prompt_cache_client_call(
-        llm_client=llm_client,
+        llm_client=control,
         method_name="prompt_cache_update",
         operation="update",
         provider=req.provider,
@@ -14052,17 +14187,17 @@ async def prompt_cache_update(req: _GatewayPromptCacheUpdateRequest) -> Dict[str
 
 @router.post("/prompt_cache/fork")
 async def prompt_cache_fork(req: _GatewayPromptCacheForkRequest) -> Dict[str, Any]:
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         return {
             "supported": False,
             "operation": "fork",
             "code": "prompt_cache_unavailable",
-            "error": err,
+            "error": err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             "capabilities": _gateway_prompt_cache_empty_caps(),
         }
     return _gateway_prompt_cache_client_call(
-        llm_client=llm_client,
+        llm_client=control,
         method_name="prompt_cache_fork",
         operation="fork",
         provider=req.provider,
@@ -14078,17 +14213,17 @@ async def prompt_cache_fork(req: _GatewayPromptCacheForkRequest) -> Dict[str, An
 
 @router.post("/prompt_cache/clear")
 async def prompt_cache_clear(req: _GatewayPromptCacheClearRequest) -> Dict[str, Any]:
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         return {
             "supported": False,
             "operation": "clear",
             "code": "prompt_cache_unavailable",
-            "error": err,
+            "error": err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             "capabilities": _gateway_prompt_cache_empty_caps(),
         }
     return _gateway_prompt_cache_client_call(
-        llm_client=llm_client,
+        llm_client=control,
         method_name="prompt_cache_clear",
         operation="clear",
         provider=req.provider,
@@ -14099,17 +14234,17 @@ async def prompt_cache_clear(req: _GatewayPromptCacheClearRequest) -> Dict[str, 
 
 @router.post("/prompt_cache/prepare_modules")
 async def prompt_cache_prepare_modules(req: _GatewayPromptCachePrepareModulesRequest) -> Dict[str, Any]:
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         return {
             "supported": False,
             "operation": "prepare_modules",
             "code": "prompt_cache_unavailable",
-            "error": err,
+            "error": err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             "capabilities": _gateway_prompt_cache_empty_caps(),
         }
     return _gateway_prompt_cache_client_call(
-        llm_client=llm_client,
+        llm_client=control,
         method_name="prompt_cache_prepare_modules",
         operation="prepare_modules",
         provider=req.provider,
@@ -14144,20 +14279,20 @@ async def session_prompt_cache_status(
         template_id=template_id,
         version=version,
     )
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         payload = _session_prompt_cache_base_payload(
             operation="status",
             session_id=session_id,
             req=req,
             capabilities=_gateway_prompt_cache_empty_caps(),
-            error=err,
+            error=err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             code="prompt_cache_unavailable",
         )
         payload["ok"] = False
         return payload
 
-    info = _gateway_prompt_cache_client_capabilities(llm_client=llm_client, provider=provider, model=model)
+    info = _gateway_prompt_cache_client_capabilities(llm_client=control, provider=provider, model=model)
     caps = info.get("capabilities") if isinstance(info, dict) else _gateway_prompt_cache_empty_caps()
     if not isinstance(caps, dict):
         caps = _gateway_prompt_cache_empty_caps()
@@ -14172,7 +14307,7 @@ async def session_prompt_cache_status(
     payload["ok"] = bool(caps.get("supported"))
     if bool(caps.get("supports_stats")):
         stats = _gateway_prompt_cache_client_call(
-            llm_client=llm_client,
+            llm_client=control,
             method_name="get_prompt_cache_stats",
             operation="stats",
             provider=provider,
@@ -14184,20 +14319,20 @@ async def session_prompt_cache_status(
 
 @router.post("/sessions/{session_id}/prompt_cache/prepare")
 async def session_prompt_cache_prepare(session_id: str, req: _GatewaySessionPromptCacheRequest) -> Dict[str, Any]:
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         payload = _session_prompt_cache_base_payload(
             operation="prepare",
             session_id=session_id,
             req=req,
             capabilities=_gateway_prompt_cache_empty_caps(),
-            error=err,
+            error=err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             code="prompt_cache_unavailable",
         )
         payload["ok"] = False
         return payload
 
-    info = _gateway_prompt_cache_client_capabilities(llm_client=llm_client, provider=req.provider, model=req.model)
+    info = _gateway_prompt_cache_client_capabilities(llm_client=control, provider=req.provider, model=req.model)
     caps = info.get("capabilities") if isinstance(info, dict) else _gateway_prompt_cache_empty_caps()
     if not isinstance(caps, dict):
         caps = _gateway_prompt_cache_empty_caps()
@@ -14221,7 +14356,7 @@ async def session_prompt_cache_prepare(session_id: str, req: _GatewaySessionProm
 
     if mode == "local_control_plane" and modules and bool(caps.get("supports_prepare_modules")):
         prepared = _gateway_prompt_cache_client_call(
-            llm_client=llm_client,
+            llm_client=control,
             method_name="prompt_cache_prepare_modules",
             operation="prepare_modules",
             provider=req.provider,
@@ -14245,7 +14380,7 @@ async def session_prompt_cache_prepare(session_id: str, req: _GatewaySessionProm
         prefix_key = str(prefix_key0).strip() if isinstance(prefix_key0, str) and prefix_key0.strip() else None
         if prefix_key and bool(caps.get("supports_fork")):
             forked = _gateway_prompt_cache_client_call(
-                llm_client=llm_client,
+                llm_client=control,
                 method_name="prompt_cache_fork",
                 operation="fork",
                 provider=req.provider,
@@ -14279,7 +14414,7 @@ async def session_prompt_cache_prepare(session_id: str, req: _GatewaySessionProm
 
     if mode == "local_control_plane" and not modules and bool(caps.get("supports_set")):
         selected = _gateway_prompt_cache_client_call(
-            llm_client=llm_client,
+            llm_client=control,
             method_name="prompt_cache_set",
             operation="set",
             provider=req.provider,
@@ -14308,20 +14443,20 @@ async def session_prompt_cache_prepare(session_id: str, req: _GatewaySessionProm
 
 @router.post("/sessions/{session_id}/prompt_cache/clear")
 async def session_prompt_cache_clear(session_id: str, req: _GatewaySessionPromptCacheRequest) -> Dict[str, Any]:
-    llm_client, err = _gateway_runtime_llm_client()
-    if err:
+    control, err = _gateway_abstractcore_host_facade()
+    if err or control is None:
         payload = _session_prompt_cache_base_payload(
             operation="clear",
             session_id=session_id,
             req=req,
             capabilities=_gateway_prompt_cache_empty_caps(),
-            error=err,
+            error=err or "Gateway runtime does not expose AbstractCore prompt-cache controls.",
             code="prompt_cache_unavailable",
         )
         payload["ok"] = False
         return payload
 
-    info = _gateway_prompt_cache_client_capabilities(llm_client=llm_client, provider=req.provider, model=req.model)
+    info = _gateway_prompt_cache_client_capabilities(llm_client=control, provider=req.provider, model=req.model)
     caps = info.get("capabilities") if isinstance(info, dict) else _gateway_prompt_cache_empty_caps()
     if not isinstance(caps, dict):
         caps = _gateway_prompt_cache_empty_caps()
@@ -14343,7 +14478,7 @@ async def session_prompt_cache_clear(session_id: str, req: _GatewaySessionPrompt
         return payload
 
     cleared = _gateway_prompt_cache_client_call(
-        llm_client=llm_client,
+        llm_client=control,
         method_name="prompt_cache_clear",
         operation="clear",
         provider=req.provider,
@@ -15057,7 +15192,7 @@ async def files_read(
 ) -> Dict[str, Any]:
     """Read a workspace file for @file mentions (best-effort).
 
-    Uses the same implementation as AbstractCore's `read_file` tool (including `.abstractignore`).
+    Uses Gateway's workspace helper implementation (including `.abstractignore`).
     """
     base_default = _workspace_root()
     mounts_default = _workspace_mounts()
@@ -15097,12 +15232,7 @@ async def files_read(
     if blocked and _is_under_allowed_roots(resolved, list(blocked)):
         raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
 
-    try:
-        from abstractcore.tools.common_tools import read_file
-
-        content = read_file(str(resolved), start_line=start_line, end_line=end_line)
-    except Exception as e:
-        content = f"Error: Failed to read '{resolved}': {e}"
+    content = read_workspace_file(str(resolved), start_line=start_line, end_line=end_line)
 
     out_path = str(virt) if isinstance(virt, str) and virt.strip() else None
     if not out_path:
@@ -15127,7 +15257,7 @@ async def files_skim(
 ) -> Dict[str, Any]:
     """Skim a workspace file for @file mentions (best-effort).
 
-    Uses the same implementation as AbstractCore's `skim_files` tool (including `.abstractignore`).
+    Uses Gateway's workspace helper implementation (including `.abstractignore`).
     """
     base_default = _workspace_root()
     mounts_default = _workspace_mounts()
@@ -15167,17 +15297,12 @@ async def files_skim(
     if blocked and _is_under_allowed_roots(resolved, list(blocked)):
         raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
 
-    try:
-        from abstractcore.tools.common_tools import skim_files
-
-        content = skim_files(
-            [str(resolved)],
-            target_percent=target_percent,
-            head_lines=head_lines,
-            tail_lines=tail_lines,
-        )
-    except Exception as e:
-        content = f"Error: Failed to skim '{resolved}': {e}"
+    content = skim_workspace_files(
+        [str(resolved)],
+        target_percent=target_percent,
+        head_lines=head_lines,
+        tail_lines=tail_lines,
+    )
 
     out_path = str(virt) if isinstance(virt, str) and virt.strip() else None
     if not out_path:
@@ -15250,17 +15375,9 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
     if blocked and _is_under_allowed_roots(resolved, list(blocked)):
         raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
 
-    try:
-        from abstractcore.tools.abstractignore import AbstractIgnore
-
-        ignore = AbstractIgnore.for_path(root)
-        if ignore.is_ignored(resolved, is_dir=False):
-            raise HTTPException(status_code=403, detail="File is ignored by .abstractignore policy")
-    except HTTPException:
-        raise
-    except Exception:
-        # Best-effort; do not block ingestion if ignore policy fails to load.
-        pass
+    ignore = AbstractIgnore.for_path(root)
+    if ignore.is_ignored(resolved, is_dir=False):
+        raise HTTPException(status_code=403, detail="File is ignored by .abstractignore policy")
 
     if not resolved.exists():
         raise HTTPException(status_code=404, detail="File not found")

@@ -15,17 +15,22 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 try:
-    from abstractcore.tools.telegram_tdlib import TdlibNotAvailable, get_global_tdlib_client, stop_global_tdlib_client
+    from abstractruntime.integrations.abstractcore import (
+        TelegramTdlibNotAvailable as TdlibNotAvailable,
+        get_global_telegram_client as get_global_tdlib_client,
+        stop_global_telegram_client as stop_global_tdlib_client,
+    )
 except Exception:  # pragma: no cover
-    # Keep Telegram bridge importable in minimal environments where `abstractcore` (or its deps)
-    # are not installed. TDLib transport will surface a clear runtime error when used.
+    # Keep Telegram bridge importable in minimal environments where Runtime's
+    # Telegram integration is unavailable. TDLib transport will surface a clear
+    # runtime error when used.
     class TdlibNotAvailable(RuntimeError):
         pass
 
     def get_global_tdlib_client(*, start: bool = False):  # type: ignore[no-untyped-def]
         raise TdlibNotAvailable(
-            "TDLib transport requires `abstractcore` and its Telegram TDLib helper. "
-            "Install: pip install \"abstractcore[tools]\" and configure TDLib (tdjson + env vars)."
+            "TDLib transport requires Gateway's Runtime Telegram integration. "
+            "Install/repair `abstractgateway` and configure TDLib (tdjson + env vars)."
         )
 
     def stop_global_tdlib_client() -> None:

@@ -21,6 +21,30 @@ from ..workflow_deprecations import WorkflowDeprecatedError, WorkflowDeprecation
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _GatewayToolSpec:
+    name: str
+    description: str
+    parameters: Dict[str, Any]
+    when_to_use: Optional[str] = None
+    examples: list[Any] = field(default_factory=list)
+    tags: list[Any] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {
+            "name": self.name,
+            "description": self.description,
+            "parameters": dict(self.parameters),
+        }
+        if self.when_to_use is not None:
+            data["when_to_use"] = self.when_to_use
+        if self.examples:
+            data["examples"] = list(self.examples)
+        if self.tags:
+            data["tags"] = list(self.tags)
+        return data
+
+
 def _namespace(bundle_id: str, flow_id: str) -> str:
     return f"{bundle_id}:{flow_id}"
 
@@ -293,6 +317,17 @@ def _flow_uses_tools(raw: Dict[str, Any]) -> bool:
     for n in nodes:
         t = _node_type_from_raw(n)
         if t in {"tool_calls", "agent"}:
+            return True
+    return False
+
+
+def _flow_uses_model_residency(raw: Dict[str, Any]) -> bool:
+    nodes = raw.get("nodes")
+    if not isinstance(nodes, list):
+        return False
+    for n in nodes:
+        t = _node_type_from_raw(n)
+        if t == "model_residency":
             return True
     return False
 
@@ -601,6 +636,7 @@ class WorkflowBundleGatewayHost:
 
         needs_llm = any(_flow_uses_llm(raw) for raw in flows_by_namespaced_id.values())
         needs_tools = any(_flow_uses_tools(raw) for raw in flows_by_namespaced_id.values())
+        needs_model_residency = any(_flow_uses_model_residency(raw) for raw in flows_by_namespaced_id.values())
         needs_memory_kg = any(_flow_uses_memory_kg(raw) for raw in flows_by_namespaced_id.values())
 
         extra_effect_handlers: Dict[Any, Any] = {}
@@ -632,8 +668,8 @@ class WorkflowBundleGatewayHost:
 
             extra_effect_handlers = build_memory_kg_effect_handlers(store=memory_store_obj, run_store=run_store, now_iso=utc_now_iso)
 
-        # Optional AbstractCore integration for LLM_CALL + TOOL_CALLS.
-        if needs_llm or needs_tools:
+        # Optional AbstractCore integration for LLM_CALL + TOOL_CALLS + MODEL_RESIDENCY.
+        if needs_llm or needs_tools or needs_model_residency:
             try:
                 from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
                 from abstractruntime.integrations.abstractcore.tool_executor import (
@@ -643,7 +679,7 @@ class WorkflowBundleGatewayHost:
                 )
             except Exception as e:  # pragma: no cover
                 raise WorkflowBundleError(
-                    "This bundle requires LLM/tool execution, but AbstractRuntime was installed "
+                    "This bundle requires AbstractCore-backed LLM/tool/model-residency execution, but AbstractRuntime was installed "
                     "without AbstractCore integration. Install `abstractruntime[abstractcore]` "
                     "(and ensure `abstractcore` is importable)."
                 ) from e
@@ -677,37 +713,64 @@ class WorkflowBundleGatewayHost:
                 except Exception:
                     tool_executor = PassthroughToolExecutor(mode="approval_required")
 
-            if needs_llm:
+            if needs_llm or needs_model_residency:
                 try:
-                    from abstractruntime.integrations.abstractcore.factory import create_local_runtime
+                    from abstractruntime.integrations.abstractcore.factory import create_local_runtime, create_remote_runtime
                 except Exception as e:  # pragma: no cover
                     raise WorkflowBundleError(
-                        "LLM nodes require AbstractRuntime AbstractCore integration. "
+                        "LLM/model_residency nodes require AbstractRuntime AbstractCore integration. "
                         "Install `abstractruntime[abstractcore]`."
                     ) from e
 
+                core_server_base_url = _env("ABSTRACTCORE_SERVER_BASE_URL")
+                provider: Optional[str] = None
+                model: Optional[str] = None
                 try:
                     provider, model = resolve_gateway_provider_model(
                         flow_defaults=_scan_flows_for_llm_defaults(flows_by_namespaced_id),
                         purpose="bundle LLM execution",
                     ).require()
                 except ProviderModelConfigError as e:
-                    raise WorkflowBundleError(
-                        "Bundle contains LLM nodes but no default provider/model is configured. "
-                        "Set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL, configure defaults via "
-                        "`abstractcore --config`, or ensure the flow JSON includes provider/model on at least "
-                        "one llm_call/agent node."
-                    ) from e
+                    if needs_llm or not core_server_base_url:
+                        raise WorkflowBundleError(
+                            "Bundle contains LLM nodes or local model_residency nodes but no default provider/model is configured. "
+                            "Set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL, configure defaults via "
+                            "flow defaults, or ensure the flow JSON includes provider/model on at least "
+                            "one llm_call/agent node."
+                        ) from e
 
-                runtime = create_local_runtime(
-                    provider=provider,
-                    model=model,
-                    run_store=run_store,
-                    ledger_store=ledger_store,
-                    artifact_store=artifact_store,
-                    tool_executor=tool_executor,
-                    extra_effect_handlers=extra_effect_handlers,
-                )
+                if core_server_base_url:
+                    headers: Dict[str, str] = {}
+                    token = _env(
+                        "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN",
+                        "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY",
+                    ) or _env("ABSTRACTCORE_SERVER_API_KEY")
+                    if token:
+                        headers["Authorization"] = f"Bearer {token.strip()}"
+                    remote_model = f"{provider}/{model}" if provider and model else "default"
+                    runtime = create_remote_runtime(
+                        server_base_url=core_server_base_url,
+                        model=remote_model,
+                        headers=headers,
+                        run_store=run_store,
+                        ledger_store=ledger_store,
+                        artifact_store=artifact_store,
+                        tool_executor=tool_executor,
+                    )
+                    if extra_effect_handlers:
+                        handlers = getattr(runtime, "_handlers", None)
+                        if isinstance(handlers, dict):
+                            handlers.update(dict(extra_effect_handlers))
+                else:
+                    runtime = create_local_runtime(
+                        provider=str(provider or ""),
+                        model=str(model or ""),
+                        run_store=run_store,
+                        ledger_store=ledger_store,
+                        artifact_store=artifact_store,
+                        tool_executor=tool_executor,
+                        extra_effect_handlers=extra_effect_handlers,
+                    )
                 runtime.set_workflow_registry(wf_reg)
             else:
                 # Tools-only runtime: avoid constructing an LLM client.
@@ -763,8 +826,6 @@ class WorkflowBundleGatewayHost:
                     "Install `abstractagent` to execute Agent nodes."
                 ) from e
 
-            from abstractcore.tools import ToolDefinition
-
             try:
                 from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
             except Exception as e:  # pragma: no cover
@@ -772,8 +833,8 @@ class WorkflowBundleGatewayHost:
                     "Visual Agent nodes require AbstractCore tool schemas (abstractruntime[abstractcore])."
                 ) from e
 
-            def _tool_defs_from_specs(specs0: list[dict[str, Any]]) -> list[ToolDefinition]:
-                out: list[ToolDefinition] = []
+            def _tool_defs_from_specs(specs0: list[dict[str, Any]]) -> list[_GatewayToolSpec]:
+                out: list[_GatewayToolSpec] = []
                 for s in specs0:
                     if not isinstance(s, dict):
                         continue
@@ -782,11 +843,17 @@ class WorkflowBundleGatewayHost:
                         continue
                     desc = s.get("description")
                     params = s.get("parameters")
+                    when_to_use = s.get("when_to_use")
+                    examples = s.get("examples")
+                    tags = s.get("tags")
                     out.append(
-                        ToolDefinition(
+                        _GatewayToolSpec(
                             name=name.strip(),
                             description=str(desc or ""),
                             parameters=dict(params) if isinstance(params, dict) else {},
+                            when_to_use=str(when_to_use) if when_to_use is not None else None,
+                            examples=list(examples) if isinstance(examples, list) else [],
+                            tags=list(tags) if isinstance(tags, list) else [],
                         )
                     )
                 return out

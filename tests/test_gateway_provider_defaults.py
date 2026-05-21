@@ -59,11 +59,10 @@ def _write_min_bundle(*, bundles_dir: Path) -> tuple[str, str]:
     return bundle_id, flow_id
 
 
-def test_provider_model_resolver_prefers_request_then_gateway_env_then_core_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provider_model_resolver_prefers_request_then_gateway_env_then_flow_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     from abstractgateway import provider_defaults
 
     _clear_provider_env(monkeypatch)
-    monkeypatch.setattr(provider_defaults, "_abstractcore_config_defaults", lambda: ("core", "core-model"))
 
     req = provider_defaults.resolve_gateway_provider_model(provider="OLLAMA", model="llama3", purpose="test").require()
     assert req == ("ollama", "llama3")
@@ -74,15 +73,17 @@ def test_provider_model_resolver_prefers_request_then_gateway_env_then_core_conf
     assert (env.provider, env.model, env.source) == ("lmstudio", "qwen-local", "gateway_env")
 
     _clear_provider_env(monkeypatch)
-    core = provider_defaults.resolve_gateway_provider_model(purpose="test")
-    assert (core.provider, core.model, core.source) == ("core", "core-model", "abstractcore_config")
+    flow = provider_defaults.resolve_gateway_provider_model(
+        flow_defaults=("ollama", "qwen3:8b"),
+        purpose="test",
+    )
+    assert (flow.provider, flow.model, flow.source) == ("ollama", "qwen3:8b", "flow_defaults")
 
 
 def test_provider_model_resolver_reports_clear_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
     from abstractgateway import provider_defaults
 
     _clear_provider_env(monkeypatch)
-    monkeypatch.setattr(provider_defaults, "_abstractcore_config_defaults", lambda: (None, None))
 
     resolved = provider_defaults.resolve_gateway_provider_model(purpose="summary helper")
     assert resolved.provider is None
@@ -94,7 +95,6 @@ def test_summary_helper_rejects_missing_provider_model_config(tmp_path: Path, mo
     import abstractgateway.provider_defaults as provider_defaults
 
     _clear_provider_env(monkeypatch)
-    monkeypatch.setattr(provider_defaults, "_abstractcore_config_defaults", lambda: (None, None))
 
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
@@ -129,21 +129,23 @@ def test_discovery_providers_reports_default_error_without_hardcoded_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from abstractcore.providers import registry as provider_registry
-
     import abstractgateway.provider_defaults as provider_defaults
+    from abstractgateway.routes import gateway as gateway_routes
 
     _clear_provider_env(monkeypatch)
-    monkeypatch.setattr(provider_defaults, "_abstractcore_config_defaults", lambda: (None, None))
-    monkeypatch.setattr(provider_registry, "get_all_providers_with_models", lambda include_models=False: [])
+
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **_kwargs):
+            assert include_models is False
+            return {"items": []}
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
-
-    from abstractgateway.routes import gateway as gateway_routes
 
     app = FastAPI()
     app.include_router(gateway_routes.router, prefix="/api")

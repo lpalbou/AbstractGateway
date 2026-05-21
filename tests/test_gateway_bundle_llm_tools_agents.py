@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import Any, Dict
 import zipfile
 
 import pytest
@@ -168,6 +169,139 @@ def test_gateway_bundle_llm_call_completes_offline(tmp_path: Path, monkeypatch: 
         assert ledger.status_code == 200, ledger.text
         items = ledger.json().get("items") or []
         assert any(isinstance(i, dict) and isinstance(i.get("effect"), dict) and i["effect"].get("type") == "llm_call" for i in items)
+
+
+def test_gateway_bundle_model_residency_only_uses_remote_core_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+
+    flow_id = "root"
+    flow = {
+        "id": flow_id,
+        "name": "residency-test",
+        "description": "",
+        "interfaces": [],
+        "nodes": [
+            {
+                "id": "node-1",
+                "type": "on_flow_start",
+                "position": {"x": 32.0, "y": 224.0},
+                "data": {"nodeType": "on_flow_start", "label": "On Flow Start", "inputs": [], "outputs": [{"id": "exec-out", "label": "", "type": "execution"}]},
+            },
+            {
+                "id": "node-2",
+                "type": "model_residency",
+                "position": {"x": 288.0, "y": 224.0},
+                "data": {
+                    "nodeType": "model_residency",
+                    "label": "Load Image Model",
+                    "inputs": [{"id": "exec-in", "label": "", "type": "execution"}],
+                    "outputs": [{"id": "exec-out", "label": "", "type": "execution"}],
+                    "effectConfig": {
+                        "operation": "load",
+                        "task": "image_generation",
+                        "provider": "mflux",
+                        "model": "black-forest-labs/FLUX.2-klein-4B",
+                    },
+                },
+            },
+            {
+                "id": "node-3",
+                "type": "on_flow_end",
+                "position": {"x": 544.0, "y": 224.0},
+                "data": {"nodeType": "on_flow_end", "label": "On Flow End", "inputs": [{"id": "exec-in", "label": "", "type": "execution"}], "outputs": []},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "node-1", "sourceHandle": "exec-out", "target": "node-2", "targetHandle": "exec-in"},
+            {"id": "e2", "source": "node-2", "sourceHandle": "exec-out", "target": "node-3", "targetHandle": "exec-in"},
+        ],
+        "entryNode": "node-1",
+    }
+    bundle_id, _entry = _write_bundle(bundles_dir=bundles_dir, bundle_id="bundle-residency", flows={flow_id: flow}, entrypoint=flow_id)
+
+    calls: list[Dict[str, Any]] = []
+
+    from abstractruntime.core.models import EffectType, RunStatus
+    from abstractruntime.core.runtime import EffectOutcome, Runtime
+    from abstractruntime.integrations.abstractcore import factory as ac_factory
+    from abstractruntime.storage.artifacts import InMemoryArtifactStore
+    from abstractruntime.storage.in_memory import InMemoryLedgerStore, InMemoryRunStore
+
+    def _fake_create_remote_runtime(**kwargs: Any) -> Runtime:
+        calls.append(dict(kwargs))
+
+        def _model_residency_handler(run, effect, default_next_node):
+            del run, default_next_node
+            payload = dict(effect.payload or {})
+            return EffectOutcome.completed(
+                {
+                    "ok": True,
+                    "supported": True,
+                    "operation": payload.get("operation"),
+                    "task": payload.get("task"),
+                    "runtime": {
+                        "runtime_id": "image_generation:mflux:black-forest-labs/FLUX.2-klein-4B",
+                        "provider": payload.get("provider"),
+                        "model": payload.get("model"),
+                    },
+                }
+            )
+
+        runtime = Runtime(
+            run_store=kwargs["run_store"],
+            ledger_store=kwargs["ledger_store"],
+            artifact_store=kwargs["artifact_store"],
+            effect_handlers={EffectType.MODEL_RESIDENCY: _model_residency_handler},
+        )
+        setattr(runtime, "_abstractcore_llm_client", object())
+        return runtime
+
+    monkeypatch.setattr(ac_factory, "create_remote_runtime", _fake_create_remote_runtime)
+    monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+    monkeypatch.delenv("ABSTRACTGATEWAY_PROVIDER", raising=False)
+    monkeypatch.delenv("ABSTRACTGATEWAY_MODEL", raising=False)
+
+    from abstractgateway.provider_defaults import ProviderModelConfigError
+    import abstractgateway.hosts.bundle_host as bundle_host
+
+    class _MissingProviderModel:
+        def require(self):
+            raise ProviderModelConfigError("missing provider/model")
+
+    monkeypatch.setattr(bundle_host, "resolve_gateway_provider_model", lambda **_kwargs: _MissingProviderModel())
+
+    run_store = InMemoryRunStore()
+    ledger_store = InMemoryLedgerStore()
+    artifact_store = InMemoryArtifactStore()
+    host = bundle_host.WorkflowBundleGatewayHost.load_from_dir(
+        bundles_dir=bundles_dir,
+        data_dir=runtime_dir,
+        run_store=run_store,
+        ledger_store=ledger_store,
+        artifact_store=artifact_store,
+    )
+
+    workflow_id = f"{bundle_id}@0.0.0:{flow_id}"
+    spec = host.specs[workflow_id]
+    run_id = host.runtime.start(workflow=spec, vars={})
+    final = host.runtime.tick(workflow=spec, run_id=run_id, max_steps=10)
+    records = ledger_store.list(run_id)
+
+    assert final.status == RunStatus.COMPLETED
+    assert calls
+    assert calls[0]["server_base_url"] == "http://core.test/v1"
+    assert calls[0]["model"] == "default"
+    assert any(
+        isinstance(item, dict)
+        and isinstance(item.get("effect"), dict)
+        and item["effect"].get("type") == "model_residency"
+        and (item.get("result") or {}).get("ok") is True
+        for item in records
+    )
 
 
 def test_gateway_bundle_agent_node_starts_react_subworkflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

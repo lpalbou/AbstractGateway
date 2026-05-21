@@ -23,29 +23,21 @@ def _pyproject() -> dict:
 def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
-    assert "AbstractRuntime[multimodal]>=0.4.14" in deps
+    assert "AbstractRuntime[multimodal,mcp-worker]>=0.4.19" in deps
     assert "abstractagent>=0.3.7" in deps
-    assert "abstractcore[remote,tools,tokens,vision,voice,audio]>=2.13.15" in deps
     assert "abstractflow>=0.3.11" in deps
-    assert "abstractvision>=0.3.6" in deps
-    assert "abstractvoice>=0.10.3" in deps
     assert "AbstractMemory[lancedb]>=0.2.6" in deps
     assert "sentence-transformers<6.0.0,>=5.1.0" in deps
     assert "numpy<3.0.0,>=1.20.0" in deps
-    assert "setuptools<82.0.0,>=80.10.2" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
-    assert "openai<2.0.0,>=1.109.1" in deps
-    assert "httpx<1.0.0,>=0.28.1" in deps
-    assert "anyio<5.0.0,>=4.12.1" in deps
-    assert "Pillow<13.0.0,>=10.0.0" in deps
-    assert "pymupdf4llm<1.0.0,>=0.0.20" in deps
-    assert "pymupdf-layout<2.0.0,>=1.26.6" in deps
-    assert "unstructured[docx,odt,pptx,rtf,xlsx]<0.19.0,>=0.18.32" in deps
-    assert "python-pptx<2.0.0,>=1.0.2" in deps
-    assert "pandas<3.0.0,>=1.0.0" in deps
     assert "fastapi<1.0.0,>=0.136.0" in deps
     assert "uvicorn[standard]<1.0.0,>=0.38.0" in deps
+    joined = "\n".join(deps)
+    assert "abstractcore[" not in joined
+    assert "abstractvision" not in joined
+    assert "abstractvoice" not in joined
+    assert "abstractmusic" not in joined
 
 
 def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
@@ -66,23 +58,22 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "all-gpu" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[multimodal,all-apple]>=0.4.14" in apple
+    assert "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.19" in apple
     assert "abstractagent[all-apple]>=0.3.7" in apple
     assert "abstractagent[apple]" not in apple
-    assert "abstractcore[all-apple]>=2.13.15" in apple
-    assert "abstractcore[apple]" not in apple
-    assert "abstractvision[all-apple]>=0.3.6" in apple
-    assert "abstractvoice[all-apple]>=0.10.3" in apple
-    assert "abstractmusic[all-apple]>=0.1.2" in apple
     assert "AbstractMemory[all-apple]>=0.2.6" in apple
+    assert "abstractcore[" not in apple
+    assert "abstractvision" not in apple
+    assert "abstractvoice" not in apple
+    assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[multimodal,all-gpu]>=0.4.14" in gpu
+    assert "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.19" in gpu
     assert "abstractagent[all-gpu]>=0.3.7" in gpu
-    assert "abstractcore[all-gpu]>=2.13.15" in gpu
-    assert "abstractvision[all-gpu]>=0.3.6" in gpu
-    assert "abstractvoice[all-gpu]>=0.10.3" in gpu
-    assert "abstractmusic[all-gpu]>=0.1.2" in gpu
     assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
+    assert "abstractcore[" not in gpu
+    assert "abstractvision" not in gpu
+    assert "abstractvoice" not in gpu
+    assert "abstractmusic" not in gpu
 
     assert extras["all-apple"] == extras["apple"]
     assert extras["all-gpu"] == extras["gpu"]
@@ -99,6 +90,14 @@ def test_config_entrypoint_is_published() -> None:
     scripts = _pyproject()["project"]["scripts"]
     assert scripts["abstractgateway"] == "abstractgateway.cli:main"
     assert scripts["abstractgateway-config"] == "abstractgateway.config_cli:main"
+
+
+def test_sdist_excludes_internal_artifacts() -> None:
+    sdist = _pyproject()["tool"]["hatch"]["build"]["targets"]["sdist"]
+    exclude = set(sdist["exclude"])
+    assert "/docs/backlog/**" in exclude
+    assert "/flows/**" in exclude
+    assert "/tests/**" in exclude
 
 
 def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> None:

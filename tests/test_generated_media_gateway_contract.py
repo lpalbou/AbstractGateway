@@ -4,7 +4,8 @@ import json
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from types import SimpleNamespace
+from typing import Any, Dict
 
 from fastapi.testclient import TestClient
 
@@ -54,64 +55,6 @@ def _write_image_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> N
         zf.writestr(f"flows/{flow_id}.json", json.dumps(flow))
 
 
-class _StubImageGatewayLLMClient:
-    def __init__(self, provider: str, model: str, llm_kwargs: Optional[Dict[str, Any]] = None, artifact_store: Any = None):
-        self.provider = provider
-        self.model = model
-        self.artifact_store = artifact_store
-        self.calls: list[Dict[str, Any]] = []
-        self._llm = self
-        _ = llm_kwargs
-
-    def get_model_capabilities(self) -> Dict[str, Any]:
-        return {"max_tokens": 1024, "max_output_tokens": 256}
-
-    def generate(
-        self,
-        *,
-        prompt: str,
-        messages: Any = None,
-        system_prompt: Any = None,
-        tools: Any = None,
-        media: Any = None,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        _ = (messages, system_prompt, tools, media)
-        params = dict(params or {})
-        self.calls.append({"prompt": prompt, "params": params})
-        output = params.get("output")
-        assert isinstance(output, dict)
-        assert output.get("modality") == "image"
-        assert output.get("task") == "image_generation"
-        assert output.get("provider") == "mflux"
-        assert output.get("model") == "flux2-klein-4b"
-        assert params.get("_provider") == "stub"
-        assert params.get("_model") == "stub-chat"
-        run_id = str(output.get("run_id") or "")
-        tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
-        meta = self.artifact_store.store(_PNG_BYTES, content_type="image/png", run_id=run_id, tags=tags)
-        return {
-            "outputs": {
-                "image": [
-                    {
-                        "modality": "image",
-                        "task": "image_generation",
-                        "content_type": "image/png",
-                        "format": "png",
-                        "artifact_ref": {
-                            "$artifact": meta.artifact_id,
-                            "artifact_id": meta.artifact_id,
-                            "content_type": "image/png",
-                            "size_bytes": len(_PNG_BYTES),
-                        },
-                    }
-                ]
-            },
-            "metadata": {"provider": "stub", "model": "stub-image"},
-            "model": "stub-image",
-        }
-
-
 def _wait_until(fn, *, timeout_s: float = 5.0, poll_s: float = 0.05) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -121,7 +64,7 @@ def _wait_until(fn, *, timeout_s: float = 5.0, poll_s: float = 0.05) -> None:
     raise AssertionError("condition did not become true before timeout")
 
 
-def test_gateway_direct_image_generation_stores_artifact_and_emits_event(tmp_path: Path, monkeypatch) -> None:
+def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_path: Path, monkeypatch) -> None:
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
     _write_image_bundle(bundles_dir=bundles_dir, bundle_id="image-contract", flow_id="root")
@@ -132,10 +75,55 @@ def test_gateway_direct_image_generation_stores_artifact_and_emits_event(tmp_pat
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTVISION_BACKEND", "mflux")
 
-    from abstractruntime.integrations.abstractcore import factory as ac_factory
+    import abstractgateway.routes.gateway as gateway_routes
+    from abstractruntime.core.models import RunStatus
 
-    monkeypatch.setattr(ac_factory, "MultiLocalAbstractCoreLLMClient", _StubImageGatewayLLMClient)
+    monkeypatch.setattr(gateway_routes, "_gateway_has_local_mflux_preset", lambda _model_id: True)
+
+    class StubRunFacade:
+        def generate_image(self, parent_run_id: str, *, prompt: str, output: Dict[str, Any], params: Dict[str, Any], child_vars=None):
+            _ = child_vars
+            child_run_id = "child-image-1"
+            assert prompt == "a one pixel generated test image"
+            assert output["modality"] == "image"
+            assert output["task"] == "image_generation"
+            assert output["provider"] == "mflux"
+            assert output["model"] == "flux2-klein-4b"
+            svc = gateway_routes.get_gateway_service()
+            store = svc.stores.artifact_store
+            tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
+            meta = store.store(_PNG_BYTES, content_type="image/png", run_id=child_run_id, tags=tags)
+            return SimpleNamespace(
+                run_id=child_run_id,
+                status=RunStatus.COMPLETED,
+                error=None,
+                output={
+                    "result": {
+                        "outputs": {
+                            "image": [
+                                {
+                                    "modality": "image",
+                                    "task": "image_generation",
+                                    "provider": "mflux",
+                                    "model": "flux2-klein-4b",
+                                    "content_type": "image/png",
+                                    "format": "png",
+                                    "artifact_ref": {
+                                        "$artifact": meta.artifact_id,
+                                        "artifact_id": meta.artifact_id,
+                                        "content_type": "image/png",
+                                        "size_bytes": len(_PNG_BYTES),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (StubRunFacade(), None))
 
     from abstractgateway.app import app
 
@@ -155,8 +143,10 @@ def test_gateway_direct_image_generation_stores_artifact_and_emits_event(tmp_pat
         assert caps.status_code == 200, caps.text
         direct = caps.json()["capabilities"]["contracts"]["assistant"]["media"]["generated_image"]["direct_endpoint"]
         assert direct["route_available"] is True
+        assert direct["available"] is True
         assert direct["endpoint"] == "/api/gateway/runs/{run_id}/images/generate"
-        assert direct["event_name"] == "abstract.media.image.generated"
+        assert direct["durability"] == "runtime_child_run"
+        assert direct["returns_child_run_id"] is True
 
         generated = client.post(
             f"/api/gateway/runs/{run_id}/images/generate",
@@ -175,7 +165,8 @@ def test_gateway_direct_image_generation_stores_artifact_and_emits_event(tmp_pat
         body = generated.json()
         assert body["ok"] is True, body
         assert body["supported"] is True
-        assert body["event_name"] == "abstract.media.image.generated"
+        assert body["child_run_id"] == "child-image-1"
+        assert body["event_name"] is None
         image_ref = body["image_artifact"]
         assert image_ref["content_type"] == "image/png"
         assert image_ref["filename"] == "generated.png"
@@ -190,7 +181,7 @@ def test_gateway_direct_image_generation_stores_artifact_and_emits_event(tmp_pat
         ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=200", headers=headers)
         assert ledger.status_code == 200, ledger.text
         events = [item for item in ledger.json().get("items", []) if isinstance(item, dict)]
-        assert any(
+        assert not any(
             (((item.get("effect") or {}).get("payload") or {}).get("name") == "abstract.media.image.generated")
             for item in events
         )

@@ -3,7 +3,7 @@
 AbstractGateway can run as a Python process or as a containerized server. The
 container path is the recommended baseline for a single self-contained Gateway
 deployment because it packages the HTTP API, durable runner, AbstractRuntime,
-and the remote-provider/multimodal AbstractCore stack together.
+and the Runtime-owned provider/media/tool stack together.
 
 ## Published image
 
@@ -11,7 +11,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.8
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.15
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -19,24 +19,20 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15
 ```
 
 The default image installs the base `abstractgateway` package, which includes:
 
-- `AbstractRuntime[multimodal]`
-- `abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]`
+- `AbstractRuntime[multimodal,mcp-worker]`
 - `AbstractMemory[lancedb]>=0.2.6`
-- `abstractvision`
-- `abstractvoice`
 - `abstractagent`
 - `abstractflow`
 - FastAPI/Uvicorn
 
 This profile supports hosted/commercial providers, OpenAI-compatible text
-provider routing, workflow-backed and direct image generation through
-Runtime/Core/AbstractVision, direct Gateway voice/STT endpoints through
-AbstractVoice, and provider/session prompt-cache controls.
+provider routing, workflow-backed and direct image/voice/STT generation through
+Runtime facades, and provider/session prompt-cache controls.
 It intentionally stays dependency-light for heavy local model runtimes: MLX,
 vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
 engines, and future AbstractMusic engines remain explicit opt-ins.
@@ -63,7 +59,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.8
+  ghcr.io/lpalbou/abstractgateway-server:0.2.15
 ```
 
 Other host-native endpoints are also valid: LM Studio at
@@ -144,7 +140,7 @@ Image/voice plugin endpoints:
 
 Core catalog proxying:
 
-- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL`: explicit standalone Core server URL for voice, TTS/STT, and vision catalog routes
+- `ABSTRACTCORE_SERVER_BASE_URL`: explicit standalone Core server URL for voice, TTS/STT, and vision catalog routes
 - `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN`: Core server auth token, separate from Gateway auth
 - `ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S`: timeout for catalog routes
 
@@ -176,7 +172,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.8-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.15-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
