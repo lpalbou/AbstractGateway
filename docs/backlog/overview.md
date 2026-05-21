@@ -21,8 +21,8 @@ gateway packages.
 ## Counts
 
 - Planned: 0
-- Proposed: 4
-- Completed: 12
+- Proposed: 3
+- Completed: 13
 - Deprecated: 1
 - Recurrent: 0
 
@@ -36,13 +36,14 @@ gateway packages.
 - Completed: install profiles and configuration entrypoint.
 - Completed: memory store resolver and TripleStore abstraction.
 - Completed: Core-backed Voice/Vision catalog proxy endpoints.
-- Proposed: provider-private prompt-cache save/load migration via Runtime.
+- Completed: provider-private prompt-cache save/load migration via Runtime.
 
 ## Next Recommended Work
 
-The main Runtime-owned boundary work is done. The next clean follow-up is
-provider-private prompt-cache save/load via Runtime, which remains intentionally
-separate from the app-facing durable bloc/KV contract.
+The main Runtime-owned boundary work is now done for Gateway's prompt-cache,
+durable bloc, residency, workspace/comms/Telegram, and operator snapshot
+surfaces. The remaining proposed work is product-facing rather than boundary
+cleanup.
 
 ## Planned Items
 
@@ -54,7 +55,6 @@ No planned items at the moment.
 | --- | --- |
 | [2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md](proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md) | Promote when Gateway draft-space semantics and ephemeral-run lifecycle are validated against Flow UX and ledger expectations. |
 | [2026-05-13_shared_identity_context.md](proposed/2026-05-13_shared_identity_context.md) | Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work. |
-| [2026-05-20_gateway_prompt_cache_save_load_via_runtime.md](proposed/2026-05-20_gateway_prompt_cache_save_load_via_runtime.md) | Promote when Runtime defines a public local-admin prompt-cache save/load surface. |
 | [offline_first_gateway_connectivity.md](proposed/offline_first_gateway_connectivity.md) | Promote when offline-first connectivity guarantees become a near-term product commitment. |
 
 ## Completed Work Ledger
@@ -71,6 +71,7 @@ No planned items at the moment.
 | Core-backed Voice/Vision catalog proxy endpoints | `proposed/2026-05-08_voice_profile_discovery_endpoint.md` | [completed/2026-05-08_voice_profile_discovery_endpoint.md](completed/2026-05-08_voice_profile_discovery_endpoint.md) | Gateway now exposes voice, speech-model, and vision provider-model catalog endpoints that proxy AbstractCore catalog routes when configured and use static bounded fallback otherwise. | `PYTHONPATH=src pytest -q tests/test_gateway_capability_catalog_proxy.py`. |
 | Gateway model residency control plane | `proposed/2026-05-19_model_residency_gateway_control_plane.md` | [completed/2026-05-19_model_residency_gateway_control_plane.md](completed/2026-05-19_model_residency_gateway_control_plane.md) | Gateway now exposes `/api/gateway/models/loaded|load|unload` through Runtime's public host facade instead of direct Core route logic. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_model_residency_endpoints.py tests/test_capabilities_endpoint_contract.py`. |
 | Gateway durable bloc prompt-cache contract via Runtime | `proposed/2026-05-20_gateway_durable_bloc_prompt_cache_contract.md` | [completed/2026-05-20_gateway_durable_bloc_prompt_cache_contract.md](completed/2026-05-20_gateway_durable_bloc_prompt_cache_contract.md) | Gateway now exposes durable bloc/KV/binding routes through Runtime and distinguishes that app-facing contract from provider-private snapshot save/load. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_durable_bloc_prompt_cache_endpoints.py tests/test_gateway_prompt_cache_endpoints.py tests/test_capabilities_endpoint_contract.py`. |
+| Gateway prompt-cache save/load via Runtime | `proposed/2026-05-20_gateway_prompt_cache_save_load_via_runtime.md` | [completed/2026-05-20_gateway_prompt_cache_save_load_via_runtime.md](completed/2026-05-20_gateway_prompt_cache_save_load_via_runtime.md) | Gateway now routes the legacy `saved/save/load` prompt-cache aliases through Runtime's public host facade and no longer reaches into provider-private prompt-cache state. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore python -m pytest -q tests/test_gateway_prompt_cache_endpoints.py tests/test_capabilities_endpoint_contract.py`. |
 | Truthful media residency gateway contract | `proposed/2026-05-20_truthful_media_residency_gateway_contract.md` | [completed/2026-05-20_truthful_media_residency_gateway_contract.md](completed/2026-05-20_truthful_media_residency_gateway_contract.md) | Gateway now advertises media residency truthfully and delegates the residency routes through Runtime's public host facade. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_model_residency_endpoints.py tests/test_capabilities_endpoint_contract.py tests/test_gateway_capability_catalog_proxy.py`. |
 | Gateway Runtime boundary cleanup for workspace, comms, and Telegram | `planned/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md` | [completed/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md](completed/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md) | Gateway now owns workspace/file helpers locally, uses Runtime comms/Telegram helper surfaces for operator paths, and no longer imports `abstractcore` directly in source. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_email_inbox_endpoints.py tests/test_gateway_cli_split_runner.py tests/test_gateway_telegram_bridge_unit.py tests/test_gateway_discovery_endpoints.py tests/test_gateway_files_skim_endpoint.py tests/test_gateway_attachments_ingest.py tests/test_gateway_workspace_policy_enforcement.py tests/test_maintenance_notifier_unit.py`. |
 
@@ -95,6 +96,9 @@ No planned items at the moment.
 - Gateway source now imports Runtime rather than Core directly for the main
   execution path and the remaining comms/Telegram helper paths. Deeper Runtime
   host-helper polish can continue without reopening Gateway's source boundary.
+- Gateway prompt-cache snapshot aliases now use Runtime's public host facade;
+  the old Gateway-local provider-private snapshot code and dead Core catalog
+  proxy module were removed.
 
 ## Completion Process
 

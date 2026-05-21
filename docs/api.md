@@ -364,17 +364,21 @@ proxying Core directly. They are operator-style host controls, so the routes
 themselves are not ledgered run execution; the ledgered exact-reuse path is the
 later `LLM_CALL.params.prompt_cache_binding` used inside real Runtime runs.
 
-Provider-specific persistence endpoints:
+Host-local prompt-cache export/import admin aliases:
 
 - `GET /api/gateway/prompt_cache/saved`
 - `POST /api/gateway/prompt_cache/save`
 - `POST /api/gateway/prompt_cache/load`
 
-These remain explicitly local/provider-specific in this release:
+These remain explicitly local/operator-oriented in this release:
 
-- `save` / `load` require direct local provider access.
-- Currently intended for in-process `mlx` and `huggingface` GGUF (`llama.cpp`) workers only.
-- GGUF save/load preserves both the raw llama.cpp cache and provider-side prompt-cache metadata so reloaded cache keys keep their module/history meaning.
+- the route paths are compatibility aliases, but the implementation delegates to Runtime's public host facade:
+  - `saved` -> `list_prompt_cache_exports(...)`
+  - `save` -> `prompt_cache_export(...)`
+  - `load` -> `prompt_cache_import(...)`
+- local bundle/file runtimes store these exports under the Gateway data dir at `prompt_cache_exports/`
+- remote and hybrid runtimes return `code=prompt_cache_local_only`
+- response payloads follow Runtime's host-local export/import contract, including `operation`, `local_only`, `artifact_*`, `capabilities`, and `provider_response`
 
 ## Email inbox (operator UI; optional)
 

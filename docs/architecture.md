@@ -1,6 +1,6 @@
 # AbstractGateway — Architecture
 
-> Status: implemented (v0.2.15)
+> Status: implemented (v0.2.16)
 > Last reviewed: 2026-05-21
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:

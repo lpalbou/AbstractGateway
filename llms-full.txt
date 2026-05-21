@@ -66,7 +66,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.15
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.16
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -74,7 +74,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.16
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
@@ -95,7 +95,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.15
+  ghcr.io/lpalbou/abstractgateway-server:0.2.16
 ```
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the
@@ -112,7 +112,7 @@ For a minimal Apple-local Gateway + Flow setup, see
 
 Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 
-## 0.2.15 capability scope
+## 0.2.16 capability scope
 
 Direct Gateway APIs in this release:
 - `GET /api/gateway/runs/{run_id}/input_data`
@@ -126,6 +126,7 @@ Direct Gateway APIs in this release:
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/models`
 - `/api/gateway/prompt_cache/*` provider/model operator controls
+- `/api/gateway/prompt_cache/saved|save|load` Runtime-backed host-local export/import admin aliases
 - `/api/gateway/sessions/{session_id}/prompt_cache/*` session lifecycle controls
 - `/api/gateway/kg/query` with configurable `lancedb` or in-memory AbstractMemory stores, plus `sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`
 - `/api/gateway/discovery/capabilities` package, plugin, and thin-client contract discovery
@@ -137,6 +138,9 @@ Workflow/Core-backed capabilities:
 - Prompt-cache support depends on the active provider/model. Session lifecycle
   routes provide Gateway-owned naming and orchestration, not a provider-
   independent local KV cache.
+- Prompt-cache export/import admin remains local-only. Local runtimes keep those
+  artifacts under the Gateway data dir; remote and hybrid runtimes return a
+  structured `prompt_cache_local_only` response.
 
 ## Client contract (replay-first)
 
@@ -418,13 +422,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.15
+  ghcr.io/lpalbou/abstractgateway-server:0.2.16
 ```
 
 See [deployment.md](docs/deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.16`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -508,6 +512,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.16] - 2026-05-21
+
+### Changed
+- Raised the Runtime floor to `AbstractRuntime[multimodal,mcp-worker]>=0.4.20` across the base, Apple, and GPU install profiles.
+- Gateway's legacy prompt-cache snapshot aliases, `GET /api/gateway/prompt_cache/saved` and `POST /api/gateway/prompt_cache/save|load`, now delegate to Runtime's public host facade instead of using provider-private prompt-cache state directly.
+- Local bundle runtimes now keep host-local prompt-cache exports under `<DATA_DIR>/prompt_cache_exports` through Runtime's export root policy.
+
+### Fixed
+- Removed the last Gateway-side prompt-cache boundary bypass (`runtime._abstractcore_llm_client`, direct provider-instance access, and provider-private `_prompt_cache_store` / GGUF cache hooks) from the public route surface.
+- Removed the stale internal Core catalog proxy module after discovery routing fully moved to Runtime's public discovery facade.
 
 ## [0.2.15] - 2026-05-21
 
@@ -1322,17 +1337,21 @@ proxying Core directly. They are operator-style host controls, so the routes
 themselves are not ledgered run execution; the ledgered exact-reuse path is the
 later `LLM_CALL.params.prompt_cache_binding` used inside real Runtime runs.
 
-Provider-specific persistence endpoints:
+Host-local prompt-cache export/import admin aliases:
 
 - `GET /api/gateway/prompt_cache/saved`
 - `POST /api/gateway/prompt_cache/save`
 - `POST /api/gateway/prompt_cache/load`
 
-These remain explicitly local/provider-specific in this release:
+These remain explicitly local/operator-oriented in this release:
 
-- `save` / `load` require direct local provider access.
-- Currently intended for in-process `mlx` and `huggingface` GGUF (`llama.cpp`) workers only.
-- GGUF save/load preserves both the raw llama.cpp cache and provider-side prompt-cache metadata so reloaded cache keys keep their module/history meaning.
+- the route paths are compatibility aliases, but the implementation delegates to Runtime's public host facade:
+  - `saved` -> `list_prompt_cache_exports(...)`
+  - `save` -> `prompt_cache_export(...)`
+  - `load` -> `prompt_cache_import(...)`
+- local bundle/file runtimes store these exports under the Gateway data dir at `prompt_cache_exports/`
+- remote and hybrid runtimes return `code=prompt_cache_local_only`
+- response payloads follow Runtime's host-local export/import contract, including `operation`, `local_only`, `artifact_*`, `capabilities`, and `provider_response`
 
 ## Email inbox (operator UI; optional)
 
@@ -1552,7 +1571,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal,mcp-worker]>=0.4.19`
+- `AbstractRuntime[multimodal,mcp-worker]>=0.4.20`
 - `abstractagent>=0.3.6`
 - `AbstractMemory[lancedb]>=0.2.6`
 
@@ -1695,7 +1714,9 @@ apps without pretending unsupported providers have local KV state.
 - `POST /api/gateway/blocs/kv/load`
 - `POST /api/gateway/blocs/kv/delete`
 - `POST /api/gateway/blocs/kv/prune`
-- `POST /api/gateway/prompt_cache/save` / `load` for supported local providers
+- `GET /api/gateway/prompt_cache/saved`
+- `POST /api/gateway/prompt_cache/save`
+- `POST /api/gateway/prompt_cache/load`
 - `GET /api/gateway/sessions/{session_id}/prompt_cache/status`
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild`
@@ -1711,6 +1732,10 @@ Treat the three prompt-cache surfaces separately:
 - `/prompt_cache/*`: provider/model prompt-cache controls
 - `/sessions/{session_id}/prompt_cache/*`: gateway-owned volatile session lifecycle
 - `/blocs/*`: durable exact-reuse bloc/KV contract that returns `prompt_cache_binding`
+
+The `saved` / `save` / `load` aliases are Runtime-backed host-local admin
+operations. Local runtimes write under `<DATA_DIR>/prompt_cache_exports`; remote
+and hybrid runtimes report `prompt_cache_local_only`.
 
 ### Multimodal provider/plugin controls
 
@@ -1783,7 +1808,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.15
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.16
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -1791,7 +1816,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.16
 ```
 
 The default image installs the base `abstractgateway` package, which includes:
@@ -1831,7 +1856,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.15
+  ghcr.io/lpalbou/abstractgateway-server:0.2.16
 ```
 
 Other host-native endpoints are also valid: LM Studio at
@@ -1944,7 +1969,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.15-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.16-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -1957,7 +1982,7 @@ PyPI release is available, matching the AbstractCore server image pattern.
 
 # AbstractGateway — Architecture
 
-> Status: implemented (v0.2.15)
+> Status: implemented (v0.2.16)
 > Last reviewed: 2026-05-21
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:

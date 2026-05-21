@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -172,6 +174,28 @@ class _StubGatewayLLMClient:
         _ = (provider, model, llm_kwargs, artifact_store, kwargs)
         self._provider = _StubPromptCacheProvider(model=model)
         self._llm = self._provider
+        root_dir = kwargs.get("prompt_cache_export_root_dir")
+        self._prompt_cache_export_root_dir = Path(root_dir) if root_dir is not None else (Path.cwd() / "prompt_cache_exports")
+        self._exports: Dict[str, Dict[str, Any]] = {}
+
+    def _prompt_cache_caps(self) -> Dict[str, Any]:
+        return self._provider.get_prompt_cache_capabilities().to_dict()
+
+    def _export_name(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("name is required")
+        text = text.replace("/", "-").replace("\\", "-")
+        text = re.sub(r"[^A-Za-z0-9._-]+", "-", text)
+        text = text.strip("._-")
+        return text or "prompt-cache-export"
+
+    def _export_paths(self, *, provider: str, model: str, name: str) -> tuple[str, Path, Path]:
+        normalized_name = self._export_name(name)
+        export_dir = self._prompt_cache_export_root_dir / str(provider or "unknown-provider") / str(model or "unknown-model").replace("/", "__")
+        artifact_path = export_dir / f"{normalized_name}.safetensors"
+        meta_path = export_dir / f"{artifact_path.name}.meta.json"
+        return normalized_name, artifact_path, meta_path
 
     def get_provider_instance(self, *, provider: str, model: str) -> Any:
         _ = (provider, model)
@@ -267,6 +291,157 @@ class _StubGatewayLLMClient:
         result.setdefault("operation", "prepare_modules")
         result.setdefault("capabilities", self._provider.get_prompt_cache_capabilities().to_dict())
         return result
+
+    def list_prompt_cache_exports(
+        self,
+        *,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        root_dir = Path(kwargs.get("prompt_cache_export_root_dir") or self._prompt_cache_export_root_dir)
+        target_provider = str(provider or "stub").strip() or "stub"
+        target_model = str(model or self._provider.model).strip() or str(self._provider.model)
+        items = [
+            dict(item)
+            for item in self._exports.values()
+            if str(item.get("provider") or "") == target_provider and str(item.get("model") or "") == target_model
+        ]
+        items.sort(key=lambda item: str(item.get("saved_at") or item.get("name") or ""), reverse=True)
+        return {
+            "supported": True,
+            "ok": True,
+            "operation": "list_exports",
+            "local_only": True,
+            "provider": target_provider,
+            "model": target_model,
+            "root_dir": str(root_dir),
+            "items": items,
+            "capabilities": self._prompt_cache_caps(),
+        }
+
+    def prompt_cache_export(
+        self,
+        *,
+        name: str,
+        key: str,
+        q8: bool = False,
+        meta: Optional[Dict[str, Any]] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        _ = kwargs
+        target_provider = str(provider or "stub").strip() or "stub"
+        target_model = str(model or self._provider.model).strip() or str(self._provider.model)
+        known_keys = set((self._provider.get_prompt_cache_stats() or {}).get("keys") or [])
+        if str(key or "").strip() not in known_keys:
+            return {
+                "supported": False,
+                "operation": "export",
+                "code": "not_found",
+                "error": f"No in-memory cache found for key '{key}'",
+                "capabilities": self._prompt_cache_caps(),
+            }
+        normalized_name, artifact_path, meta_path = self._export_paths(
+            provider=target_provider,
+            model=target_model,
+            name=name,
+        )
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text("stub prompt cache export", encoding="utf-8")
+        record: Dict[str, Any] = {
+            "schema": "abstractruntime-prompt-cache-export/v1",
+            "name": normalized_name,
+            "provider": target_provider,
+            "model": target_model,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "key": str(key or "").strip(),
+            "artifact_filename": artifact_path.name,
+            "artifact_extension": artifact_path.suffix,
+            "artifact_format": "stub",
+            "token_count": len(known_keys),
+            "provider_meta": dict(meta or {}),
+        }
+        meta_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        item = {
+            "name": normalized_name,
+            "provider": target_provider,
+            "model": target_model,
+            "saved_at": record["saved_at"],
+            "token_count": record["token_count"],
+            "key": record["key"],
+            "artifact_filename": artifact_path.name,
+            "artifact_path": str(artifact_path),
+            "artifact_exists": True,
+            "artifact_extension": artifact_path.suffix,
+            "artifact_format": "stub",
+            "meta_path": str(meta_path),
+            "meta": record,
+        }
+        self._exports[normalized_name] = item
+        return {
+            "supported": True,
+            "ok": True,
+            "operation": "export",
+            "local_only": True,
+            "provider": target_provider,
+            "model": target_model,
+            "name": normalized_name,
+            "artifact_filename": artifact_path.name,
+            "artifact_path": str(artifact_path),
+            "meta_path": str(meta_path),
+            "capabilities": self._prompt_cache_caps(),
+            "meta": record,
+            "provider_response": {"ok": True, "key": str(key or "").strip(), "q8": bool(q8)},
+        }
+
+    def prompt_cache_import(
+        self,
+        *,
+        name: str,
+        key: Optional[str] = None,
+        make_default: bool = True,
+        clear_existing: bool = False,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        _ = kwargs
+        target_provider = str(provider or "stub").strip() or "stub"
+        target_model = str(model or self._provider.model).strip() or str(self._provider.model)
+        normalized_name = self._export_name(name)
+        item = self._exports.get(normalized_name)
+        if item is None:
+            return {
+                "supported": False,
+                "operation": "import",
+                "code": "not_found",
+                "error": f"Prompt cache export '{normalized_name}' was not found for {target_provider}/{target_model}.",
+                "capabilities": self._prompt_cache_caps(),
+            }
+        if bool(clear_existing):
+            self._provider.prompt_cache_clear(None)
+        loaded_key = str(key or "").strip() or "loaded:auto"
+        self._provider.prompt_cache_set(loaded_key, make_default=bool(make_default))
+        self._provider.prompt_cache_update(loaded_key, prompt=f"loaded:{normalized_name}")
+        return {
+            "supported": True,
+            "ok": True,
+            "operation": "import",
+            "local_only": True,
+            "provider": target_provider,
+            "model": target_model,
+            "name": normalized_name,
+            "key": loaded_key,
+            "make_default": bool(make_default),
+            "clear_existing": bool(clear_existing),
+            "artifact_filename": str(item.get("artifact_filename") or ""),
+            "artifact_path": str(item.get("artifact_path") or ""),
+            "capabilities": self._prompt_cache_caps(),
+            "meta": dict(item.get("meta") or {}),
+            "provider_response": {"ok": True, "key": loaded_key},
+        }
 
     def upsert_text_bloc(self, **kwargs: Any) -> Dict[str, Any]:
         _ = kwargs
@@ -402,6 +577,44 @@ class _KeyedGatewayLLMClient:
             "capabilities": self.get_prompt_cache_capabilities()["capabilities"],
         }
 
+    def list_prompt_cache_exports(
+        self,
+        *,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": True,
+            "ok": True,
+            "operation": "list_exports",
+            "local_only": True,
+            "provider": str(provider or "remote").strip() or "remote",
+            "model": str(model or "server-model").strip() or "server-model",
+            "root_dir": str(Path.cwd() / "prompt_cache_exports"),
+            "items": [],
+            "capabilities": self.get_prompt_cache_capabilities()["capabilities"],
+        }
+
+    def prompt_cache_export(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": False,
+            "operation": "export",
+            "code": "prompt_cache_unsupported",
+            "capabilities": self.get_prompt_cache_capabilities()["capabilities"],
+        }
+
+    def prompt_cache_import(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": False,
+            "operation": "import",
+            "code": "prompt_cache_unsupported",
+            "capabilities": self.get_prompt_cache_capabilities()["capabilities"],
+        }
+
     def upsert_text_bloc(self, **kwargs: Any) -> Dict[str, Any]:
         _ = kwargs
         return {"ok": True, "operation": "upsert_text", "record": {"bloc_id": 1, "sha256": "stub-sha"}}
@@ -469,6 +682,58 @@ class _UnsupportedGatewayLLMClient(_KeyedGatewayLLMClient):
         }
 
 
+class _RemotePromptCacheGatewayLLMClient(_KeyedGatewayLLMClient):
+    def __init__(self) -> None:
+        super().__init__(provider="remote", model="server-model")
+
+    def get_prompt_cache_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": False,
+            "operation": "capabilities",
+            "capabilities": {"supported": False, "mode": "none"},
+        }
+
+    def list_prompt_cache_exports(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": False,
+            "operation": "list_exports",
+            "code": "prompt_cache_local_only",
+            "error": (
+                "Prompt cache export/import admin is local-only. "
+                "Remote and hybrid runtimes do not expose a host-local prompt-cache export root."
+            ),
+            "capabilities": {"supported": False, "mode": "none"},
+        }
+
+    def prompt_cache_export(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": False,
+            "operation": "export",
+            "code": "prompt_cache_local_only",
+            "error": (
+                "Prompt cache export/import admin is local-only. "
+                "Remote and hybrid runtimes do not expose a host-local prompt-cache export root."
+            ),
+            "capabilities": {"supported": False, "mode": "none"},
+        }
+
+    def prompt_cache_import(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": False,
+            "operation": "import",
+            "code": "prompt_cache_local_only",
+            "error": (
+                "Prompt cache export/import admin is local-only. "
+                "Remote and hybrid runtimes do not expose a host-local prompt-cache export root."
+            ),
+            "capabilities": {"supported": False, "mode": "none"},
+        }
+
+
 def _make_client(
     *,
     tmp_path: Path,
@@ -490,6 +755,48 @@ def _make_client(
     from abstractruntime.integrations.abstractcore import factory as ac_factory
 
     monkeypatch.setattr(ac_factory, "MultiLocalAbstractCoreLLMClient", llm_client_cls)
+
+    from abstractgateway.app import app
+
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {token}"}
+    return client, headers
+
+
+def _make_remote_client(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[TestClient, dict[str, str]]:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_llm_bundle(bundles_dir=bundles_dir, bundle_id="bundle-cache", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+    monkeypatch.delenv("ABSTRACTGATEWAY_PROVIDER", raising=False)
+    monkeypatch.delenv("ABSTRACTGATEWAY_MODEL", raising=False)
+
+    from abstractruntime import Runtime, WorkflowRegistry
+    from abstractruntime.integrations.abstractcore import factory as ac_factory
+
+    def _fake_create_remote_runtime(**kwargs: Any) -> Runtime:
+        runtime = Runtime(
+            run_store=kwargs["run_store"],
+            ledger_store=kwargs["ledger_store"],
+            workflow_registry=WorkflowRegistry(),
+            artifact_store=kwargs["artifact_store"],
+            effect_handlers={},
+        )
+        setattr(runtime, "_abstractcore_llm_client", _RemotePromptCacheGatewayLLMClient())
+        return runtime
+
+    monkeypatch.setattr(ac_factory, "create_remote_runtime", _fake_create_remote_runtime)
 
     from abstractgateway.app import app
 
@@ -564,6 +871,98 @@ def test_gateway_prompt_cache_routes_use_runtime_client_contract(tmp_path: Path,
         assert body["supported"] is True
         assert body["operation"] == "prepare_modules"
         assert body["capabilities"]["mode"] == "local_control_plane"
+
+
+def test_gateway_prompt_cache_export_import_aliases_use_runtime_surface(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers = _make_client(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        llm_client_cls=_ProtocolOnlyGatewayLLMClient,
+    )
+    expected_root = tmp_path / "runtime" / "prompt_cache_exports"
+    with client:
+        seeded = client.post(
+            "/api/gateway/prompt_cache/set",
+            json={"provider": "stub", "model": "stub-model", "key": "orbit"},
+            headers=headers,
+        )
+        assert seeded.status_code == 200, seeded.text
+        assert seeded.json()["ok"] is True
+
+        exported = client.post(
+            "/api/gateway/prompt_cache/save",
+            json={"provider": "stub", "model": "stub-model", "name": "Orbit Cache", "key": "orbit", "q8": True},
+            headers=headers,
+        )
+        assert exported.status_code == 200, exported.text
+        export_body = exported.json()
+        assert export_body["supported"] is True
+        assert export_body["operation"] == "export"
+        assert export_body["local_only"] is True
+        assert export_body["source"] == "abstractruntime.host_facade"
+        assert export_body["name"] == "Orbit-Cache"
+        assert Path(export_body["artifact_path"]).is_file()
+        assert Path(export_body["artifact_path"]).is_relative_to(expected_root)
+
+        listed = client.get("/api/gateway/prompt_cache/saved?provider=stub&model=stub-model", headers=headers)
+        assert listed.status_code == 200, listed.text
+        listed_body = listed.json()
+        assert listed_body["supported"] is True
+        assert listed_body["operation"] == "list_exports"
+        assert listed_body["local_only"] is True
+        assert listed_body["root_dir"] == str(expected_root)
+        assert len(listed_body["items"]) == 1
+        assert listed_body["items"][0]["artifact_path"] == export_body["artifact_path"]
+
+        imported = client.post(
+            "/api/gateway/prompt_cache/load",
+            json={"provider": "stub", "model": "stub-model", "name": "Orbit Cache", "key": "loaded:orbit", "make_default": True, "clear_existing": True},
+            headers=headers,
+        )
+        assert imported.status_code == 200, imported.text
+        import_body = imported.json()
+        assert import_body["supported"] is True
+        assert import_body["operation"] == "import"
+        assert import_body["local_only"] is True
+        assert import_body["key"] == "loaded:orbit"
+        assert import_body["clear_existing"] is True
+
+
+def test_gateway_prompt_cache_export_import_aliases_are_local_only_for_remote_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, headers = _make_remote_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        listed = client.get("/api/gateway/prompt_cache/saved?provider=stub&model=stub-model", headers=headers)
+        assert listed.status_code == 200, listed.text
+        listed_body = listed.json()
+        assert listed_body["supported"] is False
+        assert listed_body["operation"] == "list_exports"
+        assert listed_body["code"] == "prompt_cache_local_only"
+        assert listed_body["source"] == "abstractruntime.host_facade"
+
+        exported = client.post(
+            "/api/gateway/prompt_cache/save",
+            json={"provider": "stub", "model": "stub-model", "name": "remote-export", "key": "orbit"},
+            headers=headers,
+        )
+        assert exported.status_code == 200, exported.text
+        export_body = exported.json()
+        assert export_body["supported"] is False
+        assert export_body["operation"] == "export"
+        assert export_body["code"] == "prompt_cache_local_only"
+
+        imported = client.post(
+            "/api/gateway/prompt_cache/load",
+            json={"provider": "stub", "model": "stub-model", "name": "remote-export"},
+            headers=headers,
+        )
+        assert imported.status_code == 200, imported.text
+        import_body = imported.json()
+        assert import_body["supported"] is False
+        assert import_body["operation"] == "import"
+        assert import_body["code"] == "prompt_cache_local_only"
 
 
 def test_session_prompt_cache_namespace_is_stable_and_bounded() -> None:

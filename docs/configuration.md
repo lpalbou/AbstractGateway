@@ -20,7 +20,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal,mcp-worker]>=0.4.19`
+- `AbstractRuntime[multimodal,mcp-worker]>=0.4.20`
 - `abstractagent>=0.3.6`
 - `AbstractMemory[lancedb]>=0.2.6`
 
@@ -163,7 +163,9 @@ apps without pretending unsupported providers have local KV state.
 - `POST /api/gateway/blocs/kv/load`
 - `POST /api/gateway/blocs/kv/delete`
 - `POST /api/gateway/blocs/kv/prune`
-- `POST /api/gateway/prompt_cache/save` / `load` for supported local providers
+- `GET /api/gateway/prompt_cache/saved`
+- `POST /api/gateway/prompt_cache/save`
+- `POST /api/gateway/prompt_cache/load`
 - `GET /api/gateway/sessions/{session_id}/prompt_cache/status`
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild`
@@ -179,6 +181,10 @@ Treat the three prompt-cache surfaces separately:
 - `/prompt_cache/*`: provider/model prompt-cache controls
 - `/sessions/{session_id}/prompt_cache/*`: gateway-owned volatile session lifecycle
 - `/blocs/*`: durable exact-reuse bloc/KV contract that returns `prompt_cache_binding`
+
+The `saved` / `save` / `load` aliases are Runtime-backed host-local admin
+operations. Local runtimes write under `<DATA_DIR>/prompt_cache_exports`; remote
+and hybrid runtimes report `prompt_cache_local_only`.
 
 ### Multimodal provider/plugin controls
 

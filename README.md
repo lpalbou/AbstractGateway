@@ -56,7 +56,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.15
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.16
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -64,7 +64,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.16
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
@@ -85,7 +85,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.15
+  ghcr.io/lpalbou/abstractgateway-server:0.2.16
 ```
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the
@@ -102,7 +102,7 @@ For a minimal Apple-local Gateway + Flow setup, see
 
 Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 
-## 0.2.15 capability scope
+## 0.2.16 capability scope
 
 Direct Gateway APIs in this release:
 - `GET /api/gateway/runs/{run_id}/input_data`
@@ -116,6 +116,7 @@ Direct Gateway APIs in this release:
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/models`
 - `/api/gateway/prompt_cache/*` provider/model operator controls
+- `/api/gateway/prompt_cache/saved|save|load` Runtime-backed host-local export/import admin aliases
 - `/api/gateway/sessions/{session_id}/prompt_cache/*` session lifecycle controls
 - `/api/gateway/kg/query` with configurable `lancedb` or in-memory AbstractMemory stores, plus `sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`
 - `/api/gateway/discovery/capabilities` package, plugin, and thin-client contract discovery
@@ -127,6 +128,9 @@ Workflow/Core-backed capabilities:
 - Prompt-cache support depends on the active provider/model. Session lifecycle
   routes provide Gateway-owned naming and orchestration, not a provider-
   independent local KV cache.
+- Prompt-cache export/import admin remains local-only. Local runtimes keep those
+  artifacts under the Gateway data dir; remote and hybrid runtimes return a
+  structured `prompt_cache_local_only` response.
 
 ## Client contract (replay-first)
 

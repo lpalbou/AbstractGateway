@@ -769,6 +769,7 @@ class WorkflowBundleGatewayHost:
                         ledger_store=ledger_store,
                         artifact_store=artifact_store,
                         tool_executor=tool_executor,
+                        prompt_cache_export_root_dir=data_root / "prompt_cache_exports",
                         extra_effect_handlers=extra_effect_handlers,
                     )
                 runtime.set_workflow_registry(wf_reg)
