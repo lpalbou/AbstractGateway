@@ -825,7 +825,7 @@
 <h2 id="abstractframework-ecosystem-context">AbstractFramework ecosystem (context)<a class="headerlink" href="#abstractframework-ecosystem-context" title="Permanent link">&para;</a></h2>
 <p>AbstractGateway is one component in the larger <strong>AbstractFramework</strong> ecosystem:
 - <strong>AbstractRuntime</strong> (required): durable runs + workflow registry + stores
-- <strong>AbstractCore / AbstractVoice / AbstractVision / AbstractMemory</strong> (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles</p>
+- <strong>AbstractRuntime + transitive capability packages</strong> (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution</p>
 <p>Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
 - AbstractCore: https://github.com/lpalbou/abstractcore
@@ -841,7 +841,7 @@
 <li><strong>VisualFlow directory mode</strong> (compat): a directory of <code>*.json</code> VisualFlow files; the base install includes the compiler dependency</li>
 </ul>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="c1"># Remote-light server package (HTTP/SSE + runner + stores + Core remote stack + KG memory)</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Remote-light server package (HTTP/SSE + runner + stores + Runtime multimodal stack + KG memory)</span>
 pip<span class="w"> </span>install<span class="w"> </span>abstractgateway
 
 <span class="c1"># Native Apple local engines</span>
@@ -911,21 +911,20 @@ abstractgateway<span class="w"> </span>runner
 abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
 <h2 id="3b-docker-compose">3b) Docker / Compose<a class="headerlink" href="#3b-docker-compose" title="Permanent link">&para;</a></h2>
-<p>For a containerized deployment with AbstractRuntime multimodal support,
-AbstractCore remote providers, workflow-backed/direct AbstractVision image
-generation, direct Gateway voice/audio/image endpoints, and provider/session
-prompt-cache controls included:</p>
+<p>For a containerized deployment with <code>AbstractRuntime[multimodal,mcp-worker]</code>,
+Runtime-owned provider/media/tool support, direct Gateway voice/audio/image
+endpoints, and provider/session prompt-cache controls included:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import secrets; print(secrets.token_urlsafe(32))&#39;</span><span class="k">)</span><span class="s2">&quot;</span>
 
 docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-p<span class="w"> </span><span class="m">127</span>.0.0.1:8080:8080<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway:/data/gateway&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/flows/bundles:/data/flows:ro&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.8
+<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.15
 </code></pre></div>
 <p>See <a href="../deployment/">deployment.md</a> for Compose, provider keys, and image
 customization.</p>
-<p>NVIDIA hosts can try <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8</code>
+<p>NVIDIA hosts can try <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15</code>
 with the compose overlay in <code>docker/abstractgateway-server/compose.nvidia.yml</code>.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

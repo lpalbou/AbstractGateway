@@ -807,6 +807,10 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 <p>CLI helpers:
 - <code>abstractgateway triage-reports</code> (scan inbox → decision queue; optional draft writing)
 - <code>abstractgateway triage-apply &lt;decision_id&gt; approve|reject|defer</code></p>
+<p>Notification helpers used by <code>triage-reports --notify</code>:
+- Telegram: <code>ABSTRACT_BACKLOG_TELEGRAM_CHAT_ID</code> or <code>ABSTRACT_TRIAGE_TELEGRAM_CHAT_ID</code>
+- Email recipients: <code>ABSTRACT_BACKLOG_EMAIL_TO</code> or <code>ABSTRACT_TRIAGE_EMAIL_TO</code>
+- Optional email account override: <code>ABSTRACT_BACKLOG_EMAIL_ACCOUNT</code> or <code>ABSTRACT_TRIAGE_EMAIL_ACCOUNT</code></p>
 <p>Evidence: CLI wiring in <code>src/abstractgateway/cli.py</code>.</p>
 <h2 id="backlog-browsingediting-repo-dependent">Backlog browsing/editing (repo-dependent)<a class="headerlink" href="#backlog-browsingediting-repo-dependent" title="Permanent link">&para;</a></h2>
 <p>The gateway also exposes endpoints that read/write backlog Markdown files in a repository layout that includes <code>docs/backlog/*</code>.</p>
@@ -905,11 +909,11 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 - <code>GET /api/gateway/email/messages</code>
 - <code>GET /api/gateway/email/messages/{uid}</code>
 - <code>POST /api/gateway/email/send</code></p>
-<p>These endpoints proxy to AbstractCore comms tools and never accept arbitrary IMAP/SMTP host/user secrets from the browser.</p>
+<p>These endpoints proxy through Gateway's Runtime comms facade and never accept arbitrary IMAP/SMTP host/user secrets from the browser.</p>
 <p>Configuration notes:
 - Multi-account: set <code>ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml</code> (recommended).
 - Single-account env fallback: <code>ABSTRACT_EMAIL_IMAP_*</code> / <code>ABSTRACT_EMAIL_SMTP_*</code>.</p>
-<p>Evidence: <code>/api/gateway/email/*</code> routes in <code>src/abstractgateway/routes/gateway.py</code> which call <code>abstractcore.tools.comms_tools</code>.</p>
+<p>Evidence: <code>/api/gateway/email/*</code> routes in <code>src/abstractgateway/routes/gateway.py</code> which call the Runtime AbstractCore comms facade.</p>
 <h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
 <ul>
 <li>API overview (core client contract): <a href="../api/">api.md</a></li>

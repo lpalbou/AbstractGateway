@@ -701,32 +701,28 @@
 <p>AbstractGateway can run as a Python process or as a containerized server. The
 container path is the recommended baseline for a single self-contained Gateway
 deployment because it packages the HTTP API, durable runner, AbstractRuntime,
-and the remote-provider/multimodal AbstractCore stack together.</p>
+and the Runtime-owned provider/media/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
 <p>Release images are published to GHCR. The default image is the light,
 portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server:0.2.8
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server:0.2.15
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
 vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.8
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15
 </code></pre></div>
 <p>The default image installs the base <code>abstractgateway</code> package, which includes:</p>
 <ul>
-<li><code>AbstractRuntime[multimodal]</code></li>
-<li><code>abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]</code></li>
+<li><code>AbstractRuntime[multimodal,mcp-worker]</code></li>
 <li><code>AbstractMemory[lancedb]&gt;=0.2.6</code></li>
-<li><code>abstractvision</code></li>
-<li><code>abstractvoice</code></li>
 <li><code>abstractagent</code></li>
 <li><code>abstractflow</code></li>
 <li>FastAPI/Uvicorn</li>
 </ul>
 <p>This profile supports hosted/commercial providers, OpenAI-compatible text
-provider routing, workflow-backed and direct image generation through
-Runtime/Core/AbstractVision, direct Gateway voice/STT endpoints through
-AbstractVoice, and provider/session prompt-cache controls.
+provider routing, workflow-backed and direct image/voice/STT generation through
+Runtime facades, and provider/session prompt-cache controls.
 It intentionally stays dependency-light for heavy local model runtimes: MLX,
 vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
 engines, and future AbstractMusic engines remain explicit opt-ins.</p>
@@ -748,7 +744,7 @@ host-native OpenAI-compatible inference endpoint:</p>
 <span class="w">  </span>-e<span class="w"> </span><span class="nv">OPENAI_COMPATIBLE_BASE_URL</span><span class="o">=</span><span class="s2">&quot;http://model-runner.docker.internal/engines/v1&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway:/data/gateway&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/flows/bundles:/data/flows:ro&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.8
+<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.15
 </code></pre></div>
 <p>Other host-native endpoints are also valid: LM Studio at
 <code>http://host.docker.internal:1234/v1</code>, Ollama's OpenAI-compatible API at
@@ -815,7 +811,7 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Aut
 </ul>
 <p>Core catalog proxying:</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL</code>: explicit standalone Core server URL for voice, TTS/STT, and vision catalog routes</li>
+<li><code>ABSTRACTCORE_SERVER_BASE_URL</code>: explicit standalone Core server URL for voice, TTS/STT, and vision catalog routes</li>
 <li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN</code>: Core server auth token, separate from Gateway auth</li>
 <li><code>ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S</code>: timeout for catalog routes</li>
 </ul>
@@ -841,7 +837,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.8-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.15-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the

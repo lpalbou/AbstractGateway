@@ -1199,13 +1199,13 @@ versioned contract fields when enabling controls.</p>
 - <code>GET /api/gateway/audio/speech/models</code>
 - <code>GET /api/gateway/vision/provider_models</code></p>
 <p>The catalog endpoints proxy AbstractCore Server routes when
-<code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL</code> or <code>ABSTRACTCORE_SERVER_BASE_URL</code>
+<code>ABSTRACTCORE_SERVER_BASE_URL</code>
 is configured. Gateway uses explicit Core auth settings for that hop and never
 reuses the Gateway bearer token as a Core/provider secret. Without a configured
 Core server, the voice/model routes return bounded static descriptors from
 Gateway and capability-package environment variables.</p>
-<p>Generated images are available through Runtime/Core workflows when
-AbstractVision is installed and configured. Gateway also exposes a direct image
+<p>Generated images are available through Runtime workflows when a compatible
+image backend is installed and configured. Gateway also exposes a direct image
 generation endpoint that uses the Runtime/Core output-selector contract rather
 than a provider-specific image client. The route stores the generated image as a
 run artifact and emits <code>abstract.media.image.generated</code> with:</p>
@@ -1271,6 +1271,30 @@ recall.</p>
 <code>workflow_instructions</code>, <code>tools</code>, <code>pinned_attachments</code>) and returns either
 provider operation results or a key hint. <code>rebuild</code> is clear-plus-prepare for
 providers that expose clear controls.</p>
+<p>Durable bloc exact-reuse endpoints:</p>
+<ul>
+<li><code>POST /api/gateway/blocs/upsert_text</code></li>
+<li><code>GET /api/gateway/blocs/record</code></li>
+<li><code>GET /api/gateway/blocs</code></li>
+<li><code>POST /api/gateway/blocs/delete</code></li>
+<li><code>GET /api/gateway/blocs/kv/manifest</code></li>
+<li><code>GET /api/gateway/blocs/kv/list</code></li>
+<li><code>POST /api/gateway/blocs/kv/ensure</code></li>
+<li><code>POST /api/gateway/blocs/kv/load</code></li>
+<li><code>POST /api/gateway/blocs/kv/delete</code></li>
+<li><code>POST /api/gateway/blocs/kv/prune</code></li>
+</ul>
+<p>These routes are the primary app-facing durable prompt-cache path:</p>
+<ul>
+<li>create or identify a durable text bloc;</li>
+<li>ensure or load a KV artifact for a target local provider/model;</li>
+<li>use the returned <code>prompt_cache_binding</code> in later Runtime-backed generation;</li>
+<li>list/delete/prune artifacts without reaching into provider-private cache state.</li>
+</ul>
+<p>They delegate through Runtime's public AbstractCore host facade rather than
+proxying Core directly. They are operator-style host controls, so the routes
+themselves are not ledgered run execution; the ledgered exact-reuse path is the
+later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime runs.</p>
 <p>Provider-specific persistence endpoints:</p>
 <ul>
 <li><code>GET /api/gateway/prompt_cache/saved</code></li>
@@ -1305,7 +1329,7 @@ providers that expose clear controls.</p>
 - Multi-account: set <code>ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml</code> (recommended).
 - Single-account env fallback: set <code>ABSTRACT_EMAIL_IMAP_*</code> and/or <code>ABSTRACT_EMAIL_SMTP_*</code>.
 - The secret itself must be present in the env var referenced by <code>*_PASSWORD_ENV_VAR</code> (e.g. <code>EMAIL_PASSWORD=...</code>).</p>
-<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>/email/accounts|messages|send</code>) which proxies to <code>abstractcore.tools.comms_tools</code>.</p>
+<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>/email/accounts|messages|send</code>) which proxies to the Runtime AbstractCore comms facade.</p>
 <p>Troubleshooting and common questions: <a href="../faq/">faq.md</a>.</p>
 
 

@@ -889,10 +889,9 @@
 <p>AbstractGateway is configured primarily via <strong>environment variables</strong> (plus a few CLI flags).</p>
 <h2 id="install-extras-recommended">Install extras (recommended)<a class="headerlink" href="#install-extras-recommended" title="Permanent link">&para;</a></h2>
 <p>The base install (<code>pip install abstractgateway</code>) is the remote-light server
-profile: HTTP/SSE, durable stores, AbstractRuntime multimodal, AbstractCore
-remote provider/media/tool support, AbstractVision, AbstractVoice,
-AbstractAgent, AbstractFlow compatibility, and AbstractMemory/LanceDB KG
-support.</p>
+profile: HTTP/SSE, durable stores, <code>AbstractRuntime[multimodal,mcp-worker]</code>,
+Runtime-owned provider/media/tool support, AbstractAgent, AbstractFlow
+compatibility, and AbstractMemory/LanceDB KG support.</p>
 <p>Optional extras (see <code>pyproject.toml</code>):
 - <code>abstractgateway[apple]</code>: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
 - <code>abstractgateway[gpu]</code>: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
@@ -903,12 +902,9 @@ support.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors:
-- <code>AbstractRuntime[multimodal]&gt;=0.4.10</code>
+- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.19</code>
 - <code>abstractagent&gt;=0.3.6</code>
-- <code>abstractcore[remote,media,tools,tokens,compression,vision,voice,audio]&gt;=2.13.13</code>
-- <code>AbstractMemory[lancedb]&gt;=0.2.6</code>
-- <code>abstractvision&gt;=0.3.4</code>
-- <code>abstractvoice&gt;=0.9.3</code></p>
+- <code>AbstractMemory[lancedb]&gt;=0.2.6</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
 <h2 id="configuration-helper">Configuration helper<a class="headerlink" href="#configuration-helper" title="Permanent link">&para;</a></h2>
@@ -920,8 +916,7 @@ abstractgateway<span class="w"> </span>config<span class="w"> </span>status<span
 <p>It reports Gateway auth/data/store/runtime defaults, Core-server handoff
 configuration, memory-store selection, and package readiness. <code>init</code> writes a
 private env file with a generated Gateway token. Provider API keys, provider
-base URLs, Core server settings, and global Core model defaults remain owned by
-<code>abstractcore-config</code>.</p>
+base URLs and Core server settings remain owned by <code>abstractcore-config</code>.</p>
 <h2 id="core-environment-variables">Core environment variables<a class="headerlink" href="#core-environment-variables" title="Permanent link">&para;</a></h2>
 <h3 id="paths-workflow-source">Paths + workflow source<a class="headerlink" href="#paths-workflow-source" title="Permanent link">&para;</a></h3>
 <ul>
@@ -984,9 +979,9 @@ persistence, vector support, and embedder status.</p>
 <li><code>ABSTRACTGATEWAY_PROVIDER</code> / <code>ABSTRACTGATEWAY_MODEL</code><br />
   Used as defaults for LLM execution and Gateway LLM helper endpoints. Resolution
   order is: explicit request/provider-model pins, Gateway env, flow-pinned
-  defaults when compiling bundles, then AbstractCore global defaults from
-  <code>abstractcore-config</code>. If no pair is configured, helpers return a clear
-  configuration error instead of falling back to a hardcoded model.
+  defaults when compiling bundles. If no pair is configured, helpers return a
+  clear configuration error instead of falling back to a hardcoded model or a
+  separate AbstractCore config file.
   Evidence: <code>src/abstractgateway/provider_defaults.py</code>, <code>src/abstractgateway/hosts/bundle_host.py</code></li>
 <li><code>ABSTRACTGATEWAY_TOOL_MODE</code>:</li>
 <li><code>approval</code> (default): execute safe tools locally; require explicit approval for dangerous/unknown tools</li>
@@ -1018,6 +1013,16 @@ apps without pretending unsupported providers have local KV state.</p>
 <li><code>POST /api/gateway/prompt_cache/fork</code></li>
 <li><code>POST /api/gateway/prompt_cache/clear</code></li>
 <li><code>POST /api/gateway/prompt_cache/prepare_modules</code></li>
+<li><code>POST /api/gateway/blocs/upsert_text</code></li>
+<li><code>GET /api/gateway/blocs/record</code></li>
+<li><code>GET /api/gateway/blocs</code></li>
+<li><code>POST /api/gateway/blocs/delete</code></li>
+<li><code>GET /api/gateway/blocs/kv/manifest</code></li>
+<li><code>GET /api/gateway/blocs/kv/list</code></li>
+<li><code>POST /api/gateway/blocs/kv/ensure</code></li>
+<li><code>POST /api/gateway/blocs/kv/load</code></li>
+<li><code>POST /api/gateway/blocs/kv/delete</code></li>
+<li><code>POST /api/gateway/blocs/kv/prune</code></li>
 <li><code>POST /api/gateway/prompt_cache/save</code> / <code>load</code> for supported local providers</li>
 <li><code>GET /api/gateway/sessions/{session_id}/prompt_cache/status</code></li>
 <li><code>POST /api/gateway/sessions/{session_id}/prompt_cache/prepare</code></li>
@@ -1028,6 +1033,12 @@ apps without pretending unsupported providers have local KV state.</p>
 <code>local_control_plane</code> modes. Keyed providers receive a stable <code>runtime_hint</code>;
 local-control-plane providers can prepare, clear, and rebuild when their
 AbstractCore provider exposes those operations.</p>
+<p>Treat the three prompt-cache surfaces separately:</p>
+<ul>
+<li><code>/prompt_cache/*</code>: provider/model prompt-cache controls</li>
+<li><code>/sessions/{session_id}/prompt_cache/*</code>: gateway-owned volatile session lifecycle</li>
+<li><code>/blocs/*</code>: durable exact-reuse bloc/KV contract that returns <code>prompt_cache_binding</code></li>
+</ul>
 <h3 id="multimodal-providerplugin-controls">Multimodal provider/plugin controls<a class="headerlink" href="#multimodal-providerplugin-controls" title="Permanent link">&para;</a></h3>
 <p>The <code>server</code>, <code>multimodal</code>, and <code>all</code> extras install the lightweight AbstractCore
 plugin surface for generated images, generated voice, STT, and future music/video
@@ -1049,7 +1060,7 @@ heavy engines remain explicit opt-ins in the provider packages.</p>
 <li><code>ABSTRACTGATEWAY_VOICE_TTS_MODEL</code> / <code>ABSTRACTGATEWAY_VOICE_STT_MODEL</code>: Gateway-scoped TTS/STT model defaults.</li>
 <li><code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code>: remote voice endpoint used by AbstractVoice.</li>
 <li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, and future <code>music</code>; also returns <code>capabilities.contracts.version=1</code> with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls</li>
-<li><code>GET /api/gateway/voice/voices</code>: proxies AbstractCore <code>/v1/audio/voices</code> when <code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL</code> or <code>ABSTRACTCORE_SERVER_BASE_URL</code> is configured; otherwise returns static Gateway/env voice descriptors.</li>
+<li><code>GET /api/gateway/voice/voices</code>: proxies AbstractCore <code>/v1/audio/voices</code> when <code>ABSTRACTCORE_SERVER_BASE_URL</code> is configured; otherwise returns static Gateway/env voice descriptors.</li>
 <li><code>GET /api/gateway/audio/speech/models</code>: proxies AbstractCore <code>/v1/audio/speech/models</code> when configured.</li>
 <li><code>GET /api/gateway/audio/transcriptions/models</code>: proxies AbstractCore <code>/v1/audio/transcriptions/models</code> when configured.</li>
 <li><code>GET /api/gateway/vision/provider_models</code>: proxies AbstractCore <code>/v1/vision/provider_models</code> when configured.</li>
@@ -1057,7 +1068,7 @@ heavy engines remain explicit opt-ins in the provider packages.</p>
 </ul>
 <p>Core catalog proxy settings:</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL</code> (or <code>ABSTRACTCORE_SERVER_BASE_URL</code>): explicit Core server base URL for catalog proxying.</li>
+<li><code>ABSTRACTCORE_SERVER_BASE_URL</code>: explicit Core server base URL for catalog proxying.</li>
 <li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN</code> / <code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY</code> (or <code>ABSTRACTCORE_SERVER_API_KEY</code>): Core server auth token. This is separate from Gateway auth.</li>
 <li><code>ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S</code>: catalog proxy timeout (default <code>3.0</code> seconds).</li>
 </ul>

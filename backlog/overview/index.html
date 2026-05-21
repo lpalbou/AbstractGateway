@@ -560,6 +560,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#deprecated-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deprecated Work
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#planning-notes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -604,12 +615,12 @@
 <h1 id="abstractgateway-backlog-overview">AbstractGateway Backlog Overview<a class="headerlink" href="#abstractgateway-backlog-overview" title="Permanent link">&para;</a></h1>
 <h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
 <p>AbstractGateway is a durable HTTP/SSE host for AbstractRuntime runs. The current
-0.2.8 surface already provides run start/schedule/input/history, durable
+0.2.15 surface already provides run start/schedule/input/history, durable
 commands, ledger replay/streaming, artifacts, VisualFlow CRUD/publish,
-workspace policy, provider and tool discovery, direct voice TTS, audio
-transcription, direct generated image artifacts/events, provider-level and
-session-level prompt-cache controls, optional embeddings/KG helpers with
-configurable memory stores, Core-backed voice/vision catalog proxy endpoints,
+workspace policy, provider and tool discovery, Runtime-owned direct voice TTS,
+audio transcription, direct generated image child-run artifacts, provider-level
+and session-level prompt-cache controls, optional embeddings/KG helpers with
+configurable memory stores, Runtime-backed voice/vision discovery routes,
 explicit install/config profiles, and a versioned thin-client capability
 contract for Flow, Assistant, Code, and shared Gateway features.</p>
 <p>The next planning focus is to make the gateway a premium control plane for thin
@@ -620,9 +631,9 @@ gateway packages.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Planned: 0</li>
-<li>Proposed: 0</li>
-<li>Completed: 8</li>
-<li>Deprecated: 0</li>
+<li>Proposed: 4</li>
+<li>Completed: 12</li>
+<li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
 <h2 id="priority-bands">Priority Bands<a class="headerlink" href="#priority-bands" title="Permanent link">&para;</a></h2>
@@ -631,30 +642,18 @@ gateway packages.</p>
 <li>Completed: 020 AbstractFlow gateway-first editor contract and validation.</li>
 <li>Completed: 030 Gateway-owned session prompt-cache lifecycle.</li>
 <li>Completed: 040 Generated-media artifact and direct image contract.</li>
+<li>Completed: model residency, truthful media residency, durable bloc prompt-cache exposure, and Runtime boundary cleanup for workspace/comms/Telegram.</li>
 <li>Completed: install profiles and configuration entrypoint.</li>
 <li>Completed: memory store resolver and TripleStore abstraction.</li>
 <li>Completed: Core-backed Voice/Vision catalog proxy endpoints.</li>
+<li>Proposed: provider-private prompt-cache save/load migration via Runtime.</li>
 </ul>
 <h2 id="next-recommended-work">Next Recommended Work<a class="headerlink" href="#next-recommended-work" title="Permanent link">&para;</a></h2>
-<p>No planned or proposed items remain. Next, watch client adoption of the new
-install/config, memory, and catalog contracts before expanding them.</p>
+<p>The main Runtime-owned boundary work is done. The next clean follow-up is
+provider-private prompt-cache save/load via Runtime, which remains intentionally
+separate from the app-facing durable bloc/KV contract.</p>
 <h2 id="planned-items">Planned Items<a class="headerlink" href="#planned-items" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Priority</th>
-<th>Item</th>
-<th>Why now</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>-</td>
-<td>None</td>
-<td>All planned items are complete.</td>
-</tr>
-</tbody>
-</table>
+<p>No planned items at the moment.</p>
 <h2 id="proposed-items">Proposed Items<a class="headerlink" href="#proposed-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -665,23 +664,29 @@ install/config, memory, and catalog contracts before expanding them.</p>
 </thead>
 <tbody>
 <tr>
-<td>-</td>
-<td>None</td>
+<td><a href="../proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs/">2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md</a></td>
+<td>Promote when Gateway draft-space semantics and ephemeral-run lifecycle are validated against Flow UX and ledger expectations.</td>
+</tr>
+<tr>
+<td><a href="../proposed/2026-05-13_shared_identity_context/">2026-05-13_shared_identity_context.md</a></td>
+<td>Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work.</td>
+</tr>
+<tr>
+<td><a href="../proposed/2026-05-20_gateway_prompt_cache_save_load_via_runtime/">2026-05-20_gateway_prompt_cache_save_load_via_runtime.md</a></td>
+<td>Promote when Runtime defines a public local-admin prompt-cache save/load surface.</td>
+</tr>
+<tr>
+<td><a href="../proposed/offline_first_gateway_connectivity/">offline_first_gateway_connectivity.md</a></td>
+<td>Promote when offline-first connectivity guarantees become a near-term product commitment.</td>
 </tr>
 </tbody>
 </table>
-<p>The three incoming proposals were merged into completed/planned work:</p>
-<ul>
-<li><code>proposed/2026-05-07_assistant-thin-client-capability-contract.md</code></li>
-<li><code>proposed/2026-05-07_gateway-owned-assistant-session-cache.md</code></li>
-<li><code>proposed/2026-05-08_abstractflow-gateway-first-editor-contract.md</code></li>
-</ul>
 <h2 id="completed-work-ledger">Completed Work Ledger<a class="headerlink" href="#completed-work-ledger" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
 <th>Item</th>
-<th>Original planned path</th>
+<th>Original path</th>
 <th>Completed path</th>
 <th>Outcome</th>
 <th>Validation</th>
@@ -744,6 +749,49 @@ install/config, memory, and catalog contracts before expanding them.</p>
 <td>Gateway now exposes voice, speech-model, and vision provider-model catalog endpoints that proxy AbstractCore catalog routes when configured and use static bounded fallback otherwise.</td>
 <td><code>PYTHONPATH=src pytest -q tests/test_gateway_capability_catalog_proxy.py</code>.</td>
 </tr>
+<tr>
+<td>Gateway model residency control plane</td>
+<td><code>proposed/2026-05-19_model_residency_gateway_control_plane.md</code></td>
+<td><a href="../completed/2026-05-19_model_residency_gateway_control_plane/">completed/2026-05-19_model_residency_gateway_control_plane.md</a></td>
+<td>Gateway now exposes <code>/api/gateway/models/loaded|load|unload</code> through Runtime's public host facade instead of direct Core route logic.</td>
+<td><code>PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_model_residency_endpoints.py tests/test_capabilities_endpoint_contract.py</code>.</td>
+</tr>
+<tr>
+<td>Gateway durable bloc prompt-cache contract via Runtime</td>
+<td><code>proposed/2026-05-20_gateway_durable_bloc_prompt_cache_contract.md</code></td>
+<td><a href="../completed/2026-05-20_gateway_durable_bloc_prompt_cache_contract/">completed/2026-05-20_gateway_durable_bloc_prompt_cache_contract.md</a></td>
+<td>Gateway now exposes durable bloc/KV/binding routes through Runtime and distinguishes that app-facing contract from provider-private snapshot save/load.</td>
+<td><code>PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_durable_bloc_prompt_cache_endpoints.py tests/test_gateway_prompt_cache_endpoints.py tests/test_capabilities_endpoint_contract.py</code>.</td>
+</tr>
+<tr>
+<td>Truthful media residency gateway contract</td>
+<td><code>proposed/2026-05-20_truthful_media_residency_gateway_contract.md</code></td>
+<td><a href="../completed/2026-05-20_truthful_media_residency_gateway_contract/">completed/2026-05-20_truthful_media_residency_gateway_contract.md</a></td>
+<td>Gateway now advertises media residency truthfully and delegates the residency routes through Runtime's public host facade.</td>
+<td><code>PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_model_residency_endpoints.py tests/test_capabilities_endpoint_contract.py tests/test_gateway_capability_catalog_proxy.py</code>.</td>
+</tr>
+<tr>
+<td>Gateway Runtime boundary cleanup for workspace, comms, and Telegram</td>
+<td><code>planned/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md</code></td>
+<td><a href="../completed/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram/">completed/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md</a></td>
+<td>Gateway now owns workspace/file helpers locally, uses Runtime comms/Telegram helper surfaces for operator paths, and no longer imports <code>abstractcore</code> directly in source.</td>
+<td><code>PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_email_inbox_endpoints.py tests/test_gateway_cli_split_runner.py tests/test_gateway_telegram_bridge_unit.py tests/test_gateway_discovery_endpoints.py tests/test_gateway_files_skim_endpoint.py tests/test_gateway_attachments_ingest.py tests/test_gateway_workspace_policy_enforcement.py tests/test_maintenance_notifier_unit.py</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="deprecated-work">Deprecated Work<a class="headerlink" href="#deprecated-work" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary/">deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md</a></td>
+<td>Superseded by completed Runtime-owned media/discovery/control-plane work plus the narrower planned cleanup for workspace, comms, and Telegram.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="planning-notes">Planning Notes<a class="headerlink" href="#planning-notes" title="Permanent link">&para;</a></h2>
@@ -758,6 +806,9 @@ install/config, memory, and catalog contracts before expanding them.</p>
   pretending unsupported providers have local KV state.</li>
 <li>Generated image support is now both workflow-backed and directly available
   through Gateway when a Runtime/Core image backend is configured.</li>
+<li>Gateway source now imports Runtime rather than Core directly for the main
+  execution path and the remaining comms/Telegram helper paths. Deeper Runtime
+  host-helper polish can continue without reopening Gateway's source boundary.</li>
 </ul>
 <h2 id="completion-process">Completion Process<a class="headerlink" href="#completion-process" title="Permanent link">&para;</a></h2>
 <p>When a planned item is completed:</p>

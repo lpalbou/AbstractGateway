@@ -1297,7 +1297,7 @@ For the full API surface, rely on the live OpenAPI spec (<code>/openapi.json</co
 <ul>
 <li><strong>AbstractRuntime</strong> (required): the durable run model + tick loop + stores (declared in <code>pyproject.toml</code>).</li>
 <li><strong>AbstractGateway</strong> (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in <code>src/abstractgateway/routes/gateway.py</code>).</li>
-<li><strong>AbstractCore / AbstractVoice / AbstractVision / AbstractMemory</strong> (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
+<li><strong>AbstractRuntime + transitive capability packages</strong> (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
 <li>Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).</li>
 </ul>
 <p>Related repos:
@@ -1403,8 +1403,8 @@ The background runner polls the inbox and applies commands asynchronously.</p>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_MODEL</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
 </code></pre></div>
 <p>Alternatives:
-- Configure global defaults via AbstractCore config (<code>abstractcore --config</code>, inspect with <code>abstractcore --status</code>).
-- Pin provider/model on at least one <code>llm_call</code> or <code>agent</code> node; the gateway scans the flow JSON for defaults.</p>
+- Pin provider/model on at least one <code>llm_call</code> or <code>agent</code> node; the gateway scans the flow JSON for defaults.
+- Set Gateway env defaults before startup and keep provider secrets/base URLs in <code>abstractcore-config</code>.</p>
 <p>Evidence: <code>_scan_flows_for_llm_defaults</code> + provider/model selection in <code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h3 id="why-do-tool-calls-not-execute">Why do tool calls not execute?<a class="headerlink" href="#why-do-tool-calls-not-execute" title="Permanent link">&para;</a></h3>
 <p>In bundle mode, tool execution is controlled by:</p>
@@ -1416,36 +1416,38 @@ The background runner polls the inbox and applies commands asynchronously.</p>
 </ul>
 <p>Evidence: tool executor selection in <code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h3 id="why-do-voicetts-or-audiotranscribe-fail-with-capability-unavailable">Why do <code>/voice/tts</code> or <code>/audio/transcribe</code> fail with “capability unavailable”?<a class="headerlink" href="#why-do-voicetts-or-audiotranscribe-fail-with-capability-unavailable" title="Permanent link">&para;</a></h3>
-<p>Those endpoints are backed by <strong>AbstractVoice</strong> (<code>abstractvoice</code>), which is
-included by the base <code>abstractgateway</code> install. Verify the installed package
-set with:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>show<span class="w"> </span>abstractgateway<span class="w"> </span>abstractvoice<span class="w"> </span>abstractcore
+<p>Those endpoints are surfaced through Runtime's voice/audio integration path and
+the required capability packages are included by the base <code>abstractgateway</code>
+install. Verify the installed package set with:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>show<span class="w"> </span>abstractgateway<span class="w"> </span>AbstractRuntime<span class="w"> </span>abstractcore
 </code></pre></div>
-<p>By default, the gateway allows AbstractVoice to download models on first use. If you disabled downloads (or want to enable them explicitly), set:</p>
+<p>By default, the gateway allows the configured voice backend to download models on first use. If you disabled downloads (or want to enable them explicitly), set:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS</span><span class="o">=</span><span class="m">1</span>
 </code></pre></div>
-<p>For remote/OpenAI-compatible voice backends, configure AbstractVoice's native
+<p>For remote/OpenAI-compatible voice backends, configure the Gateway-scoped voice
 environment variables in the gateway process, for example
-<code>ABSTRACTVOICE_TTS_ENGINE</code>, <code>ABSTRACTVOICE_STT_ENGINE</code>,
-<code>ABSTRACTVOICE_REMOTE_BASE_URL</code>, and <code>ABSTRACTVOICE_REMOTE_API_KEY</code>.</p>
+<code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code>, <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code>,
+<code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code>, and
+<code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code> (legacy <code>ABSTRACTVOICE_*</code> names still
+work).</p>
 <h3 id="how-do-i-enable-generated-images-or-runtime-managed-multimodal-outputs">How do I enable generated images or Runtime-managed multimodal outputs?<a class="headerlink" href="#how-do-i-enable-generated-images-or-runtime-managed-multimodal-outputs" title="Permanent link">&para;</a></h3>
 <p>Use the base install:</p>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>abstractgateway
 </code></pre></div>
-<p>The base install includes <code>AbstractRuntime[multimodal]</code>, AbstractCore's
-<code>vision</code>/<code>voice</code>/<code>audio</code> extras, <code>abstractvision&gt;=0.3.4</code>, and
-<code>abstractvoice&gt;=0.9.3</code>. The server image defaults image and audio generation to
-OpenAI remote endpoints; set <code>OPENAI_API_KEY</code> (or the <code>ABSTRACTGATEWAY_VISION_*</code> /
-<code>ABSTRACTGATEWAY_VOICE_*</code> overrides) before expecting live generation to succeed. Use
-<code>ABSTRACTGATEWAY_VISION_BACKEND=diffusers</code> or <code>sdcpp</code> only for custom images that
-intentionally include those local engines.</p>
-<p>Generated images are available both inside Runtime/Core workflows and through
+<p>The base install includes <code>AbstractRuntime[multimodal,mcp-worker]</code> plus the
+Runtime-owned media/tool integration stack. The server image defaults image and
+audio generation to OpenAI remote endpoints; set <code>OPENAI_API_KEY</code> (or the
+<code>ABSTRACTGATEWAY_VISION_*</code> / <code>ABSTRACTGATEWAY_VOICE_*</code> overrides) before
+expecting live generation to succeed. Use
+<code>ABSTRACTGATEWAY_VISION_BACKEND=diffusers</code> or <code>sdcpp</code> only for custom images
+that intentionally include those local engines.</p>
+<p>Generated images are available both inside Runtime workflows and through
 Gateway's direct run-scoped endpoint:</p>
 <div class="highlight"><pre><span></span><code>POST /api/gateway/runs/{run_id}/images/generate
 </code></pre></div>
 <p>The direct endpoint uses Runtime/Core image-generation selectors and stores the
-result as a run artifact, so it still requires a configured
-AbstractVision-compatible backend.</p>
+result as a run artifact, so it still requires a configured Runtime-compatible
+image backend.</p>
 <h3 id="what-does-gateway-session-prompt-cache-orchestration-include">What does Gateway session prompt-cache orchestration include?<a class="headerlink" href="#what-does-gateway-session-prompt-cache-orchestration-include" title="Permanent link">&para;</a></h3>
 <p>The <code>/api/gateway/prompt_cache/*</code> routes expose provider/model prompt-cache
 controls when the active AbstractCore integration supports them. Gateway also

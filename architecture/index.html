@@ -809,8 +809,8 @@
 
 <h1 id="abstractgateway-architecture">AbstractGateway — Architecture<a class="headerlink" href="#abstractgateway-architecture" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p>Status: implemented (v0.2.8)
-Last reviewed: 2026-05-10</p>
+<p>Status: implemented (v0.2.15)
+Last reviewed: 2026-05-21</p>
 </blockquote>
 <p>AbstractGateway is a <strong>durable run gateway</strong> for AbstractRuntime:
 - <strong>Start runs</strong> (and optionally schedule them)
@@ -821,7 +821,7 @@ Last reviewed: 2026-05-10</p>
 <p>AbstractGateway is designed to sit between <strong>thin clients / UIs</strong> and <strong>AbstractRuntime</strong>:
 - AbstractGateway: HTTP/SSE API + durability glue + baseline security (<code>src/abstractgateway/app.py</code>, <code>src/abstractgateway/routes/gateway.py</code>)
 - AbstractRuntime (required): run model + tick loop + stores (<code>pyproject.toml</code>, <code>src/abstractgateway/runner.py</code>)
-- AbstractCore / AbstractVoice / AbstractVision / AbstractMemory (required by the default server install): LLM/tool execution, provider-level prompt-cache controls, workflow-backed/direct generated image/voice/audio capabilities, and KG memory used by many bundles (<code>src/abstractgateway/hosts/bundle_host.py</code>)</p>
+- AbstractRuntime + transitive capability packages (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution (<code>src/abstractgateway/hosts/bundle_host.py</code>)</p>
 <h2 id="high-level-shape">High-level shape<a class="headerlink" href="#high-level-shape" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart LR
   subgraph Clients[&quot;Clients (thin/stateless UIs)&quot;]

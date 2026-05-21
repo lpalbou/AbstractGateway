@@ -10,26 +10,24 @@
       
       
       
-        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/">
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/backlog/proposed/2026-05-20_gateway_prompt_cache_save_load_via_runtime/">
       
       
-      
-        <link rel="next" href="getting-started/">
       
       
         
       
       
-      <link rel="icon" href="assets/images/favicon.png">
+      <link rel="icon" href="../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>AbstractGateway</title>
+        <title>Proposed: Gateway prompt-cache save/load via Runtime - AbstractGateway</title>
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
       
       
 
@@ -48,7 +46,7 @@
       
     
     
-    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -66,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#abstractgateway-docs" class="md-skip">
+        <a href="#proposed-gateway-prompt-cache-saveload-via-runtime" class="md-skip">
           Skip to content
         </a>
       
@@ -82,7 +80,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+    <a href="../../.." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -102,7 +100,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Home
+              Proposed: Gateway prompt-cache save/load via Runtime
             
           </span>
         </div>
@@ -192,7 +190,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+    <a href="../../.." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -219,37 +217,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Home
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="." class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
         
   
   
@@ -265,70 +236,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#abstractframework-ecosystem" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        AbstractFramework ecosystem
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#docs-map" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Docs map
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#api-docs-generated" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        API docs (generated)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#project-docs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Project docs
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -340,7 +247,7 @@
   
   
     <li class="md-nav__item">
-      <a href="getting-started/" class="md-nav__link">
+      <a href="../../../getting-started/" class="md-nav__link">
         
   
   
@@ -367,7 +274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="configuration/" class="md-nav__link">
+      <a href="../../../configuration/" class="md-nav__link">
         
   
   
@@ -394,7 +301,7 @@
   
   
     <li class="md-nav__item">
-      <a href="deployment/" class="md-nav__link">
+      <a href="../../../deployment/" class="md-nav__link">
         
   
   
@@ -421,7 +328,7 @@
   
   
     <li class="md-nav__item">
-      <a href="api/" class="md-nav__link">
+      <a href="../../../api/" class="md-nav__link">
         
   
   
@@ -448,7 +355,7 @@
   
   
     <li class="md-nav__item">
-      <a href="architecture/" class="md-nav__link">
+      <a href="../../../architecture/" class="md-nav__link">
         
   
   
@@ -475,7 +382,7 @@
   
   
     <li class="md-nav__item">
-      <a href="security/" class="md-nav__link">
+      <a href="../../../security/" class="md-nav__link">
         
   
   
@@ -502,7 +409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="maintenance/" class="md-nav__link">
+      <a href="../../../maintenance/" class="md-nav__link">
         
   
   
@@ -529,7 +436,7 @@
   
   
     <li class="md-nav__item">
-      <a href="faq/" class="md-nav__link">
+      <a href="../../../faq/" class="md-nav__link">
         
   
   
@@ -576,10 +483,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#abstractframework-ecosystem" class="md-nav__link">
+  <a href="#metadata" class="md-nav__link">
     <span class="md-ellipsis">
       
-        AbstractFramework ecosystem
+        Metadata
       
     </span>
   </a>
@@ -587,10 +494,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#docs-map" class="md-nav__link">
+  <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Docs map
+        Context
       
     </span>
   </a>
@@ -598,10 +505,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#api-docs-generated" class="md-nav__link">
+  <a href="#problem" class="md-nav__link">
     <span class="md-ellipsis">
       
-        API docs (generated)
+        Problem
       
     </span>
   </a>
@@ -609,10 +516,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#project-docs" class="md-nav__link">
+  <a href="#what-we-want-to-do" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Project docs
+        What we want to do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desired-outcome" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desired outcome
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependencies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-it-is-proposed-not-planned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why it is proposed, not planned
       
     </span>
   </a>
@@ -639,44 +590,65 @@
   
 
 
-<h1 id="abstractgateway-docs">AbstractGateway docs<a class="headerlink" href="#abstractgateway-docs" title="Permanent link">&para;</a></h1>
-<p>Start here if you’re new to the project.</p>
-<h2 id="abstractframework-ecosystem">AbstractFramework ecosystem<a class="headerlink" href="#abstractframework-ecosystem" title="Permanent link">&para;</a></h2>
-<p>AbstractGateway is one component in the larger AbstractFramework ecosystem:</p>
+<h1 id="proposed-gateway-prompt-cache-saveload-via-runtime">Proposed: Gateway prompt-cache save/load via Runtime<a class="headerlink" href="#proposed-gateway-prompt-cache-saveload-via-runtime" title="Permanent link">&para;</a></h1>
+<h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>AbstractRuntime</strong> (required): durable runs + stores</li>
-<li><strong>AbstractRuntime + transitive capability packages</strong> (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution</li>
-<li>Higher-level UIs (optional): AbstractFlow / AbstractObserver / AbstractCode / thin clients</li>
+<li>Created: 2026-05-20</li>
+<li>Status: Proposed</li>
+<li>Completed: N/A</li>
 </ul>
-<p>Related repos:
-- AbstractFramework: https://github.com/lpalbou/AbstractFramework
-- AbstractCore: https://github.com/lpalbou/abstractcore
-- AbstractRuntime: https://github.com/lpalbou/abstractruntime</p>
-<h2 id="docs-map">Docs map<a class="headerlink" href="#docs-map" title="Permanent link">&para;</a></h2>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>Gateway still exposes provider-local prompt-cache save/load behavior, but the
+current implementation is not on an acceptable boundary:</p>
 <ul>
-<li>Quickstart + stores (file/SQLite): <a href="getting-started/">getting-started.md</a></li>
-<li>FAQ / troubleshooting: <a href="faq/">faq.md</a></li>
-<li>Architecture (durable contract + components): <a href="architecture/">architecture.md</a></li>
-<li>Configuration (env vars + install extras): <a href="configuration/">configuration.md</a></li>
-<li>Apple Silicon local Gateway + Flow quickstart: <a href="apple-local-gateway-flow/">apple-local-gateway-flow.md</a></li>
-<li>Deployment (Docker/GHCR/Compose): <a href="deployment/">deployment.md</a></li>
-<li>API overview (client contract + OpenAPI): <a href="api/">api.md</a></li>
-<li>Security guide (auth/origin/limits/audit log): <a href="security/">security.md</a></li>
-<li>Operator tooling (triage/backlog/process manager): <a href="maintenance/">maintenance.md</a></li>
+<li>it reaches through <code>runtime._abstractcore_llm_client</code></li>
+<li>it requires direct provider-instance access</li>
+<li>it inspects provider-private cache state</li>
 </ul>
-<h2 id="api-docs-generated">API docs (generated)<a class="headerlink" href="#api-docs-generated" title="Permanent link">&para;</a></h2>
-<p>Published static docs site: https://www.lpalbou.info/AbstractGateway/</p>
-<p>When the HTTP server is running (<code>abstractgateway serve</code>):
-- Health: <code>GET /api/health</code>
-- OpenAPI JSON: <code>GET /openapi.json</code>
-- Interactive Swagger UI: <code>GET /docs</code></p>
-<h2 id="project-docs">Project docs<a class="headerlink" href="#project-docs" title="Permanent link">&para;</a></h2>
+<p>This is not the primary app-facing durable prompt-cache contract. The cleaner
+normal app path is durable blocs plus <code>prompt_cache_binding</code> through Runtime.
+This proposal is only for the separate operator/admin snapshot gap that may
+remain afterward.</p>
+<p>The feature is still useful, especially for local operator workflows, but the
+implementation should not remain a Gateway-side hack.</p>
+<h2 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h2>
+<p>Gateway is currently acting like provider-specific orchestration code instead of
+asking Runtime for a supported admin operation.</p>
+<p>This is now a dedicated prompt-cache-specific boundary exception after the
+Runtime facade migration for discovery, residency, prompt-cache control,
+durable blocs, and run-scoped media. The other remaining non-Runtime Gateway
+edges are tracked separately in the workspace/comms/Telegram cleanup item and
+should not be conflated with this local-admin snapshot work.</p>
+<h2 id="what-we-want-to-do">What we want to do<a class="headerlink" href="#what-we-want-to-do" title="Permanent link">&para;</a></h2>
+<p>Once Runtime exposes a public local-admin prompt-cache save/load surface,
+Gateway should adopt that surface and remove the private provider/state reach-through.</p>
+<h2 id="desired-outcome">Desired outcome<a class="headerlink" href="#desired-outcome" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Package README: <a href="../README.md">../README.md</a></li>
-<li>Changelog: <a href="../CHANGELOG.md">../CHANGELOG.md</a> (compat: <code>CHANGELOD.md</code>)</li>
-<li>Contributing: <a href="../CONTRIBUTING.md">../CONTRIBUTING.md</a></li>
-<li>Security policy (vulnerability reporting): <a href="../SECURITY.md">../SECURITY.md</a></li>
-<li>Acknowledgments: <a href="../ACKNOWLEDGMENTS.md">../ACKNOWLEDGMENTS.md</a> (compat: <code>ACKNOWLEDMENTS.md</code>)</li>
+<li>Gateway calls Runtime only.</li>
+<li>No direct provider-private prompt-cache fields in Gateway route code.</li>
+<li>The API is explicit that save/load is local-admin behavior, not a generic
+  remote/server prompt-cache contract.</li>
+<li>Flow does not surface provider-private cache save/load until Gateway can
+  advertise a public Runtime-backed contract for it.</li>
+</ul>
+<h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>../../../../abstractruntime/docs/backlog/proposed/2026-05-20_runtime_local_admin_prompt_cache_save_load.md</code></li>
+<li><code>../completed/2026-05-20_gateway_durable_bloc_prompt_cache_contract.md</code></li>
+<li><code>../planned/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md</code></li>
+<li><code>src/abstractgateway/routes/gateway.py</code></li>
+</ul>
+<h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Do not preserve the current private-provider hack as the long-term design.</li>
+<li>Do not promise remote/server save/load until Runtime and Core have a real
+  public contract for it.</li>
+</ul>
+<h2 id="why-it-is-proposed-not-planned">Why it is proposed, not planned<a class="headerlink" href="#why-it-is-proposed-not-planned" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Gateway should not implement the new surface before Runtime defines the public contract.</li>
+<li>The durable app-facing bloc contract should be handled first.</li>
+<li>The adoption work is straightforward once the Runtime-side API shape is chosen.</li>
 </ul>
 
 
@@ -733,10 +705,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>
