@@ -902,7 +902,7 @@ compatibility, and AbstractMemory/LanceDB KG support.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors:
-- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.19</code>
+- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.20</code>
 - <code>abstractagent&gt;=0.3.6</code>
 - <code>AbstractMemory[lancedb]&gt;=0.2.6</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -1023,7 +1023,9 @@ apps without pretending unsupported providers have local KV state.</p>
 <li><code>POST /api/gateway/blocs/kv/load</code></li>
 <li><code>POST /api/gateway/blocs/kv/delete</code></li>
 <li><code>POST /api/gateway/blocs/kv/prune</code></li>
-<li><code>POST /api/gateway/prompt_cache/save</code> / <code>load</code> for supported local providers</li>
+<li><code>GET /api/gateway/prompt_cache/saved</code></li>
+<li><code>POST /api/gateway/prompt_cache/save</code></li>
+<li><code>POST /api/gateway/prompt_cache/load</code></li>
 <li><code>GET /api/gateway/sessions/{session_id}/prompt_cache/status</code></li>
 <li><code>POST /api/gateway/sessions/{session_id}/prompt_cache/prepare</code></li>
 <li><code>POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild</code></li>
@@ -1039,6 +1041,9 @@ AbstractCore provider exposes those operations.</p>
 <li><code>/sessions/{session_id}/prompt_cache/*</code>: gateway-owned volatile session lifecycle</li>
 <li><code>/blocs/*</code>: durable exact-reuse bloc/KV contract that returns <code>prompt_cache_binding</code></li>
 </ul>
+<p>The <code>saved</code> / <code>save</code> / <code>load</code> aliases are Runtime-backed host-local admin
+operations. Local runtimes write under <code>&lt;DATA_DIR&gt;/prompt_cache_exports</code>; remote
+and hybrid runtimes report <code>prompt_cache_local_only</code>.</p>
 <h3 id="multimodal-providerplugin-controls">Multimodal provider/plugin controls<a class="headerlink" href="#multimodal-providerplugin-controls" title="Permanent link">&para;</a></h3>
 <p>The <code>server</code>, <code>multimodal</code>, and <code>all</code> extras install the lightweight AbstractCore
 plugin surface for generated images, generated voice, STT, and future music/video

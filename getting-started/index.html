@@ -920,11 +920,11 @@ docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </
 <span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway:/data/gateway&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/flows/bundles:/data/flows:ro&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.15
+<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.16
 </code></pre></div>
 <p>See <a href="../deployment/">deployment.md</a> for Compose, provider keys, and image
 customization.</p>
-<p>NVIDIA hosts can try <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15</code>
+<p>NVIDIA hosts can try <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.16</code>
 with the compose overlay in <code>docker/abstractgateway-server/compose.nvidia.yml</code>.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

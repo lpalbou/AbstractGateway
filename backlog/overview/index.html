@@ -631,8 +631,8 @@ gateway packages.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Planned: 0</li>
-<li>Proposed: 4</li>
-<li>Completed: 12</li>
+<li>Proposed: 3</li>
+<li>Completed: 13</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
@@ -646,12 +646,13 @@ gateway packages.</p>
 <li>Completed: install profiles and configuration entrypoint.</li>
 <li>Completed: memory store resolver and TripleStore abstraction.</li>
 <li>Completed: Core-backed Voice/Vision catalog proxy endpoints.</li>
-<li>Proposed: provider-private prompt-cache save/load migration via Runtime.</li>
+<li>Completed: provider-private prompt-cache save/load migration via Runtime.</li>
 </ul>
 <h2 id="next-recommended-work">Next Recommended Work<a class="headerlink" href="#next-recommended-work" title="Permanent link">&para;</a></h2>
-<p>The main Runtime-owned boundary work is done. The next clean follow-up is
-provider-private prompt-cache save/load via Runtime, which remains intentionally
-separate from the app-facing durable bloc/KV contract.</p>
+<p>The main Runtime-owned boundary work is now done for Gateway's prompt-cache,
+durable bloc, residency, workspace/comms/Telegram, and operator snapshot
+surfaces. The remaining proposed work is product-facing rather than boundary
+cleanup.</p>
 <h2 id="planned-items">Planned Items<a class="headerlink" href="#planned-items" title="Permanent link">&para;</a></h2>
 <p>No planned items at the moment.</p>
 <h2 id="proposed-items">Proposed Items<a class="headerlink" href="#proposed-items" title="Permanent link">&para;</a></h2>
@@ -670,10 +671,6 @@ separate from the app-facing durable bloc/KV contract.</p>
 <tr>
 <td><a href="../proposed/2026-05-13_shared_identity_context/">2026-05-13_shared_identity_context.md</a></td>
 <td>Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work.</td>
-</tr>
-<tr>
-<td><a href="../proposed/2026-05-20_gateway_prompt_cache_save_load_via_runtime/">2026-05-20_gateway_prompt_cache_save_load_via_runtime.md</a></td>
-<td>Promote when Runtime defines a public local-admin prompt-cache save/load surface.</td>
 </tr>
 <tr>
 <td><a href="../proposed/offline_first_gateway_connectivity/">offline_first_gateway_connectivity.md</a></td>
@@ -764,6 +761,13 @@ separate from the app-facing durable bloc/KV contract.</p>
 <td><code>PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_durable_bloc_prompt_cache_endpoints.py tests/test_gateway_prompt_cache_endpoints.py tests/test_capabilities_endpoint_contract.py</code>.</td>
 </tr>
 <tr>
+<td>Gateway prompt-cache save/load via Runtime</td>
+<td><code>proposed/2026-05-20_gateway_prompt_cache_save_load_via_runtime.md</code></td>
+<td><a href="../completed/2026-05-20_gateway_prompt_cache_save_load_via_runtime/">completed/2026-05-20_gateway_prompt_cache_save_load_via_runtime.md</a></td>
+<td>Gateway now routes the legacy <code>saved/save/load</code> prompt-cache aliases through Runtime's public host facade and no longer reaches into provider-private prompt-cache state.</td>
+<td><code>PYTHONPATH=src:../abstractruntime/src:../abstractcore python -m pytest -q tests/test_gateway_prompt_cache_endpoints.py tests/test_capabilities_endpoint_contract.py</code>.</td>
+</tr>
+<tr>
 <td>Truthful media residency gateway contract</td>
 <td><code>proposed/2026-05-20_truthful_media_residency_gateway_contract.md</code></td>
 <td><a href="../completed/2026-05-20_truthful_media_residency_gateway_contract/">completed/2026-05-20_truthful_media_residency_gateway_contract.md</a></td>
@@ -809,6 +813,9 @@ separate from the app-facing durable bloc/KV contract.</p>
 <li>Gateway source now imports Runtime rather than Core directly for the main
   execution path and the remaining comms/Telegram helper paths. Deeper Runtime
   host-helper polish can continue without reopening Gateway's source boundary.</li>
+<li>Gateway prompt-cache snapshot aliases now use Runtime's public host facade;
+  the old Gateway-local provider-private snapshot code and dead Core catalog
+  proxy module were removed.</li>
 </ul>
 <h2 id="completion-process">Completion Process<a class="headerlink" href="#completion-process" title="Permanent link">&para;</a></h2>
 <p>When a planned item is completed:</p>

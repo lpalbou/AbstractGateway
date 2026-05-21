@@ -1295,17 +1295,21 @@ providers that expose clear controls.</p>
 proxying Core directly. They are operator-style host controls, so the routes
 themselves are not ledgered run execution; the ledgered exact-reuse path is the
 later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime runs.</p>
-<p>Provider-specific persistence endpoints:</p>
+<p>Host-local prompt-cache export/import admin aliases:</p>
 <ul>
 <li><code>GET /api/gateway/prompt_cache/saved</code></li>
 <li><code>POST /api/gateway/prompt_cache/save</code></li>
 <li><code>POST /api/gateway/prompt_cache/load</code></li>
 </ul>
-<p>These remain explicitly local/provider-specific in this release:</p>
+<p>These remain explicitly local/operator-oriented in this release:</p>
 <ul>
-<li><code>save</code> / <code>load</code> require direct local provider access.</li>
-<li>Currently intended for in-process <code>mlx</code> and <code>huggingface</code> GGUF (<code>llama.cpp</code>) workers only.</li>
-<li>GGUF save/load preserves both the raw llama.cpp cache and provider-side prompt-cache metadata so reloaded cache keys keep their module/history meaning.</li>
+<li>the route paths are compatibility aliases, but the implementation delegates to Runtime's public host facade:</li>
+<li><code>saved</code> -&gt; <code>list_prompt_cache_exports(...)</code></li>
+<li><code>save</code> -&gt; <code>prompt_cache_export(...)</code></li>
+<li><code>load</code> -&gt; <code>prompt_cache_import(...)</code></li>
+<li>local bundle/file runtimes store these exports under the Gateway data dir at <code>prompt_cache_exports/</code></li>
+<li>remote and hybrid runtimes return <code>code=prompt_cache_local_only</code></li>
+<li>response payloads follow Runtime's host-local export/import contract, including <code>operation</code>, <code>local_only</code>, <code>artifact_*</code>, <code>capabilities</code>, and <code>provider_response</code></li>
 </ul>
 <h2 id="email-inbox-operator-ui-optional">Email inbox (operator UI; optional)<a class="headerlink" href="#email-inbox-operator-ui-optional" title="Permanent link">&para;</a></h2>
 <p>These endpoints power AbstractObserver’s <strong>Inbox → Email</strong> UI. They are <strong>account-scoped</strong>: the browser cannot supply arbitrary IMAP/SMTP host/user credentials. The gateway host must be configured with one or more email accounts (multi-account YAML or env vars).</p>
