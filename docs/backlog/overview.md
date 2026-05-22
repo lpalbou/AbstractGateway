@@ -3,26 +3,27 @@
 ## Status
 
 AbstractGateway is a durable HTTP/SSE host for AbstractRuntime runs. The current
-0.2.15 surface already provides run start/schedule/input/history, durable
+main-branch surface provides run start/schedule/input/history, durable
 commands, ledger replay/streaming, artifacts, VisualFlow CRUD/publish,
 workspace policy, provider and tool discovery, Runtime-owned direct voice TTS,
-audio transcription, direct generated image child-run artifacts, provider-level
-and session-level prompt-cache controls, optional embeddings/KG helpers with
-configurable memory stores, Runtime-backed voice/vision discovery routes,
-explicit install/config profiles, and a versioned thin-client capability
-contract for Flow, Assistant, Code, and shared Gateway features.
+audio transcription, direct generated and edited image child-run artifacts,
+direct generated music, provider-level and session-level prompt-cache controls,
+optional embeddings/KG helpers with configurable memory stores, Runtime-backed
+voice/vision/music discovery routes, explicit install/config profiles, and a
+versioned thin-client capability contract for Flow, Assistant, Observer, Code,
+and shared Gateway features.
 
 The next planning focus is to make the gateway a premium control plane for thin
-AI apps such as AbstractFlow, AbstractAssistant, and AbstractCode. The gateway
-must report what is actually usable, keep provider/runtime concerns server-side,
-and expose stable contracts that clients can trust without importing local
-gateway packages.
+AI apps such as AbstractFlow, AbstractAssistant, AbstractObserver, and
+AbstractCode. The gateway must report what is actually usable, keep
+provider/runtime concerns server-side, and expose stable contracts that clients
+can trust without importing local gateway packages.
 
 ## Counts
 
 - Planned: 0
-- Proposed: 3
-- Completed: 13
+- Proposed: 4
+- Completed: 15
 - Deprecated: 1
 - Recurrent: 0
 
@@ -32,7 +33,7 @@ gateway packages.
 - Completed: 020 AbstractFlow gateway-first editor contract and validation.
 - Completed: 030 Gateway-owned session prompt-cache lifecycle.
 - Completed: 040 Generated-media artifact and direct image contract.
-- Completed: model residency, truthful media residency, durable bloc prompt-cache exposure, and Runtime boundary cleanup for workspace/comms/Telegram.
+- Completed: model residency truth, truthful media residency, durable bloc prompt-cache exposure, direct music contract truth, and Runtime boundary cleanup for workspace/comms/Telegram.
 - Completed: install profiles and configuration entrypoint.
 - Completed: memory store resolver and TripleStore abstraction.
 - Completed: Core-backed Voice/Vision catalog proxy endpoints.
@@ -41,9 +42,9 @@ gateway packages.
 ## Next Recommended Work
 
 The main Runtime-owned boundary work is now done for Gateway's prompt-cache,
-durable bloc, residency, workspace/comms/Telegram, and operator snapshot
-surfaces. The remaining proposed work is product-facing rather than boundary
-cleanup.
+durable bloc, residency, workspace/comms/Telegram, operator snapshot, direct
+music, direct image edit, and STT/listen contract surfaces. The remaining
+proposed work is product-facing contract polish rather than boundary cleanup.
 
 ## Planned Items
 
@@ -55,6 +56,7 @@ No planned items at the moment.
 | --- | --- |
 | [2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md](proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md) | Promote when Gateway draft-space semantics and ephemeral-run lifecycle are validated against Flow UX and ledger expectations. |
 | [2026-05-13_shared_identity_context.md](proposed/2026-05-13_shared_identity_context.md) | Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work. |
+| [0053_gateway_thin_client_catalog_and_readiness_contract_polish.md](proposed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md) | Promote when Flow/Assistant/Observer start depending on stricter catalog response shapes or an explicit Gateway deployment/readiness contract. |
 | [offline_first_gateway_connectivity.md](proposed/offline_first_gateway_connectivity.md) | Promote when offline-first connectivity guarantees become a near-term product commitment. |
 
 ## Completed Work Ledger
@@ -74,6 +76,8 @@ No planned items at the moment.
 | Gateway prompt-cache save/load via Runtime | `proposed/2026-05-20_gateway_prompt_cache_save_load_via_runtime.md` | [completed/2026-05-20_gateway_prompt_cache_save_load_via_runtime.md](completed/2026-05-20_gateway_prompt_cache_save_load_via_runtime.md) | Gateway now routes the legacy `saved/save/load` prompt-cache aliases through Runtime's public host facade and no longer reaches into provider-private prompt-cache state. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore python -m pytest -q tests/test_gateway_prompt_cache_endpoints.py tests/test_capabilities_endpoint_contract.py`. |
 | Truthful media residency gateway contract | `proposed/2026-05-20_truthful_media_residency_gateway_contract.md` | [completed/2026-05-20_truthful_media_residency_gateway_contract.md](completed/2026-05-20_truthful_media_residency_gateway_contract.md) | Gateway now advertises media residency truthfully and delegates the residency routes through Runtime's public host facade. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_model_residency_endpoints.py tests/test_capabilities_endpoint_contract.py tests/test_gateway_capability_catalog_proxy.py`. |
 | Gateway Runtime boundary cleanup for workspace, comms, and Telegram | `planned/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md` | [completed/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md](completed/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md) | Gateway now owns workspace/file helpers locally, uses Runtime comms/Telegram helper surfaces for operator paths, and no longer imports `abstractcore` directly in source. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_email_inbox_endpoints.py tests/test_gateway_cli_split_runner.py tests/test_gateway_telegram_bridge_unit.py tests/test_gateway_discovery_endpoints.py tests/test_gateway_files_skim_endpoint.py tests/test_gateway_attachments_ingest.py tests/test_gateway_workspace_policy_enforcement.py tests/test_maintenance_notifier_unit.py`. |
+| Model residency provider/task contract truth regression | `proposed/0051_model_residency_provider_task_contract_truth_regression.md` | [completed/0051_model_residency_provider_task_contract_truth_regression.md](completed/0051_model_residency_provider_task_contract_truth_regression.md) | Gateway now derives `common.model_residency` from Runtime's public `get_model_residency_capabilities(...)` surface instead of hard-coding media support flags, so higher apps see truthful task support. | `python -m pytest -q tests/test_gateway_model_residency_endpoints.py tests/test_capabilities_endpoint_contract.py`. |
+| Gateway music generation contract for thin clients | `proposed/0052_gateway_music_generation_contract_for_thin_clients.md` | [completed/0052_gateway_music_generation_contract_for_thin_clients.md](completed/0052_gateway_music_generation_contract_for_thin_clients.md) | Gateway's direct music route and music catalogs were already present; the remaining workflow-availability truth gap is now closed and recorded as completed history. | `python -m pytest -q tests/test_capabilities_endpoint_contract.py tests/test_generated_media_gateway_contract.py tests/test_gateway_capability_catalog_proxy.py`. |
 
 ## Deprecated Work
 
@@ -93,6 +97,11 @@ No planned items at the moment.
   pretending unsupported providers have local KV state.
 - Generated image support is now both workflow-backed and directly available
   through Gateway when a Runtime/Core image backend is configured.
+- Edited image support is now directly available through Gateway for run-scoped
+  image-to-image and optional masked edits.
+- Gateway now exposes run-scoped TTS, STT, and music generation contracts for
+  higher apps, plus a host-capture `voice.listen` contract for clients that
+  record locally and submit events or uploaded audio.
 - Gateway source now imports Runtime rather than Core directly for the main
   execution path and the remaining comms/Telegram helper paths. Deeper Runtime
   host-helper polish can continue without reopening Gateway's source boundary.

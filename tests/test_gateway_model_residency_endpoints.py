@@ -32,6 +32,24 @@ def test_gateway_model_residency_uses_runtime_host_facade(
     calls: list[tuple[str, Dict[str, Any]]] = []
 
     class StubHostFacade:
+        def get_model_residency_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(("capabilities", dict(kwargs)))
+            return {
+                "ok": True,
+                "supported": True,
+                "operation": "capabilities",
+                "mode": "remote_core_server",
+                "source": "abstractruntime.remote",
+                "relay_only": True,
+                "tasks": {
+                    "text_generation": {"supported": True},
+                    "image_generation": {"supported": True},
+                    "tts": {"supported": True},
+                    "stt": {"supported": True},
+                    "music_generation": {"supported": False},
+                },
+            }
+
         def list_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
             calls.append(("list", dict(kwargs)))
             return {"ok": True, "supported": True, "models": [{"runtime_id": "local:text_generation:mlx:qwen"}], "filters": kwargs}
@@ -106,6 +124,21 @@ def test_gateway_model_residency_preserves_runtime_unsupported_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class StubHostFacade:
+        def get_model_residency_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
+            _ = kwargs
+            return {
+                "ok": True,
+                "supported": True,
+                "operation": "capabilities",
+                "tasks": {
+                    "text_generation": {"supported": True},
+                    "image_generation": {"supported": False},
+                    "tts": {"supported": False},
+                    "stt": {"supported": False},
+                    "music_generation": {"supported": False},
+                },
+            }
+
         def load_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
             return {
                 "ok": False,
@@ -144,7 +177,27 @@ def test_gateway_model_residency_capability_contract_comes_from_runtime_host_fac
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class StubHostFacade:
-        pass
+        def get_model_residency_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
+            assert kwargs == {}
+            return {
+                "ok": True,
+                "supported": True,
+                "operation": "capabilities",
+                "mode": "remote_core_server",
+                "source": "abstractruntime.remote",
+                "relay_only": True,
+                "tasks": {
+                    "text_generation": {"supported": True, "truth_source": "abstractcore.server./acore/models"},
+                    "image_generation": {"supported": True, "truth_source": "abstractcore.server./acore/models"},
+                    "tts": {"supported": True, "truth_source": "abstractcore.server./acore/models"},
+                    "stt": {"supported": True, "truth_source": "abstractcore.server./acore/models"},
+                    "music_generation": {
+                        "supported": False,
+                        "truth_source": "abstractcore.server./acore/models",
+                        "reason": "music_generation residency is not implemented on the current server control plane",
+                    },
+                },
+            }
 
     import abstractgateway.routes.gateway as gateway_routes
 
@@ -159,9 +212,15 @@ def test_gateway_model_residency_capability_contract_comes_from_runtime_host_fac
     assert residency["route_available"] is True
     assert residency["available"] is True
     assert residency["source"] == "abstractruntime.host_facade"
+    assert residency["mode"] == "remote_core_server"
+    assert residency["relay_only"] is True
+    assert residency["capabilities_source"] == "abstractruntime.remote"
+    assert residency["tasks"] == ["text_generation", "image_generation", "tts", "stt", "music_generation"]
     assert residency["supports"] == {
         "text_generation": True,
         "image_generation": True,
         "tts": True,
         "stt": True,
+        "music_generation": False,
     }
+    assert residency["task_capabilities"]["music_generation"]["supported"] is False

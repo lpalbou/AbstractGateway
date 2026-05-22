@@ -11,7 +11,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.16
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.17
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -19,7 +19,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.16
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.17
 ```
 
 The default image installs the base `abstractgateway` package, which includes:
@@ -31,11 +31,13 @@ The default image installs the base `abstractgateway` package, which includes:
 - FastAPI/Uvicorn
 
 This profile supports hosted/commercial providers, OpenAI-compatible text
-provider routing, workflow-backed and direct image/voice/STT generation through
-Runtime facades, and provider/session prompt-cache controls.
+provider routing, workflow-backed and direct image generation, direct
+image-edit, voice/STT generation, direct Gateway-routed music generation
+through Runtime facades, and
+provider/session prompt-cache controls.
 It intentionally stays dependency-light for heavy local model runtimes: MLX,
 vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
-engines, and future AbstractMusic engines remain explicit opt-ins.
+engines, and local AbstractMusic engines remain explicit opt-ins.
 
 The NVIDIA image installs `abstractgateway[gpu]` and uses a CUDA/PyTorch base.
 It is experimental and release automation publishes it as
@@ -59,7 +61,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.16
+  ghcr.io/lpalbou/abstractgateway-server:0.2.17
 ```
 
 Other host-native endpoints are also valid: LM Studio at
@@ -172,7 +174,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.16-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.17-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

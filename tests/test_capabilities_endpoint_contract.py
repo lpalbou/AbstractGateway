@@ -103,6 +103,8 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert common.get("discovery", {}).get("voice_voices") == "/api/gateway/voice/voices"
         assert common.get("discovery", {}).get("audio_speech_models") == "/api/gateway/audio/speech/models"
         assert common.get("discovery", {}).get("audio_transcription_models") == "/api/gateway/audio/transcriptions/models"
+        assert common.get("discovery", {}).get("audio_music_providers") == "/api/gateway/audio/music/providers"
+        assert common.get("discovery", {}).get("audio_music_models") == "/api/gateway/audio/music/models"
         assert common.get("discovery", {}).get("vision_provider_models") == "/api/gateway/vision/provider_models"
         assert common.get("discovery", {}).get("vision_models") == "/api/gateway/vision/models"
         assert common.get("prompt_cache", {}).get("provider_controls") is True
@@ -124,15 +126,23 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert flow_editor.get("run_input_schema", {}).get("available") is True
         assert flow_editor.get("run_input_schema", {}).get("endpoint") == "/api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema"
         assert flow_editor.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/generate"
+        assert flow_editor.get("media", {}).get("edited_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/edit"
         assert flow_editor.get("media", {}).get("generated_voice", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/voice/tts"
+        assert flow_editor.get("media", {}).get("generated_music", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/music/generate"
+        assert flow_editor.get("voice", {}).get("stt", {}).get("endpoint") == "/api/gateway/runs/{run_id}/audio/transcribe"
+        assert flow_editor.get("voice", {}).get("listen", {}).get("commands_type") == "emit_event"
 
         assistant = contracts.get("assistant")
         assert isinstance(assistant, dict)
         assert assistant.get("version") == 1
         assert assistant.get("voice", {}).get("tts", {}).get("endpoint") == "/api/gateway/runs/{run_id}/voice/tts"
         assert assistant.get("voice", {}).get("stt", {}).get("endpoint") == "/api/gateway/runs/{run_id}/audio/transcribe"
+        assert assistant.get("voice", {}).get("listen", {}).get("host_capture_required") is True
         assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("route_available") is True
         assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/generate"
+        assert assistant.get("media", {}).get("edited_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/edit"
+        assert assistant.get("media", {}).get("generated_music", {}).get("direct_endpoint", {}).get("providers_endpoint") == "/api/gateway/audio/music/providers"
+        assert assistant.get("media", {}).get("generated_music", {}).get("direct_endpoint", {}).get("provider_models_endpoint") == "/api/gateway/audio/music/models"
         assert assistant.get("prompt_cache", {}).get("provider_controls") is True
         assert assistant.get("prompt_cache", {}).get("session_lifecycle") is True
 
@@ -176,6 +186,7 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
                     "voice": {"available": False, "install_hint": "install voice"},
                     "audio": {"available": False, "install_hint": "install audio"},
                     "vision": {"available": False, "install_hint": "install vision"},
+                    "music": {"available": False, "configured": False, "route_available": False, "config_hint": "install music"},
                 },
             },
         }
@@ -206,6 +217,13 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert media["generated_image"]["workflow"]["available"] is False
     assert media["generated_image"]["direct_endpoint"]["route_available"] is False
     assert media["generated_image"]["direct_endpoint"]["available"] is False
+    assert media["edited_image"]["workflow"]["available"] is False
+    assert media["edited_image"]["direct_endpoint"]["route_available"] is False
+    assert media["edited_image"]["direct_endpoint"]["available"] is False
+    assert media["generated_music"]["direct_endpoint"]["route_available"] is False
+    assert media["generated_music"]["direct_endpoint"]["available"] is False
+    assert media["generated_music"]["direct_endpoint"]["providers_endpoint"] == "/api/gateway/audio/music/providers"
+    assert media["generated_music"]["direct_endpoint"]["provider_models_endpoint"] == "/api/gateway/audio/music/models"
     assert contracts["assistant"]["prompt_cache"]["provider_controls"] is True
     assert contracts["assistant"]["prompt_cache"]["provider_controls_available"] is False
     assert contracts["assistant"]["prompt_cache"]["session_lifecycle"] is True
@@ -214,10 +232,11 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert residency["route_available"] is True
     assert residency["available"] is False
     assert residency["source"] == "abstractruntime.host_facade"
-    assert residency["supports"]["text_generation"] is True
-    assert residency["supports"]["image_generation"] is True
-    assert residency["supports"]["tts"] is True
-    assert residency["supports"]["stt"] is True
+    assert residency["supports"]["text_generation"] is False
+    assert residency["supports"]["image_generation"] is False
+    assert residency["supports"]["tts"] is False
+    assert residency["supports"]["stt"] is False
+    assert residency["supports"]["music_generation"] is False
     assert residency["endpoints"]["loaded"] == "/api/gateway/models/loaded"
     assert contracts["flow_editor"]["model_residency"] == residency
     assert contracts["assistant"]["model_residency"] == residency
@@ -229,6 +248,7 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert flow_editor["media"] == contracts["assistant"]["media"]
     assert contracts["common"]["discovery"]["vision_models"] == "/api/gateway/vision/models"
     assert contracts["assistant"]["voice"]["stt"]["models_endpoint"] == "/api/gateway/audio/transcriptions/models"
+    assert contracts["flow_editor"]["voice"]["listen"]["transcription_available"] is False
 
 
 def test_generated_image_contract_separates_light_package_from_backend_config(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,6 +292,11 @@ def test_generated_image_contract_separates_light_package_from_backend_config(mo
     assert media["direct_endpoint"]["route_available"] is False
     assert media["direct_endpoint"]["available"] is False
     assert "config_hint" in media["direct_endpoint"]
+    edited = contracts["assistant"]["media"]["edited_image"]
+    assert edited["workflow"]["available"] is False
+    assert edited["direct_endpoint"]["route_available"] is False
+    assert edited["direct_endpoint"]["available"] is False
+    assert edited["direct_endpoint"]["provider_models_task"] == "image_to_image"
 
 
 def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -299,12 +324,63 @@ def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch
     assert media["direct_endpoint"]["available"] is True
 
 
+def test_generated_music_contract_uses_runtime_music_capability_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (object(), None))
+
+    contracts = gateway_routes._build_client_capability_contracts(
+        {
+            "capability_plugins": {
+                "installed": True,
+                "capabilities": {
+                    "music": {
+                        "available": True,
+                        "route_available": True,
+                        "configured": True,
+                        "selected_backend": "acemusic",
+                    },
+                },
+            },
+        }
+    )
+
+    music = contracts["assistant"]["media"]["generated_music"]
+    assert music["workflow"]["available"] is True
+    assert music["workflow"]["backend"] == "acemusic"
+    assert music["direct_endpoint"]["available"] is True
+    assert music["direct_endpoint"]["route_available"] is True
+    assert music["direct_endpoint"]["selected_backend"] == "acemusic"
+    assert music["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/music/generate"
+    assert music["direct_endpoint"]["providers_endpoint"] == "/api/gateway/audio/music/providers"
+    assert music["direct_endpoint"]["provider_models_endpoint"] == "/api/gateway/audio/music/models"
+
+
 def test_model_residency_contract_advertises_configured_core_server(monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
     monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
 
-    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (object(), None))
+    class StubHostFacade:
+        def get_model_residency_capabilities(self, **kwargs):
+            assert kwargs == {}
+            return {
+                "ok": True,
+                "supported": True,
+                "operation": "capabilities",
+                "mode": "remote_core_server",
+                "source": "abstractruntime.remote",
+                "relay_only": True,
+                "tasks": {
+                    "text_generation": {"supported": True},
+                    "image_generation": {"supported": True},
+                    "tts": {"supported": True},
+                    "stt": {"supported": True},
+                    "music_generation": {"supported": False},
+                },
+            }
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (StubHostFacade(), None))
     monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (object(), None))
 
     contracts = gateway_routes._build_client_capability_contracts({})
@@ -314,10 +390,12 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     assert residency["route_available"] is True
     assert residency["available"] is True
     assert residency["source"] == "abstractruntime.host_facade"
+    assert residency["mode"] == "remote_core_server"
     assert residency["supports"]["image_generation"] is True
     assert residency["supports"]["tts"] is True
     assert residency["supports"]["stt"] is True
-    assert residency["tasks"] == ["text_generation", "image_generation", "tts", "stt"]
+    assert residency["supports"]["music_generation"] is False
+    assert residency["tasks"] == ["text_generation", "image_generation", "tts", "stt", "music_generation"]
     assert residency["endpoints"] == {
         "loaded": "/api/gateway/models/loaded",
         "load": "/api/gateway/models/load",
@@ -329,3 +407,4 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     assert contracts["assistant"]["prompt_cache"]["session_lifecycle_available"] is True
     assert media["direct_endpoint"]["available"] is True
     assert media["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/generate"
+    assert contracts["assistant"]["media"]["edited_image"]["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/edit"

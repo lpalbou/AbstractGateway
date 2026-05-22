@@ -270,3 +270,81 @@ def test_audio_transcription_models_catalog_proxies_configured_core_catalog_rout
     assert body["source"] == "abstractruntime.discovery_facade"
     assert body["models"] == ["stt-test"]
     assert calls == [{"base_url": None, "provider_api_key": None, "provider": None}]
+
+
+def test_audio_music_providers_catalog_proxies_runtime_music_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_music_providers(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {
+                "available": True,
+                "task": "text_to_music",
+                "providers": ["acemusic"],
+                "available_providers": ["acemusic"],
+                "provider_details": [{"provider": "acemusic", "tasks": ["text_to_music"]}],
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    headers = {**headers, "X-AbstractCore-Provider-API-Key": "provider-secret"}
+    with client:
+        resp = client.get("/api/gateway/audio/music/providers?task=text_to_music&base_url=http://provider.test/v1", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "abstractruntime.discovery_facade"
+    assert body["providers"] == ["acemusic"]
+    assert body["provider_details"] == [{"provider": "acemusic", "tasks": ["text_to_music"]}]
+    assert calls == [
+        {
+            "task": "text_to_music",
+            "base_url": "http://provider.test/v1",
+            "provider_api_key": "provider-secret",
+        }
+    ]
+
+
+def test_audio_music_models_catalog_filters_by_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_music_models(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {
+                "available": True,
+                "task": "text_to_music",
+                "models": [{"provider": "acemusic", "id": "ace-step"}],
+                "providers": ["acemusic"],
+                "available_providers": ["acemusic"],
+                "models_by_provider": {"acemusic": ["ace-step"]},
+                "provider_models": [{"provider": "acemusic", "model": "ace-step", "id": "acemusic/ace-step"}],
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/audio/music/models?provider=acemusic", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "abstractruntime.discovery_facade"
+    assert body["providers"] == ["acemusic"]
+    assert body["models"] == ["ace-step"]
+    assert calls == [
+        {
+            "task": "text_to_music",
+            "base_url": None,
+            "provider_api_key": None,
+            "provider": "acemusic",
+        }
+    ]

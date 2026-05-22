@@ -175,6 +175,7 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
     import abstractgateway.routes.gateway as gateway_routes
 
     headers = {"Authorization": f"Bearer {token}"}
+    calls: dict[str, list[dict[str, Any]]] = {}
 
     monkeypatch.setattr(
         gateway_routes,
@@ -210,7 +211,7 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
         assert stt_unavail.status_code == 503, stt_unavail.text
         assert "pip install abstractgateway" in str(stt_unavail.json().get("detail") or "").lower()
 
-    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:hello", transcript="hello world")
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:hello", transcript="hello world", calls=calls)
 
     with TestClient(app) as client2:
         upload2 = client2.post(
@@ -224,7 +225,14 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
 
         stt = client2.post(
             "/api/gateway/runs/session_memory_s1/audio/transcribe",
-            json={"audio_artifact": audio_ref2, "request_id": "req-stt-1"},
+            json={
+                "audio_artifact": audio_ref2,
+                "prompt": "French product names may appear.",
+                "response_format": "verbose_json",
+                "temperature": 0.2,
+                "format": "wav",
+                "request_id": "req-stt-1",
+            },
             headers=headers,
         )
         assert stt.status_code == 200, stt.text
@@ -236,6 +244,11 @@ def test_voice_audio_routes_auth_and_contract(tmp_path: Path, monkeypatch: pytes
         transcript = stt_body.get("transcript_artifact") or {}
         assert isinstance(transcript, dict)
         assert isinstance(transcript.get("$artifact"), str) and transcript["$artifact"]
+        assert calls["stt"][0]["prompt"] == "French product names may appear."
+        assert calls["stt"][0]["output"]["prompt"] == "French product names may appear."
+        assert calls["stt"][0]["output"]["response_format"] == "verbose_json"
+        assert calls["stt"][0]["output"]["temperature"] == 0.2
+        assert calls["stt"][0]["output"]["format"] == "wav"
 
         tts = client2.post(
             "/api/gateway/runs/session_memory_s1/voice/tts",

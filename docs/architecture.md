@@ -1,7 +1,7 @@
 # AbstractGateway — Architecture
 
-> Status: implemented (v0.2.16)
-> Last reviewed: 2026-05-21
+> Status: implemented (main branch)
+> Last reviewed: 2026-05-22
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
 - **Start runs** (and optionally schedule them)
@@ -15,7 +15,7 @@ This document describes the code in this repository (see **Evidence** links).
 AbstractGateway is designed to sit between **thin clients / UIs** and **AbstractRuntime**:
 - AbstractGateway: HTTP/SSE API + durability glue + baseline security (`src/abstractgateway/app.py`, `src/abstractgateway/routes/gateway.py`)
 - AbstractRuntime (required): run model + tick loop + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
-- AbstractRuntime + transitive capability packages (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`)
+- AbstractRuntime + transitive capability packages (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio/music capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`)
 
 ## High-level shape
 
@@ -72,6 +72,27 @@ The gateway is intentionally **replay-first**:
 - SSE (`/ledger/stream`) is an optimization; clients should reconnect by replaying from a cursor.
 
 This contract is stated and implemented in `src/abstractgateway/routes/gateway.py` (ledger endpoints + SSE) and `src/abstractgateway/runner.py` (StepRecord append semantics).
+
+## Thin-client control plane
+
+Gateway also acts as the control plane for higher-level apps such as
+AbstractFlow, AbstractAssistant, and AbstractObserver:
+
+- `GET /api/gateway/discovery/capabilities` exposes a versioned shared contract
+  for run input/history access, media endpoints, voice contracts, prompt-cache
+  surfaces, and model residency truth.
+- Provider/model catalogs are intentionally routed through Gateway, but their
+  payload bodies are still best-effort wrappers around lower-layer discovery
+  results. The stable Gateway contract today is the route family plus the
+  capability descriptors that point higher apps at those routes.
+- Direct run-scoped media routes currently include TTS, STT, image generation,
+  image edit, and music generation.
+- Voice listen is intentionally a host-capture contract, not a server-side
+  microphone transport. Gateway tells clients how to emit or upload captured
+  audio; clients keep ownership of live capture UX.
+- Model residency, prompt-cache lifecycle, durable blocs, and discovery
+  catalogs are server-owned control-plane surfaces so higher apps do not have
+  to import Runtime/Core packages directly.
 
 ## Deployment shape: one process vs split API/runner
 

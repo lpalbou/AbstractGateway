@@ -20,7 +20,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal,mcp-worker]>=0.4.20`
+- `AbstractRuntime[multimodal,mcp-worker]>=0.4.21`
 - `abstractagent>=0.3.6`
 - `AbstractMemory[lancedb]>=0.2.6`
 
@@ -189,11 +189,12 @@ and hybrid runtimes report `prompt_cache_local_only`.
 ### Multimodal provider/plugin controls
 
 The `server`, `multimodal`, and `all` extras install the lightweight AbstractCore
-plugin surface for generated images, generated voice, STT, and future music/video
-capabilities. Voice generation, transcription, and generated images have direct Gateway
-endpoints; generated images are also exposed through Runtime/Core workflows and
-through `POST /api/gateway/runs/{run_id}/images/generate` when a Runtime/Core
-image backend is configured or provider/model are supplied on the request. Local
+plugin surface for generated images, generated voice, STT, and music/video
+capabilities. Voice generation, transcription, generated images, and generated
+music have direct Gateway endpoints; generated images are also exposed through
+Runtime/Core workflows and through `POST /api/gateway/runs/{run_id}/images/generate`
+and `POST /api/gateway/runs/{run_id}/images/edit` when a Runtime/Core image
+backend is configured or provider/model are supplied on the request. Local
 heavy engines remain explicit opt-ins in the provider packages.
 
 - `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: default text model for bundle LLM nodes
@@ -207,12 +208,16 @@ heavy engines remain explicit opt-ins in the provider packages.
 - `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE`: Gateway-scoped voice engine settings. Legacy `ABSTRACTVOICE_*` names are still accepted by the lower package.
 - `ABSTRACTGATEWAY_VOICE_TTS_MODEL` / `ABSTRACTGATEWAY_VOICE_STT_MODEL`: Gateway-scoped TTS/STT model defaults.
 - `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL` / `ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice.
-- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and future `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image endpoints, workflow-backed image generation, and provider/session prompt-cache controls
+- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image/music endpoints, workflow-backed image generation, and provider/session prompt-cache controls
 - `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
 - `GET /api/gateway/audio/speech/models`: proxies AbstractCore `/v1/audio/speech/models` when configured.
 - `GET /api/gateway/audio/transcriptions/models`: proxies AbstractCore `/v1/audio/transcriptions/models` when configured.
+- `GET /api/gateway/audio/music/providers`: proxies AbstractCore `/v1/audio/music/providers` when configured.
+- `GET /api/gateway/audio/music/models`: proxies AbstractCore `/v1/audio/music/models` when configured.
 - `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured.
 - `GET /api/gateway/vision/models`: reports locally known/cached AbstractVision model ids when the in-process capability path is available.
+- `POST /api/gateway/runs/{run_id}/images/edit`: creates a durable Runtime child run for image-to-image edits and optional mask-guided edits.
+- `POST /api/gateway/runs/{run_id}/music/generate`: creates a durable Runtime child run and returns an artifact-backed music result for thin clients.
 
 Core catalog proxy settings:
 

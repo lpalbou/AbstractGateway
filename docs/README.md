@@ -7,7 +7,7 @@ Start here if you’re new to the project.
 AbstractGateway is one component in the larger AbstractFramework ecosystem:
 
 - **AbstractRuntime** (required): durable runs + stores
-- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution
+- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image plus voice/audio/music capabilities, and KG-backed bundle execution
 - Higher-level UIs (optional): AbstractFlow / AbstractObserver / AbstractCode / thin clients
 
 Related repos:
@@ -23,7 +23,7 @@ Related repos:
 - Configuration (env vars + install extras): [configuration.md](./configuration.md)
 - Apple Silicon local Gateway + Flow quickstart: [apple-local-gateway-flow.md](./apple-local-gateway-flow.md)
 - Deployment (Docker/GHCR/Compose): [deployment.md](./deployment.md)
-- API overview (client contract + OpenAPI): [api.md](./api.md)
+- API overview (client contract + OpenAPI, including direct image edit, STT, and music generation): [api.md](./api.md)
 - Security guide (auth/origin/limits/audit log): [security.md](./security.md)
 - Operator tooling (triage/backlog/process manager): [maintenance.md](./maintenance.md)
 

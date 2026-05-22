@@ -177,13 +177,19 @@ These exist to help thin clients adapt to the deployed gateway.
 
 - Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
 - Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
-- Dynamic capability catalogs: `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, `GET /api/gateway/vision/provider_models`
+- Dynamic capability catalogs: `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, `GET /api/gateway/audio/transcriptions/models`, `GET /api/gateway/audio/music/providers`, `GET /api/gateway/audio/music/models`, `GET /api/gateway/vision/provider_models`
 
 The capabilities payload includes package presence (`abstractruntime`,
 `abstractcore`, `abstractmemory`, `abstractvoice`, `abstractvision`), existing
 gateway helpers (`tools`, `visualflow`, `media`), memory-store readiness, and
 AbstractCore capability plugin status for `voice`, `audio`, `vision`, and
-future `music`.
+`music`.
+
+Today the route paths and contract descriptors are the stable part of this
+surface. Provider/model catalog response bodies still preserve some lower-layer
+shape variation, so higher apps may normalize fields like `items`, `models`,
+or provider-scoped model maps. A future versioned catalog envelope is tracked
+separately in backlog item `0053`.
 
 Provider discovery also reports the resolved default provider/model when one is
 configured. The resolver follows request values, Gateway env, and AbstractCore
@@ -251,12 +257,17 @@ The editor observes runs with the core lifecycle endpoints above:
 
 ## Optional multimodal scope
 
-Direct Gateway endpoints in this release:
+Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/voice/tts`
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - `POST /api/gateway/runs/{run_id}/images/generate`
+- `POST /api/gateway/runs/{run_id}/images/edit`
+- `POST /api/gateway/runs/{run_id}/music/generate`
 - `GET /api/gateway/voice/voices`
 - `GET /api/gateway/audio/speech/models`
+- `GET /api/gateway/audio/transcriptions/models`
+- `GET /api/gateway/audio/music/providers`
+- `GET /api/gateway/audio/music/models`
 - `GET /api/gateway/vision/provider_models`
 
 The catalog endpoints proxy AbstractCore Server routes when
@@ -281,6 +292,34 @@ uses it. For tools-only workflows, the route can create a direct Runtime/Core
 client from request `provider`/`model` or `ABSTRACTGATEWAY_PROVIDER` /
 `ABSTRACTGATEWAY_MODEL`. Unsupported or unconfigured deployments return a
 structured `ok=false` response instead of a failed run.
+
+Gateway also exposes a direct image-edit sibling route:
+
+- `POST /api/gateway/runs/{run_id}/images/edit`
+
+The request uses a source `image_artifact`, optional `mask_artifact`, the same
+provider/model and image backend selectors as image generation, and returns an
+artifact-backed edited image. Thin clients should feature-detect it from
+`capabilities.contracts.flow_editor.media.edited_image` or
+`capabilities.contracts.assistant.media.edited_image`.
+
+Generated music follows the same direct child-run pattern. Thin clients should
+discover it from `capabilities.contracts.flow_editor.media.generated_music` or
+`capabilities.contracts.assistant.media.generated_music`, list providers/models
+from the music catalog routes, and treat the returned `child_run_id` plus
+`music_artifact` as the durable output handle.
+
+STT and listen contract notes:
+
+- `POST /api/gateway/runs/{run_id}/audio/transcribe` accepts a run-visible
+  `audio_artifact` plus optional `language`, `prompt`, `response_format`,
+  `temperature`, `format`, `provider`, and `model` hints.
+- `capabilities.contracts.flow_editor.voice.stt` and
+  `capabilities.contracts.assistant.voice.stt` point to that upload route.
+- `capabilities.contracts.flow_editor.voice.listen` and
+  `capabilities.contracts.assistant.voice.listen` are host-capture contracts,
+  not a live microphone socket. They tell higher apps to capture locally and
+  emit an event or upload the resulting audio artifact.
 
 ## KG memory
 
@@ -370,7 +409,7 @@ Host-local prompt-cache export/import admin aliases:
 - `POST /api/gateway/prompt_cache/save`
 - `POST /api/gateway/prompt_cache/load`
 
-These remain explicitly local/operator-oriented in this release:
+These remain explicitly local/operator-oriented:
 
 - the route paths are compatibility aliases, but the implementation delegates to Runtime's public host facade:
   - `saved` -> `list_prompt_cache_exports(...)`

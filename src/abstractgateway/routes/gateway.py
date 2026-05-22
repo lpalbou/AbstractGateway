@@ -5157,6 +5157,10 @@ class AudioTranscribeRequest(BaseModel):
     language: Optional[str] = Field(default=None, description="Optional language hint (backend-specific).")
     provider: Optional[str] = Field(default=None, description="Optional STT provider/engine selector for this transcription request.")
     model: Optional[str] = Field(default=None, description="Optional STT model override for this transcription request.")
+    prompt: Optional[str] = Field(default=None, max_length=20000, description="Optional transcription prompt/context hint.")
+    response_format: Optional[str] = Field(default=None, max_length=64, description="Optional provider-specific transcription response format.")
+    temperature: Optional[float] = Field(default=None, description="Optional transcription temperature when supported.")
+    format: Optional[str] = Field(default=None, max_length=32, description="Optional source audio format hint when supported.")
     request_id: Optional[str] = Field(default=None, description="Optional idempotency key (UUID recommended).")
 
 
@@ -5201,6 +5205,62 @@ class ImageGenerateResponse(BaseModel):
     error: Optional[str] = None
 
 
+class ImageEditRequest(BaseModel):
+    prompt: str = Field(..., max_length=20000, description="Image edit prompt.")
+    image_artifact: Dict[str, Any] = Field(..., description="Source image artifact ref dict like {'$artifact': '...'}")
+    mask_artifact: Optional[Dict[str, Any]] = Field(default=None, description="Optional mask image artifact ref dict like {'$artifact': '...'}")
+    provider: Optional[str] = Field(default=None, max_length=80, description="Optional LLM/runtime provider override.")
+    model: Optional[str] = Field(default=None, max_length=240, description="Optional LLM/runtime model override.")
+    image_provider: Optional[str] = Field(default=None, max_length=80, description="Optional image backend/provider override.")
+    image_model: Optional[str] = Field(default=None, max_length=240, description="Optional image model id/name.")
+    size: Optional[str] = Field(default=None, max_length=32, description="Optional size selector such as 1024x1024.")
+    width: Optional[int] = Field(default=None, ge=1, le=8192, description="Optional image width.")
+    height: Optional[int] = Field(default=None, ge=1, le=8192, description="Optional image height.")
+    format: str = Field(default="png", max_length=16, description="Desired output format, usually png/jpeg/webp.")
+    negative_prompt: Optional[str] = Field(default=None, max_length=8000)
+    seed: Optional[int] = Field(default=None)
+    steps: Optional[int] = Field(default=None, ge=1, le=500)
+    guidance_scale: Optional[float] = Field(default=None)
+    strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    quality: Optional[str] = Field(default=None, max_length=32)
+    style: Optional[str] = Field(default=None, max_length=64)
+    request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
+    extra: Optional[Dict[str, Any]] = Field(default=None, description="Optional provider-specific image-edit extras.")
+
+
+class MusicGenerateRequest(BaseModel):
+    prompt: str = Field(..., max_length=20000, description="Music generation prompt.")
+    provider: Optional[str] = Field(default=None, max_length=80, description="Optional LLM/runtime provider override.")
+    model: Optional[str] = Field(default=None, max_length=240, description="Optional LLM/runtime model override.")
+    music_provider: Optional[str] = Field(default=None, max_length=120, description="Optional music provider/backend override.")
+    music_model: Optional[str] = Field(default=None, max_length=240, description="Optional music model id/name.")
+    music_backend: Optional[str] = Field(default=None, max_length=120, description="Optional music backend route selector.")
+    lyrics: Optional[str] = Field(default=None, max_length=20000, description="Optional lyrics for vocal music backends.")
+    duration_s: Optional[float] = Field(default=None, gt=0, le=3600, description="Requested output duration in seconds.")
+    seed: Optional[int] = Field(default=None, description="Optional deterministic seed.")
+    num_inference_steps: Optional[int] = Field(default=None, ge=1, le=2000, description="Optional sampling step count.")
+    guidance_scale: Optional[float] = Field(default=None, description="Optional guidance scale when supported.")
+    instrumental: Optional[bool] = Field(default=None, description="Request instrumental output when supported.")
+    enhance_prompt: Optional[bool] = Field(default=None, description="Enable backend prompt enhancement when supported.")
+    structure_prompt: Optional[bool] = Field(default=None, description="Enable backend structure planning when supported.")
+    auto_lyrics: Optional[bool] = Field(default=None, description="Allow backend lyric generation when supported.")
+    text_planner_mode: Optional[str] = Field(default=None, max_length=32, description="Optional text-planning mode such as auto, on, or off.")
+    format: str = Field(default="wav", max_length=16, description="Desired output format, usually wav/mp3/flac.")
+    request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
+    extra: Optional[Dict[str, Any]] = Field(default=None, description="Optional provider-specific music-generation extras.")
+
+
+class MusicGenerateResponse(BaseModel):
+    ok: bool = Field(default=True)
+    supported: bool = Field(default=True)
+    run_id: str
+    request_id: str
+    child_run_id: Optional[str] = None
+    music_artifact: Optional[Dict[str, Any]] = None
+    code: Optional[str] = None
+    error: Optional[str] = None
+
+
 @router.post("/runs/{run_id}/audio/transcribe", response_model=AudioTranscribeResponse)
 async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTranscribeResponse:
     """Delegate STT to Runtime-owned durable child execution."""
@@ -5225,53 +5285,15 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
 
     request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
     audio_ref = getattr(req, "audio_artifact", None)
-    if not (isinstance(audio_ref, dict) and isinstance(audio_ref.get("$artifact"), str) and audio_ref.get("$artifact")):
-        raise HTTPException(status_code=400, detail="audio_artifact must be an artifact ref dict like {'$artifact': '...'}")
-
-    audio_artifact_id = str(audio_ref.get("$artifact") or "").strip()
-    try:
-        meta_in = store.get_metadata(audio_artifact_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load audio artifact metadata: {e}")
-    if meta_in is None:
-        raise HTTPException(status_code=404, detail="audio_artifact not found")
-
-    expected_run_id = str(getattr(run, "run_id", rid))
-    # Attachments are session-scoped in this gateway: uploads are stored under the session memory
-    # owner run id, not necessarily the active chat/run id. Allow audio artifacts that belong to:
-    # - this run, OR
-    # - this run's session memory owner run, OR
-    # - any artifact explicitly tagged with this session_id (defense-in-depth for storage backends).
-    session_id = ""
-    try:
-        sid0 = getattr(run, "session_id", None)
-        session_id = sid0.strip() if isinstance(sid0, str) and sid0.strip() else ""
-    except Exception:
-        session_id = ""
-
-    allowed_run_ids = {expected_run_id}
-    if session_id:
-        try:
-            allowed_run_ids.add(_session_memory_run_id(session_id))
-        except Exception:
-            pass
-
-    meta_run_id = ""
-    try:
-        meta_run_id = str(getattr(meta_in, "run_id", "") or "").strip()
-    except Exception:
-        meta_run_id = ""
-
-    if meta_run_id and meta_run_id not in allowed_run_ids:
-        tags = getattr(meta_in, "tags", None)
-        tagged_session = str(tags.get("session_id") or "").strip() if isinstance(tags, dict) else ""
-        if not session_id or not tagged_session or tagged_session != session_id:
-            # Do not leak cross-session artifact existence to callers.
-            raise HTTPException(status_code=404, detail="audio_artifact not found")
-
-    content_type_in = str(getattr(meta_in, "content_type", "") or "")
-    if content_type_in and not content_type_in.startswith("audio/") and content_type_in != "application/octet-stream":
-        raise HTTPException(status_code=400, detail=f"audio_artifact must be audio/* (got '{content_type_in}')")
+    _audio_artifact_id, meta_in = _resolve_scoped_input_artifact(
+        store=store,
+        run=run,
+        run_id=rid,
+        artifact_ref=audio_ref,
+        field_name="audio_artifact",
+        expected_content_prefix="audio/",
+    )
+    session_id = str(getattr(run, "session_id", "") or "")
 
     language = getattr(req, "language", None)
     language_hint = str(language).strip() if isinstance(language, str) and language.strip() else None
@@ -5279,6 +5301,10 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
     stt_provider_name = str(stt_provider).strip() if isinstance(stt_provider, str) and stt_provider.strip() else None
     stt_model = getattr(req, "model", None)
     stt_model_name = str(stt_model).strip() if isinstance(stt_model, str) and stt_model.strip() else None
+    prompt_hint = str(getattr(req, "prompt", "") or "").strip() or None
+    response_format = str(getattr(req, "response_format", "") or "").strip() or None
+    source_format = str(getattr(req, "format", "") or "").strip() or None
+    temperature = getattr(req, "temperature", None)
 
     run_facade, err = _gateway_abstractcore_run_facade()
     if err or run_facade is None:
@@ -5287,6 +5313,14 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
     output_spec: Dict[str, Any] = {"modality": "text", "task": "transcription"}
     if language_hint:
         output_spec["language"] = language_hint
+    if prompt_hint:
+        output_spec["prompt"] = prompt_hint
+    if response_format:
+        output_spec["response_format"] = response_format
+    if source_format:
+        output_spec["format"] = source_format
+    if temperature is not None:
+        output_spec["temperature"] = temperature
     if stt_provider_name:
         output_spec["provider"] = stt_provider_name
     if stt_model_name:
@@ -5306,7 +5340,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
             run_facade.transcribe_audio,
             str(getattr(run, "run_id", rid)),
             media=audio_ref,
-            prompt=None,
+            prompt=prompt_hint,
             output=output_spec,
             params=params,
         )
@@ -5330,7 +5364,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         "request_id": request_id,
         "sha256": sha256,
         "session_id": str(getattr(run, "session_id", "") or ""),
-        "source_audio_artifact": str(audio_ref.get("$artifact")),
+        "source_audio_artifact": str(_audio_artifact_id),
     }
     if stt_provider_name:
         tags["provider"] = stt_provider_name
@@ -5382,6 +5416,19 @@ def _gateway_generated_image_content_type(fmt: str) -> Tuple[str, str]:
     return f"image/{f}", f
 
 
+def _gateway_generated_music_content_type(fmt: str) -> Tuple[str, str]:
+    f = str(fmt or "wav").strip().lower() or "wav"
+    if f in {"wav", "wave"}:
+        return "audio/wav", "wav"
+    if f in {"mp3", "mpeg"}:
+        return "audio/mpeg", "mp3"
+    if f == "flac":
+        return "audio/flac", "flac"
+    if f:
+        return f"audio/{f}", f
+    return "application/octet-stream", "bin"
+
+
 def _gateway_image_generation_max_bytes() -> int:
     raw = _env_first("ABSTRACTGATEWAY_IMAGE_MAX_BYTES", "ABSTRACTCORE_IMAGE_MAX_BYTES")
     try:
@@ -5417,6 +5464,72 @@ def _artifact_content_bytes(store: Any, artifact_id: str) -> Optional[bytes]:
     if isinstance(content, (bytes, bytearray)):
         return bytes(content)
     return None
+
+
+def _artifact_ref_id_from_request(artifact_ref: Any, *, field_name: str) -> str:
+    if not (isinstance(artifact_ref, dict) and isinstance(artifact_ref.get("$artifact"), str) and artifact_ref.get("$artifact")):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be an artifact ref dict like {{'$artifact': '...'}}",
+        )
+    return str(artifact_ref.get("$artifact") or "").strip()
+
+
+def _assert_artifact_visible_to_run(*, meta: Any, run: Any, run_id: str, field_name: str) -> None:
+    expected_run_id = str(getattr(run, "run_id", run_id) or run_id).strip()
+    session_id = ""
+    try:
+        sid0 = getattr(run, "session_id", None)
+        session_id = sid0.strip() if isinstance(sid0, str) and sid0.strip() else ""
+    except Exception:
+        session_id = ""
+
+    allowed_run_ids = {expected_run_id}
+    if session_id:
+        try:
+            allowed_run_ids.add(_session_memory_run_id(session_id))
+        except Exception:
+            pass
+
+    meta_run_id = ""
+    try:
+        meta_run_id = str(getattr(meta, "run_id", "") or "").strip()
+    except Exception:
+        meta_run_id = ""
+
+    if meta_run_id and meta_run_id not in allowed_run_ids:
+        tags = getattr(meta, "tags", None)
+        tagged_session = str(tags.get("session_id") or "").strip() if isinstance(tags, dict) else ""
+        if not session_id or not tagged_session or tagged_session != session_id:
+            raise HTTPException(status_code=404, detail=f"{field_name} not found")
+
+
+def _resolve_scoped_input_artifact(
+    *,
+    store: Any,
+    run: Any,
+    run_id: str,
+    artifact_ref: Any,
+    field_name: str,
+    expected_content_prefix: str,
+) -> tuple[str, Any]:
+    artifact_id = _artifact_ref_id_from_request(artifact_ref, field_name=field_name)
+    try:
+        meta = store.get_metadata(artifact_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load {field_name} metadata: {e}") from e
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"{field_name} not found")
+
+    _assert_artifact_visible_to_run(meta=meta, run=run, run_id=run_id, field_name=field_name)
+
+    content_type = str(getattr(meta, "content_type", "") or "")
+    if content_type and not content_type.startswith(expected_content_prefix) and content_type != "application/octet-stream":
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be {expected_content_prefix}* (got '{content_type}')",
+        )
+    return artifact_id, meta
 
 
 def _gateway_project_artifact_to_parent_run(
@@ -5476,6 +5589,9 @@ def _gateway_generated_image_ref_from_result(
     request_id: str,
     fmt: str,
     session_id: str,
+    task: str = "image_generation",
+    source: str = "gateway_direct_image",
+    filename_stem: str = "generated",
 ) -> Optional[Dict[str, Any]]:
     if not isinstance(result, dict):
         return None
@@ -5516,8 +5632,8 @@ def _gateway_generated_image_ref_from_result(
             tags={
                 "kind": "generated_media",
                 "modality": "image",
-                "task": "image_generation",
-                "source": "gateway_direct_image",
+                "task": task,
+                "source": source,
                 "request_id": request_id,
                 "session_id": session_id,
                 "sha256": sha256,
@@ -5551,8 +5667,8 @@ def _gateway_generated_image_ref_from_result(
         tags={
             "kind": "generated_media",
             "modality": "image",
-            "task": "image_generation",
-            "source": "gateway_direct_image",
+            "task": task,
+            "source": source,
             "request_id": request_id,
             "session_id": session_id,
             "format": fmt_norm,
@@ -5596,7 +5712,7 @@ def _gateway_generated_image_ref_from_result(
     out: Dict[str, Any] = {
         "$artifact": artifact_id,
         "content_type": content_type,
-        "filename": f"generated.{fmt_norm}",
+        "filename": f"{filename_stem}.{fmt_norm}",
     }
     if sha256:
         out["sha256"] = sha256
@@ -5823,6 +5939,9 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         request_id=request_id,
         fmt=fmt,
         session_id=session_id,
+        task="image_generation",
+        source="gateway_direct_image",
+        filename_stem="generated",
     )
     if not image_ref:
         return ImageGenerateResponse(
@@ -5843,6 +5962,370 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         child_run_id=str(child.run_id),
         image_artifact=image_ref,
         event_name=None,
+    )
+
+
+@router.post("/runs/{run_id}/images/edit", response_model=ImageGenerateResponse)
+async def image_edit(run_id: str, req: ImageEditRequest) -> ImageGenerateResponse:
+    """Delegate image editing to Runtime-owned durable child execution."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    prompt = str(getattr(req, "prompt", "") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    source_ref = getattr(req, "image_artifact", None)
+    source_artifact_id, source_meta = _resolve_scoped_input_artifact(
+        store=store,
+        run=run,
+        run_id=rid,
+        artifact_ref=source_ref,
+        field_name="image_artifact",
+        expected_content_prefix="image/",
+    )
+    mask_ref = getattr(req, "mask_artifact", None)
+    mask_artifact_id = ""
+    mask_meta = None
+    if mask_ref is not None:
+        mask_artifact_id, mask_meta = _resolve_scoped_input_artifact(
+            store=store,
+            run=run,
+            run_id=rid,
+            artifact_ref=mask_ref,
+            field_name="mask_artifact",
+            expected_content_prefix="image/",
+        )
+
+    run_facade, err = _gateway_abstractcore_run_facade()
+    if err or run_facade is None:
+        return ImageGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="edited_image_unavailable",
+            error=err or "Gateway runtime does not expose AbstractCore durable media helpers.",
+        )
+
+    fmt = str(getattr(req, "format", "png") or "png").strip().lower() or "png"
+    session_id = str(getattr(run, "session_id", "") or "")
+    tags = {
+        "kind": "generated_media",
+        "modality": "image",
+        "task": "image_edit",
+        "source": "gateway_direct_image_edit",
+        "request_id": request_id,
+        "session_id": session_id,
+        "format": fmt,
+    }
+    output_spec: Dict[str, Any] = {
+        "modality": "image",
+        "task": "image_edit",
+        "format": fmt,
+        "run_id": str(getattr(run, "run_id", rid)),
+        "tags": tags,
+    }
+    for key in ("size", "width", "height", "negative_prompt", "seed", "steps", "guidance_scale", "strength", "quality", "style"):
+        value = getattr(req, key, None)
+        if value is not None:
+            output_spec[key] = value
+    if isinstance(req.extra, dict) and req.extra:
+        output_spec["extra"] = dict(req.extra)
+    image_provider = str(getattr(req, "image_provider", "") or "").strip()
+    image_model = str(getattr(req, "image_model", "") or "").strip()
+    if image_provider:
+        output_spec["provider"] = image_provider
+    if image_model:
+        output_spec["model"] = image_model
+
+    source_item: Dict[str, Any] = {
+        "$artifact": source_artifact_id,
+        "artifact_id": source_artifact_id,
+        "type": "image",
+        "role": "source",
+    }
+    source_content_type = str(getattr(source_meta, "content_type", "") or "").strip()
+    if source_content_type:
+        source_item["content_type"] = source_content_type
+    media_items: List[Dict[str, Any]] = [source_item]
+    if mask_artifact_id:
+        mask_item: Dict[str, Any] = {
+            "$artifact": mask_artifact_id,
+            "artifact_id": mask_artifact_id,
+            "type": "image",
+            "role": "mask",
+        }
+        mask_content_type = str(getattr(mask_meta, "content_type", "") or "").strip()
+        if mask_content_type:
+            mask_item["content_type"] = mask_content_type
+        media_items.append(mask_item)
+
+    params: Dict[str, Any] = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": session_id,
+            "request_id": request_id,
+        },
+    }
+    child_vars: Optional[Dict[str, Any]] = None
+    runtime_provider = str(getattr(req, "provider", "") or "").strip()
+    runtime_model = str(getattr(req, "model", "") or "").strip()
+    if runtime_provider or runtime_model:
+        runtime_ns: Dict[str, Any] = {}
+        if runtime_provider:
+            runtime_ns["provider"] = runtime_provider
+        if runtime_model:
+            runtime_ns["model"] = runtime_model
+        child_vars = {"_runtime": runtime_ns}
+
+    try:
+        child = await asyncio.to_thread(
+            run_facade.edit_image,
+            str(getattr(run, "run_id", rid)),
+            prompt=prompt,
+            media=media_items,
+            output=output_spec,
+            params=params,
+            child_vars=child_vars,
+        )
+    except Exception as e:
+        return ImageGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="edited_image_error",
+            error=str(e),
+        )
+
+    result = _gateway_completed_child_result(child, operation="image edit")
+    image_ref = _gateway_generated_image_ref_from_result(
+        result=result,
+        store=store,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        fmt=fmt,
+        session_id=session_id,
+        task="image_edit",
+        source="gateway_direct_image_edit",
+        filename_stem="edited",
+    )
+    if not image_ref:
+        return ImageGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="edited_image_no_artifact",
+            error="Image edit completed without a stored image artifact.",
+        )
+
+    return ImageGenerateResponse(
+        ok=True,
+        supported=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        child_run_id=str(child.run_id),
+        image_artifact=image_ref,
+        event_name=None,
+    )
+
+
+@router.post("/runs/{run_id}/music/generate", response_model=MusicGenerateResponse)
+async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerateResponse:
+    """Delegate music generation to Runtime-owned durable child execution."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    prompt = str(getattr(req, "prompt", "") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    run_facade, err = _gateway_abstractcore_run_facade()
+    if err or run_facade is None:
+        return MusicGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="generated_music_unavailable",
+            error=err or "Gateway runtime does not expose AbstractCore durable media helpers.",
+        )
+
+    fmt = str(getattr(req, "format", "wav") or "wav").strip().lower() or "wav"
+    session_id = str(getattr(run, "session_id", "") or "")
+    tags = {
+        "kind": "generated_media",
+        "modality": "music",
+        "task": "music_generation",
+        "source": "gateway_direct_music",
+        "request_id": request_id,
+        "session_id": session_id,
+        "format": fmt,
+    }
+    output_spec: Dict[str, Any] = {
+        "modality": "music",
+        "task": "music_generation",
+        "format": fmt,
+        "run_id": str(getattr(run, "run_id", rid)),
+        "tags": tags,
+    }
+    for key in (
+        "lyrics",
+        "duration_s",
+        "seed",
+        "num_inference_steps",
+        "guidance_scale",
+        "instrumental",
+        "enhance_prompt",
+        "structure_prompt",
+        "auto_lyrics",
+        "text_planner_mode",
+    ):
+        value = getattr(req, key, None)
+        if value is not None:
+            output_spec[key] = value
+    if isinstance(req.extra, dict) and req.extra:
+        for key, value in req.extra.items():
+            if key in output_spec or value is None:
+                continue
+            output_spec[str(key)] = value
+
+    music_provider = str(getattr(req, "music_provider", "") or "").strip()
+    music_model = str(getattr(req, "music_model", "") or "").strip()
+    music_backend = str(getattr(req, "music_backend", "") or "").strip()
+    if music_provider:
+        output_spec["provider"] = music_provider
+    if music_model:
+        output_spec["model"] = music_model
+    if music_backend:
+        output_spec["backend"] = music_backend
+
+    params: Dict[str, Any] = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": session_id,
+            "request_id": request_id,
+        },
+    }
+    child_vars: Optional[Dict[str, Any]] = None
+    runtime_provider = str(getattr(req, "provider", "") or "").strip()
+    runtime_model = str(getattr(req, "model", "") or "").strip()
+    if runtime_provider or runtime_model:
+        runtime_ns: Dict[str, Any] = {}
+        if runtime_provider:
+            runtime_ns["provider"] = runtime_provider
+        if runtime_model:
+            runtime_ns["model"] = runtime_model
+        child_vars = {"_runtime": runtime_ns}
+
+    try:
+        child = await asyncio.to_thread(
+            run_facade.generate_music,
+            str(getattr(run, "run_id", rid)),
+            prompt=prompt,
+            output=output_spec,
+            params=params,
+            child_vars=child_vars,
+        )
+    except Exception as e:
+        return MusicGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="generated_music_error",
+            error=str(e),
+        )
+
+    result = _gateway_completed_child_result(child, operation="music generation")
+    outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
+    items = outputs.get("music") if isinstance(outputs, dict) else None
+    item = next((entry for entry in items if isinstance(entry, dict)), None) if isinstance(items, list) else None
+    if not isinstance(item, dict):
+        return MusicGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="generated_music_no_artifact",
+            error="Music generation completed without a stored audio artifact.",
+        )
+
+    fallback_content_type, fmt_norm = _gateway_generated_music_content_type(fmt)
+    music_ref = _gateway_generated_artifact_ref_from_item(
+        item,
+        store=store,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        session_id=session_id,
+        fallback_content_type=fallback_content_type,
+        fallback_filename=f"music.{fmt_norm}",
+        modality="music",
+        task="music_generation",
+        source="gateway_direct_music",
+    )
+    if not isinstance(music_ref, dict):
+        return MusicGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="generated_music_no_artifact",
+            error="Music generation completed without a stored audio artifact.",
+        )
+
+    return MusicGenerateResponse(
+        ok=True,
+        supported=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        child_run_id=str(child.run_id),
+        music_artifact=music_ref,
     )
 
 
@@ -7280,6 +7763,105 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
     }
 
 
+def _listen_voice_contract_descriptor(*, stt: Dict[str, Any]) -> Dict[str, Any]:
+    policy = _server_workspace_policy_public()
+    content_types = list(stt.get("content_types") or ["audio/wav", "audio/mpeg", "audio/webm"])
+    upload_endpoint = str(stt.get("upload_endpoint") or _api_gateway_path("/attachments/upload"))
+    transcribe_endpoint = str(stt.get("endpoint") or _api_gateway_path("/runs/{run_id}/audio/transcribe"))
+    models_endpoint = str(stt.get("models_endpoint") or _api_gateway_path("/audio/transcriptions/models"))
+    out: Dict[str, Any] = {
+        "available": True,
+        "host_capture_required": True,
+        "transcription_available": bool(stt.get("available")),
+        "transcribe_route_available": bool(stt.get("route_available")),
+        "upload_endpoint": upload_endpoint,
+        "transcribe_endpoint": transcribe_endpoint,
+        "models_endpoint": models_endpoint,
+        "input_modes": ["artifact"],
+        "content_types": content_types,
+        "max_upload_bytes": int(policy.get("max_attachment_bytes") or 0),
+        "durability": "workflow_wait_event",
+        "wait_event_transport": "emit_event",
+        "commands_endpoint": _api_gateway_path("/commands"),
+        "commands_type": "emit_event",
+        "returns_audio_artifact": True,
+        "returns_text": True,
+        "wait_details": {
+            "input_mode": "voice",
+            "event_payload": {
+                "audio_artifact": {"$artifact": "..."},
+                "text": "optional host transcript",
+            },
+        },
+    }
+    if stt.get("durability"):
+        out["transcription_durability"] = stt.get("durability")
+    if stt.get("returns_child_run_id") is not None:
+        out["transcription_returns_child_run_id"] = bool(stt.get("returns_child_run_id"))
+    hint = str(stt.get("config_hint") or stt.get("install_hint") or "").strip()
+    if hint:
+        out["transcription_config_hint"] = hint
+    return out
+
+
+def _gateway_music_provider_id(value: Any) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if not isinstance(value, dict):
+        return ""
+    for key in ("provider", "provider_id", "backend_id", "id", "name"):
+        raw = value.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return ""
+
+
+def _gateway_music_capability_probe() -> Dict[str, Any]:
+    task = "text_to_music"
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
+        return _runtime_discovery_payload(
+            {
+                "available": False,
+                "task": task,
+                "providers": [],
+                "available_providers": [],
+                "provider_details": [],
+                "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+            }
+        )
+    try:
+        payload = discovery.list_music_providers(task=task)
+    except Exception as exc:
+        return _runtime_discovery_payload(
+            {
+                "available": False,
+                "task": task,
+                "providers": [],
+                "available_providers": [],
+                "provider_details": [],
+                "error": str(exc),
+            }
+        )
+
+    out = _runtime_discovery_payload(payload)
+    provider_details = [dict(item) for item in out.get("provider_details") or [] if isinstance(item, dict)]
+    providers = _dedupe_strings(
+        [str(x).strip() for x in out.get("providers") or [] if isinstance(x, str) and str(x).strip()]
+        + [str(x).strip() for x in out.get("available_providers") or [] if isinstance(x, str) and str(x).strip()]
+        + [_gateway_music_provider_id(item) for item in provider_details if _gateway_music_provider_id(item)]
+    )
+    out["task"] = str(out.get("task") or task)
+    out["providers"] = providers
+    out["available_providers"] = _dedupe_strings(
+        [str(x).strip() for x in out.get("available_providers") or [] if isinstance(x, str) and str(x).strip()]
+        or providers
+    )
+    out["provider_details"] = provider_details
+    out["available"] = bool(out.get("available") or providers or out["available_providers"] or provider_details)
+    return out
+
+
 def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
     vision_plugin = _plugin_capability(caps, "vision")
     abstractvision = caps.get("abstractvision") if isinstance(caps.get("abstractvision"), dict) else {}
@@ -7290,6 +7872,11 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
         direct_route_available and direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
     )
     voice_direct = _voice_contract_descriptor(caps, kind="tts")
+    music_plugin = _plugin_capability(caps, "music")
+    music_route_available = bool(music_plugin.get("route_available")) if music_plugin else bool(direct_route_available)
+    music_configured = bool(music_plugin.get("configured")) if music_plugin else False
+    music_available = bool(music_plugin.get("available")) if music_plugin else False
+    music_hint = str(music_plugin.get("config_hint") or music_plugin.get("error") or "").strip() if music_plugin else ""
     return {
         "generated_image": {
             "workflow": {
@@ -7321,18 +7908,84 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                 ),
             },
         },
-            "generated_voice": {
-                "direct_endpoint": {
-                    "available": bool(voice_direct.get("available")),
-                    "route_available": bool(voice_direct.get("route_available")),
-                    "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
-                    "durability": "runtime_child_run",
-                    "returns_child_run_id": True,
-                    **({"config_hint": str(voice_direct.get("config_hint"))} if voice_direct.get("config_hint") else {}),
-                },
-                "workflow": {"available": bool(_plugin_capability(caps, "voice").get("available"))},
+        "edited_image": {
+            "workflow": {
+                "available": workflow_image_available,
+                "backend": vision_plugin.get("selected_backend") if isinstance(vision_plugin, dict) else None,
+                "event_contract": "workflow_artifact",
+                **(
+                    {"config_hint": str(vision_plugin.get("install_hint") or "Install/configure AbstractVision or an AbstractCore vision backend.")}
+                    if not workflow_image_available
+                    else {}
+                ),
             },
-        }
+            "direct_endpoint": {
+                "available": direct_configured,
+                "route_available": direct_route_available,
+                "endpoint": _api_gateway_path("/runs/{run_id}/images/edit"),
+                "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
+                "provider_models_task": "image_to_image",
+                "input_modes": ["artifact"],
+                "mask_supported": True,
+                "durability": "runtime_child_run",
+                "returns_child_run_id": True,
+                "formats": ["png", "jpeg", "webp"],
+                "max_image_bytes": _gateway_image_generation_max_bytes(),
+                **(
+                    {"config_hint": str(run_err or "Gateway runtime is not wired to AbstractCore durable media helpers.")}
+                    if not direct_route_available
+                    else {"config_hint": "Configure AbstractVision or an AbstractCore-backed image runtime for image edits."}
+                    if not direct_configured
+                    else {}
+                ),
+            },
+        },
+        "generated_voice": {
+            "direct_endpoint": {
+                "available": bool(voice_direct.get("available")),
+                "route_available": bool(voice_direct.get("route_available")),
+                "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
+                "durability": "runtime_child_run",
+                "returns_child_run_id": True,
+                **({"config_hint": str(voice_direct.get("config_hint"))} if voice_direct.get("config_hint") else {}),
+            },
+            "workflow": {"available": bool(_plugin_capability(caps, "voice").get("available"))},
+        },
+        "generated_music": {
+            "workflow": {
+                "available": music_available,
+                **({"backend": music_plugin.get("selected_backend")} if music_plugin.get("selected_backend") else {}),
+                "event_contract": "workflow_artifact",
+                **(
+                    {"config_hint": music_hint or "Use the direct generated-music endpoint through Runtime-backed Gateway media helpers."}
+                    if not music_available
+                    else {}
+                ),
+            },
+            "direct_endpoint": {
+                "available": music_available,
+                "route_available": music_route_available,
+                "configured": music_configured,
+                "endpoint": _api_gateway_path("/runs/{run_id}/music/generate"),
+                "providers_endpoint": _api_gateway_path("/audio/music/providers"),
+                "provider_models_endpoint": _api_gateway_path("/audio/music/models"),
+                "provider_models_task": "text_to_music",
+                "delivery_modes": ["artifact"],
+                "durability": "runtime_child_run",
+                "returns_child_run_id": True,
+                "formats": ["wav", "mp3", "flac"],
+                "content_types": {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"},
+                **({"selected_backend": music_plugin.get("selected_backend")} if music_plugin.get("selected_backend") else {}),
+                **(
+                    {"config_hint": music_hint or "Gateway runtime is not wired to AbstractCore durable media helpers."}
+                    if not music_route_available
+                    else {"config_hint": music_hint or "Configure an AbstractCore music backend or remote Core server music route."}
+                    if not music_configured
+                    else {}
+                ),
+            },
+        },
+    }
 
 
 def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
@@ -7439,6 +8092,8 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "voice_voices": _api_gateway_path("/voice/voices"),
             "audio_speech_models": _api_gateway_path("/audio/speech/models"),
             "audio_transcription_models": _api_gateway_path("/audio/transcriptions/models"),
+            "audio_music_providers": _api_gateway_path("/audio/music/providers"),
+            "audio_music_models": _api_gateway_path("/audio/music/models"),
             "vision_provider_models": _api_gateway_path("/vision/provider_models"),
             "vision_models": _api_gateway_path("/vision/models"),
             "tools": _api_gateway_path("/discovery/tools"),
@@ -7462,6 +8117,13 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "memory": _memory_contract_descriptor(caps),
     }
     generated_media = _generated_media_contract(caps)
+    tts_contract = _voice_contract_descriptor(caps, kind="tts")
+    stt_contract = _voice_contract_descriptor(caps, kind="stt")
+    assistant_voice = {
+        "tts": tts_contract,
+        "stt": stt_contract,
+        "listen": _listen_voice_contract_descriptor(stt=stt_contract),
+    }
 
     flow_editor = {
         "available": True,
@@ -7496,6 +8158,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "runs": common["runs"],
         "ledger": common["ledger"],
         "artifacts": common["artifacts"],
+        "voice": assistant_voice,
         "model_residency": common["model_residency"],
         "media": generated_media,
         "helpers": {
@@ -7508,10 +8171,6 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         },
     }
 
-    assistant_voice = {
-        "tts": _voice_contract_descriptor(caps, kind="tts"),
-        "stt": _voice_contract_descriptor(caps, kind="stt"),
-    }
     assistant = {
         "available": True,
         "version": 1,
@@ -7581,12 +8240,42 @@ async def discovery_capabilities() -> Dict[str, Any]:
     host_facade, host_err = _gateway_abstractcore_host_facade()
     discovery_facade, discovery_err = _gateway_abstractcore_discovery_facade()
     run_facade, run_err = _gateway_abstractcore_run_facade()
+    music_probe = _gateway_music_capability_probe()
+    music_route_available = bool(run_facade is not None and not run_err)
+    music_configured = bool(
+        music_probe.get("available")
+        or music_probe.get("providers")
+        or music_probe.get("available_providers")
+        or music_probe.get("provider_details")
+    )
+    music_hint = ""
+    if not music_route_available:
+        music_hint = str(run_err or "Gateway runtime is not wired to AbstractCore durable media helpers.")
+    elif not music_configured:
+        music_hint = str(
+            music_probe.get("error")
+            or "Configure an AbstractCore music backend or remote Core server music route."
+        )
     plugin_errors = [str(err) for err in (host_err, discovery_err, run_err) if isinstance(err, str) and err.strip()]
+    music_probe_error = music_probe.get("error")
+    if isinstance(music_probe_error, str) and music_probe_error.strip():
+        plugin_errors.append(music_probe_error.strip())
     plugin_caps = {
         "voice": {"available": bool(run_facade is not None and not run_err)},
         "audio": {"available": bool(run_facade is not None and not run_err)},
         "vision": {"available": bool((run_facade is not None and not run_err) or (discovery_facade is not None and not discovery_err))},
-        "music": {"available": False},
+        "music": {
+            "available": bool(music_route_available and music_configured),
+            "route_available": music_route_available,
+            "configured": music_configured,
+            "task": str(music_probe.get("task") or "text_to_music"),
+            "providers": list(music_probe.get("providers") or []) if isinstance(music_probe.get("providers"), list) else [],
+            "available_providers": list(music_probe.get("available_providers") or [])
+            if isinstance(music_probe.get("available_providers"), list)
+            else [],
+            **({"config_hint": music_hint} if music_hint else {}),
+            **({"error": str(music_probe.get("error"))} if music_probe.get("error") else {}),
+        },
     }
     caps["capability_plugins"] = {
         "installed": bool(caps["abstractruntime"].get("installed")) and bool(caps["abstractcore"].get("installed")),
@@ -7768,6 +8457,92 @@ async def audio_transcription_models_catalog(
         _runtime_discovery_payload(payload),
         provider=provider,
         model_keys=("models_by_provider", "stt_models_by_provider"),
+    )
+
+
+@router.get("/audio/music/providers")
+async def audio_music_providers_catalog(
+    request: Request,
+    task: Optional[str] = Query(default=None, description="Optional music capability task filter, usually text_to_music."),
+    base_url: Optional[str] = Query(
+        default=None,
+        description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
+    ),
+) -> Dict[str, Any]:
+    """List music providers through the Gateway Runtime discovery facade."""
+    task_value = str(task or "").strip() or "text_to_music"
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
+        return _runtime_discovery_payload(
+            {
+                "available": False,
+                "task": task_value,
+                "providers": [],
+                "available_providers": [],
+                "provider_details": [],
+                "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+            }
+        )
+    try:
+        payload = discovery.list_music_providers(
+            task=task_value,
+            base_url=base_url,
+            provider_api_key=_request_provider_api_key(request),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    out = _runtime_discovery_payload(payload)
+    out.setdefault("task", task_value)
+    out.setdefault("providers", [])
+    out.setdefault("available_providers", [])
+    out.setdefault("provider_details", [])
+    return out
+
+
+@router.get("/audio/music/models")
+async def audio_music_models_catalog(
+    request: Request,
+    task: Optional[str] = Query(default=None, description="Optional music capability task filter, usually text_to_music."),
+    base_url: Optional[str] = Query(
+        default=None,
+        description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
+    ),
+    provider: Optional[str] = Query(default=None, description="Optional music provider/backend filter."),
+) -> Dict[str, Any]:
+    """List music model ids through the Gateway Runtime discovery facade."""
+    task_value = str(task or "").strip() or "text_to_music"
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
+        return _filter_provider_model_catalog_response(
+            _runtime_discovery_payload(
+                {
+                    "available": False,
+                    "task": task_value,
+                    "provider": provider,
+                    "models": [],
+                    "providers": [],
+                    "available_providers": [],
+                    "models_by_provider": {},
+                    "provider_models": [],
+                    "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+                }
+            ),
+            provider=provider,
+            model_keys=("models_by_provider",),
+        )
+    try:
+        payload = discovery.list_music_models(
+            task=task_value,
+            base_url=base_url,
+            provider_api_key=_request_provider_api_key(request),
+            provider=provider,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return _filter_provider_model_catalog_response(
+        _runtime_discovery_payload(payload),
+        provider=provider,
+        model_keys=("models_by_provider",),
     )
 
 
@@ -13279,24 +14054,58 @@ class _GatewaySessionPromptCacheRequest(_GatewaySessionPromptCacheTarget):
 
 def _gateway_model_residency_contract_descriptor() -> Dict[str, Any]:
     facade, err = _gateway_abstractcore_host_facade()
-    available = facade is not None
     endpoints = {
         "loaded": _api_gateway_path("/models/loaded"),
         "load": _api_gateway_path("/models/load"),
         "unload": _api_gateway_path("/models/unload"),
     }
+    task_names = ["text_generation", "image_generation", "tts", "stt", "music_generation"]
+    supports = {task: False for task in task_names}
+    task_capabilities: Dict[str, Any] = {}
+    runtime_mode: Optional[str] = None
+    relay_only: Optional[bool] = None
+    diagnostics: Optional[Dict[str, Any]] = None
+    capabilities_source: Optional[str] = None
+    available = bool(facade is not None and not err)
+
+    if facade is not None and not err:
+        fn = getattr(facade, "get_model_residency_capabilities", None)
+        if callable(fn):
+            try:
+                payload = fn()
+            except Exception as exc:
+                err = str(exc)
+            else:
+                payload_dict = dict(payload) if isinstance(payload, dict) else {}
+                runtime_mode = str(payload_dict.get("mode") or "").strip() or None
+                if payload_dict.get("relay_only") is not None:
+                    relay_only = bool(payload_dict.get("relay_only"))
+                diagnostics = dict(payload_dict.get("diagnostics")) if isinstance(payload_dict.get("diagnostics"), dict) else None
+                capabilities_source = str(payload_dict.get("source") or "").strip() or None
+                raw_tasks = payload_dict.get("tasks")
+                if isinstance(raw_tasks, dict):
+                    task_capabilities = {str(name): dict(info) for name, info in raw_tasks.items() if isinstance(info, dict)}
+                    if task_capabilities:
+                        task_names = list(task_capabilities.keys())
+                        supports = {task: bool(info.get("supported")) for task, info in task_capabilities.items()}
+        else:
+            available = False
+            err = err or "Gateway runtime does not expose model residency capabilities."
+
     return {
         "route_available": True,
         "available": available,
         "source": "abstractruntime.host_facade",
         "endpoints": endpoints,
-        "tasks": ["text_generation", "image_generation", "tts", "stt"],
-        "supports": {
-            "text_generation": True,
-            "image_generation": True,
-            "tts": True,
-            "stt": True,
-        },
+        "tasks": task_names,
+        "supports": supports,
+        "task_capabilities": task_capabilities,
+        "supported_tasks": [task for task in task_names if supports.get(task) is True],
+        "unsupported_tasks": [task for task in task_names if supports.get(task) is not True],
+        **({"mode": runtime_mode} if runtime_mode else {}),
+        **({"relay_only": relay_only} if relay_only is not None else {}),
+        **({"capabilities_source": capabilities_source} if capabilities_source else {}),
+        **({"diagnostics": diagnostics} if diagnostics else {}),
         "ledger": "workflow model_residency effects are ledgered by Runtime; operator model routes are not ledger commands",
         **({"config_hint": err} if err else {}),
     }

@@ -18,7 +18,7 @@ Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.p
 
 - **AbstractRuntime** (required): the durable run model + tick loop + stores (declared in `pyproject.toml`).
 - **AbstractGateway** (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in `src/abstractgateway/routes/gateway.py`).
-- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`).
+- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image plus voice/audio/music capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`).
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).
 
 Related repos:
@@ -208,7 +208,7 @@ environment variables in the gateway process, for example
 `ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY` (legacy `ABSTRACTVOICE_*` names still
 work).
 
-### How do I enable generated images or Runtime-managed multimodal outputs?
+### How do I enable generated images, edited images, generated music, or other Runtime-managed multimodal outputs?
 
 Use the base install:
 
@@ -217,10 +217,12 @@ pip install abstractgateway
 ```
 
 The base install includes `AbstractRuntime[multimodal,mcp-worker]` plus the
-Runtime-owned media/tool integration stack. The server image defaults image and
-audio generation to OpenAI remote endpoints; set `OPENAI_API_KEY` (or the
-`ABSTRACTGATEWAY_VISION_*` / `ABSTRACTGATEWAY_VOICE_*` overrides) before
-expecting live generation to succeed. Use
+Runtime-owned media/tool integration stack. The server image defaults image,
+audio, and music generation to Runtime-backed provider routes; set the relevant
+Gateway or provider credentials before expecting live generation to succeed.
+For example, use `OPENAI_API_KEY` for hosted image/voice paths, or configure a
+Core music backend/server that Runtime can reach for Gateway-routed music
+generation. Use
 `ABSTRACTGATEWAY_VISION_BACKEND=diffusers` or `sdcpp` only for custom images
 that intentionally include those local engines.
 
@@ -229,11 +231,58 @@ Gateway's direct run-scoped endpoint:
 
 ```text
 POST /api/gateway/runs/{run_id}/images/generate
+POST /api/gateway/runs/{run_id}/images/edit
 ```
 
-The direct endpoint uses Runtime/Core image-generation selectors and stores the
-result as a run artifact, so it still requires a configured Runtime-compatible
-image backend.
+The direct image endpoints use Runtime/Core image-generation and image-edit
+selectors and store the result as a run artifact, so they still require a
+configured Runtime-compatible image backend.
+
+Generated music is exposed through Gateway's direct Runtime child-run route and
+its thin-client discovery/catalog contract:
+
+```text
+POST /api/gateway/runs/{run_id}/music/generate
+GET /api/gateway/audio/music/providers
+GET /api/gateway/audio/music/models
+```
+
+Higher apps should feature-detect music from
+`capabilities.contracts.flow_editor.media.generated_music` or
+`capabilities.contracts.assistant.media.generated_music`.
+
+### What is `voice.listen` in the capabilities contract?
+
+`voice.listen` is not a live server-side microphone transport. It is a
+higher-app contract that tells clients how to handle local capture:
+
+- capture audio on the client or host device
+- either upload it to `POST /api/gateway/runs/{run_id}/audio/transcribe`
+- or emit the configured event/command into the run contract
+
+This keeps live capture UX owned by higher apps such as Assistant or Observer
+while Gateway stays responsible for durable runs, artifacts, and transcription.
+
+### Are catalog responses fully normalized by Gateway?
+
+Not yet.
+
+Gateway already owns the route family and the thin-client contract pointers for
+provider/model discovery, but some catalog response bodies still preserve
+lower-layer shape differences. Higher apps like Flow currently normalize a few
+legacy variants when reading model/provider catalogs.
+
+What is stable today:
+
+- which discovery routes exist
+- which contract fields point at those routes
+- which media tasks and direct endpoints are available
+
+What is not yet versioned as a strict Gateway contract:
+
+- one canonical provider/model catalog response envelope across text, vision,
+  voice, STT, and music
+- a dedicated deployment/readiness block for operator dashboards
 
 ### What does Gateway session prompt-cache orchestration include?
 

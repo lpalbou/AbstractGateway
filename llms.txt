@@ -17,12 +17,19 @@ Key invariants / defaults (evidence in code):
 - Optional operator endpoints include account-scoped email inbox routes (`/api/gateway/email/*`) used by AbstractObserver (Inbox → Email) (`src/abstractgateway/routes/gateway.py`).
 
 Multimodal notes:
-- Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (best-effort; reports installed optional capabilities like `voice`, `tools`, `visualflow`, `vision_fallback`, `media`, plus the versioned shared run contract including input-data and history-bundle read endpoints).
+- Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (best-effort; reports installed optional capabilities like `voice`, `tools`, `visualflow`, `vision_fallback`, `media`, plus the versioned shared run contract including input-data/history-bundle read endpoints, direct media feature gates, voice `tts|stt|listen`, prompt-cache surfaces, and model-residency truth).
 - Direct Gateway voice/audio durable endpoints (when `abstractvoice` is installed on the gateway host):
   - STT: `POST /api/gateway/runs/{run_id}/audio/transcribe`
   - TTS: `POST /api/gateway/runs/{run_id}/voice/tts`
-- Generated images are available through Runtime workflows and through the direct run-scoped route `POST /api/gateway/runs/{run_id}/images/generate` when an image backend is configured.
-- Dynamic catalogs for thin clients are exposed at `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, and `GET /api/gateway/vision/provider_models`; they proxy AbstractCore Server catalog routes when configured.
+- Direct Gateway image durable endpoints:
+  - image generate: `POST /api/gateway/runs/{run_id}/images/generate`
+  - image edit: `POST /api/gateway/runs/{run_id}/images/edit`
+- Direct Gateway music durable endpoint:
+  - music: `POST /api/gateway/runs/{run_id}/music/generate`
+- Generated and edited images are available through Runtime workflows and the direct run-scoped routes when an image backend is configured.
+- Dynamic catalogs for thin clients are exposed at `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, `GET /api/gateway/audio/transcriptions/models`, `GET /api/gateway/audio/music/providers`, `GET /api/gateway/audio/music/models`, and `GET /api/gateway/vision/provider_models`; they proxy AbstractCore Server catalog routes when configured.
+- Catalog route bodies are still best-effort wrappers today; the stable contract is the route family plus the capability descriptors that point higher apps at those routes.
+- `voice.listen` is a host-capture contract for higher apps, not a server microphone socket; clients capture locally and then emit an event or upload audio for STT.
 - KG memory is selected through Gateway env (`ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory`, plus `sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`) and queried through `POST /api/gateway/kg/query`; store implementations remain owned by AbstractMemory, and Gateway currently targets the compatible AbstractMemory 0.0.x TripleStore API.
 - `/api/gateway/prompt_cache/*` exposes provider/model prompt-cache controls; `/api/gateway/prompt_cache/saved|save|load` are Runtime-backed host-local export/import admin aliases; `/api/gateway/sessions/{session_id}/prompt_cache/*` adds Gateway-owned session naming/status/prepare/clear/rebuild orchestration over those provider controls.
 - Docker scope: `abstractgateway-server` is the release-grade lightweight base-package image; `abstractgateway-server-nvidia` installs `abstractgateway[gpu]` and is experimental/best-effort until a CUDA smoke gate exists. Apple/MLX inference should run natively on macOS and be reached from the Gateway container via Docker Model Runner (`http://model-runner.docker.internal/engines/v1`) or a host bridge OpenAI-compatible URL.
