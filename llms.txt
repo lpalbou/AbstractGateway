@@ -87,7 +87,7 @@ Compatibility note:
 - [src/abstractgateway/config.py](./src/abstractgateway/config.py): env var parsing + sqlite safety invariant
 - [src/abstractgateway/cli.py](./src/abstractgateway/cli.py): `abstractgateway serve|runner|migrate|triage-*|...`
 - [src/abstractgateway/hosts/bundle_host.py](./src/abstractgateway/hosts/bundle_host.py): `.flow` bundle loading + VisualFlow compilation + tool/LLM wiring switches
-- [src/abstractgateway/hosts/visualflow_host.py](./src/abstractgateway/hosts/visualflow_host.py): VisualFlow directory mode (requires `abstractgateway[visualflow]`)
+- VisualFlow directory mode was intentionally removed; use VisualFlow CRUD + publish to `.flow` bundles (`/api/gateway/visualflows/*`) and run in bundle mode.
 
 ## Optional
 

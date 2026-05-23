@@ -204,6 +204,17 @@ class _StubGatewayLLMClient:
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {"max_tokens": 1024, "max_output_tokens": 256}
 
+    def get_model_residency_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": True,
+            "operation": "capabilities",
+            "mode": "local",
+            "relay_only": False,
+            "source": "test_stub",
+            "tasks": {},
+        }
+
     def get_prompt_cache_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
         _ = kwargs
         caps = self._provider.get_prompt_cache_capabilities()
@@ -522,6 +533,17 @@ class _KeyedGatewayLLMClient:
 
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {"max_tokens": 1024, "max_output_tokens": 256}
+
+    def get_model_residency_capabilities(self, **kwargs: Any) -> Dict[str, Any]:
+        _ = kwargs
+        return {
+            "supported": True,
+            "operation": "capabilities",
+            "mode": "keyed",
+            "relay_only": True,
+            "source": "test_stub",
+            "tasks": {},
+        }
 
     def generate(self, **kwargs: Any) -> Dict[str, Any]:
         _ = kwargs

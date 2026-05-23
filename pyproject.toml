@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.2.17"
+version = "0.2.18"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,9 +12,8 @@ license = { text = "MIT" }
 authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
-  "AbstractRuntime[multimodal,mcp-worker]>=0.4.21",
+  "AbstractRuntime[multimodal,mcp-worker]>=0.4.22",
   "abstractagent>=0.3.7",
-  "abstractflow>=0.3.11",
   "AbstractMemory[lancedb]>=0.2.6",
   "sentence-transformers<6.0.0,>=5.1.0",
   "numpy<3.0.0,>=1.20.0",
@@ -38,7 +37,7 @@ memory = []
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.21",
+  "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.22",
   "abstractagent[all-apple]>=0.3.7",
   "AbstractMemory[all-apple]>=0.2.6",
 ]
@@ -46,21 +45,21 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.21",
+  "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.22",
   "abstractagent[all-gpu]>=0.3.7",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]
 
 # Native macOS aggregate profile for full local+remote Gateway installs.
 all-apple = [
-  "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.21",
+  "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.22",
   "abstractagent[all-apple]>=0.3.7",
   "AbstractMemory[all-apple]>=0.2.6",
 ]
 
 # Full GPU aggregate profile for CUDA/ROCm-style local engine hosts.
 all-gpu = [
-  "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.21",
+  "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.22",
   "abstractagent[all-gpu]>=0.3.7",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]
@@ -68,7 +67,7 @@ all-gpu = [
 # Compatibility alias for historical Docker builds. New NVIDIA Docker builds use
 # `abstractgateway[gpu]`.
 server-nvidia = [
-  "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.21",
+  "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.22",
   "abstractagent[all-gpu]>=0.3.7",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]
@@ -79,9 +78,11 @@ voice = []
 # Generative vision capabilities via AbstractCore's AbstractVision plugin.
 vision = []
 
-# Compatibility aliases. VisualFlow support and Telegram's AbstractCore tool
-# integration are already present in the base remote-light server install.
+# Compatibility alias (deprecated): VisualFlow directory mode was removed.
 visualflow = []
+
+# Telegram's AbstractCore tool integration is already present in the base
+# remote-light server install.
 telegram = []
 dev = [
   "pytest>=7.0.0",

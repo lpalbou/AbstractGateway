@@ -5235,7 +5235,7 @@ class MusicGenerateRequest(BaseModel):
     prompt: str = Field(..., max_length=20000, description="Music generation prompt.")
     provider: Optional[str] = Field(default=None, max_length=80, description="Optional LLM/runtime provider override.")
     model: Optional[str] = Field(default=None, max_length=240, description="Optional LLM/runtime model override.")
-    music_provider: Optional[str] = Field(default=None, max_length=120, description="Optional music backend override.")
+    music_provider: Optional[str] = Field(default=None, max_length=120, description="Optional music provider override.")
     music_model: Optional[str] = Field(default=None, max_length=240, description="Optional music model id/name.")
     lyrics: Optional[str] = Field(default=None, max_length=20000, description="Optional lyrics for vocal music backends.")
     duration_s: Optional[float] = Field(default=None, gt=0, le=3600, description="Requested output duration in seconds.")
@@ -8799,20 +8799,9 @@ async def discovery_capabilities() -> Dict[str, Any]:
     except Exception as e:
         caps["tools"] = {"installed": False, "error": str(e)}
 
-    try:
-        import importlib.metadata
-        import importlib.util
-
-        if importlib.util.find_spec("abstractflow") is None:
-            raise ModuleNotFoundError("No module named 'abstractflow'")
-        ver = None
-        try:
-            ver = importlib.metadata.version("abstractflow")
-        except Exception:
-            ver = None
-        caps["visualflow"] = {"installed": True, "version": ver}
-    except Exception as e:
-        caps["visualflow"] = {"installed": False, "error": str(e)}
+    # VisualFlow editor support: Gateway stores VisualFlow JSON records and publishes `.flow`
+    # WorkflowBundles. The Gateway execution plane does not depend on AbstractFlow.
+    caps["visualflow"] = {"installed": True}
 
     caps["vision_fallback"] = {"installed": bool(caps["abstractcore"].get("installed"))}
     caps["media"] = {"installed": bool(caps["abstractcore"].get("installed"))}
@@ -9090,7 +9079,7 @@ async def audio_music_models_catalog(
         default=None,
         description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
     ),
-    provider: Optional[str] = Query(default=None, description="Optional music provider/backend filter."),
+    provider: Optional[str] = Query(default=None, description="Optional music provider filter."),
 ) -> Dict[str, Any]:
     """List music model ids through the Gateway Runtime discovery facade."""
     task_value = str(task or "").strip() or "text_to_music"

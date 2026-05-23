@@ -7,21 +7,21 @@ AbstractGateway is configured primarily via **environment variables** (plus a fe
 The base install (`pip install abstractgateway`) is the remote-light server
 profile: HTTP/SSE, durable stores, `AbstractRuntime[multimodal,mcp-worker]`,
 Runtime-owned provider/media/tool support, AbstractAgent, AbstractFlow
-compatibility, and AbstractMemory/LanceDB KG support.
+compatibility (runs bundles produced by AbstractFlow; does not require the `abstractflow` package), and AbstractMemory/LanceDB KG support.
 
 Optional extras (see `pyproject.toml`):
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
 - `abstractgateway[gpu]`: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
 - `abstractgateway[http]`, `[server]`, `[multimodal]`, `[memory]`, `[voice]`, `[vision]`, `[all]`: compatibility aliases because the base install now includes the remote-light server stack
 - `abstractgateway[server-nvidia]`: compatibility alias for the GPU profile used by older NVIDIA Docker commands
-- `abstractgateway[visualflow]`: compatibility alias; VisualFlow support is included by the base install
+- `abstractgateway[visualflow]`: deprecated compatibility alias (VisualFlow directory mode was removed; does nothing)
 - `abstractgateway[telegram]`: compatibility alias; Telegram bridge support uses base install dependencies
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal,mcp-worker]>=0.4.21`
-- `abstractagent>=0.3.6`
+- `AbstractRuntime[multimodal,mcp-worker]>=0.4.22`
+- `abstractagent>=0.3.7`
 - `AbstractMemory[lancedb]>=0.2.6`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use

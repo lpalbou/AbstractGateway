@@ -66,7 +66,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.17
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.18
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -74,7 +74,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.17
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.18
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
@@ -83,6 +83,9 @@ facades, OpenAI-compatible text providers, workflow-backed and direct image,
 voice, audio, and music routes surfaced through Runtime, provider/session prompt-cache
 helpers, AbstractMemory/LanceDB KG support, AbstractAgent, and AbstractFlow
 compatibility.
+
+AbstractFlow note:
+- You do **not** need the `abstractflow` Python package to run `.flow` bundles (bundle mode). You only need it to author bundles. VisualFlow directory mode was intentionally removed from the gateway to keep the dependency direction clean.
 
 ```bash
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -95,7 +98,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.17
+  ghcr.io/lpalbou/abstractgateway-server:0.2.18
 ```
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the
@@ -451,13 +454,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.17
+  ghcr.io/lpalbou/abstractgateway-server:0.2.18
 ```
 
 See [deployment.md](docs/deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.17`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.18`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -541,6 +544,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.18] - 2026-05-23
+
+### Added
+- Catalog and provider discovery routes now include a stable Gateway-owned envelope (`catalog.contract=gateway_catalog_v1`, `catalog.version=1`) plus one canonical `items` array, while preserving legacy lower-layer fields for compatibility.
+- Capability discovery now also exposes `common.readiness` (`gateway_surface_readiness_v1`): a compact surface-level summary derived from endpoint descriptors, memory readiness, prompt-cache, media gates, and Runtime/Core truth.
+
+### Changed
+- Raised the Runtime floor to `AbstractRuntime[multimodal,mcp-worker]>=0.4.22`.
+- Removed VisualFlow directory mode and fully removed the `abstractflow` package dependency from Gateway. VisualFlow JSON is stored/published via Gateway endpoints and executed as `.flow` WorkflowBundles (bundle mode).
 
 ## [0.2.17] - 2026-05-22
 
@@ -992,7 +1005,7 @@ These are not required for the base gateway, but are used by optional modes/feat
 - **FastAPI** (via **Starlette**) + **Pydantic**: HTTP API surface and request/response models (base install).
 - **Uvicorn**: ASGI server used by `abstractgateway serve` (base install).
 - **python-multipart**: multipart upload support for bundle/attachment endpoints (base install).
-- **AbstractFlow**: VisualFlow JSON directory mode and workflow authoring/bundling workflows (see `abstractgateway[visualflow]`).
+- **AbstractFlow**: workflow authoring/bundling workflows (Gateway does not depend on it; it runs `.flow` bundles).
 - **AbstractCore** integration (via `abstractruntime[abstractcore]`): LLM/tool execution wiring, embeddings client, Telegram TDLib wrapper.
 - **AbstractAgent**: Visual Agent nodes in bundle mode.
 - **AbstractMemory** + **LanceDB**: `memory_kg_*` nodes in bundle mode (knowledge graph storage).
@@ -1665,21 +1678,21 @@ AbstractGateway is configured primarily via **environment variables** (plus a fe
 The base install (`pip install abstractgateway`) is the remote-light server
 profile: HTTP/SSE, durable stores, `AbstractRuntime[multimodal,mcp-worker]`,
 Runtime-owned provider/media/tool support, AbstractAgent, AbstractFlow
-compatibility, and AbstractMemory/LanceDB KG support.
+compatibility (runs bundles produced by AbstractFlow; does not require the `abstractflow` package), and AbstractMemory/LanceDB KG support.
 
 Optional extras (see `pyproject.toml`):
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
 - `abstractgateway[gpu]`: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
 - `abstractgateway[http]`, `[server]`, `[multimodal]`, `[memory]`, `[voice]`, `[vision]`, `[all]`: compatibility aliases because the base install now includes the remote-light server stack
 - `abstractgateway[server-nvidia]`: compatibility alias for the GPU profile used by older NVIDIA Docker commands
-- `abstractgateway[visualflow]`: compatibility alias; VisualFlow support is included by the base install
+- `abstractgateway[visualflow]`: deprecated compatibility alias (VisualFlow directory mode was removed; does nothing)
 - `abstractgateway[telegram]`: compatibility alias; Telegram bridge support uses base install dependencies
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal,mcp-worker]>=0.4.21`
-- `abstractagent>=0.3.6`
+- `AbstractRuntime[multimodal,mcp-worker]>=0.4.22`
+- `abstractagent>=0.3.7`
 - `AbstractMemory[lancedb]>=0.2.6`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -1920,7 +1933,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.17
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.18
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -1928,7 +1941,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.17
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.18
 ```
 
 The default image installs the base `abstractgateway` package, which includes:
@@ -1936,7 +1949,6 @@ The default image installs the base `abstractgateway` package, which includes:
 - `AbstractRuntime[multimodal,mcp-worker]`
 - `AbstractMemory[lancedb]>=0.2.6`
 - `abstractagent`
-- `abstractflow`
 - FastAPI/Uvicorn
 
 This profile supports hosted/commercial providers, OpenAI-compatible text
@@ -1970,7 +1982,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.17
+  ghcr.io/lpalbou/abstractgateway-server:0.2.18
 ```
 
 Other host-native endpoints are also valid: LM Studio at
@@ -2083,7 +2095,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.17-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.18-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -2097,7 +2109,7 @@ PyPI release is available, matching the AbstractCore server image pattern.
 # AbstractGateway — Architecture
 
 > Status: implemented (main branch)
-> Last reviewed: 2026-05-22
+> Last reviewed: 2026-05-23
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
 - **Start runs** (and optionally schedule them)
@@ -2125,7 +2137,7 @@ flowchart LR
     Sec["GatewaySecurityMiddleware\n(auth + origin + limits)"]
     API["FastAPI routes\n/api/gateway/*"]
     Runner["GatewayRunner\npoll commands + tick runs"]
-    Host["Workflow host\n(bundle | visualflow)"]
+    Host["Workflow host\n(bundle mode)"]
     Stores["Durable stores\nruns + ledger + commands + artifacts"]
   end
 
@@ -2155,7 +2167,6 @@ flowchart LR
   - Store types come from `abstractruntime` (RunStore, LedgerStore, CommandStore, ArtifactStore).
 - **Workflow host** (what “workflows” mean in this gateway):
   - `bundle` (default): load `.flow` WorkflowBundles and compile VisualFlow JSON via `abstractruntime.visualflow_compiler` (`src/abstractgateway/hosts/bundle_host.py`).
-  - `visualflow` (optional): load VisualFlow JSON from `*.json` files via `abstractflow` (`src/abstractgateway/hosts/visualflow_host.py`).
   - Wired in `src/abstractgateway/service.py` (`create_default_gateway_service`).
 - **Runner worker**:
   - Polls the durable command inbox and applies commands; ticks RUNNING runs forward (`src/abstractgateway/runner.py`).
@@ -2204,7 +2215,7 @@ Evidence:
 - CLI flags and runner env toggles: `src/abstractgateway/cli.py`
 - Runner lock file: `src/abstractgateway/runner.py`
 
-## Workflow sources (bundle vs visualflow)
+## Workflow sources (bundle)
 
 ### Bundle mode (recommended)
 
@@ -2216,12 +2227,11 @@ Evidence:
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (`WorkflowBundleGatewayHost.load_from_dir`).
 
-### VisualFlow directory mode (compatibility)
+### VisualFlow directory mode
 
-- Input: `*.json` VisualFlow files under `ABSTRACTGATEWAY_FLOWS_DIR`.
-- Requires the `abstractflow` compiler library, included by the base `pip install abstractgateway`.
-
-Evidence: `src/abstractgateway/hosts/visualflow_host.py` (`_require_visualflow_deps`, `VisualFlowRegistry`).
+VisualFlow directory mode was intentionally removed. Store VisualFlows through
+`/api/gateway/visualflows/*`, publish a `.flow` WorkflowBundle via
+`POST /api/gateway/visualflows/{flow_id}/publish`, and run in bundle mode.
 
 ## Security model (gateway endpoints)
 
@@ -2287,20 +2297,18 @@ Related repos:
 Not for **bundle mode** (the default).
 
 - Bundle mode loads `.flow` bundles and compiles VisualFlow JSON via `abstractruntime.visualflow_compiler` (no `abstractflow` import).
-- You only need `abstractflow` to **author** bundles, or to run **visualflow directory mode**.
+- You only need `abstractflow` to **author** bundles.
 
-Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation), `src/abstractgateway/hosts/visualflow_host.py` (requires `abstractflow`).
+Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation).
 
 ### What’s the difference between bundle mode and visualflow directory mode?
 
 - **Bundle mode** (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`, default):
   - input: one `.flow` file or a directory of `*.flow`
   - versioning: bundles are addressed as `bundle_id@bundle_version`
-- **VisualFlow directory mode** (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=visualflow`):
-  - input: a directory of `*.json` VisualFlow files
-  - requires: the base `pip install abstractgateway`
+- **VisualFlow directory mode**: removed. Use VisualFlow CRUD + publish to `.flow` bundles, then run in bundle mode.
 
-Evidence: `src/abstractgateway/service.py` (workflow source switch), `src/abstractgateway/hosts/bundle_host.py`, `src/abstractgateway/hosts/visualflow_host.py`.
+Evidence: `src/abstractgateway/service.py` (workflow source switch), `src/abstractgateway/hosts/bundle_host.py`.
 
 ## Security
 

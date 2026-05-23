@@ -15,7 +15,7 @@ These are not required for the base gateway, but are used by optional modes/feat
 - **FastAPI** (via **Starlette**) + **Pydantic**: HTTP API surface and request/response models (base install).
 - **Uvicorn**: ASGI server used by `abstractgateway serve` (base install).
 - **python-multipart**: multipart upload support for bundle/attachment endpoints (base install).
-- **AbstractFlow**: VisualFlow JSON directory mode and workflow authoring/bundling workflows (see `abstractgateway[visualflow]`).
+- **AbstractFlow**: workflow authoring/bundling workflows (Gateway does not depend on it; it runs `.flow` bundles).
 - **AbstractCore** integration (via `abstractruntime[abstractcore]`): LLM/tool execution wiring, embeddings client, Telegram TDLib wrapper.
 - **AbstractAgent**: Visual Agent nodes in bundle mode.
 - **AbstractMemory** + **LanceDB**: `memory_kg_*` nodes in bundle mode (knowledge graph storage).

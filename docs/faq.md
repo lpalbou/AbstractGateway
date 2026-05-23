@@ -31,20 +31,18 @@ Related repos:
 Not for **bundle mode** (the default).
 
 - Bundle mode loads `.flow` bundles and compiles VisualFlow JSON via `abstractruntime.visualflow_compiler` (no `abstractflow` import).
-- You only need `abstractflow` to **author** bundles, or to run **visualflow directory mode**.
+- You only need `abstractflow` to **author** bundles.
 
-Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation), `src/abstractgateway/hosts/visualflow_host.py` (requires `abstractflow`).
+Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation).
 
 ### What’s the difference between bundle mode and visualflow directory mode?
 
 - **Bundle mode** (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`, default):
   - input: one `.flow` file or a directory of `*.flow`
   - versioning: bundles are addressed as `bundle_id@bundle_version`
-- **VisualFlow directory mode** (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=visualflow`):
-  - input: a directory of `*.json` VisualFlow files
-  - requires: the base `pip install abstractgateway`
+- **VisualFlow directory mode**: removed. Use VisualFlow CRUD + publish to `.flow` bundles, then run in bundle mode.
 
-Evidence: `src/abstractgateway/service.py` (workflow source switch), `src/abstractgateway/hosts/bundle_host.py`, `src/abstractgateway/hosts/visualflow_host.py`.
+Evidence: `src/abstractgateway/service.py` (workflow source switch), `src/abstractgateway/hosts/bundle_host.py`.
 
 ## Security
 

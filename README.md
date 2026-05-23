@@ -56,7 +56,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.17
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.18
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -64,7 +64,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.17
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.18
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
@@ -73,6 +73,9 @@ facades, OpenAI-compatible text providers, workflow-backed and direct image,
 voice, audio, and music routes surfaced through Runtime, provider/session prompt-cache
 helpers, AbstractMemory/LanceDB KG support, AbstractAgent, and AbstractFlow
 compatibility.
+
+AbstractFlow note:
+- You do **not** need the `abstractflow` Python package to run `.flow` bundles (bundle mode). You only need it to author bundles. VisualFlow directory mode was intentionally removed from the gateway to keep the dependency direction clean.
 
 ```bash
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -85,7 +88,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.17
+  ghcr.io/lpalbou/abstractgateway-server:0.2.18
 ```
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the

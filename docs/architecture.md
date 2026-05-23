@@ -1,7 +1,7 @@
 # AbstractGateway — Architecture
 
 > Status: implemented (main branch)
-> Last reviewed: 2026-05-22
+> Last reviewed: 2026-05-23
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
 - **Start runs** (and optionally schedule them)
@@ -29,7 +29,7 @@ flowchart LR
     Sec["GatewaySecurityMiddleware\n(auth + origin + limits)"]
     API["FastAPI routes\n/api/gateway/*"]
     Runner["GatewayRunner\npoll commands + tick runs"]
-    Host["Workflow host\n(bundle | visualflow)"]
+    Host["Workflow host\n(bundle mode)"]
     Stores["Durable stores\nruns + ledger + commands + artifacts"]
   end
 
@@ -59,7 +59,6 @@ flowchart LR
   - Store types come from `abstractruntime` (RunStore, LedgerStore, CommandStore, ArtifactStore).
 - **Workflow host** (what “workflows” mean in this gateway):
   - `bundle` (default): load `.flow` WorkflowBundles and compile VisualFlow JSON via `abstractruntime.visualflow_compiler` (`src/abstractgateway/hosts/bundle_host.py`).
-  - `visualflow` (optional): load VisualFlow JSON from `*.json` files via `abstractflow` (`src/abstractgateway/hosts/visualflow_host.py`).
   - Wired in `src/abstractgateway/service.py` (`create_default_gateway_service`).
 - **Runner worker**:
   - Polls the durable command inbox and applies commands; ticks RUNNING runs forward (`src/abstractgateway/runner.py`).
@@ -108,7 +107,7 @@ Evidence:
 - CLI flags and runner env toggles: `src/abstractgateway/cli.py`
 - Runner lock file: `src/abstractgateway/runner.py`
 
-## Workflow sources (bundle vs visualflow)
+## Workflow sources (bundle)
 
 ### Bundle mode (recommended)
 
@@ -120,12 +119,11 @@ Evidence:
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (`WorkflowBundleGatewayHost.load_from_dir`).
 
-### VisualFlow directory mode (compatibility)
+### VisualFlow directory mode
 
-- Input: `*.json` VisualFlow files under `ABSTRACTGATEWAY_FLOWS_DIR`.
-- Requires the `abstractflow` compiler library, included by the base `pip install abstractgateway`.
-
-Evidence: `src/abstractgateway/hosts/visualflow_host.py` (`_require_visualflow_deps`, `VisualFlowRegistry`).
+VisualFlow directory mode was intentionally removed. Store VisualFlows through
+`/api/gateway/visualflows/*`, publish a `.flow` WorkflowBundle via
+`POST /api/gateway/visualflows/{flow_id}/publish`, and run in bundle mode.
 
 ## Security model (gateway endpoints)
 

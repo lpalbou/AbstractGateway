@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional
 
 from .config import GatewayHostConfig
 from .embeddings_config import resolve_embedding_config
-from .hosts.visualflow_host import VisualFlowGatewayHost, VisualFlowRegistry
 from .runner import GatewayRunner, GatewayRunnerConfig
 from .security import GatewayAuthPolicy, load_gateway_auth_policy_from_env
 from .stores import GatewayStores, build_file_stores, build_sqlite_stores
@@ -90,7 +89,11 @@ def create_default_gateway_service() -> GatewayService:
 
     # Workflow source:
     # - bundle (default): `.flow` bundles with VisualFlow JSON (compiled via AbstractRuntime; no AbstractFlow import)
-    # - visualflow (optional): load VisualFlow JSON files directly from a directory (host wiring currently uses AbstractFlow extras)
+    #
+    # NOTE: VisualFlow directory mode was intentionally removed. Gateway is the
+    # execution/control plane and should not depend on the AbstractFlow compiler
+    # library. Use bundle mode and publish VisualFlows to `.flow` bundles via:
+    # `POST /api/gateway/visualflows/{flow_id}/publish`.
     source = str(os.getenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle") or "bundle").strip().lower()
     if source == "bundle":
         from .hosts.bundle_host import WorkflowBundleGatewayHost
@@ -102,17 +105,8 @@ def create_default_gateway_service() -> GatewayService:
             ledger_store=stores.ledger_store,
             artifact_store=stores.artifact_store,
         )
-    elif source == "visualflow":
-        flows = VisualFlowRegistry(flows_dir=cfg.flows_dir).load()
-        host = VisualFlowGatewayHost(
-            flows_dir=cfg.flows_dir,
-            flows=flows,
-            run_store=stores.run_store,
-            ledger_store=stores.ledger_store,
-            artifact_store=stores.artifact_store,
-        )
     else:
-        raise RuntimeError(f"Unsupported workflow source: {source}. Supported: bundle|visualflow")
+        raise RuntimeError(f"Unsupported workflow source: {source}. Supported: bundle")
 
     runner_cfg = GatewayRunnerConfig(
         poll_interval_s=float(cfg.poll_interval_s),
