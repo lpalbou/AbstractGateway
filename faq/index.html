@@ -776,10 +776,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#how-do-i-enable-generated-images-or-runtime-managed-multimodal-outputs" class="md-nav__link">
+  <a href="#how-do-i-enable-generated-images-edited-images-generated-music-or-other-runtime-managed-multimodal-outputs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How do I enable generated images or Runtime-managed multimodal outputs?
+        How do I enable generated images, edited images, generated music, or other Runtime-managed multimodal outputs?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-voicelisten-in-the-capabilities-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is voice.listen in the capabilities contract?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#are-catalog-responses-fully-normalized-by-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Are catalog responses fully normalized by Gateway?
       
     </span>
   </a>
@@ -1176,10 +1198,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#how-do-i-enable-generated-images-or-runtime-managed-multimodal-outputs" class="md-nav__link">
+  <a href="#how-do-i-enable-generated-images-edited-images-generated-music-or-other-runtime-managed-multimodal-outputs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How do I enable generated images or Runtime-managed multimodal outputs?
+        How do I enable generated images, edited images, generated music, or other Runtime-managed multimodal outputs?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-voicelisten-in-the-capabilities-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is voice.listen in the capabilities contract?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#are-catalog-responses-fully-normalized-by-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Are catalog responses fully normalized by Gateway?
       
     </span>
   </a>
@@ -1297,7 +1341,7 @@ For the full API surface, rely on the live OpenAPI spec (<code>/openapi.json</co
 <ul>
 <li><strong>AbstractRuntime</strong> (required): the durable run model + tick loop + stores (declared in <code>pyproject.toml</code>).</li>
 <li><strong>AbstractGateway</strong> (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in <code>src/abstractgateway/routes/gateway.py</code>).</li>
-<li><strong>AbstractRuntime + transitive capability packages</strong> (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
+<li><strong>AbstractRuntime + transitive capability packages</strong> (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image plus voice/audio/music capabilities, and KG-backed bundle execution (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
 <li>Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).</li>
 </ul>
 <p>Related repos:
@@ -1308,19 +1352,17 @@ For the full API surface, rely on the live OpenAPI spec (<code>/openapi.json</co
 <p>Not for <strong>bundle mode</strong> (the default).</p>
 <ul>
 <li>Bundle mode loads <code>.flow</code> bundles and compiles VisualFlow JSON via <code>abstractruntime.visualflow_compiler</code> (no <code>abstractflow</code> import).</li>
-<li>You only need <code>abstractflow</code> to <strong>author</strong> bundles, or to run <strong>visualflow directory mode</strong>.</li>
+<li>You only need <code>abstractflow</code> to <strong>author</strong> bundles.</li>
 </ul>
-<p>Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (bundle compilation), <code>src/abstractgateway/hosts/visualflow_host.py</code> (requires <code>abstractflow</code>).</p>
+<p>Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (bundle compilation).</p>
 <h3 id="whats-the-difference-between-bundle-mode-and-visualflow-directory-mode">What’s the difference between bundle mode and visualflow directory mode?<a class="headerlink" href="#whats-the-difference-between-bundle-mode-and-visualflow-directory-mode" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Bundle mode</strong> (<code>ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle</code>, default):</li>
 <li>input: one <code>.flow</code> file or a directory of <code>*.flow</code></li>
 <li>versioning: bundles are addressed as <code>bundle_id@bundle_version</code></li>
-<li><strong>VisualFlow directory mode</strong> (<code>ABSTRACTGATEWAY_WORKFLOW_SOURCE=visualflow</code>):</li>
-<li>input: a directory of <code>*.json</code> VisualFlow files</li>
-<li>requires: the base <code>pip install abstractgateway</code></li>
+<li><strong>VisualFlow directory mode</strong>: removed. Use VisualFlow CRUD + publish to <code>.flow</code> bundles, then run in bundle mode.</li>
 </ul>
-<p>Evidence: <code>src/abstractgateway/service.py</code> (workflow source switch), <code>src/abstractgateway/hosts/bundle_host.py</code>, <code>src/abstractgateway/hosts/visualflow_host.py</code>.</p>
+<p>Evidence: <code>src/abstractgateway/service.py</code> (workflow source switch), <code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h2 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h2>
 <h3 id="why-does-abstractgateway-serve-refuse-to-start">Why does <code>abstractgateway serve</code> refuse to start?<a class="headerlink" href="#why-does-abstractgateway-serve-refuse-to-start" title="Permanent link">&para;</a></h3>
 <p>By default, the server requires an auth token for <code>/api/gateway/*</code> and will fail-fast if none is configured.</p>
@@ -1430,24 +1472,64 @@ environment variables in the gateway process, for example
 <code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code>, and
 <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code> (legacy <code>ABSTRACTVOICE_*</code> names still
 work).</p>
-<h3 id="how-do-i-enable-generated-images-or-runtime-managed-multimodal-outputs">How do I enable generated images or Runtime-managed multimodal outputs?<a class="headerlink" href="#how-do-i-enable-generated-images-or-runtime-managed-multimodal-outputs" title="Permanent link">&para;</a></h3>
+<h3 id="how-do-i-enable-generated-images-edited-images-generated-music-or-other-runtime-managed-multimodal-outputs">How do I enable generated images, edited images, generated music, or other Runtime-managed multimodal outputs?<a class="headerlink" href="#how-do-i-enable-generated-images-edited-images-generated-music-or-other-runtime-managed-multimodal-outputs" title="Permanent link">&para;</a></h3>
 <p>Use the base install:</p>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>abstractgateway
 </code></pre></div>
 <p>The base install includes <code>AbstractRuntime[multimodal,mcp-worker]</code> plus the
-Runtime-owned media/tool integration stack. The server image defaults image and
-audio generation to OpenAI remote endpoints; set <code>OPENAI_API_KEY</code> (or the
-<code>ABSTRACTGATEWAY_VISION_*</code> / <code>ABSTRACTGATEWAY_VOICE_*</code> overrides) before
-expecting live generation to succeed. Use
+Runtime-owned media/tool integration stack. The server image defaults image,
+audio, and music generation to Runtime-backed provider routes; set the relevant
+Gateway or provider credentials before expecting live generation to succeed.
+For example, use <code>OPENAI_API_KEY</code> for hosted image/voice paths, or configure a
+Core music backend/server that Runtime can reach for Gateway-routed music
+generation. Use
 <code>ABSTRACTGATEWAY_VISION_BACKEND=diffusers</code> or <code>sdcpp</code> only for custom images
 that intentionally include those local engines.</p>
 <p>Generated images are available both inside Runtime workflows and through
 Gateway's direct run-scoped endpoint:</p>
 <div class="highlight"><pre><span></span><code>POST /api/gateway/runs/{run_id}/images/generate
+POST /api/gateway/runs/{run_id}/images/edit
 </code></pre></div>
-<p>The direct endpoint uses Runtime/Core image-generation selectors and stores the
-result as a run artifact, so it still requires a configured Runtime-compatible
-image backend.</p>
+<p>The direct image endpoints use Runtime/Core image-generation and image-edit
+selectors and store the result as a run artifact, so they still require a
+configured Runtime-compatible image backend.</p>
+<p>Generated music is exposed through Gateway's direct Runtime child-run route and
+its thin-client discovery/catalog contract:</p>
+<div class="highlight"><pre><span></span><code>POST /api/gateway/runs/{run_id}/music/generate
+GET /api/gateway/audio/music/providers
+GET /api/gateway/audio/music/models
+</code></pre></div>
+<p>Higher apps should feature-detect music from
+<code>capabilities.contracts.flow_editor.media.generated_music</code> or
+<code>capabilities.contracts.assistant.media.generated_music</code>.</p>
+<h3 id="what-is-voicelisten-in-the-capabilities-contract">What is <code>voice.listen</code> in the capabilities contract?<a class="headerlink" href="#what-is-voicelisten-in-the-capabilities-contract" title="Permanent link">&para;</a></h3>
+<p><code>voice.listen</code> is not a live server-side microphone transport. It is a
+higher-app contract that tells clients how to handle local capture:</p>
+<ul>
+<li>capture audio on the client or host device</li>
+<li>either upload it to <code>POST /api/gateway/runs/{run_id}/audio/transcribe</code></li>
+<li>or emit the configured event/command into the run contract</li>
+</ul>
+<p>This keeps live capture UX owned by higher apps such as Assistant or Observer
+while Gateway stays responsible for durable runs, artifacts, and transcription.</p>
+<h3 id="are-catalog-responses-fully-normalized-by-gateway">Are catalog responses fully normalized by Gateway?<a class="headerlink" href="#are-catalog-responses-fully-normalized-by-gateway" title="Permanent link">&para;</a></h3>
+<p>Not yet.</p>
+<p>Gateway already owns the route family and the thin-client contract pointers for
+provider/model discovery, but some catalog response bodies still preserve
+lower-layer shape differences. Higher apps like Flow currently normalize a few
+legacy variants when reading model/provider catalogs.</p>
+<p>What is stable today:</p>
+<ul>
+<li>which discovery routes exist</li>
+<li>which contract fields point at those routes</li>
+<li>which media tasks and direct endpoints are available</li>
+</ul>
+<p>What is not yet versioned as a strict Gateway contract:</p>
+<ul>
+<li>one canonical provider/model catalog response envelope across text, vision,
+  voice, STT, and music</li>
+<li>a dedicated deployment/readiness block for operator dashboards</li>
+</ul>
 <h3 id="what-does-gateway-session-prompt-cache-orchestration-include">What does Gateway session prompt-cache orchestration include?<a class="headerlink" href="#what-does-gateway-session-prompt-cache-orchestration-include" title="Permanent link">&para;</a></h3>
 <p>The <code>/api/gateway/prompt_cache/*</code> routes expose provider/model prompt-cache
 controls when the active AbstractCore integration supports them. Gateway also

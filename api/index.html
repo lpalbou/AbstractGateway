@@ -1128,13 +1128,23 @@ See: <a href="../maintenance/">maintenance.md</a>.</p>
 <ul>
 <li>Capabilities (best-effort): <code>GET /api/gateway/discovery/capabilities</code></li>
 <li>Providers/models discovery (best-effort): <code>GET /api/gateway/discovery/providers</code>, <code>GET /api/gateway/discovery/providers/{provider}/models</code></li>
-<li>Dynamic capability catalogs: <code>GET /api/gateway/voice/voices</code>, <code>GET /api/gateway/audio/speech/models</code>, <code>GET /api/gateway/vision/provider_models</code></li>
+<li>Dynamic capability catalogs: <code>GET /api/gateway/voice/voices</code>, <code>GET /api/gateway/audio/speech/models</code>, <code>GET /api/gateway/audio/transcriptions/models</code>, <code>GET /api/gateway/audio/music/providers</code>, <code>GET /api/gateway/audio/music/models</code>, <code>GET /api/gateway/vision/provider_models</code></li>
 </ul>
 <p>The capabilities payload includes package presence (<code>abstractruntime</code>,
 <code>abstractcore</code>, <code>abstractmemory</code>, <code>abstractvoice</code>, <code>abstractvision</code>), existing
 gateway helpers (<code>tools</code>, <code>visualflow</code>, <code>media</code>), memory-store readiness, and
 AbstractCore capability plugin status for <code>voice</code>, <code>audio</code>, <code>vision</code>, and
-future <code>music</code>.</p>
+<code>music</code>.</p>
+<p>Today the route paths and contract descriptors are the stable part of this
+surface. Catalog routes now also include a stable Gateway-owned envelope:</p>
+<ul>
+<li><code>catalog.contract = gateway_catalog_v1</code></li>
+<li><code>catalog.version = 1</code></li>
+<li><code>items = [...]</code></li>
+</ul>
+<p>Legacy lower-layer fields are still preserved for compatibility. New thin
+clients should read <code>catalog</code> plus <code>items</code>; older clients can keep using route-
+specific fields like <code>models</code>, <code>provider_models</code>, <code>profiles</code>, or <code>voices</code>.</p>
 <p>Provider discovery also reports the resolved default provider/model when one is
 configured. The resolver follows request values, Gateway env, and AbstractCore
 global defaults; if no pair exists, the response includes <code>default_error</code> rather
@@ -1145,6 +1155,9 @@ than a hardcoded local model.</p>
 <li><code>capabilities.contracts.common</code>: shared run start/list/summary/input/history,
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
   controls</li>
+<li><code>capabilities.contracts.common.readiness</code>: compact Gateway-owned
+  <code>gateway_surface_readiness_v1</code> summary derived from the shared endpoint/media/
+  residency descriptors</li>
 <li><code>capabilities.contracts.flow_editor</code>: the AbstractFlow editor/runtime surface</li>
 <li><code>capabilities.contracts.assistant</code>: assistant-facing voice/audio/media/cache
   feature gates</li>
@@ -1154,6 +1167,10 @@ than a hardcoded local model.</p>
 <p>Contract booleans are intentionally conservative. Package <code>installed=true</code> is
 not the same thing as endpoint <code>available=true</code>; clients should branch on the
 versioned contract fields when enabling controls.</p>
+<p><code>common.readiness</code> is intentionally narrower than provider/backend health. It
+summarizes Gateway surface availability from existing descriptors, but it does
+not invent selected backend/provider/model truth or stable degraded-state
+reason codes.</p>
 <p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>discovery_capabilities</code>, <code>discovery_providers</code>).</p>
 <h2 id="abstractflow-gateway-first-editor-contract">AbstractFlow gateway-first editor contract<a class="headerlink" href="#abstractflow-gateway-first-editor-contract" title="Permanent link">&para;</a></h2>
 <p>The browser editor can use AbstractGateway as its runtime and storage host.</p>
@@ -1191,12 +1208,17 @@ versioned contract fields when enabling controls.</p>
 <code>/runs/{run_id}/input_data</code>, <code>/runs/{run_id}/history_bundle</code>, and
 <code>/runs/{run_id}/artifacts</code>.</p>
 <h2 id="optional-multimodal-scope">Optional multimodal scope<a class="headerlink" href="#optional-multimodal-scope" title="Permanent link">&para;</a></h2>
-<p>Direct Gateway endpoints in this release:
+<p>Current direct Gateway endpoints:
 - <code>POST /api/gateway/runs/{run_id}/voice/tts</code>
 - <code>POST /api/gateway/runs/{run_id}/audio/transcribe</code>
 - <code>POST /api/gateway/runs/{run_id}/images/generate</code>
+- <code>POST /api/gateway/runs/{run_id}/images/edit</code>
+- <code>POST /api/gateway/runs/{run_id}/music/generate</code>
 - <code>GET /api/gateway/voice/voices</code>
 - <code>GET /api/gateway/audio/speech/models</code>
+- <code>GET /api/gateway/audio/transcriptions/models</code>
+- <code>GET /api/gateway/audio/music/providers</code>
+- <code>GET /api/gateway/audio/music/models</code>
 - <code>GET /api/gateway/vision/provider_models</code></p>
 <p>The catalog endpoints proxy AbstractCore Server routes when
 <code>ABSTRACTCORE_SERVER_BASE_URL</code>
@@ -1204,6 +1226,21 @@ is configured. Gateway uses explicit Core auth settings for that hop and never
 reuses the Gateway bearer token as a Core/provider secret. Without a configured
 Core server, the voice/model routes return bounded static descriptors from
 Gateway and capability-package environment variables.</p>
+<p>Each route now adds:</p>
+<ul>
+<li><code>catalog</code>: Gateway-owned route metadata (<code>contract</code>, <code>version</code>, <code>kind</code>,
+  <code>scope</code>, <code>route_source</code>, optional <code>upstream_source</code>, and route filters)</li>
+<li><code>items</code>: one canonical primary array for thin clients</li>
+</ul>
+<p>Examples:</p>
+<ul>
+<li><code>/voice/voices</code>: <code>items</code> contain voice/profile records with <code>id</code>, <code>label</code>,
+  optional <code>provider</code>, optional <code>model</code>, and <code>voice_kind</code></li>
+<li><code>/audio/*/models</code>: <code>items</code> contain model records with <code>id</code>, <code>label</code>,
+  optional <code>provider</code>, optional <code>tasks</code>, and optional <code>parameters</code></li>
+<li><code>/audio/music/providers</code> and <code>/discovery/providers</code>: <code>items</code> contain provider
+  records with <code>id</code>, <code>label</code>, and <code>provider</code></li>
+</ul>
 <p>Generated images are available through Runtime workflows when a compatible
 image backend is installed and configured. Gateway also exposes a direct image
 generation endpoint that uses the Runtime/Core output-selector contract rather
@@ -1219,6 +1256,32 @@ uses it. For tools-only workflows, the route can create a direct Runtime/Core
 client from request <code>provider</code>/<code>model</code> or <code>ABSTRACTGATEWAY_PROVIDER</code> /
 <code>ABSTRACTGATEWAY_MODEL</code>. Unsupported or unconfigured deployments return a
 structured <code>ok=false</code> response instead of a failed run.</p>
+<p>Gateway also exposes a direct image-edit sibling route:</p>
+<ul>
+<li><code>POST /api/gateway/runs/{run_id}/images/edit</code></li>
+</ul>
+<p>The request uses a source <code>image_artifact</code>, optional <code>mask_artifact</code>, the same
+provider/model and image backend selectors as image generation, and returns an
+artifact-backed edited image. Thin clients should feature-detect it from
+<code>capabilities.contracts.flow_editor.media.edited_image</code> or
+<code>capabilities.contracts.assistant.media.edited_image</code>.</p>
+<p>Generated music follows the same direct child-run pattern. Thin clients should
+discover it from <code>capabilities.contracts.flow_editor.media.generated_music</code> or
+<code>capabilities.contracts.assistant.media.generated_music</code>, list providers/models
+from the music catalog routes, and treat the returned <code>child_run_id</code> plus
+<code>music_artifact</code> as the durable output handle.</p>
+<p>STT and listen contract notes:</p>
+<ul>
+<li><code>POST /api/gateway/runs/{run_id}/audio/transcribe</code> accepts a run-visible
+  <code>audio_artifact</code> plus optional <code>language</code>, <code>prompt</code>, <code>response_format</code>,
+  <code>temperature</code>, <code>format</code>, <code>provider</code>, and <code>model</code> hints.</li>
+<li><code>capabilities.contracts.flow_editor.voice.stt</code> and
+  <code>capabilities.contracts.assistant.voice.stt</code> point to that upload route.</li>
+<li><code>capabilities.contracts.flow_editor.voice.listen</code> and
+  <code>capabilities.contracts.assistant.voice.listen</code> are host-capture contracts,
+  not a live microphone socket. They tell higher apps to capture locally and
+  emit an event or upload the resulting audio artifact.</li>
+</ul>
 <h2 id="kg-memory">KG memory<a class="headerlink" href="#kg-memory" title="Permanent link">&para;</a></h2>
 <p><code>POST /api/gateway/kg/query</code> queries the configured AbstractMemory TripleStore.
 Gateway resolves the store through:</p>
@@ -1301,7 +1364,7 @@ later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime
 <li><code>POST /api/gateway/prompt_cache/save</code></li>
 <li><code>POST /api/gateway/prompt_cache/load</code></li>
 </ul>
-<p>These remain explicitly local/operator-oriented in this release:</p>
+<p>These remain explicitly local/operator-oriented:</p>
 <ul>
 <li>the route paths are compatibility aliases, but the implementation delegates to Runtime's public host facade:</li>
 <li><code>saved</code> -&gt; <code>list_prompt_cache_exports(...)</code></li>

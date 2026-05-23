@@ -463,6 +463,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#thin-client-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thin-client control plane
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#deployment-shape-one-process-vs-split-apirunner" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -474,15 +485,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#workflow-sources-bundle-vs-visualflow" class="md-nav__link">
+  <a href="#workflow-sources-bundle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workflow sources (bundle vs visualflow)
+        Workflow sources (bundle)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Workflow sources (bundle vs visualflow)">
+    <nav class="md-nav" aria-label="Workflow sources (bundle)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -497,10 +508,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#visualflow-directory-mode-compatibility" class="md-nav__link">
+  <a href="#visualflow-directory-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        VisualFlow directory mode (compatibility)
+        VisualFlow directory mode
       
     </span>
   </a>
@@ -705,6 +716,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#thin-client-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thin-client control plane
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#deployment-shape-one-process-vs-split-apirunner" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -716,15 +738,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#workflow-sources-bundle-vs-visualflow" class="md-nav__link">
+  <a href="#workflow-sources-bundle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workflow sources (bundle vs visualflow)
+        Workflow sources (bundle)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Workflow sources (bundle vs visualflow)">
+    <nav class="md-nav" aria-label="Workflow sources (bundle)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -739,10 +761,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#visualflow-directory-mode-compatibility" class="md-nav__link">
+  <a href="#visualflow-directory-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        VisualFlow directory mode (compatibility)
+        VisualFlow directory mode
       
     </span>
   </a>
@@ -809,8 +831,8 @@
 
 <h1 id="abstractgateway-architecture">AbstractGateway — Architecture<a class="headerlink" href="#abstractgateway-architecture" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p>Status: implemented (v0.2.16)
-Last reviewed: 2026-05-21</p>
+<p>Status: implemented (main branch)
+Last reviewed: 2026-05-23</p>
 </blockquote>
 <p>AbstractGateway is a <strong>durable run gateway</strong> for AbstractRuntime:
 - <strong>Start runs</strong> (and optionally schedule them)
@@ -821,7 +843,7 @@ Last reviewed: 2026-05-21</p>
 <p>AbstractGateway is designed to sit between <strong>thin clients / UIs</strong> and <strong>AbstractRuntime</strong>:
 - AbstractGateway: HTTP/SSE API + durability glue + baseline security (<code>src/abstractgateway/app.py</code>, <code>src/abstractgateway/routes/gateway.py</code>)
 - AbstractRuntime (required): run model + tick loop + stores (<code>pyproject.toml</code>, <code>src/abstractgateway/runner.py</code>)
-- AbstractRuntime + transitive capability packages (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution (<code>src/abstractgateway/hosts/bundle_host.py</code>)</p>
+- AbstractRuntime + transitive capability packages (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio/music capabilities, and KG-backed bundle execution (<code>src/abstractgateway/hosts/bundle_host.py</code>)</p>
 <h2 id="high-level-shape">High-level shape<a class="headerlink" href="#high-level-shape" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart LR
   subgraph Clients[&quot;Clients (thin/stateless UIs)&quot;]
@@ -832,7 +854,7 @@ Last reviewed: 2026-05-21</p>
     Sec[&quot;GatewaySecurityMiddleware\n(auth + origin + limits)&quot;]
     API[&quot;FastAPI routes\n/api/gateway/*&quot;]
     Runner[&quot;GatewayRunner\npoll commands + tick runs&quot;]
-    Host[&quot;Workflow host\n(bundle | visualflow)&quot;]
+    Host[&quot;Workflow host\n(bundle mode)&quot;]
     Stores[&quot;Durable stores\nruns + ledger + commands + artifacts&quot;]
   end
 
@@ -861,7 +883,6 @@ Last reviewed: 2026-05-21</p>
 <li>Store types come from <code>abstractruntime</code> (RunStore, LedgerStore, CommandStore, ArtifactStore).</li>
 <li><strong>Workflow host</strong> (what “workflows” mean in this gateway):</li>
 <li><code>bundle</code> (default): load <code>.flow</code> WorkflowBundles and compile VisualFlow JSON via <code>abstractruntime.visualflow_compiler</code> (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
-<li><code>visualflow</code> (optional): load VisualFlow JSON from <code>*.json</code> files via <code>abstractflow</code> (<code>src/abstractgateway/hosts/visualflow_host.py</code>).</li>
 <li>Wired in <code>src/abstractgateway/service.py</code> (<code>create_default_gateway_service</code>).</li>
 <li><strong>Runner worker</strong>:</li>
 <li>Polls the durable command inbox and applies commands; ticks RUNNING runs forward (<code>src/abstractgateway/runner.py</code>).</li>
@@ -872,6 +893,30 @@ Last reviewed: 2026-05-21</p>
 - The <strong>durable ledger</strong> is the source of truth.
 - SSE (<code>/ledger/stream</code>) is an optimization; clients should reconnect by replaying from a cursor.</p>
 <p>This contract is stated and implemented in <code>src/abstractgateway/routes/gateway.py</code> (ledger endpoints + SSE) and <code>src/abstractgateway/runner.py</code> (StepRecord append semantics).</p>
+<h2 id="thin-client-control-plane">Thin-client control plane<a class="headerlink" href="#thin-client-control-plane" title="Permanent link">&para;</a></h2>
+<p>Gateway also acts as the control plane for higher-level apps such as
+AbstractFlow, AbstractAssistant, and AbstractObserver:</p>
+<ul>
+<li><code>GET /api/gateway/discovery/capabilities</code> exposes a versioned shared contract
+  for run input/history access, media endpoints, voice contracts, prompt-cache
+  surfaces, and model residency truth.</li>
+<li>Provider/model catalogs are intentionally routed through Gateway. The legacy
+  lower-layer payload fields are preserved, but Gateway now adds a stable
+  <code>gateway_catalog_v1</code> envelope plus canonical <code>items</code> so higher apps can stop
+  carrying route-local parsing logic.</li>
+<li>Gateway also exposes <code>common.readiness</code> as a compact surface-level summary
+  for thin clients and operator UIs. That summary is deliberately limited to
+  Gateway-owned contract truth; deeper backend/provider diagnostics still
+  belong below Gateway.</li>
+<li>Direct run-scoped media routes currently include TTS, STT, image generation,
+  image edit, and music generation.</li>
+<li>Voice listen is intentionally a host-capture contract, not a server-side
+  microphone transport. Gateway tells clients how to emit or upload captured
+  audio; clients keep ownership of live capture UX.</li>
+<li>Model residency, prompt-cache lifecycle, durable blocs, and discovery
+  catalogs are server-owned control-plane surfaces so higher apps do not have
+  to import Runtime/Core packages directly.</li>
+</ul>
 <h2 id="deployment-shape-one-process-vs-split-apirunner">Deployment shape: one process vs split API/runner<a class="headerlink" href="#deployment-shape-one-process-vs-split-apirunner" title="Permanent link">&para;</a></h2>
 <p>Supported patterns:
 - <strong>Single process</strong>: <code>abstractgateway serve</code> starts both the HTTP API and the background runner (FastAPI lifespan + service composition).
@@ -879,7 +924,7 @@ Last reviewed: 2026-05-21</p>
 <p>Evidence:
 - CLI flags and runner env toggles: <code>src/abstractgateway/cli.py</code>
 - Runner lock file: <code>src/abstractgateway/runner.py</code></p>
-<h2 id="workflow-sources-bundle-vs-visualflow">Workflow sources (bundle vs visualflow)<a class="headerlink" href="#workflow-sources-bundle-vs-visualflow" title="Permanent link">&para;</a></h2>
+<h2 id="workflow-sources-bundle">Workflow sources (bundle)<a class="headerlink" href="#workflow-sources-bundle" title="Permanent link">&para;</a></h2>
 <h3 id="bundle-mode-recommended">Bundle mode (recommended)<a class="headerlink" href="#bundle-mode-recommended" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Input: <code>*.flow</code> files (WorkflowBundles) under <code>ABSTRACTGATEWAY_FLOWS_DIR</code> (file or directory).</li>
@@ -889,12 +934,10 @@ Last reviewed: 2026-05-21</p>
 <li>“Dynamic flows” (e.g. schedules) are persisted under <code>&lt;data_dir&gt;/dynamic_flows/</code> and reloaded on startup.</li>
 </ul>
 <p>Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (<code>WorkflowBundleGatewayHost.load_from_dir</code>).</p>
-<h3 id="visualflow-directory-mode-compatibility">VisualFlow directory mode (compatibility)<a class="headerlink" href="#visualflow-directory-mode-compatibility" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Input: <code>*.json</code> VisualFlow files under <code>ABSTRACTGATEWAY_FLOWS_DIR</code>.</li>
-<li>Requires the <code>abstractflow</code> compiler library, included by the base <code>pip install abstractgateway</code>.</li>
-</ul>
-<p>Evidence: <code>src/abstractgateway/hosts/visualflow_host.py</code> (<code>_require_visualflow_deps</code>, <code>VisualFlowRegistry</code>).</p>
+<h3 id="visualflow-directory-mode">VisualFlow directory mode<a class="headerlink" href="#visualflow-directory-mode" title="Permanent link">&para;</a></h3>
+<p>VisualFlow directory mode was intentionally removed. Store VisualFlows through
+<code>/api/gateway/visualflows/*</code>, publish a <code>.flow</code> WorkflowBundle via
+<code>POST /api/gateway/visualflows/{flow_id}/publish</code>, and run in bundle mode.</p>
 <h2 id="security-model-gateway-endpoints">Security model (gateway endpoints)<a class="headerlink" href="#security-model-gateway-endpoints" title="Permanent link">&para;</a></h2>
 <p><code>GatewaySecurityMiddleware</code> applies only to paths starting with <code>/api/gateway</code>:
 - <strong>Bearer token auth</strong> (<code>ABSTRACTGATEWAY_AUTH_TOKEN</code> / <code>ABSTRACTGATEWAY_AUTH_TOKENS</code>)

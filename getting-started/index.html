@@ -825,7 +825,7 @@
 <h2 id="abstractframework-ecosystem-context">AbstractFramework ecosystem (context)<a class="headerlink" href="#abstractframework-ecosystem-context" title="Permanent link">&para;</a></h2>
 <p>AbstractGateway is one component in the larger <strong>AbstractFramework</strong> ecosystem:
 - <strong>AbstractRuntime</strong> (required): durable runs + workflow registry + stores
-- <strong>AbstractRuntime + transitive capability packages</strong> (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/voice/audio capabilities, and KG-backed bundle execution</p>
+- <strong>AbstractRuntime + transitive capability packages</strong> (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image plus voice/audio/music capabilities, and KG-backed bundle execution</p>
 <p>Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
 - AbstractCore: https://github.com/lpalbou/abstractcore
@@ -853,6 +853,9 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 <p>Compatibility extras such as <code>abstractgateway[http]</code>, <code>[server]</code>, <code>[memory]</code>,
 <code>[multimodal]</code>, <code>[voice]</code>, <code>[vision]</code>, and <code>[all]</code> remain accepted, but the
 base install already contains the remote-light server stack.</p>
+<p>With the base install and a configured provider stack, Gateway can surface
+run-scoped direct TTS, STT, image generation, image edit, and music generation
+for higher apps through one shared capability contract.</p>
 <h2 id="1-run-bundle-mode-file-backed-stores">1) Run (bundle mode, file-backed stores)<a class="headerlink" href="#1-run-bundle-mode-file-backed-stores" title="Permanent link">&para;</a></h2>
 <p>File-backed stores are the default and easiest for dev.</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_WORKFLOW_SOURCE</span><span class="o">=</span>bundle
@@ -920,11 +923,11 @@ docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </
 <span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway:/data/gateway&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/flows/bundles:/data/flows:ro&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.16
+<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.18
 </code></pre></div>
 <p>See <a href="../deployment/">deployment.md</a> for Compose, provider keys, and image
 customization.</p>
-<p>NVIDIA hosts can try <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.16</code>
+<p>NVIDIA hosts can try <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.18</code>
 with the compose overlay in <code>docker/abstractgateway-server/compose.nvidia.yml</code>.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
