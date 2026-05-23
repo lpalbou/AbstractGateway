@@ -128,9 +128,14 @@ Current direct Gateway APIs:
 Discovery note:
 - the capability contract is versioned and stable for endpoint discovery and
   feature gating
-- provider/model catalog payloads are still best-effort route bodies today, so
-  higher apps may need light normalization until a future catalog envelope is
-  versioned explicitly
+- provider/model/voice catalog routes now add a stable Gateway-owned envelope:
+  `catalog.contract = gateway_catalog_v1` plus canonical `items`
+- the shared thin-client contract now also exposes `common.readiness` as a
+  compact Gateway-owned surface summary derived from endpoint descriptors
+- legacy fields such as `models`, `providers`, `provider_models`, `profiles`,
+  and `voices` remain in place for compatibility
+- richer deployment/readiness truth is still separate from the catalog
+  envelope and depends on lower-layer Runtime/Core surfaces
 
 Workflow/Core-backed capabilities:
 - Generated images are available to Runtime workflows through Runtime's image
@@ -139,6 +144,8 @@ Workflow/Core-backed capabilities:
 - Generated music is available through Gateway's direct Runtime-backed child-run
   route, with provider/model discovery exposed through Gateway capability
   contracts and music catalog endpoints for higher apps.
+- Catalog routes now return a canonical `items` array and a `catalog` metadata
+  block so higher apps can stop parsing route-local payload variants.
 - Audio transcription is available through a direct Runtime-backed child-run
   route, and the capability contract also exposes `voice.listen` as a
   host-capture command surface for higher apps that record locally before

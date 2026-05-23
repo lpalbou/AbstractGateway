@@ -186,10 +186,15 @@ AbstractCore capability plugin status for `voice`, `audio`, `vision`, and
 `music`.
 
 Today the route paths and contract descriptors are the stable part of this
-surface. Provider/model catalog response bodies still preserve some lower-layer
-shape variation, so higher apps may normalize fields like `items`, `models`,
-or provider-scoped model maps. A future versioned catalog envelope is tracked
-separately in backlog item `0053`.
+surface. Catalog routes now also include a stable Gateway-owned envelope:
+
+- `catalog.contract = gateway_catalog_v1`
+- `catalog.version = 1`
+- `items = [...]`
+
+Legacy lower-layer fields are still preserved for compatibility. New thin
+clients should read `catalog` plus `items`; older clients can keep using route-
+specific fields like `models`, `provider_models`, `profiles`, or `voices`.
 
 Provider discovery also reports the resolved default provider/model when one is
 configured. The resolver follows request values, Gateway env, and AbstractCore
@@ -202,6 +207,9 @@ It also includes a versioned thin-client contract:
 - `capabilities.contracts.common`: shared run start/list/summary/input/history,
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
   controls
+- `capabilities.contracts.common.readiness`: compact Gateway-owned
+  `gateway_surface_readiness_v1` summary derived from the shared endpoint/media/
+  residency descriptors
 - `capabilities.contracts.flow_editor`: the AbstractFlow editor/runtime surface
 - `capabilities.contracts.assistant`: assistant-facing voice/audio/media/cache
   feature gates
@@ -211,6 +219,11 @@ It also includes a versioned thin-client contract:
 Contract booleans are intentionally conservative. Package `installed=true` is
 not the same thing as endpoint `available=true`; clients should branch on the
 versioned contract fields when enabling controls.
+
+`common.readiness` is intentionally narrower than provider/backend health. It
+summarizes Gateway surface availability from existing descriptors, but it does
+not invent selected backend/provider/model truth or stable degraded-state
+reason codes.
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`discovery_capabilities`, `discovery_providers`).
 
@@ -276,6 +289,21 @@ is configured. Gateway uses explicit Core auth settings for that hop and never
 reuses the Gateway bearer token as a Core/provider secret. Without a configured
 Core server, the voice/model routes return bounded static descriptors from
 Gateway and capability-package environment variables.
+
+Each route now adds:
+
+- `catalog`: Gateway-owned route metadata (`contract`, `version`, `kind`,
+  `scope`, `route_source`, optional `upstream_source`, and route filters)
+- `items`: one canonical primary array for thin clients
+
+Examples:
+
+- `/voice/voices`: `items` contain voice/profile records with `id`, `label`,
+  optional `provider`, optional `model`, and `voice_kind`
+- `/audio/*/models`: `items` contain model records with `id`, `label`,
+  optional `provider`, optional `tasks`, and optional `parameters`
+- `/audio/music/providers` and `/discovery/providers`: `items` contain provider
+  records with `id`, `label`, and `provider`
 
 Generated images are available through Runtime workflows when a compatible
 image backend is installed and configured. Gateway also exposes a direct image

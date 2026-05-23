@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore
@@ -53,6 +53,9 @@ from ..workflow_deprecations import WorkflowDeprecatedError
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
 logger = logging.getLogger(__name__)
+
+_GATEWAY_CATALOG_CONTRACT = "gateway_catalog_v1"
+_GATEWAY_CATALOG_VERSION = 1
 
 
 @router.get("/ping")
@@ -5232,9 +5235,8 @@ class MusicGenerateRequest(BaseModel):
     prompt: str = Field(..., max_length=20000, description="Music generation prompt.")
     provider: Optional[str] = Field(default=None, max_length=80, description="Optional LLM/runtime provider override.")
     model: Optional[str] = Field(default=None, max_length=240, description="Optional LLM/runtime model override.")
-    music_provider: Optional[str] = Field(default=None, max_length=120, description="Optional music provider/backend override.")
+    music_provider: Optional[str] = Field(default=None, max_length=120, description="Optional music backend override.")
     music_model: Optional[str] = Field(default=None, max_length=240, description="Optional music model id/name.")
-    music_backend: Optional[str] = Field(default=None, max_length=120, description="Optional music backend route selector.")
     lyrics: Optional[str] = Field(default=None, max_length=20000, description="Optional lyrics for vocal music backends.")
     duration_s: Optional[float] = Field(default=None, gt=0, le=3600, description="Requested output duration in seconds.")
     seed: Optional[int] = Field(default=None, description="Optional deterministic seed.")
@@ -5248,6 +5250,20 @@ class MusicGenerateRequest(BaseModel):
     format: str = Field(default="wav", max_length=16, description="Desired output format, usually wav/mp3/flac.")
     request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
     extra: Optional[Dict[str, Any]] = Field(default=None, description="Optional provider-specific music-generation extras.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_backend_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        for key in ("music_backend", "musicBackend", "backend_music", "backend"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                raise ValueError(
+                    "Music generation uses `music_provider` as the backend selector; "
+                    "`music_backend` and `backend` are not supported."
+                )
+        return value
 
 
 class MusicGenerateResponse(BaseModel):
@@ -6233,13 +6249,10 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
 
     music_provider = str(getattr(req, "music_provider", "") or "").strip()
     music_model = str(getattr(req, "music_model", "") or "").strip()
-    music_backend = str(getattr(req, "music_backend", "") or "").strip()
     if music_provider:
         output_spec["provider"] = music_provider
     if music_model:
         output_spec["model"] = music_model
-    if music_backend:
-        output_spec["backend"] = music_backend
 
     params: Dict[str, Any] = {
         "trace_metadata": {
@@ -6911,6 +6924,9 @@ def _gateway_abstractcore_run_facade() -> tuple[Optional[Any], Optional[str]]:
 
 def _runtime_discovery_payload(payload: Any, *, source: str = "abstractruntime.discovery_facade") -> Dict[str, Any]:
     out = dict(payload) if isinstance(payload, dict) else {}
+    upstream_source = out.get("source")
+    if isinstance(upstream_source, str) and upstream_source.strip():
+        out.setdefault("upstream_source", upstream_source.strip())
     out.setdefault("route_available", True)
     out.setdefault("available", bool(out))
     out["source"] = source
@@ -6918,6 +6934,482 @@ def _runtime_discovery_payload(payload: Any, *, source: str = "abstractruntime.d
     out.setdefault("error", None)
     out.setdefault("refreshed_at", _utc_now_iso())
     return out
+
+
+def _gateway_catalog_contract_descriptor() -> Dict[str, Any]:
+    return {
+        "contract": _GATEWAY_CATALOG_CONTRACT,
+        "version": _GATEWAY_CATALOG_VERSION,
+        "metadata_field": "catalog",
+        "primary_items_field": "items",
+        "items_field": "items",
+        "provider_item_fields": ["id", "label", "provider"],
+        "model_item_fields": ["id", "label", "provider", "tasks", "parameters"],
+        "voice_item_fields": ["id", "label", "provider", "model", "voice_kind"],
+    }
+
+
+def _catalog_string_list(value: Any) -> list[str]:
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    if not isinstance(value, list):
+        return []
+    return _dedupe_strings([str(item).strip() for item in value if isinstance(item, str) and str(item).strip()])
+
+
+def _gateway_catalog_provider_item(value: Any) -> Optional[Dict[str, Any]]:
+    raw = dict(value) if isinstance(value, dict) else {}
+    provider_id = ""
+    label = ""
+    for key in ("provider", "provider_id", "backend_id", "id", "name"):
+        candidate = raw.get(key) if raw else value
+        if isinstance(candidate, str) and candidate.strip():
+            provider_id = candidate.strip()
+            break
+    if not provider_id and isinstance(value, str) and value.strip():
+        provider_id = value.strip()
+    if not provider_id:
+        return None
+    for key in ("label", "display_name", "name", "provider_name", "title"):
+        candidate = raw.get(key) if raw else None
+        if isinstance(candidate, str) and candidate.strip():
+            label = candidate.strip()
+            break
+    if not label:
+        label = provider_id
+    out: Dict[str, Any] = raw
+    out["id"] = provider_id
+    out["label"] = label
+    out["provider"] = provider_id
+    out.setdefault("name", provider_id)
+    tasks = _catalog_string_list(out.get("tasks") if raw else None)
+    if not tasks:
+        tasks = _catalog_string_list(out.get("capabilities") if raw else None)
+    if tasks:
+        out["tasks"] = tasks
+    models = _catalog_string_list(out.get("models") if raw else None)
+    if models:
+        out["models"] = models
+    return out
+
+
+def _gateway_catalog_model_item(
+    value: Any,
+    *,
+    provider: Optional[str] = None,
+    task: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    raw = dict(value) if isinstance(value, dict) else {}
+    fallback_provider = str(provider or "").strip()
+    provider_id = str(
+        raw.get("provider")
+        or raw.get("owned_by")
+        or raw.get("backend")
+        or raw.get("provider_id")
+        or fallback_provider
+        or ""
+    ).strip()
+    model_value = str(
+        raw.get("model")
+        or raw.get("model_id")
+        or raw.get("name")
+        or raw.get("routed_model")
+        or ""
+    ).strip()
+    item_id = str(raw.get("id") or "").strip()
+    if item_id and model_value and item_id.lower().endswith(f"/{model_value.lower()}"):
+        item_id = model_value
+    if not item_id:
+        item_id = model_value
+    if not item_id and isinstance(value, str) and value.strip():
+        item_id = value.strip()
+    if not model_value and isinstance(value, str) and value.strip():
+        model_value = value.strip()
+    if not item_id:
+        return None
+    label = str(raw.get("label") or model_value or item_id).strip() or item_id
+    out: Dict[str, Any] = raw
+    out["id"] = item_id
+    out["label"] = label
+    if provider_id:
+        out["provider"] = provider_id
+    if model_value and model_value != item_id:
+        out["model"] = model_value
+    tasks = _catalog_string_list(out.get("tasks") if raw else None)
+    if not tasks:
+        tasks = _catalog_string_list(out.get("capabilities") if raw else None)
+    if not tasks and isinstance(task, str) and task.strip():
+        tasks = [task.strip()]
+    if tasks:
+        out["tasks"] = tasks
+    if not isinstance(out.get("parameters"), dict):
+        defaults = out.get("parameter_defaults")
+        constraints = out.get("parameter_constraints")
+        if isinstance(defaults, dict) or isinstance(constraints, dict):
+            out["parameters"] = {
+                "defaults": dict(defaults) if isinstance(defaults, dict) else {},
+                "constraints": dict(constraints) if isinstance(constraints, dict) else {},
+            }
+    return out
+
+
+def _gateway_catalog_voice_item(value: Any, *, voice_kind: str) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    voice_id = str(
+        value.get("id")
+        or value.get("voice_id")
+        or value.get("profile_id")
+        or value.get("label")
+        or ""
+    ).strip()
+    if not voice_id:
+        return None
+    out = dict(value)
+    out["id"] = voice_id
+    out["label"] = str(value.get("label") or voice_id).strip() or voice_id
+    provider = _voice_record_provider(value)
+    model = _voice_record_model(value)
+    if provider:
+        out["provider"] = provider
+    if model:
+        out["model"] = model
+    out["voice_kind"] = str(out.get("voice_kind") or voice_kind).strip() or voice_kind
+    return out
+
+
+def _gateway_catalog_dedupe_items(
+    items: list[Dict[str, Any]],
+    *,
+    key_fields: tuple[str, ...] = ("provider", "id"),
+) -> list[Dict[str, Any]]:
+    out: list[Dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = tuple(str(item.get(field) or "").strip().lower() for field in key_fields)
+        if not any(key):
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def _gateway_catalog_provider_items(
+    payload: Dict[str, Any],
+    *,
+    provider_keys: tuple[str, ...],
+    detail_keys: tuple[str, ...] = (),
+) -> list[Dict[str, Any]]:
+    items: list[Dict[str, Any]] = []
+    for key in detail_keys:
+        values = payload.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            item = _gateway_catalog_provider_item(value)
+            if item is not None:
+                items.append(item)
+    for key in provider_keys:
+        values = payload.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            item = _gateway_catalog_provider_item(value)
+            if item is not None:
+                items.append(item)
+    return _gateway_catalog_dedupe_items(items)
+
+
+def _gateway_catalog_model_items(
+    payload: Dict[str, Any],
+    *,
+    provider: Optional[str] = None,
+    task: Optional[str] = None,
+    detail_keys: tuple[str, ...] = (),
+    map_keys: tuple[str, ...] = (),
+    value_keys: tuple[str, ...] = ("models",),
+) -> list[Dict[str, Any]]:
+    items: list[Dict[str, Any]] = []
+    for key in detail_keys:
+        values = payload.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            item = _gateway_catalog_model_item(value, provider=provider, task=task)
+            if item is not None:
+                items.append(item)
+    for key in map_keys:
+        mapping = _provider_string_map(payload.get(key))
+        for provider_id, model_values in mapping.items():
+            for model_id in model_values:
+                item = _gateway_catalog_model_item(model_id, provider=provider_id, task=task)
+                if item is not None:
+                    items.append(item)
+    for key in value_keys:
+        values = payload.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            item = _gateway_catalog_model_item(value, provider=provider, task=task)
+            if item is not None:
+                items.append(item)
+    return _gateway_catalog_dedupe_items(items)
+
+
+def _gateway_catalog_voice_items(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
+    merged: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+    for key, voice_kind in (("profiles", "profile"), ("voices", "voice"), ("cloned_voices", "clone")):
+        values = payload.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            item = _gateway_catalog_voice_item(value, voice_kind=voice_kind)
+            if item is None:
+                continue
+            merged_key = (
+                str(item.get("provider") or "").strip().lower(),
+                str(item.get("id") or "").strip().lower(),
+                str(item.get("model") or "").strip().lower(),
+            )
+            existing = merged.get(merged_key)
+            if existing is None:
+                item["voice_kinds"] = [voice_kind]
+                merged[merged_key] = item
+                continue
+            voice_kinds = _dedupe_strings(
+                [str(kind).strip() for kind in list(existing.get("voice_kinds") or []) + [voice_kind] if str(kind).strip()]
+            )
+            existing["voice_kinds"] = voice_kinds
+            if "profile" in voice_kinds:
+                existing["voice_kind"] = "profile"
+            elif "voice" in voice_kinds:
+                existing["voice_kind"] = "voice"
+            elif voice_kinds:
+                existing["voice_kind"] = voice_kinds[0]
+    return list(merged.values())
+
+
+def _gateway_catalog_response(
+    payload: Dict[str, Any],
+    *,
+    kind: str,
+    scope: str,
+    items: list[Dict[str, Any]],
+    task: Optional[str] = None,
+    provider: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    out = dict(payload)
+    out["items"] = items
+    catalog: Dict[str, Any] = {
+        "contract": _GATEWAY_CATALOG_CONTRACT,
+        "version": _GATEWAY_CATALOG_VERSION,
+        "kind": kind,
+        "scope": scope,
+        "primary_items_field": "items",
+        "source": "abstractgateway.catalog",
+        "route_source": str(out.get("source") or "").strip() or "abstractruntime.discovery_facade",
+        "available": bool(out.get("available")),
+        "route_available": bool(out.get("route_available", True)),
+    }
+    upstream_source = str(out.get("upstream_source") or "").strip()
+    if upstream_source:
+        catalog["upstream_source"] = upstream_source
+    if isinstance(task, str) and task.strip():
+        catalog["task"] = task.strip()
+    if isinstance(provider, str) and provider.strip():
+        catalog["provider"] = provider.strip()
+    if isinstance(out.get("error"), str) and str(out.get("error")).strip():
+        catalog["error"] = str(out.get("error")).strip()
+    if isinstance(metadata, dict):
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            catalog[key] = value
+    out["catalog"] = catalog
+    return out
+
+
+def _descriptor_endpoint_available(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if not isinstance(value, dict):
+        return False
+    if value.get("available") is False:
+        return False
+    if value.get("route_available") is False:
+        return False
+    endpoint = value.get("endpoint")
+    return isinstance(endpoint, str) and bool(endpoint.strip())
+
+
+def _gateway_readiness_descriptor(
+    *,
+    common: Dict[str, Any],
+    flow_editor: Dict[str, Any],
+    assistant: Dict[str, Any],
+) -> Dict[str, Any]:
+    runs = common.get("runs") if isinstance(common.get("runs"), dict) else {}
+    ledger = common.get("ledger") if isinstance(common.get("ledger"), dict) else {}
+    artifacts = common.get("artifacts") if isinstance(common.get("artifacts"), dict) else {}
+    attachments = common.get("attachments") if isinstance(common.get("attachments"), dict) else {}
+    workspace = common.get("workspace") if isinstance(common.get("workspace"), dict) else {}
+    discovery = common.get("discovery") if isinstance(common.get("discovery"), dict) else {}
+    prompt_cache = common.get("prompt_cache") if isinstance(common.get("prompt_cache"), dict) else {}
+    memory = common.get("memory") if isinstance(common.get("memory"), dict) else {}
+    model_residency = common.get("model_residency") if isinstance(common.get("model_residency"), dict) else {}
+    flow_visualflows = flow_editor.get("visualflows") if isinstance(flow_editor.get("visualflows"), dict) else {}
+    assistant_voice = assistant.get("voice") if isinstance(assistant.get("voice"), dict) else {}
+    assistant_media = assistant.get("media") if isinstance(assistant.get("media"), dict) else {}
+    durable_blocs = prompt_cache.get("durable_blocs") if isinstance(prompt_cache.get("durable_blocs"), dict) else {}
+    generated_image = assistant_media.get("generated_image") if isinstance(assistant_media.get("generated_image"), dict) else {}
+    edited_image = assistant_media.get("edited_image") if isinstance(assistant_media.get("edited_image"), dict) else {}
+    generated_voice = assistant_media.get("generated_voice") if isinstance(assistant_media.get("generated_voice"), dict) else {}
+    generated_music = assistant_media.get("generated_music") if isinstance(assistant_media.get("generated_music"), dict) else {}
+    tts = assistant_voice.get("tts") if isinstance(assistant_voice.get("tts"), dict) else {}
+    stt = assistant_voice.get("stt") if isinstance(assistant_voice.get("stt"), dict) else {}
+    listen = assistant_voice.get("listen") if isinstance(assistant_voice.get("listen"), dict) else {}
+    residency_supports = model_residency.get("supports") if isinstance(model_residency.get("supports"), dict) else {}
+
+    def _surface(value: Dict[str, Any]) -> Dict[str, Any]:
+        out = {
+            "available": bool(value.get("available")),
+            "route_available": bool(value.get("route_available", _descriptor_endpoint_available(value))),
+        }
+        if value.get("configured") is not None:
+            out["configured"] = bool(value.get("configured"))
+        if isinstance(value.get("config_hint"), str) and str(value.get("config_hint")).strip():
+            out["config_hint"] = str(value.get("config_hint")).strip()
+        return out
+
+    return {
+        "contract": "gateway_surface_readiness_v1",
+        "version": 1,
+        "truth_scope": "gateway_contract_surface",
+        "limitations": [
+            "Derived from Gateway endpoint descriptors and contract wiring only.",
+            "Selected backend/provider/model and degraded-state truth remain per-surface and may require Runtime/Core responses.",
+        ],
+        "surfaces": {
+            "runs": {
+                "start": _descriptor_endpoint_available(runs.get("start")),
+                "schedule": _descriptor_endpoint_available(runs.get("schedule")),
+                "summary": _descriptor_endpoint_available(runs.get("summary")),
+                "list": _descriptor_endpoint_available(runs.get("list")),
+                "input_data": _descriptor_endpoint_available(runs.get("input_data")),
+                "history_bundle": _descriptor_endpoint_available(runs.get("history_bundle")),
+                "commands": _descriptor_endpoint_available(runs.get("commands")),
+            },
+            "ledger": {
+                "replay": _descriptor_endpoint_available(ledger.get("replay")),
+                "batch": _descriptor_endpoint_available(ledger.get("batch")),
+                "stream": _descriptor_endpoint_available(ledger.get("stream")),
+                "stream_transport": str(ledger.get("stream", {}).get("transport") or "").strip()
+                if isinstance(ledger.get("stream"), dict)
+                else None,
+            },
+            "artifacts": {
+                "list": _descriptor_endpoint_available(artifacts.get("list")),
+                "metadata": _descriptor_endpoint_available(artifacts.get("metadata")),
+                "content": _descriptor_endpoint_available(artifacts.get("content")),
+            },
+            "attachments": {
+                "upload": _descriptor_endpoint_available(attachments.get("upload")),
+                "max_upload_bytes": int(attachments.get("max_upload_bytes") or 0),
+            },
+            "workspace": {
+                "policy": isinstance(workspace.get("policy_endpoint"), str) and bool(str(workspace.get("policy_endpoint")).strip()),
+            },
+            "discovery": {
+                "providers": isinstance(discovery.get("providers"), str) and bool(str(discovery.get("providers")).strip()),
+                "provider_models": isinstance(discovery.get("provider_models"), str) and bool(str(discovery.get("provider_models")).strip()),
+                "voice_voices": isinstance(discovery.get("voice_voices"), str) and bool(str(discovery.get("voice_voices")).strip()),
+                "audio_speech_models": isinstance(discovery.get("audio_speech_models"), str) and bool(str(discovery.get("audio_speech_models")).strip()),
+                "audio_transcription_models": isinstance(discovery.get("audio_transcription_models"), str) and bool(str(discovery.get("audio_transcription_models")).strip()),
+                "audio_music_providers": isinstance(discovery.get("audio_music_providers"), str) and bool(str(discovery.get("audio_music_providers")).strip()),
+                "audio_music_models": isinstance(discovery.get("audio_music_models"), str) and bool(str(discovery.get("audio_music_models")).strip()),
+                "vision_provider_models": isinstance(discovery.get("vision_provider_models"), str) and bool(str(discovery.get("vision_provider_models")).strip()),
+                "vision_models": isinstance(discovery.get("vision_models"), str) and bool(str(discovery.get("vision_models")).strip()),
+                "tools": isinstance(discovery.get("tools"), str) and bool(str(discovery.get("tools")).strip()),
+                "semantics": isinstance(discovery.get("semantics"), str) and bool(str(discovery.get("semantics")).strip()),
+            },
+            "visualflows": {
+                "crud_available": bool(flow_visualflows.get("crud", {}).get("available", False))
+                if isinstance(flow_visualflows.get("crud"), dict)
+                else False,
+                "publish_available": bool(flow_visualflows.get("publish", {}).get("available", False))
+                if isinstance(flow_visualflows.get("publish"), dict)
+                else False,
+            },
+            "prompt_cache": {
+                "provider_controls": bool(prompt_cache.get("provider_controls")),
+                "provider_controls_available": bool(prompt_cache.get("provider_controls_available")),
+                "session_lifecycle": bool(prompt_cache.get("session_lifecycle")),
+                "session_lifecycle_available": bool(prompt_cache.get("session_lifecycle_available")),
+                "durable_blocs_available": bool(durable_blocs.get("available")),
+                "durable_blocs_lifecycle_available": bool(durable_blocs.get("lifecycle_available")),
+            },
+            "memory": {
+                "available": bool(memory.get("available")),
+                "route_available": bool(memory.get("route_available", _descriptor_endpoint_available(memory))),
+                "backend": str(memory.get("backend") or "").strip() or None,
+                "structured_query": bool(memory.get("structured_query")),
+                "semantic_query": bool(memory.get("semantic_query")),
+            },
+            "model_residency": {
+                "available": bool(model_residency.get("available")),
+                "route_available": bool(model_residency.get("route_available", True)),
+                "supported_tasks": list(model_residency.get("supported_tasks") or [])
+                if isinstance(model_residency.get("supported_tasks"), list)
+                else [],
+                "unsupported_tasks": list(model_residency.get("unsupported_tasks") or [])
+                if isinstance(model_residency.get("unsupported_tasks"), list)
+                else [],
+                **({"mode": model_residency.get("mode")} if model_residency.get("mode") else {}),
+                **({"relay_only": bool(model_residency.get("relay_only"))} if model_residency.get("relay_only") is not None else {}),
+                **({"supports": dict(residency_supports)} if residency_supports else {}),
+            },
+            "media": {
+                "generated_image": {
+                    **_surface(generated_image.get("direct_endpoint") if isinstance(generated_image.get("direct_endpoint"), dict) else {}),
+                    "workflow_available": bool(generated_image.get("workflow", {}).get("available"))
+                    if isinstance(generated_image.get("workflow"), dict)
+                    else False,
+                },
+                "edited_image": {
+                    **_surface(edited_image.get("direct_endpoint") if isinstance(edited_image.get("direct_endpoint"), dict) else {}),
+                    "workflow_available": bool(edited_image.get("workflow", {}).get("available"))
+                    if isinstance(edited_image.get("workflow"), dict)
+                    else False,
+                },
+                "generated_voice": {
+                    **_surface(generated_voice.get("direct_endpoint") if isinstance(generated_voice.get("direct_endpoint"), dict) else {}),
+                    "workflow_available": bool(generated_voice.get("workflow", {}).get("available"))
+                    if isinstance(generated_voice.get("workflow"), dict)
+                    else False,
+                },
+                "stt": _surface(stt),
+                "listen": {
+                    "available": bool(listen.get("available", False)),
+                    "host_capture_required": bool(listen.get("host_capture_required", False)),
+                    "transcription_available": bool(listen.get("transcription_available", False)),
+                    "transcribe_route_available": bool(listen.get("transcribe_route_available", False)),
+                },
+                "generated_music": {
+                    **_surface(generated_music.get("direct_endpoint") if isinstance(generated_music.get("direct_endpoint"), dict) else {}),
+                    "workflow_available": bool(generated_music.get("workflow", {}).get("available"))
+                    if isinstance(generated_music.get("workflow"), dict)
+                    else False,
+                },
+            },
+        },
+    }
 
 
 def _voice_catalog_controls() -> Dict[str, Any]:
@@ -8098,6 +8590,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "vision_models": _api_gateway_path("/vision/models"),
             "tools": _api_gateway_path("/discovery/tools"),
             "semantics": _api_gateway_path("/semantics"),
+            "catalog_contract": _gateway_catalog_contract_descriptor(),
         },
         "prompt_cache": {
             "provider_controls": True,
@@ -8194,6 +8687,11 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "session_rebuild_endpoint": _api_gateway_path("/sessions/{session_id}/prompt_cache/rebuild"),
         },
     }
+    common["readiness"] = _gateway_readiness_descriptor(
+        common=common,
+        flow_editor=flow_editor,
+        assistant=assistant,
+    )
 
     return {
         "version": 1,
@@ -8338,7 +8836,7 @@ async def voice_voices_catalog(
     """List TTS voices through the Gateway Runtime discovery facade."""
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
-        return _filter_voice_catalog_response(
+        out = _filter_voice_catalog_response(
             _runtime_discovery_payload(
                 {
                     "available": False,
@@ -8360,6 +8858,16 @@ async def voice_voices_catalog(
             model=model,
             providers_only=providers_only,
         )
+        return _gateway_catalog_response(
+            out,
+            kind="providers" if providers_only else "voices",
+            scope="tts",
+            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+            if providers_only
+            else _gateway_catalog_voice_items(out),
+            provider=provider,
+            metadata={"providers_only": providers_only, "model": model},
+        )
     try:
         payload = discovery.get_voice_catalog(
             base_url=base_url,
@@ -8370,11 +8878,21 @@ async def voice_voices_catalog(
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    return _filter_voice_catalog_response(
+    out = _filter_voice_catalog_response(
         _runtime_discovery_payload(payload),
         provider=provider,
         model=model,
         providers_only=providers_only,
+    )
+    return _gateway_catalog_response(
+        out,
+        kind="providers" if providers_only else "voices",
+        scope="tts",
+        items=_gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+        if providers_only
+        else _gateway_catalog_voice_items(out),
+        provider=provider,
+        metadata={"providers_only": providers_only, "model": model},
     )
 
 
@@ -8390,7 +8908,7 @@ async def audio_speech_models_catalog(
     """List TTS model ids through the Gateway Runtime discovery facade."""
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
-        return _filter_provider_model_catalog_response(
+        out = _filter_provider_model_catalog_response(
             _runtime_discovery_payload(
                 {
                     "available": False,
@@ -8404,6 +8922,19 @@ async def audio_speech_models_catalog(
             provider=provider,
             model_keys=("models_by_provider", "tts_models_by_provider"),
         )
+        return _gateway_catalog_response(
+            out,
+            kind="models",
+            scope="tts",
+            items=_gateway_catalog_model_items(
+                out,
+                provider=provider or str(out.get("provider") or out.get("active_provider") or "").strip() or None,
+                detail_keys=(),
+                map_keys=("models_by_provider", "tts_models_by_provider"),
+                value_keys=("tts_models", "models"),
+            ),
+            provider=provider,
+        )
     try:
         payload = discovery.list_tts_models(
             base_url=base_url,
@@ -8412,10 +8943,23 @@ async def audio_speech_models_catalog(
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    return _filter_provider_model_catalog_response(
+    out = _filter_provider_model_catalog_response(
         _runtime_discovery_payload(payload),
         provider=provider,
         model_keys=("models_by_provider", "tts_models_by_provider"),
+    )
+    return _gateway_catalog_response(
+        out,
+        kind="models",
+        scope="tts",
+        items=_gateway_catalog_model_items(
+            out,
+            provider=provider or str(out.get("provider") or out.get("active_provider") or "").strip() or None,
+            detail_keys=(),
+            map_keys=("models_by_provider", "tts_models_by_provider"),
+            value_keys=("tts_models", "models"),
+        ),
+        provider=provider,
     )
 
 
@@ -8431,7 +8975,7 @@ async def audio_transcription_models_catalog(
     """List STT model ids through the Gateway Runtime discovery facade."""
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
-        return _filter_provider_model_catalog_response(
+        out = _filter_provider_model_catalog_response(
             _runtime_discovery_payload(
                 {
                     "available": False,
@@ -8445,6 +8989,19 @@ async def audio_transcription_models_catalog(
             provider=provider,
             model_keys=("models_by_provider", "stt_models_by_provider"),
         )
+        return _gateway_catalog_response(
+            out,
+            kind="models",
+            scope="stt",
+            items=_gateway_catalog_model_items(
+                out,
+                provider=provider or str(out.get("provider") or out.get("active_provider") or "").strip() or None,
+                detail_keys=(),
+                map_keys=("models_by_provider", "stt_models_by_provider"),
+                value_keys=("stt_models", "models"),
+            ),
+            provider=provider,
+        )
     try:
         payload = discovery.list_stt_models(
             base_url=base_url,
@@ -8453,10 +9010,23 @@ async def audio_transcription_models_catalog(
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    return _filter_provider_model_catalog_response(
+    out = _filter_provider_model_catalog_response(
         _runtime_discovery_payload(payload),
         provider=provider,
         model_keys=("models_by_provider", "stt_models_by_provider"),
+    )
+    return _gateway_catalog_response(
+        out,
+        kind="models",
+        scope="stt",
+        items=_gateway_catalog_model_items(
+            out,
+            provider=provider or str(out.get("provider") or out.get("active_provider") or "").strip() or None,
+            detail_keys=(),
+            map_keys=("models_by_provider", "stt_models_by_provider"),
+            value_keys=("stt_models", "models"),
+        ),
+        provider=provider,
     )
 
 
@@ -8473,7 +9043,7 @@ async def audio_music_providers_catalog(
     task_value = str(task or "").strip() or "text_to_music"
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
-        return _runtime_discovery_payload(
+        out = _runtime_discovery_payload(
             {
                 "available": False,
                 "task": task_value,
@@ -8482,6 +9052,13 @@ async def audio_music_providers_catalog(
                 "provider_details": [],
                 "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
             }
+        )
+        return _gateway_catalog_response(
+            out,
+            kind="providers",
+            scope="music",
+            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "available_providers"), detail_keys=("provider_details",)),
+            task=task_value,
         )
     try:
         payload = discovery.list_music_providers(
@@ -8496,7 +9073,13 @@ async def audio_music_providers_catalog(
     out.setdefault("providers", [])
     out.setdefault("available_providers", [])
     out.setdefault("provider_details", [])
-    return out
+    return _gateway_catalog_response(
+        out,
+        kind="providers",
+        scope="music",
+        items=_gateway_catalog_provider_items(out, provider_keys=("providers", "available_providers"), detail_keys=("provider_details",)),
+        task=task_value,
+    )
 
 
 @router.get("/audio/music/models")
@@ -8513,7 +9096,7 @@ async def audio_music_models_catalog(
     task_value = str(task or "").strip() or "text_to_music"
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
-        return _filter_provider_model_catalog_response(
+        out = _filter_provider_model_catalog_response(
             _runtime_discovery_payload(
                 {
                     "available": False,
@@ -8530,6 +9113,21 @@ async def audio_music_models_catalog(
             provider=provider,
             model_keys=("models_by_provider",),
         )
+        return _gateway_catalog_response(
+            out,
+            kind="models",
+            scope="music",
+            items=_gateway_catalog_model_items(
+                out,
+                provider=provider,
+                task=task_value,
+                detail_keys=("provider_models", "models"),
+                map_keys=("models_by_provider",),
+                value_keys=("models",),
+            ),
+            task=task_value,
+            provider=provider,
+        )
     try:
         payload = discovery.list_music_models(
             task=task_value,
@@ -8539,10 +9137,25 @@ async def audio_music_models_catalog(
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    return _filter_provider_model_catalog_response(
+    out = _filter_provider_model_catalog_response(
         _runtime_discovery_payload(payload),
         provider=provider,
         model_keys=("models_by_provider",),
+    )
+    return _gateway_catalog_response(
+        out,
+        kind="models",
+        scope="music",
+        items=_gateway_catalog_model_items(
+            out,
+            provider=provider,
+            task=task_value,
+            detail_keys=("provider_models", "models"),
+            map_keys=("models_by_provider",),
+            value_keys=("models",),
+        ),
+        task=task_value,
+        provider=provider,
     )
 
 
@@ -8569,7 +9182,7 @@ async def vision_provider_models_catalog(
         )
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
-        return _filter_vision_provider_models_response(
+        out = _filter_vision_provider_models_response(
             _runtime_discovery_payload(
                 {
                     "available": False,
@@ -8585,6 +9198,24 @@ async def vision_provider_models_catalog(
             provider=provider,
             providers_only=providers_only,
         )
+        return _gateway_catalog_response(
+            out,
+            kind="providers" if providers_only else "models",
+            scope="vision",
+            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "available_providers"))
+            if providers_only
+            else _gateway_catalog_model_items(
+                out,
+                provider=provider,
+                task=task_value,
+                detail_keys=("models", "provider_models"),
+                map_keys=("models_by_provider",),
+                value_keys=("models",),
+            ),
+            task=task_value,
+            provider=provider,
+            metadata={"providers_only": providers_only},
+        )
     try:
         payload = discovery.list_vision_provider_models(
             task=task_value,
@@ -8595,10 +9226,28 @@ async def vision_provider_models_catalog(
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    return _filter_vision_provider_models_response(
+    out = _filter_vision_provider_models_response(
         _runtime_discovery_payload(payload),
         provider=provider,
         providers_only=providers_only,
+    )
+    return _gateway_catalog_response(
+        out,
+        kind="providers" if providers_only else "models",
+        scope="vision",
+        items=_gateway_catalog_provider_items(out, provider_keys=("providers", "available_providers"))
+        if providers_only
+        else _gateway_catalog_model_items(
+            out,
+            provider=provider,
+            task=task_value,
+            detail_keys=("models", "provider_models"),
+            map_keys=("models_by_provider",),
+            value_keys=("models",),
+        ),
+        task=task_value,
+        provider=provider,
+        metadata={"providers_only": providers_only},
     )
 
 
@@ -8607,7 +9256,7 @@ async def vision_models_catalog(request: Request) -> Dict[str, Any]:
     """List cached/local AbstractVision models through the Gateway Runtime discovery facade."""
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
-        return _runtime_discovery_payload(
+        out = _runtime_discovery_payload(
             {
                 "available": False,
                 "models": [],
@@ -8615,13 +9264,25 @@ async def vision_models_catalog(request: Request) -> Dict[str, Any]:
                 "config_hint": "Gateway runtime must be wired to AbstractCore discovery helpers for vision model catalogs.",
             }
         )
+        return _gateway_catalog_response(
+            out,
+            kind="models",
+            scope="vision",
+            items=_gateway_catalog_model_items(out, detail_keys=("models",), value_keys=("models",)),
+        )
     try:
         payload = discovery.list_cached_vision_models(
             provider_api_key=_request_provider_api_key(request),
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    return _runtime_discovery_payload(payload)
+    out = _runtime_discovery_payload(payload)
+    return _gateway_catalog_response(
+        out,
+        kind="models",
+        scope="vision",
+        items=_gateway_catalog_model_items(out, detail_keys=("models",), value_keys=("models",)),
+    )
 
 
 @router.get("/discovery/providers")
@@ -8632,7 +9293,14 @@ async def discovery_providers(
     """List available providers (and optionally their models) for UI helper dropdowns."""
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
-        return {"items": [], "error": err or "Gateway runtime does not expose AbstractCore discovery helpers."}
+        out = {"items": [], "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.", "available": False, "route_available": True, "source": "abstractgateway.discovery"}
+        return _gateway_catalog_response(
+            out,
+            kind="providers",
+            scope="text",
+            items=[],
+            metadata={"include_models": bool(include_models)},
+        )
 
     try:
         payload = discovery.list_providers(
@@ -8655,27 +9323,51 @@ async def discovery_providers(
 
     default_provider = payload.get("default_provider") if isinstance(payload, dict) else None
     default_model = payload.get("default_model") if isinstance(payload, dict) else None
+    body: Dict[str, Any]
     if isinstance(default_provider, str) and default_provider.strip() and isinstance(default_model, str) and default_model.strip():
-        return {
+        body = {
             "items": items,
+            "available": bool(items),
+            "route_available": True,
+            "source": "abstractruntime.discovery_facade",
             "default_provider": default_provider,
             "default_model": default_model,
             "default_source": payload.get("source") if isinstance(payload, dict) else None,
         }
-    defaults = resolve_gateway_provider_model(purpose="provider discovery defaults")
-    if defaults.provider and defaults.model:
-        return {
+    else:
+        defaults = resolve_gateway_provider_model(purpose="provider discovery defaults")
+        if defaults.provider and defaults.model:
+            body = {
             "items": items,
+            "available": bool(items),
+            "route_available": True,
+            "source": "abstractruntime.discovery_facade",
             "default_provider": defaults.provider,
             "default_model": defaults.model,
             "default_source": defaults.source,
         }
-    return {
-        "items": items,
-        "default_provider": None,
-        "default_model": None,
-        "default_error": (payload.get("error") if isinstance(payload, dict) else None) or defaults.error,
-    }
+        else:
+            body = {
+                "items": items,
+                "available": bool(items),
+                "route_available": True,
+                "source": "abstractruntime.discovery_facade",
+                "default_provider": None,
+                "default_model": None,
+                "default_error": (payload.get("error") if isinstance(payload, dict) else None) or defaults.error,
+            }
+    if isinstance(payload, dict):
+        if isinstance(payload.get("source"), str) and payload.get("source"):
+            body["upstream_source"] = str(payload.get("source"))
+        if isinstance(payload.get("error"), str) and payload.get("error"):
+            body.setdefault("error", str(payload.get("error")))
+    return _gateway_catalog_response(
+        body,
+        kind="providers",
+        scope="text",
+        items=_gateway_catalog_provider_items(body, provider_keys=(), detail_keys=("items",)),
+        metadata={"include_models": bool(include_models)},
+    )
 
 
 @router.get("/discovery/providers/{provider_name}/models")
@@ -8686,7 +9378,21 @@ async def discovery_provider_models(request: Request, provider_name: str) -> Dic
         raise HTTPException(status_code=400, detail="provider_name is required")
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
-        return {"provider": prov, "models": [], "error": err or "Gateway runtime does not expose AbstractCore discovery helpers."}
+        out = {
+            "provider": prov,
+            "models": [],
+            "available": False,
+            "route_available": True,
+            "source": "abstractgateway.discovery",
+            "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+        }
+        return _gateway_catalog_response(
+            out,
+            kind="models",
+            scope="text",
+            items=[],
+            provider=prov,
+        )
     try:
         payload = discovery.list_provider_models(
             prov,
@@ -8699,10 +9405,24 @@ async def discovery_provider_models(request: Request, provider_name: str) -> Dic
     out = [str(m) for m in models if isinstance(m, str) and str(m).strip()] if isinstance(models, list) else []
     out = _dedupe_strings(out)
     out.sort()
-    body: Dict[str, Any] = {"provider": prov, "models": out}
+    body: Dict[str, Any] = {
+        "provider": prov,
+        "models": out,
+        "available": bool(out),
+        "route_available": True,
+        "source": "abstractruntime.discovery_facade",
+    }
+    if isinstance(payload, dict) and isinstance(payload.get("source"), str) and payload.get("source"):
+        body["upstream_source"] = str(payload.get("source"))
     if isinstance(payload, dict) and payload.get("error"):
         body["error"] = str(payload.get("error"))
-    return body
+    return _gateway_catalog_response(
+        body,
+        kind="models",
+        scope="text",
+        items=_gateway_catalog_model_items(body, provider=prov, value_keys=("models",)),
+        provider=prov,
+    )
 
 
 @router.get("/discovery/models/capabilities")

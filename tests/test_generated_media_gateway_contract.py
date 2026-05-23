@@ -439,6 +439,17 @@ def test_gateway_direct_music_generation_uses_runtime_child_run_contract(tmp_pat
         assert content.status_code == 200, content.text
         assert content.content == _WAV_BYTES
 
+        rejected = client.post(
+            f"/api/gateway/runs/{run_id}/music/generate",
+            json={
+                "prompt": "warm lo-fi piano with brushed drums",
+                "music_backend": "acemusic",
+                "format": "wav",
+            },
+            headers=headers,
+        )
+        assert rejected.status_code == 422, rejected.text
+
         ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=200", headers=headers)
         assert ledger.status_code == 200, ledger.text
         events = [item for item in ledger.json().get("items", []) if isinstance(item, dict)]

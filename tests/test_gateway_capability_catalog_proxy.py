@@ -52,8 +52,23 @@ def test_voice_catalog_uses_local_capability_profiles_without_core_server(tmp_pa
     body = resp.json()
     assert body["source"] == "abstractruntime.discovery_facade"
     assert body["route_available"] is True
+    assert body["catalog"] == {
+        "contract": "gateway_catalog_v1",
+        "version": 1,
+        "kind": "voices",
+        "scope": "tts",
+        "primary_items_field": "items",
+        "source": "abstractgateway.catalog",
+        "route_source": "abstractruntime.discovery_facade",
+        "available": True,
+        "route_available": True,
+        "providers_only": False,
+    }
     ids = {item.get("id") or item.get("profile_id") or item.get("voice_id") for item in body["profiles"]}
     assert {"coral", "verse"} <= ids
+    item_ids = {item.get("id") for item in body["items"] if isinstance(item, dict)}
+    assert {"coral", "verse"} <= item_ids
+    assert all(item.get("voice_kind") == "profile" for item in body["items"])
 
 
 def test_voice_catalog_static_fallback_surfaces_configured_env_voices(
@@ -76,6 +91,9 @@ def test_voice_catalog_static_fallback_surfaces_configured_env_voices(
     assert body["route_available"] is True
     assert body["available"] is False
     assert body["profiles"] == []
+    assert body["catalog"]["kind"] == "voices"
+    assert body["catalog"]["scope"] == "tts"
+    assert body["items"] == []
 
 
 def test_voice_catalog_static_fallback_surfaces_supertonic_builtin_profiles_without_runtime(
@@ -135,6 +153,9 @@ def test_voice_catalog_proxies_configured_core_catalog_route(
     assert body["source"] == "abstractruntime.discovery_facade"
     assert body["route_available"] is True
     assert body["profiles"] == [{"profile_id": "coral"}]
+    assert body["catalog"]["route_source"] == "abstractruntime.discovery_facade"
+    assert body["catalog"]["upstream_source"] == "abstractvoice"
+    assert body["items"] == [{"profile_id": "coral", "id": "coral", "label": "coral", "voice_kind": "profile", "voice_kinds": ["profile"]}]
     assert calls == [
         {
             "base_url": "http://provider.test/v1",
@@ -183,6 +204,9 @@ def test_audio_model_catalogs_include_local_voice_providers(tmp_path: Path, monk
     assert "fake-tts" in speech.json()["providers"]
     assert transcription.json()["providers"] == ["fake-stt"]
     assert transcription.json()["active_provider"] == "fake-stt"
+    assert speech.json()["catalog"]["kind"] == "models"
+    assert speech.json()["items"] == [{"id": "tts-test", "label": "tts-test", "provider": "fake-tts"}]
+    assert transcription.json()["items"] == [{"id": "stt-test", "label": "stt-test", "provider": "fake-stt"}]
 
 
 def test_vision_catalog_rejects_unknown_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -245,6 +269,10 @@ def test_vision_models_catalog_proxies_configured_core_catalog_route(
     assert body["source"] == "abstractruntime.discovery_facade"
     assert body["route_available"] is True
     assert body["models"] == [{"model_id": "flux-local"}]
+    assert body["catalog"]["kind"] == "models"
+    assert body["catalog"]["scope"] == "vision"
+    assert body["catalog"]["upstream_source"] == "abstractvision"
+    assert body["items"] == [{"model_id": "flux-local", "id": "flux-local", "label": "flux-local"}]
     assert calls == [{"provider_api_key": None}]
 
 
@@ -269,6 +297,9 @@ def test_audio_transcription_models_catalog_proxies_configured_core_catalog_rout
     body = resp.json()
     assert body["source"] == "abstractruntime.discovery_facade"
     assert body["models"] == ["stt-test"]
+    assert body["catalog"]["scope"] == "stt"
+    assert body["catalog"]["upstream_source"] == "abstractvoice"
+    assert body["items"] == [{"id": "stt-test", "label": "stt-test"}]
     assert calls == [{"base_url": None, "provider_api_key": None, "provider": None}]
 
 
@@ -301,6 +332,19 @@ def test_audio_music_providers_catalog_proxies_runtime_music_discovery(
     assert body["source"] == "abstractruntime.discovery_facade"
     assert body["providers"] == ["acemusic"]
     assert body["provider_details"] == [{"provider": "acemusic", "tasks": ["text_to_music"]}]
+    assert body["catalog"] == {
+        "contract": "gateway_catalog_v1",
+        "version": 1,
+        "kind": "providers",
+        "scope": "music",
+        "primary_items_field": "items",
+        "source": "abstractgateway.catalog",
+        "route_source": "abstractruntime.discovery_facade",
+        "available": True,
+        "route_available": True,
+        "task": "text_to_music",
+    }
+    assert body["items"] == [{"provider": "acemusic", "tasks": ["text_to_music"], "id": "acemusic", "label": "acemusic", "name": "acemusic"}]
     assert calls == [
         {
             "task": "text_to_music",
@@ -340,6 +384,11 @@ def test_audio_music_models_catalog_filters_by_provider(
     assert body["source"] == "abstractruntime.discovery_facade"
     assert body["providers"] == ["acemusic"]
     assert body["models"] == ["ace-step"]
+    assert body["catalog"]["kind"] == "models"
+    assert body["catalog"]["scope"] == "music"
+    assert body["catalog"]["provider"] == "acemusic"
+    assert body["catalog"]["task"] == "text_to_music"
+    assert body["items"] == [{"provider": "acemusic", "model": "ace-step", "id": "ace-step", "label": "ace-step", "tasks": ["text_to_music"]}]
     assert calls == [
         {
             "task": "text_to_music",

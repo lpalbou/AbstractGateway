@@ -123,17 +123,47 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
         assert body.get("default_provider") == "ollama"
         assert body.get("default_model") == "llama3"
         items = body.get("items") or []
+        assert [p.get("id") for p in items] == ["lmstudio", "ollama"]
         assert [p.get("name") for p in items] == ["lmstudio", "ollama"]
+        assert body.get("catalog") == {
+            "contract": "gateway_catalog_v1",
+            "version": 1,
+            "kind": "providers",
+            "scope": "text",
+            "primary_items_field": "items",
+            "source": "abstractgateway.catalog",
+            "route_source": "abstractruntime.discovery_facade",
+            "available": True,
+            "route_available": True,
+            "include_models": False,
+        }
 
         providers2 = client.get("/api/gateway/discovery/providers?include_models=true", headers=headers)
         assert providers2.status_code == 200, providers2.text
         items2 = providers2.json().get("items") or []
         assert items2[0].get("models") == ["qwen"]
+        assert providers2.json().get("catalog", {}).get("include_models") is True
 
         models = client.get("/api/gateway/discovery/providers/lmstudio/models", headers=headers)
         assert models.status_code == 200, models.text
         assert models.json().get("provider") == "lmstudio"
         assert models.json().get("models") == ["m1", "m2"]
+        assert models.json().get("catalog") == {
+            "contract": "gateway_catalog_v1",
+            "version": 1,
+            "kind": "models",
+            "scope": "text",
+            "primary_items_field": "items",
+            "source": "abstractgateway.catalog",
+            "route_source": "abstractruntime.discovery_facade",
+            "available": True,
+            "route_available": True,
+            "provider": "lmstudio",
+        }
+        assert models.json().get("items") == [
+            {"id": "m1", "label": "m1", "provider": "lmstudio"},
+            {"id": "m2", "label": "m2", "provider": "lmstudio"},
+        ]
 
 
 def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -158,10 +188,15 @@ def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, mon
         providers = client.get("/api/gateway/discovery/providers?include_models=false", headers=headers)
         assert providers.status_code == 200, providers.text
         assert [item.get("name") for item in providers.json().get("items") or []] == ["lmstudio"]
+        assert providers.json().get("catalog", {}).get("include_models") is False
 
         models = client.get("/api/gateway/discovery/providers/lmstudio/models", headers=headers)
         assert models.status_code == 200, models.text
         assert models.json().get("models") == ["qwen", "qwen2"]
+        assert models.json().get("items") == [
+            {"id": "qwen", "label": "qwen", "provider": "lmstudio"},
+            {"id": "qwen2", "label": "qwen2", "provider": "lmstudio"},
+        ]
 
     assert calls == [
         {"method": "list_providers", "include_models": False, "provider_api_key": None},

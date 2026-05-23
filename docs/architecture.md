@@ -81,10 +81,14 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:
 - `GET /api/gateway/discovery/capabilities` exposes a versioned shared contract
   for run input/history access, media endpoints, voice contracts, prompt-cache
   surfaces, and model residency truth.
-- Provider/model catalogs are intentionally routed through Gateway, but their
-  payload bodies are still best-effort wrappers around lower-layer discovery
-  results. The stable Gateway contract today is the route family plus the
-  capability descriptors that point higher apps at those routes.
+- Provider/model catalogs are intentionally routed through Gateway. The legacy
+  lower-layer payload fields are preserved, but Gateway now adds a stable
+  `gateway_catalog_v1` envelope plus canonical `items` so higher apps can stop
+  carrying route-local parsing logic.
+- Gateway also exposes `common.readiness` as a compact surface-level summary
+  for thin clients and operator UIs. That summary is deliberately limited to
+  Gateway-owned contract truth; deeper backend/provider diagnostics still
+  belong below Gateway.
 - Direct run-scoped media routes currently include TTS, STT, image generation,
   image edit, and music generation.
 - Voice listen is intentionally a host-capture contract, not a server-side

@@ -107,6 +107,30 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert common.get("discovery", {}).get("audio_music_models") == "/api/gateway/audio/music/models"
         assert common.get("discovery", {}).get("vision_provider_models") == "/api/gateway/vision/provider_models"
         assert common.get("discovery", {}).get("vision_models") == "/api/gateway/vision/models"
+        catalog_contract = common.get("discovery", {}).get("catalog_contract")
+        assert catalog_contract == {
+            "contract": "gateway_catalog_v1",
+            "version": 1,
+            "metadata_field": "catalog",
+            "primary_items_field": "items",
+            "items_field": "items",
+            "provider_item_fields": ["id", "label", "provider"],
+            "model_item_fields": ["id", "label", "provider", "tasks", "parameters"],
+            "voice_item_fields": ["id", "label", "provider", "model", "voice_kind"],
+        }
+        readiness = common.get("readiness")
+        assert readiness.get("contract") == "gateway_surface_readiness_v1"
+        assert readiness.get("version") == 1
+        assert readiness.get("truth_scope") == "gateway_contract_surface"
+        surfaces = readiness.get("surfaces", {})
+        assert surfaces.get("runs", {}).get("start") is True
+        assert surfaces.get("artifacts", {}).get("content") is True
+        assert surfaces.get("attachments", {}).get("upload") is True
+        assert surfaces.get("workspace", {}).get("policy") is True
+        assert surfaces.get("discovery", {}).get("audio_music_models") is True
+        assert surfaces.get("visualflows", {}).get("crud_available") is True
+        assert surfaces.get("prompt_cache", {}).get("provider_controls") is True
+        assert surfaces.get("model_residency", {}).get("route_available") is True
         assert common.get("prompt_cache", {}).get("provider_controls") is True
         assert isinstance(common.get("prompt_cache", {}).get("provider_controls_available"), bool)
         assert common.get("prompt_cache", {}).get("session_lifecycle") is True
@@ -247,6 +271,18 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert "install_hint" in flow_editor["visualflows"]["publish"]
     assert flow_editor["media"] == contracts["assistant"]["media"]
     assert contracts["common"]["discovery"]["vision_models"] == "/api/gateway/vision/models"
+    readiness = contracts["common"]["readiness"]
+    assert readiness["contract"] == "gateway_surface_readiness_v1"
+    assert readiness["surfaces"]["prompt_cache"]["provider_controls_available"] is False
+    assert readiness["surfaces"]["prompt_cache"]["session_lifecycle_available"] is False
+    assert readiness["surfaces"]["media"]["generated_image"]["route_available"] is False
+    assert readiness["surfaces"]["media"]["generated_image"]["available"] is False
+    assert readiness["surfaces"]["media"]["edited_image"]["route_available"] is False
+    assert readiness["surfaces"]["media"]["stt"]["route_available"] is False
+    assert readiness["surfaces"]["media"]["listen"]["host_capture_required"] is True
+    assert readiness["surfaces"]["media"]["generated_music"]["route_available"] is False
+    assert readiness["surfaces"]["model_residency"]["supported_tasks"] == []
+    assert readiness["surfaces"]["memory"]["route_available"] is True
     assert contracts["assistant"]["voice"]["stt"]["models_endpoint"] == "/api/gateway/audio/transcriptions/models"
     assert contracts["flow_editor"]["voice"]["listen"]["transcription_available"] is False
 
@@ -405,6 +441,10 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     assert contracts["assistant"]["model_residency"] == residency
     assert contracts["assistant"]["prompt_cache"]["provider_controls_available"] is True
     assert contracts["assistant"]["prompt_cache"]["session_lifecycle_available"] is True
+    readiness = contracts["common"]["readiness"]
+    assert readiness["surfaces"]["model_residency"]["available"] is True
+    assert readiness["surfaces"]["model_residency"]["mode"] == "remote_core_server"
+    assert readiness["surfaces"]["model_residency"]["supports"]["music_generation"] is False
     assert media["direct_endpoint"]["available"] is True
     assert media["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/generate"
     assert contracts["assistant"]["media"]["edited_image"]["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/edit"

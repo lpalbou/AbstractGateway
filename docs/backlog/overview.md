@@ -23,7 +23,7 @@ can trust without importing local gateway packages.
 
 - Planned: 0
 - Proposed: 4
-- Completed: 15
+- Completed: 17
 - Deprecated: 1
 - Recurrent: 0
 
@@ -38,13 +38,16 @@ can trust without importing local gateway packages.
 - Completed: memory store resolver and TripleStore abstraction.
 - Completed: Core-backed Voice/Vision catalog proxy endpoints.
 - Completed: provider-private prompt-cache save/load migration via Runtime.
+- Completed: Gateway-owned thin-client catalog envelope normalization.
+- Completed: Gateway-owned thin-client surface readiness summary.
 
 ## Next Recommended Work
 
 The main Runtime-owned boundary work is now done for Gateway's prompt-cache,
 durable bloc, residency, workspace/comms/Telegram, operator snapshot, direct
-music, direct image edit, and STT/listen contract surfaces. The remaining
-proposed work is product-facing contract polish rather than boundary cleanup.
+music, direct image edit, STT/listen contract surfaces, thin-client catalog
+normalization, and thin-client surface readiness summary. The remaining
+proposed work is deeper provider/backend truth rather than boundary cleanup.
 
 ## Planned Items
 
@@ -56,7 +59,7 @@ No planned items at the moment.
 | --- | --- |
 | [2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md](proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md) | Promote when Gateway draft-space semantics and ephemeral-run lifecycle are validated against Flow UX and ledger expectations. |
 | [2026-05-13_shared_identity_context.md](proposed/2026-05-13_shared_identity_context.md) | Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work. |
-| [0053_gateway_thin_client_catalog_and_readiness_contract_polish.md](proposed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md) | Promote when Flow/Assistant/Observer start depending on stricter catalog response shapes or an explicit Gateway deployment/readiness contract. |
+| [0055_gateway_provider_backend_readiness_truth_for_thin_clients.md](proposed/0055_gateway_provider_backend_readiness_truth_for_thin_clients.md) | Promote when Runtime/Core can supply selected backend/provider/model and stable degraded-state truth for Gateway to relay to thin clients. |
 | [offline_first_gateway_connectivity.md](proposed/offline_first_gateway_connectivity.md) | Promote when offline-first connectivity guarantees become a near-term product commitment. |
 
 ## Completed Work Ledger
@@ -78,6 +81,8 @@ No planned items at the moment.
 | Gateway Runtime boundary cleanup for workspace, comms, and Telegram | `planned/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md` | [completed/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md](completed/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram.md) | Gateway now owns workspace/file helpers locally, uses Runtime comms/Telegram helper surfaces for operator paths, and no longer imports `abstractcore` directly in source. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_gateway_email_inbox_endpoints.py tests/test_gateway_cli_split_runner.py tests/test_gateway_telegram_bridge_unit.py tests/test_gateway_discovery_endpoints.py tests/test_gateway_files_skim_endpoint.py tests/test_gateway_attachments_ingest.py tests/test_gateway_workspace_policy_enforcement.py tests/test_maintenance_notifier_unit.py`. |
 | Model residency provider/task contract truth regression | `proposed/0051_model_residency_provider_task_contract_truth_regression.md` | [completed/0051_model_residency_provider_task_contract_truth_regression.md](completed/0051_model_residency_provider_task_contract_truth_regression.md) | Gateway now derives `common.model_residency` from Runtime's public `get_model_residency_capabilities(...)` surface instead of hard-coding media support flags, so higher apps see truthful task support. | `python -m pytest -q tests/test_gateway_model_residency_endpoints.py tests/test_capabilities_endpoint_contract.py`. |
 | Gateway music generation contract for thin clients | `proposed/0052_gateway_music_generation_contract_for_thin_clients.md` | [completed/0052_gateway_music_generation_contract_for_thin_clients.md](completed/0052_gateway_music_generation_contract_for_thin_clients.md) | Gateway's direct music route and music catalogs were already present; the remaining workflow-availability truth gap is now closed and recorded as completed history. | `python -m pytest -q tests/test_capabilities_endpoint_contract.py tests/test_generated_media_gateway_contract.py tests/test_gateway_capability_catalog_proxy.py`. |
+| Gateway thin-client catalog and readiness contract polish | `proposed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md` | [completed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md](completed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md) | Gateway now exposes a compact `common.readiness` surface summary derived from its own contract descriptors, without inventing deeper lower-layer backend truth. | `python -m pytest -q tests/test_capabilities_endpoint_contract.py tests/test_gateway_capability_catalog_proxy.py tests/test_gateway_discovery_endpoints.py`. |
+| Gateway catalog envelope contract for thin clients | `proposed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md` (catalog half) | [completed/0054_gateway_catalog_envelope_contract_for_thin_clients.md](completed/0054_gateway_catalog_envelope_contract_for_thin_clients.md) | Gateway discovery routes now preserve legacy fields but also expose a versioned canonical `catalog` envelope plus `items` for thin clients. | `python -m pytest -q tests/test_gateway_capability_catalog_proxy.py tests/test_gateway_discovery_endpoints.py tests/test_capabilities_endpoint_contract.py`. |
 
 ## Deprecated Work
 
@@ -102,6 +107,12 @@ No planned items at the moment.
 - Gateway now exposes run-scoped TTS, STT, and music generation contracts for
   higher apps, plus a host-capture `voice.listen` contract for clients that
   record locally and submit events or uploaded audio.
+- Gateway discovery routes now expose a versioned `gateway_catalog_v1`
+  envelope plus canonical `items`, so higher apps no longer need route-local
+  parsing for common provider/model/voice pickers.
+- Gateway now also exposes a narrow `gateway_surface_readiness_v1` summary in
+  `common.readiness`, but deeper provider/backend/model truth still belongs in
+  Runtime/Core rather than Gateway-side inference.
 - Gateway source now imports Runtime rather than Core directly for the main
   execution path and the remaining comms/Telegram helper paths. Deeper Runtime
   host-helper polish can continue without reopening Gateway's source boundary.
