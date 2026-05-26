@@ -1213,6 +1213,8 @@ reason codes.</p>
 - <code>POST /api/gateway/runs/{run_id}/audio/transcribe</code>
 - <code>POST /api/gateway/runs/{run_id}/images/generate</code>
 - <code>POST /api/gateway/runs/{run_id}/images/edit</code>
+- <code>POST /api/gateway/runs/{run_id}/videos/generate</code>
+- <code>POST /api/gateway/runs/{run_id}/videos/from_image</code>
 - <code>POST /api/gateway/runs/{run_id}/music/generate</code>
 - <code>GET /api/gateway/voice/voices</code>
 - <code>GET /api/gateway/audio/speech/models</code>
@@ -1270,6 +1272,20 @@ discover it from <code>capabilities.contracts.flow_editor.media.generated_music<
 <code>capabilities.contracts.assistant.media.generated_music</code>, list providers/models
 from the music catalog routes, and treat the returned <code>child_run_id</code> plus
 <code>music_artifact</code> as the durable output handle.</p>
+<p>Generated video also follows the direct child-run pattern:</p>
+<ul>
+<li><code>POST /api/gateway/runs/{run_id}/videos/generate</code> uses the Runtime/Core
+  <code>output.modality=video</code> / <code>task=text_to_video</code> contract.</li>
+<li><code>POST /api/gateway/runs/{run_id}/videos/from_image</code> accepts a run-visible
+  source <code>image_artifact</code> and uses <code>task=image_to_video</code>.</li>
+<li>Thin clients should discover these routes from
+  <code>capabilities.contracts.flow_editor.media.generated_video</code> and
+  <code>capabilities.contracts.flow_editor.media.image_to_video</code> (or the matching
+  <code>assistant.media.*</code> entries), use
+  <code>GET /api/gateway/vision/provider_models?task=text_to_video|image_to_video</code>
+  for model catalogs, and stream the returned <code>child_run_id</code> ledger for
+  <code>abstract.progress</code> events.</li>
+</ul>
 <p>STT and listen contract notes:</p>
 <ul>
 <li><code>POST /api/gateway/runs/{run_id}/audio/transcribe</code> accepts a run-visible

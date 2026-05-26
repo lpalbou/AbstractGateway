@@ -902,7 +902,7 @@ compatibility (runs bundles produced by AbstractFlow; does not require the <code
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors:
-- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.23</code>
+- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.24</code>
 - <code>abstractagent&gt;=0.3.8</code>
 - <code>AbstractMemory[lancedb]&gt;=0.2.6</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -1052,7 +1052,7 @@ operations. Local runtimes write under <code>&lt;DATA_DIR&gt;/prompt_cache_expor
 and hybrid runtimes report <code>prompt_cache_local_only</code>.</p>
 <h3 id="multimodal-providerplugin-controls">Multimodal provider/plugin controls<a class="headerlink" href="#multimodal-providerplugin-controls" title="Permanent link">&para;</a></h3>
 <p>The <code>server</code>, <code>multimodal</code>, and <code>all</code> extras install the lightweight AbstractCore
-plugin surface for generated images, generated voice, STT, and music/video
+plugin surface for generated images, generated videos, generated voice, STT, and music
 capabilities. Voice generation, transcription, generated images, and generated
 music have direct Gateway endpoints; generated images are also exposed through
 Runtime/Core workflows and through <code>POST /api/gateway/runs/{run_id}/images/generate</code>
@@ -1071,7 +1071,7 @@ heavy engines remain explicit opt-ins in the provider packages.</p>
 <li><code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code> / <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code>: Gateway-scoped voice engine settings. Legacy <code>ABSTRACTVOICE_*</code> names are still accepted by the lower package.</li>
 <li><code>ABSTRACTGATEWAY_VOICE_TTS_MODEL</code> / <code>ABSTRACTGATEWAY_VOICE_STT_MODEL</code>: Gateway-scoped TTS/STT model defaults.</li>
 <li><code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code>: remote voice endpoint used by AbstractVoice.</li>
-<li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, and <code>music</code>; also returns <code>capabilities.contracts.version=1</code> with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image/music endpoints, workflow-backed image generation, and provider/session prompt-cache controls</li>
+<li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, and <code>music</code>; also returns <code>capabilities.contracts.version=1</code> with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls</li>
 <li><code>GET /api/gateway/voice/voices</code>: proxies AbstractCore <code>/v1/audio/voices</code> when <code>ABSTRACTCORE_SERVER_BASE_URL</code> is configured; otherwise returns static Gateway/env voice descriptors.</li>
 <li><code>GET /api/gateway/audio/speech/models</code>: proxies AbstractCore <code>/v1/audio/speech/models</code> when configured.</li>
 <li><code>GET /api/gateway/audio/transcriptions/models</code>: proxies AbstractCore <code>/v1/audio/transcriptions/models</code> when configured.</li>
@@ -1080,6 +1080,8 @@ heavy engines remain explicit opt-ins in the provider packages.</p>
 <li><code>GET /api/gateway/vision/provider_models</code>: proxies AbstractCore <code>/v1/vision/provider_models</code> when configured.</li>
 <li><code>GET /api/gateway/vision/models</code>: reports locally known/cached AbstractVision model ids when the in-process capability path is available.</li>
 <li><code>POST /api/gateway/runs/{run_id}/images/edit</code>: creates a durable Runtime child run for image-to-image edits and optional mask-guided edits.</li>
+<li><code>POST /api/gateway/runs/{run_id}/videos/generate</code>: creates a durable Runtime child run for text-to-video and returns an artifact-backed video result.</li>
+<li><code>POST /api/gateway/runs/{run_id}/videos/from_image</code>: creates a durable Runtime child run for image-to-video and returns an artifact-backed video result.</li>
 <li><code>POST /api/gateway/runs/{run_id}/music/generate</code>: creates a durable Runtime child run and returns an artifact-backed music result for thin clients.</li>
 </ul>
 <p>Core catalog proxy settings:</p>
