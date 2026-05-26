@@ -23,8 +23,8 @@ def _pyproject() -> dict:
 def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
-    assert "AbstractRuntime[multimodal,mcp-worker]>=0.4.22" in deps
-    assert "abstractagent>=0.3.7" in deps
+    assert "AbstractRuntime[multimodal,mcp-worker]>=0.4.23" in deps
+    assert "abstractagent>=0.3.8" in deps
     assert "AbstractMemory[lancedb]>=0.2.6" in deps
     assert "sentence-transformers<6.0.0,>=5.1.0" in deps
     assert "numpy<3.0.0,>=1.20.0" in deps
@@ -58,8 +58,8 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "all-gpu" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.22" in apple
-    assert "abstractagent[all-apple]>=0.3.7" in apple
+    assert "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.23" in apple
+    assert "abstractagent[all-apple]>=0.3.8" in apple
     assert "abstractagent[apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.2.6" in apple
     assert "abstractcore[" not in apple
@@ -67,8 +67,8 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.22" in gpu
-    assert "abstractagent[all-gpu]>=0.3.7" in gpu
+    assert "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.23" in gpu
+    assert "abstractagent[all-gpu]>=0.3.8" in gpu
     assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu

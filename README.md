@@ -56,7 +56,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.18
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.19
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -64,7 +64,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.18
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.19
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
@@ -83,12 +83,19 @@ export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.to
 docker run --rm --name abstractgateway-server \
   -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
-  -e ABSTRACTGATEWAY_PROVIDER="openai-compatible" \
-  -e ABSTRACTGATEWAY_MODEL="your-model" \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.18
+  ghcr.io/lpalbou/abstractgateway-server:0.2.19
+```
+
+Configure framework model defaults through execution-host capability routes:
+
+```bash
+abstractgateway-config set-default output.text \
+  --provider openai-compatible \
+  --model your-model \
+  --base-url http://host.docker.internal:1234/v1
 ```
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the
@@ -208,7 +215,7 @@ abstractgateway-config status
 abstractgateway config init --env-file .env
 ```
 
-For details on `ABSTRACTGATEWAY_PROVIDER`/`MODEL`, store backends, and workflow sources, see [docs/configuration.md](docs/configuration.md).
+For details on capability route defaults, store backends, and workflow sources, see [docs/configuration.md](docs/configuration.md).
 
 ## Creating a `.flow` bundle (authoring)
 

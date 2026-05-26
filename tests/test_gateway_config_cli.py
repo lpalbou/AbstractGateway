@@ -58,6 +58,8 @@ def test_gateway_config_init_writes_private_env_file(tmp_path: Path, capsys: pyt
     assert "ABSTRACTGATEWAY_STORE_BACKEND=sqlite" in text
     assert "ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite" in text
     assert "ABSTRACTCORE_SERVER_BASE_URL=http://core.test/v1" in text
+    assert "ABSTRACTGATEWAY_PROVIDER" not in text
+    assert "ABSTRACTGATEWAY_MODEL" not in text
     assert "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL" not in text
     assert "abstractcore-config" in text
 
@@ -75,3 +77,45 @@ def test_gateway_config_init_refuses_to_overwrite(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit):
         main(["init", "--env-file", str(env_file)])
+
+
+def test_gateway_config_defaults_set_list_and_clear(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    from abstractgateway.config_cli import main
+
+    main(
+        [
+            "set-default",
+            "output.text",
+            "--provider",
+            "lmstudio",
+            "--model",
+            "qwen/qwen3.6-35b-a3b",
+            "--base-url",
+            "http://127.0.0.1:1234/v1",
+            "--option",
+            "temperature=0.2",
+        ]
+    )
+    assert "Set execution-host capability default: output.text" in capsys.readouterr().out
+
+    main(["defaults", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    route = next(item for item in out["routes"] if item["key"] == "output.text")
+    assert route["provider"] == "lmstudio"
+    assert route["model"] == "qwen/qwen3.6-35b-a3b"
+    assert route["base_url"] == "http://127.0.0.1:1234/v1"
+    assert route["options"] == {"temperature": 0.2}
+
+    main(["clear-default", "output.text"])
+    assert "Cleared execution-host capability default: output.text" in capsys.readouterr().out
+
+    main(["defaults", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    route = next(item for item in out["routes"] if item["key"] == "output.text")
+    assert route["configured"] is False

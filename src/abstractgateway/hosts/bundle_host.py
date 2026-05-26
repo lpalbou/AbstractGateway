@@ -13,6 +13,7 @@ from abstractruntime import Runtime, WorkflowRegistry, WorkflowSpec, persist_wor
 from abstractruntime.visualflow_compiler import compile_visualflow
 from abstractruntime.workflow_bundle import WorkflowBundle, WorkflowBundleError, open_workflow_bundle
 
+from ..capability_defaults import core_server_token
 from ..memory_store import build_gateway_memory_embedder, open_gateway_memory_store
 from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from ..workflow_deprecations import WorkflowDeprecatedError, WorkflowDeprecationStore
@@ -92,10 +93,17 @@ def _try_parse_semver(v: str) -> Optional[tuple[int, int, int]]:
     return (nums[0], nums[1], nums[2])
 
 
+def _is_draft_bundle_version(v: str) -> bool:
+    return str(v or "").strip().lower().startswith("draft.")
+
+
 def _pick_latest_version(versions: Dict[str, WorkflowBundle]) -> str:
     items = [(str(k), v) for k, v in (versions or {}).items() if isinstance(k, str)]
     if not items:
         return "0.0.0"
+    published_items = [(ver, b) for ver, b in items if not _is_draft_bundle_version(ver)]
+    if published_items:
+        items = published_items
 
     if all(_try_parse_semver(ver) is not None for ver, _ in items):
         return max(items, key=lambda x: _try_parse_semver(x[0]) or (0, 0, 0))[0]
@@ -734,17 +742,14 @@ class WorkflowBundleGatewayHost:
                     if needs_llm or not core_server_base_url:
                         raise WorkflowBundleError(
                             "Bundle contains LLM nodes or local model_residency nodes but no default provider/model is configured. "
-                            "Set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL, configure defaults via "
+                            "Configure the execution-host output.text capability default, provide "
                             "flow defaults, or ensure the flow JSON includes provider/model on at least "
                             "one llm_call/agent node."
                         ) from e
 
                 if core_server_base_url:
                     headers: Dict[str, str] = {}
-                    token = _env(
-                        "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN",
-                        "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY",
-                    ) or _env("ABSTRACTCORE_SERVER_API_KEY")
+                    token = core_server_token()
                     if token:
                         headers["Authorization"] = f"Bearer {token.strip()}"
                     remote_model = f"{provider}/{model}" if provider and model else "default"

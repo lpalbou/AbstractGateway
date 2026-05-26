@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-05-26
+
+### Added
+- Gateway capability-default routing and configuration helpers so downstream thin clients can discover provider/model defaults without hardcoded fallbacks.
+- Run-retention cleanup support for draft and ephemeral Flow runs.
+
+### Changed
+- Raised dependency floors to `AbstractRuntime[multimodal,mcp-worker]>=0.4.23` and `abstractagent>=0.3.8`.
+- Refined Gateway model-residency and catalog proxy responses around Runtime/Core discovery truth, including the latest MLX-Gen vision and OmniVoice catalog surfaces.
+- Refreshed Docker and deployment docs for the new release image tags.
+
+### Fixed
+- Removed brittle catalog payload assertions by normalizing Gateway-owned catalog envelopes at the route boundary.
+
 ## [0.2.18] - 2026-05-23
 
 ### Added

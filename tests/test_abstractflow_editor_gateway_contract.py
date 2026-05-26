@@ -136,6 +136,43 @@ def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeyp
         assert published.get("bundle_id") == "editor-contract"
         assert published.get("bundle_version") == "0.0.0"
 
+        draft_publish = client.post(
+            f"/api/gateway/visualflows/{flow_id}/publish",
+            json={"bundle_id": "editor-contract", "bundle_version": "draft.editor-session", "overwrite": True, "reload_gateway": True},
+            headers=headers,
+        )
+        assert draft_publish.status_code == 200, draft_publish.text
+        assert draft_publish.json().get("bundle_version") == "draft.editor-session"
+
+        auto_publish = client.post(
+            f"/api/gateway/visualflows/{flow_id}/publish",
+            json={"bundle_id": "editor-contract", "overwrite": False, "reload_gateway": True},
+            headers=headers,
+        )
+        assert auto_publish.status_code == 200, auto_publish.text
+        assert auto_publish.json().get("bundle_version") == "0.0.1"
+
+        bundles = client.get("/api/gateway/bundles?all_versions=true&include_drafts=true", headers=headers)
+        assert bundles.status_code == 200, bundles.text
+        bundle_items = bundles.json().get("items") or []
+        stable_item = next((i for i in bundle_items if i.get("bundle_id") == "editor-contract" and i.get("bundle_version") == "0.0.1"), None)
+        assert stable_item is not None
+        assert stable_item.get("version_channel") == "published"
+        assert stable_item.get("is_draft") is False
+        assert stable_item.get("latest_published_version") == "0.0.1"
+        assert stable_item.get("metadata", {}).get("source", {}).get("root_flow_id") == flow_id
+        assert any(ep.get("workflow_id") == f"editor-contract@0.0.1:{flow_id}" for ep in stable_item.get("entrypoints") or [])
+        draft_item = next((i for i in bundle_items if i.get("bundle_id") == "editor-contract" and i.get("bundle_version") == "draft.editor-session"), None)
+        assert draft_item is not None
+        assert draft_item.get("version_channel") == "draft"
+        assert draft_item.get("is_draft") is True
+
+        default_bundles = client.get("/api/gateway/bundles", headers=headers)
+        assert default_bundles.status_code == 200, default_bundles.text
+        default_item = next((i for i in default_bundles.json().get("items") or [] if i.get("bundle_id") == "editor-contract"), None)
+        assert default_item is not None
+        assert default_item.get("bundle_version") == "0.0.1"
+
         caps = client.get("/api/gateway/discovery/capabilities", headers=headers)
         assert caps.status_code == 200, caps.text
         flow_editor = caps.json()["capabilities"]["contracts"]["flow_editor"]

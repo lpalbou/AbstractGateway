@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import urllib.request
 import zipfile
 
 import pytest
@@ -76,9 +77,16 @@ def test_gateway_embeddings_endpoint_returns_vectors(tmp_path: Path, monkeypatch
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_EMBEDDING_PROVIDER", "lmstudio")
-    monkeypatch.setenv("ABSTRACTGATEWAY_EMBEDDING_MODEL", "text-embedding-nomic-embed-text-v1.5@q6_k")
+    from abstractcore.config.manager import ConfigurationManager
+
+    assert ConfigurationManager().set_capability_default(
+        "embedding.text",
+        provider="lmstudio",
+        model="text-embedding-nomic-embed-text-v1.5@q6_k",
+        base_url="http://127.0.0.1:1234/v1",
+    )
 
     # Patch the embeddings client used by the gateway service so the test runs offline.
     from abstractruntime.integrations.abstractcore import embeddings_client as emb_mod
@@ -122,6 +130,12 @@ def test_gateway_embeddings_endpoint_returns_vectors(tmp_path: Path, monkeypatch
         assert body["dimension"] == 3
         assert len(body["data"]) == 2
         assert body["data"][0]["embedding"] == [5.0, 1.0, 0.0]
+        assert not (runtime_dir / "gateway_embeddings.json").exists()
+
+        cfg = client.get("/api/gateway/embeddings/config", headers=headers)
+        assert cfg.status_code == 200, cfg.text
+        assert cfg.json()["route"] == "embedding.text"
+        assert cfg.json()["base_url"] == "http://127.0.0.1:1234/v1"
 
 
 def test_gateway_embeddings_endpoint_rejects_model_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,9 +150,15 @@ def test_gateway_embeddings_endpoint_rejects_model_override(tmp_path: Path, monk
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_EMBEDDING_PROVIDER", "lmstudio")
-    monkeypatch.setenv("ABSTRACTGATEWAY_EMBEDDING_MODEL", "text-embedding-nomic-embed-text-v1.5@q6_k")
+    from abstractcore.config.manager import ConfigurationManager
+
+    assert ConfigurationManager().set_capability_default(
+        "embedding.text",
+        provider="lmstudio",
+        model="text-embedding-nomic-embed-text-v1.5@q6_k",
+    )
 
     from abstractruntime.integrations.abstractcore import embeddings_client as emb_mod
 
@@ -172,3 +192,54 @@ def test_gateway_embeddings_endpoint_rejects_model_override(tmp_path: Path, monk
         )
         assert r.status_code == 400, r.text
         assert "fixed" in r.text.lower()
+
+
+def test_remote_core_embeddings_client_posts_to_core_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.embeddings_config import EmbeddingRouteConfig, RemoteCoreEmbeddingsClient
+
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "data": [
+                        {"object": "embedding", "index": 0, "embedding": [1.0, 2.0]},
+                    ],
+                    "model": "lmstudio/text-embedding-model",
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        captured["headers"] = dict(request.header_items())
+        captured["body"] = json.loads((request.data or b"{}").decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    client = RemoteCoreEmbeddingsClient(
+        EmbeddingRouteConfig(
+            provider="lmstudio",
+            model="text-embedding-model",
+            base_url="http://127.0.0.1:1234/v1",
+            remote_core_url="http://core.test/v1",
+            remote_core_token="core-token",
+        )
+    )
+
+    result = client.embed_texts(["hello"])
+
+    assert captured["url"] == "http://core.test/v1/embeddings"
+    assert captured["headers"]["Authorization"] == "Bearer core-token"
+    assert captured["body"]["model"] == "lmstudio/text-embedding-model"
+    assert captured["body"]["base_url"] == "http://127.0.0.1:1234/v1"
+    assert result.embeddings == [[1.0, 2.0]]
+    assert result.dimension == 2

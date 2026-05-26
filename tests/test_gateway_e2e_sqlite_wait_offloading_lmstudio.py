@@ -82,8 +82,14 @@ def test_gateway_sqlite_wait_index_offloading_dedupe_lmstudio(tmp_path: Path, mo
     base_url = os.environ.get("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
     model = os.environ.get("LMSTUDIO_MODEL", "qwen/qwen3-next-80b")
     monkeypatch.setenv("LMSTUDIO_BASE_URL", base_url)
-    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "lmstudio")
-    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", model)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    from abstractcore.config.manager import ConfigurationManager
+    assert ConfigurationManager().set_capability_default(
+        "output.text",
+        provider="lmstudio",
+        model=model,
+        base_url=base_url,
+    )
 
     flow_id = "root"
     flow = {

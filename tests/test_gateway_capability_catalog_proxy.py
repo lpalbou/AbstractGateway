@@ -47,12 +47,13 @@ def test_voice_catalog_uses_local_capability_profiles_without_core_server(tmp_pa
     client, headers = _client(tmp_path, monkeypatch)
     with client:
         resp = client.get("/api/gateway/voice/voices", headers=headers)
+        compact_resp = client.get("/api/gateway/voice/voices?compact=true", headers=headers)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["source"] == "abstractruntime.discovery_facade"
     assert body["route_available"] is True
-    assert body["catalog"] == {
+    expected_catalog = {
         "contract": "gateway_catalog_v1",
         "version": 1,
         "kind": "voices",
@@ -64,11 +65,20 @@ def test_voice_catalog_uses_local_capability_profiles_without_core_server(tmp_pa
         "route_available": True,
         "providers_only": False,
     }
+    for key, value in expected_catalog.items():
+        assert body["catalog"].get(key) == value
+    assert "compact" not in body["catalog"]
     ids = {item.get("id") or item.get("profile_id") or item.get("voice_id") for item in body["profiles"]}
     assert {"coral", "verse"} <= ids
     item_ids = {item.get("id") for item in body["items"] if isinstance(item, dict)}
     assert {"coral", "verse"} <= item_ids
     assert all(item.get("voice_kind") == "profile" for item in body["items"])
+
+    assert compact_resp.status_code == 200, compact_resp.text
+    compact_body = compact_resp.json()
+    assert compact_body["catalog"]["compact"] is True
+    assert compact_body["catalog"]["kind"] == "voices"
+    assert {item.get("id") for item in compact_body["items"] if isinstance(item, dict)} >= {"coral", "verse"}
 
 
 def test_voice_catalog_static_fallback_surfaces_configured_env_voices(
@@ -130,6 +140,25 @@ def test_voice_catalog_static_fallback_surfaces_supertonic_builtin_profiles_with
     assert "supertonic" in providers["tts_providers"]
 
 
+def test_voice_catalog_static_fallback_surfaces_omnivoice_languages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_module_available", lambda name: name == "omnivoice")
+    monkeypatch.setattr(gateway_routes, "_omnivoice_language_ids", lambda: ["en", "fr"])
+
+    body = gateway_routes._static_voice_catalog_response(provider="omnivoice")
+    assert body["tts_providers"] == ["omnivoice"]
+    assert body["tts_models_by_provider"] == {"omnivoice": ["en", "fr"]}
+    assert body["tts_model_roles_by_provider"] == {"omnivoice": "language"}
+
+    speech_models = gateway_routes._static_speech_models_response(provider="omnivoice")
+    assert speech_models["models"] == ["en", "fr"]
+    assert speech_models["tts_models_by_provider"] == {"omnivoice": ["en", "fr"]}
+    assert speech_models["tts_model_roles_by_provider"] == {"omnivoice": "language"}
+
+
 def test_voice_catalog_proxies_configured_core_catalog_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -182,6 +211,70 @@ def test_catalog_proxy_preserves_core_auth_error(tmp_path: Path, monkeypatch: py
     assert "core auth required" in resp.text
 
 
+def test_speech_provider_only_catalog_uses_fast_static_provider_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    class StubDiscoveryFacade:
+        def list_tts_models(self, **_kwargs: Any) -> Dict[str, Any]:
+            raise AssertionError("provider-only lookup must not load the TTS model catalog")
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ABSTRACTVOICE_OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(gateway_routes, "_module_available", lambda name: name == "omnivoice")
+    monkeypatch.setattr(gateway_routes, "_has_builtin_voice_profiles", lambda _engine: False)
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/audio/speech/models?providers_only=true", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["catalog"]["kind"] == "providers"
+    assert body["catalog"]["scope"] == "tts"
+    assert body["catalog"]["providers_only"] is True
+    assert body["models"] == []
+    assert body["providers"] == ["omnivoice"]
+    assert body["items"] == [{"id": "omnivoice", "label": "omnivoice", "provider": "omnivoice", "name": "omnivoice"}]
+
+
+def test_transcription_provider_only_catalog_uses_fast_static_stt_provider_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    class StubDiscoveryFacade:
+        def list_stt_models(self, **_kwargs: Any) -> Dict[str, Any]:
+            raise AssertionError("provider-only lookup must not load the STT model catalog")
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ABSTRACTVOICE_OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(gateway_routes, "_module_available", lambda name: name == "faster_whisper")
+    monkeypatch.setattr(gateway_routes, "_has_builtin_voice_profiles", lambda _engine: False)
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/audio/transcriptions/models?providers_only=true", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["catalog"]["kind"] == "providers"
+    assert body["catalog"]["scope"] == "stt"
+    assert body["catalog"]["providers_only"] is True
+    assert body["models"] == []
+    assert body["providers"] == ["faster-whisper"]
+    assert body["tts_providers"] == []
+    assert body["stt_providers"] == ["faster-whisper"]
+    assert body["items"] == [
+        {"id": "faster-whisper", "label": "faster-whisper", "provider": "faster-whisper", "name": "faster-whisper"}
+    ]
+
+
 def test_audio_model_catalogs_include_local_voice_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
 
@@ -209,12 +302,71 @@ def test_audio_model_catalogs_include_local_voice_providers(tmp_path: Path, monk
     assert transcription.json()["items"] == [{"id": "stt-test", "label": "stt-test", "provider": "fake-stt"}]
 
 
+def test_audio_speech_models_filter_removes_other_provider_items(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class StubDiscoveryFacade:
+        def list_tts_models(self, **_kwargs: Any) -> Dict[str, Any]:
+            return {
+                "available": True,
+                "providers": ["openai", "omnivoice"],
+                "available_providers": ["openai", "omnivoice"],
+                "models": ["tts-1"],
+                "models_by_provider": {"openai": ["tts-1"]},
+                "tts_models_by_provider": {"openai": ["tts-1"]},
+                "provider_models": [{"provider": "openai", "model": "tts-1", "id": "openai/tts-1"}],
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/audio/speech/models?provider=omnivoice", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["provider"] == "omnivoice"
+    assert body["models"] == []
+    assert body["models_by_provider"] == {}
+    assert body["tts_models_by_provider"] == {}
+    assert body["provider_models"] == []
+    assert body["items"] == []
+
+
 def test_vision_catalog_rejects_unknown_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client, headers = _client(tmp_path, monkeypatch)
     with client:
         resp = client.get("/api/gateway/vision/provider_models?task=unknown", headers=headers)
 
     assert resp.status_code == 400, resp.text
+
+
+def test_vision_provider_catalog_items_use_available_providers_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubDiscoveryFacade:
+        def list_vision_provider_models(self, **_kwargs) -> Dict[str, Any]:
+            return {
+                "available": True,
+                "providers": ["openai", "mflux", "mlx-gen"],
+                "available_providers": ["mlx-gen"],
+                "models": [],
+                "models_by_provider": {},
+                "provider_models": [],
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get(
+            "/api/gateway/vision/provider_models?task=text_to_image&providers_only=true",
+            headers=headers,
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["available_providers"] == ["mlx-gen"]
+    assert [item["id"] for item in body["items"]] == ["mlx-gen"]
 
 
 def test_gateway_vision_catalog_routes_local_mflux_without_diffusers_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -228,10 +380,10 @@ def test_gateway_vision_catalog_routes_local_mflux_without_diffusers_prefix(monk
         task="text_to_image",
     )
 
-    assert item["provider"] == "mflux"
-    assert item["backend"] == "mflux"
-    assert item["model"] == "black-forest-labs/FLUX.2-klein-9B"
-    assert item["routed_model"] == "black-forest-labs/FLUX.2-klein-9B"
+    assert item["provider"] == "mlx-gen"
+    assert item["backend"] == "mlx-gen"
+    assert item["model"] == "mlx-gen/black-forest-labs/FLUX.2-klein-9B"
+    assert item["routed_model"] == "mlx-gen/black-forest-labs/FLUX.2-klein-9B"
     assert not str(item["model"]).startswith("diffusers/")
 
 
@@ -396,4 +548,97 @@ def test_audio_music_models_catalog_filters_by_provider(
             "provider_api_key": None,
             "provider": "acemusic",
         }
+    ]
+
+
+def test_embedding_model_catalog_filters_embedding_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_embedding_models(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {
+                "available": True,
+                "scope": "embedding.text",
+                "providers": ["lmstudio"],
+                "available_providers": ["lmstudio"],
+                "embedding_providers": ["lmstudio"],
+                "models": ["bge-small-en-v1.5"],
+                "embedding_models": ["bge-small-en-v1.5"],
+                "models_by_provider": {"lmstudio": ["bge-small-en-v1.5"]},
+                "embedding_models_by_provider": {"lmstudio": ["bge-small-en-v1.5"]},
+                "provider_models": [{"provider": "lmstudio", "model": "bge-small-en-v1.5", "id": "lmstudio/bge-small-en-v1.5"}],
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/embeddings/models?provider=lmstudio", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "abstractruntime.discovery_facade"
+    assert body["catalog"]["kind"] == "models"
+    assert body["catalog"]["scope"] == "embedding.text"
+    assert body["catalog"]["provider"] == "lmstudio"
+    assert body["models"] == ["bge-small-en-v1.5"]
+    assert body["items"] == [
+        {
+            "provider": "lmstudio",
+            "model": "bge-small-en-v1.5",
+            "id": "bge-small-en-v1.5",
+            "label": "bge-small-en-v1.5",
+            "tasks": ["embedding.text"],
+        }
+    ]
+    assert calls == [
+        {
+            "base_url": None,
+            "provider_api_key": None,
+            "provider": "lmstudio",
+            "providers_only": False,
+        }
+    ]
+
+
+def test_embedding_provider_only_catalog_keeps_provider_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubDiscoveryFacade:
+        def list_embedding_models(self, **_kwargs: Any) -> Dict[str, Any]:
+            return {
+                "available": True,
+                "providers": ["huggingface", "lmstudio"],
+                "available_providers": ["huggingface", "lmstudio"],
+                "embedding_providers": ["huggingface", "lmstudio"],
+                "provider_details": [
+                    {"provider": "huggingface", "label": "HuggingFace"},
+                    {"provider": "lmstudio", "label": "LMStudio"},
+                ],
+                "models": [],
+                "embedding_models": [],
+                "models_by_provider": {},
+                "embedding_models_by_provider": {},
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/embeddings/models?providers_only=true", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["catalog"]["kind"] == "providers"
+    assert body["catalog"]["scope"] == "embedding.text"
+    assert body["catalog"]["providers_only"] is True
+    assert body["models"] == []
+    assert body["items"] == [
+        {"provider": "huggingface", "label": "HuggingFace", "id": "huggingface", "name": "huggingface"},
+        {"provider": "lmstudio", "label": "LMStudio", "id": "lmstudio", "name": "lmstudio"},
     ]

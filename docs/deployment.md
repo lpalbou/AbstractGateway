@@ -11,7 +11,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.18
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.19
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -19,7 +19,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.18
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.19
 ```
 
 The default image installs the base `abstractgateway` package, which includes:
@@ -55,12 +55,19 @@ host-native OpenAI-compatible inference endpoint:
 docker run --rm --name abstractgateway-server \
   -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
-  -e ABSTRACTGATEWAY_PROVIDER="openai-compatible" \
-  -e ABSTRACTGATEWAY_MODEL="your-model" \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.18
+  ghcr.io/lpalbou/abstractgateway-server:0.2.19
+```
+
+Set the execution-host text route separately:
+
+```bash
+abstractgateway-config set-default output.text \
+  --provider openai-compatible \
+  --model your-model \
+  --base-url http://model-runner.docker.internal/engines/v1
 ```
 
 Other host-native endpoints are also valid: LM Studio at
@@ -113,7 +120,7 @@ Required:
 Common:
 
 - `ABSTRACTGATEWAY_ALLOWED_ORIGINS`: browser origin allowlist
-- `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: defaults for LLM/agent nodes
+- `output.text` capability route: default for LLM/agent nodes
 - `ABSTRACTGATEWAY_TOOL_MODE`: `approval`, `passthrough`, `delegated`, or local dev modes
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` or `sqlite`
 - `ABSTRACTGATEWAY_DB_PATH`: SQLite file, when using `sqlite`
@@ -173,7 +180,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.18-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.19-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

@@ -14,8 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ABSTRACTGATEWAY_FLOWS_DIR=/data/flows \
     ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle \
     ABSTRACTGATEWAY_STORE_BACKEND=file \
-    ABSTRACTGATEWAY_ALLOWED_ORIGINS=http://localhost:*,http://127.0.0.1:* \
-    ABSTRACTGATEWAY_EMBEDDING_PROVIDER=disabled
+    ABSTRACTGATEWAY_ALLOWED_ORIGINS=http://localhost:*,http://127.0.0.1:*
 
 RUN addgroup --system abstractgateway \
     && adduser --system --ingroup abstractgateway --home /home/abstractgateway abstractgateway \

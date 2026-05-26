@@ -74,15 +74,21 @@ def test_gateway_model_residency_uses_runtime_host_facade(
 
     assert loaded.status_code == 200, loaded.text
     assert loaded.json()["models"][0]["runtime_id"] == "local:text_generation:mlx:qwen"
+    assert loaded.json()["success"] is True
+    assert loaded.json()["affected_models"][0]["runtime_id"] == "local:text_generation:mlx:qwen"
     assert loaded.json()["filters"] == {"task": "text_generation", "provider": "mlx"}
     assert loaded.json()["source"] == "abstractruntime.host_facade"
 
     assert load.status_code == 200, load.text
     assert load.json()["loaded_new"] is True
+    assert load.json()["success"] is True
+    assert load.json()["affected_models"][0]["runtime_id"] == "local:text_generation:mlx:qwen"
     assert load.json()["request"]["task"] == "text_generation"
 
     assert unload.status_code == 200, unload.text
     assert unload.json()["unloaded"] is True
+    assert unload.json()["success"] is True
+    assert unload.json()["affected_models"] == []
 
     assert calls == [
         ("list", {"task": "text_generation", "provider": "mlx"}),
@@ -114,6 +120,8 @@ def test_gateway_model_residency_reports_runtime_unavailable(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ok"] is False
+    assert body["success"] is False
+    assert body["affected_models"] == []
     assert body["supported"] is False
     assert body["code"] == "model_residency_unavailable"
     assert "host controls" in body["error"]

@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .config import GatewayHostConfig
+from .capability_defaults import (
+    clear_gateway_capability_default,
+    core_server_token,
+    gateway_capability_defaults_payload,
+    save_gateway_capability_default,
+)
 from .memory_store import resolve_memory_store_config
 
 
@@ -47,7 +53,7 @@ def _status_payload() -> Dict[str, Any]:
     core_token = (
         os.getenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN")
         or os.getenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY")
-        or os.getenv("ABSTRACTCORE_SERVER_API_KEY")
+        or core_server_token()
     )
 
     return {
@@ -63,14 +69,9 @@ def _status_payload() -> Dict[str, Any]:
             "tool_mode": os.getenv("ABSTRACTGATEWAY_TOOL_MODE", "approval"),
             "max_attachment_bytes": os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES") or None,
         },
-        "runtime_defaults": {
-            "provider": os.getenv("ABSTRACTGATEWAY_PROVIDER") or None,
-            "model": os.getenv("ABSTRACTGATEWAY_MODEL") or None,
-            "prompt_cache": os.getenv("ABSTRACTGATEWAY_PROMPT_CACHE") or None,
-            "embedding_provider": os.getenv("ABSTRACTGATEWAY_EMBEDDING_PROVIDER") or None,
-            "embedding_model": os.getenv("ABSTRACTGATEWAY_EMBEDDING_MODEL") or None,
-        },
+        "runtime": {"prompt_cache": os.getenv("ABSTRACTGATEWAY_PROMPT_CACHE") or None},
         "memory": memory_cfg.public_dict(),
+        "capability_defaults": gateway_capability_defaults_payload(),
         "core_server": {
             "base_url": core_url or None,
             "auth_configured": bool(str(core_token or "").strip()),
@@ -98,6 +99,27 @@ def _quote_env(value: Any) -> str:
     if text == "" or any(ch.isspace() or ch in {'"', "'", "#", "$", "\\"} for ch in text):
         return json.dumps(text)
     return text
+
+
+def _parse_capability_options(items: list[str]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for item in items or []:
+        raw = str(item or "").strip()
+        if not raw:
+            continue
+        if "=" not in raw:
+            raise SystemExit(f"Invalid --option value {raw!r}; expected KEY=VALUE")
+        key, value_raw = raw.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise SystemExit(f"Invalid --option value {raw!r}; key is empty")
+        value_text = value_raw.strip()
+        try:
+            value = json.loads(value_text)
+        except Exception:
+            value = value_text
+        out[key] = value
+    return out
 
 
 def _write_env_file(path: Path, values: Dict[str, Any], *, force: bool) -> None:
@@ -149,6 +171,19 @@ def _cmd_status(args: argparse.Namespace) -> None:
     print(f"- gateway_auth_configured: {gw['auth_configured']}")
     print(f"- memory_backend: {mem['backend']} ({mem.get('path') or 'process memory'})")
     print(f"- core_server: {core.get('base_url') or 'not configured'}")
+    configured_defaults = [
+        item
+        for item in payload.get("capability_defaults", {}).get("routes", [])
+        if isinstance(item, dict) and bool(item.get("configured"))
+    ]
+    if configured_defaults:
+        print("- capability_defaults:")
+        for item in configured_defaults:
+            key = item.get("key") or f"{item.get('kind')}.{item.get('modality')}"
+            provider = item.get("provider") or "-"
+            model = item.get("model") or "-"
+            source = item.get("source") or "-"
+            print(f"  - {key}: {provider}/{model} ({source})")
     print("")
     print("Use abstractcore-config for provider credentials and provider base URLs.")
 
@@ -174,10 +209,6 @@ def _cmd_init(args: argparse.Namespace) -> None:
         "ABSTRACTGATEWAY_TOOL_MODE": args.tool_mode,
         "ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES": str(int(args.max_attachment_bytes)),
         "ABSTRACTGATEWAY_MEMORY_STORE_BACKEND": args.memory_backend,
-        "ABSTRACTGATEWAY_PROVIDER": args.provider,
-        "ABSTRACTGATEWAY_MODEL": args.model,
-        "ABSTRACTGATEWAY_EMBEDDING_PROVIDER": args.embedding_provider,
-        "ABSTRACTGATEWAY_EMBEDDING_MODEL": args.embedding_model,
         "ABSTRACTCORE_SERVER_BASE_URL": args.core_server_url,
         "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN": args.core_server_auth_token,
     }
@@ -186,7 +217,42 @@ def _cmd_init(args: argparse.Namespace) -> None:
     _write_env_file(out_path, values, force=bool(args.force))
     print(f"Wrote {out_path}")
     print("Gateway auth token generated. Keep this file private.")
+    print("Use abstractgateway-config set-default for framework capability routes.")
     print("Run abstractcore-config separately for provider keys and provider base URLs.")
+
+
+def _cmd_defaults(args: argparse.Namespace) -> None:
+    payload = gateway_capability_defaults_payload()
+    if bool(args.json):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print("Execution-host capability defaults")
+    print(f"- config_file: {payload.get('config_file')}")
+    for item in payload.get("routes", []):
+        if not isinstance(item, dict):
+            continue
+        key = item.get("key") or f"{item.get('kind')}.{item.get('modality')}"
+        provider = item.get("provider") or "-"
+        model = item.get("model") or "-"
+        source = item.get("source") or "-"
+        print(f"- {key}: {provider}/{model} ({source})")
+
+
+def _cmd_set_default(args: argparse.Namespace) -> None:
+    options = _parse_capability_options(args.option or [])
+    save_gateway_capability_default(
+        args.route,
+        provider=args.provider,
+        model=args.model,
+        base_url=args.base_url,
+        options=options,
+    )
+    print(f"Set execution-host capability default: {args.route}")
+
+
+def _cmd_clear_default(args: argparse.Namespace) -> None:
+    clear_gateway_capability_default(args.route)
+    print(f"Cleared execution-host capability default: {args.route}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -214,13 +280,25 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--tool-mode", default="approval")
     init.add_argument("--max-attachment-bytes", type=int, default=25 * 1024 * 1024)
     init.add_argument("--memory-backend", choices=["lancedb", "sqlite", "memory"], default="lancedb")
-    init.add_argument("--provider", default=None)
-    init.add_argument("--model", default=None)
-    init.add_argument("--embedding-provider", default=None)
-    init.add_argument("--embedding-model", default=None)
     init.add_argument("--core-server-url", default=None)
     init.add_argument("--core-server-auth-token", default=None)
     init.set_defaults(func=_cmd_init)
+
+    defaults = sub.add_parser("defaults", help="Show effective execution-host capability routing defaults")
+    defaults.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    defaults.set_defaults(func=_cmd_defaults)
+
+    set_default = sub.add_parser("set-default", help="Persist one execution-host Core/Runtime capability routing default")
+    set_default.add_argument("route", help="Capability route, e.g. output.text, input.image, output.voice")
+    set_default.add_argument("--provider", default=None, help="Provider/backend id")
+    set_default.add_argument("--model", default=None, help="Model id")
+    set_default.add_argument("--base-url", default=None, help="Optional provider base URL")
+    set_default.add_argument("--option", action="append", default=[], metavar="KEY=VALUE", help="Optional JSON-capable parameter; repeatable")
+    set_default.set_defaults(func=_cmd_set_default)
+
+    clear_default = sub.add_parser("clear-default", help="Clear one execution-host capability routing default")
+    clear_default.add_argument("route", help="Capability route, e.g. output.text")
+    clear_default.set_defaults(func=_cmd_clear_default)
 
     return parser
 

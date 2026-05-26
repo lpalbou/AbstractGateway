@@ -57,7 +57,7 @@ No planned items at the moment.
 
 | Item | Promotion criteria |
 | --- | --- |
-| [2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md](proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md) | Promote when Gateway draft-space semantics and ephemeral-run lifecycle are validated against Flow UX and ledger expectations. |
+| [2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md](proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md) | Remaining optional hardening: draft-bundle cleanup and default memory-scope isolation; run-tree purge is implemented. |
 | [2026-05-13_shared_identity_context.md](proposed/2026-05-13_shared_identity_context.md) | Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work. |
 | [0055_gateway_provider_backend_readiness_truth_for_thin_clients.md](proposed/0055_gateway_provider_backend_readiness_truth_for_thin_clients.md) | Promote when Runtime/Core can supply selected backend/provider/model and stable degraded-state truth for Gateway to relay to thin clients. |
 | [offline_first_gateway_connectivity.md](proposed/offline_first_gateway_connectivity.md) | Promote when offline-first connectivity guarantees become a near-term product commitment. |
@@ -119,6 +119,9 @@ No planned items at the moment.
 - Gateway prompt-cache snapshot aliases now use Runtime's public host facade;
   the old Gateway-local provider-private snapshot code and dead Core catalog
   proxy module were removed.
+- Gateway now owns AbstractFlow draft-test run purge through
+  `/api/gateway/runs/purge_drafts`, using Runtime optional deletion protocols
+  while keeping draft/published taxonomy out of Runtime.
 
 ## Completion Process
 

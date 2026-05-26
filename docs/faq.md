@@ -159,16 +159,19 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/n
 
 ### My bundle fails with “LLM nodes but no default provider/model is configured”
 
-Provide defaults via env vars (most explicit):
+Configure the execution-host `output.text` route:
 
 ```bash
-export ABSTRACTGATEWAY_PROVIDER="lmstudio"
-export ABSTRACTGATEWAY_MODEL="..."
+abstractgateway-config set-default output.text \
+  --provider lmstudio \
+  --model qwen/qwen3.6-35b-a3b \
+  --base-url http://127.0.0.1:1234/v1
 ```
 
 Alternatives:
 - Pin provider/model on at least one `llm_call` or `agent` node; the gateway scans the flow JSON for defaults.
-- Set Gateway env defaults before startup and keep provider secrets/base URLs in `abstractcore-config`.
+- Keep provider secrets in `abstractcore-config`; use `--base-url` on the capability route when the
+  selected provider endpoint is not the provider default.
 
 Evidence: `_scan_flows_for_llm_defaults` + provider/model selection in `src/abstractgateway/hosts/bundle_host.py`.
 

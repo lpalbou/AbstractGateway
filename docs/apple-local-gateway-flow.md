@@ -23,25 +23,35 @@ packages needed by Gateway.
 
 ## 3. Configure local engines
 
-Use Gateway-scoped env vars so the Gateway catalog routes and runtime use the
-same settings.
+Use Gateway env vars for Gateway internals, then set framework model defaults through capability
+routes owned by the execution host.
 
 ```bash
 export ABSTRACTGATEWAY_AUTH_TOKEN="dev-local-token"
-
-# Local LLM routing. Replace the model with the local MLX model you want.
-export ABSTRACTGATEWAY_PROVIDER="mlx"
-export ABSTRACTGATEWAY_MODEL="mlx-community/Qwen3-4B-4bit"
 
 # Local image generation on MPS through AbstractVision/Diffusers.
 export ABSTRACTGATEWAY_VISION_BACKEND="diffusers"
 export ABSTRACTGATEWAY_VISION_MODEL_ID="runwayml/stable-diffusion-v1-5"
 export ABSTRACTGATEWAY_VISION_DIFFUSERS_DEVICE="mps"
 
+# Alternative: Apple-local MLX-Gen through AbstractVision q4 presets.
+# Pre-download with: abstractvision download flux2-klein-4b --provider mlx-gen
+# export ABSTRACTGATEWAY_VISION_BACKEND="mlx-gen"
+# export ABSTRACTGATEWAY_VISION_MODEL_ID="mlx-gen/flux2-klein-4b"
+
 # Local voice generation and transcription through AbstractVoice.
 export ABSTRACTGATEWAY_VOICE_TTS_ENGINE="piper"
 export ABSTRACTGATEWAY_VOICE_STT_ENGINE="faster_whisper"
 export ABSTRACTGATEWAY_VOICE_STT_MODEL="base"
+```
+
+Set the default text route:
+
+```bash
+abstractgateway-config set-default output.text \
+  --provider lmstudio \
+  --model qwen/qwen3.6-35b-a3b \
+  --base-url http://127.0.0.1:1234/v1
 ```
 
 Optional prefetch for voice models:
@@ -105,4 +115,3 @@ In the editor, media nodes use Gateway catalogs:
 - Generate Voice: voice profile/clone plus TTS model
 - Transcribe Audio: STT model
 - Listen Voice: voice-input wait metadata
-

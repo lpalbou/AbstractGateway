@@ -60,8 +60,7 @@ def test_runner_process_keeps_ticking_while_api_restarts(tmp_path: Path, monkeyp
     monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
     monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
     monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", "file")
-    # Avoid slow/blocked network calls during startup (embeddings are not needed for this test).
-    monkeypatch.setenv("ABSTRACTGATEWAY_EMBEDDING_PROVIDER", "disabled")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
     # Bundle: a durable WAIT_UNTIL that should complete even if the API process restarts.
     flow_id = "root"

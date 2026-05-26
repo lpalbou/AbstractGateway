@@ -5,11 +5,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from abstractruntime.core.run_lifecycle import extract_run_lifecycle
+
 from .config import GatewayHostConfig
-from .embeddings_config import resolve_embedding_config
+from .embeddings_config import build_embedding_client, resolve_embedding_config
 from .runner import GatewayRunner, GatewayRunnerConfig
 from .security import GatewayAuthPolicy, load_gateway_auth_policy_from_env
 from .stores import GatewayStores, build_file_stores, build_sqlite_stores
+
+_DRAFT_RUN_PURPOSE = "draft_test"
+
+
+def is_draft_run_lifecycle(lifecycle: Any) -> bool:
+    if not isinstance(lifecycle, dict):
+        return False
+    purpose = lifecycle.get("purpose")
+    return isinstance(purpose, str) and purpose.strip() == _DRAFT_RUN_PURPOSE
 
 
 @dataclass(frozen=True)
@@ -23,6 +34,7 @@ class GatewayService:
     auth_policy: GatewayAuthPolicy
     embedding_provider: Optional[str] = None
     embedding_model: Optional[str] = None
+    embedding_base_url: Optional[str] = None
     embeddings_client: Optional[Any] = None
     telegram_bridge: Optional[Any] = None
     email_bridge: Optional[Any] = None
@@ -128,19 +140,18 @@ def create_default_gateway_service() -> GatewayService:
 
     embedding_provider: Optional[str] = None
     embedding_model: Optional[str] = None
+    embedding_base_url: Optional[str] = None
     embeddings_client: Optional[Any] = None
     try:
-        embedding_provider, embedding_model = resolve_embedding_config(base_dir=stores.base_dir)
-        from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient
-
-        embeddings_client = AbstractCoreEmbeddingsClient(
-            provider=embedding_provider,
-            model=embedding_model,
-            manager_kwargs={
-                "cache_dir": Path(stores.base_dir) / "abstractcore" / "embeddings",
-                # Embeddings must be trustworthy for semantic retrieval; do not return zero vectors on failure.
-                "strict": True,
-            },
+        embedding_route = resolve_embedding_config(base_dir=stores.base_dir)
+        embedding_provider = embedding_route.provider
+        embedding_model = embedding_route.model
+        embedding_base_url = embedding_route.base_url
+        embeddings_client = build_embedding_client(
+            embedding_route,
+            cache_dir=Path(stores.base_dir) / "abstractcore" / "embeddings",
+            # Embeddings must be trustworthy for semantic retrieval; do not return zero vectors on failure.
+            strict=True,
         )
     except Exception:
         # Embeddings are optional: the gateway may run without AbstractCore embedding deps.
@@ -178,6 +189,7 @@ def create_default_gateway_service() -> GatewayService:
         auth_policy=policy,
         embedding_provider=embedding_provider,
         embedding_model=embedding_model,
+        embedding_base_url=embedding_base_url,
         embeddings_client=embeddings_client,
         telegram_bridge=telegram_bridge,
         email_bridge=email_bridge,
@@ -270,7 +282,18 @@ def run_summary(run: Any) -> Dict[str, Any]:
         "schedule": None,
         # Best-effort limits metadata (for UX, not for enforcing).
         "limits": None,
+        # First-class authoring/execution lifecycle summary. This is a sanitized
+        # projection of vars._run_lifecycle, not the full run input payload.
+        "run_lifecycle": None,
+        "is_draft": False,
     }
+    try:
+        lifecycle = extract_run_lifecycle(getattr(run, "vars", None))
+        if lifecycle is not None:
+            out["run_lifecycle"] = lifecycle
+            out["is_draft"] = is_draft_run_lifecycle(lifecycle)
+    except Exception:
+        pass
     try:
         vars_obj = getattr(run, "vars", None)
         runtime_ns = vars_obj.get("_runtime") if isinstance(vars_obj, dict) else None

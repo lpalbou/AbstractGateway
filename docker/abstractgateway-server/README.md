@@ -127,13 +127,13 @@ Useful compose variables:
 - `ABSTRACTGATEWAY_HOST_FLOWS_DIR`: host directory containing `*.flow` bundles
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` or `sqlite`
 - `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND`: `lancedb` or `memory`; `sqlite` works when the installed AbstractMemory build exposes `SQLiteTripleStore`
-- `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: defaults for bundles
+- `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: transitional text fallback; prefer execution-host `output.text`
 - `ABSTRACTGATEWAY_TOOL_MODE`: `approval`, `passthrough`, `delegated`, or local dev modes
-- `ABSTRACTGATEWAY_EMBEDDING_PROVIDER` / `ABSTRACTGATEWAY_EMBEDDING_MODEL`: optional embedding space
+- `ABSTRACTCORE_SERVER_BASE_URL`: optional standalone Core server for capability defaults and dynamic catalogs
+- `embedding.text` capability default: configure through `abstractgateway-config set-default embedding.text ...`
 - `ABSTRACTVISION_*`: AbstractVision image backend or OpenAI-compatible image endpoint
 - `ABSTRACTVOICE_*`: AbstractVoice TTS/STT backend, local/remote engine, and model controls
 - `ABSTRACTGATEWAY_EXTRAS`: build-time install extra for local image builds (empty for the default image, `gpu` for NVIDIA)
-- `ABSTRACTCORE_SERVER_BASE_URL`: optional standalone Core server for dynamic voice/vision catalogs
 
 Release scope: TTS, STT, and generated images are direct Gateway endpoints.
 Generated images are also available through Runtime workflows with a configured

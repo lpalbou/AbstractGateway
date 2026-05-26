@@ -88,9 +88,6 @@ def test_discovery_requires_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 
 def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "ollama")
-    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "llama3")
-
     class StubDiscoveryFacade:
         def list_providers(self, *, include_models: bool = False, **_kwargs):
             items = [
@@ -167,9 +164,6 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
 
 
 def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "lmstudio")
-    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "qwen")
-
     calls: list[dict] = []
 
     class StubDiscoveryFacade:

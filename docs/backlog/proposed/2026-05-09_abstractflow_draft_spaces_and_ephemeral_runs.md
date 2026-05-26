@@ -2,7 +2,7 @@
 
 ## Metadata
 - Created: 2026-05-09
-- Status: Proposed
+- Status: Partially implemented
 - Completed: N/A
 
 ## Context
@@ -17,8 +17,12 @@ Current Gateway reality:
 - `/api/gateway/visualflows/{flow_id}/publish` packs a `.flow` bundle and installs it.
 - `/api/gateway/runs/start` starts durable Runtime runs.
 - Gateway creates a per-run workspace when `workspace_root` is omitted.
-- Run listing/history currently treats editor tests like any other durable run unless clients
-  filter them themselves.
+- Gateway accepts sanitized top-level `run_lifecycle` metadata, hides
+  `purpose: "draft_test"` runs from default `/runs`, rejects accidental production starts of
+  explicit `draft.*` bundle versions, and exposes `/runs/purge_drafts` for expired ephemeral
+  draft-test run trees.
+- Gateway-created default workspaces now include `.abstractgateway-workspace.json` ownership
+  markers so purge can delete only Gateway-owned workspace directories.
 
 ## Why this might matter
 
@@ -43,7 +47,8 @@ Add Gateway support for draft/private Flow authoring:
   - hide draft/private runs unless `include_drafts=true` or equivalent;
   - preserve current-session draft runs for Flow debugging.
 - Cleanup:
-  - TTL-based cleanup for draft runs, ledgers, artifacts, and draft workspaces;
+  - TTL-based cleanup for draft runs, ledgers, artifacts, command records, and Gateway-owned
+    workspaces is implemented through `/runs/purge_drafts`;
   - safe cleanup of draft bundles without touching published versions.
 - Memory safety:
   - draft runs should default to isolated memory scopes or clear warnings when writing to durable
@@ -51,13 +56,14 @@ Add Gateway support for draft/private Flow authoring:
 
 ## Evidence to gather before promotion
 
-- Confirm whether Gateway should own all cleanup directly or delegate generic retention mechanics to
-  AbstractRuntime storage protocols.
-- Decide whether draft bundles should live in the same `WorkflowBundleRegistry` with a flag or in a
-  separate draft registry.
-- Decide whether draft run metadata belongs in `StartRunRequest` top-level fields or under
-  `input_data["_runtime"]`.
-- Decide what default TTL is acceptable for local dev and hosted deployments.
+- Gateway owns draft-test cleanup policy and delegates only optional storage deletion mechanics to
+  AbstractRuntime.
+- Draft bundles live in the same `WorkflowBundleRegistry` with `metadata.lifecycle.channel`
+  and `draft.*` version classification.
+- Draft run metadata belongs in `StartRunRequest.run_lifecycle`, normalized into private run vars
+  as `_run_lifecycle`.
+- Default draft-run TTL is seven days and can be overridden with
+  `ABSTRACTGATEWAY_DRAFT_RUN_RETENTION_TTL_S` / `ABSTRACTGATEWAY_DRAFT_RUN_TTL_S`.
 
 ## Validation ideas
 
@@ -81,5 +87,6 @@ Add Gateway support for draft/private Flow authoring:
 
 ## Guidance for future agents
 
-Promote this when implementing AbstractFlow's `Test Draft` lifecycle. Keep the API explicit rather
-than relying on the magic string `bundle_version="dev"` as the only signal.
+AbstractFlow's `Test Draft` lifecycle is now implemented. Keep this item proposed only for the
+remaining optional hardening around draft-bundle cleanup and default memory-scope isolation; do not
+reopen run-tree purge unless the tests around `/runs/purge_drafts` fail.

@@ -197,9 +197,9 @@ clients should read `catalog` plus `items`; older clients can keep using route-
 specific fields like `models`, `provider_models`, `profiles`, or `voices`.
 
 Provider discovery also reports the resolved default provider/model when one is
-configured. The resolver follows request values, Gateway env, and AbstractCore
-global defaults; if no pair exists, the response includes `default_error` rather
-than a hardcoded local model.
+configured. The resolver follows request values, flow pins, and the execution-host
+`output.text` capability route; if no pair exists, the response includes
+`default_error` rather than a hardcoded local model.
 
 It also includes a versioned thin-client contract:
 
@@ -317,9 +317,9 @@ run artifact and emits `abstract.media.image.generated` with:
 
 If the active workflow runtime already has an AbstractCore LLM client, the route
 uses it. For tools-only workflows, the route can create a direct Runtime/Core
-client from request `provider`/`model` or `ABSTRACTGATEWAY_PROVIDER` /
-`ABSTRACTGATEWAY_MODEL`. Unsupported or unconfigured deployments return a
-structured `ok=false` response instead of a failed run.
+client from request `provider`/`model` or the execution-host capability route
+default. Unsupported or unconfigured deployments return a structured `ok=false`
+response instead of a failed run.
 
 Gateway also exposes a direct image-edit sibling route:
 
@@ -360,9 +360,9 @@ Gateway resolves the store through:
 
 Structured queries work with LanceDB and in-memory stores. SQLite also works
 when the installed AbstractMemory build exposes `SQLiteTripleStore`. Semantic
-`query_text` requires a vector-capable backend plus configured Gateway
-embeddings; SQLite returns a clear 400 instead of pretending to support semantic
-recall.
+`query_text` requires a vector-capable backend plus the execution-host
+`embedding.text` route; SQLite returns a clear 400 instead of pretending to
+support semantic recall.
 
 ## Prompt-cache control plane (operator API)
 

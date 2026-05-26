@@ -98,6 +98,7 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert common.get("runs", {}).get("input_data", {}).get("endpoint") == "/api/gateway/runs/{run_id}/input_data"
         assert common.get("runs", {}).get("history_bundle", {}).get("available") is True
         assert common.get("runs", {}).get("history_bundle", {}).get("endpoint") == "/api/gateway/runs/{run_id}/history_bundle"
+        assert common.get("runs", {}).get("purge_drafts", {}).get("endpoint") == "/api/gateway/runs/purge_drafts"
         assert common.get("ledger", {}).get("stream", {}).get("transport") == "sse"
         assert common.get("artifacts", {}).get("content", {}).get("endpoint") == "/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content"
         assert common.get("discovery", {}).get("voice_voices") == "/api/gateway/voice/voices"
@@ -105,8 +106,16 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert common.get("discovery", {}).get("audio_transcription_models") == "/api/gateway/audio/transcriptions/models"
         assert common.get("discovery", {}).get("audio_music_providers") == "/api/gateway/audio/music/providers"
         assert common.get("discovery", {}).get("audio_music_models") == "/api/gateway/audio/music/models"
+        assert common.get("discovery", {}).get("embedding_models") == "/api/gateway/embeddings/models"
         assert common.get("discovery", {}).get("vision_provider_models") == "/api/gateway/vision/provider_models"
         assert common.get("discovery", {}).get("vision_models") == "/api/gateway/vision/models"
+        code_execution = common.get("execution", {}).get("code")
+        assert code_execution.get("contract") == "code_execution_policy_v1"
+        assert code_execution.get("default_mode") == "sandbox"
+        modes = {m.get("id"): m for m in code_execution.get("modes", [])}
+        assert modes["sandbox"]["available"] is True
+        assert modes["full_access"]["available"] is False
+        assert contracts.get("flow_editor", {}).get("execution", {}).get("code") == code_execution
         catalog_contract = common.get("discovery", {}).get("catalog_contract")
         assert catalog_contract == {
             "contract": "gateway_catalog_v1",
@@ -225,6 +234,13 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
         "available": True,
         "endpoint": "/api/gateway/runs/{run_id}/history_bundle",
     }
+    code_execution = contracts["common"]["execution"]["code"]
+    assert code_execution["contract"] == "code_execution_policy_v1"
+    assert code_execution["simulate"]["endpoint"] == "/api/gateway/visualflows/code/simulate"
+    modes = {m["id"]: m for m in code_execution["modes"]}
+    assert modes["sandbox"]["available"] is True
+    assert modes["full_access"]["available"] is False
+    assert contracts["flow_editor"]["execution"]["code"] == code_execution
     assert contracts["flow_editor"]["runs"]["input_data"] == contracts["common"]["runs"]["input_data"]
     assert contracts["assistant"]["runs"]["history_bundle"] == contracts["common"]["runs"]["history_bundle"]
     assert contracts["abstractcode"]["runs"]["history_bundle"] == contracts["common"]["runs"]["history_bundle"]
@@ -285,6 +301,18 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert readiness["surfaces"]["memory"]["route_available"] is True
     assert contracts["assistant"]["voice"]["stt"]["models_endpoint"] == "/api/gateway/audio/transcriptions/models"
     assert contracts["flow_editor"]["voice"]["listen"]["transcription_available"] is False
+
+
+def test_code_execution_contract_reports_full_access_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setenv("ABSTRACTRUNTIME_CODE_FULL_ACCESS", "1")
+    contracts = gateway_routes._build_client_capability_contracts({})
+    code_execution = contracts["common"]["execution"]["code"]
+    modes = {m["id"]: m for m in code_execution["modes"]}
+    assert modes["sandbox"]["available"] is True
+    assert modes["full_access"]["available"] is True
+    assert contracts["flow_editor"]["execution"]["code"] == code_execution
 
 
 def test_generated_image_contract_separates_light_package_from_backend_config(monkeypatch: pytest.MonkeyPatch) -> None:

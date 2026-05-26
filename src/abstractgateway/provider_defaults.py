@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
@@ -32,18 +31,36 @@ def _clean_model(value: Any) -> Optional[str]:
     return text or None
 
 
-def _env_first(*keys: str) -> Optional[str]:
-    for key in keys:
-        raw = os.getenv(str(key))
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-    return None
+def _gateway_capability_text_default() -> tuple[Optional[str], Optional[str], Optional[str]]:
+    try:
+        from .capability_defaults import gateway_capability_defaults_payload
+
+        payload = gateway_capability_defaults_payload()
+        routes = payload.get("routes") if isinstance(payload, dict) else None
+        if not isinstance(routes, list):
+            return None, None, None
+        for kind in ("output", "input"):
+            for route in routes:
+                if not isinstance(route, dict):
+                    continue
+                route_kind = str(route.get("kind") or route.get("direction") or "").strip()
+                if route_kind != kind:
+                    continue
+                if str(route.get("modality") or "").strip() != "text":
+                    continue
+                provider = _clean_provider(route.get("provider"))
+                model = _clean_model(route.get("model"))
+                if provider and model:
+                    return provider, model, str(route.get("source") or payload.get("authority") or "abstractcore_config")
+    except Exception:
+        pass
+    return None, None, None
 
 
 def provider_model_config_error(*, purpose: str = "LLM helper") -> str:
     return (
         f"No provider/model is configured for {purpose}. Provide provider and model in the request, "
-        "set ABSTRACTGATEWAY_PROVIDER and ABSTRACTGATEWAY_MODEL, or supply flow defaults."
+        "supply workflow defaults, or configure the execution-host output.text capability default."
     )
 
 
@@ -60,28 +77,31 @@ def resolve_gateway_provider_model(
     model_s = _clean_model(model)
     source: Optional[str] = "request" if provider_s or model_s else None
 
-    env_provider = _clean_provider(_env_first("ABSTRACTGATEWAY_PROVIDER", "ABSTRACTFLOW_PROVIDER"))
-    env_model = _clean_model(_env_first("ABSTRACTGATEWAY_MODEL", "ABSTRACTFLOW_MODEL"))
-    if not provider_s and env_provider:
-        provider_s = env_provider
-        source = "gateway_env"
-    if not model_s and env_model:
-        model_s = env_model
-        source = "gateway_env"
+    if provider_s or model_s:
+        if provider_s and model_s:
+            return ProviderModelResolution(provider=provider_s, model=model_s, source=source)
+        return ProviderModelResolution(
+            provider=provider_s,
+            model=model_s,
+            source=source,
+            error=provider_model_config_error(purpose=purpose),
+        )
 
-    if flow_defaults and (not provider_s or not model_s):
+    if flow_defaults:
         flow_provider = _clean_provider(flow_defaults[0])
         flow_model = _clean_model(flow_defaults[1])
         if flow_provider and flow_model:
-            if not provider_s and not model_s:
-                provider_s, model_s = flow_provider, flow_model
-                source = "flow_defaults"
-            elif provider_s and not model_s and provider_s == flow_provider:
-                model_s = flow_model
-                source = source or "flow_defaults"
-            elif model_s and not provider_s and model_s == flow_model:
-                provider_s = flow_provider
-                source = source or "flow_defaults"
+            provider_s, model_s = flow_provider, flow_model
+            source = "flow_defaults"
+
+    if not provider_s or not model_s:
+        cfg_provider, cfg_model, cfg_source = _gateway_capability_text_default()
+        cfg_provider = _clean_provider(cfg_provider)
+        cfg_model = _clean_model(cfg_model)
+        if cfg_provider and cfg_model:
+            provider_s = cfg_provider
+            model_s = cfg_model
+            source = cfg_source or "abstractcore_config"
 
     if provider_s and model_s:
         return ProviderModelResolution(provider=provider_s, model=model_s, source=source or "resolved")

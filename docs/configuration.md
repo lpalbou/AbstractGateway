@@ -20,8 +20,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal,mcp-worker]>=0.4.22`
-- `abstractagent>=0.3.7`
+- `AbstractRuntime[multimodal,mcp-worker]>=0.4.23`
+- `abstractagent>=0.3.8`
 - `AbstractMemory[lancedb]>=0.2.6`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -89,7 +89,8 @@ not implement memory stores itself.
 
 Backend behavior:
 
-- `lancedb`: persistent and vector-capable; semantic `query_text` requires Gateway embeddings.
+- `lancedb`: persistent and vector-capable; semantic `query_text` requires the execution-host
+  `embedding.text` capability route.
 - `sqlite`: persistent and structured-query only when `SQLiteTripleStore` is available; semantic `query_text` fails clearly.
 - `memory`: process-local test/dev backend; non-durable.
 
@@ -114,12 +115,11 @@ Evidence: `src/abstractgateway/config.py`, `src/abstractgateway/runner.py`.
 
 Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.
 
-- `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`  
-  Used as defaults for LLM execution and Gateway LLM helper endpoints. Resolution
-  order is: explicit request/provider-model pins, Gateway env, flow-pinned
-  defaults when compiling bundles. If no pair is configured, helpers return a
-  clear configuration error instead of falling back to a hardcoded model or a
-  separate AbstractCore config file.
+- `output.text` capability route
+  Default text route for LLM execution and Gateway LLM helper endpoints. Configure it through
+  `abstractgateway-config set-default output.text ...` or `abstractcore --set-global-default ...`.
+  If no pair is configured, helpers return a clear configuration error instead of falling back to a
+  hardcoded model.
   Evidence: `src/abstractgateway/provider_defaults.py`, `src/abstractgateway/hosts/bundle_host.py`
 - `ABSTRACTGATEWAY_TOOL_MODE`:
   - `approval` (default): execute safe tools locally; require explicit approval for dangerous/unknown tools
@@ -128,13 +128,25 @@ Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.
   - `local` (or `local_all`): execute all tools inside the gateway process (dev only; higher risk)
   Evidence: `src/abstractgateway/hosts/bundle_host.py` (tool executor selection)
 
-### Embeddings (optional)
+### Embeddings
 
-The gateway can expose an embeddings API if AbstractCore embedding deps are available.
+The gateway exposes an embeddings API when the execution host has an explicit `embedding.text`
+capability default and AbstractCore embedding deps are available.
 
-- `ABSTRACTGATEWAY_EMBEDDING_PROVIDER` / `ABSTRACTGATEWAY_EMBEDDING_MODEL`  
-  Persisted under `<DATA_DIR>/gateway_embeddings.json` for stability across restarts.  
-  Evidence: `src/abstractgateway/embeddings_config.py`
+Configure it through the same capability-default control plane used by Flow:
+
+```bash
+abstractgateway-config set-default embedding.text \
+  --provider lmstudio \
+  --model text-embedding-nomic-embed-text-v1.5 \
+  --base-url http://127.0.0.1:1234/v1
+```
+
+In embedded deployments Gateway uses the local Core embedding manager. In split deployments it
+delegates to the remote AbstractCore `/v1/embeddings` route so provider `base_url` is evaluated
+from the Core host.
+
+Evidence: `src/abstractgateway/embeddings_config.py`
 
 ### Prompt cache controls (provider-dependent)
 
@@ -197,7 +209,7 @@ and `POST /api/gateway/runs/{run_id}/images/edit` when a Runtime/Core image
 backend is configured or provider/model are supplied on the request. Local
 heavy engines remain explicit opt-ins in the provider packages.
 
-- `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: default text model for bundle LLM nodes
+- `output.text` capability route: default text model for bundle LLM nodes
 - `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`: OpenAI-compatible text endpoint for AbstractCore providers
   - Apple/MLX Docker deployments should point the lightweight Gateway container
     at host-native inference, for example
@@ -222,7 +234,9 @@ heavy engines remain explicit opt-ins in the provider packages.
 Core catalog proxy settings:
 
 - `ABSTRACTCORE_SERVER_BASE_URL`: explicit Core server base URL for catalog proxying.
-- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN` / `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY` (or `ABSTRACTCORE_SERVER_API_KEY`): Core server auth token. This is separate from Gateway auth.
+- `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN` / `ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY`
+  (or Core's `ABSTRACTCORE_AUTH_TOKEN` / `ABSTRACTCORE_SERVER_API_KEY`): Core server auth token.
+  This is separate from Gateway auth.
 - `ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S`: catalog proxy timeout (default `3.0` seconds).
 
 ## CLI flags

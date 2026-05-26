@@ -182,18 +182,13 @@ def build_gateway_memory_embedder(*, base_dir: Path) -> Optional[Any]:
     """
 
     try:
-        from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient
+        from .embeddings_config import build_embedding_client, resolve_embedding_config
 
-        from .embeddings_config import resolve_embedding_config
-
-        emb_provider, emb_model = resolve_embedding_config(base_dir=Path(base_dir))
-        emb_client = AbstractCoreEmbeddingsClient(
-            provider=str(emb_provider).strip().lower(),
-            model=str(emb_model).strip(),
-            manager_kwargs={
-                "cache_dir": Path(base_dir) / "abstractcore" / "embeddings",
-                "strict": True,
-            },
+        embedding_route = resolve_embedding_config(base_dir=Path(base_dir))
+        emb_client = build_embedding_client(
+            embedding_route,
+            cache_dir=Path(base_dir) / "abstractcore" / "embeddings",
+            strict=True,
         )
 
         class _Embedder:

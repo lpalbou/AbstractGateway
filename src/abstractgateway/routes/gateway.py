@@ -34,6 +34,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from abstractruntime.core.run_lifecycle import normalize_run_lifecycle_vars
 from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore
 from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord, WaitReason
@@ -44,9 +45,21 @@ from ..memory_store import (
     open_gateway_memory_store,
     resolve_memory_store_config,
 )
+from ..embeddings_config import resolve_embedding_config
+from ..capability_defaults import (
+    clear_gateway_capability_default,
+    gateway_capability_defaults_payload,
+    save_gateway_capability_default,
+)
 from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from .. import host_metrics
-from ..service import backlog_exec_runner_status, get_gateway_service, run_summary
+from ..run_retention import (
+    DraftRunPurgeOptions,
+    DraftRunPurgeUnsupported,
+    purge_ephemeral_draft_runs,
+    write_gateway_workspace_marker,
+)
+from ..service import backlog_exec_runner_status, get_gateway_service, is_draft_run_lifecycle, run_summary
 from ..workspace_tools import AbstractIgnore, read_file as read_workspace_file, skim_files as skim_workspace_files
 from ..workflow_deprecations import WorkflowDeprecatedError
 
@@ -56,6 +69,7 @@ logger = logging.getLogger(__name__)
 
 _GATEWAY_CATALOG_CONTRACT = "gateway_catalog_v1"
 _GATEWAY_CATALOG_VERSION = 1
+_OMNIVOICE_FALLBACK_LANGUAGES = ["en", "fr", "de", "es", "ru", "zh", "ja", "ko"]
 
 
 @router.get("/ping")
@@ -161,7 +175,7 @@ def _gateway_direct_image_configured() -> bool:
     backend = str(_env_first("ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND", default="openai") or "openai")
     backend = backend.strip().lower().replace("_", "-")
 
-    if backend in {"mflux", "m-flux"}:
+    if backend in {"mlx-gen", "mlxgen", "mflux", "m-flux"}:
         if _env_first("ABSTRACTVISION_MFLUX_MODEL", "ABSTRACTGATEWAY_VISION_MFLUX_MODEL", "ABSTRACTVISION_MODEL_ID"):
             return True
         return _gateway_has_local_mflux_preset("")
@@ -224,6 +238,10 @@ class StartRunRequest(BaseModel):
         ),
     )
     input_data: Dict[str, Any] = Field(default_factory=dict)
+    run_lifecycle: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Optional control-plane lifecycle metadata for this run, exposed as a sanitized run_lifecycle summary.",
+    )
     session_id: Optional[str] = Field(
         default=None,
         description="Optional session id to group related runs (e.g. a chat session).",
@@ -232,6 +250,22 @@ class StartRunRequest(BaseModel):
 
 class StartRunResponse(BaseModel):
     run_id: str
+
+
+class PurgeDraftRunsRequest(BaseModel):
+    """Request a controlled cleanup of ephemeral draft-test run state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool = Field(default=True, description="When true, report what would be purged without deleting data.")
+    limit: int = Field(default=200, ge=1, le=5000, description="Maximum root runs to scan or purge.")
+    session_id: Optional[str] = Field(default=None, description="Optional session id filter.")
+    workflow_id: Optional[str] = Field(default=None, description="Optional workflow id filter.")
+    run_ids: Optional[List[str]] = Field(default=None, description="Optional exact root run ids to consider.")
+    force: bool = Field(default=False, description="Delete matching terminal draft-test runs even when their retention has not expired.")
+    include_active: bool = Field(default=False, description="Allow deletion of running/waiting run trees. Defaults off.")
+    delete_artifacts: bool = Field(default=True, description="Delete run-associated artifacts and then garbage-collect unreferenced blobs.")
+    delete_workspaces: bool = Field(default=True, description="Delete Gateway-owned per-run workspaces under the Gateway data dir.")
 
 
 # ---------------------------------------------------------------------
@@ -262,6 +296,17 @@ class VisualFlowUpdateRequest(BaseModel):
     nodes: Optional[List[Dict[str, Any]]] = None
     edges: Optional[List[Dict[str, Any]]] = None
     entryNode: Optional[str] = None
+
+
+class VisualFlowCodeSimulateRequest(BaseModel):
+    """Run a Python Code-node body through the same Runtime sandbox used by flows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(default="")
+    input: Any = Field(default_factory=dict)
+    function_name: str = Field(default="transform")
+    permissions: str = Field(default="sandbox")
 
 
 class PublishVisualFlowRequest(BaseModel):
@@ -437,6 +482,14 @@ def _bump_patch(v: str) -> str:
     return f"{s}.1" if s else "0.0.1"
 
 
+def _is_draft_bundle_version(v: Any) -> bool:
+    return str(v or "").strip().lower().startswith("draft.")
+
+
+def _bundle_version_channel(v: Any) -> str:
+    return "draft" if _is_draft_bundle_version(v) else "published"
+
+
 def _latest_version(versions: list[Dict[str, str]]) -> Optional[str]:
     if not versions:
         return None
@@ -533,8 +586,8 @@ class GenerateRunSummaryResponse(BaseModel):
 
 class EmbeddingsRequest(BaseModel):
     input: Any = Field(..., description="Text or list of texts to embed (OpenAI-compatible field name).")
-    provider: Optional[str] = Field(default=None, description="Optional provider override (must match gateway embedding config).")
-    model: Optional[str] = Field(default=None, description="Optional model override (must match gateway embedding config).")
+    provider: Optional[str] = Field(default=None, description="Optional provider override (must match the execution-host embedding.text route).")
+    model: Optional[str] = Field(default=None, description="Optional model override (must match the execution-host embedding.text route).")
 
 
 class EmbeddingItem(BaseModel):
@@ -2666,6 +2719,72 @@ async def list_visualflows() -> List[Dict[str, Any]]:
     return items
 
 
+@router.post("/visualflows/code/simulate")
+async def simulate_visualflow_code(req: VisualFlowCodeSimulateRequest) -> Dict[str, Any]:
+    """Execute Code-node Python in the Runtime sandbox without starting a flow run."""
+    function_name = str(req.function_name or "transform").strip() or "transform"
+    try:
+        from abstractruntime.visualflow_compiler.visual.code_executor import CodeExecutionError, create_code_handler, normalize_code_permissions
+        from abstractruntime.visualflow_compiler.visual.execution_metrics import capture_execution_start, finish_execution_metrics
+
+        execution_start = capture_execution_start()
+        effective_permissions = str(req.permissions or "sandbox")
+        handler_created = False
+        try:
+            effective_permissions = normalize_code_permissions(req.permissions)
+            handler = create_code_handler(str(req.code or ""), function_name, permissions=req.permissions)
+            handler_created = True
+            output = handler(req.input)
+        except CodeExecutionError as e:
+            execution = finish_execution_metrics(execution_start)
+            execution["permissions"] = effective_permissions
+            return {
+                "ok": False,
+                "success": False,
+                "output": None,
+                "execution": execution,
+                "error": str(e),
+                "diagnostics": {
+                    "source": "abstractruntime.code_executor",
+                    "phase": "runtime" if handler_created else "compile",
+                    "requested_mode": req.permissions,
+                    "effective_mode": effective_permissions,
+                    "allowed": False,
+                },
+            }
+        execution = finish_execution_metrics(execution_start)
+        execution["permissions"] = effective_permissions
+        return {
+            "ok": True,
+            "success": True,
+            "output": output,
+            "execution": execution,
+            "error": None,
+            "diagnostics": {
+                "source": "abstractruntime.code_executor",
+                "phase": "runtime",
+                "requested_mode": req.permissions,
+                "effective_mode": effective_permissions,
+                "allowed": True,
+            },
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "success": False,
+            "output": None,
+            "execution": None,
+            "error": str(e),
+            "diagnostics": {
+                "source": "abstractruntime.code_executor",
+                "phase": "compile",
+                "requested_mode": req.permissions,
+                "effective_mode": req.permissions,
+                "allowed": False,
+            },
+        }
+
+
 @router.post("/visualflows")
 async def create_visualflow(req: VisualFlowCreateRequest) -> Dict[str, Any]:
     """Create a new VisualFlow JSON record."""
@@ -2780,26 +2899,34 @@ async def publish_visualflow(flow_id: str, req: PublishVisualFlowRequest) -> Pub
         existing = []
 
     requested_ver = str(req.bundle_version or "").strip() if isinstance(req.bundle_version, str) and str(req.bundle_version).strip() else ""
+    durable_existing = [v for v in existing if not _is_draft_bundle_version(v.get("bundle_version"))]
     if requested_ver:
         if not req.overwrite and any(str(v.get("bundle_version") or "").strip() == requested_ver for v in existing):
             raise HTTPException(status_code=400, detail=f"bundle_version '{requested_ver}' already exists for bundle '{bundle_id}'")
         new_ver = requested_ver
     else:
-        prev = _latest_version(existing)
+        prev = _latest_version(durable_existing)
         new_ver = "0.0.0" if not prev else _bump_patch(prev)
-        if not req.overwrite and any(str(v.get("bundle_version") or "").strip() == new_ver for v in existing):
+        if not req.overwrite and any(str(v.get("bundle_version") or "").strip() == new_ver for v in durable_existing):
             raise HTTPException(status_code=400, detail=f"bundle_version '{new_ver}' already exists for bundle '{bundle_id}'")
 
     published_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    origin = _origin_version(existing) or _latest_version(existing)
+    is_draft_bundle = _is_draft_bundle_version(new_ver)
+    lineage_existing = existing if is_draft_bundle else durable_existing
+    previous_version = _latest_version(lineage_existing)
+    origin = _origin_version(lineage_existing) or previous_version
     metadata: Dict[str, Any] = {
+        "lifecycle": {
+            "channel": _bundle_version_channel(new_ver),
+            "source": "abstractflow.editor",
+        },
         "publisher": {"host": "abstractgateway", "published_at": published_at},
         "source": {"root_flow_id": str(flow.get("id") or flow_id), "root_flow_name": str(flow.get("name") or ""), "root_flow_updated_at": str(flow.get("updated_at") or "")},
         "lineage": {
             "bundle_id": bundle_id,
             "bundle_version": new_ver,
             "origin_bundle_version": str(origin or new_ver),
-            **({"previous_bundle_version": str(_latest_version(existing))} if _latest_version(existing) else {}),
+            **({"previous_bundle_version": str(previous_version)} if previous_version else {}),
         },
     }
 
@@ -2859,6 +2986,7 @@ async def publish_visualflow(flow_id: str, req: PublishVisualFlowRequest) -> Pub
 @router.get("/bundles")
 async def list_bundles(
     all_versions: bool = Query(default=False, description="If true, return one item per bundle version."),
+    include_drafts: bool = Query(default=False, description="If true, include draft bundle versions."),
     include_deprecated: bool = Query(default=False, description="If true, include deprecated entrypoints in discovery."),
 ) -> Dict[str, Any]:
     svc = get_gateway_service()
@@ -2873,23 +3001,48 @@ async def list_bundles(
     for bid, versions in (bundles_by_id or {}).items():
         if not isinstance(versions, dict) or not versions:
             continue
+        version_rows: list[Dict[str, str]] = []
+        for ver0, bundle0 in versions.items():
+            ver = str(ver0 or "").strip() if isinstance(ver0, str) else ""
+            if not ver:
+                continue
+            man0 = getattr(bundle0, "manifest", None) if bundle0 is not None else None
+            created = str(getattr(man0, "created_at", "") or "")
+            version_rows.append({"bundle_version": ver, "created_at": created})
+        published_rows = [row for row in version_rows if not _is_draft_bundle_version(row.get("bundle_version"))]
+        latest_any_version = _latest_version(version_rows) or ""
+        latest_published_version = _latest_version(published_rows) or ""
 
         selected_versions: list[str]
         if all_versions:
-            selected_versions = [str(v) for v in versions.keys() if isinstance(v, str)]
+            selected_versions = [
+                str(v)
+                for v in versions.keys()
+                if isinstance(v, str) and (include_drafts or not _is_draft_bundle_version(v))
+            ]
         else:
-            v0 = latest.get(str(bid))
+            v0 = latest_published_version or (latest_any_version if include_drafts else "")
+            if not v0:
+                v0 = latest.get(str(bid))
             v = str(v0).strip() if isinstance(v0, str) and str(v0).strip() else ""
+            if v and not include_drafts and _is_draft_bundle_version(v):
+                v = ""
             if not v:
-                # Best-effort fallback.
-                v = sorted([str(x) for x in versions.keys() if isinstance(x, str)])[-1]
-            selected_versions = [v]
+                selected_versions = []
+            else:
+                selected_versions = [v]
 
         for ver in selected_versions:
             b = versions.get(ver)
             man = getattr(b, "manifest", None) if b is not None else None
             if man is None:
                 continue
+            if not include_drafts and _is_draft_bundle_version(ver):
+                continue
+            exact_version = str(getattr(man, "bundle_version", ver) or ver)
+            version_channel = _bundle_version_channel(exact_version)
+            metadata = getattr(man, "metadata", None)
+            metadata_obj = metadata if isinstance(metadata, dict) else {}
             entrypoints = getattr(man, "entrypoints", None) or []
             eps: list[Dict[str, Any]] = []
             for ep in entrypoints:
@@ -2906,6 +3059,7 @@ async def list_bundles(
                         "name": getattr(ep, "name", None),
                         "description": getattr(ep, "description", "") or "",
                         "interfaces": list(getattr(ep, "interfaces", None) or []),
+                        "workflow_id": f"{bid}@{exact_version}:{fid}",
                         "deprecated": bool(deprecated),
                         "deprecated_at": (str(rec.get("deprecated_at") or "").strip() if isinstance(rec, dict) else "") or None,
                         "deprecated_reason": (str(rec.get("reason") or "").strip() if isinstance(rec, dict) else "") or None,
@@ -2916,9 +3070,15 @@ async def list_bundles(
             items.append(
                 {
                     "bundle_id": str(bid),
-                    "bundle_version": getattr(man, "bundle_version", ver),
-                    "bundle_ref": f"{bid}@{getattr(man, 'bundle_version', ver)}",
+                    "bundle_version": exact_version,
+                    "bundle_ref": f"{bid}@{exact_version}",
+                    "version_channel": version_channel,
+                    "is_draft": version_channel == "draft",
+                    "is_published": version_channel == "published",
+                    "latest_published_version": latest_published_version or None,
+                    "latest_any_version": latest_any_version or None,
                     "created_at": getattr(man, "created_at", ""),
+                    "metadata": metadata_obj,
                     "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
                     "entrypoints": eps,
                 }
@@ -3342,22 +3502,41 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
     )
     if not flow_id and not bundle_id:
         raise HTTPException(status_code=400, detail="flow_id is required (or provide bundle_id to start a bundle entrypoint)")
+    bundle_ref_version = _split_bundle_ref(bundle_id or "")[1] if bundle_id else None
+    flow_ref_version = None
+    parsed_flow_ref = _parse_namespaced_workflow_id(flow_id) if ":" in flow_id else None
+    if parsed_flow_ref:
+        flow_ref_version = _split_bundle_ref(parsed_flow_ref[0])[1]
+    requested_bundle_version = bundle_version or bundle_ref_version or flow_ref_version
+    if _is_draft_bundle_version(requested_bundle_version):
+        lifecycle_purpose = (
+            str((req.run_lifecycle or {}).get("purpose") or "").strip()
+            if isinstance(req.run_lifecycle, dict)
+            else ""
+        )
+        if lifecycle_purpose != "draft_test":
+            raise HTTPException(status_code=400, detail="draft bundle versions require run_lifecycle.purpose='draft_test'")
 
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = dict(req.input_data or {})
         input_data = _sanitize_run_workspace_policy(input_data)
         input_data = _normalize_run_context_media(input_data)
+        if isinstance(req.run_lifecycle, dict):
+            input_data["_run_lifecycle"] = dict(req.run_lifecycle)
+        normalize_run_lifecycle_vars(input_data)
         # Default workspace_root behavior (cross-client):
         # - If omitted, create a per-run workspace under the gateway data_dir.
         # - Clients may override only within the operator-configured server workspace roots.
         raw_ws = input_data.get("workspace_root")
+        gateway_owned_workspace: Optional[Path] = None
         if not (isinstance(raw_ws, str) and raw_ws.strip()):
             base = Path(svc.config.data_dir) / "workspaces"
             base.mkdir(parents=True, exist_ok=True)
             ws_dir = base / uuid.uuid4().hex
             ws_dir.mkdir(parents=True, exist_ok=True)
             input_data["workspace_root"] = str(ws_dir)
+            gateway_owned_workspace = ws_dir
 
         # Ensure the session attachment store exists early so clients can list/preview
         # session-scoped artifacts even before any attachments are ingested.
@@ -3375,6 +3554,11 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
             actor_id="gateway",
             session_id=session_id,
         )
+        if gateway_owned_workspace is not None:
+            try:
+                write_gateway_workspace_marker(gateway_owned_workspace, run_id=str(run_id))
+            except Exception as e:
+                logger.warning("Failed to write gateway workspace ownership marker", extra={"error": str(e)})
     except WorkflowDeprecatedError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except KeyError as e:
@@ -3611,6 +3795,35 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
     return StartRunResponse(run_id=str(run_id))
 
 
+@router.post("/runs/purge_drafts")
+async def purge_draft_runs(req: PurgeDraftRunsRequest) -> Dict[str, Any]:
+    """Purge terminal ephemeral draft-test run trees.
+
+    This is intentionally Gateway-owned: Runtime provides store-level deletion,
+    while Gateway owns the draft-test taxonomy and workspace/artifact cleanup policy.
+    """
+
+    try:
+        return purge_ephemeral_draft_runs(
+            get_gateway_service(),
+            DraftRunPurgeOptions(
+                dry_run=bool(req.dry_run),
+                limit=int(req.limit),
+                session_id=req.session_id,
+                workflow_id=req.workflow_id,
+                run_ids=list(req.run_ids or []) if req.run_ids is not None else None,
+                force=bool(req.force),
+                include_active=bool(req.include_active),
+                delete_artifacts=bool(req.delete_artifacts),
+                delete_workspaces=bool(req.delete_workspaces),
+            ),
+        )
+    except DraftRunPurgeUnsupported as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to purge draft runs: {e}")
+
+
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str) -> Dict[str, Any]:
     svc = get_gateway_service()
@@ -3633,6 +3846,7 @@ async def list_runs(
     root_only: bool = Query(False, description="If true, return only root/parent runs (parent_run_id is empty)."),
     include_ledger_len: bool = Query(True, description="If true, include ledger_len (may be slow for file-backed ledgers)."),
     include_metrics: bool = Query(False, description="If true, include best-effort llm/tool counts (aggregated across child runs)."),
+    include_drafts: bool = Query(False, description="If true, include private draft-test runs in the response."),
 ) -> Dict[str, Any]:
     """List recent runs (summary only; never returns full run.vars)."""
     svc = get_gateway_service()
@@ -3676,6 +3890,8 @@ async def list_runs(
             "is_scheduled": False,
             "schedule": None,
             "limits": None,
+            "run_lifecycle": row.get("run_lifecycle") if isinstance(row.get("run_lifecycle"), dict) else None,
+            "is_draft": is_draft_run_lifecycle(row.get("run_lifecycle")),
         }
         if status0 == "waiting":
             reason = str(row.get("wait_reason") or "").strip()
@@ -3690,7 +3906,7 @@ async def list_runs(
     if isinstance(rs, QueryableRunIndexStore):
         try:
             # Overfetch a bit to account for filtering internal runs or malformed rows.
-            internal_limit = max(200, int(limit) * 5) if (bool(root_only) or sid or filter_internal) else int(limit)
+            internal_limit = max(200, int(limit) * 5) if (bool(root_only) or sid or filter_internal or not include_drafts) else int(limit)
             rows = rs.list_run_index(status=status_enum, workflow_id=wid, session_id=sid, root_only=bool(root_only), limit=internal_limit)
             for row in rows or []:
                 wf_id = str(row.get("workflow_id") or "").strip()
@@ -3698,7 +3914,10 @@ async def list_runs(
                     continue
                 if bool(root_only) and str(row.get("parent_run_id") or "").strip():
                     continue
-                items.append(_summary_from_index_row(row))
+                summary = _summary_from_index_row(row)
+                if not include_drafts and bool(summary.get("is_draft") is True):
+                    continue
+                items.append(summary)
                 if len(items) >= int(limit):
                     break
             used_index = True
@@ -3728,7 +3947,10 @@ async def list_runs(
                 wf_id = getattr(r, "workflow_id", None)
                 if isinstance(wf_id, str) and wf_id.startswith("__"):
                     continue
-            items.append(run_summary(r))
+            summary = run_summary(r)
+            if not include_drafts and bool(summary.get("is_draft") is True):
+                continue
+            items.append(summary)
             if len(items) >= int(limit):
                 break
 
@@ -6372,7 +6594,7 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
             status_code=400,
             detail=(
                 "Semantic KG query is not available for memory backend 'sqlite'. "
-                "Use a vector-capable backend with Gateway embeddings configured, or omit query_text."
+                "Use a vector-capable backend with the execution-host embedding.text route configured, or omit query_text."
             ),
         )
     if not memory_store_exists(memory_config):
@@ -6488,7 +6710,7 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
                 status_code=400,
                 detail=(
                     f"Semantic KG query is not available for memory backend '{backend}'. "
-                    "Use a vector-capable backend with Gateway embeddings configured, or omit query_text."
+                    "Use a vector-capable backend with the execution-host embedding.text route configured, or omit query_text."
                 ),
             )
 
@@ -6666,6 +6888,19 @@ def _split_env_csv(raw: Optional[str]) -> list[str]:
     return out
 
 
+def _omnivoice_language_ids() -> list[str]:
+    def order(values: list[str]) -> list[str]:
+        preferred = {item: index for index, item in enumerate(_OMNIVOICE_FALLBACK_LANGUAGES)}
+        return sorted(_dedupe_strings(values), key=lambda item: (preferred.get(item.lower(), len(preferred)), item.lower()))
+
+    try:
+        from omnivoice.utils.lang_map import LANG_IDS  # type: ignore
+
+        return order([str(item).strip().lower() for item in LANG_IDS if str(item).strip()])
+    except Exception:
+        return list(_OMNIVOICE_FALLBACK_LANGUAGES)
+
+
 def _voice_profile_descriptors() -> list[Dict[str, Any]]:
     """Best-effort voice profile discovery without importing provider packages."""
     profiles: list[Dict[str, Any]] = []
@@ -6739,9 +6974,11 @@ def _voice_record_model(item: Any) -> str:
     return str(
         item.get("model")
         or item.get("model_id")
+        or item.get("language")
         or params.get("model")
         or params.get("model_id")
         or params.get("model_filename")
+        or params.get("language")
         or ""
     ).strip()
 
@@ -7193,6 +7430,42 @@ def _gateway_catalog_voice_items(payload: Dict[str, Any]) -> list[Dict[str, Any]
     return list(merged.values())
 
 
+def _compact_voice_catalog_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep Gateway catalog metadata without returning duplicated voice trees."""
+
+    keep_keys = (
+        "kind",
+        "available",
+        "route_available",
+        "stale",
+        "error",
+        "source",
+        "upstream_source",
+        "refreshed_at",
+        "engine_id",
+        "provider_id",
+        "active_provider",
+        "active_model",
+        "active_tts_provider",
+        "active_stt_provider",
+        "providers",
+        "tts_providers",
+        "stt_providers",
+        "models",
+        "tts_models",
+        "stt_models",
+        "models_by_provider",
+        "tts_models_by_provider",
+        "stt_models_by_provider",
+        "tts_model_roles_by_provider",
+        "tts_voices_by_provider",
+        "tts_profiles_by_provider",
+        "tts_formats_by_provider",
+        "controls",
+    )
+    return {key: payload[key] for key in keep_keys if key in payload}
+
+
 def _gateway_catalog_response(
     payload: Dict[str, Any],
     *,
@@ -7459,6 +7732,7 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         omni_profiles = _builtin_voice_profile_records("omnivoice")
         add_provider("omnivoice")
         profiles.extend(omni_profiles)
+        tts_models_by_provider["omnivoice"] = _omnivoice_language_ids()
         tts_profiles_by_provider["omnivoice"] = [str(item["id"]) for item in omni_profiles]
         tts_voices_by_provider["omnivoice"] = [str(item["id"]) for item in omni_profiles]
 
@@ -7502,6 +7776,10 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         "tts_providers": tts_providers,
         "providers": tts_providers,
         "tts_models_by_provider": tts_models_by_provider,
+        "tts_model_roles_by_provider": {
+            provider_id: "language" if provider_id == "omnivoice" else "model"
+            for provider_id in tts_providers
+        },
         "tts_profiles_by_provider": tts_profiles_by_provider,
         "tts_voices_by_provider": tts_voices_by_provider,
         "controls": _voice_catalog_controls(),
@@ -7555,6 +7833,8 @@ def _static_voice_providers_only_response() -> Dict[str, Any]:
         add(tts_providers, "f5-tts")
     if _module_available("faster_whisper") or _module_available("whisper"):
         add(stt_providers, "faster-whisper")
+    if _module_available("torch") and _module_available("transformers") and _module_available("soundfile"):
+        add(stt_providers, "transformers-asr")
 
     return {
         "kind": "voice_providers",
@@ -7571,6 +7851,29 @@ def _static_voice_providers_only_response() -> Dict[str, Any]:
         "refreshed_at": _utc_now_iso(),
         "error": None,
     }
+
+
+def _static_transcription_providers_only_response(provider: Optional[str] = None) -> Dict[str, Any]:
+    raw = _static_voice_providers_only_response()
+    wanted = str(provider or "").strip().lower().replace("_", "-")
+    stt_providers = _dedupe_strings(
+        [str(x).strip() for x in (raw.get("stt_providers") or []) if isinstance(x, str) and str(x).strip()]
+    )
+    if wanted:
+        stt_providers = [p for p in stt_providers if p.lower().replace("_", "-") == wanted]
+    out = dict(raw)
+    out["kind"] = "stt_providers"
+    out["available"] = bool(stt_providers)
+    out["providers"] = stt_providers
+    out["available_providers"] = stt_providers
+    out["stt_providers"] = stt_providers
+    out["tts_providers"] = []
+    out["models"] = []
+    out["models_by_provider"] = {}
+    out["stt_models_by_provider"] = {}
+    out["provider_models"] = []
+    out["active_provider"] = stt_providers[0] if stt_providers else None
+    return out
 
 
 def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, Any]:
@@ -7594,6 +7897,8 @@ def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, 
         _module_available("onnxruntime") or _has_builtin_voice_profiles("supertonic")
     ):
         models_by_provider["supertonic"] = ["supertonic-3"]
+    if (not provider_key or provider_key == "omnivoice") and _module_available("omnivoice"):
+        models_by_provider["omnivoice"] = _omnivoice_language_ids()
     if not provider_key and engine and values:
         models_by_provider.setdefault(engine.lower(), _dedupe_strings(values))
     models = _dedupe_strings([model for provider_models in models_by_provider.values() for model in provider_models])
@@ -7607,6 +7912,10 @@ def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, 
         "active_provider": providers[0] if providers else None,
         "models_by_provider": models_by_provider,
         "tts_models_by_provider": models_by_provider,
+        "tts_model_roles_by_provider": {
+            provider_id: "language" if provider_id == "omnivoice" else "model"
+            for provider_id in providers
+        },
         "controls": _voice_catalog_controls(),
         "source": "gateway_static",
         "stale": False,
@@ -7664,20 +7973,10 @@ def _gateway_has_local_mflux_preset(model_id: str) -> bool:
 
 
 def _gateway_vision_parameter_metadata(*, provider: str, model_id: str) -> Dict[str, Any]:
-    provider_key = str(provider or "").strip().lower().replace("_", "-")
-    model_key = str(model_id or "").strip().lower()
-    if provider_key in {"mflux", "m-flux"} and ("flux.2-klein" in model_key or "flux2-klein" in model_key):
-        defaults = {"steps": 4, "guidance_scale": 1.0}
-        constraints = {
-            "steps": {"min": 2},
-            "guidance_scale": {"const": 1.0},
-            "negative_prompt": {"supported": False},
-        }
-        return {
-            "parameter_defaults": defaults,
-            "parameter_constraints": constraints,
-            "parameters": {"defaults": defaults, "constraints": constraints},
-        }
+    _ = provider, model_id
+    # Gateway does not own model-specific generation parameters. Dynamic
+    # AbstractVision/Core catalogs include parameter metadata when the selected
+    # backend exposes it; static env fallbacks stay intentionally generic.
     return {}
 
 
@@ -7685,14 +7984,14 @@ def _gateway_vision_provider_model_item(*, provider: str, model_id: str, task: O
     mid = str(model_id or "").strip()
     provider_s = str(provider or "").strip() or "openai-compatible"
     provider_l = provider_s.lower().replace("_", "-")
-    if mid.startswith("mflux/"):
-        provider_l = "mflux"
-        provider_s = "mflux"
+    if mid.startswith(("mlx-gen/", "mlxgen/", "mflux/")):
+        provider_l = "mlx-gen"
+        provider_s = "mlx-gen"
         mid = mid.split("/", 1)[1].strip()
-    if provider_l in {"mflux", "m-flux"} or _gateway_has_local_mflux_preset(mid):
-        display_provider = "mflux"
-        routed = mid
-        backend = "mflux"
+    if provider_l in {"mlx-gen", "mlxgen", "mflux", "m-flux"} or _gateway_has_local_mflux_preset(mid):
+        display_provider = "mlx-gen"
+        routed = mid if mid.startswith("mlx-gen/") else f"mlx-gen/{mid}"
+        backend = "mlx-gen"
     elif provider_l in {"huggingface", "hf", "diffusers", "hf-diffusers"} or _gateway_looks_like_hf_repo_id(mid):
         display_provider = "huggingface" if provider_l in {"huggingface", "hf", "hf-diffusers"} or _gateway_looks_like_hf_repo_id(mid) else provider_s
         routed = mid if mid.startswith("diffusers/") else f"diffusers/{mid}"
@@ -7708,7 +8007,7 @@ def _gateway_vision_provider_model_item(*, provider: str, model_id: str, task: O
     caps = [str(task)] if task else ["text_to_image", "image_generation"]
     parameter_metadata = _gateway_vision_parameter_metadata(provider=display_provider, model_id=mid)
     return {
-        "id": mid.removeprefix("mflux/").removeprefix("diffusers/").removeprefix("openai-compatible/"),
+        "id": mid.removeprefix("mlx-gen/").removeprefix("mflux/").removeprefix("diffusers/").removeprefix("openai-compatible/"),
         "model": routed,
         "provider": display_provider,
         "backend": backend,
@@ -7718,7 +8017,7 @@ def _gateway_vision_provider_model_item(*, provider: str, model_id: str, task: O
         "capabilities": caps,
         **parameter_metadata,
         "raw": {
-            "id": mid.removeprefix("mflux/").removeprefix("diffusers/").removeprefix("openai-compatible/"),
+            "id": mid.removeprefix("mlx-gen/").removeprefix("mflux/").removeprefix("diffusers/").removeprefix("openai-compatible/"),
             "provider": display_provider,
             "backend": backend,
             "routed_model": routed,
@@ -7892,16 +8191,45 @@ def _filter_provider_model_catalog_response(
     wanted = str(provider or "").strip()
     if not wanted:
         return response
+    wanted_key = wanted.lower()
     models = _provider_filtered_values(response, wanted, *model_keys)
     if not models:
         active = str(response.get("active_provider") or response.get("provider") or "").strip().lower()
-        if active == wanted.lower():
+        if active == wanted_key:
             raw = response.get("models")
             models = _dedupe_strings([str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]) if isinstance(raw, list) else []
     out = dict(response)
     out["provider"] = wanted
     out["providers"] = [wanted] if models else []
     out["models"] = models
+    for key in model_keys:
+        mapping = response.get(key)
+        if isinstance(mapping, dict):
+            out[key] = {
+                str(map_provider): map_values
+                for map_provider, map_values in mapping.items()
+                if str(map_provider or "").strip().lower() == wanted_key
+            }
+    for key in ("tts_models", "stt_models", "embedding_models", "music_models"):
+        if key in out:
+            out[key] = list(models)
+    active = str(response.get("active_provider") or response.get("provider") or "").strip().lower()
+    filtered_provider_models: list[Any] = []
+    raw_provider_models = response.get("provider_models")
+    if isinstance(raw_provider_models, list):
+        for item in raw_provider_models:
+            if isinstance(item, dict):
+                item_provider = str(
+                    item.get("provider")
+                    or item.get("owned_by")
+                    or item.get("backend")
+                    or item.get("provider_id")
+                    or ""
+                ).strip().lower()
+                if item_provider == wanted_key or (not item_provider and active == wanted_key):
+                    filtered_provider_models.append(item)
+    if "provider_models" in out:
+        out["provider_models"] = filtered_provider_models
     out["available"] = bool(models)
     return out
 
@@ -8117,12 +8445,12 @@ def _static_vision_provider_models_response(*, task: Optional[str]) -> Dict[str,
         ("OPENAI_IMAGE_MODEL_ID", "openai"),
         ("OPENAI_IMAGE_MODEL", "openai"),
         ("ABSTRACTCORE_VISION_UPSTREAM_MODEL_ID", "openai-compatible"),
-        ("ABSTRACTCORE_VISION_MODEL_ID", "mflux" if configured_backend in {"mflux", "m-flux"} else "openai-compatible"),
-        ("ABSTRACTCORE_VISION_MFLUX_MODEL", "mflux"),
-        ("ABSTRACTGATEWAY_VISION_MFLUX_MODEL", "mflux"),
-        ("ABSTRACTVISION_MFLUX_MODEL", "mflux"),
-        ("ABSTRACTGATEWAY_VISION_MODEL_ID", "mflux" if configured_backend in {"mflux", "m-flux"} else "openai-compatible"),
-        ("ABSTRACTVISION_MODEL_ID", "mflux" if configured_backend in {"mflux", "m-flux"} else "openai-compatible"),
+        ("ABSTRACTCORE_VISION_MODEL_ID", "mlx-gen" if configured_backend in {"mlx-gen", "mlxgen", "mflux", "m-flux"} else "openai-compatible"),
+        ("ABSTRACTCORE_VISION_MFLUX_MODEL", "mlx-gen"),
+        ("ABSTRACTGATEWAY_VISION_MFLUX_MODEL", "mlx-gen"),
+        ("ABSTRACTVISION_MFLUX_MODEL", "mlx-gen"),
+        ("ABSTRACTGATEWAY_VISION_MODEL_ID", "mlx-gen" if configured_backend in {"mlx-gen", "mlxgen", "mflux", "m-flux"} else "openai-compatible"),
+        ("ABSTRACTVISION_MODEL_ID", "mlx-gen" if configured_backend in {"mlx-gen", "mlxgen", "mflux", "m-flux"} else "openai-compatible"),
         ("ABSTRACTVISION_DIFFUSERS_MODEL_ID", "huggingface"),
         ("ABSTRACTVISION_SDCPP_MODEL", "sdcpp"),
         ("ABSTRACTVISION_SDCPP_DIFFUSION_MODEL", "sdcpp"),
@@ -8486,14 +8814,14 @@ def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
         base_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime")).expanduser().resolve()
         cfg = resolve_memory_store_config(base_dir=base_dir)
         backend = cfg.backend
-        embedder_configured = bool(
-            _env_first(
-                "ABSTRACTGATEWAY_EMBEDDING_PROVIDER",
-                "ABSTRACTFLOW_EMBEDDING_PROVIDER",
-                "ABSTRACTGATEWAY_EMBEDDING_MODEL",
-                "ABSTRACTFLOW_EMBEDDING_MODEL",
-            )
-        )
+        embedding_error = ""
+        try:
+            embedding_route = resolve_embedding_config(base_dir=base_dir)
+            embedder_configured = bool(embedding_route.provider and embedding_route.model)
+        except Exception as e:
+            embedding_route = None
+            embedder_configured = False
+            embedding_error = str(e)
         vector_capable = backend == "lancedb" or (backend == "memory" and embedder_configured)
         backend_error = memory_backend_unavailable_reason(backend)
         backend_ready = backend_error is None
@@ -8514,10 +8842,28 @@ def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
             and bool(embedder_configured),
             "vector_capable": bool(vector_capable),
             "embedder_configured": bool(embedder_configured),
+            **(
+                {
+                    "embedding_route": {
+                        "key": "embedding.text",
+                        "provider": embedding_route.provider,
+                        "model": embedding_route.model,
+                        "authority": embedding_route.authority,
+                    }
+                }
+                if embedding_route is not None
+                else {}
+            ),
             **({} if abstractmemory.get("installed") else {"install_hint": "pip install abstractgateway"}),
             **({} if backend_ready else {"error": backend_error}),
             **(
-                {"config_hint": "Set ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb and configure Gateway embeddings for semantic KG queries."}
+                {
+                    "config_hint": (
+                        "Set ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb and configure the execution-host "
+                        "embedding.text capability default for semantic KG queries."
+                    ),
+                    **({"embedding_error": embedding_error} if embedding_error else {}),
+                }
                 if backend != "lancedb" or not embedder_configured
                 else {}
             ),
@@ -8529,6 +8875,50 @@ def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
             "available": False,
             "error": str(e),
         }
+
+
+def _gateway_code_execution_contract_descriptor() -> Dict[str, Any]:
+    """Advertise the execution-host policy for VisualFlow Code nodes."""
+    fallback = {
+        "contract": "code_execution_policy_v1",
+        "version": 1,
+        "available": True,
+        "default_mode": "sandbox",
+        "simulate": {
+            "available": True,
+            "endpoint": _api_gateway_path("/visualflows/code/simulate"),
+        },
+        "modes": [
+            {
+                "id": "sandbox",
+                "label": "Sandbox",
+                "available": True,
+                "default": True,
+                "safety": "limited_builtins",
+                "description": "Protected Python execution with imports and unsafe constructs disabled.",
+            }
+        ],
+    }
+    try:
+        from abstractruntime.visualflow_compiler.visual.code_executor import get_code_execution_policy
+
+        policy = get_code_execution_policy()
+        if not isinstance(policy, dict):
+            return fallback
+        out = dict(policy)
+        out.setdefault("contract", "code_execution_policy_v1")
+        out.setdefault("version", 1)
+        out.setdefault("available", True)
+        out.setdefault("default_mode", "sandbox")
+        out["simulate"] = {
+            "available": True,
+            "endpoint": _api_gateway_path("/visualflows/code/simulate"),
+        }
+        return out
+    except Exception as e:
+        out = dict(fallback)
+        out["warning"] = str(e)
+        return out
 
 
 def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
@@ -8547,12 +8937,15 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
     durable_blocs = _gateway_durable_bloc_contract_descriptor()
     flow_publish_available = bool((caps.get("visualflow") if isinstance(caps.get("visualflow"), dict) else {}).get("installed"))
 
+    code_execution = _gateway_code_execution_contract_descriptor()
+
     common = {
         "runs": {
             "start": {"available": True, "endpoint": _api_gateway_path("/runs/start")},
             "schedule": {"available": True, "endpoint": _api_gateway_path("/runs/schedule")},
             "summary": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}")},
             "list": {"available": True, "endpoint": _api_gateway_path("/runs")},
+            "purge_drafts": {"available": True, "endpoint": _api_gateway_path("/runs/purge_drafts")},
             "input_data": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/input_data")},
             "history_bundle": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/history_bundle")},
             "commands": {
@@ -8576,6 +8969,17 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "max_upload_bytes": int(_server_workspace_policy_public().get("max_attachment_bytes") or 0),
         },
         "workspace": {"policy_endpoint": _api_gateway_path("/workspace/policy")},
+        "configuration": {
+            "capability_defaults": {
+                "available": True,
+                "endpoint": _api_gateway_path("/config/capability-defaults"),
+                "item_endpoint": _api_gateway_path("/config/capability-defaults/{kind}/{modality}"),
+                "schema": "capability_defaults_v1",
+            },
+        },
+        "execution": {
+            "code": code_execution,
+        },
         "discovery": {
             "capabilities": _api_gateway_path("/discovery/capabilities"),
             "providers": _api_gateway_path("/discovery/providers"),
@@ -8586,6 +8990,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "audio_transcription_models": _api_gateway_path("/audio/transcriptions/models"),
             "audio_music_providers": _api_gateway_path("/audio/music/providers"),
             "audio_music_models": _api_gateway_path("/audio/music/models"),
+            "embedding_models": _api_gateway_path("/embeddings/models"),
             "vision_provider_models": _api_gateway_path("/vision/provider_models"),
             "vision_models": _api_gateway_path("/vision/models"),
             "tools": _api_gateway_path("/discovery/tools"),
@@ -8661,6 +9066,9 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "workspace_policy": common["workspace"]["policy_endpoint"],
             "kg_query": _api_gateway_path("/kg/query"),
             "embeddings": _api_gateway_path("/embeddings"),
+        },
+        "execution": {
+            "code": common["execution"]["code"],
         },
     }
 
@@ -8821,6 +9229,7 @@ async def voice_voices_catalog(
     provider: Optional[str] = Query(default=None, description="Optional TTS provider/engine filter."),
     model: Optional[str] = Query(default=None, description="Optional TTS model/language filter."),
     providers_only: bool = Query(default=False, description="Return provider names without model/voice lists."),
+    compact: bool = Query(default=False, description="Return normalized catalog items without duplicated source catalog trees."),
 ) -> Dict[str, Any]:
     """List TTS voices through the Gateway Runtime discovery facade."""
     discovery, err = _gateway_abstractcore_discovery_facade()
@@ -8847,15 +9256,18 @@ async def voice_voices_catalog(
             model=model,
             providers_only=providers_only,
         )
+        items = (
+            _gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+            if providers_only
+            else _gateway_catalog_voice_items(out)
+        )
         return _gateway_catalog_response(
-            out,
+            _compact_voice_catalog_payload(out) if compact else out,
             kind="providers" if providers_only else "voices",
             scope="tts",
-            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
-            if providers_only
-            else _gateway_catalog_voice_items(out),
+            items=items,
             provider=provider,
-            metadata={"providers_only": providers_only, "model": model},
+            metadata={"providers_only": providers_only, "model": model, "compact": True if compact else None},
         )
     try:
         payload = discovery.get_voice_catalog(
@@ -8873,15 +9285,18 @@ async def voice_voices_catalog(
         model=model,
         providers_only=providers_only,
     )
+    items = (
+        _gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+        if providers_only
+        else _gateway_catalog_voice_items(out)
+    )
     return _gateway_catalog_response(
-        out,
+        _compact_voice_catalog_payload(out) if compact else out,
         kind="providers" if providers_only else "voices",
         scope="tts",
-        items=_gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
-        if providers_only
-        else _gateway_catalog_voice_items(out),
+        items=items,
         provider=provider,
-        metadata={"providers_only": providers_only, "model": model},
+        metadata={"providers_only": providers_only, "model": model, "compact": True if compact else None},
     )
 
 
@@ -8893,8 +9308,28 @@ async def audio_speech_models_catalog(
         description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
     ),
     provider: Optional[str] = Query(default=None, description="Optional TTS provider/engine filter."),
+    providers_only: bool = Query(default=False, description="Return provider names without loading the model catalog."),
 ) -> Dict[str, Any]:
     """List TTS model ids through the Gateway Runtime discovery facade."""
+    if providers_only:
+        out = _filter_voice_catalog_response(
+            _static_voice_providers_only_response(),
+            provider=provider,
+            model=None,
+            providers_only=True,
+        )
+        out["models"] = []
+        out["models_by_provider"] = {}
+        out["tts_models_by_provider"] = {}
+        return _gateway_catalog_response(
+            out,
+            kind="providers",
+            scope="tts",
+            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers")),
+            provider=provider,
+            metadata={"providers_only": True},
+        )
+
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
         out = _filter_provider_model_catalog_response(
@@ -8960,8 +9395,20 @@ async def audio_transcription_models_catalog(
         description="Optional provider/catalog base URL forwarded to the configured AbstractCore catalog route.",
     ),
     provider: Optional[str] = Query(default=None, description="Optional STT provider/engine filter."),
+    providers_only: bool = Query(default=False, description="Return only available STT providers without enumerating model catalogs."),
 ) -> Dict[str, Any]:
     """List STT model ids through the Gateway Runtime discovery facade."""
+    if providers_only:
+        out = _static_transcription_providers_only_response(provider)
+        return _gateway_catalog_response(
+            out,
+            kind="providers",
+            scope="stt",
+            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "stt_providers", "available_providers")),
+            provider=provider,
+            metadata={"providers_only": True},
+        )
+
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
         out = _filter_provider_model_catalog_response(
@@ -9191,7 +9638,7 @@ async def vision_provider_models_catalog(
             out,
             kind="providers" if providers_only else "models",
             scope="vision",
-            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "available_providers"))
+            items=_gateway_catalog_provider_items(out, provider_keys=("available_providers",))
             if providers_only
             else _gateway_catalog_model_items(
                 out,
@@ -9224,7 +9671,7 @@ async def vision_provider_models_catalog(
         out,
         kind="providers" if providers_only else "models",
         scope="vision",
-        items=_gateway_catalog_provider_items(out, provider_keys=("providers", "available_providers"))
+        items=_gateway_catalog_provider_items(out, provider_keys=("available_providers",))
         if providers_only
         else _gateway_catalog_model_items(
             out,
@@ -9271,6 +9718,101 @@ async def vision_models_catalog(request: Request) -> Dict[str, Any]:
         kind="models",
         scope="vision",
         items=_gateway_catalog_model_items(out, detail_keys=("models",), value_keys=("models",)),
+    )
+
+
+@router.get("/embeddings/models")
+async def embedding_models_catalog(
+    request: Request,
+    base_url: Optional[str] = Query(
+        default=None,
+        description="Optional provider/catalog base URL forwarded to the configured AbstractCore embedding catalog route.",
+    ),
+    provider: Optional[str] = Query(default=None, description="Optional text embedding provider filter."),
+    providers_only: bool = Query(default=False, description="Return embedding provider names without loading model catalogs."),
+) -> Dict[str, Any]:
+    """List text embedding providers/models through the Gateway Runtime discovery facade."""
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
+        raw = _runtime_discovery_payload(
+            {
+                "available": False,
+                "kind": "embedding_models",
+                "scope": "embedding.text",
+                "provider": provider,
+                "models": [],
+                "embedding_models": [],
+                "providers": [],
+                "available_providers": [],
+                "embedding_providers": [],
+                "provider_details": [],
+                "models_by_provider": {},
+                "embedding_models_by_provider": {},
+                "provider_models": [],
+                "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+            }
+        )
+        out = raw if providers_only else _filter_provider_model_catalog_response(
+            raw,
+            provider=provider,
+            model_keys=("models_by_provider", "embedding_models_by_provider"),
+        )
+        return _gateway_catalog_response(
+            out,
+            kind="providers" if providers_only else "models",
+            scope="embedding.text",
+            items=_gateway_catalog_provider_items(
+                out,
+                provider_keys=("providers", "available_providers", "embedding_providers"),
+                detail_keys=("provider_details",),
+            )
+            if providers_only
+            else _gateway_catalog_model_items(
+                out,
+                provider=provider,
+                task="embedding.text",
+                detail_keys=("provider_models",),
+                map_keys=("models_by_provider", "embedding_models_by_provider"),
+                value_keys=("embedding_models", "models"),
+            ),
+            provider=provider,
+            metadata={"providers_only": providers_only},
+        )
+    try:
+        payload = discovery.list_embedding_models(
+            base_url=base_url,
+            provider_api_key=_request_provider_api_key(request),
+            provider=provider,
+            providers_only=providers_only,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    raw = _runtime_discovery_payload(payload)
+    out = raw if providers_only else _filter_provider_model_catalog_response(
+        raw,
+        provider=provider,
+        model_keys=("models_by_provider", "embedding_models_by_provider"),
+    )
+    return _gateway_catalog_response(
+        out,
+        kind="providers" if providers_only else "models",
+        scope="embedding.text",
+        items=_gateway_catalog_provider_items(
+            out,
+            provider_keys=("providers", "available_providers", "embedding_providers"),
+            detail_keys=("provider_details",),
+        )
+        if providers_only
+        else _gateway_catalog_model_items(
+            out,
+            provider=provider,
+            task="embedding.text",
+            detail_keys=("provider_models",),
+            map_keys=("models_by_provider", "embedding_models_by_provider"),
+            value_keys=("embedding_models", "models"),
+        ),
+        provider=provider,
+        metadata={"providers_only": providers_only},
     )
 
 
@@ -14740,6 +15282,13 @@ class _GatewayModelResidencyUnloadRequest(BaseModel):
     timeout_s: Optional[float] = Field(default=None, description="Optional provider unload timeout forwarded to AbstractCore.")
 
 
+class _GatewayCapabilityDefaultRequest(BaseModel):
+    provider: Optional[str] = Field(default=None, description="Default provider/backend id for this capability route.")
+    model: Optional[str] = Field(default=None, description="Default model id for this capability route.")
+    base_url: Optional[str] = Field(default=None, description="Optional upstream provider base URL for this capability route.")
+    options: Optional[Dict[str, Any]] = Field(default=None, description="Optional plugin/provider parameters, such as voice/profile/language.")
+
+
 class _GatewaySessionPromptCacheTarget(_GatewayPromptCacheTarget):
     bundle_id: Optional[str] = Field(default=None, max_length=160, description="Optional workflow bundle id.")
     bundle_version: Optional[str] = Field(default=None, max_length=80, description="Optional workflow bundle version.")
@@ -14919,10 +15468,13 @@ def _gateway_bloc_client_call(
 def _gateway_model_residency_unavailable(*, operation: str, error: str) -> Dict[str, Any]:
     return {
         "ok": False,
+        "success": False,
         "supported": False,
         "operation": operation,
         "code": "model_residency_unavailable",
         "error": error,
+        "warnings": [error],
+        "affected_models": [],
     }
 
 
@@ -14951,10 +15503,13 @@ def _gateway_model_residency_client_call(
     except Exception as e:
         return {
             "ok": False,
+            "success": False,
             "supported": False,
             "operation": operation,
             "code": "model_residency_error",
             "error": str(e),
+            "warnings": [str(e)],
+            "affected_models": [],
         }
     if isinstance(result, dict):
         result.setdefault("operation", operation)
@@ -14967,11 +15522,19 @@ def _normalize_gateway_model_residency_response(payload: Dict[str, Any], *, oper
     out.setdefault("operation", operation)
     out.setdefault("source", "abstractruntime.host_facade")
     out.setdefault("route_available", True)
+    out.setdefault("success", out.get("ok") is not False)
     if operation == "list_loaded" and "models" not in out:
         for key in ("data", "loaded", "runtimes"):
             if isinstance(out.get(key), list):
                 out["models"] = out[key]
                 break
+    if "affected_models" not in out:
+        if isinstance(out.get("models"), list):
+            out["affected_models"] = out["models"]
+        elif isinstance(out.get("runtime"), dict):
+            out["affected_models"] = [out["runtime"]]
+        else:
+            out["affected_models"] = []
     return out
 
 
@@ -15276,6 +15839,43 @@ async def model_residency_loaded(
         ),
         operation="list_loaded",
     )
+
+
+@router.get("/config/capability-defaults")
+async def capability_defaults_get() -> Dict[str, Any]:
+    """List execution-host Core/Runtime capability routing defaults for thin-client settings UIs."""
+    return gateway_capability_defaults_payload()
+
+
+@router.put("/config/capability-defaults/{kind}/{modality}")
+async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabilityDefaultRequest) -> Dict[str, Any]:
+    """Persist one execution-host Core/Runtime capability route default."""
+    try:
+        save_gateway_capability_default(
+            kind,
+            modality,
+            provider=req.provider,
+            model=req.model,
+            base_url=req.base_url,
+            options=req.options,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return gateway_capability_defaults_payload()
+
+
+@router.delete("/config/capability-defaults/{kind}/{modality}")
+async def capability_defaults_delete(kind: str, modality: str) -> Dict[str, Any]:
+    """Clear one execution-host Core/Runtime capability route default."""
+    try:
+        clear_gateway_capability_default(kind, modality)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return gateway_capability_defaults_payload()
 
 
 @router.post("/models/load")
@@ -16024,11 +16624,11 @@ async def host_gpu_metrics() -> Dict[str, Any]:
 
 @router.post("/embeddings", response_model=EmbeddingsResponse)
 async def embeddings(req: EmbeddingsRequest) -> EmbeddingsResponse:
-    """Generate embeddings for text inputs using the gateway-wide embedding model.
+    """Generate embeddings for text inputs using the execution-host embedding.text route.
 
     Contract:
-    - Single embedding space per gateway instance (provider+model are stable).
-    - Request overrides are rejected unless they match the configured provider/model.
+    - Single embedding space per execution host (provider+model are stable).
+    - Request overrides are rejected unless they match the configured route.
     """
     svc = get_gateway_service()
     client = getattr(svc, "embeddings_client", None)
@@ -16037,7 +16637,7 @@ async def embeddings(req: EmbeddingsRequest) -> EmbeddingsResponse:
             status_code=503,
             detail=(
                 "Embeddings are not available (missing AbstractCore embedding integration). "
-                "Install `abstractruntime[abstractcore]` and ensure an embedding provider/model is configured."
+                "Install `abstractruntime[abstractcore]` and configure the execution-host embedding.text route."
             ),
         )
 
@@ -16083,24 +16683,27 @@ async def embeddings(req: EmbeddingsRequest) -> EmbeddingsResponse:
 
 @router.get("/embeddings/config")
 async def embeddings_config() -> Dict[str, Any]:
-    """Return the gateway-wide embedding configuration (singleton per instance)."""
+    """Return the execution-host embedding configuration (singleton embedding space)."""
     svc = get_gateway_service()
     client = getattr(svc, "embeddings_client", None)
 
     configured_provider = str(getattr(svc, "embedding_provider", "") or getattr(client, "provider", "") or "").strip().lower()
     configured_model = str(getattr(svc, "embedding_model", "") or getattr(client, "model", "") or "").strip()
+    configured_base_url = str(getattr(svc, "embedding_base_url", "") or getattr(client, "base_url", "") or "").strip()
 
     out: Dict[str, Any] = {
         "ok": client is not None,
+        "route": "embedding.text",
         "provider": configured_provider,
         "model": configured_model,
+        "base_url": configured_base_url or None,
         "dimension": 0,
     }
 
     if client is None:
         out["error"] = (
             "Embeddings are not available (missing AbstractCore embedding integration). "
-            "Install `abstractruntime[abstractcore]` and configure ABSTRACTGATEWAY_EMBEDDING_PROVIDER/MODEL."
+            "Install `abstractruntime[abstractcore]` and configure the execution-host embedding.text capability default."
         )
         return out
 
