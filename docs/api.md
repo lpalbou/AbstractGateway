@@ -275,6 +275,8 @@ Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - `POST /api/gateway/runs/{run_id}/images/generate`
 - `POST /api/gateway/runs/{run_id}/images/edit`
+- `POST /api/gateway/runs/{run_id}/videos/generate`
+- `POST /api/gateway/runs/{run_id}/videos/from_image`
 - `POST /api/gateway/runs/{run_id}/music/generate`
 - `GET /api/gateway/voice/voices`
 - `GET /api/gateway/audio/speech/models`
@@ -336,6 +338,20 @@ discover it from `capabilities.contracts.flow_editor.media.generated_music` or
 `capabilities.contracts.assistant.media.generated_music`, list providers/models
 from the music catalog routes, and treat the returned `child_run_id` plus
 `music_artifact` as the durable output handle.
+
+Generated video also follows the direct child-run pattern:
+
+- `POST /api/gateway/runs/{run_id}/videos/generate` uses the Runtime/Core
+  `output.modality=video` / `task=text_to_video` contract.
+- `POST /api/gateway/runs/{run_id}/videos/from_image` accepts a run-visible
+  source `image_artifact` and uses `task=image_to_video`.
+- Thin clients should discover these routes from
+  `capabilities.contracts.flow_editor.media.generated_video` and
+  `capabilities.contracts.flow_editor.media.image_to_video` (or the matching
+  `assistant.media.*` entries), use
+  `GET /api/gateway/vision/provider_models?task=text_to_video|image_to_video`
+  for model catalogs, and stream the returned `child_run_id` ledger for
+  `abstract.progress` events.
 
 STT and listen contract notes:
 

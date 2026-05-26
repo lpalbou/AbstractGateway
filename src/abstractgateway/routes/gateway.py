@@ -5453,6 +5453,43 @@ class ImageEditRequest(BaseModel):
     extra: Optional[Dict[str, Any]] = Field(default=None, description="Optional provider-specific image-edit extras.")
 
 
+class VideoGenerateRequest(BaseModel):
+    prompt: str = Field(..., max_length=20000, description="Video generation prompt.")
+    provider: Optional[str] = Field(default=None, max_length=80, description="Optional LLM/runtime provider override.")
+    model: Optional[str] = Field(default=None, max_length=240, description="Optional LLM/runtime model override.")
+    video_provider: Optional[str] = Field(default=None, max_length=80, description="Optional video backend/provider override.")
+    video_model: Optional[str] = Field(default=None, max_length=240, description="Optional video model id/name.")
+    width: Optional[int] = Field(default=None, ge=1, le=8192, description="Optional video width.")
+    height: Optional[int] = Field(default=None, ge=1, le=8192, description="Optional video height.")
+    fps: Optional[int] = Field(default=None, ge=1, le=240, description="Optional frame rate.")
+    frames: Optional[int] = Field(default=None, ge=1, le=2000, description="Optional frame count.")
+    num_frames: Optional[int] = Field(default=None, ge=1, le=2000, description="Compatibility alias for frames.")
+    duration_s: Optional[float] = Field(default=None, gt=0, le=3600, description="Optional requested duration in seconds.")
+    format: str = Field(default="mp4", max_length=16, description="Desired output format, usually mp4.")
+    negative_prompt: Optional[str] = Field(default=None, max_length=8000)
+    seed: Optional[int] = Field(default=None)
+    steps: Optional[int] = Field(default=None, ge=1, le=1000)
+    guidance_scale: Optional[float] = Field(default=None)
+    request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
+    extra: Optional[Dict[str, Any]] = Field(default=None, description="Optional provider-specific video-generation extras.")
+
+
+class ImageToVideoRequest(VideoGenerateRequest):
+    image_artifact: Dict[str, Any] = Field(..., description="Source image artifact ref dict like {'$artifact': '...'}")
+
+
+class VideoGenerateResponse(BaseModel):
+    ok: bool = Field(default=True)
+    supported: bool = Field(default=True)
+    run_id: str
+    request_id: str
+    child_run_id: Optional[str] = None
+    video_artifact: Optional[Dict[str, Any]] = None
+    event_name: Optional[str] = None
+    code: Optional[str] = None
+    error: Optional[str] = None
+
+
 class MusicGenerateRequest(BaseModel):
     prompt: str = Field(..., max_length=20000, description="Music generation prompt.")
     provider: Optional[str] = Field(default=None, max_length=80, description="Optional LLM/runtime provider override.")
@@ -5664,6 +5701,19 @@ def _gateway_generated_music_content_type(fmt: str) -> Tuple[str, str]:
         return "audio/flac", "flac"
     if f:
         return f"audio/{f}", f
+    return "application/octet-stream", "bin"
+
+
+def _gateway_generated_video_content_type(fmt: str) -> Tuple[str, str]:
+    f = str(fmt or "mp4").strip().lower() or "mp4"
+    if f in {"mp4", "m4v"}:
+        return "video/mp4", "mp4"
+    if f in {"mov", "quicktime"}:
+        return "video/quicktime", "mov"
+    if f in {"webm"}:
+        return "video/webm", "webm"
+    if f:
+        return f"video/{f}", f
     return "application/octet-stream", "bin"
 
 
@@ -5971,6 +6021,7 @@ def _gateway_generated_artifact_ref_from_item(
     modality: str,
     task: str,
     source: str,
+    include_sha256: bool = True,
 ) -> Optional[Dict[str, Any]]:
     ref = item.get("artifact_ref") if isinstance(item.get("artifact_ref"), dict) else None
     artifact_id = ""
@@ -6018,11 +6069,11 @@ def _gateway_generated_artifact_ref_from_item(
                 size_bytes = None
 
     sha256 = ""
-    if isinstance(projected_blob, (bytes, bytearray)):
+    if include_sha256 and isinstance(projected_blob, (bytes, bytearray)):
         blob = bytes(projected_blob)
         sha256 = hashlib.sha256(blob).hexdigest()
         size_bytes = len(blob)
-    else:
+    elif include_sha256:
         load_fn = getattr(store, "load", None)
         if callable(load_fn):
             try:
@@ -6117,7 +6168,17 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         "run_id": str(getattr(run, "run_id", rid)),
         "tags": tags,
     }
-    for key in ("size", "width", "height", "negative_prompt", "seed", "steps", "guidance_scale", "quality", "style"):
+    for key in (
+        "size",
+        "width",
+        "height",
+        "negative_prompt",
+        "seed",
+        "steps",
+        "guidance_scale",
+        "quality",
+        "style",
+    ):
         value = getattr(req, key, None)
         if value is not None:
             output_spec[key] = value
@@ -6282,7 +6343,18 @@ async def image_edit(run_id: str, req: ImageEditRequest) -> ImageGenerateRespons
         "run_id": str(getattr(run, "run_id", rid)),
         "tags": tags,
     }
-    for key in ("size", "width", "height", "negative_prompt", "seed", "steps", "guidance_scale", "strength", "quality", "style"):
+    for key in (
+        "size",
+        "width",
+        "height",
+        "negative_prompt",
+        "seed",
+        "steps",
+        "guidance_scale",
+        "strength",
+        "quality",
+        "style",
+    ):
         value = getattr(req, key, None)
         if value is not None:
             output_spec[key] = value
@@ -6388,6 +6460,375 @@ async def image_edit(run_id: str, req: ImageEditRequest) -> ImageGenerateRespons
         child_run_id=str(child.run_id),
         image_artifact=image_ref,
         event_name=None,
+    )
+
+
+@router.post("/runs/{run_id}/videos/generate", response_model=VideoGenerateResponse)
+async def video_generate(run_id: str, req: VideoGenerateRequest) -> VideoGenerateResponse:
+    """Delegate text-to-video generation to Runtime-owned durable child execution."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    prompt = str(getattr(req, "prompt", "") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    run_facade, err = _gateway_abstractcore_run_facade()
+    generate_video_fn = getattr(run_facade, "generate_video", None) if run_facade is not None else None
+    if err or run_facade is None or not callable(generate_video_fn):
+        return VideoGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="generated_video_unavailable",
+            error=err or "Gateway runtime does not expose AbstractCore durable video helpers.",
+        )
+
+    fmt = str(getattr(req, "format", "mp4") or "mp4").strip().lower() or "mp4"
+    session_id = str(getattr(run, "session_id", "") or "")
+    tags = {
+        "kind": "generated_media",
+        "modality": "video",
+        "task": "text_to_video",
+        "source": "gateway_direct_video",
+        "request_id": request_id,
+        "session_id": session_id,
+        "format": fmt,
+    }
+    output_spec: Dict[str, Any] = {
+        "modality": "video",
+        "task": "text_to_video",
+        "format": fmt,
+        "run_id": str(getattr(run, "run_id", rid)),
+        "tags": tags,
+    }
+    for key in (
+        "width",
+        "height",
+        "fps",
+        "frames",
+        "num_frames",
+        "duration_s",
+        "negative_prompt",
+        "seed",
+        "steps",
+        "guidance_scale",
+    ):
+        value = getattr(req, key, None)
+        if value is not None:
+            output_spec[key] = value
+    if output_spec.get("frames") is None and output_spec.get("num_frames") is not None:
+        output_spec["frames"] = output_spec["num_frames"]
+    if isinstance(req.extra, dict) and req.extra:
+        output_spec["extra"] = dict(req.extra)
+    video_provider = str(getattr(req, "video_provider", "") or "").strip()
+    video_model = str(getattr(req, "video_model", "") or "").strip()
+    if video_provider:
+        output_spec["provider"] = video_provider
+    if video_model:
+        output_spec["model"] = video_model
+
+    params: Dict[str, Any] = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": session_id,
+            "request_id": request_id,
+        },
+    }
+    child_vars: Optional[Dict[str, Any]] = None
+    runtime_provider = str(getattr(req, "provider", "") or "").strip()
+    runtime_model = str(getattr(req, "model", "") or "").strip()
+    if runtime_provider or runtime_model:
+        runtime_ns: Dict[str, Any] = {}
+        if runtime_provider:
+            runtime_ns["provider"] = runtime_provider
+        if runtime_model:
+            runtime_ns["model"] = runtime_model
+        child_vars = {"_runtime": runtime_ns}
+
+    try:
+        child = await asyncio.to_thread(
+            generate_video_fn,
+            str(getattr(run, "run_id", rid)),
+            prompt=prompt,
+            output=output_spec,
+            params=params,
+            child_vars=child_vars,
+        )
+    except Exception as e:
+        return VideoGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="generated_video_error",
+            error=str(e),
+        )
+
+    result = _gateway_completed_child_result(child, operation="video generation")
+    outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
+    items = outputs.get("video") if isinstance(outputs, dict) else None
+    item = next((entry for entry in items if isinstance(entry, dict)), None) if isinstance(items, list) else None
+    if not isinstance(item, dict):
+        return VideoGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="generated_video_no_artifact",
+            error="Video generation completed without a stored video artifact.",
+        )
+
+    fallback_content_type, fmt_norm = _gateway_generated_video_content_type(fmt)
+    video_ref = _gateway_generated_artifact_ref_from_item(
+        item,
+        store=store,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        session_id=session_id,
+        fallback_content_type=fallback_content_type,
+        fallback_filename=f"video.{fmt_norm}",
+        modality="video",
+        task="text_to_video",
+        source="gateway_direct_video",
+        include_sha256=False,
+    )
+    if not isinstance(video_ref, dict):
+        return VideoGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="generated_video_no_artifact",
+            error="Video generation completed without a stored video artifact.",
+        )
+
+    return VideoGenerateResponse(
+        ok=True,
+        supported=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        child_run_id=str(child.run_id),
+        video_artifact=video_ref,
+        event_name="abstract.progress",
+    )
+
+
+@router.post("/runs/{run_id}/videos/from_image", response_model=VideoGenerateResponse)
+async def image_to_video(run_id: str, req: ImageToVideoRequest) -> VideoGenerateResponse:
+    """Delegate image-to-video generation to Runtime-owned durable child execution."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    prompt = str(getattr(req, "prompt", "") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    source_ref = getattr(req, "image_artifact", None)
+    source_artifact_id, source_meta = _resolve_scoped_input_artifact(
+        store=store,
+        run=run,
+        run_id=rid,
+        artifact_ref=source_ref,
+        field_name="image_artifact",
+        expected_content_prefix="image/",
+    )
+
+    run_facade, err = _gateway_abstractcore_run_facade()
+    image_to_video_fn = getattr(run_facade, "image_to_video", None) if run_facade is not None else None
+    if err or run_facade is None or not callable(image_to_video_fn):
+        return VideoGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="image_to_video_unavailable",
+            error=err or "Gateway runtime does not expose AbstractCore durable image-to-video helpers.",
+        )
+
+    fmt = str(getattr(req, "format", "mp4") or "mp4").strip().lower() or "mp4"
+    session_id = str(getattr(run, "session_id", "") or "")
+    tags = {
+        "kind": "generated_media",
+        "modality": "video",
+        "task": "image_to_video",
+        "source": "gateway_direct_image_to_video",
+        "request_id": request_id,
+        "session_id": session_id,
+        "format": fmt,
+    }
+    output_spec: Dict[str, Any] = {
+        "modality": "video",
+        "task": "image_to_video",
+        "format": fmt,
+        "run_id": str(getattr(run, "run_id", rid)),
+        "tags": tags,
+    }
+    for key in (
+        "width",
+        "height",
+        "fps",
+        "frames",
+        "num_frames",
+        "duration_s",
+        "negative_prompt",
+        "seed",
+        "steps",
+        "guidance_scale",
+    ):
+        value = getattr(req, key, None)
+        if value is not None:
+            output_spec[key] = value
+    if output_spec.get("frames") is None and output_spec.get("num_frames") is not None:
+        output_spec["frames"] = output_spec["num_frames"]
+    if isinstance(req.extra, dict) and req.extra:
+        output_spec["extra"] = dict(req.extra)
+    video_provider = str(getattr(req, "video_provider", "") or "").strip()
+    video_model = str(getattr(req, "video_model", "") or "").strip()
+    if video_provider:
+        output_spec["provider"] = video_provider
+    if video_model:
+        output_spec["model"] = video_model
+
+    source_item: Dict[str, Any] = {
+        "$artifact": source_artifact_id,
+        "artifact_id": source_artifact_id,
+        "type": "image",
+        "role": "source",
+    }
+    source_content_type = str(getattr(source_meta, "content_type", "") or "").strip()
+    if source_content_type:
+        source_item["content_type"] = source_content_type
+
+    params: Dict[str, Any] = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": session_id,
+            "request_id": request_id,
+        },
+    }
+    child_vars: Optional[Dict[str, Any]] = None
+    runtime_provider = str(getattr(req, "provider", "") or "").strip()
+    runtime_model = str(getattr(req, "model", "") or "").strip()
+    if runtime_provider or runtime_model:
+        runtime_ns: Dict[str, Any] = {}
+        if runtime_provider:
+            runtime_ns["provider"] = runtime_provider
+        if runtime_model:
+            runtime_ns["model"] = runtime_model
+        child_vars = {"_runtime": runtime_ns}
+
+    try:
+        child = await asyncio.to_thread(
+            image_to_video_fn,
+            str(getattr(run, "run_id", rid)),
+            prompt=prompt,
+            media=[source_item],
+            output=output_spec,
+            params=params,
+            child_vars=child_vars,
+        )
+    except Exception as e:
+        return VideoGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="image_to_video_error",
+            error=str(e),
+        )
+
+    result = _gateway_completed_child_result(child, operation="image-to-video generation")
+    outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
+    items = outputs.get("video") if isinstance(outputs, dict) else None
+    item = next((entry for entry in items if isinstance(entry, dict)), None) if isinstance(items, list) else None
+    if not isinstance(item, dict):
+        return VideoGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="image_to_video_no_artifact",
+            error="Image-to-video generation completed without a stored video artifact.",
+        )
+
+    fallback_content_type, fmt_norm = _gateway_generated_video_content_type(fmt)
+    video_ref = _gateway_generated_artifact_ref_from_item(
+        item,
+        store=store,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        session_id=session_id,
+        fallback_content_type=fallback_content_type,
+        fallback_filename=f"video.{fmt_norm}",
+        modality="video",
+        task="image_to_video",
+        source="gateway_direct_image_to_video",
+        include_sha256=False,
+    )
+    if not isinstance(video_ref, dict):
+        return VideoGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="image_to_video_no_artifact",
+            error="Image-to-video generation completed without a stored video artifact.",
+        )
+
+    return VideoGenerateResponse(
+        ok=True,
+        supported=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        child_run_id=str(child.run_id),
+        video_artifact=video_ref,
+        event_name="abstract.progress",
     )
 
 
@@ -7543,6 +7984,8 @@ def _gateway_readiness_descriptor(
     durable_blocs = prompt_cache.get("durable_blocs") if isinstance(prompt_cache.get("durable_blocs"), dict) else {}
     generated_image = assistant_media.get("generated_image") if isinstance(assistant_media.get("generated_image"), dict) else {}
     edited_image = assistant_media.get("edited_image") if isinstance(assistant_media.get("edited_image"), dict) else {}
+    generated_video = assistant_media.get("generated_video") if isinstance(assistant_media.get("generated_video"), dict) else {}
+    image_to_video_media = assistant_media.get("image_to_video") if isinstance(assistant_media.get("image_to_video"), dict) else {}
     generated_voice = assistant_media.get("generated_voice") if isinstance(assistant_media.get("generated_voice"), dict) else {}
     generated_music = assistant_media.get("generated_music") if isinstance(assistant_media.get("generated_music"), dict) else {}
     tts = assistant_voice.get("tts") if isinstance(assistant_voice.get("tts"), dict) else {}
@@ -7659,6 +8102,18 @@ def _gateway_readiness_descriptor(
                     **_surface(edited_image.get("direct_endpoint") if isinstance(edited_image.get("direct_endpoint"), dict) else {}),
                     "workflow_available": bool(edited_image.get("workflow", {}).get("available"))
                     if isinstance(edited_image.get("workflow"), dict)
+                    else False,
+                },
+                "generated_video": {
+                    **_surface(generated_video.get("direct_endpoint") if isinstance(generated_video.get("direct_endpoint"), dict) else {}),
+                    "workflow_available": bool(generated_video.get("workflow", {}).get("available"))
+                    if isinstance(generated_video.get("workflow"), dict)
+                    else False,
+                },
+                "image_to_video": {
+                    **_surface(image_to_video_media.get("direct_endpoint") if isinstance(image_to_video_media.get("direct_endpoint"), dict) else {}),
+                    "workflow_available": bool(image_to_video_media.get("workflow", {}).get("available"))
+                    if isinstance(image_to_video_media.get("workflow"), dict)
                     else False,
                 },
                 "generated_voice": {
@@ -8687,9 +9142,17 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
     abstractvision = caps.get("abstractvision") if isinstance(caps.get("abstractvision"), dict) else {}
     run_facade, run_err = _gateway_abstractcore_run_facade()
     direct_route_available = run_facade is not None and not run_err
+    generated_video_route_available = bool(direct_route_available and callable(getattr(run_facade, "generate_video", None)))
+    image_to_video_route_available = bool(direct_route_available and callable(getattr(run_facade, "image_to_video", None)))
     direct_configured = bool(direct_route_available and _gateway_direct_image_configured())
     workflow_image_available = bool(
         direct_route_available and direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
+    )
+    workflow_generated_video_available = bool(
+        generated_video_route_available and direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
+    )
+    workflow_image_to_video_available = bool(
+        image_to_video_route_available and direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
     )
     voice_direct = _voice_contract_descriptor(caps, kind="tts")
     music_plugin = _plugin_capability(caps, "music")
@@ -8755,6 +9218,78 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                     {"config_hint": str(run_err or "Gateway runtime is not wired to AbstractCore durable media helpers.")}
                     if not direct_route_available
                     else {"config_hint": "Configure AbstractVision or an AbstractCore-backed image runtime for image edits."}
+                    if not direct_configured
+                    else {}
+                ),
+            },
+        },
+        "generated_video": {
+            "workflow": {
+                "available": workflow_generated_video_available,
+                "backend": vision_plugin.get("selected_backend") if isinstance(vision_plugin, dict) else None,
+                "event_contract": "workflow_artifact",
+                "progress_event_name": "abstract.progress",
+                **(
+                    {"config_hint": str(vision_plugin.get("install_hint") or "Install/configure AbstractVision or an AbstractCore video backend.")}
+                    if not workflow_generated_video_available
+                    else {}
+                ),
+            },
+            "direct_endpoint": {
+                "available": bool(generated_video_route_available and direct_configured),
+                "route_available": generated_video_route_available,
+                "configured": direct_configured,
+                "endpoint": _api_gateway_path("/runs/{run_id}/videos/generate"),
+                "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
+                "provider_models_task": "text_to_video",
+                "delivery_modes": ["artifact"],
+                "input_modes": ["prompt"],
+                "durability": "runtime_child_run",
+                "returns_child_run_id": True,
+                "progress_event_name": "abstract.progress",
+                "progress_scope": "child_run_ledger",
+                "formats": ["mp4"],
+                "content_types": {"mp4": "video/mp4"},
+                **(
+                    {"config_hint": str(run_err or "Gateway runtime is not wired to AbstractCore durable video helpers.")}
+                    if not generated_video_route_available
+                    else {"config_hint": "Configure AbstractVision or an AbstractCore-backed video runtime for text-to-video generation."}
+                    if not direct_configured
+                    else {}
+                ),
+            },
+        },
+        "image_to_video": {
+            "workflow": {
+                "available": workflow_image_to_video_available,
+                "backend": vision_plugin.get("selected_backend") if isinstance(vision_plugin, dict) else None,
+                "event_contract": "workflow_artifact",
+                "progress_event_name": "abstract.progress",
+                **(
+                    {"config_hint": str(vision_plugin.get("install_hint") or "Install/configure AbstractVision or an AbstractCore image-to-video backend.")}
+                    if not workflow_image_to_video_available
+                    else {}
+                ),
+            },
+            "direct_endpoint": {
+                "available": bool(image_to_video_route_available and direct_configured),
+                "route_available": image_to_video_route_available,
+                "configured": direct_configured,
+                "endpoint": _api_gateway_path("/runs/{run_id}/videos/from_image"),
+                "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
+                "provider_models_task": "image_to_video",
+                "delivery_modes": ["artifact"],
+                "input_modes": ["artifact"],
+                "durability": "runtime_child_run",
+                "returns_child_run_id": True,
+                "progress_event_name": "abstract.progress",
+                "progress_scope": "child_run_ledger",
+                "formats": ["mp4"],
+                "content_types": {"mp4": "video/mp4"},
+                **(
+                    {"config_hint": str(run_err or "Gateway runtime is not wired to AbstractCore durable image-to-video helpers.")}
+                    if not image_to_video_route_available
+                    else {"config_hint": "Configure AbstractVision or an AbstractCore-backed video runtime for image-to-video generation."}
                     if not direct_configured
                     else {}
                 ),
@@ -15317,7 +15852,16 @@ def _gateway_model_residency_contract_descriptor() -> Dict[str, Any]:
         "load": _api_gateway_path("/models/load"),
         "unload": _api_gateway_path("/models/unload"),
     }
-    task_names = ["text_generation", "image_generation", "tts", "stt", "music_generation"]
+    task_names = [
+        "text_generation",
+        "image_generation",
+        "text_to_video",
+        "image_to_video",
+        "video_generation",
+        "tts",
+        "stt",
+        "music_generation",
+    ]
     supports = {task: False for task in task_names}
     task_capabilities: Dict[str, Any] = {}
     runtime_mode: Optional[str] = None

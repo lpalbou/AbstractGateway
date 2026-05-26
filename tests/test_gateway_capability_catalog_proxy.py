@@ -372,18 +372,18 @@ def test_vision_provider_catalog_items_use_available_providers_only(
 def test_gateway_vision_catalog_routes_local_mflux_without_diffusers_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
-    monkeypatch.setattr(gateway_routes, "_gateway_has_local_mflux_preset", lambda model_id: str(model_id).endswith("FLUX.2-klein-9B"))
+    monkeypatch.setattr(gateway_routes, "_gateway_has_local_mflux_preset", lambda model_id: str(model_id).endswith("flux.2-klein-9b-4bit"))
 
     item = gateway_routes._gateway_vision_provider_model_item(
         provider="huggingface",
-        model_id="black-forest-labs/FLUX.2-klein-9B",
+        model_id="AbstractFramework/flux.2-klein-9b-4bit",
         task="text_to_image",
     )
 
     assert item["provider"] == "mlx-gen"
     assert item["backend"] == "mlx-gen"
-    assert item["model"] == "mlx-gen/black-forest-labs/FLUX.2-klein-9B"
-    assert item["routed_model"] == "mlx-gen/black-forest-labs/FLUX.2-klein-9B"
+    assert item["model"] == "mlx-gen/AbstractFramework/flux.2-klein-9b-4bit"
+    assert item["routed_model"] == "mlx-gen/AbstractFramework/flux.2-klein-9b-4bit"
     assert not str(item["model"]).startswith("diffusers/")
 
 

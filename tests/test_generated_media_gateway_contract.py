@@ -17,6 +17,7 @@ _PNG_BYTES = (
 )
 
 _WAV_BYTES = b"RIFF\x24\x00\x00\x00WAVEfmt music-data"
+_MP4_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isomvideo-data"
 
 
 def _write_image_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> None:
@@ -92,7 +93,7 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
             assert output["modality"] == "image"
             assert output["task"] == "image_generation"
             assert output["provider"] == "mflux"
-            assert output["model"] == "flux2-klein-4b"
+            assert output["model"] == "AbstractFramework/flux.2-klein-4b-4bit"
             svc = gateway_routes.get_gateway_service()
             store = svc.stores.artifact_store
             tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
@@ -109,7 +110,7 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
                                     "modality": "image",
                                     "task": "image_generation",
                                     "provider": "mflux",
-                                    "model": "flux2-klein-4b",
+                                    "model": "AbstractFramework/flux.2-klein-4b-4bit",
                                     "content_type": "image/png",
                                     "format": "png",
                                     "artifact_ref": {
@@ -157,7 +158,7 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
                 "provider": "stub",
                 "model": "stub-chat",
                 "image_provider": "mflux",
-                "image_model": "flux2-klein-4b",
+                "image_model": "AbstractFramework/flux.2-klein-4b-4bit",
                 "format": "png",
                 "request_id": "img-1",
             },
@@ -215,7 +216,7 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
             assert output["modality"] == "image"
             assert output["task"] == "image_edit"
             assert output["provider"] == "mflux"
-            assert output["model"] == "flux2-klein-4b"
+            assert output["model"] == "AbstractFramework/flux.2-klein-4b-4bit"
             assert output["strength"] == 0.6
             assert media[0]["role"] == "source"
             assert media[1]["role"] == "mask"
@@ -235,7 +236,7 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
                                     "modality": "image",
                                     "task": "image_edit",
                                     "provider": "mflux",
-                                    "model": "flux2-klein-4b",
+                                    "model": "AbstractFramework/flux.2-klein-4b-4bit",
                                     "content_type": "image/png",
                                     "format": "png",
                                     "artifact_ref": {
@@ -290,7 +291,7 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
                 "image_artifact": {"$artifact": source_meta.artifact_id, "content_type": "image/png"},
                 "mask_artifact": {"$artifact": mask_meta.artifact_id, "content_type": "image/png"},
                 "image_provider": "mflux",
-                "image_model": "flux2-klein-4b",
+                "image_model": "AbstractFramework/flux.2-klein-4b-4bit",
                 "strength": 0.6,
                 "format": "png",
                 "request_id": "img-edit-1",
@@ -312,6 +313,240 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
         content = client.get(f"/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content", headers=headers)
         assert content.status_code == 200, content.text
         assert content.content == _PNG_BYTES
+
+
+def test_gateway_direct_video_generation_uses_runtime_child_run_contract(tmp_path: Path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_image_bundle(bundles_dir=bundles_dir, bundle_id="video-contract", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTVISION_BACKEND", "mflux")
+
+    import abstractgateway.routes.gateway as gateway_routes
+    from abstractruntime.core.models import RunStatus
+
+    monkeypatch.setattr(gateway_routes, "_gateway_has_local_mflux_preset", lambda _model_id: True)
+
+    class StubRunFacade:
+        def generate_video(self, parent_run_id: str, *, prompt: str, output: Dict[str, Any], params: Dict[str, Any], child_vars=None):
+            _ = parent_run_id, params, child_vars
+            child_run_id = "child-video-1"
+            assert prompt == "a short product reveal"
+            assert output["modality"] == "video"
+            assert output["task"] == "text_to_video"
+            assert output["provider"] == "mlx-gen"
+            assert output["model"] == "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+            assert output["frames"] == 41
+            assert output["fps"] == 24
+            svc = gateway_routes.get_gateway_service()
+            store = svc.stores.artifact_store
+            tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
+            meta = store.store(_MP4_BYTES, content_type="video/mp4", run_id=child_run_id, tags=tags)
+            return SimpleNamespace(
+                run_id=child_run_id,
+                status=RunStatus.COMPLETED,
+                error=None,
+                output={
+                    "result": {
+                        "outputs": {
+                            "video": [
+                                {
+                                    "modality": "video",
+                                    "task": "text_to_video",
+                                    "provider": "mlx-gen",
+                                    "model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+                                    "content_type": "video/mp4",
+                                    "format": "mp4",
+                                    "artifact_ref": {
+                                        "$artifact": meta.artifact_id,
+                                        "artifact_id": meta.artifact_id,
+                                        "content_type": "video/mp4",
+                                        "size_bytes": len(_MP4_BYTES),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (StubRunFacade(), None))
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        start = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": "video-contract", "bundle_version": "0.0.0", "flow_id": "root", "input_data": {}},
+            headers=headers,
+        )
+        assert start.status_code == 200, start.text
+        run_id = start.json()["run_id"]
+
+        _wait_until(lambda: client.get(f"/api/gateway/runs/{run_id}", headers=headers).json().get("status") == "completed")
+
+        caps = client.get("/api/gateway/discovery/capabilities", headers=headers)
+        assert caps.status_code == 200, caps.text
+        direct = caps.json()["capabilities"]["contracts"]["assistant"]["media"]["generated_video"]["direct_endpoint"]
+        assert direct["route_available"] is True
+        assert direct["available"] is True
+        assert direct["endpoint"] == "/api/gateway/runs/{run_id}/videos/generate"
+        assert direct["provider_models_task"] == "text_to_video"
+        assert direct["progress_event_name"] == "abstract.progress"
+
+        generated = client.post(
+            f"/api/gateway/runs/{run_id}/videos/generate",
+            json={
+                "prompt": "a short product reveal",
+                "provider": "stub",
+                "model": "stub-chat",
+                "video_provider": "mlx-gen",
+                "video_model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+                "frames": 41,
+                "fps": 24,
+                "format": "mp4",
+                "request_id": "video-1",
+            },
+            headers=headers,
+        )
+        assert generated.status_code == 200, generated.text
+        body = generated.json()
+        assert body["ok"] is True, body
+        assert body["supported"] is True
+        assert body["child_run_id"] == "child-video-1"
+        assert body["event_name"] == "abstract.progress"
+        video_ref = body["video_artifact"]
+        assert video_ref["content_type"] == "video/mp4"
+        assert video_ref["filename"] == "video.mp4"
+        assert video_ref["size_bytes"] == len(_MP4_BYTES)
+
+        artifact_id = video_ref["$artifact"]
+        content = client.get(f"/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content", headers=headers)
+        assert content.status_code == 200, content.text
+        assert content.content == _MP4_BYTES
+
+
+def test_gateway_direct_image_to_video_uses_runtime_child_run_contract(tmp_path: Path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_image_bundle(bundles_dir=bundles_dir, bundle_id="image-to-video-contract", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTVISION_BACKEND", "mflux")
+
+    import abstractgateway.routes.gateway as gateway_routes
+    from abstractruntime.core.models import RunStatus
+
+    monkeypatch.setattr(gateway_routes, "_gateway_has_local_mflux_preset", lambda _model_id: True)
+
+    class StubRunFacade:
+        def image_to_video(self, parent_run_id: str, *, prompt: str, media, output: Dict[str, Any], params: Dict[str, Any], child_vars=None):
+            _ = parent_run_id, params, child_vars
+            child_run_id = "child-image-to-video-1"
+            assert prompt == "slowly rotate the product"
+            assert media[0]["role"] == "source"
+            assert output["modality"] == "video"
+            assert output["task"] == "image_to_video"
+            assert output["provider"] == "mlx-gen"
+            assert output["model"] == "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+            svc = gateway_routes.get_gateway_service()
+            store = svc.stores.artifact_store
+            tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
+            meta = store.store(_MP4_BYTES, content_type="video/mp4", run_id=child_run_id, tags=tags)
+            return SimpleNamespace(
+                run_id=child_run_id,
+                status=RunStatus.COMPLETED,
+                error=None,
+                output={
+                    "result": {
+                        "outputs": {
+                            "video": [
+                                {
+                                    "modality": "video",
+                                    "task": "image_to_video",
+                                    "provider": "mlx-gen",
+                                    "model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+                                    "content_type": "video/mp4",
+                                    "format": "mp4",
+                                    "artifact_ref": {
+                                        "$artifact": meta.artifact_id,
+                                        "artifact_id": meta.artifact_id,
+                                        "content_type": "video/mp4",
+                                        "size_bytes": len(_MP4_BYTES),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (StubRunFacade(), None))
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        start = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": "image-to-video-contract", "bundle_version": "0.0.0", "flow_id": "root", "session_id": "sess-video", "input_data": {}},
+            headers=headers,
+        )
+        assert start.status_code == 200, start.text
+        run_id = start.json()["run_id"]
+
+        _wait_until(lambda: client.get(f"/api/gateway/runs/{run_id}", headers=headers).json().get("status") == "completed")
+
+        svc = gateway_routes.get_gateway_service()
+        store = svc.stores.artifact_store
+        source_meta = store.store(_PNG_BYTES, content_type="image/png", run_id="session_memory_sess-video", tags={"session_id": "sess-video"})
+
+        caps = client.get("/api/gateway/discovery/capabilities", headers=headers)
+        assert caps.status_code == 200, caps.text
+        direct = caps.json()["capabilities"]["contracts"]["assistant"]["media"]["image_to_video"]["direct_endpoint"]
+        assert direct["route_available"] is True
+        assert direct["available"] is True
+        assert direct["endpoint"] == "/api/gateway/runs/{run_id}/videos/from_image"
+        assert direct["provider_models_task"] == "image_to_video"
+
+        generated = client.post(
+            f"/api/gateway/runs/{run_id}/videos/from_image",
+            json={
+                "prompt": "slowly rotate the product",
+                "image_artifact": {"$artifact": source_meta.artifact_id, "content_type": "image/png"},
+                "video_provider": "mlx-gen",
+                "video_model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+                "format": "mp4",
+                "request_id": "image-to-video-1",
+            },
+            headers=headers,
+        )
+        assert generated.status_code == 200, generated.text
+        body = generated.json()
+        assert body["ok"] is True, body
+        assert body["supported"] is True
+        assert body["child_run_id"] == "child-image-to-video-1"
+        video_ref = body["video_artifact"]
+        assert video_ref["content_type"] == "video/mp4"
+        assert video_ref["filename"] == "video.mp4"
+        assert video_ref["size_bytes"] == len(_MP4_BYTES)
+
+        artifact_id = video_ref["$artifact"]
+        content = client.get(f"/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content", headers=headers)
+        assert content.status_code == 200, content.text
+        assert content.content == _MP4_BYTES
 
 
 def test_gateway_direct_music_generation_uses_runtime_child_run_contract(tmp_path: Path, monkeypatch) -> None:

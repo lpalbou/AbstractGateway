@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-05-26
+
+### Added
+- Direct Runtime-backed video generation routes:
+  - `POST /api/gateway/runs/{run_id}/videos/generate` for text-to-video
+  - `POST /api/gateway/runs/{run_id}/videos/from_image` for image-to-video
+- Thin-client capability contracts and readiness metadata now advertise `generated_video` and `image_to_video`, including `provider_models_task` values and `abstract.progress` child-run progress events.
+- Model-residency capability reporting now includes video tasks (`text_to_video`, `image_to_video`, and `video_generation`) when Runtime/Core expose them.
+
+### Changed
+- Raised the Runtime floor to `AbstractRuntime[multimodal,mcp-worker]>=0.4.24`.
+- Gateway documentation now describes direct video routes, video provider/model catalog tasks, and progress-event handling for long-running media jobs.
+
 ## [0.2.19] - 2026-05-26
 
 ### Added

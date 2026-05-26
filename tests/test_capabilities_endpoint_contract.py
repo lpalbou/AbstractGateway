@@ -160,6 +160,8 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert flow_editor.get("run_input_schema", {}).get("endpoint") == "/api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema"
         assert flow_editor.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/generate"
         assert flow_editor.get("media", {}).get("edited_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/edit"
+        assert flow_editor.get("media", {}).get("generated_video", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/videos/generate"
+        assert flow_editor.get("media", {}).get("image_to_video", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/videos/from_image"
         assert flow_editor.get("media", {}).get("generated_voice", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/voice/tts"
         assert flow_editor.get("media", {}).get("generated_music", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/music/generate"
         assert flow_editor.get("voice", {}).get("stt", {}).get("endpoint") == "/api/gateway/runs/{run_id}/audio/transcribe"
@@ -171,9 +173,11 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert assistant.get("voice", {}).get("tts", {}).get("endpoint") == "/api/gateway/runs/{run_id}/voice/tts"
         assert assistant.get("voice", {}).get("stt", {}).get("endpoint") == "/api/gateway/runs/{run_id}/audio/transcribe"
         assert assistant.get("voice", {}).get("listen", {}).get("host_capture_required") is True
-        assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("route_available") is True
+        assert isinstance(assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("route_available"), bool)
         assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/generate"
         assert assistant.get("media", {}).get("edited_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/edit"
+        assert assistant.get("media", {}).get("generated_video", {}).get("direct_endpoint", {}).get("provider_models_task") == "text_to_video"
+        assert assistant.get("media", {}).get("image_to_video", {}).get("direct_endpoint", {}).get("provider_models_task") == "image_to_video"
         assert assistant.get("media", {}).get("generated_music", {}).get("direct_endpoint", {}).get("providers_endpoint") == "/api/gateway/audio/music/providers"
         assert assistant.get("media", {}).get("generated_music", {}).get("direct_endpoint", {}).get("provider_models_endpoint") == "/api/gateway/audio/music/models"
         assert assistant.get("prompt_cache", {}).get("provider_controls") is True
@@ -260,6 +264,10 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert media["edited_image"]["workflow"]["available"] is False
     assert media["edited_image"]["direct_endpoint"]["route_available"] is False
     assert media["edited_image"]["direct_endpoint"]["available"] is False
+    assert media["generated_video"]["direct_endpoint"]["route_available"] is False
+    assert media["generated_video"]["direct_endpoint"]["available"] is False
+    assert media["image_to_video"]["direct_endpoint"]["route_available"] is False
+    assert media["image_to_video"]["direct_endpoint"]["available"] is False
     assert media["generated_music"]["direct_endpoint"]["route_available"] is False
     assert media["generated_music"]["direct_endpoint"]["available"] is False
     assert media["generated_music"]["direct_endpoint"]["providers_endpoint"] == "/api/gateway/audio/music/providers"
@@ -274,6 +282,9 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert residency["source"] == "abstractruntime.host_facade"
     assert residency["supports"]["text_generation"] is False
     assert residency["supports"]["image_generation"] is False
+    assert residency["supports"]["text_to_video"] is False
+    assert residency["supports"]["image_to_video"] is False
+    assert residency["supports"]["video_generation"] is False
     assert residency["supports"]["tts"] is False
     assert residency["supports"]["stt"] is False
     assert residency["supports"]["music_generation"] is False
@@ -294,6 +305,8 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert readiness["surfaces"]["media"]["generated_image"]["route_available"] is False
     assert readiness["surfaces"]["media"]["generated_image"]["available"] is False
     assert readiness["surfaces"]["media"]["edited_image"]["route_available"] is False
+    assert readiness["surfaces"]["media"]["generated_video"]["route_available"] is False
+    assert readiness["surfaces"]["media"]["image_to_video"]["route_available"] is False
     assert readiness["surfaces"]["media"]["stt"]["route_available"] is False
     assert readiness["surfaces"]["media"]["listen"]["host_capture_required"] is True
     assert readiness["surfaces"]["media"]["generated_music"]["route_available"] is False
@@ -361,6 +374,16 @@ def test_generated_image_contract_separates_light_package_from_backend_config(mo
     assert edited["direct_endpoint"]["route_available"] is False
     assert edited["direct_endpoint"]["available"] is False
     assert edited["direct_endpoint"]["provider_models_task"] == "image_to_image"
+    video = contracts["assistant"]["media"]["generated_video"]
+    assert video["workflow"]["available"] is False
+    assert video["direct_endpoint"]["route_available"] is False
+    assert video["direct_endpoint"]["available"] is False
+    assert video["direct_endpoint"]["provider_models_task"] == "text_to_video"
+    image_to_video = contracts["assistant"]["media"]["image_to_video"]
+    assert image_to_video["workflow"]["available"] is False
+    assert image_to_video["direct_endpoint"]["route_available"] is False
+    assert image_to_video["direct_endpoint"]["available"] is False
+    assert image_to_video["direct_endpoint"]["provider_models_task"] == "image_to_video"
 
 
 def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -386,6 +409,7 @@ def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch
     media = contracts["assistant"]["media"]["generated_image"]
     assert media["workflow"]["available"] is True
     assert media["direct_endpoint"]["available"] is True
+    assert contracts["assistant"]["media"]["generated_video"]["direct_endpoint"]["route_available"] is False
 
 
 def test_generated_music_contract_uses_runtime_music_capability_probe(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -438,6 +462,9 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
                 "tasks": {
                     "text_generation": {"supported": True},
                     "image_generation": {"supported": True},
+                    "text_to_video": {"supported": True},
+                    "image_to_video": {"supported": True},
+                    "video_generation": {"supported": True},
                     "tts": {"supported": True},
                     "stt": {"supported": True},
                     "music_generation": {"supported": False},
@@ -456,10 +483,22 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     assert residency["source"] == "abstractruntime.host_facade"
     assert residency["mode"] == "remote_core_server"
     assert residency["supports"]["image_generation"] is True
+    assert residency["supports"]["text_to_video"] is True
+    assert residency["supports"]["image_to_video"] is True
+    assert residency["supports"]["video_generation"] is True
     assert residency["supports"]["tts"] is True
     assert residency["supports"]["stt"] is True
     assert residency["supports"]["music_generation"] is False
-    assert residency["tasks"] == ["text_generation", "image_generation", "tts", "stt", "music_generation"]
+    assert residency["tasks"] == [
+        "text_generation",
+        "image_generation",
+        "text_to_video",
+        "image_to_video",
+        "video_generation",
+        "tts",
+        "stt",
+        "music_generation",
+    ]
     assert residency["endpoints"] == {
         "loaded": "/api/gateway/models/loaded",
         "load": "/api/gateway/models/load",

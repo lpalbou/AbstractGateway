@@ -10,7 +10,7 @@ This guide gets a new installation running in **bundle mode** (recommended), the
 
 AbstractGateway is one component in the larger **AbstractFramework** ecosystem:
 - **AbstractRuntime** (required): durable runs + workflow registry + stores
-- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image plus voice/audio/music capabilities, and KG-backed bundle execution
+- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image/video plus voice/audio/music capabilities, and KG-backed bundle execution
 
 Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
@@ -145,13 +145,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.19
+  ghcr.io/lpalbou/abstractgateway-server:0.2.20
 ```
 
 See [deployment.md](./deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.19`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.20`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

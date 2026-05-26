@@ -15,7 +15,7 @@ Start here: [docs/getting-started.md](docs/getting-started.md)
 AbstractGateway is part of the **AbstractFramework** ecosystem:
 
 - **AbstractRuntime** (required): durable run model + workflow registry + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
-- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image plus voice/audio/music capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`)
+- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image/video plus voice/audio/music capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`)
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractCode / AbstractObserver / thin clients (rendering + operations)
 
 Related repos:
@@ -56,7 +56,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.19
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.20
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -64,13 +64,13 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.19
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.20
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
 `AbstractRuntime[multimodal,mcp-worker]`, Runtime-owned provider/media/tool
 facades, OpenAI-compatible text providers, workflow-backed and direct image,
-voice, audio, and music routes surfaced through Runtime, provider/session prompt-cache
+video, voice, audio, and music routes surfaced through Runtime, provider/session prompt-cache
 helpers, AbstractMemory/LanceDB KG support, AbstractAgent, and AbstractFlow
 compatibility.
 
@@ -86,7 +86,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.19
+  ghcr.io/lpalbou/abstractgateway-server:0.2.20
 ```
 
 Configure framework model defaults through execution-host capability routes:
@@ -121,6 +121,8 @@ Current direct Gateway APIs:
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - `POST /api/gateway/runs/{run_id}/images/generate`
 - `POST /api/gateway/runs/{run_id}/images/edit`
+- `POST /api/gateway/runs/{run_id}/videos/generate`
+- `POST /api/gateway/runs/{run_id}/videos/from_image`
 - `POST /api/gateway/runs/{run_id}/music/generate`
 - `GET /api/gateway/voice/voices`
 - `GET /api/gateway/audio/speech/models`
@@ -148,9 +150,10 @@ Discovery note:
   envelope and depends on lower-layer Runtime/Core surfaces
 
 Workflow/Core-backed capabilities:
-- Generated images are available to Runtime workflows through Runtime's image
-  backend integrations, and the direct Gateway image routes use the same
-  Runtime/Core image-generation and image-edit contracts.
+- Generated images and videos are available to Runtime workflows through
+  Runtime's media backend integrations, and the direct Gateway image/video
+  routes use the same Runtime/Core output-selector contracts. Video generation
+  exposes child-run progress through `abstract.progress` ledger records.
 - Generated music is available through Gateway's direct Runtime-backed child-run
   route, with provider/model discovery exposed through Gateway capability
   contracts and music catalog endpoints for higher apps.

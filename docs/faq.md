@@ -233,11 +233,14 @@ Gateway's direct run-scoped endpoint:
 ```text
 POST /api/gateway/runs/{run_id}/images/generate
 POST /api/gateway/runs/{run_id}/images/edit
+POST /api/gateway/runs/{run_id}/videos/generate
+POST /api/gateway/runs/{run_id}/videos/from_image
 ```
 
-The direct image endpoints use Runtime/Core image-generation and image-edit
-selectors and store the result as a run artifact, so they still require a
-configured Runtime-compatible image backend.
+The direct image and video endpoints use Runtime/Core output selectors and
+store the result as a run artifact, so they still require a configured
+Runtime-compatible vision/video backend. For long video runs, stream the
+returned `child_run_id` ledger and watch `abstract.progress` records.
 
 Generated music is exposed through Gateway's direct Runtime child-run route and
 its thin-client discovery/catalog contract:
