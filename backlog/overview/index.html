@@ -670,7 +670,7 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
 <tbody>
 <tr>
 <td><a href="../proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs/">2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md</a></td>
-<td>Promote when Gateway draft-space semantics and ephemeral-run lifecycle are validated against Flow UX and ledger expectations.</td>
+<td>Remaining optional hardening: draft-bundle cleanup and default memory-scope isolation; run-tree purge is implemented.</td>
 </tr>
 <tr>
 <td><a href="../proposed/2026-05-13_shared_identity_context/">2026-05-13_shared_identity_context.md</a></td>
@@ -863,6 +863,9 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
 <li>Gateway prompt-cache snapshot aliases now use Runtime's public host facade;
   the old Gateway-local provider-private snapshot code and dead Core catalog
   proxy module were removed.</li>
+<li>Gateway now owns AbstractFlow draft-test run purge through
+  <code>/api/gateway/runs/purge_drafts</code>, using Runtime optional deletion protocols
+  while keeping draft/published taxonomy out of Runtime.</li>
 </ul>
 <h2 id="completion-process">Completion Process<a class="headerlink" href="#completion-process" title="Permanent link">&para;</a></h2>
 <p>When a planned item is completed:</p>

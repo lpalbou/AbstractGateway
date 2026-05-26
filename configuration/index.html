@@ -444,10 +444,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#embeddings-optional" class="md-nav__link">
+  <a href="#embeddings" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Embeddings (optional)
+        Embeddings
       
     </span>
   </a>
@@ -806,10 +806,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#embeddings-optional" class="md-nav__link">
+  <a href="#embeddings" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Embeddings (optional)
+        Embeddings
       
     </span>
   </a>
@@ -902,8 +902,8 @@ compatibility (runs bundles produced by AbstractFlow; does not require the <code
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors:
-- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.22</code>
-- <code>abstractagent&gt;=0.3.7</code>
+- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.23</code>
+- <code>abstractagent&gt;=0.3.8</code>
 - <code>AbstractMemory[lancedb]&gt;=0.2.6</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
@@ -956,7 +956,8 @@ not implement memory stores itself.</p>
 </ul>
 <p>Backend behavior:</p>
 <ul>
-<li><code>lancedb</code>: persistent and vector-capable; semantic <code>query_text</code> requires Gateway embeddings.</li>
+<li><code>lancedb</code>: persistent and vector-capable; semantic <code>query_text</code> requires the execution-host
+  <code>embedding.text</code> capability route.</li>
 <li><code>sqlite</code>: persistent and structured-query only when <code>SQLiteTripleStore</code> is available; semantic <code>query_text</code> fails clearly.</li>
 <li><code>memory</code>: process-local test/dev backend; non-durable.</li>
 </ul>
@@ -976,12 +977,11 @@ persistence, vector support, and embedder status.</p>
 <h2 id="llmtool-defaults-bundle-mode">LLM/tool defaults (bundle mode)<a class="headerlink" href="#llmtool-defaults-bundle-mode" title="Permanent link">&para;</a></h2>
 <p>Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_PROVIDER</code> / <code>ABSTRACTGATEWAY_MODEL</code><br />
-  Used as defaults for LLM execution and Gateway LLM helper endpoints. Resolution
-  order is: explicit request/provider-model pins, Gateway env, flow-pinned
-  defaults when compiling bundles. If no pair is configured, helpers return a
-  clear configuration error instead of falling back to a hardcoded model or a
-  separate AbstractCore config file.
+<li><code>output.text</code> capability route
+  Default text route for LLM execution and Gateway LLM helper endpoints. Configure it through
+  <code>abstractgateway-config set-default output.text ...</code> or <code>abstractcore --set-global-default ...</code>.
+  If no pair is configured, helpers return a clear configuration error instead of falling back to a
+  hardcoded model.
   Evidence: <code>src/abstractgateway/provider_defaults.py</code>, <code>src/abstractgateway/hosts/bundle_host.py</code></li>
 <li><code>ABSTRACTGATEWAY_TOOL_MODE</code>:</li>
 <li><code>approval</code> (default): execute safe tools locally; require explicit approval for dangerous/unknown tools</li>
@@ -990,13 +990,19 @@ persistence, vector support, and embedder status.</p>
 <li><code>local</code> (or <code>local_all</code>): execute all tools inside the gateway process (dev only; higher risk)
   Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (tool executor selection)</li>
 </ul>
-<h3 id="embeddings-optional">Embeddings (optional)<a class="headerlink" href="#embeddings-optional" title="Permanent link">&para;</a></h3>
-<p>The gateway can expose an embeddings API if AbstractCore embedding deps are available.</p>
-<ul>
-<li><code>ABSTRACTGATEWAY_EMBEDDING_PROVIDER</code> / <code>ABSTRACTGATEWAY_EMBEDDING_MODEL</code><br />
-  Persisted under <code>&lt;DATA_DIR&gt;/gateway_embeddings.json</code> for stability across restarts.<br />
-  Evidence: <code>src/abstractgateway/embeddings_config.py</code></li>
-</ul>
+<h3 id="embeddings">Embeddings<a class="headerlink" href="#embeddings" title="Permanent link">&para;</a></h3>
+<p>The gateway exposes an embeddings API when the execution host has an explicit <code>embedding.text</code>
+capability default and AbstractCore embedding deps are available.</p>
+<p>Configure it through the same capability-default control plane used by Flow:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>embedding.text<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--provider<span class="w"> </span>lmstudio<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model<span class="w"> </span>text-embedding-nomic-embed-text-v1.5<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--base-url<span class="w"> </span>http://127.0.0.1:1234/v1
+</code></pre></div>
+<p>In embedded deployments Gateway uses the local Core embedding manager. In split deployments it
+delegates to the remote AbstractCore <code>/v1/embeddings</code> route so provider <code>base_url</code> is evaluated
+from the Core host.</p>
+<p>Evidence: <code>src/abstractgateway/embeddings_config.py</code></p>
 <h3 id="prompt-cache-controls-provider-dependent">Prompt cache controls (provider-dependent)<a class="headerlink" href="#prompt-cache-controls-provider-dependent" title="Permanent link">&para;</a></h3>
 <p>Gateway prompt-cache endpoints are available when the AbstractCore integration
 for the active provider/model exposes them. Remote providers usually provide
@@ -1054,7 +1060,7 @@ and <code>POST /api/gateway/runs/{run_id}/images/edit</code> when a Runtime/Core
 backend is configured or provider/model are supplied on the request. Local
 heavy engines remain explicit opt-ins in the provider packages.</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_PROVIDER</code> / <code>ABSTRACTGATEWAY_MODEL</code>: default text model for bundle LLM nodes</li>
+<li><code>output.text</code> capability route: default text model for bundle LLM nodes</li>
 <li><code>OPENAI_COMPATIBLE_BASE_URL</code> / <code>OPENAI_COMPATIBLE_API_KEY</code>: OpenAI-compatible text endpoint for AbstractCore providers</li>
 <li>Apple/MLX Docker deployments should point the lightweight Gateway container
     at host-native inference, for example
@@ -1079,7 +1085,9 @@ heavy engines remain explicit opt-ins in the provider packages.</p>
 <p>Core catalog proxy settings:</p>
 <ul>
 <li><code>ABSTRACTCORE_SERVER_BASE_URL</code>: explicit Core server base URL for catalog proxying.</li>
-<li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN</code> / <code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY</code> (or <code>ABSTRACTCORE_SERVER_API_KEY</code>): Core server auth token. This is separate from Gateway auth.</li>
+<li><code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN</code> / <code>ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY</code>
+  (or Core's <code>ABSTRACTCORE_AUTH_TOKEN</code> / <code>ABSTRACTCORE_SERVER_API_KEY</code>): Core server auth token.
+  This is separate from Gateway auth.</li>
 <li><code>ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S</code>: catalog proxy timeout (default <code>3.0</code> seconds).</li>
 </ul>
 <h2 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h2>

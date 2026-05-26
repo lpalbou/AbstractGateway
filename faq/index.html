@@ -1440,13 +1440,16 @@ The background runner polls the inbox and applies commands asynchronously.</p>
 <code>pip show AbstractRuntime abstractcore</code>.</p>
 <p>Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (imports under <code>needs_llm/needs_tools</code>).</p>
 <h3 id="my-bundle-fails-with-llm-nodes-but-no-default-providermodel-is-configured">My bundle fails with “LLM nodes but no default provider/model is configured”<a class="headerlink" href="#my-bundle-fails-with-llm-nodes-but-no-default-providermodel-is-configured" title="Permanent link">&para;</a></h3>
-<p>Provide defaults via env vars (most explicit):</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_PROVIDER</span><span class="o">=</span><span class="s2">&quot;lmstudio&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_MODEL</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
+<p>Configure the execution-host <code>output.text</code> route:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>output.text<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--provider<span class="w"> </span>lmstudio<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model<span class="w"> </span>qwen/qwen3.6-35b-a3b<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--base-url<span class="w"> </span>http://127.0.0.1:1234/v1
 </code></pre></div>
 <p>Alternatives:
 - Pin provider/model on at least one <code>llm_call</code> or <code>agent</code> node; the gateway scans the flow JSON for defaults.
-- Set Gateway env defaults before startup and keep provider secrets/base URLs in <code>abstractcore-config</code>.</p>
+- Keep provider secrets in <code>abstractcore-config</code>; use <code>--base-url</code> on the capability route when the
+  selected provider endpoint is not the provider default.</p>
 <p>Evidence: <code>_scan_flows_for_llm_defaults</code> + provider/model selection in <code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h3 id="why-do-tool-calls-not-execute">Why do tool calls not execute?<a class="headerlink" href="#why-do-tool-calls-not-execute" title="Permanent link">&para;</a></h3>
 <p>In bundle mode, tool execution is controlled by:</p>

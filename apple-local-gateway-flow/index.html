@@ -572,23 +572,30 @@ python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </sp
 AbstractCore, AbstractRuntime, AbstractVision, and AbstractVoice capability
 packages needed by Gateway.</p>
 <h2 id="3-configure-local-engines">3. Configure local engines<a class="headerlink" href="#3-configure-local-engines" title="Permanent link">&para;</a></h2>
-<p>Use Gateway-scoped env vars so the Gateway catalog routes and runtime use the
-same settings.</p>
+<p>Use Gateway env vars for Gateway internals, then set framework model defaults through capability
+routes owned by the execution host.</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;dev-local-token&quot;</span>
-
-<span class="c1"># Local LLM routing. Replace the model with the local MLX model you want.</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_PROVIDER</span><span class="o">=</span><span class="s2">&quot;mlx&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_MODEL</span><span class="o">=</span><span class="s2">&quot;mlx-community/Qwen3-4B-4bit&quot;</span>
 
 <span class="c1"># Local image generation on MPS through AbstractVision/Diffusers.</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VISION_BACKEND</span><span class="o">=</span><span class="s2">&quot;diffusers&quot;</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VISION_MODEL_ID</span><span class="o">=</span><span class="s2">&quot;runwayml/stable-diffusion-v1-5&quot;</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VISION_DIFFUSERS_DEVICE</span><span class="o">=</span><span class="s2">&quot;mps&quot;</span>
 
+<span class="c1"># Alternative: Apple-local MLX-Gen through AbstractVision q4 presets.</span>
+<span class="c1"># Pre-download with: abstractvision download flux2-klein-4b --provider mlx-gen</span>
+<span class="c1"># export ABSTRACTGATEWAY_VISION_BACKEND=&quot;mlx-gen&quot;</span>
+<span class="c1"># export ABSTRACTGATEWAY_VISION_MODEL_ID=&quot;mlx-gen/flux2-klein-4b&quot;</span>
+
 <span class="c1"># Local voice generation and transcription through AbstractVoice.</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_TTS_ENGINE</span><span class="o">=</span><span class="s2">&quot;piper&quot;</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_STT_ENGINE</span><span class="o">=</span><span class="s2">&quot;faster_whisper&quot;</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_STT_MODEL</span><span class="o">=</span><span class="s2">&quot;base&quot;</span>
+</code></pre></div>
+<p>Set the default text route:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>output.text<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--provider<span class="w"> </span>lmstudio<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model<span class="w"> </span>qwen/qwen3.6-35b-a3b<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--base-url<span class="w"> </span>http://127.0.0.1:1234/v1
 </code></pre></div>
 <p>Optional prefetch for voice models:</p>
 <div class="highlight"><pre><span></span><code>abstractvoice-prefetch<span class="w"> </span>--piper<span class="w"> </span>en

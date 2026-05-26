@@ -1146,9 +1146,9 @@ surface. Catalog routes now also include a stable Gateway-owned envelope:</p>
 clients should read <code>catalog</code> plus <code>items</code>; older clients can keep using route-
 specific fields like <code>models</code>, <code>provider_models</code>, <code>profiles</code>, or <code>voices</code>.</p>
 <p>Provider discovery also reports the resolved default provider/model when one is
-configured. The resolver follows request values, Gateway env, and AbstractCore
-global defaults; if no pair exists, the response includes <code>default_error</code> rather
-than a hardcoded local model.</p>
+configured. The resolver follows request values, flow pins, and the execution-host
+<code>output.text</code> capability route; if no pair exists, the response includes
+<code>default_error</code> rather than a hardcoded local model.</p>
 <p>It also includes a versioned thin-client contract:</p>
 <ul>
 <li><code>capabilities.contracts.version</code>: currently <code>1</code></li>
@@ -1253,9 +1253,9 @@ run artifact and emits <code>abstract.media.image.generated</code> with:</p>
 </ul>
 <p>If the active workflow runtime already has an AbstractCore LLM client, the route
 uses it. For tools-only workflows, the route can create a direct Runtime/Core
-client from request <code>provider</code>/<code>model</code> or <code>ABSTRACTGATEWAY_PROVIDER</code> /
-<code>ABSTRACTGATEWAY_MODEL</code>. Unsupported or unconfigured deployments return a
-structured <code>ok=false</code> response instead of a failed run.</p>
+client from request <code>provider</code>/<code>model</code> or the execution-host capability route
+default. Unsupported or unconfigured deployments return a structured <code>ok=false</code>
+response instead of a failed run.</p>
 <p>Gateway also exposes a direct image-edit sibling route:</p>
 <ul>
 <li><code>POST /api/gateway/runs/{run_id}/images/edit</code></li>
@@ -1292,9 +1292,9 @@ Gateway resolves the store through:</p>
 </ul>
 <p>Structured queries work with LanceDB and in-memory stores. SQLite also works
 when the installed AbstractMemory build exposes <code>SQLiteTripleStore</code>. Semantic
-<code>query_text</code> requires a vector-capable backend plus configured Gateway
-embeddings; SQLite returns a clear 400 instead of pretending to support semantic
-recall.</p>
+<code>query_text</code> requires a vector-capable backend plus the execution-host
+<code>embedding.text</code> route; SQLite returns a clear 400 instead of pretending to
+support semantic recall.</p>
 <h2 id="prompt-cache-control-plane-operator-api">Prompt-cache control plane (operator API)<a class="headerlink" href="#prompt-cache-control-plane-operator-api" title="Permanent link">&para;</a></h2>
 <p>The gateway exposes prompt-cache operator endpoints under <code>/api/gateway/prompt_cache/*</code>.</p>
 <p>Core endpoints:</p>

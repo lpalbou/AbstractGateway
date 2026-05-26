@@ -594,7 +594,7 @@
 <h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Created: 2026-05-09</li>
-<li>Status: Proposed</li>
+<li>Status: Partially implemented</li>
 <li>Completed: N/A</li>
 </ul>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
@@ -607,8 +607,12 @@ versions, semantic memory, or long-term ledger storage.</p>
 <li><code>/api/gateway/visualflows/{flow_id}/publish</code> packs a <code>.flow</code> bundle and installs it.</li>
 <li><code>/api/gateway/runs/start</code> starts durable Runtime runs.</li>
 <li>Gateway creates a per-run workspace when <code>workspace_root</code> is omitted.</li>
-<li>Run listing/history currently treats editor tests like any other durable run unless clients
-  filter them themselves.</li>
+<li>Gateway accepts sanitized top-level <code>run_lifecycle</code> metadata, hides
+  <code>purpose: "draft_test"</code> runs from default <code>/runs</code>, rejects accidental production starts of
+  explicit <code>draft.*</code> bundle versions, and exposes <code>/runs/purge_drafts</code> for expired ephemeral
+  draft-test run trees.</li>
+<li>Gateway-created default workspaces now include <code>.abstractgateway-workspace.json</code> ownership
+  markers so purge can delete only Gateway-owned workspace directories.</li>
 </ul>
 <h2 id="why-this-might-matter">Why this might matter<a class="headerlink" href="#why-this-might-matter" title="Permanent link">&para;</a></h2>
 <p>Without a Gateway-owned draft/private lifecycle, AbstractFlow has to fake draft semantics with
@@ -630,7 +634,8 @@ into the deployment composition root.</p>
 <li>hide draft/private runs unless <code>include_drafts=true</code> or equivalent;</li>
 <li>preserve current-session draft runs for Flow debugging.</li>
 <li>Cleanup:</li>
-<li>TTL-based cleanup for draft runs, ledgers, artifacts, and draft workspaces;</li>
+<li>TTL-based cleanup for draft runs, ledgers, artifacts, command records, and Gateway-owned
+    workspaces is implemented through <code>/runs/purge_drafts</code>;</li>
 <li>safe cleanup of draft bundles without touching published versions.</li>
 <li>Memory safety:</li>
 <li>draft runs should default to isolated memory scopes or clear warnings when writing to durable
@@ -638,13 +643,14 @@ into the deployment composition root.</p>
 </ul>
 <h2 id="evidence-to-gather-before-promotion">Evidence to gather before promotion<a class="headerlink" href="#evidence-to-gather-before-promotion" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Confirm whether Gateway should own all cleanup directly or delegate generic retention mechanics to
-  AbstractRuntime storage protocols.</li>
-<li>Decide whether draft bundles should live in the same <code>WorkflowBundleRegistry</code> with a flag or in a
-  separate draft registry.</li>
-<li>Decide whether draft run metadata belongs in <code>StartRunRequest</code> top-level fields or under
-  <code>input_data["_runtime"]</code>.</li>
-<li>Decide what default TTL is acceptable for local dev and hosted deployments.</li>
+<li>Gateway owns draft-test cleanup policy and delegates only optional storage deletion mechanics to
+  AbstractRuntime.</li>
+<li>Draft bundles live in the same <code>WorkflowBundleRegistry</code> with <code>metadata.lifecycle.channel</code>
+  and <code>draft.*</code> version classification.</li>
+<li>Draft run metadata belongs in <code>StartRunRequest.run_lifecycle</code>, normalized into private run vars
+  as <code>_run_lifecycle</code>.</li>
+<li>Default draft-run TTL is seven days and can be overridden with
+  <code>ABSTRACTGATEWAY_DRAFT_RUN_RETENTION_TTL_S</code> / <code>ABSTRACTGATEWAY_DRAFT_RUN_TTL_S</code>.</li>
 </ul>
 <h2 id="validation-ideas">Validation ideas<a class="headerlink" href="#validation-ideas" title="Permanent link">&para;</a></h2>
 <ul>
@@ -667,8 +673,9 @@ into the deployment composition root.</p>
 <li>Do not delete production runs through the draft cleanup path.</li>
 </ul>
 <h2 id="guidance-for-future-agents">Guidance for future agents<a class="headerlink" href="#guidance-for-future-agents" title="Permanent link">&para;</a></h2>
-<p>Promote this when implementing AbstractFlow's <code>Test Draft</code> lifecycle. Keep the API explicit rather
-than relying on the magic string <code>bundle_version="dev"</code> as the only signal.</p>
+<p>AbstractFlow's <code>Test Draft</code> lifecycle is now implemented. Keep this item proposed only for the
+remaining optional hardening around draft-bundle cleanup and default memory-scope isolation; do not
+reopen run-tree purge unless the tests around <code>/runs/purge_drafts</code> fail.</p>
 
 
 
