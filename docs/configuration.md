@@ -12,10 +12,6 @@ compatibility (runs bundles produced by AbstractFlow; does not require the `abst
 Optional extras (see `pyproject.toml`):
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
 - `abstractgateway[gpu]`: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
-- `abstractgateway[http]`, `[server]`, `[multimodal]`, `[memory]`, `[voice]`, `[vision]`, `[all]`: compatibility aliases because the base install now includes the remote-light server stack
-- `abstractgateway[server-nvidia]`: compatibility alias for the GPU profile used by older NVIDIA Docker commands
-- `abstractgateway[visualflow]`: deprecated compatibility alias (VisualFlow directory mode was removed; does nothing)
-- `abstractgateway[telegram]`: compatibility alias; Telegram bridge support uses base install dependencies
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
@@ -200,14 +196,14 @@ and hybrid runtimes report `prompt_cache_local_only`.
 
 ### Multimodal provider/plugin controls
 
-The `server`, `multimodal`, and `all` extras install the lightweight AbstractCore
-plugin surface for generated images, generated videos, generated voice, STT, and music
-capabilities. Voice generation, transcription, generated images, and generated
-music have direct Gateway endpoints; generated images are also exposed through
-Runtime/Core workflows and through `POST /api/gateway/runs/{run_id}/images/generate`
-and `POST /api/gateway/runs/{run_id}/images/edit` when a Runtime/Core image
-backend is configured or provider/model are supplied on the request. Local
-heavy engines remain explicit opt-ins in the provider packages.
+The base install already includes the Gateway HTTP/SSE server and the Runtime
+multimodal integration layer. Direct Gateway routes for voice/audio, image/video,
+and music become available when the corresponding lower-layer capability
+packages are installed on the gateway host (or when Gateway is configured to
+proxy to a remote AbstractCore server).
+
+Local heavy engines remain explicit opt-ins in the provider packages; Gateway
+does not implicitly install them.
 
 - `output.text` capability route: default text model for bundle LLM nodes
 - `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`: OpenAI-compatible text endpoint for AbstractCore providers

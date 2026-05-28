@@ -38,10 +38,6 @@ pip install "abstractgateway[apple]"
 pip install "abstractgateway[gpu]"
 ```
 
-Compatibility extras such as `abstractgateway[http]`, `[server]`, `[memory]`,
-`[multimodal]`, `[voice]`, `[vision]`, and `[all]` remain accepted, but the
-base install already contains the remote-light server stack.
-
 With the base install and a configured provider stack, Gateway can surface
 run-scoped direct TTS, STT, image generation, image edit, and music generation
 for higher apps through one shared capability contract.

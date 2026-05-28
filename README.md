@@ -200,9 +200,6 @@ pip install abstractgateway
 
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities
 - `abstractgateway[gpu]`: full local GPU profile with vLLM/HuggingFace, local Diffusers image generation, local voice engines, music, and KG memory; this is also the NVIDIA Docker install profile
-- `abstractgateway[server]`, `[http]`, `[multimodal]`, `[memory]`, `[voice]`, `[vision]`, and `[all]`: compatibility aliases; the base package already includes the remote-light server stack
-- `abstractgateway[server-nvidia]`: compatibility alias for the GPU profile used by older NVIDIA Docker commands
-- `abstractgateway[telegram]` and `[visualflow]`: compatibility aliases; Telegram bridge and VisualFlow publishing use base install dependencies
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local test/dev deps
 

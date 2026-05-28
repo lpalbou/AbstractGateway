@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Removed legacy compatibility install extras (`abstractgateway[http]`, `[server]`, `[multimodal]`, `[memory]`, `[voice]`, `[vision]`, `[telegram]`, `[visualflow]`, `[all]`, `[all-apple]`, `[all-gpu]`, `[server-nvidia]`). The supported install surface is now:
+  - `pip install abstractgateway`
+  - `pip install "abstractgateway[apple]"`
+  - `pip install "abstractgateway[gpu]"`
+
 ## [0.2.20] - 2026-05-26
 
 ### Added

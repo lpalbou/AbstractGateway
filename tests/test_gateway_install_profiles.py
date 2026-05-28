@@ -43,19 +43,29 @@ def test_base_install_is_remote_light_server() -> None:
 def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     extras = _pyproject()["project"]["optional-dependencies"]
 
-    assert extras["http"] == []
-    assert extras["server"] == []
-    assert extras["multimodal"] == []
-    assert extras["memory"] == []
-    assert extras["voice"] == []
-    assert extras["vision"] == []
-    assert extras["visualflow"] == []
-    assert extras["telegram"] == []
-    assert extras["all"] == []
+    # Legacy compatibility aliases were removed; keep the user-facing install
+    # surface minimal and unambiguous.
+    for legacy in (
+        "http",
+        "server",
+        "multimodal",
+        "memory",
+        "voice",
+        "vision",
+        "visualflow",
+        "telegram",
+        "all",
+        "all-apple",
+        "all-gpu",
+        "server-nvidia",
+    ):
+        assert legacy not in extras
+
     assert "apple" in extras
     assert "gpu" in extras
-    assert "all-apple" in extras
-    assert "all-gpu" in extras
+    # Tooling extras remain for contributors/CI.
+    assert "dev" in extras
+    assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
     assert "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.24" in apple
@@ -74,16 +84,6 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvision" not in gpu
     assert "abstractvoice" not in gpu
     assert "abstractmusic" not in gpu
-
-    assert extras["all-apple"] == extras["apple"]
-    assert extras["all-gpu"] == extras["gpu"]
-
-    nvidia = "\n".join(extras["server-nvidia"])
-    assert nvidia == gpu
-
-    assert "AbstractMemory[all-apple]>=0.2.6" in extras["all-apple"]
-    assert "AbstractMemory[all-gpu]>=0.2.6" in extras["all-gpu"]
-    assert "AbstractMemory[all-gpu]>=0.2.6" in extras["server-nvidia"]
 
 
 def test_config_entrypoint_is_published() -> None:

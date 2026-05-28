@@ -25,15 +25,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The base package is the remote-light server install. These extras remain as
-# compatibility aliases for existing install commands.
-http = []
-server = []
-multimodal = []
-memory = []
+# Supported install profiles.
+# - Base install (`pip install abstractgateway`) is the remote-light HTTP/SSE server.
+# - `apple` / `gpu` select hardware-local stacks for the gateway host.
+#
+# Tooling extras for contributors: `dev`, `docs`.
 
-# Native Apple Gateway profile. This is for direct macOS Python installs, not
-# Docker, because MLX/Metal-backed engines need the host Apple runtime. As the
+# Native Apple Gateway profile. This is for direct macOS Python installs (not
+# Docker), because MLX/Metal-backed engines need the host Apple runtime. As the
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
@@ -49,41 +48,6 @@ gpu = [
   "abstractagent[all-gpu]>=0.3.8",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]
-
-# Native macOS aggregate profile for full local+remote Gateway installs.
-all-apple = [
-  "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.24",
-  "abstractagent[all-apple]>=0.3.8",
-  "AbstractMemory[all-apple]>=0.2.6",
-]
-
-# Full GPU aggregate profile for CUDA/ROCm-style local engine hosts.
-all-gpu = [
-  "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.24",
-  "abstractagent[all-gpu]>=0.3.8",
-  "AbstractMemory[all-gpu]>=0.2.6",
-]
-
-# Compatibility alias for historical Docker builds. New NVIDIA Docker builds use
-# `abstractgateway[gpu]`.
-server-nvidia = [
-  "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.24",
-  "abstractagent[all-gpu]>=0.3.8",
-  "AbstractMemory[all-gpu]>=0.2.6",
-]
-
-# Voice/audio capabilities (TTS + STT) via AbstractVoice.
-voice = []
-
-# Generative vision capabilities via AbstractCore's AbstractVision plugin.
-vision = []
-
-# Compatibility alias (deprecated): VisualFlow directory mode was removed.
-visualflow = []
-
-# Telegram's AbstractCore tool integration is already present in the base
-# remote-light server install.
-telegram = []
 dev = [
   "pytest>=7.0.0",
   "httpx>=0.27.0",
@@ -93,11 +57,6 @@ docs = [
   "mkdocs>=1.6.0",
   "mkdocs-material>=9.0.0",
 ]
-
-# Compatibility alias. The base install is already the remote-light
-# batteries-included server; hardware-local engines are selected by `apple` or
-# `gpu`.
-all = []
 
 [project.scripts]
 abstractgateway = "abstractgateway.cli:main"
