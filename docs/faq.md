@@ -320,6 +320,11 @@ Keep the default `lancedb` backend for durable vector-capable memory, use
 `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite` only when your installed
 AbstractMemory build exposes `SQLiteTripleStore`.
 
+A fresh persistent store does not make KG memory unavailable. Capability
+discovery treats the surface as available once AbstractMemory is installed and
+the configured backend resolves; empty structured queries return empty results
+until a flow asserts triples.
+
 Evidence: memory KG wiring in `src/abstractgateway/memory_store.py` and
 `src/abstractgateway/hosts/bundle_host.py`.
 

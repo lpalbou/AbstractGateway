@@ -18,6 +18,7 @@ Key invariants / defaults (evidence in code):
 
 Multimodal notes:
 - Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (best-effort; reports installed optional capabilities like `voice`, `tools`, `visualflow`, `vision_fallback`, `media`, plus the versioned shared run contract including input-data/history-bundle read endpoints, direct media feature gates, voice `tts|stt|listen`, prompt-cache surfaces, and model-residency truth).
+- The shared artifact contract includes run artifact listing/content, session-visible artifact listing, cross-run/session/run artifact search, workspace-path import, and artifact-to-workspace export. Browser-local files use upload; Gateway workspace paths use import.
 - Direct Gateway voice/audio durable endpoints (when `abstractvoice` is installed on the gateway host):
   - STT: `POST /api/gateway/runs/{run_id}/audio/transcribe`
   - TTS: `POST /api/gateway/runs/{run_id}/voice/tts`
@@ -35,7 +36,7 @@ Multimodal notes:
 - The shared client contract also exposes `common.readiness` as `gateway_surface_readiness_v1`: a compact surface-level summary derived from Gateway descriptors, media gates, memory, prompt-cache, and Runtime-backed model-residency truth.
 - Deployment/readiness truth is still narrower than catalog shape; Gateway does not invent selected-backend or degraded-state truth unless Runtime/Core exposes it.
 - `voice.listen` is a host-capture contract for higher apps, not a server microphone socket; clients capture locally and then emit an event or upload audio for STT.
-- KG memory is selected through Gateway env (`ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory`, plus `sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`) and queried through `POST /api/gateway/kg/query`; store implementations remain owned by AbstractMemory, and Gateway currently targets the compatible AbstractMemory 0.0.x TripleStore API.
+- KG memory is selected through Gateway env (`ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory`, plus `sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`) and queried through `POST /api/gateway/kg/query`; store implementations remain owned by AbstractMemory, Gateway targets the compatible AbstractMemory 0.0.x TripleStore API, and fresh empty stores are reported as available when the backend resolves.
 - Text embeddings use the execution-host `embedding.text` capability route. Gateway does not persist a separate embedding provider/model file; split deployments proxy embedding generation to the remote AbstractCore server.
 - `/api/gateway/prompt_cache/*` exposes provider/model prompt-cache controls; `/api/gateway/prompt_cache/saved|save|load` are Runtime-backed host-local export/import admin aliases; `/api/gateway/sessions/{session_id}/prompt_cache/*` adds Gateway-owned session naming/status/prepare/clear/rebuild orchestration over those provider controls.
 - Docker scope: `abstractgateway-server` is the release-grade lightweight base-package image; `abstractgateway-server-nvidia` installs `abstractgateway[gpu]` and is experimental/best-effort until a CUDA smoke gate exists. Apple/MLX inference should run natively on macOS and be reached from the Gateway container via Docker Model Runner (`http://model-runner.docker.internal/engines/v1`) or a host bridge OpenAI-compatible URL.

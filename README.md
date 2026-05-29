@@ -56,7 +56,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.20
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.21
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -64,7 +64,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.20
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
@@ -86,7 +86,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.20
+  ghcr.io/lpalbou/abstractgateway-server:0.2.21
 ```
 
 Configure framework model defaults through execution-host capability routes:
@@ -131,6 +131,8 @@ Current direct Gateway APIs:
 - `GET /api/gateway/audio/music/models`
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/models`
+- `/api/gateway/artifacts/search` cross-run/session/run artifact search with
+  modality, content-type, text, and tag filters
 - `/api/gateway/prompt_cache/*` provider/model operator controls
 - `/api/gateway/prompt_cache/saved|save|load` Runtime-backed host-local export/import admin aliases
 - `/api/gateway/sessions/{session_id}/prompt_cache/*` session lifecycle controls
@@ -206,7 +208,9 @@ pip install abstractgateway
 KG memory nodes use Gateway's memory resolver. The default durable/vector
 backend is LanceDB; `memory` is process-local dev/test storage, and `sqlite` is
 structured-only when the installed AbstractMemory build exposes
-`SQLiteTripleStore`.
+`SQLiteTripleStore`. A fresh persistent store is still reported as available
+when the backend resolves; empty queries return empty results instead of hiding
+KG authoring surfaces.
 
 Gateway has a first-class config helper:
 

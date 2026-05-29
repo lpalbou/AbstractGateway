@@ -124,3 +124,156 @@ def test_gateway_artifacts_api_list_metadata_and_download(tmp_path: Path, monkey
         other = store.store(b"world", content_type="text/plain", run_id="other-run")
         resp = client.get(f"/api/gateway/runs/{run_id}/artifacts/{other.artifact_id}", headers=headers)
         assert resp.status_code == 404
+
+
+def test_gateway_artifact_import_session_list_export_and_run_start_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "input.txt").write_text("artifact handoff\n", encoding="utf-8")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(workspace))
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+    from abstractruntime.storage.artifacts import FileArtifactStore
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        imported = client.post(
+            "/api/gateway/artifacts/import",
+            json={
+                "session_id": "s-artifacts",
+                "source": {"kind": "workspace_path", "path": "input.txt"},
+                "pin_id": "image",
+            },
+            headers=headers,
+        )
+        assert imported.status_code == 200, imported.text
+        body = imported.json()
+        ref = body.get("artifact") or {}
+        assert isinstance(ref, dict)
+        artifact_id = ref.get("$artifact")
+        assert isinstance(artifact_id, str) and artifact_id
+        assert ref.get("artifact_id") == artifact_id
+        assert ref.get("run_id") == "session_memory_s-artifacts"
+        assert ref.get("source_path") == "input.txt"
+        assert ref.get("content_type") == "text/plain"
+
+        listed = client.get("/api/gateway/sessions/s-artifacts/artifacts", headers=headers)
+        assert listed.status_code == 200, listed.text
+        items = listed.json().get("items") or []
+        found = next((item for item in items if item.get("artifact_id") == artifact_id), None)
+        assert isinstance(found, dict)
+        assert found.get("run_id") == "session_memory_s-artifacts"
+        assert (found.get("ref") or {}).get("$artifact") == artifact_id
+
+        searched = client.get(
+            "/api/gateway/artifacts/search",
+            params={"scope": "all", "modality": "text", "query": "input.txt", "tags": '{"pin_id":"image"}'},
+            headers=headers,
+        )
+        assert searched.status_code == 200, searched.text
+        search_items = searched.json().get("items") or []
+        assert any(item.get("artifact_id") == artifact_id for item in search_items)
+
+        session_search = client.get(
+            "/api/gateway/artifacts/search",
+            params={"scope": "session", "session_id": "s-artifacts", "content_type": "text/*"},
+            headers=headers,
+        )
+        assert session_search.status_code == 200, session_search.text
+        assert any(item.get("artifact_id") == artifact_id for item in session_search.json().get("items") or [])
+
+        producer = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "session_id": "producer-session", "input_data": {}},
+            headers=headers,
+        )
+        assert producer.status_code == 200, producer.text
+        producer_run_id = producer.json()["run_id"]
+        prior_meta = FileArtifactStore(runtime_dir).store(
+            b"png",
+            content_type="image/png",
+            run_id=producer_run_id,
+            tags={"filename": "prior.png", "modality": "image"},
+        )
+        prior_ref = {
+            "$artifact": prior_meta.artifact_id,
+            "artifact_id": prior_meta.artifact_id,
+            "run_id": producer_run_id,
+            "content_type": "image/png",
+            "modality": "image",
+            "filename": "prior.png",
+        }
+        prior_search = client.get(
+            "/api/gateway/artifacts/search",
+            params={"scope": "all", "modality": "image", "query": "prior.png"},
+            headers=headers,
+        )
+        assert prior_search.status_code == 200, prior_search.text
+        assert any(item.get("artifact_id") == prior_meta.artifact_id for item in prior_search.json().get("items") or [])
+
+        started = client.post(
+            "/api/gateway/runs/start",
+            json={
+                "bundle_id": bundle_id,
+                "flow_id": flow_id,
+                "session_id": "s-artifacts",
+                "input_data": {"image": ref},
+            },
+            headers=headers,
+        )
+        assert started.status_code == 200, started.text
+
+        explicit_prior_ref = client.post(
+            "/api/gateway/runs/start",
+            json={
+                "bundle_id": bundle_id,
+                "flow_id": flow_id,
+                "session_id": "s-artifacts",
+                "input_data": {"image": prior_ref},
+            },
+            headers=headers,
+        )
+        assert explicit_prior_ref.status_code == 200, explicit_prior_ref.text
+
+        rejected = client.post(
+            "/api/gateway/runs/start",
+            json={
+                "bundle_id": bundle_id,
+                "flow_id": flow_id,
+                "session_id": "other-session",
+                "input_data": {"image": ref},
+            },
+            headers=headers,
+        )
+        assert rejected.status_code == 404, rejected.text
+        assert "not visible to session" in rejected.json().get("detail", "")
+
+        exported = client.post(
+            f"/api/gateway/runs/session_memory_s-artifacts/artifacts/{artifact_id}/export",
+            json={"path": "exports/copy.txt", "create_parent_dirs": True},
+            headers=headers,
+        )
+        assert exported.status_code == 200, exported.text
+        assert (workspace / "exports" / "copy.txt").read_text(encoding="utf-8") == "artifact handoff\n"
+
+        blocked_overwrite = client.post(
+            f"/api/gateway/runs/session_memory_s-artifacts/artifacts/{artifact_id}/export",
+            json={"path": "exports/copy.txt"},
+            headers=headers,
+        )
+        assert blocked_overwrite.status_code == 409, blocked_overwrite.text

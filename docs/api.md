@@ -116,6 +116,70 @@ curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`stream_ledger`).
 
+## Artifacts and filesystem handoff
+
+Gateway artifacts are the cross-package representation for files, media, and
+large payloads. Thin clients should pass artifact refs across runs instead of
+raw bytes or local paths:
+
+```json
+{
+  "$artifact": "abc123",
+  "artifact_id": "abc123",
+  "run_id": "session_memory_sess-1",
+  "content_type": "image/png",
+  "filename": "input.png"
+}
+```
+
+List run artifacts:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/artifacts"
+```
+
+List artifacts visible to a session:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/sessions/sess-1/artifacts"
+```
+
+Search artifacts across Gateway storage:
+
+```bash
+curl -sS -H "$AUTH" \
+  "$BASE_URL/api/gateway/artifacts/search?scope=all&modality=image&query=logo&tags=pin_id=image"
+```
+
+`scope` can be `all`, `session`, or `run`. Use `session_id` with
+`scope=session` and `run_id` with `scope=run`; omit both for `scope=all`.
+`modality` filters normalized artifact type (`image`, `audio`, `video`,
+`text`, `document`, `music`, `voice`, or `artifact`), `content_type` accepts
+exact values or prefixes such as `image/*`, and `tags` accepts either a JSON
+object or comma-separated `key=value` filters.
+
+Import a server workspace path into a session artifact:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"session_id":"sess-1","source":{"kind":"workspace_path","path":"inputs/photo.png"},"pin_id":"image"}' \
+  "$BASE_URL/api/gateway/artifacts/import"
+```
+
+Export an artifact back into the server workspace:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"path":"outputs/photo.png","create_parent_dirs":true,"overwrite":false}' \
+  "$BASE_URL/api/gateway/runs/<run_id>/artifacts/<artifact_id>/export"
+```
+
+Import and export use the same Gateway workspace policy as file helpers:
+workspace roots, mounted roots, ignored paths, and size limits are enforced on
+the server. Browser-local files should be uploaded through
+`POST /api/gateway/attachments/upload`; browser-local file paths are not
+interpreted as Gateway workspace paths.
+
 ## Durable commands (`POST /api/gateway/commands`)
 
 Commands are appended to a durable inbox and applied asynchronously by the runner.
@@ -206,7 +270,9 @@ It also includes a versioned thin-client contract:
 - `capabilities.contracts.version`: currently `1`
 - `capabilities.contracts.common`: shared run start/list/summary/input/history,
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
-  controls
+  controls. `common.artifacts` includes run listing/content, session artifact
+  listing, artifact search, workspace import, and workspace export descriptors
+  when available.
 - `capabilities.contracts.common.readiness`: compact Gateway-owned
   `gateway_surface_readiness_v1` summary derived from the shared endpoint/media/
   residency descriptors
@@ -379,6 +445,11 @@ when the installed AbstractMemory build exposes `SQLiteTripleStore`. Semantic
 `query_text` requires a vector-capable backend plus the execution-host
 `embedding.text` route; SQLite returns a clear 400 instead of pretending to
 support semantic recall.
+
+Capability discovery reports KG memory as available when AbstractMemory is
+installed and the configured backend can be resolved. A fresh persistent store
+does not need to exist yet; empty-store structured queries return an empty
+result rather than making Flow authoring nodes unavailable.
 
 ## Prompt-cache control plane (operator API)
 

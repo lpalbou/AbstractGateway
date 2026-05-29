@@ -704,14 +704,27 @@ class KGQueryResponse(BaseModel):
 
 class ArtifactListItem(BaseModel):
     artifact_id: str
+    run_id: Optional[str] = None
     content_type: Optional[str] = None
     size_bytes: Optional[int] = None
     created_at: Optional[str] = None
     tags: Dict[str, str] = Field(default_factory=dict)
+    filename: Optional[str] = None
+    source_path: Optional[str] = None
+    sha256: Optional[str] = None
+    modality: Optional[str] = None
+    ref: Optional[Dict[str, Any]] = None
 
 
 class ArtifactListResponse(BaseModel):
     items: list[ArtifactListItem] = Field(default_factory=list)
+
+
+class ArtifactSearchResponse(ArtifactListResponse):
+    scope: str = Field(default="all")
+    query: Optional[str] = None
+    modality: Optional[str] = None
+    tags: Dict[str, str] = Field(default_factory=dict)
 
 
 class AttachmentIngestRequest(BaseModel):
@@ -726,6 +739,37 @@ class AttachmentIngestRequest(BaseModel):
     workspace_access_mode: Optional[str] = Field(default=None, description="Workspace access mode (workspace_only|workspace_or_allowed).")
     workspace_allowed_paths: Optional[str] = Field(default=None, description="Newline-separated allowed root directories (mounted).")
     workspace_ignored_paths: Optional[str] = Field(default=None, description="Newline-separated ignored paths (blocked).")
+
+
+class ArtifactImportSource(BaseModel):
+    kind: Optional[str] = Field(default="workspace_path", description="Source kind. Currently supports workspace_path.")
+    path: Optional[str] = Field(default=None, description="Workspace-relative or mounted server path.")
+
+
+class ArtifactImportRequest(BaseModel):
+    session_id: str = Field(..., description="Session id that owns the imported artifact.")
+    path: Optional[str] = Field(default=None, description="Workspace-relative path. Alias for source.path.")
+    source: Optional[ArtifactImportSource] = Field(default=None, description="Structured source descriptor.")
+    filename: Optional[str] = Field(default=None, description="Optional filename override (defaults to basename of path).")
+    content_type: Optional[str] = Field(default=None, description="Optional content type override.")
+    pin_id: Optional[str] = Field(default=None, description="Optional input pin id for provenance.")
+    purpose: Optional[str] = Field(default="run_input", description="Artifact purpose tag.")
+    tags: Optional[Dict[str, str]] = Field(default=None, description="Additional string tags.")
+    workspace_root: Optional[str] = Field(default=None, description="Optional workspace root override (local/trusted mode only).")
+    workspace_access_mode: Optional[str] = Field(default=None, description="Workspace access mode.")
+    workspace_allowed_paths: Optional[str] = Field(default=None, description="Newline-separated allowed root directories.")
+    workspace_ignored_paths: Optional[str] = Field(default=None, description="Newline-separated ignored paths.")
+
+
+class ArtifactExportRequest(BaseModel):
+    path: Optional[str] = Field(default=None, description="Workspace-relative destination path.")
+    destination: Optional[str] = Field(default=None, description="Alias for path.")
+    overwrite: bool = Field(default=False, description="Replace an existing file when true.")
+    create_parent_dirs: bool = Field(default=False, description="Create missing parent directories when true.")
+    workspace_root: Optional[str] = Field(default=None, description="Optional workspace root override (local/trusted mode only).")
+    workspace_access_mode: Optional[str] = Field(default=None, description="Workspace access mode.")
+    workspace_allowed_paths: Optional[str] = Field(default=None, description="Newline-separated allowed root directories.")
+    workspace_ignored_paths: Optional[str] = Field(default=None, description="Newline-separated ignored paths.")
 
 
 def _require_bundle_host(svc: Any) -> Any:
@@ -2321,6 +2365,437 @@ def _resolve_workspace_path(*, base: Path, mounts: Dict[str, Path], raw_path: st
     return resolved, virt_norm, mount, root
 
 
+def _max_attachment_bytes() -> int:
+    try:
+        max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip()
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
+        if max_bytes <= 0:
+            return 25 * 1024 * 1024
+        return max_bytes
+    except Exception:
+        return 25 * 1024 * 1024
+
+
+def _request_workspace_scope(req: Any) -> tuple[Path, Dict[str, Path], tuple[Path, ...], str]:
+    base_default = _workspace_root()
+    mounts_default = _workspace_mounts()
+    if not _client_workspace_scope_overrides_enabled():
+        return base_default, mounts_default, (), "workspace_only"
+
+    has_scope = bool(
+        str(getattr(req, "workspace_root", "") or "").strip()
+        or str(getattr(req, "workspace_access_mode", "") or "").strip()
+        or str(getattr(req, "workspace_allowed_paths", "") or "").strip()
+        or str(getattr(req, "workspace_ignored_paths", "") or "").strip()
+    )
+    if not has_scope:
+        return base_default, mounts_default, (), "workspace_only"
+    return _effective_workspace_scope(
+        default_base=base_default,
+        workspace_root=getattr(req, "workspace_root", None),
+        workspace_access_mode=getattr(req, "workspace_access_mode", None),
+        workspace_allowed_paths=getattr(req, "workspace_allowed_paths", None),
+        workspace_ignored_paths=getattr(req, "workspace_ignored_paths", None),
+    )
+
+
+def _resolve_request_workspace_path(
+    *,
+    raw_path: str,
+    base: Path,
+    mounts: Dict[str, Path],
+    blocked: tuple[Path, ...],
+    mode: str,
+) -> tuple[Path, str, Path]:
+    if mode == "all_except_ignored":
+        p_raw = str(raw_path or "").strip()
+        if p_raw.startswith("@"):
+            p_raw = p_raw[1:].lstrip()
+        p2 = Path(p_raw).expanduser()
+        if p2.is_absolute():
+            try:
+                resolved = p2.resolve()
+            except Exception:
+                raise HTTPException(status_code=400, detail="invalid absolute path")
+            virt = str(resolved)
+            root = resolved.parent
+        else:
+            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts={}, raw_path=p_raw)
+    else:
+        resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=raw_path)
+
+    if blocked and _is_under_allowed_roots(resolved, list(blocked)):
+        raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
+    return resolved, virt, root
+
+
+def _reject_ignored_workspace_path(path: Path, *, root: Path, is_dir: bool = False) -> None:
+    ignore = AbstractIgnore.for_path(root)
+    if ignore.is_ignored(path, is_dir=is_dir):
+        raise HTTPException(status_code=403, detail="Path is ignored by .abstractignore policy")
+
+
+def _artifact_modality_from_content_type(content_type: Optional[str]) -> str:
+    ct = str(content_type or "").strip().lower()
+    if ct.startswith("image/"):
+        return "image"
+    if ct.startswith("audio/"):
+        return "audio"
+    if ct.startswith("video/"):
+        return "video"
+    if ct.startswith("text/") or ct in {"application/json", "application/xml", "application/x-yaml", "text/markdown"}:
+        return "text"
+    return "file"
+
+
+def _artifact_meta_dict(meta: Any) -> Dict[str, Any]:
+    to_dict = getattr(meta, "to_dict", None)
+    out = to_dict() if callable(to_dict) else {}
+    return out if isinstance(out, dict) else {}
+
+
+def _canonical_artifact_ref(meta: Any, *, tags: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    tags0 = dict(tags or {})
+    artifact_id = str(getattr(meta, "artifact_id", "") or "").strip()
+    content_type = str(getattr(meta, "content_type", "") or "").strip()
+    run_id = str(getattr(meta, "run_id", "") or "").strip()
+    filename = str(tags0.get("filename") or "").strip()
+    source_path = str(tags0.get("path") or "").strip()
+    sha256 = str(tags0.get("sha256") or "").strip()
+    modality = str(tags0.get("modality") or "").strip() or _artifact_modality_from_content_type(content_type)
+
+    ref: Dict[str, Any] = {
+        "$artifact": artifact_id,
+        "artifact_id": artifact_id,
+        "content_type": content_type or "application/octet-stream",
+        "modality": modality,
+    }
+    if run_id:
+        ref["run_id"] = run_id
+    if filename:
+        ref["filename"] = filename
+    if source_path:
+        ref["source_path"] = source_path
+    if sha256:
+        ref["sha256"] = sha256
+    target = str(tags0.get("target") or "").strip()
+    if target:
+        ref["target"] = target
+    return ref
+
+
+def _artifact_list_item(meta: Any) -> Optional[ArtifactListItem]:
+    artifact_id = str(getattr(meta, "artifact_id", "") or "").strip()
+    if not artifact_id:
+        return None
+    tags = getattr(meta, "tags", None)
+    tags0 = dict(tags or {}) if isinstance(tags, dict) else {}
+    ref = _canonical_artifact_ref(meta, tags=tags0)
+    return ArtifactListItem(
+        artifact_id=artifact_id,
+        run_id=str(getattr(meta, "run_id", "") or "").strip() or None,
+        content_type=getattr(meta, "content_type", None),
+        size_bytes=getattr(meta, "size_bytes", None),
+        created_at=getattr(meta, "created_at", None),
+        tags=tags0,
+        filename=str(tags0.get("filename") or "").strip() or None,
+        source_path=str(tags0.get("path") or "").strip() or None,
+        sha256=str(tags0.get("sha256") or "").strip() or None,
+        modality=str(tags0.get("modality") or "").strip() or _artifact_modality_from_content_type(getattr(meta, "content_type", None)),
+        ref=ref,
+    )
+
+
+def _parse_artifact_tag_filter(raw: Optional[str]) -> Dict[str, str]:
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid tags JSON: {e}")
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=400, detail="tags must be a JSON object or key=value list")
+        out: Dict[str, str] = {}
+        for k, v in parsed.items():
+            ks = str(k or "").strip()
+            vs = str(v or "").strip()
+            if ks and vs:
+                out[ks] = vs
+        return out
+
+    out: Dict[str, str] = {}
+    for part in re.split(r"[,\n]+", text):
+        piece = part.strip()
+        if not piece:
+            continue
+        if "=" in piece:
+            k, v = piece.split("=", 1)
+        elif ":" in piece:
+            k, v = piece.split(":", 1)
+        else:
+            raise HTTPException(status_code=400, detail="tags entries must use key=value or key:value")
+        ks = k.strip()
+        vs = v.strip()
+        if ks and vs:
+            out[ks] = vs
+    return out
+
+
+def _artifact_text_matches(item: ArtifactListItem, query: str) -> bool:
+    needle = str(query or "").strip().lower()
+    if not needle:
+        return True
+    haystack: list[str] = [
+        item.artifact_id,
+        item.run_id or "",
+        item.content_type or "",
+        item.filename or "",
+        item.source_path or "",
+        item.sha256 or "",
+        item.modality or "",
+    ]
+    for k, v in (item.tags or {}).items():
+        haystack.append(str(k))
+        haystack.append(str(v))
+    return any(needle in str(value or "").lower() for value in haystack)
+
+
+def _artifact_matches_filters(
+    item: ArtifactListItem,
+    *,
+    query: str = "",
+    modality: str = "",
+    content_type: str = "",
+    tags: Optional[Dict[str, str]] = None,
+) -> bool:
+    expected_modality = str(modality or "").strip().lower()
+    if expected_modality and expected_modality not in {"artifact", "any", "all", "*"}:
+        actual = str(item.modality or "").strip().lower()
+        if expected_modality == "audio":
+            if actual not in {"audio", "voice", "music", "sound"}:
+                return False
+        elif actual != expected_modality:
+            return False
+
+    expected_content_type = str(content_type or "").strip().lower()
+    if expected_content_type:
+        actual_ct = str(item.content_type or "").strip().lower()
+        if expected_content_type.endswith("/*"):
+            if not actual_ct.startswith(expected_content_type[:-1]):
+                return False
+        elif actual_ct != expected_content_type:
+            return False
+
+    for k, v in (tags or {}).items():
+        if str((item.tags or {}).get(k) or "") != str(v):
+            return False
+
+    return _artifact_text_matches(item, query)
+
+
+def _artifact_search_candidates(
+    store: Any,
+    *,
+    scope: str,
+    session_id: str = "",
+    run_id: str = "",
+    limit: int,
+) -> list[ArtifactListItem]:
+    scope0 = str(scope or "all").strip().lower()
+    seen: set[str] = set()
+    rows: list[ArtifactListItem] = []
+
+    def add_meta(meta: Any) -> None:
+        item = _artifact_list_item(meta)
+        if item is None or item.artifact_id in seen:
+            return
+        seen.add(item.artifact_id)
+        rows.append(item)
+
+    if scope0 == "run":
+        rid = str(run_id or "").strip()
+        if not rid:
+            raise HTTPException(status_code=400, detail="run_id is required when scope=run")
+        list_by_run = getattr(store, "list_by_run", None)
+        if not callable(list_by_run):
+            raise HTTPException(status_code=400, detail="Artifact store does not support run listing")
+        for meta in list_by_run(rid) or []:
+            add_meta(meta)
+    elif scope0 == "session":
+        sid = str(session_id or "").strip()
+        if not sid:
+            raise HTTPException(status_code=400, detail="session_id is required when scope=session")
+        list_by_run = getattr(store, "list_by_run", None)
+        if callable(list_by_run):
+            try:
+                for meta in list_by_run(_session_memory_run_id(sid)) or []:
+                    add_meta(meta)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to list session artifacts: {e}")
+        list_all = getattr(store, "list_all", None)
+        if callable(list_all):
+            try:
+                for meta in list_all(limit=max(int(limit) * 10, 10_000)) or []:
+                    if _artifact_visible_to_session(meta, sid):
+                        add_meta(meta)
+            except Exception:
+                pass
+    elif scope0 == "all":
+        list_all = getattr(store, "list_all", None)
+        if not callable(list_all):
+            raise HTTPException(status_code=400, detail="Artifact store does not support all-artifact listing")
+        for meta in list_all(limit=max(int(limit) * 10, 10_000)) or []:
+            add_meta(meta)
+    else:
+        raise HTTPException(status_code=400, detail="scope must be one of all|session|run")
+
+    rows.sort(key=lambda r: str(r.created_at or ""), reverse=True)
+    return rows
+
+
+def _artifact_store_or_500(svc: Any) -> Any:
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+    return store
+
+
+def _load_artifact_metadata_or_404(store: Any, artifact_id: str) -> Any:
+    meta_fn = getattr(store, "get_metadata", None)
+    if not callable(meta_fn):
+        raise HTTPException(status_code=400, detail="Artifact store does not support metadata reads")
+    try:
+        meta = meta_fn(str(artifact_id))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid artifact id: {e}")
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+    return meta
+
+
+def _store_session_artifact(
+    *,
+    svc: Any,
+    session_id: str,
+    content: bytes,
+    content_type: str,
+    filename: str,
+    target: str,
+    source: str,
+    source_path: str,
+    kind: str,
+    extra_tags: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    max_bytes = _max_attachment_bytes()
+    size = len(content or b"")
+    if size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Attachment too large ({size} bytes > {max_bytes} bytes)")
+
+    sha256 = hashlib.sha256(bytes(content or b"")).hexdigest()
+    ctype = str(content_type or "").strip().lower()
+    fname = str(filename or "").strip() or "artifact.bin"
+    if not ctype:
+        guessed, _enc = mimetypes.guess_type(fname)
+        ctype = str(guessed or "application/octet-stream")
+
+    try:
+        rid = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
+
+    store = _artifact_store_or_500(svc)
+    store_fn = getattr(store, "store", None)
+    if not callable(store_fn):
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    tags: Dict[str, str] = {
+        "kind": str(kind or "artifact"),
+        "target": str(target or "server"),
+        "source": str(source or "workspace"),
+        "path": str(source_path or ""),
+        "filename": fname,
+        "session_id": sid,
+        "sha256": sha256,
+        "modality": _artifact_modality_from_content_type(ctype),
+    }
+    reserved_tags = {"kind", "target", "source", "path", "filename", "session_id", "sha256"}
+    for k, v in (extra_tags or {}).items():
+        ks = str(k or "").strip()
+        vs = str(v or "").strip()
+        if ks and vs:
+            if ks in reserved_tags:
+                continue
+            tags[ks] = vs
+
+    try:
+        meta = store_fn(bytes(content or b""), content_type=str(ctype), run_id=str(rid), tags=tags)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store artifact: {e}")
+
+    ref = _canonical_artifact_ref(meta, tags=tags)
+    return {"ok": True, "run_id": str(rid), "artifact": ref, "metadata": _artifact_meta_dict(meta)}
+
+
+def _artifact_visible_to_session(meta: Any, session_id: str) -> bool:
+    sid = str(session_id or "").strip()
+    if not sid:
+        return False
+    meta_run_id = str(getattr(meta, "run_id", "") or "").strip()
+    try:
+        if meta_run_id == _session_memory_run_id(sid):
+            return True
+    except Exception:
+        pass
+    tags = getattr(meta, "tags", None)
+    tagged_session = str(tags.get("session_id") or "").strip() if isinstance(tags, dict) else ""
+    return bool(tagged_session and tagged_session == sid)
+
+
+def _iter_artifact_refs(value: Any, *, path: str = "$") -> list[tuple[str, Dict[str, Any]]]:
+    found: list[tuple[str, Dict[str, Any]]] = []
+    if isinstance(value, dict):
+        artifact_id = value.get("$artifact") or value.get("artifact_id")
+        if isinstance(artifact_id, str) and artifact_id.strip():
+            found.append((path, value))
+        for k, v in value.items():
+            found.extend(_iter_artifact_refs(v, path=f"{path}.{k}"))
+    elif isinstance(value, list):
+        for idx, item in enumerate(value):
+            found.extend(_iter_artifact_refs(item, path=f"{path}[{idx}]"))
+    return found
+
+
+def _validate_run_start_artifact_refs(*, store: Any, input_data: Dict[str, Any], session_id: Optional[str]) -> None:
+    refs = _iter_artifact_refs(input_data)
+    if not refs:
+        return
+    for path, ref in refs:
+        artifact_id = str(ref.get("$artifact") or ref.get("artifact_id") or "").strip()
+        meta = _load_artifact_metadata_or_404(store, artifact_id)
+        ref_run_id = str(ref.get("run_id") or "").strip()
+        meta_run_id = str(getattr(meta, "run_id", "") or "").strip()
+        if ref_run_id and meta_run_id and ref_run_id != meta_run_id:
+            raise HTTPException(status_code=400, detail=f"Artifact ref at {path} has mismatched run_id")
+        if session_id:
+            if _artifact_visible_to_session(meta, session_id):
+                continue
+            if ref_run_id and meta_run_id and ref_run_id == meta_run_id:
+                tags = getattr(meta, "tags", None)
+                tagged_session = str(tags.get("session_id") or "").strip() if isinstance(tags, dict) else ""
+                if meta_run_id.startswith("session_memory_") and tagged_session and tagged_session != str(session_id).strip():
+                    raise HTTPException(status_code=404, detail=f"Artifact ref at {path} is not visible to session")
+                continue
+            raise HTTPException(status_code=404, detail=f"Artifact ref at {path} is not visible to session")
+        if not ref_run_id:
+            raise HTTPException(status_code=400, detail=f"Artifact ref at {path} requires run_id or a run session_id")
+
+
 def _clamp_text(text: str, *, max_len: int) -> str:
     s = str(text or "")
     if max_len <= 0:
@@ -3546,6 +4021,10 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
             except Exception as e:
                 logger.warning("Failed to ensure session memory owner run exists", extra={"error": str(e)})
 
+        if _iter_artifact_refs(input_data):
+            store = _artifact_store_or_500(svc)
+            _validate_run_start_artifact_refs(store=store, input_data=input_data, session_id=session_id)
+
         run_id = svc.host.start_run(
             flow_id=flow_id,
             bundle_id=bundle_id,
@@ -3559,6 +4038,8 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
                 write_gateway_workspace_marker(gateway_owned_workspace, run_id=str(run_id))
             except Exception as e:
                 logger.warning("Failed to write gateway workspace ownership marker", extra={"error": str(e)})
+    except HTTPException:
+        raise
     except WorkflowDeprecatedError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except KeyError as e:
@@ -4363,6 +4844,49 @@ async def get_run_history_bundle(
         raise HTTPException(status_code=500, detail=f"Failed to export history bundle: {e}")
 
 
+@router.get("/artifacts/search", response_model=ArtifactSearchResponse)
+async def search_artifacts(
+    scope: str = Query("all", description="Search scope: all|session|run."),
+    session_id: Optional[str] = Query(None, description="Session id when scope=session."),
+    run_id: Optional[str] = Query(None, description="Run id when scope=run."),
+    modality: Optional[str] = Query(None, description="Optional artifact modality: image|audio|video|text|file."),
+    content_type: Optional[str] = Query(None, description="Optional exact content type or prefix like image/*."),
+    query: Optional[str] = Query(None, description="Case-insensitive metadata text search."),
+    tags: Optional[str] = Query(None, description="Optional tag filters as JSON object or key=value list."),
+    limit: int = Query(100, ge=1, le=2000, description="Maximum number of artifacts (most recent first)."),
+) -> ArtifactSearchResponse:
+    """Search artifact metadata by scope, modality, content type, free text, and tags."""
+    svc = get_gateway_service()
+    store = _artifact_store_or_500(svc)
+    scope0 = str(scope or "all").strip().lower() or "all"
+    tag_filter = _parse_artifact_tag_filter(tags)
+    rows = _artifact_search_candidates(
+        store,
+        scope=scope0,
+        session_id=str(session_id or ""),
+        run_id=str(run_id or ""),
+        limit=int(limit),
+    )
+    rows = [
+        item
+        for item in rows
+        if _artifact_matches_filters(
+            item,
+            query=str(query or ""),
+            modality=str(modality or ""),
+            content_type=str(content_type or ""),
+            tags=tag_filter,
+        )
+    ]
+    return ArtifactSearchResponse(
+        scope=scope0,
+        query=str(query or "").strip() or None,
+        modality=str(modality or "").strip() or None,
+        tags=tag_filter,
+        items=rows[: int(limit)],
+    )
+
+
 @router.get("/runs/{run_id}/artifacts", response_model=ArtifactListResponse)
 async def list_run_artifacts(
     run_id: str,
@@ -4395,20 +4919,59 @@ async def list_run_artifacts(
     rows: list[ArtifactListItem] = []
     for m in items0 or []:
         try:
-            artifact_id = str(getattr(m, "artifact_id", "") or "").strip()
-            if not artifact_id:
-                continue
-            rows.append(
-                ArtifactListItem(
-                    artifact_id=artifact_id,
-                    content_type=getattr(m, "content_type", None),
-                    size_bytes=getattr(m, "size_bytes", None),
-                    created_at=getattr(m, "created_at", None),
-                    tags=dict(getattr(m, "tags", None) or {}) if isinstance(getattr(m, "tags", None), dict) else {},
-                )
-            )
+            item = _artifact_list_item(m)
+            if item is not None:
+                rows.append(item)
         except Exception:
             continue
+
+    rows.sort(key=lambda r: str(r.created_at or ""), reverse=True)
+    return ArtifactListResponse(items=rows[: int(limit)])
+
+
+@router.get("/sessions/{session_id}/artifacts", response_model=ArtifactListResponse)
+async def list_session_artifacts(
+    session_id: str,
+    limit: int = Query(200, ge=1, le=2000, description="Maximum number of artifacts (most recent first)."),
+) -> ArtifactListResponse:
+    """List artifacts visible to a session for run-start input selection."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    svc = get_gateway_service()
+    try:
+        owner_run_id = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
+
+    store = _artifact_store_or_500(svc)
+    seen: set[str] = set()
+    rows: list[ArtifactListItem] = []
+
+    list_by_run = getattr(store, "list_by_run", None)
+    if callable(list_by_run):
+        try:
+            for meta in list_by_run(str(owner_run_id)) or []:
+                item = _artifact_list_item(meta)
+                if item is not None and item.artifact_id not in seen:
+                    seen.add(item.artifact_id)
+                    rows.append(item)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list session artifacts: {e}")
+
+    list_all = getattr(store, "list_all", None)
+    if callable(list_all):
+        try:
+            for meta in list_all(limit=max(int(limit) * 10, 10_000)) or []:
+                if not _artifact_visible_to_session(meta, sid):
+                    continue
+                item = _artifact_list_item(meta)
+                if item is not None and item.artifact_id not in seen:
+                    seen.add(item.artifact_id)
+                    rows.append(item)
+        except Exception:
+            # Session owner artifacts were already listed above; older stores may not support list_all.
+            pass
 
     rows.sort(key=lambda r: str(r.created_at or ""), reverse=True)
     return ArtifactListResponse(items=rows[: int(limit)])
@@ -4428,27 +4991,11 @@ async def get_run_artifact_metadata(run_id: str, artifact_id: str) -> Dict[str, 
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
-    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
-    meta_fn = getattr(store, "get_metadata", None)
-    if not callable(meta_fn):
-        raise HTTPException(status_code=400, detail="Artifact store does not support metadata reads")
+    store = _artifact_store_or_500(svc)
+    meta = _load_artifact_metadata_or_404(store, artifact_id)
+    _assert_artifact_visible_to_run(meta=meta, run=run, run_id=str(run_id), field_name="artifact")
 
-    try:
-        meta = meta_fn(str(artifact_id))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid artifact id: {e}")
-    if meta is None:
-        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
-
-    rid = str(getattr(meta, "run_id", "") or "").strip()
-    if rid != str(run_id):
-        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
-
-    to_dict = getattr(meta, "to_dict", None)
-    out = to_dict() if callable(to_dict) else {}
-    if not isinstance(out, dict):
-        out = {}
-    return out
+    return _artifact_meta_dict(meta)
 
 
 @router.get("/runs/{run_id}/artifacts/{artifact_id}/content")
@@ -4465,28 +5012,16 @@ async def download_run_artifact_content(run_id: str, artifact_id: str) -> Stream
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
-    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
-    meta_fn = getattr(store, "get_metadata", None)
-    if not callable(meta_fn):
-        raise HTTPException(status_code=400, detail="Artifact store does not support metadata reads")
-
-    try:
-        meta = meta_fn(str(artifact_id))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid artifact id: {e}")
-    if meta is None:
-        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
-
-    rid = str(getattr(meta, "run_id", "") or "").strip()
-    if rid != str(run_id):
-        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+    store = _artifact_store_or_500(svc)
+    meta = _load_artifact_metadata_or_404(store, artifact_id)
+    _assert_artifact_visible_to_run(meta=meta, run=run, run_id=str(run_id), field_name="artifact")
 
     content_type = str(getattr(meta, "content_type", None) or "application/octet-stream")
 
     # Best-effort streaming for file-backed stores.
     content_path = None
     try:
-        path_fn = getattr(store, "_content_path", None)
+        path_fn = getattr(store, "content_path", None)
         if callable(path_fn):
             content_path = path_fn(str(artifact_id))
     except Exception:
@@ -4524,6 +5059,106 @@ async def download_run_artifact_content(run_id: str, artifact_id: str) -> Stream
         yield getattr(artifact, "content", b"") or b""
 
     return StreamingResponse(_single_chunk(), media_type=content_type)
+
+
+@router.post("/runs/{run_id}/artifacts/{artifact_id}/export")
+async def export_run_artifact_content(run_id: str, artifact_id: str, req: ArtifactExportRequest) -> Dict[str, Any]:
+    """Export artifact bytes into the server workspace."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    try:
+        run = rs.load(str(run_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=str(run_id))
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+    store = _artifact_store_or_500(svc)
+    meta = _load_artifact_metadata_or_404(store, artifact_id)
+    _assert_artifact_visible_to_run(meta=meta, run=run, run_id=str(run_id), field_name="artifact")
+
+    raw_path = str(req.path or req.destination or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    base, mounts, blocked, mode = _request_workspace_scope(req)
+    resolved, virt, root = _resolve_request_workspace_path(
+        raw_path=raw_path,
+        base=base,
+        mounts=mounts,
+        blocked=blocked,
+        mode=mode,
+    )
+    if resolved.exists() and resolved.is_dir():
+        raise HTTPException(status_code=400, detail="Destination path is a directory")
+    _reject_ignored_workspace_path(resolved, root=root, is_dir=False)
+
+    parent = resolved.parent
+    if not parent.exists():
+        if not req.create_parent_dirs:
+            raise HTTPException(status_code=404, detail="Destination parent directory does not exist")
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create destination parent directories: {e}")
+    if not parent.is_dir():
+        raise HTTPException(status_code=400, detail="Destination parent is not a directory")
+    _reject_ignored_workspace_path(parent, root=root, is_dir=True)
+
+    if resolved.exists() and not req.overwrite:
+        raise HTTPException(status_code=409, detail="Destination already exists; set overwrite=true to replace it")
+
+    tmp = parent / f".{resolved.name}.{uuid.uuid4().hex}.tmp"
+    bytes_written = 0
+    try:
+        path_fn = getattr(store, "content_path", None)
+        src_path = path_fn(str(artifact_id)) if callable(path_fn) else None
+    except Exception:
+        src_path = None
+
+    try:
+        if src_path is not None and Path(src_path).exists():
+            with open(Path(src_path), "rb") as src, open(tmp, "wb") as dst:
+                while True:
+                    chunk = src.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    bytes_written += len(chunk)
+        else:
+            load_fn = getattr(store, "load", None)
+            if not callable(load_fn):
+                raise HTTPException(status_code=400, detail="Artifact store does not support content reads")
+            artifact = load_fn(str(artifact_id))
+            if artifact is None:
+                raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+            content = getattr(artifact, "content", b"") or b""
+            with open(tmp, "wb") as dst:
+                dst.write(content)
+            bytes_written = len(content)
+        tmp.replace(resolved)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export artifact: {e}")
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+    return {
+        "ok": True,
+        "artifact_id": str(artifact_id),
+        "run_id": str(run_id),
+        "path": str(virt) if isinstance(virt, str) and virt.strip() else str(resolved),
+        "bytes_written": int(bytes_written),
+        "content_type": str(getattr(meta, "content_type", "") or "application/octet-stream"),
+        "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+    }
 
 
 @router.get("/runs/{run_id}/ledger")
@@ -8032,8 +8667,12 @@ def _gateway_readiness_descriptor(
             },
             "artifacts": {
                 "list": _descriptor_endpoint_available(artifacts.get("list")),
+                "search": _descriptor_endpoint_available(artifacts.get("search")),
+                "session_list": _descriptor_endpoint_available(artifacts.get("session_list")),
                 "metadata": _descriptor_endpoint_available(artifacts.get("metadata")),
                 "content": _descriptor_endpoint_available(artifacts.get("content")),
+                "import": _descriptor_endpoint_available(artifacts.get("import")),
+                "export": _descriptor_endpoint_available(artifacts.get("export")),
             },
             "attachments": {
                 "upload": _descriptor_endpoint_available(attachments.get("upload")),
@@ -9363,9 +10002,7 @@ def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "installed": bool(abstractmemory.get("installed")),
             "route_available": True,
-            "available": bool(abstractmemory.get("installed"))
-            and backend_ready
-            and (memory_store_exists(cfg) or backend == "memory"),
+            "available": bool(abstractmemory.get("installed")) and backend_ready,
             "endpoint": _api_gateway_path("/kg/query"),
             "backend": backend,
             "path": str(cfg.path) if cfg.path is not None else None,
@@ -9496,8 +10133,12 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         },
         "artifacts": {
             "list": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts")},
+            "search": {"available": True, "endpoint": _api_gateway_path("/artifacts/search")},
+            "session_list": {"available": True, "endpoint": _api_gateway_path("/sessions/{session_id}/artifacts")},
             "metadata": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}")},
             "content": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}/content")},
+            "import": {"available": True, "endpoint": _api_gateway_path("/artifacts/import")},
+            "export": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}/export")},
         },
         "attachments": {
             "upload": {"available": True, "endpoint": _api_gateway_path("/attachments/upload")},
@@ -15855,6 +16496,7 @@ def _gateway_model_residency_contract_descriptor() -> Dict[str, Any]:
     task_names = [
         "text_generation",
         "image_generation",
+        "image_to_image",
         "text_to_video",
         "image_to_video",
         "video_generation",
@@ -17484,6 +18126,81 @@ async def files_skim(
     return {"path": out_path, "content": content}
 
 
+@router.post("/artifacts/import")
+async def import_artifact(req: ArtifactImportRequest) -> Dict[str, Any]:
+    """Import a server-workspace file into the session-scoped ArtifactStore."""
+    svc = get_gateway_service()
+
+    sid = str(req.session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    source_kind = str(getattr(req.source, "kind", None) or "workspace_path").strip().lower()
+    if source_kind not in {"workspace_path", "path", "workspace"}:
+        raise HTTPException(status_code=400, detail="source.kind must be 'workspace_path'")
+    raw_path = str(req.path or getattr(req.source, "path", None) or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    base, mounts, blocked, mode = _request_workspace_scope(req)
+    resolved, virt, root = _resolve_request_workspace_path(
+        raw_path=raw_path,
+        base=base,
+        mounts=mounts,
+        blocked=blocked,
+        mode=mode,
+    )
+    _reject_ignored_workspace_path(resolved, root=root, is_dir=False)
+
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    if not resolved.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    try:
+        size = int(resolved.stat().st_size)
+    except Exception:
+        size = -1
+    max_bytes = _max_attachment_bytes()
+    if size >= 0 and size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Artifact too large ({size} bytes > {max_bytes} bytes)")
+
+    try:
+        content = resolved.read_bytes()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+
+    filename = str(req.filename or "").strip() or resolved.name
+    content_type = str(req.content_type or "").strip().lower()
+    if not content_type:
+        guessed, _enc = mimetypes.guess_type(filename)
+        content_type = str(guessed or "application/octet-stream")
+    rel = str(virt) if isinstance(virt, str) and virt.strip() else str(resolved)
+
+    extra_tags: Dict[str, str] = {"purpose": str(req.purpose or "run_input").strip() or "run_input"}
+    if req.pin_id and str(req.pin_id).strip():
+        extra_tags["pin_id"] = str(req.pin_id).strip()
+    if isinstance(req.tags, dict):
+        for k, v in req.tags.items():
+            ks = str(k or "").strip()
+            vs = str(v or "").strip()
+            if ks and vs:
+                extra_tags[ks] = vs
+
+    return _store_session_artifact(
+        svc=svc,
+        session_id=sid,
+        content=bytes(content),
+        content_type=content_type,
+        filename=filename,
+        target="server",
+        source="workspace",
+        source_path=rel,
+        kind="run_input",
+        extra_tags=extra_tags,
+    )
+
+
 @router.post("/attachments/ingest")
 async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
     """Ingest a workspace file as an artifact-backed attachment.
@@ -17501,53 +18218,15 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
     if not sid:
         raise HTTPException(status_code=400, detail="session_id is required")
 
-    base_default = _workspace_root()
-    mounts_default = _workspace_mounts()
-    base = base_default
-    mounts = mounts_default
-    blocked: tuple[Path, ...] = ()
-    mode = "workspace_only"
-
-    if _client_workspace_scope_overrides_enabled():
-        has_scope = bool(
-            str(req.workspace_root or "").strip()
-            or str(req.workspace_access_mode or "").strip()
-            or str(req.workspace_allowed_paths or "").strip()
-            or str(req.workspace_ignored_paths or "").strip()
-        )
-        if has_scope:
-            base, mounts, blocked, mode = _effective_workspace_scope(
-                default_base=base_default,
-                workspace_root=req.workspace_root,
-                workspace_access_mode=req.workspace_access_mode,
-                workspace_allowed_paths=req.workspace_allowed_paths,
-                workspace_ignored_paths=req.workspace_ignored_paths,
-            )
-
-    raw_path = str(req.path or "")
-    if mode == "all_except_ignored":
-        p_raw = raw_path.strip()
-        if p_raw.startswith("@"):
-            p_raw = p_raw[1:].lstrip()
-        p2 = Path(p_raw).expanduser()
-        if p2.is_absolute():
-            try:
-                resolved = p2.resolve()
-            except Exception:
-                raise HTTPException(status_code=400, detail="invalid absolute path")
-            virt = str(resolved)
-            root = resolved.parent
-        else:
-            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts={}, raw_path=p_raw)
-    else:
-        resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=raw_path)
-
-    if blocked and _is_under_allowed_roots(resolved, list(blocked)):
-        raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
-
-    ignore = AbstractIgnore.for_path(root)
-    if ignore.is_ignored(resolved, is_dir=False):
-        raise HTTPException(status_code=403, detail="File is ignored by .abstractignore policy")
+    base, mounts, blocked, mode = _request_workspace_scope(req)
+    resolved, virt, root = _resolve_request_workspace_path(
+        raw_path=str(req.path or ""),
+        base=base,
+        mounts=mounts,
+        blocked=blocked,
+        mode=mode,
+    )
+    _reject_ignored_workspace_path(resolved, root=root, is_dir=False)
 
     if not resolved.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -17555,17 +18234,10 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Path is not a file")
 
     try:
-        max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip()
-        max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
-        if max_bytes <= 0:
-            max_bytes = 25 * 1024 * 1024
-    except Exception:
-        max_bytes = 25 * 1024 * 1024
-
-    try:
         size = int(resolved.stat().st_size)
     except Exception:
         size = -1
+    max_bytes = _max_attachment_bytes()
     if size >= 0 and size > max_bytes:
         raise HTTPException(status_code=413, detail=f"Attachment too large ({size} bytes > {max_bytes} bytes)")
 
@@ -17583,47 +18255,19 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
         content_type = str(guessed or "application/octet-stream")
 
     rel = str(virt) if isinstance(virt, str) and virt.strip() else str(resolved)
-
-    rs = svc.host.run_store
-    try:
-        rid = _ensure_session_memory_owner_run_exists(run_store=rs, session_id=sid)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
-
-    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
-    store_fn = getattr(store, "store", None)
-    if not callable(store_fn):
-        raise HTTPException(status_code=500, detail="Artifact store is not available")
-
-    tags: Dict[str, str] = {
-        "kind": "attachment",
-        "target": "server",
-        "source": "workspace",
-        "path": str(rel),
-        "filename": str(filename),
-        "session_id": sid,
-        "sha256": sha256,
-    }
-    try:
-        meta = store_fn(bytes(content), content_type=str(content_type), run_id=str(rid), tags=tags)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to store attachment artifact: {e}")
-
-    to_dict = getattr(meta, "to_dict", None)
-    meta_dict = to_dict() if callable(to_dict) else {}
-    if not isinstance(meta_dict, dict):
-        meta_dict = {}
-
-    attachment_ref: Dict[str, Any] = {
-        "$artifact": str(getattr(meta, "artifact_id", "") or ""),
-        "target": "server",
-        "filename": filename,
-        "content_type": content_type,
-        "source_path": rel,
-        "sha256": sha256,
-    }
-
-    return {"ok": True, "run_id": str(rid), "attachment": attachment_ref, "metadata": meta_dict}
+    stored = _store_session_artifact(
+        svc=svc,
+        session_id=sid,
+        content=bytes(content),
+        content_type=content_type,
+        filename=filename,
+        target="server",
+        source="workspace",
+        source_path=rel,
+        kind="attachment",
+        extra_tags={"sha256": sha256},
+    )
+    return {**stored, "attachment": stored.get("artifact")}
 
 
 @router.post("/attachments/upload")
@@ -17648,23 +18292,14 @@ async def attachments_upload(
         raise HTTPException(status_code=400, detail="session_id is required")
 
     try:
-        max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip()
-        max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
-        if max_bytes <= 0:
-            max_bytes = 25 * 1024 * 1024
-    except Exception:
-        max_bytes = 25 * 1024 * 1024
-
-    try:
         content = await file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read upload: {e}")
 
     size = len(content or b"")
+    max_bytes = _max_attachment_bytes()
     if size > max_bytes:
         raise HTTPException(status_code=413, detail=f"Attachment too large ({size} bytes > {max_bytes} bytes)")
-
-    sha256 = hashlib.sha256(bytes(content or b"")).hexdigest()
 
     filename_final = str(filename or "").strip() or str(getattr(file, "filename", "") or "").strip() or "upload.bin"
     content_type_final = str(content_type or "").strip().lower() or str(getattr(file, "content_type", "") or "").strip().lower()
@@ -17672,49 +18307,20 @@ async def attachments_upload(
         guessed, _enc = mimetypes.guess_type(filename_final)
         content_type_final = str(guessed or "application/octet-stream")
 
-    rs = svc.host.run_store
-    try:
-        rid = _ensure_session_memory_owner_run_exists(run_store=rs, session_id=sid)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
-
-    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
-    store_fn = getattr(store, "store", None)
-    if not callable(store_fn):
-        raise HTTPException(status_code=500, detail="Artifact store is not available")
-
     # Prefix client uploads to avoid collisions with server workspace virtual paths.
     handle = f"client:{filename_final}"
-
-    tags: Dict[str, str] = {
-        "kind": "attachment",
-        "target": "client",
-        "source": "upload",
-        "path": str(handle),
-        "filename": str(filename_final),
-        "session_id": sid,
-        "sha256": sha256,
-    }
-    try:
-        meta = store_fn(bytes(content or b""), content_type=str(content_type_final), run_id=str(rid), tags=tags)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to store attachment artifact: {e}")
-
-    to_dict = getattr(meta, "to_dict", None)
-    meta_dict = to_dict() if callable(to_dict) else {}
-    if not isinstance(meta_dict, dict):
-        meta_dict = {}
-
-    attachment_ref: Dict[str, Any] = {
-        "$artifact": str(getattr(meta, "artifact_id", "") or ""),
-        "target": "client",
-        "filename": filename_final,
-        "content_type": content_type_final,
-        "source_path": handle,
-        "sha256": sha256,
-    }
-
-    return {"ok": True, "run_id": str(rid), "attachment": attachment_ref, "metadata": meta_dict}
+    stored = _store_session_artifact(
+        svc=svc,
+        session_id=sid,
+        content=bytes(content or b""),
+        content_type=content_type_final,
+        filename=filename_final,
+        target="client",
+        source="upload",
+        source_path=handle,
+        kind="attachment",
+    )
+    return {**stored, "attachment": stored.get("artifact")}
 
 
 @router.post("/commands", response_model=SubmitCommandResponse)

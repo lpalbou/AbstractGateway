@@ -16,8 +16,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal,mcp-worker]>=0.4.24`
-- `abstractagent>=0.3.8`
+- `AbstractRuntime[multimodal,mcp-worker]>=0.4.25`
+- `abstractagent>=0.3.9`
 - `AbstractMemory[lancedb]>=0.2.6`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -92,7 +92,10 @@ Backend behavior:
 
 The same resolver is used for bundle `memory_kg_*` nodes and
 `POST /api/gateway/kg/query`. Capability discovery reports memory backend,
-persistence, vector support, and embedder status.
+persistence, vector support, and embedder status. A missing on-disk store is not
+an unavailable state by itself: when AbstractMemory is installed and the backend
+resolves, fresh stores are authoring-ready and structured queries simply return
+no matches until assertions are written.
 
 ### Runner tuning (advanced)
 
@@ -216,7 +219,7 @@ does not implicitly install them.
 - `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE`: Gateway-scoped voice engine settings. Legacy `ABSTRACTVOICE_*` names are still accepted by the lower package.
 - `ABSTRACTGATEWAY_VOICE_TTS_MODEL` / `ABSTRACTGATEWAY_VOICE_STT_MODEL`: Gateway-scoped TTS/STT model defaults.
 - `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL` / `ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice.
-- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls
+- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls
 - `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
 - `GET /api/gateway/audio/speech/models`: proxies AbstractCore `/v1/audio/speech/models` when configured.
 - `GET /api/gateway/audio/transcriptions/models`: proxies AbstractCore `/v1/audio/transcriptions/models` when configured.

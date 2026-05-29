@@ -197,6 +197,7 @@ def test_gateway_model_residency_capability_contract_comes_from_runtime_host_fac
                 "tasks": {
                     "text_generation": {"supported": True, "truth_source": "abstractcore.server./acore/models"},
                     "image_generation": {"supported": True, "truth_source": "abstractcore.server./acore/models"},
+                    "image_to_image": {"supported": True, "truth_source": "abstractcore.server./acore/models"},
                     "tts": {"supported": True, "truth_source": "abstractcore.server./acore/models"},
                     "stt": {"supported": True, "truth_source": "abstractcore.server./acore/models"},
                     "music_generation": {
@@ -223,10 +224,11 @@ def test_gateway_model_residency_capability_contract_comes_from_runtime_host_fac
     assert residency["mode"] == "remote_core_server"
     assert residency["relay_only"] is True
     assert residency["capabilities_source"] == "abstractruntime.remote"
-    assert residency["tasks"] == ["text_generation", "image_generation", "tts", "stt", "music_generation"]
+    assert residency["tasks"] == ["text_generation", "image_generation", "image_to_image", "tts", "stt", "music_generation"]
     assert residency["supports"] == {
         "text_generation": True,
         "image_generation": True,
+        "image_to_image": True,
         "tts": True,
         "stt": True,
         "music_generation": False,

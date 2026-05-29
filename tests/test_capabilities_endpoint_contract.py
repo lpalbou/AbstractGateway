@@ -100,6 +100,10 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert common.get("runs", {}).get("history_bundle", {}).get("endpoint") == "/api/gateway/runs/{run_id}/history_bundle"
         assert common.get("runs", {}).get("purge_drafts", {}).get("endpoint") == "/api/gateway/runs/purge_drafts"
         assert common.get("ledger", {}).get("stream", {}).get("transport") == "sse"
+        assert common.get("artifacts", {}).get("search", {}).get("endpoint") == "/api/gateway/artifacts/search"
+        assert common.get("artifacts", {}).get("session_list", {}).get("endpoint") == "/api/gateway/sessions/{session_id}/artifacts"
+        assert common.get("artifacts", {}).get("import", {}).get("endpoint") == "/api/gateway/artifacts/import"
+        assert common.get("artifacts", {}).get("export", {}).get("endpoint") == "/api/gateway/runs/{run_id}/artifacts/{artifact_id}/export"
         assert common.get("artifacts", {}).get("content", {}).get("endpoint") == "/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content"
         assert common.get("discovery", {}).get("voice_voices") == "/api/gateway/voice/voices"
         assert common.get("discovery", {}).get("audio_speech_models") == "/api/gateway/audio/speech/models"
@@ -134,12 +138,22 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         surfaces = readiness.get("surfaces", {})
         assert surfaces.get("runs", {}).get("start") is True
         assert surfaces.get("artifacts", {}).get("content") is True
+        assert surfaces.get("artifacts", {}).get("search") is True
+        assert surfaces.get("artifacts", {}).get("session_list") is True
+        assert surfaces.get("artifacts", {}).get("import") is True
+        assert surfaces.get("artifacts", {}).get("export") is True
         assert surfaces.get("attachments", {}).get("upload") is True
         assert surfaces.get("workspace", {}).get("policy") is True
         assert surfaces.get("discovery", {}).get("audio_music_models") is True
         assert surfaces.get("visualflows", {}).get("crud_available") is True
         assert surfaces.get("prompt_cache", {}).get("provider_controls") is True
         assert surfaces.get("model_residency", {}).get("route_available") is True
+        memory = common.get("memory")
+        assert isinstance(memory, dict)
+        assert memory.get("route_available") is True
+        if memory.get("installed") is True and not memory.get("error"):
+            assert memory.get("available") is True
+            assert surfaces.get("memory", {}).get("available") is True
         assert common.get("prompt_cache", {}).get("provider_controls") is True
         assert isinstance(common.get("prompt_cache", {}).get("provider_controls_available"), bool)
         assert common.get("prompt_cache", {}).get("session_lifecycle") is True
@@ -282,6 +296,7 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert residency["source"] == "abstractruntime.host_facade"
     assert residency["supports"]["text_generation"] is False
     assert residency["supports"]["image_generation"] is False
+    assert residency["supports"]["image_to_image"] is False
     assert residency["supports"]["text_to_video"] is False
     assert residency["supports"]["image_to_video"] is False
     assert residency["supports"]["video_generation"] is False
@@ -462,6 +477,7 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
                 "tasks": {
                     "text_generation": {"supported": True},
                     "image_generation": {"supported": True},
+                    "image_to_image": {"supported": True},
                     "text_to_video": {"supported": True},
                     "image_to_video": {"supported": True},
                     "video_generation": {"supported": True},
@@ -483,6 +499,7 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     assert residency["source"] == "abstractruntime.host_facade"
     assert residency["mode"] == "remote_core_server"
     assert residency["supports"]["image_generation"] is True
+    assert residency["supports"]["image_to_image"] is True
     assert residency["supports"]["text_to_video"] is True
     assert residency["supports"]["image_to_video"] is True
     assert residency["supports"]["video_generation"] is True
@@ -492,6 +509,7 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     assert residency["tasks"] == [
         "text_generation",
         "image_generation",
+        "image_to_image",
         "text_to_video",
         "image_to_video",
         "video_generation",

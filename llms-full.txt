@@ -66,7 +66,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.20
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.21
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -74,7 +74,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.20
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
@@ -96,7 +96,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.20
+  ghcr.io/lpalbou/abstractgateway-server:0.2.21
 ```
 
 Configure framework model defaults through execution-host capability routes:
@@ -141,6 +141,8 @@ Current direct Gateway APIs:
 - `GET /api/gateway/audio/music/models`
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/models`
+- `/api/gateway/artifacts/search` cross-run/session/run artifact search with
+  modality, content-type, text, and tag filters
 - `/api/gateway/prompt_cache/*` provider/model operator controls
 - `/api/gateway/prompt_cache/saved|save|load` Runtime-backed host-local export/import admin aliases
 - `/api/gateway/sessions/{session_id}/prompt_cache/*` session lifecycle controls
@@ -216,7 +218,9 @@ pip install abstractgateway
 KG memory nodes use Gateway's memory resolver. The default durable/vector
 backend is LanceDB; `memory` is process-local dev/test storage, and `sqlite` is
 structured-only when the installed AbstractMemory build exposes
-`SQLiteTripleStore`.
+`SQLiteTripleStore`. A fresh persistent store is still reported as available
+when the backend resolves; empty queries return empty results instead of hiding
+KG authoring surfaces.
 
 Gateway has a first-class config helper:
 
@@ -457,13 +461,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.20
+  ghcr.io/lpalbou/abstractgateway-server:0.2.21
 ```
 
 See [deployment.md](docs/deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.20`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -547,6 +551,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.21] - 2026-05-29
+
+### Added
+- Gateway artifact search/import/export endpoints for thin clients, including scoped artifact lookup by run, session, or all stored artifacts with modality, content type, text, and tag filters.
+- Capability discovery now advertises artifact search, workspace import, and workspace export descriptors in the shared thin-client contract.
+
+### Changed
+
+- Removed legacy compatibility install extras (`abstractgateway[http]`, `[server]`, `[multimodal]`, `[memory]`, `[voice]`, `[vision]`, `[telegram]`, `[visualflow]`, `[all]`, `[all-apple]`, `[all-gpu]`, `[server-nvidia]`). The supported install surface is now:
+  - `pip install abstractgateway`
+  - `pip install "abstractgateway[apple]"`
+  - `pip install "abstractgateway[gpu]"`
+- Raised dependency floors to `AbstractRuntime[multimodal,mcp-worker]>=0.4.25` and `abstractagent>=0.3.9`.
+- KG memory readiness now treats a resolvable fresh persistent AbstractMemory store as available, so empty stores return empty query results instead of hiding Flow authoring surfaces.
+
+### Fixed
+- Media model-residency discovery now keeps image editing distinct from image generation when Runtime/Core expose task-specific residency state.
 
 ## [0.2.20] - 2026-05-26
 
@@ -921,7 +943,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 python -m pip install -U pip
-pip install -e ".[dev,http]"
+pip install -e ".[dev]"
 ```
 
 Run the test suite:
@@ -1172,6 +1194,70 @@ curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`stream_ledger`).
 
+## Artifacts and filesystem handoff
+
+Gateway artifacts are the cross-package representation for files, media, and
+large payloads. Thin clients should pass artifact refs across runs instead of
+raw bytes or local paths:
+
+```json
+{
+  "$artifact": "abc123",
+  "artifact_id": "abc123",
+  "run_id": "session_memory_sess-1",
+  "content_type": "image/png",
+  "filename": "input.png"
+}
+```
+
+List run artifacts:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/artifacts"
+```
+
+List artifacts visible to a session:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/sessions/sess-1/artifacts"
+```
+
+Search artifacts across Gateway storage:
+
+```bash
+curl -sS -H "$AUTH" \
+  "$BASE_URL/api/gateway/artifacts/search?scope=all&modality=image&query=logo&tags=pin_id=image"
+```
+
+`scope` can be `all`, `session`, or `run`. Use `session_id` with
+`scope=session` and `run_id` with `scope=run`; omit both for `scope=all`.
+`modality` filters normalized artifact type (`image`, `audio`, `video`,
+`text`, `document`, `music`, `voice`, or `artifact`), `content_type` accepts
+exact values or prefixes such as `image/*`, and `tags` accepts either a JSON
+object or comma-separated `key=value` filters.
+
+Import a server workspace path into a session artifact:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"session_id":"sess-1","source":{"kind":"workspace_path","path":"inputs/photo.png"},"pin_id":"image"}' \
+  "$BASE_URL/api/gateway/artifacts/import"
+```
+
+Export an artifact back into the server workspace:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"path":"outputs/photo.png","create_parent_dirs":true,"overwrite":false}' \
+  "$BASE_URL/api/gateway/runs/<run_id>/artifacts/<artifact_id>/export"
+```
+
+Import and export use the same Gateway workspace policy as file helpers:
+workspace roots, mounted roots, ignored paths, and size limits are enforced on
+the server. Browser-local files should be uploaded through
+`POST /api/gateway/attachments/upload`; browser-local file paths are not
+interpreted as Gateway workspace paths.
+
 ## Durable commands (`POST /api/gateway/commands`)
 
 Commands are appended to a durable inbox and applied asynchronously by the runner.
@@ -1262,7 +1348,9 @@ It also includes a versioned thin-client contract:
 - `capabilities.contracts.version`: currently `1`
 - `capabilities.contracts.common`: shared run start/list/summary/input/history,
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
-  controls
+  controls. `common.artifacts` includes run listing/content, session artifact
+  listing, artifact search, workspace import, and workspace export descriptors
+  when available.
 - `capabilities.contracts.common.readiness`: compact Gateway-owned
   `gateway_surface_readiness_v1` summary derived from the shared endpoint/media/
   residency descriptors
@@ -1435,6 +1523,11 @@ when the installed AbstractMemory build exposes `SQLiteTripleStore`. Semantic
 `query_text` requires a vector-capable backend plus the execution-host
 `embedding.text` route; SQLite returns a clear 400 instead of pretending to
 support semantic recall.
+
+Capability discovery reports KG memory as available when AbstractMemory is
+installed and the configured backend can be resolved. A fresh persistent store
+does not need to exist yet; empty-store structured queries return an empty
+result rather than making Flow authoring nodes unavailable.
 
 ## Prompt-cache control plane (operator API)
 
@@ -1733,8 +1826,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal,mcp-worker]>=0.4.24`
-- `abstractagent>=0.3.8`
+- `AbstractRuntime[multimodal,mcp-worker]>=0.4.25`
+- `abstractagent>=0.3.9`
 - `AbstractMemory[lancedb]>=0.2.6`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -1809,7 +1902,10 @@ Backend behavior:
 
 The same resolver is used for bundle `memory_kg_*` nodes and
 `POST /api/gateway/kg/query`. Capability discovery reports memory backend,
-persistence, vector support, and embedder status.
+persistence, vector support, and embedder status. A missing on-disk store is not
+an unavailable state by itself: when AbstractMemory is installed and the backend
+resolves, fresh stores are authoring-ready and structured queries simply return
+no matches until assertions are written.
 
 ### Runner tuning (advanced)
 
@@ -1933,7 +2029,7 @@ does not implicitly install them.
 - `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE`: Gateway-scoped voice engine settings. Legacy `ABSTRACTVOICE_*` names are still accepted by the lower package.
 - `ABSTRACTGATEWAY_VOICE_TTS_MODEL` / `ABSTRACTGATEWAY_VOICE_STT_MODEL`: Gateway-scoped TTS/STT model defaults.
 - `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL` / `ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice.
-- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls
+- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls
 - `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
 - `GET /api/gateway/audio/speech/models`: proxies AbstractCore `/v1/audio/speech/models` when configured.
 - `GET /api/gateway/audio/transcriptions/models`: proxies AbstractCore `/v1/audio/transcriptions/models` when configured.
@@ -1991,7 +2087,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.20
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.21
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -1999,7 +2095,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.20
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21
 ```
 
 The default image installs the base `abstractgateway` package, which includes:
@@ -2038,7 +2134,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.20
+  ghcr.io/lpalbou/abstractgateway-server:0.2.21
 ```
 
 Set the execution-host text route separately:
@@ -2160,7 +2256,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.20-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.21-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -2650,6 +2746,11 @@ Keep the default `lancedb` backend for durable vector-capable memory, use
 `memory` for process-local dev/test memory, or set
 `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite` only when your installed
 AbstractMemory build exposes `SQLiteTripleStore`.
+
+A fresh persistent store does not make KG memory unavailable. Capability
+discovery treats the surface as available once AbstractMemory is installed and
+the configured backend resolves; empty structured queries return empty results
+until a flow asserts triples.
 
 Evidence: memory KG wiring in `src/abstractgateway/memory_store.py` and
 `src/abstractgateway/hosts/bundle_host.py`.

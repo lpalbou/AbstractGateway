@@ -7,12 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.21] - 2026-05-29
+
+### Added
+- Gateway artifact search/import/export endpoints for thin clients, including scoped artifact lookup by run, session, or all stored artifacts with modality, content type, text, and tag filters.
+- Capability discovery now advertises artifact search, workspace import, and workspace export descriptors in the shared thin-client contract.
+
 ### Changed
 
 - Removed legacy compatibility install extras (`abstractgateway[http]`, `[server]`, `[multimodal]`, `[memory]`, `[voice]`, `[vision]`, `[telegram]`, `[visualflow]`, `[all]`, `[all-apple]`, `[all-gpu]`, `[server-nvidia]`). The supported install surface is now:
   - `pip install abstractgateway`
   - `pip install "abstractgateway[apple]"`
   - `pip install "abstractgateway[gpu]"`
+- Raised dependency floors to `AbstractRuntime[multimodal,mcp-worker]>=0.4.25` and `abstractagent>=0.3.9`.
+- KG memory readiness now treats a resolvable fresh persistent AbstractMemory store as available, so empty stores return empty query results instead of hiding Flow authoring surfaces.
+
+### Fixed
+- Media model-residency discovery now keeps image editing distinct from image generation when Runtime/Core expose task-specific residency state.
 
 ## [0.2.20] - 2026-05-26
 

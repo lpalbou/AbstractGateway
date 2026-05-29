@@ -11,7 +11,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 python -m pip install -U pip
-pip install -e ".[dev,http]"
+pip install -e ".[dev]"
 ```
 
 Run the test suite:

@@ -346,7 +346,7 @@ def _flow_uses_memory_kg(raw: Dict[str, Any]) -> bool:
         return False
     for n in nodes:
         t = _node_type_from_raw(n)
-        if t in {"memory_kg_assert", "memory_kg_query"}:
+        if t in {"memory_kg_assert", "memory_kg_query", "memory_kg_resolve"}:
             return True
     return False
 
