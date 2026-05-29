@@ -1557,6 +1557,10 @@ included by the base <code>abstractgateway</code> install.</p>
 <code>memory</code> for process-local dev/test memory, or set
 <code>ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite</code> only when your installed
 AbstractMemory build exposes <code>SQLiteTripleStore</code>.</p>
+<p>A fresh persistent store does not make KG memory unavailable. Capability
+discovery treats the surface as available once AbstractMemory is installed and
+the configured backend resolves; empty structured queries return empty results
+until a flow asserts triples.</p>
 <p>Evidence: memory KG wiring in <code>src/abstractgateway/memory_store.py</code> and
 <code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h2 id="deployment">Deployment<a class="headerlink" href="#deployment" title="Permanent link">&para;</a></h2>

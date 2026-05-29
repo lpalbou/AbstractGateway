@@ -486,6 +486,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#artifacts-and-filesystem-handoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Artifacts and filesystem handoff
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#durable-commands-post-apigatewaycommands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -860,6 +871,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#artifacts-and-filesystem-handoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Artifacts and filesystem handoff
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#durable-commands-post-apigatewaycommands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1089,6 +1111,49 @@ See: <a href="../security/">security.md</a>.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-N<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/ledger/stream?after=0&quot;</span>
 </code></pre></div>
 <p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>stream_ledger</code>).</p>
+<h2 id="artifacts-and-filesystem-handoff">Artifacts and filesystem handoff<a class="headerlink" href="#artifacts-and-filesystem-handoff" title="Permanent link">&para;</a></h2>
+<p>Gateway artifacts are the cross-package representation for files, media, and
+large payloads. Thin clients should pass artifact refs across runs instead of
+raw bytes or local paths:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;$artifact&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;abc123&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;artifact_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;abc123&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;run_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;session_memory_sess-1&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;content_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;image/png&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;filename&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;input.png&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>List run artifacts:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/artifacts&quot;</span>
+</code></pre></div>
+<p>List artifacts visible to a session:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/sessions/sess-1/artifacts&quot;</span>
+</code></pre></div>
+<p>Search artifacts across Gateway storage:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/artifacts/search?scope=all&amp;modality=image&amp;query=logo&amp;tags=pin_id=image&quot;</span>
+</code></pre></div>
+<p><code>scope</code> can be <code>all</code>, <code>session</code>, or <code>run</code>. Use <code>session_id</code> with
+<code>scope=session</code> and <code>run_id</code> with <code>scope=run</code>; omit both for <code>scope=all</code>.
+<code>modality</code> filters normalized artifact type (<code>image</code>, <code>audio</code>, <code>video</code>,
+<code>text</code>, <code>document</code>, <code>music</code>, <code>voice</code>, or <code>artifact</code>), <code>content_type</code> accepts
+exact values or prefixes such as <code>image/*</code>, and <code>tags</code> accepts either a JSON
+object or comma-separated <code>key=value</code> filters.</p>
+<p>Import a server workspace path into a session artifact:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;session_id&quot;:&quot;sess-1&quot;,&quot;source&quot;:{&quot;kind&quot;:&quot;workspace_path&quot;,&quot;path&quot;:&quot;inputs/photo.png&quot;},&quot;pin_id&quot;:&quot;image&quot;}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/artifacts/import&quot;</span>
+</code></pre></div>
+<p>Export an artifact back into the server workspace:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;path&quot;:&quot;outputs/photo.png&quot;,&quot;create_parent_dirs&quot;:true,&quot;overwrite&quot;:false}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/artifacts/&lt;artifact_id&gt;/export&quot;</span>
+</code></pre></div>
+<p>Import and export use the same Gateway workspace policy as file helpers:
+workspace roots, mounted roots, ignored paths, and size limits are enforced on
+the server. Browser-local files should be uploaded through
+<code>POST /api/gateway/attachments/upload</code>; browser-local file paths are not
+interpreted as Gateway workspace paths.</p>
 <h2 id="durable-commands-post-apigatewaycommands">Durable commands (<code>POST /api/gateway/commands</code>)<a class="headerlink" href="#durable-commands-post-apigatewaycommands" title="Permanent link">&para;</a></h2>
 <p>Commands are appended to a durable inbox and applied asynchronously by the runner.</p>
 <p>Request fields (see <code>SubmitCommandRequest</code> in <code>src/abstractgateway/routes/gateway.py</code>):
@@ -1154,7 +1219,9 @@ configured. The resolver follows request values, flow pins, and the execution-ho
 <li><code>capabilities.contracts.version</code>: currently <code>1</code></li>
 <li><code>capabilities.contracts.common</code>: shared run start/list/summary/input/history,
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
-  controls</li>
+  controls. <code>common.artifacts</code> includes run listing/content, session artifact
+  listing, artifact search, workspace import, and workspace export descriptors
+  when available.</li>
 <li><code>capabilities.contracts.common.readiness</code>: compact Gateway-owned
   <code>gateway_surface_readiness_v1</code> summary derived from the shared endpoint/media/
   residency descriptors</li>
@@ -1311,6 +1378,10 @@ when the installed AbstractMemory build exposes <code>SQLiteTripleStore</code>. 
 <code>query_text</code> requires a vector-capable backend plus the execution-host
 <code>embedding.text</code> route; SQLite returns a clear 400 instead of pretending to
 support semantic recall.</p>
+<p>Capability discovery reports KG memory as available when AbstractMemory is
+installed and the configured backend can be resolved. A fresh persistent store
+does not need to exist yet; empty-store structured queries return an empty
+result rather than making Flow authoring nodes unavailable.</p>
 <h2 id="prompt-cache-control-plane-operator-api">Prompt-cache control plane (operator API)<a class="headerlink" href="#prompt-cache-control-plane-operator-api" title="Permanent link">&para;</a></h2>
 <p>The gateway exposes prompt-cache operator endpoints under <code>/api/gateway/prompt_cache/*</code>.</p>
 <p>Core endpoints:</p>

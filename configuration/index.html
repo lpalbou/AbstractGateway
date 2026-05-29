@@ -895,15 +895,11 @@ compatibility (runs bundles produced by AbstractFlow; does not require the <code
 <p>Optional extras (see <code>pyproject.toml</code>):
 - <code>abstractgateway[apple]</code>: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
 - <code>abstractgateway[gpu]</code>: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
-- <code>abstractgateway[http]</code>, <code>[server]</code>, <code>[multimodal]</code>, <code>[memory]</code>, <code>[voice]</code>, <code>[vision]</code>, <code>[all]</code>: compatibility aliases because the base install now includes the remote-light server stack
-- <code>abstractgateway[server-nvidia]</code>: compatibility alias for the GPU profile used by older NVIDIA Docker commands
-- <code>abstractgateway[visualflow]</code>: deprecated compatibility alias (VisualFlow directory mode was removed; does nothing)
-- <code>abstractgateway[telegram]</code>: compatibility alias; Telegram bridge support uses base install dependencies
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors:
-- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.24</code>
-- <code>abstractagent&gt;=0.3.8</code>
+- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.25</code>
+- <code>abstractagent&gt;=0.3.9</code>
 - <code>AbstractMemory[lancedb]&gt;=0.2.6</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
@@ -963,7 +959,10 @@ not implement memory stores itself.</p>
 </ul>
 <p>The same resolver is used for bundle <code>memory_kg_*</code> nodes and
 <code>POST /api/gateway/kg/query</code>. Capability discovery reports memory backend,
-persistence, vector support, and embedder status.</p>
+persistence, vector support, and embedder status. A missing on-disk store is not
+an unavailable state by itself: when AbstractMemory is installed and the backend
+resolves, fresh stores are authoring-ready and structured queries simply return
+no matches until assertions are written.</p>
 <h3 id="runner-tuning-advanced">Runner tuning (advanced)<a class="headerlink" href="#runner-tuning-advanced" title="Permanent link">&para;</a></h3>
 <p>These map to <code>GatewayHostConfig</code> and <code>GatewayRunnerConfig</code>:
 - <code>ABSTRACTGATEWAY_RUNNER</code>: <code>1</code> (default) / <code>0</code> to disable runner in-process<br />
@@ -1051,14 +1050,13 @@ AbstractCore provider exposes those operations.</p>
 operations. Local runtimes write under <code>&lt;DATA_DIR&gt;/prompt_cache_exports</code>; remote
 and hybrid runtimes report <code>prompt_cache_local_only</code>.</p>
 <h3 id="multimodal-providerplugin-controls">Multimodal provider/plugin controls<a class="headerlink" href="#multimodal-providerplugin-controls" title="Permanent link">&para;</a></h3>
-<p>The <code>server</code>, <code>multimodal</code>, and <code>all</code> extras install the lightweight AbstractCore
-plugin surface for generated images, generated videos, generated voice, STT, and music
-capabilities. Voice generation, transcription, generated images, and generated
-music have direct Gateway endpoints; generated images are also exposed through
-Runtime/Core workflows and through <code>POST /api/gateway/runs/{run_id}/images/generate</code>
-and <code>POST /api/gateway/runs/{run_id}/images/edit</code> when a Runtime/Core image
-backend is configured or provider/model are supplied on the request. Local
-heavy engines remain explicit opt-ins in the provider packages.</p>
+<p>The base install already includes the Gateway HTTP/SSE server and the Runtime
+multimodal integration layer. Direct Gateway routes for voice/audio, image/video,
+and music become available when the corresponding lower-layer capability
+packages are installed on the gateway host (or when Gateway is configured to
+proxy to a remote AbstractCore server).</p>
+<p>Local heavy engines remain explicit opt-ins in the provider packages; Gateway
+does not implicitly install them.</p>
 <ul>
 <li><code>output.text</code> capability route: default text model for bundle LLM nodes</li>
 <li><code>OPENAI_COMPATIBLE_BASE_URL</code> / <code>OPENAI_COMPATIBLE_API_KEY</code>: OpenAI-compatible text endpoint for AbstractCore providers</li>
@@ -1071,7 +1069,7 @@ heavy engines remain explicit opt-ins in the provider packages.</p>
 <li><code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code> / <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code>: Gateway-scoped voice engine settings. Legacy <code>ABSTRACTVOICE_*</code> names are still accepted by the lower package.</li>
 <li><code>ABSTRACTGATEWAY_VOICE_TTS_MODEL</code> / <code>ABSTRACTGATEWAY_VOICE_STT_MODEL</code>: Gateway-scoped TTS/STT model defaults.</li>
 <li><code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code>: remote voice endpoint used by AbstractVoice.</li>
-<li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, and <code>music</code>; also returns <code>capabilities.contracts.version=1</code> with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls</li>
+<li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, and <code>music</code>; also returns <code>capabilities.contracts.version=1</code> with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls</li>
 <li><code>GET /api/gateway/voice/voices</code>: proxies AbstractCore <code>/v1/audio/voices</code> when <code>ABSTRACTCORE_SERVER_BASE_URL</code> is configured; otherwise returns static Gateway/env voice descriptors.</li>
 <li><code>GET /api/gateway/audio/speech/models</code>: proxies AbstractCore <code>/v1/audio/speech/models</code> when configured.</li>
 <li><code>GET /api/gateway/audio/transcriptions/models</code>: proxies AbstractCore <code>/v1/audio/transcriptions/models</code> when configured.</li>
