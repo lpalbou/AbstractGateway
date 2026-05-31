@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -35,5 +36,7 @@ def _reset_gateway_service_between_tests(_isolate_gateway_runtime_env: None):
     from abstractgateway.service import stop_gateway_runner
 
     stop_gateway_runner()
+    sys.modules.pop("abstractgateway.app", None)
     yield
     stop_gateway_runner()
+    sys.modules.pop("abstractgateway.app", None)

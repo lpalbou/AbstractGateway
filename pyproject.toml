@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.2.21"
+version = "0.2.22"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,11 +12,9 @@ license = { text = "MIT" }
 authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
-  "AbstractRuntime[multimodal,mcp-worker]>=0.4.25",
-  "abstractagent>=0.3.9",
+  "AbstractRuntime>=0.4.26",
+  "abstractagent>=0.3.10",
   "AbstractMemory[lancedb]>=0.2.6",
-  "sentence-transformers<6.0.0,>=5.1.0",
-  "numpy<3.0.0,>=1.20.0",
   "requests<3.0.0,>=2.32.5",
   "urllib3<3.0.0,>=2.5.0",
   "fastapi<1.0.0,>=0.136.0",
@@ -26,26 +24,32 @@ dependencies = [
 
 [project.optional-dependencies]
 # Supported install profiles.
-# - Base install (`pip install abstractgateway`) is the remote-light HTTP/SSE server.
+# - Base install (`pip install abstractgateway`) is the remote-light HTTP/SSE server
+#   with Runtime multimodal routing and MCP worker support.
+# - `embeddings` enables local sentence-transformer embeddings for semantic KG queries.
 # - `apple` / `gpu` select hardware-local stacks for the gateway host.
 #
 # Tooling extras for contributors: `dev`, `docs`.
+
+embeddings = [
+  "abstractcore[embeddings]>=2.13.31",
+]
 
 # Native Apple Gateway profile. This is for direct macOS Python installs (not
 # Docker), because MLX/Metal-backed engines need the host Apple runtime. As the
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.25",
-  "abstractagent[all-apple]>=0.3.9",
+  "AbstractRuntime[apple]>=0.4.26",
+  "abstractagent[apple]>=0.3.10",
   "AbstractMemory[all-apple]>=0.2.6",
 ]
 
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.25",
-  "abstractagent[all-gpu]>=0.3.9",
+  "AbstractRuntime[gpu]>=0.4.26",
+  "abstractagent[gpu]>=0.3.10",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]
 dev = [
@@ -70,12 +74,20 @@ abstractgateway-config = "abstractgateway.config_cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/abstractgateway"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"flows/bundles/basic-agent.flow" = "abstractgateway/flows/bundles/basic-agent.flow"
+"flows/bundles/basic-agent@0.0.1.flow" = "abstractgateway/flows/bundles/basic-agent@0.0.1.flow"
+
 [tool.hatch.build.targets.sdist]
 exclude = [
   "/docs/backlog/**",
   "/flows/**",
   "/tests/**",
 ]
+
+[tool.hatch.build.targets.sdist.force-include]
+"flows/bundles/basic-agent.flow" = "flows/bundles/basic-agent.flow"
+"flows/bundles/basic-agent@0.0.1.flow" = "flows/bundles/basic-agent@0.0.1.flow"
 
 [tool.pytest.ini_options]
 minversion = "7.0"

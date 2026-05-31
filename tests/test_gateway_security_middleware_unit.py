@@ -21,8 +21,72 @@ def _make_app(*, policy: GatewayAuthPolicy) -> FastAPI:
     async def get_run(run_id: str):
         return {"ok": True, "run_id": run_id}
 
+    @app.get("/api/gateway/admin/probe")
+    async def admin_probe():
+        return {"ok": True}
+
+    @app.get("/api/gateway/audit/events")
+    async def audit_events():
+        return {"ok": True}
+
+    @app.get("/api/gateway/processes")
+    async def processes():
+        return {"ok": True}
+
+    @app.get("/api/gateway/backlog/items")
+    async def backlog_items():
+        return {"ok": True}
+
+    @app.get("/api/gateway/triage/items")
+    async def triage_items():
+        return {"ok": True}
+
+    @app.get("/api/gateway/reports/items")
+    async def reports_items():
+        return {"ok": True}
+
+    @app.get("/api/gateway/email/messages")
+    async def email_messages():
+        return {"ok": True}
+
+    @app.get("/api/gateway/host/metrics/gpu")
+    async def host_gpu_metrics():
+        return {"ok": True}
+
+    @app.get("/api/gateway/models/loaded")
+    async def models_loaded():
+        return {"ok": True}
+
+    @app.post("/api/gateway/models/load")
+    async def models_load(payload: dict):
+        return {"ok": True, "payload": payload}
+
+    @app.get("/api/gateway/files/read")
+    async def files_read():
+        return {"ok": True}
+
+    @app.post("/api/gateway/artifacts/import")
+    async def artifacts_import(payload: dict):
+        return {"ok": True, "payload": payload}
+
+    @app.post("/api/gateway/runs/{run_id}/artifacts/{artifact_id}/export")
+    async def artifact_export(run_id: str, artifact_id: str, payload: dict):
+        return {"ok": True, "run_id": run_id, "artifact_id": artifact_id, "payload": payload}
+
+    @app.put("/api/gateway/config/capability-defaults/{kind}/{modality}")
+    async def capability_default_put(kind: str, modality: str, payload: dict):
+        return {"ok": True, "kind": kind, "modality": modality, "payload": payload}
+
     @app.post("/api/gateway/commands")
     async def post_commands(payload: dict):
+        return {"ok": True, "payload": payload}
+
+    @app.post("/api/gateway/blocs/upsert_text")
+    async def blocs_upsert_text(payload: dict):
+        return {"ok": True, "payload": payload}
+
+    @app.post("/api/gateway/prompt_cache/sessions")
+    async def prompt_cache_session(payload: dict):
         return {"ok": True, "payload": payload}
 
     @app.post("/api/gateway/attachments/upload")
@@ -84,6 +148,121 @@ def test_dev_read_no_auth_loopback_allows_reads() -> None:
     with TestClient(app) as client:
         r = client.get("/api/gateway/runs/x")
         assert r.status_code == 200
+
+
+def test_dev_read_no_auth_loopback_does_not_grant_admin_reads() -> None:
+    app = _make_app(
+        policy=GatewayAuthPolicy(
+            enabled=True,
+            tokens=("t",),
+            protect_read_endpoints=True,
+            protect_write_endpoints=True,
+            dev_allow_unauthenticated_reads_on_loopback=True,
+        )
+    )
+    with TestClient(app) as client:
+        allowed = client.get("/api/gateway/runs/x")
+        denied = client.get("/api/gateway/admin/probe")
+        assert allowed.status_code == 200
+        assert denied.status_code == 403
+        assert denied.json()["reason_code"] == "admin_required"
+
+
+def test_non_admin_user_token_cannot_access_operator_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    from abstractgateway.users import GatewayUserRegistry
+
+    _record, user_token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"])
+    app = _make_app(policy=GatewayAuthPolicy(enabled=True, tokens=("admin-token",), user_auth_enabled=True))
+    with TestClient(app) as client:
+        denied = client.get("/api/gateway/processes", headers={"Authorization": f"Bearer {user_token}"})
+        allowed = client.get("/api/gateway/processes", headers={"Authorization": "Bearer admin-token"})
+
+    assert denied.status_code == 403
+    assert denied.json()["resource_class"] == "processes"
+    assert allowed.status_code == 200
+
+
+def test_non_admin_user_token_cannot_access_server_workspace_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    from abstractgateway.users import GatewayUserRegistry
+
+    _record, user_token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"])
+    app = _make_app(policy=GatewayAuthPolicy(enabled=True, tokens=("admin-token",), user_auth_enabled=True))
+    headers = {"Authorization": f"Bearer {user_token}"}
+    with TestClient(app) as client:
+        denied_read = client.get("/api/gateway/files/read?path=pyproject.toml", headers=headers)
+        denied_import = client.post("/api/gateway/artifacts/import", headers=headers, json={"path": "x"})
+        denied_export = client.post("/api/gateway/runs/r1/artifacts/a1/export", headers=headers, json={"path": "x"})
+        admin_allowed = client.get("/api/gateway/files/read?path=pyproject.toml", headers={"Authorization": "Bearer admin-token"})
+
+    assert denied_read.status_code == 403
+    assert denied_read.json()["resource_class"] == "workspace"
+    assert denied_import.status_code == 403
+    assert denied_export.status_code == 403
+    assert admin_allowed.status_code == 200
+
+
+def test_non_admin_user_token_can_update_own_capability_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    from abstractgateway.users import GatewayUserRegistry
+
+    _record, user_token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"])
+    app = _make_app(policy=GatewayAuthPolicy(enabled=True, tokens=("admin-token",), user_auth_enabled=True))
+    with TestClient(app) as client:
+        response = client.put(
+            "/api/gateway/config/capability-defaults/output/text",
+            headers={"Authorization": f"Bearer {user_token}"},
+            json={"provider": "openrouter", "model": "model-a"},
+        )
+
+    assert response.status_code == 200
+
+
+def test_admin_required_routes_ignore_user_scopes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    from abstractgateway.users import GatewayUserRegistry
+
+    _record, user_token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"], scopes=["processes:read", "*"])
+    app = _make_app(policy=GatewayAuthPolicy(enabled=True, tokens=("admin-token",), user_auth_enabled=True))
+    with TestClient(app) as client:
+        denied = client.get("/api/gateway/processes", headers={"Authorization": f"Bearer {user_token}"})
+
+    assert denied.status_code == 403
+    assert denied.json()["required_role"] == "admin"
+
+
+def test_non_admin_wildcard_scope_cannot_access_any_admin_route_family(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    from abstractgateway.users import GatewayUserRegistry
+
+    _record, user_token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"], scopes=["*"])
+    app = _make_app(policy=GatewayAuthPolicy(enabled=True, tokens=("admin-token",), user_auth_enabled=True))
+    headers = {"Authorization": f"Bearer {user_token}"}
+    routes = [
+        ("GET", "/api/gateway/admin/probe", None, "admin"),
+        ("GET", "/api/gateway/audit/events", None, "audit"),
+        ("GET", "/api/gateway/processes", None, "processes"),
+        ("GET", "/api/gateway/backlog/items", None, "backlog"),
+        ("GET", "/api/gateway/triage/items", None, "triage"),
+        ("GET", "/api/gateway/reports/items", None, "reports"),
+        ("GET", "/api/gateway/email/messages", None, "email"),
+        ("GET", "/api/gateway/host/metrics/gpu", None, "host"),
+        ("GET", "/api/gateway/models/loaded", None, "models"),
+        ("POST", "/api/gateway/models/load", {"model": "x"}, "models"),
+        ("GET", "/api/gateway/files/read?path=pyproject.toml", None, "workspace"),
+        ("POST", "/api/gateway/artifacts/import", {"path": "x"}, "workspace"),
+        ("POST", "/api/gateway/runs/r1/artifacts/a1/export", {"path": "x"}, "workspace"),
+        ("POST", "/api/gateway/blocs/upsert_text", {"text": "x"}, "blocs"),
+        ("POST", "/api/gateway/prompt_cache/sessions", {"session_id": "s"}, "prompt_cache"),
+    ]
+    with TestClient(app) as client:
+        for method, path, body, resource in routes:
+            response = client.request(method, path, headers=headers, json=body)
+            assert response.status_code == 403, (method, path, response.text)
+            payload = response.json()
+            assert payload["required_role"] == "admin"
+            assert payload["resource_class"] == resource
 
 
 def test_can_disable_write_protection_for_local_dev() -> None:

@@ -38,8 +38,11 @@ Related repos:
 ```bash
 pip install abstractgateway
 
-export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"   # *.flow dir (or a single .flow file)
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
+
+# Optional: set only for a custom bundle registry. When unset, Gateway uses
+# the packaged shipped bundle directory containing basic-agent.
+# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
 
 # Required by default: the server refuses to start without a token.
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -60,13 +63,49 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
   "http://127.0.0.1:8080/api/gateway/bundles"
 ```
 
+## Hosted user auth
+
+Local mode keeps `ABSTRACTGATEWAY_AUTH_TOKEN` as a Gateway admin token. Hosted
+mode can enable file-backed user principals and one runtime/data plane per user:
+
+```bash
+export ABSTRACTGATEWAY_USER_AUTH=1
+export ABSTRACTGATEWAY_AUTH_TOKEN="<admin-bootstrap-token>"
+```
+
+Admins manage users through `/api/gateway/admin/users`; generated user bearer
+tokens are returned once and stored only as hashes under
+`<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`. User clients call
+`GET /api/gateway/me` after connecting to confirm the resolved principal and
+routing mode. Gateway rejects duplicate runtime ids within the same tenant, so
+the default hosted model remains `1 user = 1 runtime`. Deleting a user reserves
+the retained runtime id; admins can explicitly purge retained runtime data or
+transfer it to an existing same-tenant user. See
+[docs/security.md](docs/security.md) for the current hosted isolation boundary
+and remaining operator-route hardening work.
+
+Gateway also serves a built-in control-plane console at `/console`. The console
+uses the same browser-session contract as hosted apps: sign in with a Gateway
+user id and its token. Because the console is served by Gateway, it uses the
+current origin and does not ask for a Gateway URL. You can then manage the
+current account, admin-only user records
+with optional email metadata, retained runtime reservations, and capability defaults selected from
+Gateway-discovered provider/model catalogs without storing the bearer token in
+browser storage.
+
+Browser apps should not keep user bearer tokens. They exchange the user token at
+`POST /api/gateway/session/login` for an opaque Gateway browser session and use
+that session for proxied Gateway calls. The login response body does not return
+the session id or CSRF token. Session writes require the Gateway CSRF token, and
+`POST /api/gateway/session/logout` revokes the session.
+
 ## Docker server
 
 Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.21
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -74,15 +113,19 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.22
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
-`AbstractRuntime[multimodal,mcp-worker]`, Runtime-owned provider/media/tool
-facades, OpenAI-compatible text providers, workflow-backed and direct image,
-video, voice, audio, and music routes surfaced through Runtime, provider/session prompt-cache
-helpers, AbstractMemory/LanceDB KG support, AbstractAgent, and AbstractFlow
-compatibility.
+`AbstractRuntime`, Runtime-owned provider/tool and
+multimodal facades, OpenAI-compatible text/media providers,
+provider/session prompt-cache helpers, AbstractMemory/LanceDB KG support,
+AbstractAgent, and AbstractFlow compatibility. Local sentence-transformer
+embeddings and hardware-local inference engines are explicit extras so the
+light server image does not pull PyTorch/CUDA runtime packages. Remote text
+embeddings remain part of the light profile through the `embedding.text`
+capability route: point it at OpenAI, OpenRouter, Portkey, LM Studio, vLLM,
+any OpenAI-compatible embeddings endpoint, or a remote AbstractCore server.
 
 AbstractFlow note:
 - You do **not** need the `abstractflow` Python package to run `.flow` bundles (bundle mode). You only need it to author bundles. VisualFlow directory mode was intentionally removed from the gateway to keep the dependency direction clean.
@@ -96,7 +139,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.21
+  ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 Configure framework model defaults through execution-host capability routes:
@@ -201,8 +244,12 @@ See [docs/api.md](docs/api.md) for curl examples and the live OpenAPI spec (`/op
 Requires Python `>=3.10` (see `pyproject.toml`).
 
 The base install is the remote-light HTTP/SSE server: Gateway, Runtime,
-Agent, Flow compatibility, Runtime-owned provider/tool/media facades, and
-LanceDB-backed Memory.
+Agent, Flow compatibility, Runtime-owned provider/tool and multimodal facades,
+and LanceDB-backed Memory. It intentionally excludes local sentence-transformer
+embeddings and hardware-local inference engines so Linux installs do not pull
+PyTorch/CUDA packages. Remote embeddings and remote multimodal input/output
+still work in this profile through hosted providers, OpenAI-compatible
+endpoints, or a remote AbstractCore server.
 
 ```bash
 pip install abstractgateway
@@ -212,6 +259,7 @@ pip install abstractgateway
 
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities
 - `abstractgateway[gpu]`: full local GPU profile with vLLM/HuggingFace, local Diffusers image generation, local voice engines, music, and KG memory; this is also the NVIDIA Docker install profile
+- `abstractgateway[embeddings]`: local sentence-transformer embeddings for semantic KG queries
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local test/dev deps
 
@@ -348,7 +396,7 @@ Related repos:
 ## Install
 
 ```bash
-# Remote-light server package (HTTP/SSE + runner + stores + Runtime multimodal stack + KG memory)
+# Remote-light server package (HTTP/SSE + runner + stores + KG memory)
 pip install abstractgateway
 
 # Native Apple local engines
@@ -368,8 +416,11 @@ File-backed stores are the default and easiest for dev.
 
 ```bash
 export ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle
-export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"      # directory with *.flow (or a single .flow file)
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
+
+# Optional: set only for a custom bundle registry. When unset, Gateway uses
+# the packaged shipped bundle directory containing basic-agent.
+# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
 
 # Required by default: the server refuses to start without a token.
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -390,7 +441,8 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
 ```
 
 If `bundles.items` is empty, either:
-- point `ABSTRACTGATEWAY_FLOWS_DIR` at a directory containing `*.flow` files (or a single `.flow` file), or
+- point `ABSTRACTGATEWAY_FLOWS_DIR` at the shipped bundle directory or another
+  directory containing `*.flow` files (or a single `.flow` file), or
 - upload a bundle via the API:
 
 ```bash
@@ -450,9 +502,13 @@ abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
 
 ## 3b) Docker / Compose
 
-For a containerized deployment with `AbstractRuntime[multimodal,mcp-worker]`,
-Runtime-owned provider/media/tool support, direct Gateway voice/audio/image
-endpoints, and provider/session prompt-cache controls included:
+For a containerized remote-light deployment with
+`AbstractRuntime`, Runtime-owned provider/tool and
+multimodal support, KG memory, and provider/session prompt-cache controls
+included. Remote embeddings are available in this profile when `embedding.text`
+points at a remote provider, an OpenAI-compatible embeddings endpoint, or a
+remote AbstractCore server; local HuggingFace/sentence-transformer embeddings
+require `abstractgateway[embeddings]`.
 
 ```bash
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -461,13 +517,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.21
+  ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 See [deployment.md](docs/deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.22`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -551,6 +607,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.22] - 2026-05-31
+
+### Added
+- Added hosted user-principal auth with `GET /api/gateway/me`, admin-only `/api/gateway/admin/users` CRUD, and a file-backed user registry storing bearer-token hashes.
+- Added request-scoped Gateway service routing so hosted user-auth mode maps each principal to a separate GatewayService data plane under `<DATA_DIR>/users/<tenant_id>/<runtime_id>/`.
+- Added the built-in Gateway Console at `/console` for browser-session sign-in, account/runtime summary, admin user management, token rotation, and per-principal capability default editing.
+- Added per-principal capability-default overlays in hosted user-auth mode so users can set provider/model defaults for their own runtime without mutating the global AbstractCore config.
+- Added provider endpoint profiles for Gateway-stored OpenAI-compatible or hosted endpoints. Profiles keep API keys server-side, discover endpoint models on demand, and surface as virtual providers in Gateway defaults and Flow node selectors.
+
+### Changed
+- Raised dependency floors to `AbstractRuntime>=0.4.26`, `abstractagent>=0.3.10`, and `abstractcore[embeddings]>=2.13.31` so Gateway installs inherit the latest light-profile, media, and provider-profile contracts.
+
+### Fixed
+- Fixed the Gateway Console sign-in page so generated inline JavaScript parses correctly, the sign-in form posts to `/api/gateway/session/login`, and signed-out users see only the same-origin Gateway user/token login card.
+- Made `abstractgateway.security` export session and middleware helpers lazily so direct `abstractgateway.users` imports are not order-sensitive.
+- Kept the base `pip install abstractgateway` remote-light on Linux while relying on the base `AbstractRuntime` install for MCP and remote multimodal routing. Local sentence-transformer embeddings moved behind `abstractgateway[embeddings]`, and Gateway no longer declares direct base `sentence-transformers` or `numpy` dependencies, avoiding PyTorch/NVIDIA CUDA runtime wheels unless an explicit local-engine profile is selected.
+- Kept remote/provider-backed embeddings in the base light profile through `embedding.text` routes and remote AbstractCore delegation, while surfacing embedding setup errors instead of reporting a generic missing integration.
+- Gateway admin user routes now fail closed when request principal context is absent while Gateway security is enabled.
+- Gateway route-family authorization now keeps operator/admin surfaces and server-workspace file helpers admin-only in hosted user-auth mode while regular users remain able to operate within their own runtime data plane.
 
 ## [0.2.21] - 2026-05-29
 
@@ -1058,7 +1134,7 @@ These are not required for the base gateway, but are used by optional modes/feat
 - **Uvicorn**: ASGI server used by `abstractgateway serve` (base install).
 - **python-multipart**: multipart upload support for bundle/attachment endpoints (base install).
 - **AbstractFlow**: workflow authoring/bundling workflows (Gateway does not depend on it; it runs `.flow` bundles).
-- **AbstractCore** integration (via `abstractruntime[abstractcore]`): LLM/tool execution wiring, embeddings client, Telegram TDLib wrapper.
+- **AbstractCore** integration (via base `abstractruntime`): LLM/tool execution wiring, embeddings client, Telegram TDLib wrapper.
 - **AbstractAgent**: Visual Agent nodes in bundle mode.
 - **AbstractMemory** + **LanceDB**: `memory_kg_*` nodes in bundle mode (knowledge graph storage).
 - **TDLib**: Telegram Secret Chats support when using the TDLib transport.
@@ -1101,6 +1177,26 @@ All examples below assume:
 export BASE_URL="http://127.0.0.1:8080"
 export AUTH="Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN"
 ```
+
+## Provider endpoint profiles
+
+Gateway-owned provider endpoint profiles let users create reusable hosted
+endpoints without putting raw API keys in workflow JSON or browser storage.
+
+- `GET /api/gateway/config/provider-endpoint-profiles`: list visible profiles.
+- `POST /api/gateway/config/provider-endpoint-profiles`: create a user- or
+  admin-owned profile.
+- `POST /api/gateway/config/provider-endpoint-profiles/discover-models`:
+  discover models for a draft or saved profile by calling the configured
+  provider family and base URL with the entered or server-side key. The raw key
+  is never returned.
+- `PUT` or `DELETE /api/gateway/config/provider-endpoint-profiles/{profile_id}`:
+  update or delete a profile.
+
+Enabled profiles appear in `GET /api/gateway/discovery/providers` as virtual
+providers such as `endpoint:office-vllm`. Model discovery through
+`GET /api/gateway/discovery/providers/{provider_name}/models` returns either the
+fixed profile allowlist or the live endpoint model catalog.
 
 ## Core workflow lifecycle
 
@@ -1157,6 +1253,45 @@ Notes:
 - To stop a schedule, cancel the scheduled parent run via `POST /api/gateway/commands` with type `cancel`.
 
 Evidence: `ScheduleRunRequest`, `start_scheduled_run` in `src/abstractgateway/routes/gateway.py`.
+
+### 2c) Shared workflow catalog
+
+Private `/api/gateway/bundles` routes are scoped to the signed-in user's routed
+runtime. Shared/default workflows use the Gateway workflow catalog instead:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/workflow-catalog"
+```
+
+Admin-only catalog operations live under
+`/api/gateway/admin/workflow-catalog/*`:
+
+- upload or promote immutable `.flow` versions;
+- move a bundle's default pointer;
+- set ACLs;
+- deprecate, block, or tombstone a version without deleting bundle bytes.
+
+Start a catalog workflow in the requesting user's runtime by setting
+`registry_scope`:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"registry_scope":"tenant_catalog","bundle_id":"basic-agent","flow_id":"root","input_data":{"prompt":"Hello"}}' \
+  "$BASE_URL/api/gateway/runs/start"
+```
+
+If `bundle_version` is omitted, Gateway uses the admin-managed catalog default
+pointer. Exact older versions keep working until that specific version is
+deprecated, blocked, or tombstoned.
+
+Catalog scope is explicit: omitting `registry_scope` starts only private
+runtime bundles. Flow/schema inspection for catalog workflows should use the
+ACL-aware catalog endpoints:
+
+- `GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}`
+- `GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}/input_schema`
+
+`framework_catalog` is reserved but not loadable yet; use `tenant_catalog`.
 
 ### 3) Replay the ledger (cursor-based)
 
@@ -1256,7 +1391,10 @@ Import and export use the same Gateway workspace policy as file helpers:
 workspace roots, mounted roots, ignored paths, and size limits are enforced on
 the server. Browser-local files should be uploaded through
 `POST /api/gateway/attachments/upload`; browser-local file paths are not
-interpreted as Gateway workspace paths.
+interpreted as Gateway workspace paths. In hosted user-auth mode, server
+workspace import/export and `/files/*` helpers require an admin principal.
+Ordinary users can still upload browser-local files and list/search artifacts in
+their own routed runtime.
 
 ## Durable commands (`POST /api/gateway/commands`)
 
@@ -1350,7 +1488,9 @@ It also includes a versioned thin-client contract:
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
   controls. `common.artifacts` includes run listing/content, session artifact
   listing, artifact search, workspace import, and workspace export descriptors
-  when available.
+  when available. Permission-sensitive descriptors are principal-aware:
+  ordinary users see admin-only workspace import/export and provider
+  prompt-cache controls marked unavailable with `admin_required` metadata.
 - `capabilities.contracts.common.readiness`: compact Gateway-owned
   `gateway_surface_readiness_v1` summary derived from the shared endpoint/media/
   residency descriptors
@@ -1532,6 +1672,8 @@ result rather than making Flow authoring nodes unavailable.
 ## Prompt-cache control plane (operator API)
 
 The gateway exposes prompt-cache operator endpoints under `/api/gateway/prompt_cache/*`.
+Provider prompt-cache controls affect process-local or remote provider state
+and require an admin principal in hosted user-auth mode.
 
 Core endpoints:
 
@@ -1560,7 +1702,11 @@ Session lifecycle endpoints:
 
 These routes derive a deterministic bounded namespace/key from `session_id`,
 `bundle_id`, `bundle_version`, `flow_id`, `provider`, `model`, optional
-`template_id`, and `version`. They expose three honest modes:
+`template_id`, and `version`. The private hash also includes the authenticated
+principal scope, so two hosted users using the same session id/provider/model do
+not collide in a shared provider control plane; the returned `identity` remains
+portable app-level data and does not expose that private scope. These routes
+expose three honest modes:
 
 - `unsupported`: provider/model does not expose prompt-cache support; responses include `supported=false`, `ok=false`, and capabilities.
 - `keyed`: gateway returns a stable `runtime_hint`/`prompt_cache_key` for Runtime/Core injection, but does not claim module preparation occurred.
@@ -1682,6 +1828,141 @@ Clients must send:
 Authorization: Bearer <token>
 ```
 
+### Tenant and user isolation
+
+In local/single-user mode, `ABSTRACTGATEWAY_AUTH_TOKEN` remains a gateway-level
+control-plane token and maps to the `local-admin` principal. Treat that token as
+full authority for the Gateway instance.
+
+Hosted user-auth mode is enabled with `ABSTRACTGATEWAY_USER_AUTH=1` or
+`ABSTRACTGATEWAY_AUTH_MODE=users`. In that mode, Gateway bearer tokens resolve
+to concrete principals with `tenant_id`, `user_id`, roles/scopes, and a token
+fingerprint. `GET /api/gateway/me` returns the resolved principal and routing
+mode. The presence of an `auth/users.json` registry file is readiness state; it
+does not silently enable hosted user auth unless `ABSTRACTGATEWAY_USER_AUTH_AUTO=1`
+is set for compatibility. Admin principals can manage users through:
+
+- `GET /api/gateway/admin/users`
+- `POST /api/gateway/admin/users`
+- `GET /api/gateway/admin/users/{user_id}?tenant_id=...`
+- `PATCH /api/gateway/admin/users/{user_id}?tenant_id=...`
+- `DELETE /api/gateway/admin/users/{user_id}?tenant_id=...`
+- `GET /api/gateway/admin/runtime-reservations`
+- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer`
+- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/purge`
+
+Gateway stores user token hashes in `<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`
+by default. Generated or rotated bearer tokens are returned once from the admin
+create/update response and are never stored in plaintext.
+
+Browser apps should exchange user bearer tokens for Gateway browser sessions
+instead of storing bearer tokens. `POST /api/gateway/session/login` accepts a
+Gateway user id and user token, validates them against the registry, and sets an
+opaque signed session id plus a CSRF token as cookies. The JSON response body
+does not expose those values. Gateway stores session records in
+`<ABSTRACTGATEWAY_DATA_DIR>/auth/sessions.json` by default.
+The session cookie is HTTP-only; the CSRF cookie is readable by the hosting app
+so it can send the CSRF header. Both cookies use path `/` and `SameSite=Lax`.
+Plain HTTP local-dev responses do not set `Secure`; HTTPS responses, including
+requests forwarded with `X-Forwarded-Proto: https`, do set `Secure`.
+Non-remembered sessions omit `Max-Age`; remembered sessions include one.
+Session-authenticated mutating requests must send:
+
+```text
+X-AbstractGateway-Session: <session id>
+X-AbstractGateway-CSRF: <csrf token>
+```
+
+`POST /api/gateway/session/logout` revokes the session. Disabling, deleting, or
+rotating the Gateway user invalidates existing browser sessions for that user.
+
+When user auth is active, the Gateway service composition root routes each
+principal to an isolated service/data plane under:
+
+```text
+<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/runtime
+<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/flows
+```
+
+Gateway rejects duplicate `runtime_id` values within the same tenant during
+user creation and update. This keeps the default multi-user invariant at
+`1 user = 1 runtime`. Deleting a user removes the credential but reserves the
+retained runtime id for that principal, so another same-tenant user cannot be
+assigned to retained data by accident. Reusing the same runtime id in a
+different tenant remains valid.
+
+Admins can intentionally resolve retained runtime reservations through
+admin-only lifecycle routes. Transfer assigns a retained runtime to an existing
+same-tenant user and reserves that user's previous runtime id. Purge requires an
+exact `confirm_runtime_id`, deletes the retained runtime root under
+`<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/`, then releases the
+runtime id for reuse. Regular users cannot list, transfer, or purge retained
+runtime reservations.
+
+Clients must not send authoritative `user_id`, `tenant_id`, `runtime_id`, or
+workspace-root values. Runtime fields such as `actor_id` and `session_id`, and
+references such as `run_id`, `artifact_id`, and memory `owner_id`, remain
+correlation and lookup fields; they do not authorize access by themselves.
+
+Hosted multi-user mode is an incremental surface: the core request path now has
+principal auth and per-principal services. Gateway also applies a central
+route-family authorization table for operator/admin surfaces. Admin-only route
+families include user management, audit, process control, backlog/triage/report
+operations, email bridge routes, host metrics, model residency list/load/unload,
+server workspace file helpers, server-workspace artifact import/export, and
+global prompt-cache/bloc mutation routes. Regular users remain able to use
+their own runtime data plane for run, ledger, artifact upload, discovery, and
+per-principal capability-default routes.
+
+The route table is intentionally conservative around server filesystem access:
+browser-local files should use `/api/gateway/attachments/upload`; server
+workspace reads/imports/exports require an admin principal until a stronger
+per-user workspace grant model exists.
+
+Capability discovery follows the same policy. Regular users can still discover
+ordinary run, ledger, artifact, upload, provider/model catalog, KG, and
+per-principal defaults surfaces, but admin-only workspace artifact
+import/export and provider prompt-cache controls are advertised as unavailable
+with machine-readable `admin_required` metadata. Session-level prompt-cache
+keys remain available for users; the private hash includes the current
+principal scope, so two users using the same session id/provider/model tuple do
+not collide in a shared provider control plane.
+
+Hosted provider secrets are supported through Gateway provider endpoint
+profiles. Profiles are stored under the relevant Gateway data plane, expose only
+non-secret metadata and a virtual provider id such as `endpoint:office-vllm`,
+and inject the raw key only into the transient Runtime provider call. Normal
+users can manage user-scoped profiles; Gateway-scoped profiles require an admin
+principal. The current capability-default cascade still uses execution-host Core
+defaults, then the Gateway/root baseline, then a per-user overlay under the
+user's Gateway data plane. A stronger encrypted vault, audit model, and
+bridge/delegated-tool propagation policy remain future hardening work.
+
+### Shared workflow catalog
+
+Do not share workflows by pointing multiple users at another user's private
+bundle directory. Private `/api/gateway/bundles` routes stay scoped to the
+current principal's runtime. Shared/default workflows belong in the Gateway
+workflow catalog:
+
+- catalog versions are immutable by `scope + tenant + bundle_id +
+  bundle_version + sha256`;
+- admins move explicit default pointers instead of overwriting existing
+  versions;
+- catalog ACLs are checked at run start against the authenticated principal's
+  tenant, roles, and user id;
+- catalog runs execute in the requesting user's runtime by default;
+- catalog run policy is Gateway-issued and HMAC-signed before it is handed to
+  Runtime state; client-supplied `_runtime.workflow_policy` values are stripped;
+- private bundle inspection routes reject catalog-internal bundle ids, so
+  catalog flow/schema inspection remains ACL-aware;
+- deprecate/block/tombstone changes block new starts without deleting stored
+  bundle bytes.
+
+Catalog mutation routes are admin-only under
+`/api/gateway/admin/workflow-catalog/*`. User-visible catalog discovery is
+available at `GET /api/gateway/workflow-catalog`.
+
 ## Origin allowlist (browser/origin defense)
 
 If the request includes an `Origin` header, the middleware enforces `ABSTRACTGATEWAY_ALLOWED_ORIGINS` using glob-style patterns (fnmatch).
@@ -1758,6 +2039,18 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 - `ABSTRACTGATEWAY_AUTH_TOKEN` (single shared secret)
 - `ABSTRACTGATEWAY_AUTH_TOKENS` (comma-separated list)
+- `ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_MODE=users`: enable
+  file-backed user principals and per-principal service routing
+- `ABSTRACTGATEWAY_USER_AUTH_AUTO=1`: compatibility mode that also enables
+  user auth when the registry file exists
+- `ABSTRACTGATEWAY_USERS_FILE`: optional user registry path; defaults to
+  `<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`
+- `ABSTRACTGATEWAY_SESSIONS_FILE`: optional browser session registry path;
+  defaults to `<ABSTRACTGATEWAY_DATA_DIR>/auth/sessions.json`
+- `ABSTRACTGATEWAY_SESSION_TTL_S`: default browser session lifetime in seconds
+  (default: 8 hours; bounded)
+- `ABSTRACTGATEWAY_REMEMBER_SESSION_TTL_S`: browser session lifetime when an
+  app requests "remember me" (default: 30 days; bounded)
 
 ### Protect reads vs writes
 
@@ -1815,19 +2108,29 @@ AbstractGateway is configured primarily via **environment variables** (plus a fe
 ## Install extras (recommended)
 
 The base install (`pip install abstractgateway`) is the remote-light server
-profile: HTTP/SSE, durable stores, `AbstractRuntime[multimodal,mcp-worker]`,
-Runtime-owned provider/media/tool support, AbstractAgent, AbstractFlow
-compatibility (runs bundles produced by AbstractFlow; does not require the `abstractflow` package), and AbstractMemory/LanceDB KG support.
+profile: HTTP/SSE, durable stores, `AbstractRuntime`,
+Runtime-owned provider/tool and multimodal support, AbstractAgent, AbstractFlow
+compatibility (runs bundles produced by AbstractFlow; does not require the
+`abstractflow` package), and AbstractMemory/LanceDB KG support. Local
+sentence-transformer embeddings and hardware-local inference engines are
+opt-in, so the base Linux install does not pull PyTorch/CUDA packages.
+
+Remote embeddings are part of this base light profile. Configure
+`embedding.text` for OpenAI, OpenRouter, Portkey, LM Studio, vLLM, another
+OpenAI-compatible embeddings endpoint, or a remote AbstractCore server. The
+`abstractgateway[embeddings]` extra is only for local HuggingFace/
+sentence-transformer embeddings on the Gateway host.
 
 Optional extras (see `pyproject.toml`):
+- `abstractgateway[embeddings]`: local sentence-transformer embeddings for semantic KG queries
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
 - `abstractgateway[gpu]`: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime[multimodal,mcp-worker]>=0.4.25`
-- `abstractagent>=0.3.9`
+- `AbstractRuntime>=0.4.26`
+- `abstractagent>=0.3.10`
 - `AbstractMemory[lancedb]>=0.2.6`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -1845,8 +2148,9 @@ abstractgateway config status --json
 
 It reports Gateway auth/data/store/runtime defaults, Core-server handoff
 configuration, memory-store selection, and package readiness. `init` writes a
-private env file with a generated Gateway token. Provider API keys, provider
-base URLs and Core server settings remain owned by `abstractcore-config`.
+private env file with a generated Gateway token. General Core defaults remain
+available through `abstractcore-config`; hosted reusable endpoint profiles can
+also be managed by the Gateway Console and API.
 
 ## Core environment variables
 
@@ -1854,10 +2158,124 @@ base URLs and Core server settings remain owned by `abstractcore-config`.
 
 - `ABSTRACTGATEWAY_DATA_DIR`: durable data directory (default: `./runtime`)
   Evidence: `src/abstractgateway/config.py` (`GatewayHostConfig.from_env`)
-- `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory (default: `./flows`)
+- `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway first
+  uses the packaged shipped bundle directory containing `basic-agent`. If the
+  shipped bundle is unavailable, Gateway fails clearly instead of starting with
+  an empty default registry.
   Evidence: `src/abstractgateway/config.py`
 - `ABSTRACTGATEWAY_WORKFLOW_SOURCE`: `bundle` (default) or `visualflow`
   Evidence: `src/abstractgateway/service.py` (`create_default_gateway_service`)
+
+### Authentication and user routing
+
+Default local mode uses a Gateway bearer token:
+
+- `ABSTRACTGATEWAY_AUTH_TOKEN`: single Gateway admin token
+- `ABSTRACTGATEWAY_AUTH_TOKENS`: comma-separated Gateway admin tokens
+
+Hosted user-auth mode resolves bearer tokens to Gateway principals and routes
+each principal to a separate service/data plane:
+
+- `ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_MODE=users`: enable
+  file-backed user principals and per-principal runtime routing
+- `ABSTRACTGATEWAY_USER_AUTH_AUTO=1`: compatibility mode that also enables
+  user auth when the registry file already exists
+- `ABSTRACTGATEWAY_USERS_FILE`: optional user registry path; default:
+  `<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`
+- `ABSTRACTGATEWAY_SESSIONS_FILE`: optional browser session registry path;
+  default: `<ABSTRACTGATEWAY_DATA_DIR>/auth/sessions.json`
+- `ABSTRACTGATEWAY_SESSION_TTL_S`: default browser session lifetime
+- `ABSTRACTGATEWAY_REMEMBER_SESSION_TTL_S`: browser session lifetime when a
+  browser app requests "remember me"
+- `ABSTRACTGATEWAY_ADMIN_USES_DEFAULT_RUNTIME`: keep the default
+  `default/admin` admin principal on the Gateway's base data plane when its
+  `runtime_id` is `default` or `admin` (default: enabled)
+- `GET /api/gateway/me`: returns the resolved principal and routing mode
+- `/api/gateway/admin/users`: admin-only user list/create/read/update/delete
+- `/api/gateway/admin/runtime-reservations`: admin-only retained runtime
+  list/transfer/purge lifecycle
+- `/console`: built-in same-origin Gateway Console for session sign-in with
+  Gateway user + token, account/runtime summary, admin user management, optional
+  account email metadata, token rotation, retained runtime transfer/purge, and
+  capability defaults selected from Gateway-discovered provider/model catalogs
+
+User records include `tenant_id`, `user_id`, roles/scopes, enabled state, and a
+`runtime_id`. The registry stores password-grade bearer-token hashes only.
+Generated or rotated user tokens are returned once from the admin response.
+Gateway rejects duplicate `runtime_id` values within the same tenant when users
+are created or updated, preserving `1 user = 1 runtime` for independent hosted
+users. Deleting a user reserves its retained runtime id. Admins must explicitly
+purge retained runtime data before the id can be reused by another user, or
+transfer the retained runtime to an existing same-tenant user.
+
+When user auth is active, `src/abstractgateway/service.py` keeps normal users
+isolated in a per-principal service directory:
+
+```text
+<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/runtime
+<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/flows
+```
+
+The bootstrap `default/admin` admin principal is a local-setup compatibility
+exception by default: with `ABSTRACTGATEWAY_ADMIN_USES_DEFAULT_RUNTIME=1`, it
+uses the base Gateway data plane and bundle registry. That keeps the admin
+connected to the default runtime and shipped `basic-agent` bundle while regular
+users remain on `1 user = 1 runtime` routing.
+
+Browser apps should exchange a Gateway user token for an opaque Gateway browser
+session through `/api/gateway/session/login`; the raw bearer token should not be
+kept in browser storage, and the login response body does not expose the session
+id or CSRF token. Session-authenticated writes carry
+`X-AbstractGateway-Session` plus `X-AbstractGateway-CSRF`, and
+`/api/gateway/session/logout` revokes the session. Apps such as AbstractFlow,
+AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
+current user/session in hosted mode. They should not share one app-server
+Gateway token for all users.
+
+### Per-principal capability defaults
+
+In hosted user-auth mode, `GET /api/gateway/config/capability-defaults` returns
+the execution-host Core capability routes plus the Gateway/root baseline and any
+defaults configured for the current Gateway principal. The bootstrap
+`default/admin` principal edits the Gateway baseline when it uses the default
+runtime. Normal user writes to
+`PUT /api/gateway/config/capability-defaults/{kind}/{modality}` are stored under
+that principal's Gateway data plane and override the Gateway baseline only for
+that user:
+
+```text
+<principal-runtime>/config/capability_defaults.json
+```
+
+This lets operators set a Gateway default and lets hosted users choose
+remote-provider defaults for their own runtime without mutating the operator's
+global AbstractCore config or other users. The route schema and normalization
+still come from AbstractCore capability-default contracts. Provider API keys and
+raw secrets are not returned by these routes and require a separate per-request
+secret-injection boundary before hosted user secrets can be treated as fully
+isolated execution credentials.
+
+### Provider endpoint profiles
+
+Gateway Console and `POST /api/gateway/config/provider-endpoint-profiles` let
+signed-in users define reusable provider endpoint profiles. A profile includes a
+stable id, display name, description, provider family such as
+`openai-compatible`, optional base URL, optional API key, capabilities, and an
+optional model allowlist. The raw API key is write-only: responses include only
+`api_key_set` and a short fingerprint.
+
+For OpenAI-compatible and other discoverable endpoints, the console can call the
+endpoint through `POST /api/gateway/config/provider-endpoint-profiles/discover-models`
+and populate a model picker. Leave all models unselected to keep live discovery
+active, or select one or more models to store a fixed allowlist.
+
+Enabled profiles appear in `GET /api/gateway/discovery/providers` as virtual
+provider ids such as `endpoint:office-vllm`. Use that virtual id in Flow nodes
+or Gateway capability defaults. At runtime the Gateway host resolves the virtual
+provider to the real provider family, base URL, and API key for the transient
+AbstractRuntime call; workflow JSON and browser storage do not contain the raw
+secret. Normal users can manage user-scoped profiles. Gateway-scoped profiles
+require an admin principal.
 
 ### Workspace policy (filesystem scope)
 
@@ -1940,7 +2358,9 @@ Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.
 ### Embeddings
 
 The gateway exposes an embeddings API when the execution host has an explicit `embedding.text`
-capability default and AbstractCore embedding deps are available.
+capability default. Remote/provider-backed embeddings work with the base
+remote-light install; local HuggingFace/sentence-transformer embeddings require
+`abstractgateway[embeddings]`.
 
 Configure it through the same capability-default control plane used by Flow:
 
@@ -2079,7 +2499,7 @@ Most-used:
 AbstractGateway can run as a Python process or as a containerized server. The
 container path is the recommended baseline for a single self-contained Gateway
 deployment because it packages the HTTP API, durable runner, AbstractRuntime,
-and the Runtime-owned provider/media/tool stack together.
+and the Runtime-owned provider/tool stack together.
 
 ## Published image
 
@@ -2087,7 +2507,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.21
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -2095,24 +2515,27 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.22
 ```
 
 The default image installs the base `abstractgateway` package, which includes:
 
-- `AbstractRuntime[multimodal,mcp-worker]`
+- `AbstractRuntime`
 - `AbstractMemory[lancedb]>=0.2.6`
 - `abstractagent`
 - FastAPI/Uvicorn
 
 This profile supports hosted/commercial providers, OpenAI-compatible text
-provider routing, workflow-backed and direct image generation, direct
-image-edit, voice/STT generation, direct Gateway-routed music generation
-through Runtime facades, and
-provider/session prompt-cache controls.
-It intentionally stays dependency-light for heavy local model runtimes: MLX,
-vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
-engines, and local AbstractMusic engines remain explicit opt-ins.
+and multimodal provider routing, Runtime-owned tool execution, KG memory, and
+provider/session prompt-cache controls. Remote embeddings are included through
+the `embedding.text` capability route for hosted providers, LM Studio, vLLM,
+other OpenAI-compatible endpoints, or a remote AbstractCore server. Local
+sentence-transformer embeddings and hardware-local model runtimes remain
+explicit opt-ins, so the base Linux image does not pull PyTorch/CUDA runtime
+packages. MLX, vLLM, HuggingFace
+Transformers, local Diffusers/sdcpp, AbstractVoice local engines, and local
+AbstractMusic engines belong in native `abstractgateway[apple]` or
+`abstractgateway[gpu]` installs.
 
 The NVIDIA image installs `abstractgateway[gpu]` and uses a CUDA/PyTorch base.
 It is experimental and release automation publishes it as
@@ -2134,7 +2557,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.21
+  ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 Set the execution-host text route separately:
@@ -2256,7 +2679,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.21-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.22-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -2329,6 +2752,16 @@ flowchart LR
 - **Workflow host** (what “workflows” mean in this gateway):
   - `bundle` (default): load `.flow` WorkflowBundles and compile VisualFlow JSON via `abstractruntime.visualflow_compiler` (`src/abstractgateway/hosts/bundle_host.py`).
   - Wired in `src/abstractgateway/service.py` (`create_default_gateway_service`).
+- **Workflow catalog**:
+  - Gateway-owned metadata and immutable bundle bytes for shared/default
+    workflows.
+  - Private runtime bundles remain per-principal; catalog bundles are loaded
+    into each user's host under internal bundle ids so private ids cannot
+    shadow catalog ids.
+  - Run start and schedule routes resolve catalog ACL/default policy before
+    execution; catalog runs still execute in the caller's runtime.
+  - Gateway signs catalog workflow-policy snapshots before Runtime receives
+    them, and direct private-bundle routes reject catalog-internal ids.
 - **Runner worker**:
   - Polls the durable command inbox and applies commands; ticks RUNNING runs forward (`src/abstractgateway/runner.py`).
   - A filesystem lock (`gateway_runner.lock`) prevents double-ticking in split-process deployments.
@@ -2365,6 +2798,11 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:
 - Model residency, prompt-cache lifecycle, durable blocs, and discovery
   catalogs are server-owned control-plane surfaces so higher apps do not have
   to import Runtime/Core packages directly.
+- The shared contract is principal-aware for high-trust actions. Regular users
+  see admin-only workspace artifact import/export and provider prompt-cache
+  controls as unavailable in discovery, while ordinary run/ledger/artifact
+  upload, KG query, provider/model discovery, and per-principal defaults remain
+  available in their routed runtime.
 
 ## Deployment shape: one process vs split API/runner
 
@@ -2388,6 +2826,27 @@ Evidence:
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (`WorkflowBundleGatewayHost.load_from_dir`).
 
+### Workflow catalog
+
+The workflow catalog is a control-plane registry for shared workflows. It is
+separate from the caller's private bundle directory:
+
+- user-visible discovery: `GET /api/gateway/workflow-catalog`;
+- admin mutation: `/api/gateway/admin/workflow-catalog/*`;
+- immutable bundle bytes: existing `bundle_id@version` content cannot be
+  replaced with different bytes;
+- default pointers: omitted catalog versions resolve through the admin-managed
+  pointer, not semver order;
+- status: deprecated, blocked, and tombstoned versions cannot start new runs.
+
+Gateway stores catalog metadata under the root Gateway data dir and loads
+tenant catalog bundle bytes into each per-principal runtime host. Runtime still
+executes workflows; Gateway owns the authorization decision.
+
+The implemented catalog scope is `tenant_catalog`. `framework_catalog` is
+reserved for a later cross-tenant distribution model and is rejected by the API
+until host loading and policy semantics exist for it.
+
 ### VisualFlow directory mode
 
 VisualFlow directory mode was intentionally removed. Store VisualFlows through
@@ -2402,6 +2861,17 @@ VisualFlow directory mode was intentionally removed. Store VisualFlows through
 - **Abuse resistance** (body size caps, concurrency caps, auth lockouts, optional audit log)
 
 Evidence: `src/abstractgateway/security/gateway_security.py` (`GatewayAuthPolicy`, `load_gateway_auth_policy_from_env`, middleware `__call__`).
+
+Bearer tokens are gateway-level control-plane credentials, not tenant or
+browser-session identities. `session_id`, `run_id`, `artifact_id`, and memory
+owner ids are references/correlation fields, not authorization proofs. Deploy a
+separate Gateway/runtime/data plane per independent user or tenant unless all
+users are a trusted cohort that may share runs, artifacts, workflows, memory,
+workspaces, tools, provider credentials, and audit scope. Hosted user-auth mode
+routes each principal to a separate GatewayService data plane; browser apps
+exchange user tokens for opaque session cookies plus CSRF rather than storing
+raw bearer tokens. Session prompt-cache names include a private principal scope
+in their hash to avoid cross-user key collisions. See [security.md](docs/security.md).
 
 ## Evidence (jump-to-code)
 
@@ -2638,21 +3108,22 @@ work).
 
 ### How do I enable generated images, edited images, generated music, or other Runtime-managed multimodal outputs?
 
-Use the base install:
+Use the base install for the Gateway control plane and remote/provider-backed
+routes:
 
 ```bash
 pip install abstractgateway
 ```
 
-The base install includes `AbstractRuntime[multimodal,mcp-worker]` plus the
-Runtime-owned media/tool integration stack. The server image defaults image,
-audio, and music generation to Runtime-backed provider routes; set the relevant
-Gateway or provider credentials before expecting live generation to succeed.
-For example, use `OPENAI_API_KEY` for hosted image/voice paths, or configure a
-Core music backend/server that Runtime can reach for Gateway-routed music
-generation. Use
-`ABSTRACTGATEWAY_VISION_BACKEND=diffusers` or `sdcpp` only for custom images
-that intentionally include those local engines.
+The base install includes Runtime-owned tool and multimodal integration and can
+proxy to configured remote/provider routes. Remote embeddings are supported
+through the `embedding.text` capability route when it points at OpenAI,
+OpenRouter, Portkey, LM Studio, vLLM, another OpenAI-compatible endpoint, or a
+remote AbstractCore server. Local sentence-transformer embeddings and
+hardware-local image, audio, voice, and music engines are explicit opt-ins so a
+light Linux install does not pull PyTorch/CUDA packages. Use
+`abstractgateway[apple]` or `abstractgateway[gpu]` only when this Gateway host
+should execute those local engines itself.
 
 Generated images are available both inside Runtime workflows and through
 Gateway's direct run-scoped endpoint:

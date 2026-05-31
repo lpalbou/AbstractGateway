@@ -9,14 +9,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from abstractruntime import Runtime, WorkflowRegistry, WorkflowSpec, persist_workflow_snapshot
+from abstractruntime import EffectType, Runtime, WorkflowRegistry, WorkflowSpec, persist_workflow_snapshot
+from abstractruntime.core.runtime import EffectOutcome
 from abstractruntime.visualflow_compiler import compile_visualflow
 from abstractruntime.workflow_bundle import WorkflowBundle, WorkflowBundleError, open_workflow_bundle
 
 from ..capability_defaults import core_server_token
 from ..memory_store import build_gateway_memory_embedder, open_gateway_memory_store
+from ..provider_endpoint_profiles import ProviderEndpointProfileError, resolve_effective_endpoint_profile
 from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from ..workflow_deprecations import WorkflowDeprecatedError, WorkflowDeprecationStore
+from ..workflow_catalog import (
+    CATALOG_SCOPE_TENANT,
+    WorkflowCatalogStore,
+    catalog_internal_bundle_id,
+    load_or_create_workflow_policy_secret,
+    principal_can_run_catalog_record,
+    parse_catalog_internal_bundle_id,
+    verify_workflow_policy_signature,
+)
+from ..security.principal import GatewayPrincipal, safe_principal_component
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +70,52 @@ def _bundle_ref(bundle_id: str, bundle_version: str) -> str:
     if not bv:
         raise ValueError("bundle_version is required")
     return f"{bid}@{bv}"
+
+
+def _attach_provider_endpoint_profile_resolver(*, runtime: Runtime, data_root: Path, catalog_root: Path) -> None:
+    llm_client = getattr(runtime, "_abstractcore_llm_client", None)
+    if llm_client is None:
+        return
+
+    def _resolve(provider_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            profile = resolve_effective_endpoint_profile(provider_id, base_dir=data_root, root_base_dir=catalog_root)
+        except ProviderEndpointProfileError:
+            return None
+        if profile is None or not profile.enabled:
+            return None
+        return profile.private_resolution()
+
+    try:
+        setattr(llm_client, "resolve_provider_endpoint_profile", _resolve)
+    except Exception:
+        pass
+
+
+def _resolve_gateway_default_endpoint_profile(
+    *,
+    provider: Optional[str],
+    data_root: Path,
+    catalog_root: Path,
+) -> tuple[Optional[str], Dict[str, Any], Optional[str]]:
+    provider_s = str(provider or "").strip()
+    if not provider_s:
+        return None, {}, None
+    try:
+        profile = resolve_effective_endpoint_profile(provider_s, base_dir=data_root, root_base_dir=catalog_root)
+    except ProviderEndpointProfileError as exc:
+        raise WorkflowBundleError(f"Invalid Gateway provider endpoint profile {provider_s!r}: {exc}") from exc
+    if profile is None:
+        if provider_s.startswith("endpoint:"):
+            raise WorkflowBundleError(f"Gateway provider endpoint profile {provider_s!r} is not configured or is disabled.")
+        return provider_s, {}, None
+
+    llm_kwargs: Dict[str, Any] = {}
+    if profile.base_url:
+        llm_kwargs["base_url"] = profile.base_url
+    if profile.api_key:
+        llm_kwargs["api_key"] = profile.api_key
+    return profile.provider_family, llm_kwargs, profile.virtual_provider_id
 
 
 def _split_bundle_ref(raw: str) -> tuple[str, Optional[str]]:
@@ -145,6 +203,147 @@ def _coerce_namespaced_id(*, bundle_id: Optional[str], flow_id: str, default_bun
         return _namespace(default_bundle_id, fid)
 
     raise ValueError("bundle_id is required when multiple bundles are loaded (or pass flow_id as 'bundle:flow')")
+
+
+def _catalog_workflow_parts(workflow_id: Any) -> Optional[tuple[str, str, str, str]]:
+    wid = str(workflow_id or "").strip()
+    if ":" not in wid:
+        return None
+    prefix, flow_id = wid.split(":", 1)
+    bid, bver = _split_bundle_ref(prefix)
+    if not bid or not bver or not flow_id.strip():
+        return None
+    parsed = parse_catalog_internal_bundle_id(bid)
+    if parsed is None:
+        return None
+    scope, tenant_id, public_bid = parsed
+    return scope, tenant_id, public_bid, bver
+
+
+def _runtime_workflow_policy(vars_obj: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(vars_obj, dict):
+        return None
+    runtime_ns = vars_obj.get("_runtime")
+    policy = runtime_ns.get("workflow_policy") if isinstance(runtime_ns, dict) else None
+    if not isinstance(policy, dict):
+        return None
+    return policy
+
+
+def _policy_principal(policy: Dict[str, Any]) -> GatewayPrincipal:
+    raw = policy.get("principal")
+    p = raw if isinstance(raw, dict) else {}
+    roles = p.get("roles")
+    scopes = p.get("scopes")
+    return GatewayPrincipal(
+        user_id=str(p.get("user_id") or ""),
+        tenant_id=str(p.get("tenant_id") or "default"),
+        roles=tuple(str(r).strip() for r in (roles if isinstance(roles, list) else []) if str(r or "").strip()),
+        scopes=tuple(str(s).strip() for s in (scopes if isinstance(scopes, list) else []) if str(s or "").strip()),
+        runtime_id=str(p.get("runtime_id") or p.get("user_id") or ""),
+        source=str(p.get("source") or "workflow-policy"),
+    )
+
+
+def _runtime_workflow_policy_error(
+    vars_obj: Any,
+    *,
+    workflow_id: str,
+    policy_secret: str,
+    catalog_store: WorkflowCatalogStore,
+    expected_tenant_id: str,
+    expected_runtime_id: str,
+) -> Optional[str]:
+    policy = _runtime_workflow_policy(vars_obj)
+    if not isinstance(policy, dict):
+        return "missing Gateway-issued workflow policy"
+    if not verify_workflow_policy_signature(policy, secret=policy_secret):
+        return "invalid Gateway workflow policy signature"
+    host_tenant_id = safe_principal_component(policy.get("host_tenant_id"), default="")
+    host_runtime_id = safe_principal_component(policy.get("host_runtime_id"), default="")
+    expected_tenant = safe_principal_component(expected_tenant_id, default="default")
+    expected_runtime = safe_principal_component(expected_runtime_id, default=expected_tenant)
+    if host_tenant_id != expected_tenant or host_runtime_id != expected_runtime:
+        return "Gateway workflow policy is not valid for this runtime"
+    allowed: set[str] = set()
+    host_wid = policy.get("host_workflow_id")
+    if isinstance(host_wid, str) and host_wid.strip():
+        allowed.add(host_wid.strip())
+        if ":" in host_wid:
+            allowed.add(host_wid.split(":", 1)[0].strip() + ":*")
+    for item in list(policy.get("allowed_host_workflow_ids") or []):
+        if isinstance(item, str) and item.strip():
+            allowed.add(item.strip())
+            if ":" in item:
+                allowed.add(item.split(":", 1)[0].strip() + ":*")
+    wid = str(workflow_id or "").strip()
+    allowed_match = wid in allowed
+    if ":" in wid:
+        prefix = wid.split(":", 1)[0].strip()
+        if f"{prefix}:*" in allowed:
+            allowed_match = True
+    if not allowed_match:
+        return f"workflow '{wid}' is not allowed by the Gateway workflow policy"
+
+    parts = _catalog_workflow_parts(workflow_id)
+    if parts is None:
+        return None
+    scope, tenant_id, public_bid, bver = parts
+    rec = catalog_store.get_record(scope=scope, tenant_id=tenant_id, bundle_id=public_bid, bundle_version=bver)
+    if rec is None:
+        return f"Catalog workflow '{public_bid}@{bver}' is not registered"
+    status = str((rec or {}).get("status") or "").strip().lower()
+    if status != "published":
+        return f"Catalog workflow '{public_bid}@{bver}' is {status or 'unavailable'}"
+    sha = str(policy.get("sha256") or "").strip()
+    if sha and sha != str(rec.get("sha256") or "").strip():
+        return f"Catalog workflow '{public_bid}@{bver}' content hash no longer matches the Gateway workflow policy"
+    principal = _policy_principal(policy)
+    if not principal_can_run_catalog_record(rec, principal):
+        return f"Catalog workflow '{public_bid}@{bver}' is no longer allowed for this user"
+    return None
+
+
+def _install_catalog_subworkflow_guard(
+    *,
+    runtime: Runtime,
+    catalog_root_data_dir: Path,
+    catalog_tenant_id: str,
+    catalog_runtime_id: str,
+) -> None:
+    original = getattr(runtime, "_handle_start_subworkflow", None)
+    if not callable(original):
+        return
+
+    store = WorkflowCatalogStore(root_data_dir=catalog_root_data_dir)
+    policy_secret = load_or_create_workflow_policy_secret(catalog_root_data_dir)
+
+    def _guarded_start_subworkflow(run: Any, effect: Any, default_next_node: Optional[str]) -> Any:
+        workflow_id = None
+        try:
+            payload = getattr(effect, "payload", None)
+            workflow_id = payload.get("workflow_id") if isinstance(payload, dict) else None
+        except Exception:
+            workflow_id = None
+        parts = _catalog_workflow_parts(workflow_id)
+        if parts is not None:
+            wid = str(workflow_id or "").strip()
+            err = _runtime_workflow_policy_error(
+                getattr(run, "vars", None),
+                workflow_id=wid,
+                policy_secret=policy_secret,
+                catalog_store=store,
+                expected_tenant_id=catalog_tenant_id,
+                expected_runtime_id=catalog_runtime_id,
+            )
+            if err:
+                return EffectOutcome.failed(f"Catalog subworkflow '{wid}' is not allowed: {err}")
+        return original(run, effect, default_next_node)
+
+    try:
+        runtime._handlers[EffectType.START_SUBWORKFLOW] = _guarded_start_subworkflow  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 
 def _namespace_visualflow_raw(
@@ -399,9 +598,17 @@ class WorkflowBundleGatewayHost:
     bundles_dir: Path
     data_dir: Path
     dynamic_flows_dir: Path
+    catalog_bundles_dir: Optional[Path]
+    catalog_root_data_dir: Optional[Path]
+    catalog_tenant_id: str
+    catalog_user_id: str
+    catalog_runtime_id: str
+    catalog_policy_secret: str
     deprecation_store: WorkflowDeprecationStore
     # bundle_id -> bundle_version -> WorkflowBundle
     bundles: Dict[str, Dict[str, WorkflowBundle]]
+    # bundle_id -> bundle_version -> source metadata
+    bundle_sources: Dict[str, Dict[str, Dict[str, Any]]]
     # bundle_id -> latest bundle_version
     latest_bundle_versions: Dict[str, str]
     runtime: Runtime
@@ -532,6 +739,11 @@ class WorkflowBundleGatewayHost:
         *,
         bundles_dir: Path,
         data_dir: Path,
+        catalog_bundles_dir: Optional[Path] = None,
+        catalog_root_data_dir: Optional[Path] = None,
+        catalog_tenant_id: str = "default",
+        catalog_user_id: str = "admin",
+        catalog_runtime_id: str = "default",
         run_store: Any,
         ledger_store: Any,
         artifact_store: Any,
@@ -546,35 +758,69 @@ class WorkflowBundleGatewayHost:
             except Exception as e:
                 raise FileNotFoundError(f"bundles_dir does not exist and could not be created: {base} ({e})") from e
 
-        bundle_paths: list[Path] = []
-        if base.is_file():
-            bundle_paths = [base]
-        else:
-            bundle_paths = sorted([p for p in base.glob("*.flow") if p.is_file()])
-
         bundles_by_id: Dict[str, Dict[str, WorkflowBundle]] = {}
-        for p in bundle_paths:
+        bundle_sources: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        data_root = Path(data_dir).expanduser().resolve()
+        catalog_root = Path(catalog_root_data_dir).expanduser().resolve() if catalog_root_data_dir is not None else data_root
+        catalog_tenant = safe_principal_component(catalog_tenant_id, default="default")
+        catalog_runtime = safe_principal_component(catalog_runtime_id, default=catalog_tenant)
+        catalog_user = safe_principal_component(catalog_user_id, default="admin")
+        catalog_policy_secret = load_or_create_workflow_policy_secret(catalog_root)
+
+        def _load_bundle_path(p: Path, *, source_scope: str, source_tenant_id: str = "default") -> None:
             try:
                 b = open_workflow_bundle(p)
-                bid = str(getattr(getattr(b, "manifest", None), "bundle_id", "") or "").strip()
+                public_bid = str(getattr(getattr(b, "manifest", None), "bundle_id", "") or "").strip()
                 bver = str(getattr(getattr(b, "manifest", None), "bundle_version", "0.0.0") or "0.0.0").strip() or "0.0.0"
-                if not bid:
+                if not public_bid:
                     raise WorkflowBundleError(f"Bundle '{p}' has empty bundle_id")
+                bid = (
+                    catalog_internal_bundle_id(scope=source_scope, tenant_id=source_tenant_id, bundle_id=public_bid)
+                    if source_scope != "private"
+                    else public_bid
+                )
                 versions = bundles_by_id.setdefault(bid, {})
                 if bver in versions:
                     logger.warning("Duplicate bundle version '%s@%s' at %s; keeping first", bid, bver, p)
-                    continue
+                    return
                 versions[bver] = b
+                bundle_sources.setdefault(bid, {})[bver] = {
+                    "registry_scope": source_scope,
+                    "tenant_id": source_tenant_id,
+                    "bundle_id": public_bid,
+                    "host_bundle_id": bid,
+                    "bundle_version": bver,
+                    "path": str(p),
+                }
             except Exception as e:
                 logger.warning("Failed to load bundle %s: %s", p, e)
+
+        private_bundle_ids: set[str] = set()
+        private_paths: list[Path]
+        if base.is_file():
+            private_paths = [base]
+        else:
+            private_paths = sorted([p for p in base.glob("*.flow") if p.is_file()])
+        for p in private_paths:
+            before = set(bundles_by_id.keys())
+            _load_bundle_path(p, source_scope="private")
+            private_bundle_ids.update(set(bundles_by_id.keys()) - before)
+
+        catalog_base = Path(catalog_bundles_dir).expanduser().resolve() if catalog_bundles_dir is not None else None
+        if catalog_base is not None and catalog_base.exists() and catalog_base.is_dir():
+            for p in sorted([p for p in catalog_base.glob("*.flow") if p.is_file()]):
+                _load_bundle_path(
+                    p,
+                    source_scope=CATALOG_SCOPE_TENANT,
+                    source_tenant_id=catalog_tenant,
+                )
 
         if not bundles_by_id:
             logger.warning("No bundles found in %s (expected *.flow). Starting gateway with zero loaded bundles.", base)
 
-        default_bundle_id = next(iter(bundles_by_id.keys())) if len(bundles_by_id) == 1 else None
+        default_bundle_id = sorted(private_bundle_ids)[0] if len(private_bundle_ids) == 1 else None
         latest_versions: Dict[str, str] = {bid: _pick_latest_version(versions) for bid, versions in bundles_by_id.items()}
 
-        data_root = Path(data_dir).expanduser().resolve()
         dep_store = WorkflowDeprecationStore(path=data_root / "workflow_deprecations.json")
         dynamic_dir = data_root / "dynamic_flows"
         try:
@@ -688,7 +934,7 @@ class WorkflowBundleGatewayHost:
             except Exception as e:  # pragma: no cover
                 raise WorkflowBundleError(
                     "This bundle requires AbstractCore-backed LLM/tool/model-residency execution, but AbstractRuntime was installed "
-                    "without AbstractCore integration. Install `abstractruntime[abstractcore]` "
+                    "without AbstractCore integration. Install or upgrade `abstractruntime` "
                     "(and ensure `abstractcore` is importable)."
                 ) from e
 
@@ -727,7 +973,7 @@ class WorkflowBundleGatewayHost:
                 except Exception as e:  # pragma: no cover
                     raise WorkflowBundleError(
                         "LLM/model_residency nodes require AbstractRuntime AbstractCore integration. "
-                        "Install `abstractruntime[abstractcore]`."
+                        "Install or upgrade `abstractruntime`."
                     ) from e
 
                 core_server_base_url = _env("ABSTRACTCORE_SERVER_BASE_URL")
@@ -747,12 +993,17 @@ class WorkflowBundleGatewayHost:
                             "one llm_call/agent node."
                         ) from e
 
+                provider_for_runtime, default_profile_kwargs, provider_override = _resolve_gateway_default_endpoint_profile(
+                    provider=provider,
+                    data_root=data_root,
+                    catalog_root=catalog_root,
+                )
                 if core_server_base_url:
                     headers: Dict[str, str] = {}
                     token = core_server_token()
                     if token:
                         headers["Authorization"] = f"Bearer {token.strip()}"
-                    remote_model = f"{provider}/{model}" if provider and model else "default"
+                    remote_model = f"{provider_for_runtime}/{model}" if provider_for_runtime and model else "default"
                     runtime = create_remote_runtime(
                         server_base_url=core_server_base_url,
                         model=remote_model,
@@ -768,8 +1019,9 @@ class WorkflowBundleGatewayHost:
                             handlers.update(dict(extra_effect_handlers))
                 else:
                     runtime = create_local_runtime(
-                        provider=str(provider or ""),
+                        provider=str(provider_for_runtime or ""),
                         model=str(model or ""),
+                        llm_kwargs=default_profile_kwargs or None,
                         run_store=run_store,
                         ledger_store=ledger_store,
                         artifact_store=artifact_store,
@@ -777,6 +1029,12 @@ class WorkflowBundleGatewayHost:
                         prompt_cache_export_root_dir=data_root / "prompt_cache_exports",
                         extra_effect_handlers=extra_effect_handlers,
                     )
+                if provider_override:
+                    try:
+                        setattr(runtime, "_gateway_default_provider_override", provider_override)
+                    except Exception:
+                        pass
+                _attach_provider_endpoint_profile_resolver(runtime=runtime, data_root=data_root, catalog_root=catalog_root)
                 runtime.set_workflow_registry(wf_reg)
             else:
                 # Tools-only runtime: avoid constructing an LLM client.
@@ -836,7 +1094,7 @@ class WorkflowBundleGatewayHost:
                 from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
             except Exception as e:  # pragma: no cover
                 raise WorkflowBundleError(
-                    "Visual Agent nodes require AbstractCore tool schemas (abstractruntime[abstractcore])."
+                    "Visual Agent nodes require AbstractCore tool schemas from the base AbstractRuntime install."
                 ) from e
 
             def _tool_defs_from_specs(specs0: list[dict[str, Any]]) -> list[_GatewayToolSpec]:
@@ -953,12 +1211,26 @@ class WorkflowBundleGatewayHost:
                 specs[str(spec.workflow_id)] = spec
                 event_listener_specs_by_root.setdefault(flow_id, []).append(str(spec.workflow_id))
 
+        _install_catalog_subworkflow_guard(
+            runtime=runtime,
+            catalog_root_data_dir=catalog_root,
+            catalog_tenant_id=catalog_tenant,
+            catalog_runtime_id=catalog_runtime,
+        )
+
         return WorkflowBundleGatewayHost(
             bundles_dir=base,
             data_dir=data_root,
             dynamic_flows_dir=dynamic_dir,
+            catalog_bundles_dir=catalog_base,
+            catalog_root_data_dir=catalog_root,
+            catalog_tenant_id=catalog_tenant,
+            catalog_user_id=catalog_user,
+            catalog_runtime_id=catalog_runtime,
+            catalog_policy_secret=catalog_policy_secret,
             deprecation_store=dep_store,
             bundles=bundles_by_id,
+            bundle_sources=bundle_sources,
             latest_bundle_versions=latest_versions,
             runtime=runtime,
             workflow_registry=wf_reg,
@@ -993,6 +1265,11 @@ class WorkflowBundleGatewayHost:
         new_host = WorkflowBundleGatewayHost.load_from_dir(
             bundles_dir=self.bundles_dir,
             data_dir=self.data_dir,
+            catalog_bundles_dir=self.catalog_bundles_dir,
+            catalog_root_data_dir=self.catalog_root_data_dir,
+            catalog_tenant_id=self.catalog_tenant_id,
+            catalog_user_id=self.catalog_user_id,
+            catalog_runtime_id=self.catalog_runtime_id,
             run_store=self.run_store,
             ledger_store=self.ledger_store,
             artifact_store=self.artifact_store,
@@ -1000,6 +1277,7 @@ class WorkflowBundleGatewayHost:
         with self._lock:
             old_memory_store = getattr(self, "memory_store", None)
             self.bundles = new_host.bundles
+            self.bundle_sources = new_host.bundle_sources
             self.latest_bundle_versions = new_host.latest_bundle_versions
             self.runtime = new_host.runtime
             self.workflow_registry = new_host.workflow_registry
@@ -1009,6 +1287,12 @@ class WorkflowBundleGatewayHost:
             self.memory_store_info = new_host.memory_store_info
             self._default_bundle_id = new_host._default_bundle_id
             self.deprecation_store = new_host.deprecation_store
+            self.catalog_bundles_dir = new_host.catalog_bundles_dir
+            self.catalog_root_data_dir = new_host.catalog_root_data_dir
+            self.catalog_tenant_id = new_host.catalog_tenant_id
+            self.catalog_user_id = new_host.catalog_user_id
+            self.catalog_runtime_id = new_host.catalog_runtime_id
+            self.catalog_policy_secret = new_host.catalog_policy_secret
         try:
             if old_memory_store is not None and old_memory_store is not getattr(self, "memory_store", None):
                 close = getattr(old_memory_store, "close", None)
@@ -1118,6 +1402,30 @@ class WorkflowBundleGatewayHost:
                 selected_ver, _bundle2 = _get_bundle(bundle_id2=selected_bundle_id, bundle_version2=requested_ver)
                 workflow_id = _namespace(_bundle_ref(selected_bundle_id, selected_ver), fid_raw)
 
+        catalog_parts = _catalog_workflow_parts(workflow_id)
+        if catalog_parts is not None:
+            scope, tenant_id, public_bid, bver = catalog_parts
+            store = WorkflowCatalogStore(root_data_dir=self.catalog_root_data_dir or self.data_dir)
+            err = _runtime_workflow_policy_error(
+                input_data,
+                workflow_id=workflow_id,
+                policy_secret=self.catalog_policy_secret or load_or_create_workflow_policy_secret(self.catalog_root_data_dir or self.data_dir),
+                catalog_store=store,
+                expected_tenant_id=self.catalog_tenant_id,
+                expected_runtime_id=self.catalog_runtime_id,
+            )
+            if err:
+                status_tokens = {"deprecated", "blocked", "tombstoned", "unavailable"}
+                if any(token in str(err).lower() for token in status_tokens):
+                    raise WorkflowDeprecatedError(bundle_id=public_bid, flow_id=fid_raw or "*", record={"reason": err})
+                raise PermissionError(f"Catalog workflow '{workflow_id}' is not allowed: {err}")
+            rec = store.get_record(scope=scope, tenant_id=tenant_id, bundle_id=public_bid, bundle_version=bver)
+            status = str((rec or {}).get("status") or "").strip().lower()
+            if rec is None:
+                raise PermissionError(f"Catalog workflow '{public_bid}@{bver}' is not registered")
+            if status != "published":
+                raise WorkflowDeprecatedError(bundle_id=public_bid, flow_id=fid_raw or "*", record={"reason": f"catalog status: {status or 'unavailable'}"})
+
         # Enforce workflow deprecations (bundle-owned entry workflows).
         # This must live in the host so scheduled child launches are also blocked.
         if ":" in workflow_id:
@@ -1155,7 +1463,7 @@ class WorkflowBundleGatewayHost:
         # nodes (notably Agent nodes) can inherit provider/model without per-node wiring.
         try:
             cfg = getattr(self.runtime, "config", None)
-            default_provider = getattr(cfg, "provider", None)
+            default_provider = getattr(self.runtime, "_gateway_default_provider_override", None) or getattr(cfg, "provider", None)
             default_model = getattr(cfg, "model", None)
         except Exception:  # pragma: no cover
             default_provider = None

@@ -24,6 +24,21 @@ def test_gateway_host_config_rejects_sqlite_db_outside_data_dir(monkeypatch: pyt
 
 
 @pytest.mark.basic
+def test_gateway_host_config_defaults_to_shipped_basic_agent_bundles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from abstractgateway.config import GatewayHostConfig
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+    monkeypatch.delenv("ABSTRACTGATEWAY_FLOWS_DIR", raising=False)
+    monkeypatch.delenv("ABSTRACTFRAMEWORK_WORKFLOWS_DIR", raising=False)
+    monkeypatch.delenv("ABSTRACTFLOW_FLOWS_DIR", raising=False)
+
+    cfg = GatewayHostConfig.from_env()
+
+    assert cfg.flows_dir.name == "bundles"
+    assert (cfg.flows_dir / "basic-agent.flow").is_file() or (cfg.flows_dir / "basic-agent@0.0.1.flow").is_file()
+
+
+@pytest.mark.basic
 def test_build_sqlite_stores_rejects_db_outside_base_dir(tmp_path: Path) -> None:
     from abstractgateway.stores import build_sqlite_stores
 
@@ -35,4 +50,3 @@ def test_build_sqlite_stores_rejects_db_outside_base_dir(tmp_path: Path) -> None
     with pytest.raises(ValueError) as e:
         build_sqlite_stores(base_dir=base, db_path=other / "gateway.sqlite3")
     assert "db_path must be under base_dir" in str(e.value)
-

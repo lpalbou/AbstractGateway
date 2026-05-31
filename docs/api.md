@@ -24,6 +24,26 @@ export BASE_URL="http://127.0.0.1:8080"
 export AUTH="Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN"
 ```
 
+## Provider endpoint profiles
+
+Gateway-owned provider endpoint profiles let users create reusable hosted
+endpoints without putting raw API keys in workflow JSON or browser storage.
+
+- `GET /api/gateway/config/provider-endpoint-profiles`: list visible profiles.
+- `POST /api/gateway/config/provider-endpoint-profiles`: create a user- or
+  admin-owned profile.
+- `POST /api/gateway/config/provider-endpoint-profiles/discover-models`:
+  discover models for a draft or saved profile by calling the configured
+  provider family and base URL with the entered or server-side key. The raw key
+  is never returned.
+- `PUT` or `DELETE /api/gateway/config/provider-endpoint-profiles/{profile_id}`:
+  update or delete a profile.
+
+Enabled profiles appear in `GET /api/gateway/discovery/providers` as virtual
+providers such as `endpoint:office-vllm`. Model discovery through
+`GET /api/gateway/discovery/providers/{provider_name}/models` returns either the
+fixed profile allowlist or the live endpoint model catalog.
+
 ## Core workflow lifecycle
 
 ### 1) List bundles (bundle mode)
@@ -79,6 +99,45 @@ Notes:
 - To stop a schedule, cancel the scheduled parent run via `POST /api/gateway/commands` with type `cancel`.
 
 Evidence: `ScheduleRunRequest`, `start_scheduled_run` in `src/abstractgateway/routes/gateway.py`.
+
+### 2c) Shared workflow catalog
+
+Private `/api/gateway/bundles` routes are scoped to the signed-in user's routed
+runtime. Shared/default workflows use the Gateway workflow catalog instead:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/workflow-catalog"
+```
+
+Admin-only catalog operations live under
+`/api/gateway/admin/workflow-catalog/*`:
+
+- upload or promote immutable `.flow` versions;
+- move a bundle's default pointer;
+- set ACLs;
+- deprecate, block, or tombstone a version without deleting bundle bytes.
+
+Start a catalog workflow in the requesting user's runtime by setting
+`registry_scope`:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"registry_scope":"tenant_catalog","bundle_id":"basic-agent","flow_id":"root","input_data":{"prompt":"Hello"}}' \
+  "$BASE_URL/api/gateway/runs/start"
+```
+
+If `bundle_version` is omitted, Gateway uses the admin-managed catalog default
+pointer. Exact older versions keep working until that specific version is
+deprecated, blocked, or tombstoned.
+
+Catalog scope is explicit: omitting `registry_scope` starts only private
+runtime bundles. Flow/schema inspection for catalog workflows should use the
+ACL-aware catalog endpoints:
+
+- `GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}`
+- `GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}/input_schema`
+
+`framework_catalog` is reserved but not loadable yet; use `tenant_catalog`.
 
 ### 3) Replay the ledger (cursor-based)
 
@@ -178,7 +237,10 @@ Import and export use the same Gateway workspace policy as file helpers:
 workspace roots, mounted roots, ignored paths, and size limits are enforced on
 the server. Browser-local files should be uploaded through
 `POST /api/gateway/attachments/upload`; browser-local file paths are not
-interpreted as Gateway workspace paths.
+interpreted as Gateway workspace paths. In hosted user-auth mode, server
+workspace import/export and `/files/*` helpers require an admin principal.
+Ordinary users can still upload browser-local files and list/search artifacts in
+their own routed runtime.
 
 ## Durable commands (`POST /api/gateway/commands`)
 
@@ -272,7 +334,9 @@ It also includes a versioned thin-client contract:
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
   controls. `common.artifacts` includes run listing/content, session artifact
   listing, artifact search, workspace import, and workspace export descriptors
-  when available.
+  when available. Permission-sensitive descriptors are principal-aware:
+  ordinary users see admin-only workspace import/export and provider
+  prompt-cache controls marked unavailable with `admin_required` metadata.
 - `capabilities.contracts.common.readiness`: compact Gateway-owned
   `gateway_surface_readiness_v1` summary derived from the shared endpoint/media/
   residency descriptors
@@ -454,6 +518,8 @@ result rather than making Flow authoring nodes unavailable.
 ## Prompt-cache control plane (operator API)
 
 The gateway exposes prompt-cache operator endpoints under `/api/gateway/prompt_cache/*`.
+Provider prompt-cache controls affect process-local or remote provider state
+and require an admin principal in hosted user-auth mode.
 
 Core endpoints:
 
@@ -482,7 +548,11 @@ Session lifecycle endpoints:
 
 These routes derive a deterministic bounded namespace/key from `session_id`,
 `bundle_id`, `bundle_version`, `flow_id`, `provider`, `model`, optional
-`template_id`, and `version`. They expose three honest modes:
+`template_id`, and `version`. The private hash also includes the authenticated
+principal scope, so two hosted users using the same session id/provider/model do
+not collide in a shared provider control plane; the returned `identity` remains
+portable app-level data and does not expose that private scope. These routes
+expose three honest modes:
 
 - `unsupported`: provider/model does not expose prompt-cache support; responses include `supported=false`, `ok=false`, and capabilities.
 - `keyed`: gateway returns a stable `runtime_hint`/`prompt_cache_key` for Runtime/Core injection, but does not claim module preparation occurred.

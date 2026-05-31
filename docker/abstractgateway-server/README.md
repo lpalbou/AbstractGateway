@@ -22,15 +22,16 @@ abstractgateway==<version>
 ```
 
 The default image uses the base remote-light server install. It includes
-`AbstractRuntime[multimodal,mcp-worker]`, Runtime-owned provider/media/tool
-facades, OpenAI-compatible text provider routing, workflow-backed and direct
-image generation through Runtime, direct Gateway voice/audio endpoints,
+`AbstractRuntime`, Runtime-owned provider/tool and
+multimodal facades, OpenAI-compatible text/media provider routing,
 provider/session prompt-cache helpers, KG memory via AbstractMemory/LanceDB,
-media parsing, tool helpers, token counting, compression helpers,
-FastAPI/Uvicorn, AbstractAgent, and AbstractFlow compatibility. It
-intentionally does not bundle local model runtimes such as MLX, vLLM,
-HuggingFace Transformers, local Diffusers/sdcpp vision backends, or local
-voice/music generation engines.
+tool helpers, FastAPI/Uvicorn, AbstractAgent, and AbstractFlow compatibility.
+It intentionally does not bundle local sentence-transformer embeddings or model
+runtimes such as PyTorch/CUDA, MLX, vLLM, HuggingFace Transformers, local
+Diffusers/sdcpp vision backends, or local voice/music generation engines.
+Remote embeddings remain supported through the `embedding.text` capability
+route when it targets hosted providers, LM Studio, vLLM, OpenAI-compatible
+embedding endpoints, or a remote AbstractCore server.
 
 The NVIDIA image installs `abstractgateway[gpu]` on a CUDA/PyTorch base and
 adds vLLM/HuggingFace, local Diffusers image generation, and local
@@ -130,7 +131,7 @@ Useful compose variables:
 - `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: transitional text fallback; prefer execution-host `output.text`
 - `ABSTRACTGATEWAY_TOOL_MODE`: `approval`, `passthrough`, `delegated`, or local dev modes
 - `ABSTRACTCORE_SERVER_BASE_URL`: optional standalone Core server for capability defaults and dynamic catalogs
-- `embedding.text` capability default: configure through `abstractgateway-config set-default embedding.text ...`
+- `embedding.text` capability default: configure through `abstractgateway-config set-default embedding.text ...`; remote/provider-backed embeddings work in the default image, local HuggingFace/sentence-transformer embeddings require an image built with `abstractgateway[embeddings]`
 - `ABSTRACTVISION_*`: AbstractVision image backend or OpenAI-compatible image endpoint
 - `ABSTRACTVOICE_*`: AbstractVoice TTS/STT backend, local/remote engine, and model controls
 - `ABSTRACTGATEWAY_EXTRAS`: build-time install extra for local image builds (empty for the default image, `gpu` for NVIDIA)

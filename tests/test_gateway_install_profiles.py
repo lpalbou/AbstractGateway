@@ -14,30 +14,79 @@ pytestmark = pytest.mark.basic
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_ROOT = ROOT.parent
 
 
 def _pyproject() -> dict:
     return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
 
+def _sibling_pyproject(package_dir: str) -> dict:
+    return tomllib.loads((WORKSPACE_ROOT / package_dir / "pyproject.toml").read_text(encoding="utf-8"))
+
+
 def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
-    assert "AbstractRuntime[multimodal,mcp-worker]>=0.4.25" in deps
-    assert "abstractagent>=0.3.9" in deps
+    assert "AbstractRuntime>=0.4.26" in deps
+    assert "abstractagent>=0.3.10" in deps
     assert "AbstractMemory[lancedb]>=0.2.6" in deps
-    assert "sentence-transformers<6.0.0,>=5.1.0" in deps
-    assert "numpy<3.0.0,>=1.20.0" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
     assert "fastapi<1.0.0,>=0.136.0" in deps
     assert "uvicorn[standard]<1.0.0,>=0.38.0" in deps
     joined = "\n".join(deps)
+    assert "mcp-worker" not in joined
+    assert "multimodal" not in joined
+    assert "sentence-transformers" not in joined
+    assert "torch" not in joined
+    assert "numpy" not in joined
     assert "abstractcore[" not in joined
-    assert "abstractvision" not in joined
-    assert "abstractvoice" not in joined
-    assert "abstractmusic" not in joined
     assert "abstractflow" not in joined
+
+
+def test_base_install_keeps_remote_light_multimodal_plugins_without_local_inferencers() -> None:
+    runtime_project = _sibling_pyproject("abstractruntime")["project"]
+    core_extras = _sibling_pyproject("abstractcore")["project"]["optional-dependencies"]
+    vision_base = "\n".join(_sibling_pyproject("abstractvision")["project"].get("dependencies", []))
+    voice_base = "\n".join(_sibling_pyproject("abstractvoice")["project"].get("dependencies", []))
+    music_base = "\n".join(_sibling_pyproject("abstractmusic")["project"].get("dependencies", []))
+
+    runtime_base = "\n".join(runtime_project["dependencies"])
+    assert "abstractcore[remote,media,tools,vision,voice,audio,music]>=2.13.31" in runtime_base
+    assert "torch" not in runtime_base
+    assert "sentence-transformers" not in runtime_base
+    assert "mlx" not in runtime_base
+    assert "vllm" not in runtime_base
+
+    core_remote = "\n".join(core_extras["remote"])
+    assert "openai" in core_remote
+    assert "anthropic" in core_remote
+
+    assert "abstractvision>=0.3.18" in "\n".join(core_extras["vision"])
+    assert "abstractvoice>=0.10.17" in "\n".join(core_extras["voice"])
+    assert "abstractvoice>=0.10.17" in "\n".join(core_extras["audio"])
+    assert "abstractmusic>=0.1.12" in "\n".join(core_extras["music"])
+    core_light_capabilities = "\n".join(
+        [
+            *core_extras["vision"],
+            *core_extras["voice"],
+            *core_extras["audio"],
+            *core_extras["music"],
+        ]
+    )
+    assert "omnivoice" not in core_light_capabilities
+    assert "torch" not in core_light_capabilities
+    assert "torchaudio" not in core_light_capabilities
+    assert "sentence-transformers" not in core_light_capabilities
+
+    remote_light_bases = "\n".join([vision_base, voice_base, music_base])
+    assert "torch" not in remote_light_bases
+    assert "diffusers" not in remote_light_bases
+    assert "transformers" not in remote_light_bases
+    assert "mlx" not in remote_light_bases
+    assert "vllm" not in remote_light_bases
+    assert "sentence-transformers" not in remote_light_bases
 
 
 def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
@@ -61,6 +110,10 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     ):
         assert legacy not in extras
 
+    assert "embeddings" in extras
+    embeddings = "\n".join(extras["embeddings"])
+    assert "abstractcore[embeddings]>=2.13.31" in embeddings
+
     assert "apple" in extras
     assert "gpu" in extras
     # Tooling extras remain for contributors/CI.
@@ -68,17 +121,17 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[multimodal,mcp-worker,all-apple]>=0.4.25" in apple
-    assert "abstractagent[all-apple]>=0.3.9" in apple
-    assert "abstractagent[apple]" not in apple
+    assert "AbstractRuntime[apple]>=0.4.26" in apple
+    assert "abstractagent[apple]>=0.3.10" in apple
+    assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.2.6" in apple
     assert "abstractcore[" not in apple
     assert "abstractvision" not in apple
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[multimodal,mcp-worker,all-gpu]>=0.4.25" in gpu
-    assert "abstractagent[all-gpu]>=0.3.9" in gpu
+    assert "AbstractRuntime[gpu]>=0.4.26" in gpu
+    assert "abstractagent[gpu]>=0.3.10" in gpu
     assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu
@@ -98,6 +151,17 @@ def test_sdist_excludes_internal_artifacts() -> None:
     assert "/docs/backlog/**" in exclude
     assert "/flows/**" in exclude
     assert "/tests/**" in exclude
+
+
+def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
+    build = _pyproject()["tool"]["hatch"]["build"]["targets"]
+    wheel_force = build["wheel"]["force-include"]
+    sdist_force = build["sdist"]["force-include"]
+
+    assert wheel_force["flows/bundles/basic-agent.flow"] == "abstractgateway/flows/bundles/basic-agent.flow"
+    assert wheel_force["flows/bundles/basic-agent@0.0.1.flow"] == "abstractgateway/flows/bundles/basic-agent@0.0.1.flow"
+    assert sdist_force["flows/bundles/basic-agent.flow"] == "flows/bundles/basic-agent.flow"
+    assert sdist_force["flows/bundles/basic-agent@0.0.1.flow"] == "flows/bundles/basic-agent@0.0.1.flow"
 
 
 def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> None:

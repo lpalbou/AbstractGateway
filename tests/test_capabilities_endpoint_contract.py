@@ -335,7 +335,15 @@ def test_code_execution_contract_reports_full_access_policy(monkeypatch: pytest.
     import abstractgateway.routes.gateway as gateway_routes
 
     monkeypatch.setenv("ABSTRACTRUNTIME_CODE_FULL_ACCESS", "1")
-    contracts = gateway_routes._build_client_capability_contracts({})
+    from abstractgateway.security.principal import GatewayPrincipal, reset_current_gateway_principal, set_current_gateway_principal
+
+    token = set_current_gateway_principal(
+        GatewayPrincipal(user_id="admin", tenant_id="default", roles=("admin", "user"), runtime_id="default")
+    )
+    try:
+        contracts = gateway_routes._build_client_capability_contracts({})
+    finally:
+        reset_current_gateway_principal(token)
     code_execution = contracts["common"]["execution"]["code"]
     modes = {m["id"]: m for m in code_execution["modes"]}
     assert modes["sandbox"]["available"] is True
@@ -490,7 +498,15 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (StubHostFacade(), None))
     monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (object(), None))
 
-    contracts = gateway_routes._build_client_capability_contracts({})
+    from abstractgateway.security.principal import GatewayPrincipal, reset_current_gateway_principal, set_current_gateway_principal
+
+    token = set_current_gateway_principal(
+        GatewayPrincipal(user_id="admin", tenant_id="default", roles=("admin", "user"), runtime_id="default")
+    )
+    try:
+        contracts = gateway_routes._build_client_capability_contracts({})
+    finally:
+        reset_current_gateway_principal(token)
     residency = contracts["common"]["model_residency"]
     media = contracts["assistant"]["media"]["generated_image"]
 

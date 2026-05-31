@@ -28,8 +28,11 @@ Related repos:
 ```bash
 pip install abstractgateway
 
-export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"   # *.flow dir (or a single .flow file)
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
+
+# Optional: set only for a custom bundle registry. When unset, Gateway uses
+# the packaged shipped bundle directory containing basic-agent.
+# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
 
 # Required by default: the server refuses to start without a token.
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -50,13 +53,49 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
   "http://127.0.0.1:8080/api/gateway/bundles"
 ```
 
+## Hosted user auth
+
+Local mode keeps `ABSTRACTGATEWAY_AUTH_TOKEN` as a Gateway admin token. Hosted
+mode can enable file-backed user principals and one runtime/data plane per user:
+
+```bash
+export ABSTRACTGATEWAY_USER_AUTH=1
+export ABSTRACTGATEWAY_AUTH_TOKEN="<admin-bootstrap-token>"
+```
+
+Admins manage users through `/api/gateway/admin/users`; generated user bearer
+tokens are returned once and stored only as hashes under
+`<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`. User clients call
+`GET /api/gateway/me` after connecting to confirm the resolved principal and
+routing mode. Gateway rejects duplicate runtime ids within the same tenant, so
+the default hosted model remains `1 user = 1 runtime`. Deleting a user reserves
+the retained runtime id; admins can explicitly purge retained runtime data or
+transfer it to an existing same-tenant user. See
+[docs/security.md](docs/security.md) for the current hosted isolation boundary
+and remaining operator-route hardening work.
+
+Gateway also serves a built-in control-plane console at `/console`. The console
+uses the same browser-session contract as hosted apps: sign in with a Gateway
+user id and its token. Because the console is served by Gateway, it uses the
+current origin and does not ask for a Gateway URL. You can then manage the
+current account, admin-only user records
+with optional email metadata, retained runtime reservations, and capability defaults selected from
+Gateway-discovered provider/model catalogs without storing the bearer token in
+browser storage.
+
+Browser apps should not keep user bearer tokens. They exchange the user token at
+`POST /api/gateway/session/login` for an opaque Gateway browser session and use
+that session for proxied Gateway calls. The login response body does not return
+the session id or CSRF token. Session writes require the Gateway CSRF token, and
+`POST /api/gateway/session/logout` revokes the session.
+
 ## Docker server
 
 Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.21
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -64,15 +103,19 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.22
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
-`AbstractRuntime[multimodal,mcp-worker]`, Runtime-owned provider/media/tool
-facades, OpenAI-compatible text providers, workflow-backed and direct image,
-video, voice, audio, and music routes surfaced through Runtime, provider/session prompt-cache
-helpers, AbstractMemory/LanceDB KG support, AbstractAgent, and AbstractFlow
-compatibility.
+`AbstractRuntime`, Runtime-owned provider/tool and
+multimodal facades, OpenAI-compatible text/media providers,
+provider/session prompt-cache helpers, AbstractMemory/LanceDB KG support,
+AbstractAgent, and AbstractFlow compatibility. Local sentence-transformer
+embeddings and hardware-local inference engines are explicit extras so the
+light server image does not pull PyTorch/CUDA runtime packages. Remote text
+embeddings remain part of the light profile through the `embedding.text`
+capability route: point it at OpenAI, OpenRouter, Portkey, LM Studio, vLLM,
+any OpenAI-compatible embeddings endpoint, or a remote AbstractCore server.
 
 AbstractFlow note:
 - You do **not** need the `abstractflow` Python package to run `.flow` bundles (bundle mode). You only need it to author bundles. VisualFlow directory mode was intentionally removed from the gateway to keep the dependency direction clean.
@@ -86,7 +129,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.21
+  ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 Configure framework model defaults through execution-host capability routes:
@@ -191,8 +234,12 @@ See [docs/api.md](docs/api.md) for curl examples and the live OpenAPI spec (`/op
 Requires Python `>=3.10` (see `pyproject.toml`).
 
 The base install is the remote-light HTTP/SSE server: Gateway, Runtime,
-Agent, Flow compatibility, Runtime-owned provider/tool/media facades, and
-LanceDB-backed Memory.
+Agent, Flow compatibility, Runtime-owned provider/tool and multimodal facades,
+and LanceDB-backed Memory. It intentionally excludes local sentence-transformer
+embeddings and hardware-local inference engines so Linux installs do not pull
+PyTorch/CUDA packages. Remote embeddings and remote multimodal input/output
+still work in this profile through hosted providers, OpenAI-compatible
+endpoints, or a remote AbstractCore server.
 
 ```bash
 pip install abstractgateway
@@ -202,6 +249,7 @@ pip install abstractgateway
 
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities
 - `abstractgateway[gpu]`: full local GPU profile with vLLM/HuggingFace, local Diffusers image generation, local voice engines, music, and KG memory; this is also the NVIDIA Docker install profile
+- `abstractgateway[embeddings]`: local sentence-transformer embeddings for semantic KG queries
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local test/dev deps
 

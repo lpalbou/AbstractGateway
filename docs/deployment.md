@@ -3,7 +3,7 @@
 AbstractGateway can run as a Python process or as a containerized server. The
 container path is the recommended baseline for a single self-contained Gateway
 deployment because it packages the HTTP API, durable runner, AbstractRuntime,
-and the Runtime-owned provider/media/tool stack together.
+and the Runtime-owned provider/tool stack together.
 
 ## Published image
 
@@ -11,7 +11,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.21
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -19,24 +19,27 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.22
 ```
 
 The default image installs the base `abstractgateway` package, which includes:
 
-- `AbstractRuntime[multimodal,mcp-worker]`
+- `AbstractRuntime`
 - `AbstractMemory[lancedb]>=0.2.6`
 - `abstractagent`
 - FastAPI/Uvicorn
 
 This profile supports hosted/commercial providers, OpenAI-compatible text
-provider routing, workflow-backed and direct image generation, direct
-image-edit, voice/STT generation, direct Gateway-routed music generation
-through Runtime facades, and
-provider/session prompt-cache controls.
-It intentionally stays dependency-light for heavy local model runtimes: MLX,
-vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
-engines, and local AbstractMusic engines remain explicit opt-ins.
+and multimodal provider routing, Runtime-owned tool execution, KG memory, and
+provider/session prompt-cache controls. Remote embeddings are included through
+the `embedding.text` capability route for hosted providers, LM Studio, vLLM,
+other OpenAI-compatible endpoints, or a remote AbstractCore server. Local
+sentence-transformer embeddings and hardware-local model runtimes remain
+explicit opt-ins, so the base Linux image does not pull PyTorch/CUDA runtime
+packages. MLX, vLLM, HuggingFace
+Transformers, local Diffusers/sdcpp, AbstractVoice local engines, and local
+AbstractMusic engines belong in native `abstractgateway[apple]` or
+`abstractgateway[gpu]` installs.
 
 The NVIDIA image installs `abstractgateway[gpu]` and uses a CUDA/PyTorch base.
 It is experimental and release automation publishes it as
@@ -58,7 +61,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.21
+  ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 Set the execution-host text route separately:
@@ -180,7 +183,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.21-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.22-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

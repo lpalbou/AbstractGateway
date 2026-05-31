@@ -7,7 +7,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+from .console import gateway_console_html
 
 from .routes import gateway_router, triage_router
 from .security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_env
@@ -28,7 +30,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(
     title="AbstractGateway",
     description="Durable Run Gateway for AbstractRuntime (commands + ledger replay/stream).",
-    version="0.2.21",
+    version="0.2.22",
     lifespan=_lifespan,
     docs_url=None,
     redoc_url=None,
@@ -255,6 +257,16 @@ async def offline_docs() -> HTMLResponse:
 @app.get("/redoc", include_in_schema=False)
 async def offline_redoc() -> HTMLResponse:
     return HTMLResponse(_offline_openapi_docs_html(title=f"{app.title} API Docs"))
+
+
+@app.get("/", include_in_schema=False)
+async def gateway_root() -> RedirectResponse:
+    return RedirectResponse(url="/console", status_code=307)
+
+
+@app.get("/console", include_in_schema=False)
+async def gateway_console() -> HTMLResponse:
+    return HTMLResponse(gateway_console_html())
 
 
 @app.get("/api/health")

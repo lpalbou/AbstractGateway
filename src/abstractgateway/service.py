@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -10,8 +11,11 @@ from abstractruntime.core.run_lifecycle import extract_run_lifecycle
 from .config import GatewayHostConfig
 from .embeddings_config import build_embedding_client, resolve_embedding_config
 from .runner import GatewayRunner, GatewayRunnerConfig
+from .security.principal import GatewayPrincipal, current_gateway_principal, safe_principal_component
 from .security import GatewayAuthPolicy, load_gateway_auth_policy_from_env
 from .stores import GatewayStores, build_file_stores, build_sqlite_stores
+from .users import gateway_user_auth_enabled
+from .workflow_catalog import workflow_catalog_bundles_root_from_env
 
 _DRAFT_RUN_PURPOSE = "draft_test"
 
@@ -35,14 +39,24 @@ class GatewayService:
     embedding_provider: Optional[str] = None
     embedding_model: Optional[str] = None
     embedding_base_url: Optional[str] = None
+    embedding_error: Optional[str] = None
     embeddings_client: Optional[Any] = None
     telegram_bridge: Optional[Any] = None
     email_bridge: Optional[Any] = None
 
 
 _service: Optional[GatewayService] = None
+_services_by_principal: Dict[str, GatewayService] = {}
+_service_lock = threading.RLock()
 _backlog_exec_runner: Optional[Any] = None
 _backlog_exec_runner_error: Optional[str] = None
+
+
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def backlog_exec_runner_status() -> Dict[str, Any]:
@@ -72,13 +86,105 @@ def backlog_exec_runner_status() -> Dict[str, Any]:
 
 def get_gateway_service() -> GatewayService:
     global _service
-    if _service is None:
-        _service = create_default_gateway_service()
-    return _service
+    principal = current_gateway_principal()
+    if principal is not None and gateway_multi_user_enabled():
+        return get_gateway_service_for_principal(principal)
+    with _service_lock:
+        if _service is None:
+            _service = create_default_gateway_service()
+        return _service
 
 
-def create_default_gateway_service() -> GatewayService:
-    cfg = GatewayHostConfig.from_env()
+def gateway_multi_user_enabled() -> bool:
+    return bool(gateway_user_auth_enabled())
+
+
+def _principal_uses_default_runtime(principal: GatewayPrincipal) -> bool:
+    if not _env_bool("ABSTRACTGATEWAY_ADMIN_USES_DEFAULT_RUNTIME", default=True):
+        return False
+    tenant = safe_principal_component(principal.tenant_id, default="default")
+    user = safe_principal_component(principal.user_id, default="")
+    runtime_id = safe_principal_component(principal.runtime_id or principal.user_id, default=user or "user")
+    return (
+        tenant == "default"
+        and user == "admin"
+        and runtime_id in {"admin", "default"}
+        and principal.is_admin()
+    )
+
+
+def _principal_service_key(principal: GatewayPrincipal) -> str:
+    if _principal_uses_default_runtime(principal):
+        return "default:__gateway_default_runtime__"
+    tenant = safe_principal_component(principal.tenant_id, default="default")
+    user = safe_principal_component(principal.runtime_id or principal.user_id, default=principal.user_id or "user")
+    return f"{tenant}:{user}"
+
+
+def _config_for_principal(principal: GatewayPrincipal) -> GatewayHostConfig:
+    base = GatewayHostConfig.from_env()
+    if _principal_uses_default_runtime(principal):
+        return replace(base, root_data_dir=base.root_data_dir or base.data_dir, tenant_id="default", user_id=principal.user_id, runtime_id="default")
+    tenant = safe_principal_component(principal.tenant_id, default="default")
+    runtime_id = safe_principal_component(principal.runtime_id or principal.user_id, default=principal.user_id or "user")
+    root = base.data_dir / "users" / tenant / runtime_id
+    data_dir = root / "runtime"
+    flows_dir = root / "flows"
+    db_path = data_dir / "gateway.sqlite3" if str(base.store_backend).strip().lower() == "sqlite" else None
+    return replace(
+        base,
+        data_dir=data_dir,
+        flows_dir=flows_dir,
+        root_data_dir=base.root_data_dir or base.data_dir,
+        tenant_id=tenant,
+        user_id=safe_principal_component(principal.user_id, default="user"),
+        runtime_id=runtime_id,
+        db_path=db_path,
+    )
+
+
+def get_gateway_service_for_principal(principal: GatewayPrincipal) -> GatewayService:
+    if not gateway_multi_user_enabled():
+        return get_gateway_service()
+    key = _principal_service_key(principal)
+    with _service_lock:
+        svc = _services_by_principal.get(key)
+        if svc is None:
+            svc = create_default_gateway_service(config=_config_for_principal(principal))
+            _services_by_principal[key] = svc
+            if getattr(svc.config, "runner_enabled", False):
+                try:
+                    svc.runner.start()
+                except Exception:
+                    _services_by_principal.pop(key, None)
+                    raise
+        return svc
+
+
+def invalidate_gateway_service_for_runtime(*, tenant_id: str, runtime_id: str) -> bool:
+    """Drop a cached per-principal service after admin runtime reassignment/purge."""
+    tenant = safe_principal_component(tenant_id, default="default")
+    runtime = safe_principal_component(runtime_id, default="")
+    if not tenant or not runtime:
+        return False
+    keys = [f"{tenant}:{runtime}"]
+    if tenant == "default" and runtime == "default":
+        keys.append("default:__gateway_default_runtime__")
+    removed: list[GatewayService] = []
+    with _service_lock:
+        for key in keys:
+            svc = _services_by_principal.pop(key, None)
+            if svc is not None:
+                removed.append(svc)
+    for svc in removed:
+        _stop_gateway_service_instance(svc)
+    return bool(removed)
+
+
+def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None) -> GatewayService:
+    cfg = config or GatewayHostConfig.from_env()
+    cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    cfg.flows_dir.mkdir(parents=True, exist_ok=True)
     backend = str(getattr(cfg, "store_backend", "file") or "file").strip().lower() or "file"
     if backend == "file":
         stores = build_file_stores(base_dir=cfg.data_dir)
@@ -110,9 +216,17 @@ def create_default_gateway_service() -> GatewayService:
     if source == "bundle":
         from .hosts.bundle_host import WorkflowBundleGatewayHost
 
+        root_data_dir = Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir).expanduser().resolve()
+        tenant_id = safe_principal_component(getattr(cfg, "tenant_id", "default"), default="default")
+        catalog_bundles_dir = workflow_catalog_bundles_root_from_env(root_data_dir) / "tenant_catalog" / tenant_id
         host = WorkflowBundleGatewayHost.load_from_dir(
             bundles_dir=cfg.flows_dir,
             data_dir=cfg.data_dir,
+            catalog_bundles_dir=catalog_bundles_dir,
+            catalog_root_data_dir=root_data_dir,
+            catalog_tenant_id=tenant_id,
+            catalog_user_id=safe_principal_component(getattr(cfg, "user_id", "admin"), default="admin"),
+            catalog_runtime_id=safe_principal_component(getattr(cfg, "runtime_id", tenant_id), default=tenant_id),
             run_store=stores.run_store,
             ledger_store=stores.ledger_store,
             artifact_store=stores.artifact_store,
@@ -141,6 +255,7 @@ def create_default_gateway_service() -> GatewayService:
     embedding_provider: Optional[str] = None
     embedding_model: Optional[str] = None
     embedding_base_url: Optional[str] = None
+    embedding_error: Optional[str] = None
     embeddings_client: Optional[Any] = None
     try:
         embedding_route = resolve_embedding_config(base_dir=stores.base_dir)
@@ -153,8 +268,9 @@ def create_default_gateway_service() -> GatewayService:
             # Embeddings must be trustworthy for semantic retrieval; do not return zero vectors on failure.
             strict=True,
         )
-    except Exception:
+    except Exception as e:
         # Embeddings are optional: the gateway may run without AbstractCore embedding deps.
+        embedding_error = str(e)
         embeddings_client = None
 
     telegram_bridge = None
@@ -190,13 +306,41 @@ def create_default_gateway_service() -> GatewayService:
         embedding_provider=embedding_provider,
         embedding_model=embedding_model,
         embedding_base_url=embedding_base_url,
+        embedding_error=embedding_error,
         embeddings_client=embeddings_client,
         telegram_bridge=telegram_bridge,
         email_bridge=email_bridge,
     )
 
 
+def reload_gateway_workflow_bundles() -> Dict[str, Any]:
+    """Reload private and catalog bundles for all instantiated Gateway services."""
+    with _service_lock:
+        services = []
+        if _service is not None:
+            services.append(_service)
+        services.extend(list(_services_by_principal.values()))
+    results: list[Dict[str, Any]] = []
+    for svc in services:
+        host = getattr(svc, "host", None)
+        reload_fn = getattr(host, "reload_bundles_from_disk", None)
+        if not callable(reload_fn):
+            continue
+        try:
+            result = dict(reload_fn() or {})
+            result["data_dir"] = str(getattr(svc.config, "data_dir", ""))
+            results.append(result)
+        except Exception as e:
+            results.append({"ok": False, "data_dir": str(getattr(svc.config, "data_dir", "")), "error": str(e)})
+    return {"ok": all(bool(r.get("ok", True)) for r in results), "services": results}
+
+
 def start_gateway_runner() -> None:
+    if gateway_multi_user_enabled():
+        # Per-principal services are created and started lazily once auth resolves
+        # the current user. Starting a process-wide service here would recreate
+        # the singleton data-plane that hosted mode is meant to avoid.
+        return
     svc = get_gateway_service()
     svc.runner.start()
     # Optional: backlog execution runner (consumes backlog_exec_queue and executes requests).
@@ -227,21 +371,13 @@ def start_gateway_runner() -> None:
 
 def stop_gateway_runner() -> None:
     global _service, _backlog_exec_runner, _backlog_exec_runner_error
-    if _service is None:
-        return
     try:
-        try:
-            bridge = getattr(_service, "telegram_bridge", None)
-            if bridge is not None:
-                bridge.stop()
-        except Exception:
-            pass
-        try:
-            bridge2 = getattr(_service, "email_bridge", None)
-            if bridge2 is not None:
-                bridge2.stop()
-        except Exception:
-            pass
+        services = []
+        if _service is not None:
+            services.append(_service)
+        services.extend(list(_services_by_principal.values()))
+        if not services:
+            return
         try:
             if _backlog_exec_runner is not None:
                 _backlog_exec_runner.stop()
@@ -249,9 +385,34 @@ def stop_gateway_runner() -> None:
             pass
         _backlog_exec_runner = None
         _backlog_exec_runner_error = None
-        _service.runner.stop()
+        for svc in services:
+            _stop_gateway_service_instance(svc)
     finally:
-        _service = None
+        with _service_lock:
+            _service = None
+            _services_by_principal.clear()
+
+
+def _stop_gateway_service_instance(service: GatewayService) -> None:
+    try:
+        try:
+            bridge = getattr(service, "telegram_bridge", None)
+            if bridge is not None:
+                bridge.stop()
+        except Exception:
+            pass
+        try:
+            bridge2 = getattr(service, "email_bridge", None)
+            if bridge2 is not None:
+                bridge2.stop()
+        except Exception:
+            pass
+        try:
+            service.runner.stop()
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
 def run_summary(run: Any) -> Dict[str, Any]:

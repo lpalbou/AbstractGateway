@@ -211,21 +211,22 @@ work).
 
 ### How do I enable generated images, edited images, generated music, or other Runtime-managed multimodal outputs?
 
-Use the base install:
+Use the base install for the Gateway control plane and remote/provider-backed
+routes:
 
 ```bash
 pip install abstractgateway
 ```
 
-The base install includes `AbstractRuntime[multimodal,mcp-worker]` plus the
-Runtime-owned media/tool integration stack. The server image defaults image,
-audio, and music generation to Runtime-backed provider routes; set the relevant
-Gateway or provider credentials before expecting live generation to succeed.
-For example, use `OPENAI_API_KEY` for hosted image/voice paths, or configure a
-Core music backend/server that Runtime can reach for Gateway-routed music
-generation. Use
-`ABSTRACTGATEWAY_VISION_BACKEND=diffusers` or `sdcpp` only for custom images
-that intentionally include those local engines.
+The base install includes Runtime-owned tool and multimodal integration and can
+proxy to configured remote/provider routes. Remote embeddings are supported
+through the `embedding.text` capability route when it points at OpenAI,
+OpenRouter, Portkey, LM Studio, vLLM, another OpenAI-compatible endpoint, or a
+remote AbstractCore server. Local sentence-transformer embeddings and
+hardware-local image, audio, voice, and music engines are explicit opt-ins so a
+light Linux install does not pull PyTorch/CUDA packages. Use
+`abstractgateway[apple]` or `abstractgateway[gpu]` only when this Gateway host
+should execute those local engines itself.
 
 Generated images are available both inside Runtime workflows and through
 Gateway's direct run-scoped endpoint:

@@ -59,12 +59,34 @@ def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def _default_flows_dir() -> str:
+    package_root = Path(__file__).resolve().parent
+    candidates = [
+        package_root / "flows" / "bundles",
+        package_root.parent.parent / "flows" / "bundles",
+    ]
+    for candidate in candidates:
+        try:
+            if (candidate / "basic-agent.flow").is_file() or (candidate / "basic-agent@0.0.1.flow").is_file():
+                return str(candidate)
+        except Exception:
+            continue
+    raise RuntimeError(
+        "AbstractGateway default bundle registry is missing the shipped basic-agent bundle. "
+        "Reinstall or rebuild abstractgateway, or set ABSTRACTGATEWAY_FLOWS_DIR to a bundle directory containing basic-agent."
+    )
+
+
 @dataclass(frozen=True)
 class GatewayHostConfig:
     """Process-level configuration for the AbstractGateway host."""
 
     data_dir: Path
     flows_dir: Path
+    root_data_dir: Optional[Path] = None
+    tenant_id: str = "default"
+    user_id: str = "admin"
+    runtime_id: str = ""
     store_backend: str = "file"  # file|sqlite
     db_path: Optional[Path] = None
 
@@ -84,7 +106,7 @@ class GatewayHostConfig:
             _env("ABSTRACTGATEWAY_FLOWS_DIR")
             or _env("ABSTRACTFRAMEWORK_WORKFLOWS_DIR")
             or _env("ABSTRACTFLOW_FLOWS_DIR")
-            or "./flows"
+            or _default_flows_dir()
         )
 
         store_backend = str(_env("ABSTRACTGATEWAY_STORE_BACKEND") or "file").strip().lower() or "file"
@@ -120,6 +142,10 @@ class GatewayHostConfig:
         return GatewayHostConfig(
             data_dir=data_dir,
             flows_dir=flows_dir,
+            root_data_dir=data_dir,
+            tenant_id="default",
+            user_id="admin",
+            runtime_id="default",
             store_backend=store_backend,
             db_path=db_path,
             runner_enabled=bool(runner_enabled),

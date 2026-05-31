@@ -28,7 +28,7 @@ Related repos:
 ## Install
 
 ```bash
-# Remote-light server package (HTTP/SSE + runner + stores + Runtime multimodal stack + KG memory)
+# Remote-light server package (HTTP/SSE + runner + stores + KG memory)
 pip install abstractgateway
 
 # Native Apple local engines
@@ -48,8 +48,11 @@ File-backed stores are the default and easiest for dev.
 
 ```bash
 export ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle
-export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"      # directory with *.flow (or a single .flow file)
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
+
+# Optional: set only for a custom bundle registry. When unset, Gateway uses
+# the packaged shipped bundle directory containing basic-agent.
+# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
 
 # Required by default: the server refuses to start without a token.
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -70,7 +73,8 @@ curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
 ```
 
 If `bundles.items` is empty, either:
-- point `ABSTRACTGATEWAY_FLOWS_DIR` at a directory containing `*.flow` files (or a single `.flow` file), or
+- point `ABSTRACTGATEWAY_FLOWS_DIR` at the shipped bundle directory or another
+  directory containing `*.flow` files (or a single `.flow` file), or
 - upload a bundle via the API:
 
 ```bash
@@ -130,9 +134,13 @@ abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
 
 ## 3b) Docker / Compose
 
-For a containerized deployment with `AbstractRuntime[multimodal,mcp-worker]`,
-Runtime-owned provider/media/tool support, direct Gateway voice/audio/image
-endpoints, and provider/session prompt-cache controls included:
+For a containerized remote-light deployment with
+`AbstractRuntime`, Runtime-owned provider/tool and
+multimodal support, KG memory, and provider/session prompt-cache controls
+included. Remote embeddings are available in this profile when `embedding.text`
+points at a remote provider, an OpenAI-compatible embeddings endpoint, or a
+remote AbstractCore server; local HuggingFace/sentence-transformer embeddings
+require `abstractgateway[embeddings]`.
 
 ```bash
 export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -141,13 +149,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.21
+  ghcr.io/lpalbou/abstractgateway-server:0.2.22
 ```
 
 See [deployment.md](./deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.22`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

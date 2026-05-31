@@ -30,7 +30,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -52,6 +52,16 @@ from ..capability_defaults import (
     save_gateway_capability_default,
 )
 from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
+from ..provider_endpoint_profiles import (
+    ProviderEndpointProfileError,
+    ProviderEndpointProfileStore,
+    effective_endpoint_profiles,
+    normalize_api_key,
+    normalize_base_url,
+    normalize_provider_family,
+    profile_id_from_virtual_provider,
+    resolve_effective_endpoint_profile,
+)
 from .. import host_metrics
 from ..run_retention import (
     DraftRunPurgeOptions,
@@ -59,8 +69,45 @@ from ..run_retention import (
     purge_ephemeral_draft_runs,
     write_gateway_workspace_marker,
 )
-from ..service import backlog_exec_runner_status, get_gateway_service, is_draft_run_lifecycle, run_summary
+from ..security import load_gateway_auth_policy_from_env
+from ..security.sessions import (
+    GatewaySessionStore,
+    gateway_csrf_cookie_name,
+    gateway_session_cookie_name,
+    gateway_session_id_from_cookie_header,
+    gateway_session_id_from_value,
+    gateway_session_ttl_s,
+)
+from ..security.principal import GatewayPrincipal, current_gateway_principal, local_admin_principal, safe_principal_component
+from ..service import (
+    backlog_exec_runner_status,
+    gateway_multi_user_enabled,
+    get_gateway_service,
+    invalidate_gateway_service_for_runtime,
+    is_draft_run_lifecycle,
+    reload_gateway_workflow_bundles,
+    run_summary,
+)
+from ..users import GatewayUserRegistry, gateway_data_dir_from_env, gateway_user_auth_enabled
 from ..workspace_tools import AbstractIgnore, read_file as read_workspace_file, skim_files as skim_workspace_files
+from ..workflow_catalog import (
+    CATALOG_SCOPE_FRAMEWORK,
+    CATALOG_SCOPE_TENANT,
+    WorkflowCatalogError,
+    WorkflowCatalogForbiddenError,
+    WorkflowCatalogImmutableError,
+    WorkflowCatalogNotFoundError,
+    WorkflowCatalogStartSelection,
+    WorkflowCatalogStatusError,
+    WorkflowCatalogStore,
+    catalog_record_public_dict,
+    load_or_create_workflow_policy_secret,
+    normalize_catalog_acl,
+    normalize_catalog_scope,
+    parse_catalog_internal_bundle_id,
+    principal_can_run_catalog_record,
+    sign_workflow_policy,
+)
 from ..workflow_deprecations import WorkflowDeprecatedError
 
 
@@ -86,6 +133,747 @@ async def gateway_ping() -> Dict[str, Any]:
         "service": "abstractgateway",
         "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
+
+
+def _principal_from_request(request: Request) -> GatewayPrincipal:
+    try:
+        principal = getattr(request.state, "gateway_principal", None)
+    except Exception:
+        principal = None
+    if principal is None:
+        principal = current_gateway_principal()
+    if principal is None:
+        try:
+            policy = load_gateway_auth_policy_from_env()
+        except Exception:
+            policy = None
+        if policy is not None and not bool(getattr(policy, "enabled", True)):
+            principal = local_admin_principal()
+        else:
+            raise HTTPException(status_code=401, detail="Gateway principal unavailable")
+    if not isinstance(principal, GatewayPrincipal):
+        raise HTTPException(status_code=401, detail="Gateway principal unavailable")
+    return principal
+
+
+def _require_admin_principal(request: Request) -> GatewayPrincipal:
+    principal = _principal_from_request(request)
+    if not principal.is_admin():
+        raise HTTPException(status_code=403, detail="Admin principal required")
+    return principal
+
+
+def _runtime_reservation_root(*, tenant_id: str, runtime_id: str) -> Path:
+    tenant = safe_principal_component(tenant_id, default="default")
+    runtime = safe_principal_component(runtime_id, default="")
+    if not runtime:
+        raise HTTPException(status_code=400, detail="runtime_id is required")
+    users_root = (gateway_data_dir_from_env() / "users").resolve()
+    root = (users_root / tenant / runtime).resolve()
+    try:
+        root.relative_to(users_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid retained runtime path") from exc
+    return root
+
+
+def _runtime_reservation_payload(reservation: Any) -> Dict[str, Any]:
+    payload = dict(reservation.public_dict())
+    root = _runtime_reservation_root(tenant_id=reservation.tenant_id, runtime_id=reservation.runtime_id)
+    payload["data_exists"] = root.exists()
+    payload["data_path"] = str(root)
+    return payload
+
+
+class GatewayUserCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str = Field(..., min_length=1)
+    tenant_id: str = Field(default="default", min_length=1)
+    email: Optional[str] = Field(default=None, max_length=254)
+    roles: List[str] = Field(default_factory=lambda: ["user"])
+    scopes: List[str] = Field(default_factory=list)
+    enabled: bool = True
+    runtime_id: Optional[str] = None
+    token: Optional[str] = Field(
+        default=None,
+        description="Optional caller-provided bearer token. When omitted, Gateway generates one and returns it once.",
+    )
+
+
+class GatewayUserUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: Optional[str] = Field(default=None, max_length=254)
+    roles: Optional[List[str]] = None
+    scopes: Optional[List[str]] = None
+    enabled: Optional[bool] = None
+    runtime_id: Optional[str] = None
+    token: Optional[str] = Field(default=None, description="Optional replacement bearer token.")
+    rotate_token: bool = Field(default=False, description="Generate and return a fresh bearer token.")
+
+
+class GatewayRuntimeReservationTransferRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str = Field(default="default", min_length=1)
+    target_user_id: str = Field(..., min_length=1)
+    confirm_runtime_id: str = Field(..., min_length=1)
+
+
+class GatewayRuntimeReservationPurgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str = Field(default="default", min_length=1)
+    confirm_runtime_id: str = Field(..., min_length=1)
+    delete_data: bool = Field(default=True, description="Must be true to delete retained runtime files before release.")
+
+
+class GatewaySessionLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str = Field(..., min_length=1)
+    token: str = Field(..., min_length=1)
+    remember: bool = Field(default=False)
+
+
+def _request_session_value(request: Request) -> str:
+    try:
+        header_value = str(request.headers.get("x-abstractgateway-session") or "").strip()
+        if header_value:
+            return header_value
+    except Exception:
+        pass
+    try:
+        cookie_header = str(request.headers.get("cookie") or "").strip()
+        session_id = gateway_session_id_from_cookie_header(cookie_header)
+        if session_id:
+            return session_id
+    except Exception:
+        pass
+    return ""
+
+
+def _cookie_secure(request: Request) -> bool:
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return str(proto or "").strip().lower() == "https"
+
+
+def _session_cookie_kwargs(request: Request, *, max_age: Optional[int] = None, httponly: bool = True) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {
+        "httponly": bool(httponly),
+        "secure": _cookie_secure(request),
+        "samesite": "lax",
+        "path": "/",
+    }
+    if max_age is not None:
+        kwargs["max_age"] = int(max_age)
+    return kwargs
+
+
+@router.get("/me")
+async def gateway_me(request: Request) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    return {
+        "ok": True,
+        "principal": principal.public_dict(),
+        "auth": {
+            "mode": "users" if gateway_user_auth_enabled() else "legacy-token",
+            "user_auth_enabled": bool(gateway_user_auth_enabled()),
+        },
+        "routing": {
+            "mode": "per-principal" if gateway_multi_user_enabled() else "single-user",
+            "one_user_one_runtime": bool(gateway_multi_user_enabled()),
+        },
+    }
+
+
+@router.post("/session/login")
+async def gateway_session_login(
+    request: Request,
+    response: Response,
+    payload: GatewaySessionLoginRequest,
+) -> Dict[str, Any]:
+    principal = GatewayUserRegistry().authenticate(payload.token)
+    if principal is None or principal.source != "user-registry":
+        raise HTTPException(status_code=401, detail="Invalid Gateway user token")
+    expected_user = str(payload.user_id or "").strip()
+    if expected_user and principal.user_id != expected_user:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Gateway token resolved to user '{principal.user_id or 'unknown'}', not '{expected_user}'.",
+        )
+
+    ttl_s = gateway_session_ttl_s()
+    if bool(payload.remember):
+        try:
+            ttl_s = int(os.getenv("ABSTRACTGATEWAY_REMEMBER_SESSION_TTL_S") or (30 * 24 * 60 * 60))
+        except Exception:
+            ttl_s = 30 * 24 * 60 * 60
+        ttl_s = max(60, min(90 * 24 * 60 * 60, ttl_s))
+
+    session_value, csrf_token, record = GatewaySessionStore().create_session(principal, ttl_s=ttl_s)
+    response.set_cookie(
+        gateway_session_cookie_name(),
+        session_value,
+        **_session_cookie_kwargs(request, max_age=ttl_s if bool(payload.remember) else None, httponly=True),
+    )
+    response.set_cookie(
+        gateway_csrf_cookie_name(),
+        csrf_token,
+        **_session_cookie_kwargs(request, max_age=ttl_s if bool(payload.remember) else None, httponly=False),
+    )
+    return {
+        "ok": True,
+        "principal": principal.public_dict(),
+        "auth": {"mode": "users", "user_auth_enabled": True, "session": "gateway-browser-session"},
+        "routing": {
+            "mode": "per-principal" if gateway_multi_user_enabled() else "single-user",
+            "one_user_one_runtime": bool(gateway_multi_user_enabled()),
+        },
+        "session": {
+            "expires_at": record.expires_at,
+        },
+    }
+
+
+@router.post("/session/logout")
+async def gateway_session_logout(request: Request, response: Response) -> Dict[str, Any]:
+    value = _request_session_value(request)
+    deleted = GatewaySessionStore().delete_session(gateway_session_id_from_value(value) or value)
+    response.delete_cookie(gateway_session_cookie_name(), path="/", samesite="lax", secure=_cookie_secure(request))
+    response.delete_cookie(gateway_csrf_cookie_name(), path="/", samesite="lax", secure=_cookie_secure(request))
+    return {"ok": True, "deleted": bool(deleted)}
+
+
+@router.get("/admin/users")
+async def gateway_admin_list_users(request: Request) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    registry = GatewayUserRegistry()
+    return {"users": [record.public_dict() for record in registry.list_users()]}
+
+
+@router.post("/admin/users")
+async def gateway_admin_create_user(request: Request, payload: GatewayUserCreateRequest) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    registry = GatewayUserRegistry()
+    try:
+        record, issued_token = registry.create_user(
+            user_id=payload.user_id,
+            tenant_id=payload.tenant_id,
+            roles=payload.roles,
+            scopes=payload.scopes,
+            enabled=payload.enabled,
+            runtime_id=payload.runtime_id,
+            email=payload.email,
+            token=payload.token,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"user": record.public_dict(), "token": issued_token}
+
+
+@router.get("/admin/users/{user_id}")
+async def gateway_admin_get_user(request: Request, user_id: str, tenant_id: str = Query(default="default")) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    record = GatewayUserRegistry().get_user(user_id, tenant_id=tenant_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Gateway user not found")
+    return {"user": record.public_dict()}
+
+
+@router.patch("/admin/users/{user_id}")
+async def gateway_admin_update_user(
+    request: Request,
+    user_id: str,
+    payload: GatewayUserUpdateRequest,
+    tenant_id: str = Query(default="default"),
+) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    token_update: Optional[str] = payload.token
+    if payload.rotate_token and token_update is None:
+        token_update = ""
+    try:
+        record, issued_token = GatewayUserRegistry().update_user(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            roles=payload.roles,
+            scopes=payload.scopes,
+            enabled=payload.enabled,
+            runtime_id=payload.runtime_id,
+            email=payload.email,
+            token=token_update,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail="Gateway user not found") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    response: Dict[str, Any] = {"user": record.public_dict()}
+    if issued_token is not None:
+        response["token"] = issued_token
+    return response
+
+
+@router.delete("/admin/users/{user_id}")
+async def gateway_admin_delete_user(
+    request: Request,
+    user_id: str,
+    tenant_id: str = Query(default="default"),
+) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    deleted = GatewayUserRegistry().delete_user(user_id=user_id, tenant_id=tenant_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Gateway user not found")
+    return {"ok": True, "deleted": True, "user_id": user_id, "tenant_id": tenant_id}
+
+
+@router.get("/admin/runtime-reservations")
+async def gateway_admin_list_runtime_reservations(request: Request) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    registry = GatewayUserRegistry()
+    return {"runtime_reservations": [_runtime_reservation_payload(r) for r in registry.list_runtime_reservations()]}
+
+
+@router.post("/admin/runtime-reservations/{runtime_id}/transfer")
+async def gateway_admin_transfer_runtime_reservation(
+    request: Request,
+    runtime_id: str,
+    payload: GatewayRuntimeReservationTransferRequest,
+) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    runtime0 = safe_principal_component(runtime_id, default="")
+    if safe_principal_component(payload.confirm_runtime_id, default="") != runtime0:
+        raise HTTPException(status_code=400, detail="confirm_runtime_id must match the retained runtime id")
+    registry = GatewayUserRegistry()
+    try:
+        record, reservation, previous_runtime_id = registry.transfer_runtime_reservation(
+            tenant_id=payload.tenant_id,
+            runtime_id=runtime0,
+            target_user_id=payload.target_user_id,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'")) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    invalidate_gateway_service_for_runtime(tenant_id=record.tenant_id, runtime_id=previous_runtime_id)
+    invalidate_gateway_service_for_runtime(tenant_id=record.tenant_id, runtime_id=record.runtime_id or record.user_id)
+    return {
+        "ok": True,
+        "transferred": True,
+        "user": record.public_dict(),
+        "reservation": reservation.public_dict(),
+        "previous_runtime_id": previous_runtime_id,
+    }
+
+
+@router.post("/admin/runtime-reservations/{runtime_id}/purge")
+async def gateway_admin_purge_runtime_reservation(
+    request: Request,
+    runtime_id: str,
+    payload: GatewayRuntimeReservationPurgeRequest,
+) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    runtime0 = safe_principal_component(runtime_id, default="")
+    if safe_principal_component(payload.confirm_runtime_id, default="") != runtime0:
+        raise HTTPException(status_code=400, detail="confirm_runtime_id must match the retained runtime id")
+    if not bool(payload.delete_data):
+        raise HTTPException(status_code=400, detail="delete_data must be true to purge a retained runtime")
+    registry = GatewayUserRegistry()
+    try:
+        reservation = registry.mark_runtime_reservation_purging(tenant_id=payload.tenant_id, runtime_id=runtime0)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'")) from e
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    root = _runtime_reservation_root(tenant_id=reservation.tenant_id, runtime_id=reservation.runtime_id)
+    deleted_data = False
+    if root.exists():
+        if not root.is_dir():
+            raise HTTPException(status_code=409, detail=f"Retained runtime path is not a directory: {root}")
+        shutil.rmtree(root)
+        deleted_data = True
+    try:
+        released = registry.release_runtime_reservation(tenant_id=reservation.tenant_id, runtime_id=reservation.runtime_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    invalidate_gateway_service_for_runtime(tenant_id=reservation.tenant_id, runtime_id=reservation.runtime_id)
+    return {
+        "ok": True,
+        "purged": bool(released),
+        "deleted_data": deleted_data,
+        "runtime_id": reservation.runtime_id,
+        "tenant_id": reservation.tenant_id,
+        "data_path": str(root),
+    }
+
+
+def _catalog_actor(principal: GatewayPrincipal) -> str:
+    return f"{principal.tenant_id}:{principal.user_id}"
+
+
+def _csv_acl(*, roles: str = "", users: str = "", deny_users: str = "") -> dict[str, Any]:
+    def _split(raw: str) -> list[str]:
+        out: list[str] = []
+        for part in str(raw or "").split(","):
+            value = part.strip()
+            if value and value not in out:
+                out.append(value)
+        return out
+
+    return normalize_catalog_acl({"roles": _split(roles), "users": _split(users), "deny_users": _split(deny_users)})
+
+
+@router.get("/workflow-catalog")
+async def list_workflow_catalog(
+    request: Request,
+    scope: str = Query(default=CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Query(default=None),
+    include_inactive: bool = Query(default=False),
+    include_denied: bool = Query(default=False),
+) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    scope0 = _require_supported_workflow_catalog_scope(scope)
+    tenant0 = _principal_catalog_tenant(principal, svc, tenant_id)
+    if tenant0 != str(principal.tenant_id or "default") and not principal.is_admin():
+        raise HTTPException(status_code=403, detail="Cross-tenant workflow catalog access denied")
+    store = _workflow_catalog_store_for_service(svc)
+    records = store.list_records(
+        principal=principal,
+        scope=scope0,
+        tenant_id=tenant0,
+        include_inactive=bool(include_inactive and principal.is_admin()),
+        include_denied=bool(include_denied and principal.is_admin()),
+    )
+    items = [catalog_record_public_dict(record, principal) for record in records]
+    return {"items": items, "scope": scope0, "tenant_id": tenant0, "count": len(items)}
+
+
+@router.get("/workflow-catalog/{bundle_id}")
+async def get_workflow_catalog_bundle(
+    request: Request,
+    bundle_id: str,
+    scope: str = Query(default=CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Query(default=None),
+    include_inactive: bool = Query(default=False),
+) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    scope0 = _require_supported_workflow_catalog_scope(scope)
+    tenant0 = _principal_catalog_tenant(principal, svc, tenant_id)
+    if tenant0 != str(principal.tenant_id or "default") and not principal.is_admin():
+        raise HTTPException(status_code=403, detail="Cross-tenant workflow catalog access denied")
+    store = _workflow_catalog_store_for_service(svc)
+    records = [
+        r
+        for r in store.list_records(
+            principal=principal,
+            scope=scope0,
+            tenant_id=tenant0,
+            include_inactive=bool(include_inactive and principal.is_admin()),
+            include_denied=bool(principal.is_admin()),
+        )
+        if str(r.get("bundle_id") or "") == str(bundle_id or "").strip()
+    ]
+    if not records:
+        raise HTTPException(status_code=404, detail=f"Catalog bundle '{bundle_id}' not found")
+    return {
+        "items": [catalog_record_public_dict(record, principal) for record in records],
+        "scope": scope0,
+        "tenant_id": tenant0,
+        "bundle_id": str(bundle_id or "").strip(),
+    }
+
+
+def _resolve_catalog_flow_for_request(
+    *,
+    request: Request,
+    bundle_id: str,
+    bundle_version: str,
+    flow_id: str,
+    scope: str,
+    tenant_id: Optional[str],
+) -> tuple[WorkflowCatalogStartSelection, Dict[str, Any]]:
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    scope0 = _require_supported_workflow_catalog_scope(scope)
+    tenant0 = _principal_catalog_tenant(principal, svc, tenant_id)
+    if tenant0 != str(principal.tenant_id or "default") and not principal.is_admin():
+        raise HTTPException(status_code=403, detail="Cross-tenant workflow catalog access denied")
+    store = _workflow_catalog_store_for_service(svc)
+    try:
+        selection = store.resolve_start(
+            principal=principal,
+            scope=scope0,
+            tenant_id=tenant0,
+            bundle_id=bundle_id,
+            bundle_version=bundle_version,
+            flow_id=flow_id,
+        )
+    except WorkflowCatalogError as e:
+        raise _map_catalog_error(e) from e
+    _ensure_catalog_selection_loaded(svc=svc, selection=selection)
+    host = _require_bundle_host(svc)
+    _bid, _ver, _fid, raw = _resolve_bundle_flow_json(
+        host=host,
+        bundle_id=selection.host_bundle_id,
+        flow_id=selection.flow_id,
+        bundle_version=selection.bundle_version,
+        allow_catalog_internal=True,
+    )
+    return selection, raw
+
+
+@router.get("/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}")
+async def get_workflow_catalog_flow(
+    request: Request,
+    bundle_id: str,
+    bundle_version: str,
+    flow_id: str,
+    scope: str = Query(default=CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    selection, raw = _resolve_catalog_flow_for_request(
+        request=request,
+        bundle_id=bundle_id,
+        bundle_version=bundle_version,
+        flow_id=flow_id,
+        scope=scope,
+        tenant_id=tenant_id,
+    )
+    return {
+        "registry_scope": selection.scope,
+        "tenant_id": selection.tenant_id,
+        "bundle_id": selection.bundle_id,
+        "bundle_version": selection.bundle_version,
+        "bundle_ref": f"{selection.bundle_id}@{selection.bundle_version}",
+        "flow_id": selection.flow_id,
+        "workflow_id": f"{selection.bundle_id}@{selection.bundle_version}:{selection.flow_id}",
+        "flow": raw,
+    }
+
+
+@router.get("/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}/input_schema")
+async def get_workflow_catalog_flow_input_schema(
+    request: Request,
+    bundle_id: str,
+    bundle_version: str,
+    flow_id: str,
+    scope: str = Query(default=CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    selection, raw = _resolve_catalog_flow_for_request(
+        request=request,
+        bundle_id=bundle_id,
+        bundle_version=bundle_version,
+        flow_id=flow_id,
+        scope=scope,
+        tenant_id=tenant_id,
+    )
+    schema = _entrypoint_input_schema_from_visualflow(raw)
+    return {
+        "registry_scope": selection.scope,
+        "tenant_id": selection.tenant_id,
+        "bundle_id": selection.bundle_id,
+        "bundle_version": selection.bundle_version,
+        "bundle_ref": f"{selection.bundle_id}@{selection.bundle_version}",
+        "flow_id": selection.flow_id,
+        "workflow_id": f"{selection.bundle_id}@{selection.bundle_version}:{selection.flow_id}",
+        **schema,
+    }
+
+
+@router.post("/admin/workflow-catalog/upload")
+async def gateway_admin_upload_workflow_catalog_bundle(
+    request: Request,
+    file: UploadFile = File(..., description="WorkflowBundle (.flow) to register in the shared catalog."),
+    scope: str = Form(CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Form(default=None),
+    roles: str = Form("user,admin"),
+    users: str = Form(""),
+    deny_users: str = Form(""),
+    make_default: bool = Form(True),
+) -> Dict[str, Any]:
+    principal = _require_admin_principal(request)
+    svc = get_gateway_service()
+    scope0 = _require_supported_workflow_catalog_scope(scope)
+    tenant0 = _principal_catalog_tenant(principal, svc, tenant_id)
+    try:
+        content = await file.read()
+        record = _workflow_catalog_store_for_service(svc).install_bundle_bytes(
+            bytes(content or b""),
+            scope=scope0,
+            tenant_id=tenant0,
+            acl=_csv_acl(roles=roles, users=users, deny_users=deny_users),
+            make_default=bool(make_default),
+            publisher=_catalog_actor(principal),
+        )
+        reload_result = reload_gateway_workflow_bundles()
+    except WorkflowCatalogError as e:
+        raise _map_catalog_error(e) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to upload workflow catalog bundle: {e}") from e
+    return {"ok": True, "record": catalog_record_public_dict(record, principal), "reload": reload_result}
+
+
+@router.post("/admin/workflow-catalog/promote")
+async def gateway_admin_promote_workflow_catalog_bundle(request: Request, payload: WorkflowCatalogPromoteRequest) -> Dict[str, Any]:
+    principal = _require_admin_principal(request)
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+    scope0 = _require_supported_workflow_catalog_scope(payload.scope)
+    tenant0 = _principal_catalog_tenant(principal, svc, payload.tenant_id)
+    try:
+        from abstractruntime.workflow_bundle import WorkflowBundleRegistry, WorkflowBundleRegistryError
+
+        ref = str(payload.bundle_id or "").strip()
+        if payload.bundle_version:
+            ref = f"{ref}@{str(payload.bundle_version).strip()}"
+        installed = WorkflowBundleRegistry(getattr(host, "bundles_dir", None)).resolve_bundle(ref)
+        acl = payload.acl.model_dump() if payload.acl is not None else None
+        record = _workflow_catalog_store_for_service(svc).install_bundle_bytes(
+            installed.path.read_bytes(),
+            scope=scope0,
+            tenant_id=tenant0,
+            acl=acl,
+            make_default=bool(payload.make_default),
+            publisher=_catalog_actor(principal),
+        )
+        reload_result = reload_gateway_workflow_bundles()
+    except WorkflowBundleRegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except WorkflowCatalogError as e:
+        raise _map_catalog_error(e) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to promote workflow catalog bundle: {e}") from e
+    return {"ok": True, "record": catalog_record_public_dict(record, principal), "reload": reload_result}
+
+
+@router.post("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}/default")
+async def gateway_admin_set_workflow_catalog_default(
+    request: Request,
+    bundle_id: str,
+    bundle_version: str,
+    scope: str = Query(default=CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    principal = _require_admin_principal(request)
+    svc = get_gateway_service()
+    try:
+        record = _workflow_catalog_store_for_service(svc).set_default(
+            scope=_require_supported_workflow_catalog_scope(scope),
+            tenant_id=_principal_catalog_tenant(principal, svc, tenant_id),
+            bundle_id=bundle_id,
+            bundle_version=bundle_version,
+            updated_by=_catalog_actor(principal),
+        )
+    except WorkflowCatalogError as e:
+        raise _map_catalog_error(e) from e
+    return {"ok": True, "record": catalog_record_public_dict(record, principal)}
+
+
+@router.put("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}/acl")
+async def gateway_admin_set_workflow_catalog_acl(
+    request: Request,
+    bundle_id: str,
+    bundle_version: str,
+    payload: WorkflowCatalogACLRequest,
+    scope: str = Query(default=CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    principal = _require_admin_principal(request)
+    svc = get_gateway_service()
+    try:
+        record = _workflow_catalog_store_for_service(svc).set_acl(
+            scope=_require_supported_workflow_catalog_scope(scope),
+            tenant_id=_principal_catalog_tenant(principal, svc, tenant_id),
+            bundle_id=bundle_id,
+            bundle_version=bundle_version,
+            acl=payload.model_dump(),
+            updated_by=_catalog_actor(principal),
+        )
+    except WorkflowCatalogError as e:
+        raise _map_catalog_error(e) from e
+    return {"ok": True, "record": catalog_record_public_dict(record, principal)}
+
+
+@router.post("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}/deprecate")
+async def gateway_admin_deprecate_workflow_catalog_bundle(
+    request: Request,
+    bundle_id: str,
+    bundle_version: str,
+    payload: WorkflowCatalogStatusRequest,
+    scope: str = Query(default=CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    principal = _require_admin_principal(request)
+    svc = get_gateway_service()
+    try:
+        record = _workflow_catalog_store_for_service(svc).set_status(
+            scope=_require_supported_workflow_catalog_scope(scope),
+            tenant_id=_principal_catalog_tenant(principal, svc, tenant_id),
+            bundle_id=bundle_id,
+            bundle_version=bundle_version,
+            status="deprecated",
+            reason=payload.reason,
+            updated_by=_catalog_actor(principal),
+        )
+    except WorkflowCatalogError as e:
+        raise _map_catalog_error(e) from e
+    return {"ok": True, "record": catalog_record_public_dict(record, principal)}
+
+
+@router.post("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}/block")
+async def gateway_admin_block_workflow_catalog_bundle(
+    request: Request,
+    bundle_id: str,
+    bundle_version: str,
+    payload: WorkflowCatalogStatusRequest,
+    scope: str = Query(default=CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    principal = _require_admin_principal(request)
+    svc = get_gateway_service()
+    try:
+        record = _workflow_catalog_store_for_service(svc).set_status(
+            scope=_require_supported_workflow_catalog_scope(scope),
+            tenant_id=_principal_catalog_tenant(principal, svc, tenant_id),
+            bundle_id=bundle_id,
+            bundle_version=bundle_version,
+            status="blocked",
+            reason=payload.reason,
+            updated_by=_catalog_actor(principal),
+        )
+    except WorkflowCatalogError as e:
+        raise _map_catalog_error(e) from e
+    return {"ok": True, "record": catalog_record_public_dict(record, principal)}
+
+
+@router.delete("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}")
+async def gateway_admin_tombstone_workflow_catalog_bundle(
+    request: Request,
+    bundle_id: str,
+    bundle_version: str,
+    scope: str = Query(default=CATALOG_SCOPE_TENANT),
+    tenant_id: Optional[str] = Query(default=None),
+    reason: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    principal = _require_admin_principal(request)
+    svc = get_gateway_service()
+    try:
+        record = _workflow_catalog_store_for_service(svc).set_status(
+            scope=_require_supported_workflow_catalog_scope(scope),
+            tenant_id=_principal_catalog_tenant(principal, svc, tenant_id),
+            bundle_id=bundle_id,
+            bundle_version=bundle_version,
+            status="tombstoned",
+            reason=reason,
+            updated_by=_catalog_actor(principal),
+        )
+    except WorkflowCatalogError as e:
+        raise _map_catalog_error(e) from e
+    return {"ok": True, "record": catalog_record_public_dict(record, principal), "deleted_bytes": False}
+
 
 def _env_first(*keys: str, default: Optional[str] = None) -> Optional[str]:
     for key in keys:
@@ -222,6 +1010,10 @@ def _optional_package_status(module_name: str, dist_name: Optional[str] = None) 
 
 
 class StartRunRequest(BaseModel):
+    registry_scope: Optional[str] = Field(
+        default=None,
+        description="Optional workflow registry scope: private (default when present in caller runtime) or tenant_catalog.",
+    )
     bundle_id: Optional[str] = Field(
         default=None,
         description="Bundle id (when workflow source is 'bundle'). Optional if flow_id is already namespaced as 'bundle:flow'.",
@@ -508,6 +1300,10 @@ def _origin_version(versions: list[Dict[str, str]]) -> Optional[str]:
 
 
 class ScheduleRunRequest(BaseModel):
+    registry_scope: Optional[str] = Field(
+        default=None,
+        description="Optional workflow registry scope: private (default when present in caller runtime) or tenant_catalog.",
+    )
     bundle_id: str = Field(..., description="Target bundle id to execute.")
     bundle_version: Optional[str] = Field(
         default=None,
@@ -569,6 +1365,31 @@ class DeprecateWorkflowRequest(BaseModel):
     reason: Optional[str] = Field(default=None, description="Optional reason to record for operators.")
 
 
+class WorkflowCatalogACLRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roles: List[str] = Field(default_factory=lambda: ["user", "admin"])
+    users: List[str] = Field(default_factory=list)
+    deny_users: List[str] = Field(default_factory=list)
+
+
+class WorkflowCatalogPromoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bundle_id: str = Field(..., min_length=1)
+    bundle_version: Optional[str] = Field(default=None)
+    scope: str = Field(default=CATALOG_SCOPE_TENANT)
+    tenant_id: Optional[str] = Field(default=None)
+    make_default: bool = Field(default=True)
+    acl: Optional[WorkflowCatalogACLRequest] = None
+
+
+class WorkflowCatalogStatusRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Optional[str] = Field(default=None)
+
+
 class GenerateRunSummaryRequest(BaseModel):
     provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
     model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
@@ -602,6 +1423,19 @@ class EmbeddingsResponse(BaseModel):
     model: str
     dimension: int
     data: list[EmbeddingItem]
+
+
+def _embedding_unavailable_message(error: str = "") -> str:
+    msg = (
+        "Embeddings are not available for this gateway instance. Configure the execution-host "
+        "embedding.text capability default to a remote provider, or set ABSTRACTCORE_SERVER_BASE_URL "
+        "so Gateway delegates to a remote AbstractCore /v1/embeddings route. Install "
+        "`abstractgateway[embeddings]` only when this host must run local HuggingFace/"
+        "sentence-transformer embeddings."
+    )
+    if error:
+        msg += f" Last setup error: {error}"
+    return msg
 
 
 class RunChatRequest(BaseModel):
@@ -1462,7 +2296,7 @@ def _split_bundle_ref(raw: str) -> tuple[str, Optional[str]]:
     return (a, b)
 
 
-def _resolve_bundle_from_host(*, host: Any, bundle_id: str, bundle_version: Optional[str]) -> tuple[str, Any]:
+def _resolve_bundle_from_host(*, host: Any, bundle_id: str, bundle_version: Optional[str], allow_catalog_internal: bool = False) -> tuple[str, Any]:
     """Return (selected_bundle_version, bundle) for a bundle_id (+ optional bundle_version)."""
     bundles0 = getattr(host, "bundles", None)
     if not isinstance(bundles0, dict):
@@ -1473,6 +2307,8 @@ def _resolve_bundle_from_host(*, host: Any, bundle_id: str, bundle_version: Opti
     bid_base, bid_ver = _split_bundle_ref(str(bundle_id or ""))
     if not bid_base:
         raise HTTPException(status_code=400, detail="bundle_id is required")
+    if parse_catalog_internal_bundle_id(bid_base) is not None and not allow_catalog_internal:
+        raise HTTPException(status_code=403, detail="Catalog bundles must be accessed through /api/gateway/workflow-catalog")
 
     req_ver = str(bundle_version or "").strip() if isinstance(bundle_version, str) and str(bundle_version).strip() else ""
     if bid_ver and req_ver and bid_ver != req_ver:
@@ -1491,6 +2327,208 @@ def _resolve_bundle_from_host(*, host: Any, bundle_id: str, bundle_version: Opti
         raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}@{selected_ver}' not found")
 
     return (selected_ver, bundle)
+
+
+def _workflow_catalog_store_for_service(svc: Any) -> WorkflowCatalogStore:
+    cfg = getattr(svc, "config", None)
+    root = Path(getattr(cfg, "root_data_dir", None) or getattr(cfg, "data_dir", None) or ".").expanduser().resolve()
+    return WorkflowCatalogStore(root_data_dir=root)
+
+
+def _workflow_policy_secret_for_service(svc: Any) -> str:
+    cfg = getattr(svc, "config", None)
+    root = Path(getattr(cfg, "root_data_dir", None) or getattr(cfg, "data_dir", None) or ".").expanduser().resolve()
+    return load_or_create_workflow_policy_secret(root)
+
+
+def _require_supported_workflow_catalog_scope(scope: str) -> str:
+    scope0 = normalize_catalog_scope(scope)
+    if scope0 == CATALOG_SCOPE_FRAMEWORK:
+        raise HTTPException(status_code=501, detail="framework_catalog is reserved but not loadable yet; use tenant_catalog")
+    return scope0
+
+
+def _principal_catalog_tenant(principal: GatewayPrincipal, svc: Any, explicit_tenant_id: Optional[str] = None) -> str:
+    if isinstance(explicit_tenant_id, str) and explicit_tenant_id.strip():
+        return explicit_tenant_id.strip()
+    if str(getattr(principal, "source", "") or "") == "legacy-token":
+        return "default"
+    cfg = getattr(svc, "config", None)
+    tenant = getattr(cfg, "tenant_id", None)
+    if isinstance(tenant, str) and tenant.strip():
+        return tenant.strip()
+    return str(principal.tenant_id or "default").strip() or "default"
+
+
+def _catalog_scope_requested(value: Any) -> bool:
+    raw = str(value or "").strip().lower().replace("-", "_")
+    return raw in {"catalog", "tenant", "tenant_catalog", "framework", "framework_catalog", "global"}
+
+
+def _strip_client_workflow_policy(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    runtime_ns = input_data.get("_runtime")
+    if isinstance(runtime_ns, dict) and "workflow_policy" in runtime_ns:
+        runtime_ns = dict(runtime_ns)
+        runtime_ns.pop("workflow_policy", None)
+        input_data["_runtime"] = runtime_ns
+    return input_data
+
+
+def _private_bundle_loaded(host: Any, bundle_id: str) -> bool:
+    bid, _ver = _split_bundle_ref(str(bundle_id or ""))
+    if not bid:
+        return False
+    bundles = getattr(host, "bundles", None)
+    sources = getattr(host, "bundle_sources", None)
+    if not isinstance(bundles, dict) or bid not in bundles:
+        return False
+    if not isinstance(sources, dict):
+        return True
+    versions = sources.get(bid)
+    if not isinstance(versions, dict):
+        return True
+    return any(str((meta or {}).get("registry_scope") or "private") == "private" for meta in versions.values() if isinstance(meta, dict))
+
+
+def _contains_catalog_internal_ref(*, bundle_id: Optional[str], flow_id: Optional[str]) -> bool:
+    candidates: list[str] = []
+    if isinstance(bundle_id, str) and bundle_id.strip():
+        candidates.append(_split_bundle_ref(bundle_id.strip())[0])
+    if isinstance(flow_id, str) and ":" in flow_id:
+        parsed = _parse_namespaced_workflow_id(flow_id)
+        if parsed is not None:
+            candidates.append(_split_bundle_ref(parsed[0])[0])
+    return any(parse_catalog_internal_bundle_id(candidate) is not None for candidate in candidates)
+
+
+def _parse_catalog_start_target(
+    *,
+    bundle_id: Optional[str],
+    bundle_version: Optional[str],
+    flow_id: Optional[str],
+) -> tuple[str, Optional[str], str]:
+    bid_raw = str(bundle_id or "").strip()
+    bid, bid_ver = _split_bundle_ref(bid_raw)
+    bver = str(bundle_version or "").strip() if isinstance(bundle_version, str) and str(bundle_version).strip() else bid_ver
+    fid = str(flow_id or "").strip()
+    if ":" in fid:
+        parsed = _parse_namespaced_workflow_id(fid)
+        if parsed is None:
+            raise HTTPException(status_code=400, detail="Invalid flow_id")
+        prefix_bid, prefix_ver = _split_bundle_ref(parsed[0])
+        if bid and prefix_bid and prefix_bid != bid:
+            raise HTTPException(status_code=400, detail="flow_id bundle prefix does not match bundle_id")
+        if prefix_ver and bver and prefix_ver != bver:
+            raise HTTPException(status_code=400, detail="flow_id version does not match bundle_version")
+        bid = prefix_bid or bid
+        bver = prefix_ver or bver
+        fid = parsed[1]
+    if not bid:
+        raise HTTPException(status_code=400, detail="catalog bundle_id is required")
+    if not fid:
+        raise HTTPException(status_code=400, detail="catalog flow_id is required")
+    return bid, bver, fid
+
+
+def _ensure_input_runtime_namespace(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    runtime_ns = input_data.get("_runtime")
+    if not isinstance(runtime_ns, dict):
+        runtime_ns = {}
+        input_data["_runtime"] = runtime_ns
+    return runtime_ns
+
+
+def _map_catalog_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, WorkflowCatalogForbiddenError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, WorkflowCatalogStatusError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, WorkflowCatalogImmutableError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, WorkflowCatalogNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+def _ensure_catalog_selection_loaded(*, svc: Any, selection: WorkflowCatalogStartSelection) -> None:
+    host = getattr(svc, "host", None)
+    bundles = getattr(host, "bundles", None)
+    versions = bundles.get(selection.host_bundle_id) if isinstance(bundles, dict) else None
+    if isinstance(versions, dict) and selection.bundle_version in versions:
+        return
+    reload_fn = getattr(host, "reload_bundles_from_disk", None)
+    if callable(reload_fn):
+        try:
+            reload_fn()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Failed to reload catalog bundles: {e}") from e
+    bundles = getattr(host, "bundles", None)
+    versions = bundles.get(selection.host_bundle_id) if isinstance(bundles, dict) else None
+    if not isinstance(versions, dict) or selection.bundle_version not in versions:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Catalog bundle '{selection.bundle_id}@{selection.bundle_version}' is registered but not loaded by this runtime",
+        )
+
+
+def _maybe_resolve_catalog_start(
+    *,
+    svc: Any,
+    principal: GatewayPrincipal,
+    registry_scope: Optional[str],
+    bundle_id: Optional[str],
+    bundle_version: Optional[str],
+    flow_id: Optional[str],
+    input_data: Dict[str, Any],
+) -> Optional[WorkflowCatalogStartSelection]:
+    requested_scope = str(registry_scope or "").strip()
+    try_catalog = _catalog_scope_requested(requested_scope)
+    if requested_scope and not try_catalog and requested_scope.lower().replace("-", "_") != "private":
+        raise HTTPException(status_code=400, detail=f"Unsupported registry_scope: {registry_scope}")
+
+    # Keep catalog authority explicit. If no scope is requested, only the caller's
+    # private runtime registry is considered.
+    bid_probe = str(bundle_id or "").strip()
+    if not bid_probe and isinstance(flow_id, str) and ":" in flow_id:
+        parsed = _parse_namespaced_workflow_id(flow_id)
+        if parsed is not None:
+            bid_probe = parsed[0]
+    bid_base, _bid_ver = _split_bundle_ref(bid_probe)
+    if not try_catalog:
+        if not bid_base:
+            return None
+        return None
+
+    bid, bver, fid = _parse_catalog_start_target(bundle_id=bundle_id, bundle_version=bundle_version, flow_id=flow_id)
+    scope = _require_supported_workflow_catalog_scope(requested_scope or CATALOG_SCOPE_TENANT)
+    tenant_id = _principal_catalog_tenant(principal, svc)
+    store = _workflow_catalog_store_for_service(svc)
+    try:
+        selection = store.resolve_start(
+            principal=principal,
+            scope=scope,
+            tenant_id=tenant_id,
+            bundle_id=bid,
+            bundle_version=bver,
+            flow_id=fid,
+        )
+    except WorkflowCatalogError as e:
+        if try_catalog:
+            raise _map_catalog_error(e) from e
+        return None
+
+    _ensure_catalog_selection_loaded(svc=svc, selection=selection)
+    runtime_ns = _ensure_input_runtime_namespace(input_data)
+    snapshot = selection.policy_snapshot()
+    cfg = getattr(svc, "config", None)
+    host_tenant_id = str(getattr(cfg, "tenant_id", tenant_id) or tenant_id).strip() or tenant_id
+    host_runtime_id = str(getattr(cfg, "runtime_id", host_tenant_id) or host_tenant_id).strip() or host_tenant_id
+    snapshot["principal"] = principal.public_dict()
+    snapshot["host_tenant_id"] = host_tenant_id
+    snapshot["host_runtime_id"] = host_runtime_id
+    snapshot["allowed_host_workflow_ids"] = [selection.host_workflow_id, selection.host_workflow_id.split(":", 1)[0] + ":*"]
+    runtime_ns["workflow_policy"] = sign_workflow_policy(snapshot, secret=_workflow_policy_secret_for_service(svc))
+    return selection
 
 
 def _workspace_root() -> Path:
@@ -3470,6 +4508,7 @@ async def list_bundles(
 
     items: list[Dict[str, Any]] = []
     bundles_by_id = getattr(host, "bundles", {}) or {}
+    bundle_sources = getattr(host, "bundle_sources", {}) or {}
     latest0 = getattr(host, "latest_bundle_versions", None)
     latest = latest0 if isinstance(latest0, dict) else {}
 
@@ -3481,9 +4520,14 @@ async def list_bundles(
             ver = str(ver0 or "").strip() if isinstance(ver0, str) else ""
             if not ver:
                 continue
+            source_meta = ((bundle_sources.get(str(bid)) or {}).get(ver) if isinstance(bundle_sources, dict) else None) or {}
+            if isinstance(source_meta, dict) and str(source_meta.get("registry_scope") or "private") != "private":
+                continue
             man0 = getattr(bundle0, "manifest", None) if bundle0 is not None else None
             created = str(getattr(man0, "created_at", "") or "")
             version_rows.append({"bundle_version": ver, "created_at": created})
+        if not version_rows:
+            continue
         published_rows = [row for row in version_rows if not _is_draft_bundle_version(row.get("bundle_version"))]
         latest_any_version = _latest_version(version_rows) or ""
         latest_published_version = _latest_version(published_rows) or ""
@@ -3508,6 +4552,9 @@ async def list_bundles(
                 selected_versions = [v]
 
         for ver in selected_versions:
+            source_meta = ((bundle_sources.get(str(bid)) or {}).get(ver) if isinstance(bundle_sources, dict) else None) or {}
+            if isinstance(source_meta, dict) and str(source_meta.get("registry_scope") or "private") != "private":
+                continue
             b = versions.get(ver)
             man = getattr(b, "manifest", None) if b is not None else None
             if man is None:
@@ -3547,6 +4594,7 @@ async def list_bundles(
                     "bundle_id": str(bid),
                     "bundle_version": exact_version,
                     "bundle_ref": f"{bid}@{exact_version}",
+                    "registry_scope": "private",
                     "version_channel": version_channel,
                     "is_draft": version_channel == "draft",
                     "is_published": version_channel == "published",
@@ -3556,6 +4604,13 @@ async def list_bundles(
                     "metadata": metadata_obj,
                     "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
                     "entrypoints": eps,
+                    "actions": {
+                        "can_run": True,
+                        "can_upload": True,
+                        "can_remove": True,
+                        "can_deprecate": True,
+                        "catalog_promote_endpoint": _api_gateway_path("/admin/workflow-catalog/promote"),
+                    },
                 }
             )
 
@@ -3855,6 +4910,7 @@ def _resolve_bundle_flow_json(
     bundle_id: str,
     flow_id: str,
     bundle_version: Optional[str] = None,
+    allow_catalog_internal: bool = False,
 ) -> Tuple[str, str, str, Dict[str, Any]]:
     bid = str(bundle_id or "").strip()
     if not bid:
@@ -3886,7 +4942,12 @@ def _resolve_bundle_flow_json(
     elif bid_ver and bundle_version and bid_ver != bundle_version:
         raise HTTPException(status_code=400, detail="bundle_id version does not match bundle_version")
 
-    selected_ver, bundle = _resolve_bundle_from_host(host=host, bundle_id=bid_base, bundle_version=bundle_version or bid_ver)
+    selected_ver, bundle = _resolve_bundle_from_host(
+        host=host,
+        bundle_id=bid_base,
+        bundle_version=bundle_version or bid_ver,
+        allow_catalog_internal=allow_catalog_internal,
+    )
 
     rel = bundle.manifest.flow_path_for(fid)
     if not isinstance(rel, str) or not rel.strip():
@@ -3938,6 +4999,11 @@ async def get_workflow_flow(workflow_id: str) -> Dict[str, Any]:
     wid = str(workflow_id or "").strip()
     if not wid:
         raise HTTPException(status_code=400, detail="workflow_id is required")
+    parsed_wid = _parse_namespaced_workflow_id(wid)
+    if parsed_wid is not None:
+        bid_base, _ = _split_bundle_ref(parsed_wid[0])
+        if parse_catalog_internal_bundle_id(bid_base) is not None:
+            raise HTTPException(status_code=403, detail="Catalog workflows must be inspected through /api/gateway/workflow-catalog")
 
     dyn_path_fn = getattr(host, "_dynamic_flow_path", None)
     dyn_path = dyn_path_fn(wid) if callable(dyn_path_fn) else None
@@ -3966,8 +5032,9 @@ async def get_workflow_flow(workflow_id: str) -> Dict[str, Any]:
 
 
 @router.post("/runs/start", response_model=StartRunResponse)
-async def start_run(req: StartRunRequest) -> StartRunResponse:
+async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     svc = get_gateway_service()
+    principal = _principal_from_request(request)
     svc.runner.start()
 
     flow_id = str(req.flow_id or "").strip()
@@ -3983,7 +5050,7 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
     if parsed_flow_ref:
         flow_ref_version = _split_bundle_ref(parsed_flow_ref[0])[1]
     requested_bundle_version = bundle_version or bundle_ref_version or flow_ref_version
-    if _is_draft_bundle_version(requested_bundle_version):
+    if _is_draft_bundle_version(requested_bundle_version) and not _catalog_scope_requested(req.registry_scope):
         lifecycle_purpose = (
             str((req.run_lifecycle or {}).get("purpose") or "").strip()
             if isinstance(req.run_lifecycle, dict)
@@ -3994,12 +5061,29 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
 
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
-        input_data = dict(req.input_data or {})
+        input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
         input_data = _sanitize_run_workspace_policy(input_data)
         input_data = _normalize_run_context_media(input_data)
         if isinstance(req.run_lifecycle, dict):
             input_data["_run_lifecycle"] = dict(req.run_lifecycle)
         normalize_run_lifecycle_vars(input_data)
+
+        catalog_selection = _maybe_resolve_catalog_start(
+            svc=svc,
+            principal=principal,
+            registry_scope=req.registry_scope,
+            bundle_id=bundle_id,
+            bundle_version=bundle_version,
+            flow_id=flow_id,
+            input_data=input_data,
+        )
+        if catalog_selection is not None:
+            bundle_id = catalog_selection.host_bundle_id
+            bundle_version = catalog_selection.bundle_version
+            flow_id = catalog_selection.flow_id
+        elif _contains_catalog_internal_ref(bundle_id=bundle_id, flow_id=flow_id):
+            raise HTTPException(status_code=403, detail="Catalog workflows must be started through registry_scope='tenant_catalog'")
+
         # Default workspace_root behavior (cross-client):
         # - If omitted, create a per-run workspace under the gateway data_dir.
         # - Clients may override only within the operator-configured server workspace roots.
@@ -4056,7 +5140,7 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
 
 
 @router.post("/runs/schedule", response_model=StartRunResponse)
-async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
+async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> StartRunResponse:
     """Start a durable scheduled run that triggers a target workflow over time.
 
     Implementation notes:
@@ -4064,6 +5148,7 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
     - The scheduled parent run starts that wrapper workflow and launches the target workflow as child runs.
     """
     svc = get_gateway_service()
+    principal = _principal_from_request(request)
     svc.runner.start()
 
     host = getattr(svc, "host", None)
@@ -4074,6 +5159,27 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
     flow_id_raw = str(req.flow_id or "").strip()
     if not bundle_id_ref or not flow_id_raw:
         raise HTTPException(status_code=400, detail="bundle_id and flow_id are required")
+
+    catalog_input_data: Optional[Dict[str, Any]] = None
+    schedule_input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
+    catalog_selection = _maybe_resolve_catalog_start(
+        svc=svc,
+        principal=principal,
+        registry_scope=req.registry_scope,
+        bundle_id=bundle_id_ref,
+        bundle_version=req.bundle_version,
+        flow_id=flow_id_raw,
+        input_data=(catalog_input_data := dict(schedule_input_data)),
+    )
+    catalog_public_bundle_id: Optional[str] = None
+    catalog_public_bundle_version: Optional[str] = None
+    if catalog_selection is not None:
+        catalog_public_bundle_id = catalog_selection.bundle_id
+        catalog_public_bundle_version = catalog_selection.bundle_version
+        bundle_id_ref = f"{catalog_selection.host_bundle_id}@{catalog_selection.bundle_version}"
+        flow_id_raw = catalog_selection.flow_id
+    elif _contains_catalog_internal_ref(bundle_id=bundle_id_ref, flow_id=flow_id_raw):
+        raise HTTPException(status_code=403, detail="Catalog workflows must be scheduled through registry_scope='tenant_catalog'")
 
     bundle_id_base, bundle_id_ver = _split_bundle_ref(bundle_id_ref)
     if not bundle_id_base:
@@ -4236,13 +5342,19 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to register schedule wrapper workflow: {e}")
 
-    input_data = dict(req.input_data or {})
+    input_data = catalog_input_data if catalog_selection is not None and catalog_input_data is not None else dict(schedule_input_data)
     schedule_meta: Dict[str, Any] = {
         "kind": "scheduled_run",
         "target_workflow_id": target_workflow_id,
-        "target_bundle_id": bundle_id_base,
+        "target_bundle_id": catalog_public_bundle_id or bundle_id_base,
         "target_bundle_version": selected_ver,
-        "target_bundle_ref": f"{bundle_id_base}@{selected_ver}",
+        "target_bundle_ref": (
+            f"{catalog_public_bundle_id}@{catalog_public_bundle_version}"
+            if catalog_public_bundle_id and catalog_public_bundle_version
+            else f"{bundle_id_base}@{selected_ver}"
+        ),
+        "target_registry_scope": catalog_selection.scope if catalog_selection is not None else "private",
+        "target_host_bundle_id": bundle_id_base,
         "target_flow_id": target_flow_id,
         "start_at": start_at_iso,
         "interval": interval_opt,
@@ -4257,6 +5369,8 @@ async def start_scheduled_run(req: ScheduleRunRequest) -> StartRunResponse:
         **({"session_prefix": session_prefix} if isinstance(session_prefix, str) and session_prefix.strip() else {}),
         "_meta": {"schedule": schedule_meta},
     }
+    if catalog_selection is not None and isinstance(input_data.get("_runtime"), dict):
+        wrapper_vars["_runtime"] = dict(input_data["_runtime"])
     # Best-effort: lift a common prompt string to the parent run for UX/digest.
     prompt_text = input_data.get("prompt")
     if isinstance(prompt_text, str) and prompt_text.strip():
@@ -5168,6 +6282,12 @@ async def get_ledger(
     limit: int = Query(200, ge=1, le=2000),
 ) -> Dict[str, Any]:
     svc = get_gateway_service()
+    try:
+        run0 = svc.host.run_store.load(str(run_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run0 is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     ledger = svc.host.ledger_store.list(str(run_id))
     if not isinstance(ledger, list):
         ledger = []
@@ -5190,6 +6310,11 @@ async def get_ledger_batch(req: LedgerBatchRequest) -> Dict[str, Any]:
     for it in req.runs or []:
         rid = str(getattr(it, "run_id", "") or "").strip()
         if not rid:
+            continue
+        try:
+            if svc.host.run_store.load(rid) is None:
+                continue
+        except Exception:
             continue
         after = int(getattr(it, "after", 0) or 0)
         if after < 0:
@@ -8190,6 +9315,63 @@ def _request_provider_api_key(request: Request) -> Optional[str]:
     return None
 
 
+def _gateway_profile_dirs() -> tuple[Path, Path]:
+    svc = get_gateway_service()
+    current = Path(svc.config.data_dir).expanduser().resolve()
+    root = Path(getattr(svc.config, "root_data_dir", None) or current).expanduser().resolve()
+    return current, root
+
+
+def _endpoint_profile_store_for_scope(*, scope: str, principal: GatewayPrincipal, current_base_dir: Path, root_base_dir: Path) -> ProviderEndpointProfileStore:
+    scope_s = str(scope or "user").strip().lower() or "user"
+    if scope_s == "gateway":
+        if not principal.is_admin():
+            raise HTTPException(status_code=403, detail="Admin principal required for gateway-scoped endpoint profiles")
+        return ProviderEndpointProfileStore(base_dir=root_base_dir)
+    return ProviderEndpointProfileStore(base_dir=current_base_dir)
+
+
+def _effective_endpoint_profile_public_rows(*, current_base_dir: Path, root_base_dir: Path) -> list[Dict[str, Any]]:
+    return [profile.public_dict() for profile in effective_endpoint_profiles(base_dir=current_base_dir, root_base_dir=root_base_dir)]
+
+
+def _resolve_endpoint_profile_for_request(request: Request, provider: Any) -> Optional[Any]:
+    _ = request
+    current_base, root_base = _gateway_profile_dirs()
+    try:
+        return resolve_effective_endpoint_profile(provider, base_dir=current_base, root_base_dir=root_base)
+    except ProviderEndpointProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _gateway_provider_endpoint_items(*, current_base_dir: Path, root_base_dir: Path) -> list[Dict[str, Any]]:
+    items: list[Dict[str, Any]] = []
+    for profile in effective_endpoint_profiles(base_dir=current_base_dir, root_base_dir=root_base_dir):
+        if not profile.enabled:
+            continue
+        public = profile.public_dict()
+        items.append(
+            {
+                "id": profile.virtual_provider_id,
+                "name": profile.virtual_provider_id,
+                "display_name": profile.display_name or profile.id,
+                "label": profile.display_name or profile.id,
+                "description": profile.description,
+                "provider": profile.virtual_provider_id,
+                "provider_family": profile.provider_family,
+                "virtual": True,
+                "virtual_provider": True,
+                "provider_endpoint_profile": public,
+                "models": list(profile.allowed_models),
+                "base_url_configured": bool(profile.base_url),
+                "api_key_set": bool(profile.api_key),
+                "scope": profile.scope,
+                "capabilities": list(profile.capabilities),
+            }
+        )
+    return items
+
+
 def _gateway_runtime() -> tuple[Optional[Any], Optional[str]]:
     svc = get_gateway_service()
     host = getattr(svc, "host", None)
@@ -10095,8 +11277,36 @@ def _gateway_code_execution_contract_descriptor() -> Dict[str, Any]:
 
 def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
     """Build the versioned thin-client capability contract from cheap probes."""
+    try:
+        principal = current_gateway_principal()
+    except Exception:
+        principal = None
+    is_admin = bool(isinstance(principal, GatewayPrincipal) and principal.is_admin())
+
+    def _admin_only_endpoint(endpoint: str, *, resource: str) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"available": is_admin, "endpoint": endpoint}
+        if not is_admin:
+            out.update(
+                {
+                    "denied_reason": "admin_required",
+                    "required_role": "admin",
+                    "resource_class": resource,
+                }
+            )
+        return out
+
     prompt_cache_control, prompt_cache_err = _gateway_abstractcore_host_facade()
     prompt_cache_available = bool(prompt_cache_control is not None and not prompt_cache_err)
+    prompt_cache_provider_controls_available = bool(prompt_cache_available and is_admin)
+    prompt_cache_provider_control_policy = (
+        {}
+        if is_admin
+        else {
+            "provider_controls_denied_reason": "admin_required",
+            "provider_controls_required_role": "admin",
+            "provider_controls_resource_class": "prompt_cache",
+        }
+    )
     prompt_cache_endpoints = {
         "capabilities": _api_gateway_path("/prompt_cache/capabilities"),
         "stats": _api_gateway_path("/prompt_cache/stats"),
@@ -10137,8 +11347,11 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "session_list": {"available": True, "endpoint": _api_gateway_path("/sessions/{session_id}/artifacts")},
             "metadata": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}")},
             "content": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}/content")},
-            "import": {"available": True, "endpoint": _api_gateway_path("/artifacts/import")},
-            "export": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}/export")},
+            "import": _admin_only_endpoint(_api_gateway_path("/artifacts/import"), resource="workspace"),
+            "export": _admin_only_endpoint(
+                _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}/export"),
+                resource="workspace",
+            ),
         },
         "attachments": {
             "upload": {"available": True, "endpoint": _api_gateway_path("/attachments/upload")},
@@ -10175,7 +11388,8 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         },
         "prompt_cache": {
             "provider_controls": True,
-            "provider_controls_available": prompt_cache_available,
+            "provider_controls_available": prompt_cache_provider_controls_available,
+            **prompt_cache_provider_control_policy,
             "session_lifecycle": True,
             "session_lifecycle_available": prompt_cache_available,
             "durable_blocs": durable_blocs,
@@ -10224,6 +11438,53 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "undeprecate": {"available": True, "endpoint": _api_gateway_path("/bundles/{bundle_id}/undeprecate")},
             "flow": {"available": True, "endpoint": _api_gateway_path("/bundles/{bundle_id}/flows/{flow_id}")},
         },
+        "workflow_catalog": {
+            "list": {"available": True, "endpoint": _api_gateway_path("/workflow-catalog")},
+            "inspect": {"available": True, "endpoint": _api_gateway_path("/workflow-catalog/{bundle_id}")},
+            "run": {
+                "available": True,
+                "endpoint": common["runs"]["start"]["endpoint"],
+                "registry_scope": CATALOG_SCOPE_TENANT,
+            },
+            "admin": {
+                "available": is_admin,
+                "upload": {
+                    "available": is_admin,
+                    "endpoint": _api_gateway_path("/admin/workflow-catalog/upload"),
+                    **({} if is_admin else {"denied_reason": "admin_required"}),
+                },
+                "promote": {
+                    "available": is_admin,
+                    "endpoint": _api_gateway_path("/admin/workflow-catalog/promote"),
+                    **({} if is_admin else {"denied_reason": "admin_required"}),
+                },
+                "set_default": {
+                    "available": is_admin,
+                    "endpoint": _api_gateway_path("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}/default"),
+                    **({} if is_admin else {"denied_reason": "admin_required"}),
+                },
+                "set_acl": {
+                    "available": is_admin,
+                    "endpoint": _api_gateway_path("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}/acl"),
+                    **({} if is_admin else {"denied_reason": "admin_required"}),
+                },
+                "deprecate": {
+                    "available": is_admin,
+                    "endpoint": _api_gateway_path("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}/deprecate"),
+                    **({} if is_admin else {"denied_reason": "admin_required"}),
+                },
+                "block": {
+                    "available": is_admin,
+                    "endpoint": _api_gateway_path("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}/block"),
+                    **({} if is_admin else {"denied_reason": "admin_required"}),
+                },
+                "tombstone": {
+                    "available": is_admin,
+                    "endpoint": _api_gateway_path("/admin/workflow-catalog/{bundle_id}/versions/{bundle_version}"),
+                    **({} if is_admin else {"denied_reason": "admin_required"}),
+                },
+            },
+        },
         "run_input_schema": {
             "available": True,
             "endpoint": _api_gateway_path("/bundles/{bundle_id}/flows/{flow_id}/input_schema"),
@@ -10259,7 +11520,8 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "model_residency": common["model_residency"],
         "prompt_cache": {
             "provider_controls": True,
-            "provider_controls_available": prompt_cache_available,
+            "provider_controls_available": prompt_cache_provider_controls_available,
+            **prompt_cache_provider_control_policy,
             "session_lifecycle": True,
             "session_lifecycle_available": prompt_cache_available,
             "durable_blocs": durable_blocs,
@@ -10999,13 +12261,23 @@ async def discovery_providers(
 ) -> Dict[str, Any]:
     """List available providers (and optionally their models) for UI helper dropdowns."""
     discovery, err = _gateway_abstractcore_discovery_facade()
+    current_base, root_base = _gateway_profile_dirs()
+    endpoint_items = _gateway_provider_endpoint_items(current_base_dir=current_base, root_base_dir=root_base)
     if err or discovery is None:
-        out = {"items": [], "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.", "available": False, "route_available": True, "source": "abstractgateway.discovery"}
+        out = {
+            "items": endpoint_items,
+            "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+            "available": bool(endpoint_items),
+            "route_available": True,
+            "source": "abstractgateway.discovery",
+        }
+        if endpoint_items:
+            out["provider_endpoint_profiles"] = [dict(item.get("provider_endpoint_profile") or {}) for item in endpoint_items]
         return _gateway_catalog_response(
             out,
             kind="providers",
             scope="text",
-            items=[],
+            items=_gateway_catalog_provider_items(out, provider_keys=(), detail_keys=("items",)),
             metadata={"include_models": bool(include_models)},
         )
 
@@ -11025,6 +12297,13 @@ async def discovery_providers(
                 name = p.get("name")
                 if isinstance(name, str) and name.strip():
                     items.append(dict(p))
+
+    known_provider_names = {str(item.get("name") or "").strip().lower() for item in items if isinstance(item.get("name"), str)}
+    for item in endpoint_items:
+        name = str(item.get("name") or "").strip()
+        if name and name.lower() not in known_provider_names:
+            items.append(item)
+            known_provider_names.add(name.lower())
 
     items.sort(key=lambda x: str(x.get("name") or ""))
 
@@ -11068,6 +12347,8 @@ async def discovery_providers(
             body["upstream_source"] = str(payload.get("source"))
         if isinstance(payload.get("error"), str) and payload.get("error"):
             body.setdefault("error", str(payload.get("error")))
+    if endpoint_items:
+        body["provider_endpoint_profiles"] = [dict(item.get("provider_endpoint_profile") or {}) for item in endpoint_items]
     return _gateway_catalog_response(
         body,
         kind="providers",
@@ -11083,7 +12364,80 @@ async def discovery_provider_models(request: Request, provider_name: str) -> Dic
     prov = str(provider_name or "").strip()
     if not prov:
         raise HTTPException(status_code=400, detail="provider_name is required")
+    profile = _resolve_endpoint_profile_for_request(request, prov)
     discovery, err = _gateway_abstractcore_discovery_facade()
+    if profile is not None:
+        profile_public = profile.public_dict()
+        if profile.allowed_models:
+            models = _dedupe_strings([str(m) for m in profile.allowed_models if str(m).strip()])
+            models.sort()
+            body = {
+                "provider": profile.virtual_provider_id,
+                "routed_provider": profile.provider_family,
+                "models": models,
+                "available": bool(models),
+                "route_available": True,
+                "source": "abstractgateway.provider_endpoint_profiles",
+                "provider_endpoint_profile": profile_public,
+            }
+            return _gateway_catalog_response(
+                body,
+                kind="models",
+                scope="text",
+                items=_gateway_catalog_model_items(body, provider=profile.virtual_provider_id, value_keys=("models",)),
+                provider=profile.virtual_provider_id,
+            )
+        if err or discovery is None:
+            body = {
+                "provider": profile.virtual_provider_id,
+                "routed_provider": profile.provider_family,
+                "models": [],
+                "available": False,
+                "route_available": True,
+                "source": "abstractgateway.provider_endpoint_profiles",
+                "provider_endpoint_profile": profile_public,
+                "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+            }
+            return _gateway_catalog_response(
+                body,
+                kind="models",
+                scope="text",
+                items=[],
+                provider=profile.virtual_provider_id,
+            )
+        try:
+            payload = discovery.list_provider_models(
+                profile.provider_family,
+                base_url=profile.base_url or None,
+                provider_api_key=profile.api_key or _request_provider_api_key(request),
+                timeout_s=_provider_models_timeout_s(),
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+        models = payload.get("models") if isinstance(payload, dict) else None
+        out = [str(m) for m in models if isinstance(m, str) and str(m).strip()] if isinstance(models, list) else []
+        out = _dedupe_strings(out)
+        out.sort()
+        body = {
+            "provider": profile.virtual_provider_id,
+            "routed_provider": profile.provider_family,
+            "models": out,
+            "available": bool(out),
+            "route_available": True,
+            "source": "abstractruntime.discovery_facade",
+            "provider_endpoint_profile": profile_public,
+        }
+        if isinstance(payload, dict) and isinstance(payload.get("source"), str) and payload.get("source"):
+            body["upstream_source"] = str(payload.get("source"))
+        if isinstance(payload, dict) and payload.get("error"):
+            body["error"] = str(payload.get("error"))
+        return _gateway_catalog_response(
+            body,
+            kind="models",
+            scope="text",
+            items=_gateway_catalog_model_items(body, provider=profile.virtual_provider_id, value_keys=("models",)),
+            provider=profile.virtual_provider_id,
+        )
     if err or discovery is None:
         out = {
             "provider": prov,
@@ -16465,6 +17819,45 @@ class _GatewayCapabilityDefaultRequest(BaseModel):
     options: Optional[Dict[str, Any]] = Field(default=None, description="Optional plugin/provider parameters, such as voice/profile/language.")
 
 
+class _GatewayProviderEndpointProfileCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=1, max_length=80)
+    display_name: str = Field(..., min_length=1, max_length=120)
+    description: Optional[str] = Field(default="", max_length=1000)
+    provider_family: str = Field(default="openai-compatible", min_length=1, max_length=80)
+    base_url: Optional[str] = Field(default=None, max_length=2048)
+    api_key: Optional[str] = Field(default=None, max_length=65536)
+    scope: str = Field(default="user", description="user or gateway. Gateway scope requires an admin principal.")
+    capabilities: List[str] = Field(default_factory=lambda: ["text"])
+    allowed_models: List[str] = Field(default_factory=list)
+    enabled: bool = True
+
+
+class _GatewayProviderEndpointProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=1000)
+    provider_family: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    base_url: Optional[str] = Field(default=None, max_length=2048)
+    api_key: Optional[str] = Field(default=None, max_length=65536)
+    clear_api_key: bool = False
+    scope: Optional[str] = Field(default=None, description="user or gateway. Gateway scope requires an admin principal.")
+    capabilities: Optional[List[str]] = None
+    allowed_models: Optional[List[str]] = None
+    enabled: Optional[bool] = None
+
+
+class _GatewayProviderEndpointProfileModelDiscoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: Optional[str] = Field(default=None, max_length=96, description="Optional existing endpoint profile id or virtual provider id.")
+    provider_family: Optional[str] = Field(default="openai-compatible", min_length=1, max_length=80)
+    base_url: Optional[str] = Field(default=None, max_length=2048)
+    api_key: Optional[str] = Field(default=None, max_length=65536)
+
+
 class _GatewaySessionPromptCacheTarget(_GatewayPromptCacheTarget):
     bundle_id: Optional[str] = Field(default=None, max_length=160, description="Optional workflow bundle id.")
     bundle_version: Optional[str] = Field(default=None, max_length=80, description="Optional workflow bundle version.")
@@ -16814,6 +18207,22 @@ def _session_cache_label(value: Any, *, fallback: str, max_len: int = 36) -> str
     return safe[: max(1, int(max_len))].rstrip("._-") or fallback
 
 
+def _session_prompt_cache_principal_scope() -> str:
+    try:
+        principal = current_gateway_principal()
+    except Exception:
+        principal = None
+    if not isinstance(principal, GatewayPrincipal):
+        return "anonymous"
+    payload = {
+        "source": str(principal.source or "").strip() or "principal",
+        "tenant_id": str(principal.tenant_id or "").strip() or "default",
+        "user_id": str(principal.user_id or "").strip() or "user",
+        "runtime_id": str(principal.runtime_id or principal.user_id or "").strip() or "default",
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def _session_prompt_cache_identity(
     *,
     session_id: str,
@@ -16824,6 +18233,7 @@ def _session_prompt_cache_identity(
     flow_id: Optional[str] = None,
     template_id: Optional[str] = None,
     version: int = 1,
+    principal_scope: Optional[str] = None,
 ) -> Dict[str, Any]:
     sid = str(session_id or "").strip()
     prov = str(provider or "").strip()
@@ -16845,7 +18255,14 @@ def _session_prompt_cache_identity(
         "template_id": str(template_id or "").strip(),
         "version": int(version or 1),
     }
-    raw = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    # The returned identity intentionally stays app-level and portable. The hash
+    # also includes a private principal scope so hosted users cannot collide on
+    # the same session/provider/model tuple against a shared provider control plane.
+    private_identity = {
+        **identity,
+        "_principal_scope": str(principal_scope or _session_prompt_cache_principal_scope()),
+    }
+    raw = json.dumps(private_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     parts = [
         f"s-{_session_cache_label(sid, fallback='session')}",
@@ -16935,6 +18352,7 @@ def _session_prompt_cache_base_payload(
         flow_id=req.flow_id,
         template_id=req.template_id,
         version=int(getattr(req, "version", 1) or 1),
+        principal_scope=_session_prompt_cache_principal_scope(),
     )
     caps = capabilities if isinstance(capabilities, dict) else _gateway_prompt_cache_empty_caps()
     mode = _session_prompt_cache_mode(caps)
@@ -17030,12 +18448,180 @@ async def model_residency_loaded(
 @router.get("/config/capability-defaults")
 async def capability_defaults_get() -> Dict[str, Any]:
     """List execution-host Core/Runtime capability routing defaults for thin-client settings UIs."""
-    return gateway_capability_defaults_payload()
+    svc = get_gateway_service()
+    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+
+
+@router.get("/config/provider-endpoint-profiles")
+async def provider_endpoint_profiles_get(request: Request) -> Dict[str, Any]:
+    """List reusable Gateway-owned provider endpoint profiles without exposing secrets."""
+    principal = _principal_from_request(request)
+    current_base, root_base = _gateway_profile_dirs()
+    return {
+        "ok": True,
+        "profiles": _effective_endpoint_profile_public_rows(current_base_dir=current_base, root_base_dir=root_base),
+        "can_create_gateway_scope": principal.is_admin(),
+        "source": "abstractgateway.provider_endpoint_profiles",
+    }
+
+
+@router.post("/config/provider-endpoint-profiles")
+async def provider_endpoint_profiles_create(request: Request, req: _GatewayProviderEndpointProfileCreateRequest) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    current_base, root_base = _gateway_profile_dirs()
+    try:
+        store = _endpoint_profile_store_for_scope(scope=req.scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
+        profile = store.upsert_profile(
+            profile_id=req.id,
+            display_name=req.display_name,
+            description=req.description,
+            provider_family=req.provider_family,
+            base_url=req.base_url,
+            api_key=req.api_key,
+            scope=req.scope,
+            capabilities=req.capabilities,
+            allowed_models=req.allowed_models,
+            enabled=req.enabled,
+        )
+    except ProviderEndpointProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "profile": profile.public_dict(),
+        "profiles": _effective_endpoint_profile_public_rows(current_base_dir=current_base, root_base_dir=root_base),
+    }
+
+
+@router.post("/config/provider-endpoint-profiles/discover-models")
+async def provider_endpoint_profiles_discover_models(request: Request, req: _GatewayProviderEndpointProfileModelDiscoveryRequest) -> Dict[str, Any]:
+    """Discover models for a draft or saved provider endpoint profile without exposing secrets."""
+    _principal_from_request(request)
+    profile = None
+    if isinstance(req.profile_id, str) and req.profile_id.strip():
+        profile = _resolve_endpoint_profile_for_request(request, req.profile_id.strip()) or _resolve_endpoint_profile_for_request(
+            request,
+            f"endpoint:{req.profile_id.strip()}",
+        )
+
+    try:
+        provider_family = normalize_provider_family(req.provider_family or (profile.provider_family if profile is not None else "openai-compatible"))
+        base_url = normalize_base_url(req.base_url if req.base_url is not None else (profile.base_url if profile is not None else ""))
+        body_api_key = normalize_api_key(req.api_key) if req.api_key is not None else ""
+    except ProviderEndpointProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    provider_api_key = body_api_key or (profile.api_key if profile is not None else "") or _request_provider_api_key(request)
+
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    profile_public = profile.public_dict() if profile is not None else None
+    if err or discovery is None:
+        body: Dict[str, Any] = {
+            "ok": False,
+            "provider": provider_family,
+            "models": [],
+            "available": False,
+            "route_available": True,
+            "source": "abstractgateway.provider_endpoint_profiles",
+            "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+            "base_url_configured": bool(base_url),
+            "api_key_set": bool(provider_api_key),
+        }
+        if profile_public is not None:
+            body["provider_endpoint_profile"] = profile_public
+        return body
+
+    try:
+        payload = discovery.list_provider_models(
+            provider_family,
+            base_url=base_url or None,
+            provider_api_key=provider_api_key,
+            timeout_s=_provider_models_timeout_s(),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    raw_models = payload.get("models") if isinstance(payload, dict) else None
+    models = _dedupe_strings([str(m).strip() for m in raw_models if isinstance(m, str) and str(m).strip()]) if isinstance(raw_models, list) else []
+    models.sort()
+    body = {
+        "ok": bool(models),
+        "provider": provider_family,
+        "models": models,
+        "available": bool(models),
+        "route_available": True,
+        "source": "abstractruntime.discovery_facade",
+        "base_url_configured": bool(base_url),
+        "api_key_set": bool(provider_api_key),
+    }
+    if profile_public is not None:
+        body["provider_endpoint_profile"] = profile_public
+    if isinstance(payload, dict) and isinstance(payload.get("source"), str) and payload.get("source"):
+        body["upstream_source"] = str(payload.get("source"))
+    if isinstance(payload, dict) and payload.get("error"):
+        body["error"] = str(payload.get("error"))
+    return body
+
+
+@router.put("/config/provider-endpoint-profiles/{profile_id}")
+async def provider_endpoint_profiles_update(request: Request, profile_id: str, req: _GatewayProviderEndpointProfileUpdateRequest) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    current_base, root_base = _gateway_profile_dirs()
+    existing = _resolve_endpoint_profile_for_request(request, profile_id) or _resolve_endpoint_profile_for_request(request, f"endpoint:{profile_id}")
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Endpoint profile not found")
+    requested_scope = req.scope or existing.scope
+    if existing.scope == "gateway" and not principal.is_admin():
+        raise HTTPException(status_code=403, detail="Admin principal required for gateway-scoped endpoint profiles")
+    try:
+        store = _endpoint_profile_store_for_scope(scope=requested_scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
+        profile = store.upsert_profile(
+            profile_id=profile_id,
+            display_name=req.display_name,
+            description=req.description,
+            provider_family=req.provider_family,
+            base_url=req.base_url,
+            api_key=req.api_key,
+            clear_api_key=req.clear_api_key,
+            scope=requested_scope,
+            capabilities=req.capabilities,
+            allowed_models=req.allowed_models,
+            enabled=req.enabled,
+        )
+        if existing.scope != requested_scope:
+            old_store = _endpoint_profile_store_for_scope(scope=existing.scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
+            old_store.delete_profile(existing.id)
+    except ProviderEndpointProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "profile": profile.public_dict(),
+        "profiles": _effective_endpoint_profile_public_rows(current_base_dir=current_base, root_base_dir=root_base),
+    }
+
+
+@router.delete("/config/provider-endpoint-profiles/{profile_id}")
+async def provider_endpoint_profiles_delete(request: Request, profile_id: str) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    current_base, root_base = _gateway_profile_dirs()
+    existing = _resolve_endpoint_profile_for_request(request, profile_id) or _resolve_endpoint_profile_for_request(request, f"endpoint:{profile_id}")
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Endpoint profile not found")
+    if existing.scope == "gateway" and not principal.is_admin():
+        raise HTTPException(status_code=403, detail="Admin principal required for gateway-scoped endpoint profiles")
+    try:
+        store = _endpoint_profile_store_for_scope(scope=existing.scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
+        store.delete_profile(existing.id)
+    except ProviderEndpointProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "deleted": True,
+        "profiles": _effective_endpoint_profile_public_rows(current_base_dir=current_base, root_base_dir=root_base),
+    }
 
 
 @router.put("/config/capability-defaults/{kind}/{modality}")
 async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabilityDefaultRequest) -> Dict[str, Any]:
     """Persist one execution-host Core/Runtime capability route default."""
+    svc = get_gateway_service()
     try:
         save_gateway_capability_default(
             kind,
@@ -17044,24 +18630,26 @@ async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabil
             model=req.model,
             base_url=req.base_url,
             options=req.options,
+            base_dir=Path(svc.config.data_dir),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return gateway_capability_defaults_payload()
+    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
 
 
 @router.delete("/config/capability-defaults/{kind}/{modality}")
 async def capability_defaults_delete(kind: str, modality: str) -> Dict[str, Any]:
     """Clear one execution-host Core/Runtime capability route default."""
+    svc = get_gateway_service()
     try:
-        clear_gateway_capability_default(kind, modality)
+        clear_gateway_capability_default(kind, modality, base_dir=Path(svc.config.data_dir))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return gateway_capability_defaults_payload()
+    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
 
 
 @router.post("/models/load")
@@ -17821,10 +19409,7 @@ async def embeddings(req: EmbeddingsRequest) -> EmbeddingsResponse:
     if client is None:
         raise HTTPException(
             status_code=503,
-            detail=(
-                "Embeddings are not available (missing AbstractCore embedding integration). "
-                "Install `abstractruntime[abstractcore]` and configure the execution-host embedding.text route."
-            ),
+            detail=_embedding_unavailable_message(str(getattr(svc, "embedding_error", "") or "")),
         )
 
     configured_provider = str(getattr(svc, "embedding_provider", "") or getattr(client, "provider", "") or "").strip().lower()
@@ -17887,10 +19472,7 @@ async def embeddings_config() -> Dict[str, Any]:
     }
 
     if client is None:
-        out["error"] = (
-            "Embeddings are not available (missing AbstractCore embedding integration). "
-            "Install `abstractruntime[abstractcore]` and configure the execution-host embedding.text capability default."
-        )
+        out["error"] = _embedding_unavailable_message(str(getattr(svc, "embedding_error", "") or ""))
         return out
 
     # Best-effort dimension probe (do not fail the endpoint).

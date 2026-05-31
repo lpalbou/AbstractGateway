@@ -27,6 +27,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
+from ..users import GatewayUserRegistry, gateway_user_auth_enabled, token_fingerprint
+from .principal import (
+    GatewayPrincipal,
+    local_admin_principal,
+    local_readonly_principal,
+    reset_current_gateway_principal,
+    set_current_gateway_principal,
+)
+from .authorization import authorize_gateway_principal, gateway_route_authorization_requirement
+from .sessions import (
+    GatewaySessionStore,
+    gateway_csrf_header_name,
+    gateway_session_header_name,
+    gateway_session_id_from_cookie_header,
+    gateway_session_id_from_value,
+    legacy_token_fingerprints,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +192,10 @@ class GatewayAuthPolicy:
     # Auth tokens (shared secret list; any token is accepted).
     tokens: Tuple[str, ...] = ()
 
+    # File-backed user registry auth. When enabled, bearer tokens resolve to
+    # concrete principals and request-scoped Gateway services.
+    user_auth_enabled: bool = False
+
     # Default: protect both reads and writes.
     protect_read_endpoints: bool = True
     protect_write_endpoints: bool = True
@@ -291,10 +312,12 @@ def load_gateway_auth_policy_from_env() -> GatewayAuthPolicy:
     lockout_base = _as_float("ABSTRACTGATEWAY_LOCKOUT_BASE_S", "ABSTRACTFLOW_GATEWAY_LOCKOUT_BASE_S", 1.0)
     lockout_max = _as_float("ABSTRACTGATEWAY_LOCKOUT_MAX_S", "ABSTRACTFLOW_GATEWAY_LOCKOUT_MAX_S", 60.0)
     trust_proxy = _as_bool(_env("ABSTRACTGATEWAY_TRUST_PROXY", "ABSTRACTFLOW_GATEWAY_TRUST_PROXY") or "0", False)
+    user_auth = gateway_user_auth_enabled()
 
     return GatewayAuthPolicy(
         enabled=enabled,
         tokens=tuple(tokens2),
+        user_auth_enabled=bool(user_auth),
         protect_read_endpoints=bool(protect_read),
         protect_write_endpoints=bool(protect_write),
         dev_allow_unauthenticated_reads_on_loopback=bool(dev_read_no_auth),
@@ -387,7 +410,7 @@ class GatewaySecurityMiddleware:
         )
 
         if policy.enabled:
-            if policy.protect_write_endpoints and not policy.tokens:
+            if policy.protect_write_endpoints and not policy.tokens and not policy.user_auth_enabled:
                 logger.warning(
                     "Gateway security enabled, but no auth token configured "
                     "(ABSTRACTGATEWAY_AUTH_TOKEN). Mutating endpoints will be rejected."
@@ -513,6 +536,66 @@ class GatewaySecurityMiddleware:
                 return True
         return False
 
+    def _authenticate_token(self, token: str) -> Optional[GatewayPrincipal]:
+        if not token:
+            return None
+        try:
+            if self._policy.user_auth_enabled or gateway_user_auth_enabled():
+                principal = GatewayUserRegistry().authenticate(token)
+                if principal is not None:
+                    return principal
+        except Exception as e:
+            logger.warning("Gateway user registry auth failed: %s", e)
+        if self._token_valid(token):
+            return local_admin_principal(token_fingerprint=token_fingerprint(token))
+        return None
+
+    def _authenticate_session_cookie(self, cookie_header: Optional[str]) -> Optional[tuple[GatewayPrincipal, str]]:
+        session_id = gateway_session_id_from_cookie_header(cookie_header)
+        if not session_id:
+            return None
+        principal = GatewaySessionStore().authenticate_session(
+            session_id,
+            legacy_token_fingerprints=legacy_token_fingerprints(tuple(self._policy.tokens or ())),
+        )
+        if principal is None:
+            return None
+        return principal, session_id
+
+    def _authenticate_session_header(self, session_value: Optional[str]) -> Optional[tuple[GatewayPrincipal, str]]:
+        session_id = gateway_session_id_from_value(session_value)
+        if not session_id:
+            return None
+        principal = GatewaySessionStore().authenticate_session(
+            session_id,
+            legacy_token_fingerprints=legacy_token_fingerprints(tuple(self._policy.tokens or ())),
+        )
+        if principal is None:
+            return None
+        return principal, session_id
+
+    def _public_auth_path(self, path: str, method: str) -> bool:
+        if method == "POST" and path.rstrip("/") == "/api/gateway/session/login":
+            return True
+        return False
+
+    def _route_authorization_requirement(self, path: str, method: str) -> Optional[dict[str, str]]:
+        requirement = gateway_route_authorization_requirement(path, method)
+        return requirement.public_dict() if requirement is not None else None
+
+    async def _reject_forbidden_route(self, send, *, requirement: dict[str, str]) -> None:
+        await self._send_json(
+            send,
+            status=403,
+            payload={
+                "detail": "Admin principal required",
+                "reason_code": requirement.get("reason_code") or "admin_required",
+                "required_role": "admin",
+                "resource_class": requirement.get("resource") or "gateway",
+                "action": requirement.get("action") or "",
+            },
+        )
+
     async def _send_json(
         self,
         send,
@@ -572,6 +655,9 @@ class GatewaySecurityMiddleware:
         error: Optional[str] = None
         auth_required: bool = False
         presented_token_fp: str = ""
+        principal: Optional[GatewayPrincipal] = None
+        session_id: str = ""
+        session_authenticated: bool = False
 
         async def _send_wrapped(message: dict) -> None:
             nonlocal status_code
@@ -620,6 +706,9 @@ class GatewaySecurityMiddleware:
             }
             if presented_token_fp:
                 entry["auth_token_fp"] = str(presented_token_fp)
+            if principal is not None:
+                entry["principal_user_id"] = str(principal.user_id)
+                entry["principal_tenant_id"] = str(principal.tenant_id)
 
             origin = self._header(scope, "origin")
             if origin:
@@ -671,7 +760,8 @@ class GatewaySecurityMiddleware:
 
             # Auth decision.
             auth_required = False
-            if is_write and self._policy.protect_write_endpoints:
+            public_auth_path = self._public_auth_path(path, method)
+            if is_write and self._policy.protect_write_endpoints and not public_auth_path:
                 auth_required = True
             if is_read and self._policy.protect_read_endpoints:
                 # Optional dev escape hatch (loopback-only).
@@ -685,7 +775,7 @@ class GatewaySecurityMiddleware:
                 return await self._app(scope, receive, _send_wrapped)
 
             if auth_required:
-                if not self._policy.tokens:
+                if not self._policy.tokens and not self._policy.user_auth_enabled and not gateway_user_auth_enabled():
                     await self._reject(_send_wrapped, status=503, detail="Gateway auth required but no token configured")
                     return
                 auth = self._header(scope, "authorization") or ""
@@ -694,7 +784,17 @@ class GatewaySecurityMiddleware:
                     token = auth.split(" ", 1)[1].strip()
                 if token:
                     presented_token_fp = _sha256_hex(token)[:12]
-                if not token or not self._token_valid(token):
+                    principal = self._authenticate_token(token)
+                else:
+                    session_auth = self._authenticate_session_header(
+                        self._header(scope, gateway_session_header_name())
+                    )
+                    if session_auth is None:
+                        session_auth = self._authenticate_session_cookie(self._header(scope, "cookie"))
+                    if session_auth is not None:
+                        principal, session_id = session_auth
+                        session_authenticated = True
+                if principal is None:
                     lock = self._lockouts.record_failure(ip)
                     if lock is not None and lock > 0:
                         await self._reject(
@@ -712,6 +812,50 @@ class GatewaySecurityMiddleware:
                     )
                     return
                 self._lockouts.record_success(ip)
+            elif principal is None:
+                if public_auth_path:
+                    principal = None
+                elif is_read and self._policy.dev_allow_unauthenticated_reads_on_loopback and _is_loopback_ip(ip):
+                    principal = local_readonly_principal()
+                else:
+                    principal = local_admin_principal()
+
+            if session_authenticated and is_write:
+                csrf_token = self._header(scope, gateway_csrf_header_name()) or ""
+                if not GatewaySessionStore().verify_csrf_token(session_id, csrf_token):
+                    await self._send_json(
+                        _send_wrapped,
+                        status=403,
+                        payload={
+                            "detail": "Gateway browser session CSRF token missing or invalid",
+                            "reason_code": "csrf_required",
+                        },
+                    )
+                    return
+
+            requirement = self._route_authorization_requirement(path, method)
+            if requirement is not None:
+                decision = authorize_gateway_principal(
+                    principal,
+                    resource=requirement.get("resource") or "gateway",
+                    action=requirement.get("action") or method,
+                    admin_required=True,
+                )
+                if not decision.allowed:
+                    await self._reject_forbidden_route(_send_wrapped, requirement=requirement)
+                    return
+
+            try:
+                state = scope.setdefault("state", {})
+                if isinstance(state, dict):
+                    state["gateway_principal"] = principal
+                    if session_id:
+                        state["gateway_session_id"] = session_id
+                scope["abstractgateway.principal"] = principal
+                if session_id:
+                    scope["abstractgateway.session_id"] = session_id
+            except Exception:
+                pass
 
             def _upload_kind(path: str) -> str:
                 p = str(path or "").rstrip("/")
@@ -789,26 +933,30 @@ class GatewaySecurityMiddleware:
                 )
                 return
 
+            principal_token = set_current_gateway_principal(principal)
             try:
-                if buffered_body is None:
-                    return await self._app(scope, receive, _send_wrapped)
-
-                # Replay buffered body to downstream app.
-                sent = False
-
-                async def _replay_receive():
-                    nonlocal sent
-                    if sent:
-                        return {"type": "http.request", "body": b"", "more_body": False}
-                    sent = True
-                    return {"type": "http.request", "body": buffered_body, "more_body": False}
-
-                return await self._app(scope, _replay_receive, _send_wrapped)
-            finally:
                 try:
-                    sem.release()
-                except Exception:
-                    pass
+                    if buffered_body is None:
+                        return await self._app(scope, receive, _send_wrapped)
+
+                    # Replay buffered body to downstream app.
+                    sent = False
+
+                    async def _replay_receive():
+                        nonlocal sent
+                        if sent:
+                            return {"type": "http.request", "body": b"", "more_body": False}
+                        sent = True
+                        return {"type": "http.request", "body": buffered_body, "more_body": False}
+
+                    return await self._app(scope, _replay_receive, _send_wrapped)
+                finally:
+                    try:
+                        sem.release()
+                    except Exception:
+                        pass
+            finally:
+                reset_current_gateway_principal(principal_token)
         except Exception as e:  # pragma: no cover
             try:
                 error = str(e)

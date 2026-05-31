@@ -60,6 +60,16 @@ flowchart LR
 - **Workflow host** (what “workflows” mean in this gateway):
   - `bundle` (default): load `.flow` WorkflowBundles and compile VisualFlow JSON via `abstractruntime.visualflow_compiler` (`src/abstractgateway/hosts/bundle_host.py`).
   - Wired in `src/abstractgateway/service.py` (`create_default_gateway_service`).
+- **Workflow catalog**:
+  - Gateway-owned metadata and immutable bundle bytes for shared/default
+    workflows.
+  - Private runtime bundles remain per-principal; catalog bundles are loaded
+    into each user's host under internal bundle ids so private ids cannot
+    shadow catalog ids.
+  - Run start and schedule routes resolve catalog ACL/default policy before
+    execution; catalog runs still execute in the caller's runtime.
+  - Gateway signs catalog workflow-policy snapshots before Runtime receives
+    them, and direct private-bundle routes reject catalog-internal ids.
 - **Runner worker**:
   - Polls the durable command inbox and applies commands; ticks RUNNING runs forward (`src/abstractgateway/runner.py`).
   - A filesystem lock (`gateway_runner.lock`) prevents double-ticking in split-process deployments.
@@ -96,6 +106,11 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:
 - Model residency, prompt-cache lifecycle, durable blocs, and discovery
   catalogs are server-owned control-plane surfaces so higher apps do not have
   to import Runtime/Core packages directly.
+- The shared contract is principal-aware for high-trust actions. Regular users
+  see admin-only workspace artifact import/export and provider prompt-cache
+  controls as unavailable in discovery, while ordinary run/ledger/artifact
+  upload, KG query, provider/model discovery, and per-principal defaults remain
+  available in their routed runtime.
 
 ## Deployment shape: one process vs split API/runner
 
@@ -119,6 +134,27 @@ Evidence:
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (`WorkflowBundleGatewayHost.load_from_dir`).
 
+### Workflow catalog
+
+The workflow catalog is a control-plane registry for shared workflows. It is
+separate from the caller's private bundle directory:
+
+- user-visible discovery: `GET /api/gateway/workflow-catalog`;
+- admin mutation: `/api/gateway/admin/workflow-catalog/*`;
+- immutable bundle bytes: existing `bundle_id@version` content cannot be
+  replaced with different bytes;
+- default pointers: omitted catalog versions resolve through the admin-managed
+  pointer, not semver order;
+- status: deprecated, blocked, and tombstoned versions cannot start new runs.
+
+Gateway stores catalog metadata under the root Gateway data dir and loads
+tenant catalog bundle bytes into each per-principal runtime host. Runtime still
+executes workflows; Gateway owns the authorization decision.
+
+The implemented catalog scope is `tenant_catalog`. `framework_catalog` is
+reserved for a later cross-tenant distribution model and is rejected by the API
+until host loading and policy semantics exist for it.
+
 ### VisualFlow directory mode
 
 VisualFlow directory mode was intentionally removed. Store VisualFlows through
@@ -133,6 +169,17 @@ VisualFlow directory mode was intentionally removed. Store VisualFlows through
 - **Abuse resistance** (body size caps, concurrency caps, auth lockouts, optional audit log)
 
 Evidence: `src/abstractgateway/security/gateway_security.py` (`GatewayAuthPolicy`, `load_gateway_auth_policy_from_env`, middleware `__call__`).
+
+Bearer tokens are gateway-level control-plane credentials, not tenant or
+browser-session identities. `session_id`, `run_id`, `artifact_id`, and memory
+owner ids are references/correlation fields, not authorization proofs. Deploy a
+separate Gateway/runtime/data plane per independent user or tenant unless all
+users are a trusted cohort that may share runs, artifacts, workflows, memory,
+workspaces, tools, provider credentials, and audit scope. Hosted user-auth mode
+routes each principal to a separate GatewayService data plane; browser apps
+exchange user tokens for opaque session cookies plus CSRF rather than storing
+raw bearer tokens. Session prompt-cache names include a private principal scope
+in their hash to avoid cross-user key collisions. See [security.md](security.md).
 
 ## Evidence (jump-to-code)
 

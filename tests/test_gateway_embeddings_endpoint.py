@@ -243,3 +243,20 @@ def test_remote_core_embeddings_client_posts_to_core_route(monkeypatch: pytest.M
     assert captured["body"]["base_url"] == "http://127.0.0.1:1234/v1"
     assert result.embeddings == [[1.0, 2.0]]
     assert result.dimension == 2
+
+
+def test_remote_core_embedding_client_is_selected_without_local_core_client(tmp_path: Path) -> None:
+    from abstractgateway.embeddings_config import EmbeddingRouteConfig, RemoteCoreEmbeddingsClient, build_embedding_client
+
+    client = build_embedding_client(
+        EmbeddingRouteConfig(
+            provider="openai",
+            model="text-embedding-3-small",
+            remote_core_url="http://core.test/v1",
+        ),
+        cache_dir=tmp_path,
+    )
+
+    assert isinstance(client, RemoteCoreEmbeddingsClient)
+    assert client.provider == "openai"
+    assert client.model == "text-embedding-3-small"

@@ -28,11 +28,9 @@ def resolve_embedding_config(*, base_dir: Path) -> EmbeddingRouteConfig:
     AbstractCore server (split mode).
     """
 
-    del base_dir  # Kept for caller compatibility; Gateway no longer persists an embedding file.
-
     from . import capability_defaults
 
-    payload = capability_defaults.gateway_capability_defaults_payload()
+    payload = capability_defaults.gateway_capability_defaults_payload(base_dir=base_dir)
     route = _embedding_text_route(payload)
     if route is None:
         errors = payload.get("errors") if isinstance(payload, dict) else None
