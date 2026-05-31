@@ -403,6 +403,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#provider-endpoint-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider endpoint profiles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#core-workflow-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -441,6 +452,17 @@
     <span class="md-ellipsis">
       
         2b) Schedule a run (bundle mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2c-shared-workflow-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2c) Shared workflow catalog
       
     </span>
   </a>
@@ -788,6 +810,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#provider-endpoint-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider endpoint profiles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#core-workflow-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -826,6 +859,17 @@
     <span class="md-ellipsis">
       
         2b) Schedule a run (bundle mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2c-shared-workflow-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2c) Shared workflow catalog
       
     </span>
   </a>
@@ -1056,6 +1100,24 @@ See: <a href="../security/">security.md</a>.</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">BASE_URL</span><span class="o">=</span><span class="s2">&quot;http://127.0.0.1:8080&quot;</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">AUTH</span><span class="o">=</span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span>
 </code></pre></div>
+<h2 id="provider-endpoint-profiles">Provider endpoint profiles<a class="headerlink" href="#provider-endpoint-profiles" title="Permanent link">&para;</a></h2>
+<p>Gateway-owned provider endpoint profiles let users create reusable hosted
+endpoints without putting raw API keys in workflow JSON or browser storage.</p>
+<ul>
+<li><code>GET /api/gateway/config/provider-endpoint-profiles</code>: list visible profiles.</li>
+<li><code>POST /api/gateway/config/provider-endpoint-profiles</code>: create a user- or
+  admin-owned profile.</li>
+<li><code>POST /api/gateway/config/provider-endpoint-profiles/discover-models</code>:
+  discover models for a draft or saved profile by calling the configured
+  provider family and base URL with the entered or server-side key. The raw key
+  is never returned.</li>
+<li><code>PUT</code> or <code>DELETE /api/gateway/config/provider-endpoint-profiles/{profile_id}</code>:
+  update or delete a profile.</li>
+</ul>
+<p>Enabled profiles appear in <code>GET /api/gateway/discovery/providers</code> as virtual
+providers such as <code>endpoint:office-vllm</code>. Model discovery through
+<code>GET /api/gateway/discovery/providers/{provider_name}/models</code> returns either the
+fixed profile allowlist or the live endpoint model catalog.</p>
 <h2 id="core-workflow-lifecycle">Core workflow lifecycle<a class="headerlink" href="#core-workflow-lifecycle" title="Permanent link">&para;</a></h2>
 <h3 id="1-list-bundles-bundle-mode">1) List bundles (bundle mode)<a class="headerlink" href="#1-list-bundles-bundle-mode" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/bundles&quot;</span>
@@ -1091,6 +1153,36 @@ See: <a href="../security/">security.md</a>.</p>
 - <code>repeat_count</code>: if omitted and <code>interval</code> is set, repeats forever. Alternatively use <code>repeat_until</code> (ISO 8601).
 - To stop a schedule, cancel the scheduled parent run via <code>POST /api/gateway/commands</code> with type <code>cancel</code>.</p>
 <p>Evidence: <code>ScheduleRunRequest</code>, <code>start_scheduled_run</code> in <code>src/abstractgateway/routes/gateway.py</code>.</p>
+<h3 id="2c-shared-workflow-catalog">2c) Shared workflow catalog<a class="headerlink" href="#2c-shared-workflow-catalog" title="Permanent link">&para;</a></h3>
+<p>Private <code>/api/gateway/bundles</code> routes are scoped to the signed-in user's routed
+runtime. Shared/default workflows use the Gateway workflow catalog instead:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/workflow-catalog&quot;</span>
+</code></pre></div>
+<p>Admin-only catalog operations live under
+<code>/api/gateway/admin/workflow-catalog/*</code>:</p>
+<ul>
+<li>upload or promote immutable <code>.flow</code> versions;</li>
+<li>move a bundle's default pointer;</li>
+<li>set ACLs;</li>
+<li>deprecate, block, or tombstone a version without deleting bundle bytes.</li>
+</ul>
+<p>Start a catalog workflow in the requesting user's runtime by setting
+<code>registry_scope</code>:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;registry_scope&quot;:&quot;tenant_catalog&quot;,&quot;bundle_id&quot;:&quot;basic-agent&quot;,&quot;flow_id&quot;:&quot;root&quot;,&quot;input_data&quot;:{&quot;prompt&quot;:&quot;Hello&quot;}}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/start&quot;</span>
+</code></pre></div>
+<p>If <code>bundle_version</code> is omitted, Gateway uses the admin-managed catalog default
+pointer. Exact older versions keep working until that specific version is
+deprecated, blocked, or tombstoned.</p>
+<p>Catalog scope is explicit: omitting <code>registry_scope</code> starts only private
+runtime bundles. Flow/schema inspection for catalog workflows should use the
+ACL-aware catalog endpoints:</p>
+<ul>
+<li><code>GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}</code></li>
+<li><code>GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}/input_schema</code></li>
+</ul>
+<p><code>framework_catalog</code> is reserved but not loadable yet; use <code>tenant_catalog</code>.</p>
 <h3 id="3-replay-the-ledger-cursor-based">3) Replay the ledger (cursor-based)<a class="headerlink" href="#3-replay-the-ledger-cursor-based" title="Permanent link">&para;</a></h3>
 <p>Ledger pages are replayed using <code>after</code> as “number of items already consumed”.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/ledger?after=0&amp;limit=200&quot;</span>
@@ -1153,7 +1245,10 @@ object or comma-separated <code>key=value</code> filters.</p>
 workspace roots, mounted roots, ignored paths, and size limits are enforced on
 the server. Browser-local files should be uploaded through
 <code>POST /api/gateway/attachments/upload</code>; browser-local file paths are not
-interpreted as Gateway workspace paths.</p>
+interpreted as Gateway workspace paths. In hosted user-auth mode, server
+workspace import/export and <code>/files/*</code> helpers require an admin principal.
+Ordinary users can still upload browser-local files and list/search artifacts in
+their own routed runtime.</p>
 <h2 id="durable-commands-post-apigatewaycommands">Durable commands (<code>POST /api/gateway/commands</code>)<a class="headerlink" href="#durable-commands-post-apigatewaycommands" title="Permanent link">&para;</a></h2>
 <p>Commands are appended to a durable inbox and applied asynchronously by the runner.</p>
 <p>Request fields (see <code>SubmitCommandRequest</code> in <code>src/abstractgateway/routes/gateway.py</code>):
@@ -1221,7 +1316,9 @@ configured. The resolver follows request values, flow pins, and the execution-ho
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
   controls. <code>common.artifacts</code> includes run listing/content, session artifact
   listing, artifact search, workspace import, and workspace export descriptors
-  when available.</li>
+  when available. Permission-sensitive descriptors are principal-aware:
+  ordinary users see admin-only workspace import/export and provider
+  prompt-cache controls marked unavailable with <code>admin_required</code> metadata.</li>
 <li><code>capabilities.contracts.common.readiness</code>: compact Gateway-owned
   <code>gateway_surface_readiness_v1</code> summary derived from the shared endpoint/media/
   residency descriptors</li>
@@ -1383,7 +1480,9 @@ installed and the configured backend can be resolved. A fresh persistent store
 does not need to exist yet; empty-store structured queries return an empty
 result rather than making Flow authoring nodes unavailable.</p>
 <h2 id="prompt-cache-control-plane-operator-api">Prompt-cache control plane (operator API)<a class="headerlink" href="#prompt-cache-control-plane-operator-api" title="Permanent link">&para;</a></h2>
-<p>The gateway exposes prompt-cache operator endpoints under <code>/api/gateway/prompt_cache/*</code>.</p>
+<p>The gateway exposes prompt-cache operator endpoints under <code>/api/gateway/prompt_cache/*</code>.
+Provider prompt-cache controls affect process-local or remote provider state
+and require an admin principal in hosted user-auth mode.</p>
 <p>Core endpoints:</p>
 <ul>
 <li><code>GET /api/gateway/prompt_cache/capabilities?provider=...&amp;model=...</code></li>
@@ -1411,7 +1510,11 @@ result rather than making Flow authoring nodes unavailable.</p>
 </ul>
 <p>These routes derive a deterministic bounded namespace/key from <code>session_id</code>,
 <code>bundle_id</code>, <code>bundle_version</code>, <code>flow_id</code>, <code>provider</code>, <code>model</code>, optional
-<code>template_id</code>, and <code>version</code>. They expose three honest modes:</p>
+<code>template_id</code>, and <code>version</code>. The private hash also includes the authenticated
+principal scope, so two hosted users using the same session id/provider/model do
+not collide in a shared provider control plane; the returned <code>identity</code> remains
+portable app-level data and does not expose that private scope. These routes
+expose three honest modes:</p>
 <ul>
 <li><code>unsupported</code>: provider/model does not expose prompt-cache support; responses include <code>supported=false</code>, <code>ok=false</code>, and capabilities.</li>
 <li><code>keyed</code>: gateway returns a stable <code>runtime_hint</code>/<code>prompt_cache_key</code> for Runtime/Core injection, but does not claim module preparation occurred.</li>

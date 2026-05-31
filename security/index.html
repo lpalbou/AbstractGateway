@@ -454,6 +454,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Default behavior (token required)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tenant-and-user-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tenant and user isolation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-workflow-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared workflow catalog
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -741,6 +769,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Default behavior (token required)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tenant-and-user-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tenant and user isolation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-workflow-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared workflow catalog
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -967,6 +1023,122 @@ Evidence: startup self-check in <code>src/abstractgateway/cli.py</code> (<code>l
 <p>Clients must send:</p>
 <div class="highlight"><pre><span></span><code>Authorization: Bearer &lt;token&gt;
 </code></pre></div>
+<h3 id="tenant-and-user-isolation">Tenant and user isolation<a class="headerlink" href="#tenant-and-user-isolation" title="Permanent link">&para;</a></h3>
+<p>In local/single-user mode, <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> remains a gateway-level
+control-plane token and maps to the <code>local-admin</code> principal. Treat that token as
+full authority for the Gateway instance.</p>
+<p>Hosted user-auth mode is enabled with <code>ABSTRACTGATEWAY_USER_AUTH=1</code> or
+<code>ABSTRACTGATEWAY_AUTH_MODE=users</code>. In that mode, Gateway bearer tokens resolve
+to concrete principals with <code>tenant_id</code>, <code>user_id</code>, roles/scopes, and a token
+fingerprint. <code>GET /api/gateway/me</code> returns the resolved principal and routing
+mode. The presence of an <code>auth/users.json</code> registry file is readiness state; it
+does not silently enable hosted user auth unless <code>ABSTRACTGATEWAY_USER_AUTH_AUTO=1</code>
+is set for compatibility. Admin principals can manage users through:</p>
+<ul>
+<li><code>GET /api/gateway/admin/users</code></li>
+<li><code>POST /api/gateway/admin/users</code></li>
+<li><code>GET /api/gateway/admin/users/{user_id}?tenant_id=...</code></li>
+<li><code>PATCH /api/gateway/admin/users/{user_id}?tenant_id=...</code></li>
+<li><code>DELETE /api/gateway/admin/users/{user_id}?tenant_id=...</code></li>
+<li><code>GET /api/gateway/admin/runtime-reservations</code></li>
+<li><code>POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer</code></li>
+<li><code>POST /api/gateway/admin/runtime-reservations/{runtime_id}/purge</code></li>
+</ul>
+<p>Gateway stores user token hashes in <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/users.json</code>
+by default. Generated or rotated bearer tokens are returned once from the admin
+create/update response and are never stored in plaintext.</p>
+<p>Browser apps should exchange user bearer tokens for Gateway browser sessions
+instead of storing bearer tokens. <code>POST /api/gateway/session/login</code> accepts a
+Gateway user id and user token, validates them against the registry, and sets an
+opaque signed session id plus a CSRF token as cookies. The JSON response body
+does not expose those values. Gateway stores session records in
+<code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/sessions.json</code> by default.
+The session cookie is HTTP-only; the CSRF cookie is readable by the hosting app
+so it can send the CSRF header. Both cookies use path <code>/</code> and <code>SameSite=Lax</code>.
+Plain HTTP local-dev responses do not set <code>Secure</code>; HTTPS responses, including
+requests forwarded with <code>X-Forwarded-Proto: https</code>, do set <code>Secure</code>.
+Non-remembered sessions omit <code>Max-Age</code>; remembered sessions include one.
+Session-authenticated mutating requests must send:</p>
+<div class="highlight"><pre><span></span><code>X-AbstractGateway-Session: &lt;session id&gt;
+X-AbstractGateway-CSRF: &lt;csrf token&gt;
+</code></pre></div>
+<p><code>POST /api/gateway/session/logout</code> revokes the session. Disabling, deleting, or
+rotating the Gateway user invalidates existing browser sessions for that user.</p>
+<p>When user auth is active, the Gateway service composition root routes each
+principal to an isolated service/data plane under:</p>
+<div class="highlight"><pre><span></span><code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/users/&lt;tenant_id&gt;/&lt;runtime_id&gt;/runtime
+&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/users/&lt;tenant_id&gt;/&lt;runtime_id&gt;/flows
+</code></pre></div>
+<p>Gateway rejects duplicate <code>runtime_id</code> values within the same tenant during
+user creation and update. This keeps the default multi-user invariant at
+<code>1 user = 1 runtime</code>. Deleting a user removes the credential but reserves the
+retained runtime id for that principal, so another same-tenant user cannot be
+assigned to retained data by accident. Reusing the same runtime id in a
+different tenant remains valid.</p>
+<p>Admins can intentionally resolve retained runtime reservations through
+admin-only lifecycle routes. Transfer assigns a retained runtime to an existing
+same-tenant user and reserves that user's previous runtime id. Purge requires an
+exact <code>confirm_runtime_id</code>, deletes the retained runtime root under
+<code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/users/&lt;tenant_id&gt;/&lt;runtime_id&gt;/</code>, then releases the
+runtime id for reuse. Regular users cannot list, transfer, or purge retained
+runtime reservations.</p>
+<p>Clients must not send authoritative <code>user_id</code>, <code>tenant_id</code>, <code>runtime_id</code>, or
+workspace-root values. Runtime fields such as <code>actor_id</code> and <code>session_id</code>, and
+references such as <code>run_id</code>, <code>artifact_id</code>, and memory <code>owner_id</code>, remain
+correlation and lookup fields; they do not authorize access by themselves.</p>
+<p>Hosted multi-user mode is an incremental surface: the core request path now has
+principal auth and per-principal services. Gateway also applies a central
+route-family authorization table for operator/admin surfaces. Admin-only route
+families include user management, audit, process control, backlog/triage/report
+operations, email bridge routes, host metrics, model residency list/load/unload,
+server workspace file helpers, server-workspace artifact import/export, and
+global prompt-cache/bloc mutation routes. Regular users remain able to use
+their own runtime data plane for run, ledger, artifact upload, discovery, and
+per-principal capability-default routes.</p>
+<p>The route table is intentionally conservative around server filesystem access:
+browser-local files should use <code>/api/gateway/attachments/upload</code>; server
+workspace reads/imports/exports require an admin principal until a stronger
+per-user workspace grant model exists.</p>
+<p>Capability discovery follows the same policy. Regular users can still discover
+ordinary run, ledger, artifact, upload, provider/model catalog, KG, and
+per-principal defaults surfaces, but admin-only workspace artifact
+import/export and provider prompt-cache controls are advertised as unavailable
+with machine-readable <code>admin_required</code> metadata. Session-level prompt-cache
+keys remain available for users; the private hash includes the current
+principal scope, so two users using the same session id/provider/model tuple do
+not collide in a shared provider control plane.</p>
+<p>Hosted provider secrets are supported through Gateway provider endpoint
+profiles. Profiles are stored under the relevant Gateway data plane, expose only
+non-secret metadata and a virtual provider id such as <code>endpoint:office-vllm</code>,
+and inject the raw key only into the transient Runtime provider call. Normal
+users can manage user-scoped profiles; Gateway-scoped profiles require an admin
+principal. The current capability-default cascade still uses execution-host Core
+defaults, then the Gateway/root baseline, then a per-user overlay under the
+user's Gateway data plane. A stronger encrypted vault, audit model, and
+bridge/delegated-tool propagation policy remain future hardening work.</p>
+<h3 id="shared-workflow-catalog">Shared workflow catalog<a class="headerlink" href="#shared-workflow-catalog" title="Permanent link">&para;</a></h3>
+<p>Do not share workflows by pointing multiple users at another user's private
+bundle directory. Private <code>/api/gateway/bundles</code> routes stay scoped to the
+current principal's runtime. Shared/default workflows belong in the Gateway
+workflow catalog:</p>
+<ul>
+<li>catalog versions are immutable by <code>scope + tenant + bundle_id +
+  bundle_version + sha256</code>;</li>
+<li>admins move explicit default pointers instead of overwriting existing
+  versions;</li>
+<li>catalog ACLs are checked at run start against the authenticated principal's
+  tenant, roles, and user id;</li>
+<li>catalog runs execute in the requesting user's runtime by default;</li>
+<li>catalog run policy is Gateway-issued and HMAC-signed before it is handed to
+  Runtime state; client-supplied <code>_runtime.workflow_policy</code> values are stripped;</li>
+<li>private bundle inspection routes reject catalog-internal bundle ids, so
+  catalog flow/schema inspection remains ACL-aware;</li>
+<li>deprecate/block/tombstone changes block new starts without deleting stored
+  bundle bytes.</li>
+</ul>
+<p>Catalog mutation routes are admin-only under
+<code>/api/gateway/admin/workflow-catalog/*</code>. User-visible catalog discovery is
+available at <code>GET /api/gateway/workflow-catalog</code>.</p>
 <h2 id="origin-allowlist-browserorigin-defense">Origin allowlist (browser/origin defense)<a class="headerlink" href="#origin-allowlist-browserorigin-defense" title="Permanent link">&para;</a></h2>
 <p>If the request includes an <code>Origin</code> header, the middleware enforces <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> using glob-style patterns (fnmatch).</p>
 <p>Examples:</p>
@@ -1023,6 +1195,18 @@ Evidence: startup self-check in <code>src/abstractgateway/cli.py</code> (<code>l
 <ul>
 <li><code>ABSTRACTGATEWAY_AUTH_TOKEN</code> (single shared secret)</li>
 <li><code>ABSTRACTGATEWAY_AUTH_TOKENS</code> (comma-separated list)</li>
+<li><code>ABSTRACTGATEWAY_USER_AUTH=1</code> or <code>ABSTRACTGATEWAY_AUTH_MODE=users</code>: enable
+  file-backed user principals and per-principal service routing</li>
+<li><code>ABSTRACTGATEWAY_USER_AUTH_AUTO=1</code>: compatibility mode that also enables
+  user auth when the registry file exists</li>
+<li><code>ABSTRACTGATEWAY_USERS_FILE</code>: optional user registry path; defaults to
+  <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/users.json</code></li>
+<li><code>ABSTRACTGATEWAY_SESSIONS_FILE</code>: optional browser session registry path;
+  defaults to <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/sessions.json</code></li>
+<li><code>ABSTRACTGATEWAY_SESSION_TTL_S</code>: default browser session lifetime in seconds
+  (default: 8 hours; bounded)</li>
+<li><code>ABSTRACTGATEWAY_REMEMBER_SESSION_TTL_S</code>: browser session lifetime when an
+  app requests "remember me" (default: 30 days; bounded)</li>
 </ul>
 <h3 id="protect-reads-vs-writes">Protect reads vs writes<a class="headerlink" href="#protect-reads-vs-writes" title="Permanent link">&para;</a></h3>
 <ul>

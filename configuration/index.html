@@ -383,6 +383,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#authentication-and-user-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication and user routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-principal-capability-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-principal capability defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provider-endpoint-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider endpoint profiles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#workspace-policy-filesystem-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -745,6 +778,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#authentication-and-user-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication and user routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-principal-capability-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-principal capability defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provider-endpoint-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider endpoint profiles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#workspace-policy-filesystem-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -889,17 +955,26 @@
 <p>AbstractGateway is configured primarily via <strong>environment variables</strong> (plus a few CLI flags).</p>
 <h2 id="install-extras-recommended">Install extras (recommended)<a class="headerlink" href="#install-extras-recommended" title="Permanent link">&para;</a></h2>
 <p>The base install (<code>pip install abstractgateway</code>) is the remote-light server
-profile: HTTP/SSE, durable stores, <code>AbstractRuntime[multimodal,mcp-worker]</code>,
-Runtime-owned provider/media/tool support, AbstractAgent, AbstractFlow
-compatibility (runs bundles produced by AbstractFlow; does not require the <code>abstractflow</code> package), and AbstractMemory/LanceDB KG support.</p>
+profile: HTTP/SSE, durable stores, <code>AbstractRuntime</code>,
+Runtime-owned provider/tool and multimodal support, AbstractAgent, AbstractFlow
+compatibility (runs bundles produced by AbstractFlow; does not require the
+<code>abstractflow</code> package), and AbstractMemory/LanceDB KG support. Local
+sentence-transformer embeddings and hardware-local inference engines are
+opt-in, so the base Linux install does not pull PyTorch/CUDA packages.</p>
+<p>Remote embeddings are part of this base light profile. Configure
+<code>embedding.text</code> for OpenAI, OpenRouter, Portkey, LM Studio, vLLM, another
+OpenAI-compatible embeddings endpoint, or a remote AbstractCore server. The
+<code>abstractgateway[embeddings]</code> extra is only for local HuggingFace/
+sentence-transformer embeddings on the Gateway host.</p>
 <p>Optional extras (see <code>pyproject.toml</code>):
+- <code>abstractgateway[embeddings]</code>: local sentence-transformer embeddings for semantic KG queries
 - <code>abstractgateway[apple]</code>: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
 - <code>abstractgateway[gpu]</code>: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors:
-- <code>AbstractRuntime[multimodal,mcp-worker]&gt;=0.4.25</code>
-- <code>abstractagent&gt;=0.3.9</code>
+- <code>AbstractRuntime&gt;=0.4.26</code>
+- <code>abstractagent&gt;=0.3.10</code>
 - <code>AbstractMemory[lancedb]&gt;=0.2.6</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
@@ -911,18 +986,117 @@ abstractgateway<span class="w"> </span>config<span class="w"> </span>status<span
 </code></pre></div>
 <p>It reports Gateway auth/data/store/runtime defaults, Core-server handoff
 configuration, memory-store selection, and package readiness. <code>init</code> writes a
-private env file with a generated Gateway token. Provider API keys, provider
-base URLs and Core server settings remain owned by <code>abstractcore-config</code>.</p>
+private env file with a generated Gateway token. General Core defaults remain
+available through <code>abstractcore-config</code>; hosted reusable endpoint profiles can
+also be managed by the Gateway Console and API.</p>
 <h2 id="core-environment-variables">Core environment variables<a class="headerlink" href="#core-environment-variables" title="Permanent link">&para;</a></h2>
 <h3 id="paths-workflow-source">Paths + workflow source<a class="headerlink" href="#paths-workflow-source" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>ABSTRACTGATEWAY_DATA_DIR</code>: durable data directory (default: <code>./runtime</code>)<br />
   Evidence: <code>src/abstractgateway/config.py</code> (<code>GatewayHostConfig.from_env</code>)</li>
-<li><code>ABSTRACTGATEWAY_FLOWS_DIR</code>: workflows directory (default: <code>./flows</code>)<br />
+<li><code>ABSTRACTGATEWAY_FLOWS_DIR</code>: workflows directory. When unset, Gateway first
+  uses the packaged shipped bundle directory containing <code>basic-agent</code>. If the
+  shipped bundle is unavailable, Gateway fails clearly instead of starting with
+  an empty default registry.
   Evidence: <code>src/abstractgateway/config.py</code></li>
 <li><code>ABSTRACTGATEWAY_WORKFLOW_SOURCE</code>: <code>bundle</code> (default) or <code>visualflow</code><br />
   Evidence: <code>src/abstractgateway/service.py</code> (<code>create_default_gateway_service</code>)</li>
 </ul>
+<h3 id="authentication-and-user-routing">Authentication and user routing<a class="headerlink" href="#authentication-and-user-routing" title="Permanent link">&para;</a></h3>
+<p>Default local mode uses a Gateway bearer token:</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_AUTH_TOKEN</code>: single Gateway admin token</li>
+<li><code>ABSTRACTGATEWAY_AUTH_TOKENS</code>: comma-separated Gateway admin tokens</li>
+</ul>
+<p>Hosted user-auth mode resolves bearer tokens to Gateway principals and routes
+each principal to a separate service/data plane:</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_USER_AUTH=1</code> or <code>ABSTRACTGATEWAY_AUTH_MODE=users</code>: enable
+  file-backed user principals and per-principal runtime routing</li>
+<li><code>ABSTRACTGATEWAY_USER_AUTH_AUTO=1</code>: compatibility mode that also enables
+  user auth when the registry file already exists</li>
+<li><code>ABSTRACTGATEWAY_USERS_FILE</code>: optional user registry path; default:
+  <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/users.json</code></li>
+<li><code>ABSTRACTGATEWAY_SESSIONS_FILE</code>: optional browser session registry path;
+  default: <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/sessions.json</code></li>
+<li><code>ABSTRACTGATEWAY_SESSION_TTL_S</code>: default browser session lifetime</li>
+<li><code>ABSTRACTGATEWAY_REMEMBER_SESSION_TTL_S</code>: browser session lifetime when a
+  browser app requests "remember me"</li>
+<li><code>ABSTRACTGATEWAY_ADMIN_USES_DEFAULT_RUNTIME</code>: keep the default
+  <code>default/admin</code> admin principal on the Gateway's base data plane when its
+  <code>runtime_id</code> is <code>default</code> or <code>admin</code> (default: enabled)</li>
+<li><code>GET /api/gateway/me</code>: returns the resolved principal and routing mode</li>
+<li><code>/api/gateway/admin/users</code>: admin-only user list/create/read/update/delete</li>
+<li><code>/api/gateway/admin/runtime-reservations</code>: admin-only retained runtime
+  list/transfer/purge lifecycle</li>
+<li><code>/console</code>: built-in same-origin Gateway Console for session sign-in with
+  Gateway user + token, account/runtime summary, admin user management, optional
+  account email metadata, token rotation, retained runtime transfer/purge, and
+  capability defaults selected from Gateway-discovered provider/model catalogs</li>
+</ul>
+<p>User records include <code>tenant_id</code>, <code>user_id</code>, roles/scopes, enabled state, and a
+<code>runtime_id</code>. The registry stores password-grade bearer-token hashes only.
+Generated or rotated user tokens are returned once from the admin response.
+Gateway rejects duplicate <code>runtime_id</code> values within the same tenant when users
+are created or updated, preserving <code>1 user = 1 runtime</code> for independent hosted
+users. Deleting a user reserves its retained runtime id. Admins must explicitly
+purge retained runtime data before the id can be reused by another user, or
+transfer the retained runtime to an existing same-tenant user.</p>
+<p>When user auth is active, <code>src/abstractgateway/service.py</code> keeps normal users
+isolated in a per-principal service directory:</p>
+<div class="highlight"><pre><span></span><code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/users/&lt;tenant_id&gt;/&lt;runtime_id&gt;/runtime
+&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/users/&lt;tenant_id&gt;/&lt;runtime_id&gt;/flows
+</code></pre></div>
+<p>The bootstrap <code>default/admin</code> admin principal is a local-setup compatibility
+exception by default: with <code>ABSTRACTGATEWAY_ADMIN_USES_DEFAULT_RUNTIME=1</code>, it
+uses the base Gateway data plane and bundle registry. That keeps the admin
+connected to the default runtime and shipped <code>basic-agent</code> bundle while regular
+users remain on <code>1 user = 1 runtime</code> routing.</p>
+<p>Browser apps should exchange a Gateway user token for an opaque Gateway browser
+session through <code>/api/gateway/session/login</code>; the raw bearer token should not be
+kept in browser storage, and the login response body does not expose the session
+id or CSRF token. Session-authenticated writes carry
+<code>X-AbstractGateway-Session</code> plus <code>X-AbstractGateway-CSRF</code>, and
+<code>/api/gateway/session/logout</code> revokes the session. Apps such as AbstractFlow,
+AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
+current user/session in hosted mode. They should not share one app-server
+Gateway token for all users.</p>
+<h3 id="per-principal-capability-defaults">Per-principal capability defaults<a class="headerlink" href="#per-principal-capability-defaults" title="Permanent link">&para;</a></h3>
+<p>In hosted user-auth mode, <code>GET /api/gateway/config/capability-defaults</code> returns
+the execution-host Core capability routes plus the Gateway/root baseline and any
+defaults configured for the current Gateway principal. The bootstrap
+<code>default/admin</code> principal edits the Gateway baseline when it uses the default
+runtime. Normal user writes to
+<code>PUT /api/gateway/config/capability-defaults/{kind}/{modality}</code> are stored under
+that principal's Gateway data plane and override the Gateway baseline only for
+that user:</p>
+<div class="highlight"><pre><span></span><code>&lt;principal-runtime&gt;/config/capability_defaults.json
+</code></pre></div>
+<p>This lets operators set a Gateway default and lets hosted users choose
+remote-provider defaults for their own runtime without mutating the operator's
+global AbstractCore config or other users. The route schema and normalization
+still come from AbstractCore capability-default contracts. Provider API keys and
+raw secrets are not returned by these routes and require a separate per-request
+secret-injection boundary before hosted user secrets can be treated as fully
+isolated execution credentials.</p>
+<h3 id="provider-endpoint-profiles">Provider endpoint profiles<a class="headerlink" href="#provider-endpoint-profiles" title="Permanent link">&para;</a></h3>
+<p>Gateway Console and <code>POST /api/gateway/config/provider-endpoint-profiles</code> let
+signed-in users define reusable provider endpoint profiles. A profile includes a
+stable id, display name, description, provider family such as
+<code>openai-compatible</code>, optional base URL, optional API key, capabilities, and an
+optional model allowlist. The raw API key is write-only: responses include only
+<code>api_key_set</code> and a short fingerprint.</p>
+<p>For OpenAI-compatible and other discoverable endpoints, the console can call the
+endpoint through <code>POST /api/gateway/config/provider-endpoint-profiles/discover-models</code>
+and populate a model picker. Leave all models unselected to keep live discovery
+active, or select one or more models to store a fixed allowlist.</p>
+<p>Enabled profiles appear in <code>GET /api/gateway/discovery/providers</code> as virtual
+provider ids such as <code>endpoint:office-vllm</code>. Use that virtual id in Flow nodes
+or Gateway capability defaults. At runtime the Gateway host resolves the virtual
+provider to the real provider family, base URL, and API key for the transient
+AbstractRuntime call; workflow JSON and browser storage do not contain the raw
+secret. Normal users can manage user-scoped profiles. Gateway-scoped profiles
+require an admin principal.</p>
 <h3 id="workspace-policy-filesystem-scope">Workspace policy (filesystem scope)<a class="headerlink" href="#workspace-policy-filesystem-scope" title="Permanent link">&para;</a></h3>
 <p>The gateway enforces a server-side workspace policy so thin clients cannot expand filesystem access by sending arbitrary paths.</p>
 <p>Operator-controlled roots:
@@ -991,7 +1165,9 @@ no matches until assertions are written.</p>
 </ul>
 <h3 id="embeddings">Embeddings<a class="headerlink" href="#embeddings" title="Permanent link">&para;</a></h3>
 <p>The gateway exposes an embeddings API when the execution host has an explicit <code>embedding.text</code>
-capability default and AbstractCore embedding deps are available.</p>
+capability default. Remote/provider-backed embeddings work with the base
+remote-light install; local HuggingFace/sentence-transformer embeddings require
+<code>abstractgateway[embeddings]</code>.</p>
 <p>Configure it through the same capability-default control plane used by Flow:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>embedding.text<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--provider<span class="w"> </span>lmstudio<span class="w"> </span><span class="se">\</span>

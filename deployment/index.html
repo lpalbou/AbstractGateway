@@ -701,32 +701,35 @@
 <p>AbstractGateway can run as a Python process or as a containerized server. The
 container path is the recommended baseline for a single self-contained Gateway
 deployment because it packages the HTTP API, durable runner, AbstractRuntime,
-and the Runtime-owned provider/media/tool stack together.</p>
+and the Runtime-owned provider/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
 <p>Release images are published to GHCR. The default image is the light,
 portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server:0.2.21
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server:0.2.23
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
 vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.21
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.23
 </code></pre></div>
 <p>The default image installs the base <code>abstractgateway</code> package, which includes:</p>
 <ul>
-<li><code>AbstractRuntime[multimodal,mcp-worker]</code></li>
+<li><code>AbstractRuntime</code></li>
 <li><code>AbstractMemory[lancedb]&gt;=0.2.6</code></li>
 <li><code>abstractagent</code></li>
 <li>FastAPI/Uvicorn</li>
 </ul>
 <p>This profile supports hosted/commercial providers, OpenAI-compatible text
-provider routing, workflow-backed and direct image generation, direct
-image-edit, voice/STT generation, direct Gateway-routed music generation
-through Runtime facades, and
-provider/session prompt-cache controls.
-It intentionally stays dependency-light for heavy local model runtimes: MLX,
-vLLM, HuggingFace Transformers, local Diffusers/sdcpp, AbstractVoice local
-engines, and local AbstractMusic engines remain explicit opt-ins.</p>
+and multimodal provider routing, Runtime-owned tool execution, KG memory, and
+provider/session prompt-cache controls. Remote embeddings are included through
+the <code>embedding.text</code> capability route for hosted providers, LM Studio, vLLM,
+other OpenAI-compatible endpoints, or a remote AbstractCore server. Local
+sentence-transformer embeddings and hardware-local model runtimes remain
+explicit opt-ins, so the base Linux image does not pull PyTorch/CUDA runtime
+packages. MLX, vLLM, HuggingFace
+Transformers, local Diffusers/sdcpp, AbstractVoice local engines, and local
+AbstractMusic engines belong in native <code>abstractgateway[apple]</code> or
+<code>abstractgateway[gpu]</code> installs.</p>
 <p>The NVIDIA image installs <code>abstractgateway[gpu]</code> and uses a CUDA/PyTorch base.
 It is experimental and release automation publishes it as
 best-effort for <code>linux/amd64</code>; the default image remains the release-grade
@@ -743,7 +746,7 @@ host-native OpenAI-compatible inference endpoint:</p>
 <span class="w">  </span>-e<span class="w"> </span><span class="nv">OPENAI_COMPATIBLE_BASE_URL</span><span class="o">=</span><span class="s2">&quot;http://model-runner.docker.internal/engines/v1&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway:/data/gateway&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/flows/bundles:/data/flows:ro&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.21
+<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.23
 </code></pre></div>
 <p>Set the execution-host text route separately:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>output.text<span class="w"> </span><span class="se">\</span>
@@ -842,7 +845,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.21-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.23-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the

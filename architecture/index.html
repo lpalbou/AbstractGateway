@@ -508,6 +508,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#workflow-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow catalog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#visualflow-directory-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -761,6 +772,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#workflow-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow catalog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#visualflow-directory-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -884,6 +906,16 @@ Last reviewed: 2026-05-23</p>
 <li><strong>Workflow host</strong> (what “workflows” mean in this gateway):</li>
 <li><code>bundle</code> (default): load <code>.flow</code> WorkflowBundles and compile VisualFlow JSON via <code>abstractruntime.visualflow_compiler</code> (<code>src/abstractgateway/hosts/bundle_host.py</code>).</li>
 <li>Wired in <code>src/abstractgateway/service.py</code> (<code>create_default_gateway_service</code>).</li>
+<li><strong>Workflow catalog</strong>:</li>
+<li>Gateway-owned metadata and immutable bundle bytes for shared/default
+    workflows.</li>
+<li>Private runtime bundles remain per-principal; catalog bundles are loaded
+    into each user's host under internal bundle ids so private ids cannot
+    shadow catalog ids.</li>
+<li>Run start and schedule routes resolve catalog ACL/default policy before
+    execution; catalog runs still execute in the caller's runtime.</li>
+<li>Gateway signs catalog workflow-policy snapshots before Runtime receives
+    them, and direct private-bundle routes reject catalog-internal ids.</li>
 <li><strong>Runner worker</strong>:</li>
 <li>Polls the durable command inbox and applies commands; ticks RUNNING runs forward (<code>src/abstractgateway/runner.py</code>).</li>
 <li>A filesystem lock (<code>gateway_runner.lock</code>) prevents double-ticking in split-process deployments.</li>
@@ -916,6 +948,11 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:</p>
 <li>Model residency, prompt-cache lifecycle, durable blocs, and discovery
   catalogs are server-owned control-plane surfaces so higher apps do not have
   to import Runtime/Core packages directly.</li>
+<li>The shared contract is principal-aware for high-trust actions. Regular users
+  see admin-only workspace artifact import/export and provider prompt-cache
+  controls as unavailable in discovery, while ordinary run/ledger/artifact
+  upload, KG query, provider/model discovery, and per-principal defaults remain
+  available in their routed runtime.</li>
 </ul>
 <h2 id="deployment-shape-one-process-vs-split-apirunner">Deployment shape: one process vs split API/runner<a class="headerlink" href="#deployment-shape-one-process-vs-split-apirunner" title="Permanent link">&para;</a></h2>
 <p>Supported patterns:
@@ -934,6 +971,24 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:</p>
 <li>“Dynamic flows” (e.g. schedules) are persisted under <code>&lt;data_dir&gt;/dynamic_flows/</code> and reloaded on startup.</li>
 </ul>
 <p>Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (<code>WorkflowBundleGatewayHost.load_from_dir</code>).</p>
+<h3 id="workflow-catalog">Workflow catalog<a class="headerlink" href="#workflow-catalog" title="Permanent link">&para;</a></h3>
+<p>The workflow catalog is a control-plane registry for shared workflows. It is
+separate from the caller's private bundle directory:</p>
+<ul>
+<li>user-visible discovery: <code>GET /api/gateway/workflow-catalog</code>;</li>
+<li>admin mutation: <code>/api/gateway/admin/workflow-catalog/*</code>;</li>
+<li>immutable bundle bytes: existing <code>bundle_id@version</code> content cannot be
+  replaced with different bytes;</li>
+<li>default pointers: omitted catalog versions resolve through the admin-managed
+  pointer, not semver order;</li>
+<li>status: deprecated, blocked, and tombstoned versions cannot start new runs.</li>
+</ul>
+<p>Gateway stores catalog metadata under the root Gateway data dir and loads
+tenant catalog bundle bytes into each per-principal runtime host. Runtime still
+executes workflows; Gateway owns the authorization decision.</p>
+<p>The implemented catalog scope is <code>tenant_catalog</code>. <code>framework_catalog</code> is
+reserved for a later cross-tenant distribution model and is rejected by the API
+until host loading and policy semantics exist for it.</p>
 <h3 id="visualflow-directory-mode">VisualFlow directory mode<a class="headerlink" href="#visualflow-directory-mode" title="Permanent link">&para;</a></h3>
 <p>VisualFlow directory mode was intentionally removed. Store VisualFlows through
 <code>/api/gateway/visualflows/*</code>, publish a <code>.flow</code> WorkflowBundle via
@@ -944,6 +999,16 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:</p>
 - <strong>Origin allowlist</strong> (<code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code>, glob patterns supported)
 - <strong>Abuse resistance</strong> (body size caps, concurrency caps, auth lockouts, optional audit log)</p>
 <p>Evidence: <code>src/abstractgateway/security/gateway_security.py</code> (<code>GatewayAuthPolicy</code>, <code>load_gateway_auth_policy_from_env</code>, middleware <code>__call__</code>).</p>
+<p>Bearer tokens are gateway-level control-plane credentials, not tenant or
+browser-session identities. <code>session_id</code>, <code>run_id</code>, <code>artifact_id</code>, and memory
+owner ids are references/correlation fields, not authorization proofs. Deploy a
+separate Gateway/runtime/data plane per independent user or tenant unless all
+users are a trusted cohort that may share runs, artifacts, workflows, memory,
+workspaces, tools, provider credentials, and audit scope. Hosted user-auth mode
+routes each principal to a separate GatewayService data plane; browser apps
+exchange user tokens for opaque session cookies plus CSRF rather than storing
+raw bearer tokens. Session prompt-cache names include a private principal scope
+in their hash to avoid cross-user key collisions. See <a href="../security/">security.md</a>.</p>
 <h2 id="evidence-jump-to-code">Evidence (jump-to-code)<a class="headerlink" href="#evidence-jump-to-code" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Composition root: <code>src/abstractgateway/service.py</code> (<code>create_default_gateway_service</code>, <code>start_gateway_runner</code>)</li>

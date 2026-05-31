@@ -1476,18 +1476,19 @@ environment variables in the gateway process, for example
 <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code> (legacy <code>ABSTRACTVOICE_*</code> names still
 work).</p>
 <h3 id="how-do-i-enable-generated-images-edited-images-generated-music-or-other-runtime-managed-multimodal-outputs">How do I enable generated images, edited images, generated music, or other Runtime-managed multimodal outputs?<a class="headerlink" href="#how-do-i-enable-generated-images-edited-images-generated-music-or-other-runtime-managed-multimodal-outputs" title="Permanent link">&para;</a></h3>
-<p>Use the base install:</p>
+<p>Use the base install for the Gateway control plane and remote/provider-backed
+routes:</p>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>abstractgateway
 </code></pre></div>
-<p>The base install includes <code>AbstractRuntime[multimodal,mcp-worker]</code> plus the
-Runtime-owned media/tool integration stack. The server image defaults image,
-audio, and music generation to Runtime-backed provider routes; set the relevant
-Gateway or provider credentials before expecting live generation to succeed.
-For example, use <code>OPENAI_API_KEY</code> for hosted image/voice paths, or configure a
-Core music backend/server that Runtime can reach for Gateway-routed music
-generation. Use
-<code>ABSTRACTGATEWAY_VISION_BACKEND=diffusers</code> or <code>sdcpp</code> only for custom images
-that intentionally include those local engines.</p>
+<p>The base install includes Runtime-owned tool and multimodal integration and can
+proxy to configured remote/provider routes. Remote embeddings are supported
+through the <code>embedding.text</code> capability route when it points at OpenAI,
+OpenRouter, Portkey, LM Studio, vLLM, another OpenAI-compatible endpoint, or a
+remote AbstractCore server. Local sentence-transformer embeddings and
+hardware-local image, audio, voice, and music engines are explicit opt-ins so a
+light Linux install does not pull PyTorch/CUDA packages. Use
+<code>abstractgateway[apple]</code> or <code>abstractgateway[gpu]</code> only when this Gateway host
+should execute those local engines itself.</p>
 <p>Generated images are available both inside Runtime workflows and through
 Gateway's direct run-scoped endpoint:</p>
 <div class="highlight"><pre><span></span><code>POST /api/gateway/runs/{run_id}/images/generate
