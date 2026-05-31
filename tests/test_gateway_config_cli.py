@@ -119,3 +119,33 @@ def test_gateway_config_defaults_set_list_and_clear(
     out = json.loads(capsys.readouterr().out)
     route = next(item for item in out["routes"] if item["key"] == "output.text")
     assert route["configured"] is False
+
+
+def test_gateway_config_bootstrap_admin_creates_user_and_token_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+
+    from abstractgateway.config_cli import main
+    from abstractgateway.users import GatewayUserRegistry
+
+    token_file = tmp_path / "runtime" / "auth" / "bootstrap-admin-token"
+    main(["bootstrap-admin", "--json", "--print-token"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is True
+    assert payload["changed"] is True
+    assert payload["user"]["tenant_id"] == "default"
+    assert payload["user"]["user_id"] == "admin"
+    assert payload["user"]["runtime_id"] == "default"
+    assert payload["user"]["roles"] == ["admin", "user"]
+    assert payload["token"].startswith("agw_")
+    assert token_file.read_text(encoding="utf-8").strip() == payload["token"]
+    assert GatewayUserRegistry().authenticate(payload["token"]).user_id == "admin"  # type: ignore[union-attr]
+
+    main(["bootstrap-admin", "--json", "--print-token"])
+    second = json.loads(capsys.readouterr().out)
+    assert second["changed"] is False
+    assert second["token"] == payload["token"]

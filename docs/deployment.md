@@ -11,7 +11,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.23
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.24
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -19,8 +19,12 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.23
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.24-gpu
 ```
+
+Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
+`ghcr.io/lpalbou/abstractgateway-server-nvidia:*` are still published for a
+transition period. New deployments should use `abstractgateway`.
 
 The default image installs the base `abstractgateway` package, which includes:
 
@@ -55,19 +59,19 @@ access. The supported Docker shape is a lightweight Gateway container calling a
 host-native OpenAI-compatible inference endpoint:
 
 ```bash
-docker run --rm --name abstractgateway-server \
-  -p 127.0.0.1:8080:8080 \
-  -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
+docker run --rm --name abstractgateway \
+  -p 8080:8080 \
+  -e ABSTRACTGATEWAY_DATA_DIR=/data \
+  -e ABSTRACTGATEWAY_USER_AUTH=1 \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
-  -v "$PWD/runtime/gateway:/data/gateway" \
-  -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.23
+  -v "$PWD/runtime:/data" \
+  ghcr.io/lpalbou/abstractgateway:latest
 ```
 
 Set the execution-host text route separately:
 
 ```bash
-abstractgateway-config set-default output.text \
+docker exec abstractgateway abstractgateway-config set-default output.text \
   --provider openai-compatible \
   --model your-model \
   --base-url http://model-runner.docker.internal/engines/v1
@@ -82,12 +86,12 @@ port. For fully native non-Docker installs with local engines, use
 
 ## Compose quickstart
 
-Create an env file from the template, set a strong token, then start the
-server:
+Create an env file from the template, adjust provider keys/defaults, then start
+the server. The default env keeps user auth enabled and bootstraps
+`default/admin` if missing:
 
 ```bash
 cp docker/abstractgateway-server/.env.example docker/abstractgateway-server/.env
-python -c 'import secrets; print(secrets.token_urlsafe(32))'
 docker compose --env-file docker/abstractgateway-server/.env \
   -f docker/abstractgateway-server/compose.yml up -d
 ```
@@ -102,23 +106,30 @@ docker compose --env-file docker/abstractgateway-server/.env \
 ```
 
 The default compose profile binds to `127.0.0.1:8080`, mounts a durable Gateway
-data volume at `/data/gateway`, mounts bundles from `flows/bundles` at
-`/data/flows`, and exposes a container workspace at `/workspace`.
+data volume at `/data`, mounts bundles from `flows/bundles` at `/data/flows`,
+and exposes a container workspace at `/workspace`.
 
 Smoke checks:
 
 ```bash
 curl http://127.0.0.1:8080/api/health
 
-curl -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
-  http://127.0.0.1:8080/api/gateway/bundles
+ADMIN_TOKEN="$(docker compose -f docker/abstractgateway-server/compose.yml exec -T abstractgateway cat /data/auth/bootstrap-admin-token)"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://127.0.0.1:8080/api/gateway/me
 ```
 
 ## Core configuration
 
-Required:
+Required for hosted/container user-auth mode:
 
-- `ABSTRACTGATEWAY_AUTH_TOKEN`: bearer token for `/api/gateway/*`
+- `ABSTRACTGATEWAY_USER_AUTH=1`: enables Gateway user tokens and per-user routing
+- `ABSTRACTGATEWAY_BOOTSTRAP_ADMIN=1`: creates `default/admin` if missing
+
+Optional:
+
+- `ABSTRACTGATEWAY_AUTH_TOKEN`: legacy shared admin bearer token for
+  compatibility/bootstrap APIs; browser apps should use Gateway user tokens
 
 Common:
 
@@ -183,7 +194,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.23-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.24-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

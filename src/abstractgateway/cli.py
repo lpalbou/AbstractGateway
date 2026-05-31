@@ -268,11 +268,20 @@ def main(argv: list[str] | None = None) -> None:
         if load_gateway_auth_policy_from_env is not None:
             policy = load_gateway_auth_policy_from_env()
 
-            if bool(policy.enabled) and bool(policy.protect_write_endpoints) and not tuple(policy.tokens or ()):
+            if (
+                bool(policy.enabled)
+                and bool(policy.protect_write_endpoints)
+                and not tuple(policy.tokens or ())
+                and not bool(getattr(policy, "user_auth_enabled", False))
+            ):
                 raise SystemExit(
                     "Missing gateway auth token.\n\n"
                     "Set a strong shared secret before starting the gateway:\n"
                     '  export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c \'import secrets; print(secrets.token_urlsafe(32))\')"\n'
+                    "\n"
+                    "Alternatively enable Gateway user auth and create an admin user:\n"
+                    "  export ABSTRACTGATEWAY_USER_AUTH=1\n"
+                    "  abstractgateway-config bootstrap-admin --print-token\n"
                     "\n"
                     "This is required for security, especially if you bind to 0.0.0.0 or expose the gateway via ngrok."
                 )
@@ -281,12 +290,16 @@ def main(argv: list[str] | None = None) -> None:
             if _is_public_bind_host(host):
                 _stderr(
                     "[WARN] Gateway is binding to 0.0.0.0/:: (non-loopback). "
-                    "If you expose this service (ngrok/LAN), ensure you use a strong auth token and restrict origins."
+                    "If you expose this service (ngrok/LAN), ensure you use strong Gateway auth and restrict origins."
                 )
                 _stderr("       Example hardening:")
-                _stderr(
-                    '         export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c \'import secrets; print(secrets.token_urlsafe(32))\')"'
-                )
+                if bool(getattr(policy, "user_auth_enabled", False)):
+                    _stderr("         export ABSTRACTGATEWAY_USER_AUTH=1")
+                    _stderr("         abstractgateway-config bootstrap-admin --print-token")
+                else:
+                    _stderr(
+                        '         export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c \'import secrets; print(secrets.token_urlsafe(32))\')"'
+                    )
                 _stderr("         export ABSTRACTGATEWAY_ALLOWED_ORIGINS=https://<your-subdomain>.ngrok-free.app")
                 _stderr("         export ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER=0   # unless explicitly needed")
                 if any(_is_weak_token(t) for t in tuple(policy.tokens or ())):

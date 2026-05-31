@@ -154,6 +154,138 @@ def _write_env_file(path: Path, values: Dict[str, Any], *, force: bool) -> None:
         pass
 
 
+def _chmod_private(path: Path) -> None:
+    try:
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    except Exception:
+        pass
+
+
+def _read_token_file(path: Path) -> str:
+    try:
+        if path.exists() and path.is_file():
+            return path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+    return ""
+
+
+def _write_token_file(path: Path, token: str, *, force: bool = False) -> None:
+    token = str(token or "").strip()
+    if not token:
+        return
+    path = Path(path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and not force:
+        existing = _read_token_file(path)
+        if existing:
+            return
+    if path.exists():
+        path.write_text(token + "\n", encoding="utf-8")
+    else:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fd = -1
+                fh.write(token + "\n")
+        finally:
+            if fd != -1:
+                os.close(fd)
+    _chmod_private(path)
+
+
+def _cmd_bootstrap_admin(args: argparse.Namespace) -> None:
+    from .users import GatewayUserRegistry, gateway_data_dir_from_env, generate_gateway_token
+
+    tenant_id = str(args.tenant_id or "default").strip() or "default"
+    user_id = str(args.user_id or "admin").strip() or "admin"
+    runtime_id = str(args.runtime_id or "").strip() or ("default" if tenant_id == "default" and user_id == "admin" else user_id)
+    email = str(args.email or "").strip() or None
+    token_file = Path(args.token_file).expanduser() if args.token_file else (gateway_data_dir_from_env() / "auth" / "bootstrap-admin-token")
+    explicit_token = str(args.token or os.getenv("ABSTRACTGATEWAY_BOOTSTRAP_ADMIN_TOKEN") or "").strip()
+    existing_file_token = _read_token_file(token_file)
+    registry = GatewayUserRegistry()
+
+    record = registry.get_user(user_id, tenant_id=tenant_id)
+    issued_token: Optional[str] = None
+    changed = False
+    token_source = "none"
+
+    if record is None:
+        token = explicit_token or existing_file_token or generate_gateway_token()
+        record, issued_token = registry.create_user(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            roles=["admin", "user"],
+            runtime_id=runtime_id,
+            email=email,
+            token=token,
+        )
+        changed = True
+        token_source = "env" if explicit_token else ("token-file" if existing_file_token else "generated")
+        if not bool(args.no_token_file):
+            _write_token_file(token_file, issued_token, force=True)
+    else:
+        desired_roles = tuple(dict.fromkeys([*record.roles, "admin", "user"]))
+        needs_update = (
+            not record.enabled
+            or desired_roles != tuple(record.roles)
+            or (email is not None and email != record.email)
+            or bool(args.rotate_token)
+        )
+        update_token: Optional[str] = None
+        if bool(args.rotate_token):
+            update_token = explicit_token or generate_gateway_token()
+            token_source = "env" if explicit_token else "generated"
+        if needs_update:
+            record, issued_token = registry.update_user(
+                user_id=user_id,
+                tenant_id=tenant_id,
+                roles=list(desired_roles),
+                enabled=True,
+                email=email if email is not None else record.email,
+                token=update_token,
+            )
+            changed = True
+            if issued_token and not bool(args.no_token_file):
+                _write_token_file(token_file, issued_token, force=True)
+        if issued_token is None and existing_file_token:
+            principal = registry.authenticate(existing_file_token)
+            if principal is not None and principal.user_id == user_id and principal.tenant_id == tenant_id:
+                issued_token = existing_file_token
+                token_source = "token-file"
+
+    payload = {
+        "ok": True,
+        "changed": bool(changed),
+        "user": record.public_dict(),
+        "token_file": None if bool(args.no_token_file) else str(token_file),
+        "token_available": bool(issued_token),
+        "token_source": token_source,
+    }
+    if bool(args.print_token) and issued_token:
+        payload["token"] = issued_token
+
+    if bool(args.json):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
+    print("Gateway admin user ready.")
+    print(f"- tenant: {record.tenant_id}")
+    print(f"- user: {record.user_id}")
+    print(f"- runtime: {record.runtime_id or record.user_id}")
+    print(f"- roles: {', '.join(record.roles)}")
+    if not bool(args.no_token_file):
+        print(f"- token_file: {token_file}")
+    if bool(args.print_token):
+        if issued_token:
+            print(f"- token: {issued_token}")
+        else:
+            print("- token: unchanged; rotate or read the token file if available")
+    elif issued_token:
+        print("- token: available in token_file")
+
+
 def _cmd_status(args: argparse.Namespace) -> None:
     payload = _status_payload()
     if bool(args.json):
@@ -283,6 +415,23 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--core-server-url", default=None)
     init.add_argument("--core-server-auth-token", default=None)
     init.set_defaults(func=_cmd_init)
+
+    bootstrap = sub.add_parser("bootstrap-admin", help="Ensure a file-backed admin Gateway user exists")
+    bootstrap.add_argument("--tenant-id", default="default", help="Admin tenant (default: default)")
+    bootstrap.add_argument("--user-id", default="admin", help="Admin user id (default: admin)")
+    bootstrap.add_argument("--runtime-id", default=None, help="Admin runtime id (default: default for default/admin)")
+    bootstrap.add_argument("--email", default=None, help="Optional admin email metadata")
+    bootstrap.add_argument("--token", default=None, help="Admin user token; generated when omitted")
+    bootstrap.add_argument(
+        "--token-file",
+        default=None,
+        help="Private file for the bootstrap token (default: <ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token)",
+    )
+    bootstrap.add_argument("--no-token-file", action="store_true", help="Do not write the generated token to disk")
+    bootstrap.add_argument("--rotate-token", action="store_true", help="Rotate the token if the admin user already exists")
+    bootstrap.add_argument("--print-token", action="store_true", help="Print the raw token to stdout")
+    bootstrap.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    bootstrap.set_defaults(func=_cmd_bootstrap_admin)
 
     defaults = sub.add_parser("defaults", help="Show effective execution-host capability routing defaults")
     defaults.add_argument("--json", action="store_true", help="Emit machine-readable JSON")

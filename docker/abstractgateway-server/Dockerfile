@@ -10,20 +10,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     HOST=0.0.0.0 \
     PORT=8080 \
-    ABSTRACTGATEWAY_DATA_DIR=/data/gateway \
-    ABSTRACTGATEWAY_FLOWS_DIR=/data/flows \
+    ABSTRACTGATEWAY_DATA_DIR=/data \
+    ABSTRACTGATEWAY_USER_AUTH=1 \
     ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle \
     ABSTRACTGATEWAY_STORE_BACKEND=file \
     ABSTRACTGATEWAY_ALLOWED_ORIGINS=http://localhost:*,http://127.0.0.1:*
 
 RUN addgroup --system abstractgateway \
     && adduser --system --ingroup abstractgateway --home /home/abstractgateway abstractgateway \
-    && mkdir -p /data/gateway /data/flows /workspace \
+    && mkdir -p /data /data/flows /workspace \
     && chown -R abstractgateway:abstractgateway /data /workspace
 
 COPY pyproject.toml README.md CHANGELOG.md /tmp/abstractgateway-src/
 COPY src /tmp/abstractgateway-src/src
 COPY flows/bundles/basic-agent.flow flows/bundles/basic-agent@0.0.1.flow /tmp/abstractgateway-src/flows/bundles/
+COPY docker/abstractgateway-server/entrypoint.sh /usr/local/bin/abstractgateway-docker-entrypoint
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libmagic1 \
@@ -50,14 +51,17 @@ RUN apt-get update \
         fi; \
     fi \
     && apt-get purge -y --auto-remove build-essential \
+    && chmod +x /usr/local/bin/abstractgateway-docker-entrypoint \
     && rm -rf /var/lib/apt/lists/* /tmp/abstractgateway-src
 
 USER abstractgateway
 WORKDIR /home/abstractgateway
 
 EXPOSE 8080
+VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\"PORT\", \"8080\")}/api/health', timeout=3).read()" || exit 1
 
+ENTRYPOINT ["abstractgateway-docker-entrypoint"]
 CMD ["sh", "-c", "abstractgateway serve --host \"${HOST:-0.0.0.0}\" --port \"${PORT:-8080}\""]

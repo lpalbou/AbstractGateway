@@ -1,4 +1,4 @@
-name: Publish GHCR Server Image
+name: Publish GHCR Gateway Images
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish server image
+    name: Publish Gateway images
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,9 +85,11 @@ jobs:
           provenance: false
           push: true
           build-args: |
-            ABSTRACTGATEWAY_INSTALL_MODE=local
+            ABSTRACTGATEWAY_INSTALL_MODE=pypi
             ABSTRACTGATEWAY_VERSION=${{ steps.meta.outputs.version }}
           tags: |
+            ghcr.io/${{ github.repository_owner }}/abstractgateway:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/abstractgateway:latest
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server:${{ steps.meta.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server:latest
       - name: Attempt experimental NVIDIA full server image
@@ -100,9 +102,11 @@ jobs:
           provenance: false
           push: true
           build-args: |
-            ABSTRACTGATEWAY_INSTALL_MODE=local
+            ABSTRACTGATEWAY_INSTALL_MODE=pypi
             ABSTRACTGATEWAY_VERSION=${{ steps.meta.outputs.version }}
             ABSTRACTGATEWAY_EXTRAS=gpu
           tags: |
+            ghcr.io/${{ github.repository_owner }}/abstractgateway:${{ steps.meta.outputs.version }}-gpu
+            ghcr.io/${{ github.repository_owner }}/abstractgateway:gpu-latest
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server-nvidia:${{ steps.meta.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server-nvidia:latest

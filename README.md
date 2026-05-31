@@ -95,7 +95,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.23
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.24
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -103,8 +103,12 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.23
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.24-gpu
 ```
+
+Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
+are still published for existing deployments; new deployments should use
+`abstractgateway`.
 
 The image installs the base `abstractgateway` package: HTTP server,
 `AbstractRuntime`, Runtime-owned provider/tool and
@@ -121,21 +125,23 @@ AbstractFlow note:
 - You do **not** need the `abstractflow` Python package to run `.flow` bundles (bundle mode). You only need it to author bundles. VisualFlow directory mode was intentionally removed from the gateway to keep the dependency direction clean.
 
 ```bash
-export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-
-docker run --rm --name abstractgateway-server \
-  -p 127.0.0.1:8080:8080 \
-  -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
+docker run --rm --name abstractgateway \
+  -p 8080:8080 \
+  -e ABSTRACTGATEWAY_DATA_DIR=/data \
+  -e ABSTRACTGATEWAY_USER_AUTH=1 \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
-  -v "$PWD/runtime/gateway:/data/gateway" \
-  -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.23
+  -v "$PWD/runtime:/data" \
+  ghcr.io/lpalbou/abstractgateway:latest
 ```
+
+On first start, the container creates `default/admin` and writes the admin user
+token to `runtime/auth/bootstrap-admin-token`. Use that token in `/console`,
+then rotate it or create named users from the console.
 
 Configure framework model defaults through execution-host capability routes:
 
 ```bash
-abstractgateway-config set-default output.text \
+docker exec abstractgateway abstractgateway-config set-default output.text \
   --provider openai-compatible \
   --model your-model \
   --base-url http://host.docker.internal:1234/v1

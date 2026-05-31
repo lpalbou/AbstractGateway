@@ -175,8 +175,15 @@ def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> 
     )
 
     assert "ARG ABSTRACTGATEWAY_EXTRAS=" in dockerfile
+    assert "ABSTRACTGATEWAY_USER_AUTH=1" in dockerfile
+    assert "ABSTRACTGATEWAY_DATA_DIR=/data" in dockerfile
+    assert "ABSTRACTGATEWAY_FLOWS_DIR=/data/flows" not in dockerfile
+    assert "ENTRYPOINT [\"abstractgateway-docker-entrypoint\"]" in dockerfile
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.2.24}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS: ${ABSTRACTGATEWAY_EXTRAS:-}" in compose
+    assert "ABSTRACTGATEWAY_USER_AUTH: ${ABSTRACTGATEWAY_USER_AUTH:-1}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS:-gpu" in nvidia_compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.2.24-gpu}" in nvidia_compose
     assert "context: ../.." in nvidia_compose
 
 
@@ -193,6 +200,10 @@ def test_nvidia_image_is_documented_as_experimental_while_best_effort() -> None:
 
     assert "attempt experimental nvidia full server image" in release.lower()
     assert "attempt experimental nvidia full server image" in publish.lower()
+    assert "ghcr.io/${{ github.repository_owner }}/abstractgateway:${{ needs.build.outputs.version }}" in release
+    assert "ghcr.io/${{ github.repository_owner }}/abstractgateway:${{ steps.meta.outputs.version }}" in publish
+    assert "ABSTRACTGATEWAY_INSTALL_MODE=pypi" in release
+    assert "ABSTRACTGATEWAY_INSTALL_MODE=pypi" in publish
     assert "continue-on-error: true" in release
     assert "continue-on-error: true" in publish
     assert "experimental" in docs

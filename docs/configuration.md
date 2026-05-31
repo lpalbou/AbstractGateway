@@ -40,6 +40,7 @@ Gateway has a first-class configuration helper:
 ```bash
 abstractgateway-config status
 abstractgateway-config init --env-file .env
+abstractgateway-config bootstrap-admin --print-token
 abstractgateway config status --json
 ```
 
@@ -48,6 +49,10 @@ configuration, memory-store selection, and package readiness. `init` writes a
 private env file with a generated Gateway token. General Core defaults remain
 available through `abstractcore-config`; hosted reusable endpoint profiles can
 also be managed by the Gateway Console and API.
+`bootstrap-admin` is the non-interactive setup path used by Docker images:
+when user auth is enabled, it ensures `default/admin` exists, stores only the
+token hash in `auth/users.json`, and can write the raw bootstrap token to
+`auth/bootstrap-admin-token` for first login.
 
 ## Core environment variables
 

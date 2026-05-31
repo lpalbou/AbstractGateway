@@ -4,7 +4,7 @@ This image packages the AbstractGateway HTTP/SSE server for durable
 AbstractRuntime runs:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway-server:0.2.15
+ghcr.io/lpalbou/abstractgateway:0.2.24
 ```
 
 Release images are published for `linux/amd64` and `linux/arm64`.
@@ -12,8 +12,12 @@ A separate experimental full NVIDIA image is published best-effort for
 `linux/amd64`:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.15
+ghcr.io/lpalbou/abstractgateway:0.2.24-gpu
 ```
+
+Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
+`ghcr.io/lpalbou/abstractgateway-server-nvidia:*` are still published for a
+transition period. New deployments should use `abstractgateway`.
 
 The image installs:
 
@@ -50,7 +54,12 @@ that route through its native MLX runner.
 Keep secrets in an uncommitted env file:
 
 ```bash
-ABSTRACTGATEWAY_AUTH_TOKEN=replace-with-a-gateway-token
+ABSTRACTGATEWAY_USER_AUTH=1
+ABSTRACTGATEWAY_BOOTSTRAP_ADMIN=1
+ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=0
+ABSTRACTGATEWAY_BOOTSTRAP_ADMIN_TOKEN=
+# Optional legacy shared admin token; browser apps should use Gateway user tokens.
+ABSTRACTGATEWAY_AUTH_TOKEN=
 ABSTRACTGATEWAY_PROVIDER=openai-compatible
 ABSTRACTGATEWAY_MODEL=your-model
 OPENAI_API_KEY=sk-...
@@ -72,32 +81,35 @@ ABSTRACTVOICE_REMOTE_API_KEY=
 Then run:
 
 ```bash
-docker run --rm --name abstractgateway-server \
-  -p 127.0.0.1:8080:8080 \
+docker run --rm --name abstractgateway \
+  -p 8080:8080 \
   --env-file .env \
-  -v "$PWD/runtime/gateway:/data/gateway" \
-  -v "$PWD/flows/bundles:/data/flows:ro" \
+  -v "$PWD/runtime:/data" \
   -v "$PWD/workspace:/workspace" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.15
+  ghcr.io/lpalbou/abstractgateway:latest
 ```
 
-`ABSTRACTGATEWAY_AUTH_TOKEN` is the gateway bearer token. Clients send it as
-`Authorization: Bearer <token>`, including from Swagger UI's `Authorize`
-button. Provider keys stay inside the container.
+The container uses Gateway user auth by default. On first start the entrypoint
+creates the `default/admin` user and writes the raw token once to
+`runtime/auth/bootstrap-admin-token` inside the mounted data directory. Use that
+token in `/console` and then create/rotate/manage users from the Gateway
+Console. Set `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` only for local demos
+where Docker logs are private. Provider keys stay inside the container.
 
 For local OpenAI-compatible text endpoints such as Docker Model Runner, LM
 Studio, `mlx_lm.server`, or Ollama's `/v1` server, point the container at a URL
 reachable from Docker:
 
 ```bash
-docker run --rm --name abstractgateway-server \
-  -p 127.0.0.1:8080:8080 \
-  -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
+docker run --rm --name abstractgateway \
+  -p 8080:8080 \
+  -e ABSTRACTGATEWAY_USER_AUTH=1 \
   -e ABSTRACTGATEWAY_PROVIDER="openai-compatible" \
   -e ABSTRACTGATEWAY_MODEL="your-model" \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -e OPENAI_COMPATIBLE_API_KEY="$OPENAI_COMPATIBLE_API_KEY" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.15
+  -v "$PWD/runtime:/data" \
+  ghcr.io/lpalbou/abstractgateway:latest
 ```
 
 Use `http://model-runner.docker.internal/engines/v1` for Docker Model Runner,
@@ -134,6 +146,8 @@ Useful compose variables:
 - `embedding.text` capability default: configure through `abstractgateway-config set-default embedding.text ...`; remote/provider-backed embeddings work in the default image, local HuggingFace/sentence-transformer embeddings require an image built with `abstractgateway[embeddings]`
 - `ABSTRACTVISION_*`: AbstractVision image backend or OpenAI-compatible image endpoint
 - `ABSTRACTVOICE_*`: AbstractVoice TTS/STT backend, local/remote engine, and model controls
+- `ABSTRACTGATEWAY_USER_AUTH`: `1` for per-user Gateway tokens and browser sessions
+- `ABSTRACTGATEWAY_BOOTSTRAP_ADMIN`: `1` to ensure `default/admin` exists at container start
 - `ABSTRACTGATEWAY_EXTRAS`: build-time install extra for local image builds (empty for the default image, `gpu` for NVIDIA)
 
 Release scope: TTS, STT, and generated images are direct Gateway endpoints.
@@ -144,7 +158,7 @@ For unreleased local checkouts, build the image from this repository:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.15-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.24-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -153,6 +167,7 @@ docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```bash
 curl http://localhost:8080/api/health
 
-curl -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
-  http://localhost:8080/api/gateway/bundles
+ADMIN_TOKEN="$(docker exec abstractgateway cat /data/auth/bootstrap-admin-token)"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://localhost:8080/api/gateway/me
 ```

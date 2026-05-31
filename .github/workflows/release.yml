@@ -198,7 +198,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   publish-ghcr:
-    name: Publish GHCR server image
+    name: Publish GHCR Gateway images
     runs-on: ubuntu-latest
     needs: [build, ensure-tag, publish-pypi]
     permissions:
@@ -244,9 +244,11 @@ jobs:
           provenance: false
           push: true
           build-args: |
-            ABSTRACTGATEWAY_INSTALL_MODE=local
+            ABSTRACTGATEWAY_INSTALL_MODE=pypi
             ABSTRACTGATEWAY_VERSION=${{ needs.build.outputs.version }}
           tags: |
+            ghcr.io/${{ github.repository_owner }}/abstractgateway:${{ needs.build.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/abstractgateway:latest
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server:${{ needs.build.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server:latest
       - name: Attempt experimental NVIDIA full server image
@@ -259,10 +261,12 @@ jobs:
           provenance: false
           push: true
           build-args: |
-            ABSTRACTGATEWAY_INSTALL_MODE=local
+            ABSTRACTGATEWAY_INSTALL_MODE=pypi
             ABSTRACTGATEWAY_VERSION=${{ needs.build.outputs.version }}
             ABSTRACTGATEWAY_EXTRAS=gpu
           tags: |
+            ghcr.io/${{ github.repository_owner }}/abstractgateway:${{ needs.build.outputs.version }}-gpu
+            ghcr.io/${{ github.repository_owner }}/abstractgateway:gpu-latest
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server-nvidia:${{ needs.build.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/abstractgateway-server-nvidia:latest
 

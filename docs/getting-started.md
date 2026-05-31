@@ -143,20 +143,21 @@ remote AbstractCore server; local HuggingFace/sentence-transformer embeddings
 require `abstractgateway[embeddings]`.
 
 ```bash
-export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-
-docker run --rm -p 127.0.0.1:8080:8080 \
-  -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
-  -v "$PWD/runtime/gateway:/data/gateway" \
-  -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.23
+docker run --rm --name abstractgateway \
+  -p 8080:8080 \
+  -v "$PWD/runtime:/data" \
+  -e ABSTRACTGATEWAY_DATA_DIR=/data \
+  -e ABSTRACTGATEWAY_USER_AUTH=1 \
+  ghcr.io/lpalbou/abstractgateway:latest
 ```
 
 See [deployment.md](./deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.23`
-with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
+On first start, the container creates `default/admin` and writes the token to
+`runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
+`ghcr.io/lpalbou/abstractgateway:0.2.24-gpu` with the compose overlay in
+`docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
 Apple MLX inference should run natively on macOS rather than in Docker because
