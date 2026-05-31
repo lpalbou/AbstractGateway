@@ -14,7 +14,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ABSTRACTGATEWAY_USER_AUTH=1 \
     ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle \
     ABSTRACTGATEWAY_STORE_BACKEND=file \
-    ABSTRACTGATEWAY_ALLOWED_ORIGINS=http://localhost:*,http://127.0.0.1:*
+    ABSTRACTGATEWAY_ALLOWED_ORIGINS=http://localhost:*,http://127.0.0.1:* \
+    LMSTUDIO_BASE_URL=http://host.docker.internal:1234/v1 \
+    OLLAMA_BASE_URL=http://host.docker.internal:11434
 
 RUN addgroup --system abstractgateway \
     && adduser --system --ingroup abstractgateway --home /home/abstractgateway abstractgateway \

@@ -673,12 +673,19 @@ def gateway_console_html() -> str:
         setSelectOptions($("default-model"), [], { emptyLabel: "Select provider first", disabled: true });
         return;
       }
-      if (!state.providerModels.has(provider)) {
+      const baseUrl = $("default-base-url").value.trim();
+      const cacheKey = `${provider}|${baseUrl}`;
+      if (!state.providerModels.has(cacheKey)) {
         setSelectOptions($("default-model"), [], { emptyLabel: "Loading models...", disabled: true });
-        const payload = await api(`/api/gateway/discovery/providers/${encodeURIComponent(provider)}/models`);
-        state.providerModels.set(provider, parseModelItems(payload));
+        const query = baseUrl ? `?base_url=${encodeURIComponent(baseUrl)}` : "";
+        const payload = await api(`/api/gateway/discovery/providers/${encodeURIComponent(provider)}/models${query}`);
+        state.providerModels.set(cacheKey, parseModelItems(payload));
+        if (payload.error && !state.providerModels.get(cacheKey).length) {
+          $("defaults-message").textContent = payload.error;
+          $("defaults-message").className = "message error";
+        }
       }
-      const models = state.providerModels.get(provider) || [];
+      const models = state.providerModels.get(cacheKey) || [];
       setSelectOptions($("default-model"), models, {
         emptyLabel: models.length ? "Select model..." : "No models discovered",
         disabled: !models.length,
@@ -1232,7 +1239,7 @@ def gateway_console_html() -> str:
       await api(`/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}`, { method: "DELETE" });
       await renderDefaults(await api("/api/gateway/config/capability-defaults"));
     }
-	    $("login-form").onsubmit = (event) => { event.preventDefault(); login(); };
+    $("login-form").onsubmit = (event) => { event.preventDefault(); login(); };
 	    $("toggle-token").onclick = () => {
 	      const input = $("login-token");
 	      const visible = input.type === "text";
@@ -1246,6 +1253,7 @@ def gateway_console_html() -> str:
     $("create-user").onclick = createUser;
     $("default-route").onchange = fillDefaultForm;
     $("default-provider").onchange = () => loadModels($("default-provider").value);
+    $("default-base-url").onchange = () => loadModels($("default-provider").value);
     $("refresh-catalog").onclick = async () => {
       state.providerModels.clear();
       await loadProviders();

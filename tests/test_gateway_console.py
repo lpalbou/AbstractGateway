@@ -31,7 +31,7 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert "/api/gateway/config/provider-endpoint-profiles" in console.text
     assert "/api/gateway/config/provider-endpoint-profiles/discover-models" in console.text
     assert "/api/gateway/discovery/providers?include_models=false" in console.text
-    assert "/api/gateway/discovery/providers/${encodeURIComponent(provider)}/models" in console.text
+    assert "/api/gateway/discovery/providers/${encodeURIComponent(provider)}/models${query}" in console.text
     assert '<select id="default-provider">' in console.text
     assert '<select id="default-model">' in console.text
     assert 'id="endpoint-description"' in console.text
@@ -162,6 +162,7 @@ async function fetch(path, options = {{}}) {{
   }}
   if (path === "/api/gateway/discovery/providers?include_models=false") return response(200, {{ providers: ["openai"] }});
   if (path === "/api/gateway/discovery/providers/openai/models") return response(200, {{ models: ["gpt-4.1"] }});
+  if (path === "/api/gateway/discovery/providers/openai/models?base_url=https%3A%2F%2Fmodels.example.test%2Fv1") return response(200, {{ models: ["gpt-4.1-base-url"] }});
   if (path === "/api/gateway/config/capability-defaults") return response(200, {{
     routes: [{{ key: "input.text", kind: "input", modality: "text", label: "Text Input", provider: "openai", model: "gpt-4.1", configured: true }}]
   }});
@@ -221,6 +222,19 @@ if (!calls.some((call) => call.path === "/api/gateway/config/provider-endpoint-p
 }}
 if (!el("endpoint-models").children.some((child) => child.value === "remote-model")) {{
   throw new Error("endpoint model picker was not populated from discovery");
+}}
+
+el("default-base-url").value = "https://models.example.test/v1";
+el("default-provider").value = "openai";
+el("default-base-url").onchange();
+await new Promise((resolve) => setTimeout(resolve, 0));
+await new Promise((resolve) => setTimeout(resolve, 0));
+
+if (!calls.some((call) => call.path === "/api/gateway/discovery/providers/openai/models?base_url=https%3A%2F%2Fmodels.example.test%2Fv1")) {{
+  throw new Error("default model discovery did not forward the configured base URL");
+}}
+if (!el("default-model").children.some((child) => child.value === "gpt-4.1-base-url")) {{
+  throw new Error("default model picker was not populated from base-url discovery");
 }}
 """
     result = subprocess.run(["node", "--input-type=module", "-e", harness], capture_output=True, text=True, check=False)

@@ -156,18 +156,18 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.2.24-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.2.25-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
 Apple MLX inference should run natively on macOS rather than in Docker because
 Linux containers do not get access to Apple's Metal/MLX runtime. The container
 can still use native macOS inference through an OpenAI-compatible endpoint:
-point `OPENAI_COMPATIBLE_BASE_URL` at Docker Model Runner on
-`http://model-runner.docker.internal/engines/v1`, LM Studio on
-`http://host.docker.internal:1234/v1`, `mlx_lm.server`, or Ollama's
-OpenAI-compatible API on `http://host.docker.internal:11434/v1` when the
-native Ollama model path uses MLX. For native non-Docker installs, use
+point `OPENAI_BASE_URL` at Docker Model Runner on
+`http://model-runner.docker.internal/engines/v1` or `mlx_lm.server`. For named
+local providers, set `LMSTUDIO_BASE_URL=http://host.docker.internal:1234/v1` or
+`OLLAMA_BASE_URL=http://host.docker.internal:11434` when the native Ollama model
+path uses MLX. For native non-Docker installs, use
 `pip install "abstractgateway[apple]"` on Apple Silicon, and
 `pip install "abstractgateway[gpu]"` on GPU workstations or NVIDIA Docker builds.
 

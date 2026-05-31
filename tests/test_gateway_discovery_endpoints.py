@@ -194,7 +194,43 @@ def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, mon
 
     assert calls == [
         {"method": "list_providers", "include_models": False, "provider_api_key": None},
-        {"method": "list_provider_models", "provider_name": "lmstudio", "provider_api_key": None, "timeout_s": 30.0},
+        {
+            "method": "list_provider_models",
+            "provider_name": "lmstudio",
+            "base_url": None,
+            "provider_api_key": None,
+            "timeout_s": 30.0,
+        },
+    ]
+
+
+def test_discovery_provider_models_accepts_base_url_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict] = []
+
+    class StubDiscoveryFacade:
+        def list_provider_models(self, provider_name: str, **kwargs):
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": ["qwen-local"]}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        models = client.get(
+            "/api/gateway/discovery/providers/lmstudio/models"
+            "?base_url=http%3A%2F%2F192.168.1.188%3A1234%2Fv1",
+            headers=headers,
+        )
+
+    assert models.status_code == 200, models.text
+    assert models.json().get("models") == ["qwen-local"]
+    assert calls == [
+        {
+            "provider_name": "lmstudio",
+            "base_url": "http://192.168.1.188:1234/v1",
+            "provider_api_key": None,
+            "timeout_s": 30.0,
+        }
     ]
 
 

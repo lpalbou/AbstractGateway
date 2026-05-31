@@ -4,7 +4,7 @@ This image packages the AbstractGateway HTTP/SSE server for durable
 AbstractRuntime runs:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway:0.2.24
+ghcr.io/lpalbou/abstractgateway:0.2.25
 ```
 
 Release images are published for `linux/amd64` and `linux/arm64`.
@@ -12,7 +12,7 @@ A separate experimental full NVIDIA image is published best-effort for
 `linux/amd64`:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway:0.2.24-gpu
+ghcr.io/lpalbou/abstractgateway:0.2.25-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -67,8 +67,12 @@ OPENROUTER_API_KEY=sk-or-...
 ANTHROPIC_API_KEY=sk-ant-...
 PORTKEY_API_KEY=pk_...
 PORTKEY_CONFIG=pcfg_...
-OPENAI_COMPATIBLE_BASE_URL=http://host.docker.internal:1234/v1
+OPENAI_BASE_URL=http://host.docker.internal:1234/v1
+# Legacy/compatibility alias used by some operators; AbstractCore discovery uses OPENAI_BASE_URL.
+OPENAI_COMPATIBLE_BASE_URL=
 OPENAI_COMPATIBLE_API_KEY=optional
+LMSTUDIO_BASE_URL=http://host.docker.internal:1234/v1
+OLLAMA_BASE_URL=http://host.docker.internal:11434
 ABSTRACTVISION_BASE_URL=https://api.openai.com/v1
 ABSTRACTVISION_API_KEY=optional
 ABSTRACTVISION_MODEL_ID=gpt-image-1
@@ -106,8 +110,22 @@ docker run --rm --name abstractgateway \
   -e ABSTRACTGATEWAY_USER_AUTH=1 \
   -e ABSTRACTGATEWAY_PROVIDER="openai-compatible" \
   -e ABSTRACTGATEWAY_MODEL="your-model" \
-  -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
-  -e OPENAI_COMPATIBLE_API_KEY="$OPENAI_COMPATIBLE_API_KEY" \
+  -e OPENAI_BASE_URL="http://host.docker.internal:1234/v1" \
+  -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+  -v "$PWD/runtime:/data" \
+  ghcr.io/lpalbou/abstractgateway:latest
+```
+
+For LM Studio specifically, prefer the named provider so Gateway model
+discovery uses `LMSTUDIO_BASE_URL`:
+
+```bash
+docker run --rm --name abstractgateway \
+  -p 8080:8080 \
+  -e ABSTRACTGATEWAY_USER_AUTH=1 \
+  -e ABSTRACTGATEWAY_PROVIDER="lmstudio" \
+  -e ABSTRACTGATEWAY_MODEL="your-loaded-model-id" \
+  -e LMSTUDIO_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime:/data" \
   ghcr.io/lpalbou/abstractgateway:latest
 ```
@@ -158,7 +176,7 @@ For unreleased local checkouts, build the image from this repository:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.24-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.25-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

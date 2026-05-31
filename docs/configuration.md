@@ -341,12 +341,13 @@ Local heavy engines remain explicit opt-ins in the provider packages; Gateway
 does not implicitly install them.
 
 - `output.text` capability route: default text model for bundle LLM nodes
-- `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`: OpenAI-compatible text endpoint for AbstractCore providers
+- `OPENAI_BASE_URL` / `OPENAI_API_KEY`: generic OpenAI-compatible text endpoint for AbstractCore providers
   - Apple/MLX Docker deployments should point the lightweight Gateway container
     at host-native inference, for example
     `http://model-runner.docker.internal/engines/v1`,
-    `http://host.docker.internal:1234/v1`, or
-    `http://host.docker.internal:11434/v1`.
+    `http://host.docker.internal:1234/v1`, or another `/v1` endpoint.
+- `LMSTUDIO_BASE_URL` / `OLLAMA_BASE_URL`: named local endpoint providers for
+  LM Studio and Ollama model discovery/routing from inside the Gateway container.
 - `ABSTRACTGATEWAY_VISION_BACKEND` / `ABSTRACTGATEWAY_VISION_BASE_URL` / `ABSTRACTGATEWAY_VISION_API_KEY` / `ABSTRACTGATEWAY_VISION_MODEL_ID`: Gateway-scoped image backend settings. Legacy `ABSTRACTVISION_*` names are still accepted by the lower package.
 - `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE`: Gateway-scoped voice engine settings. Legacy `ABSTRACTVOICE_*` names are still accepted by the lower package.
 - `ABSTRACTGATEWAY_VOICE_TTS_MODEL` / `ABSTRACTGATEWAY_VOICE_STT_MODEL`: Gateway-scoped TTS/STT model defaults.

@@ -12359,7 +12359,14 @@ async def discovery_providers(
 
 
 @router.get("/discovery/providers/{provider_name}/models")
-async def discovery_provider_models(request: Request, provider_name: str) -> Dict[str, Any]:
+async def discovery_provider_models(
+    request: Request,
+    provider_name: str,
+    base_url: Optional[str] = Query(
+        default=None,
+        description="Optional upstream provider base URL used for model discovery.",
+    ),
+) -> Dict[str, Any]:
     """List available models for a provider (best-effort; may require provider connectivity)."""
     prov = str(provider_name or "").strip()
     if not prov:
@@ -12457,6 +12464,7 @@ async def discovery_provider_models(request: Request, provider_name: str) -> Dic
     try:
         payload = discovery.list_provider_models(
             prov,
+            base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
             timeout_s=_provider_models_timeout_s(),
         )

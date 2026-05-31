@@ -95,7 +95,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.24
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.25
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -103,7 +103,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.24-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.25-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
@@ -129,7 +129,7 @@ docker run --rm --name abstractgateway \
   -p 8080:8080 \
   -e ABSTRACTGATEWAY_DATA_DIR=/data \
   -e ABSTRACTGATEWAY_USER_AUTH=1 \
-  -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
+  -e LMSTUDIO_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime:/data" \
   ghcr.io/lpalbou/abstractgateway:latest
 ```
@@ -142,17 +142,18 @@ Configure framework model defaults through execution-host capability routes:
 
 ```bash
 docker exec abstractgateway abstractgateway-config set-default output.text \
-  --provider openai-compatible \
+  --provider lmstudio \
   --model your-model \
   --base-url http://host.docker.internal:1234/v1
 ```
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the
 lightweight Gateway container as the transport/control plane. Point
-`OPENAI_COMPATIBLE_BASE_URL` at a host-native OpenAI-compatible endpoint such
-as Docker Model Runner (`http://model-runner.docker.internal/engines/v1`), LM
-Studio (`http://host.docker.internal:1234/v1`), Ollama
-(`http://host.docker.internal:11434/v1`), or `mlx_lm.server` on a host port.
+`OPENAI_BASE_URL` at a generic host-native OpenAI-compatible endpoint such as
+Docker Model Runner (`http://model-runner.docker.internal/engines/v1`) or
+`mlx_lm.server` on a host port. For named providers, use
+`LMSTUDIO_BASE_URL=http://host.docker.internal:1234/v1` or
+`OLLAMA_BASE_URL=http://host.docker.internal:11434`.
 For native non-Docker installs with local engines, use
 `pip install "abstractgateway[apple]"` on Apple Silicon, and
 `pip install "abstractgateway[gpu]"` on GPU workstations or NVIDIA Docker builds.

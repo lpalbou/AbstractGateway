@@ -11,7 +11,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.24
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.25
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -19,7 +19,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.24-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.25-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -63,7 +63,7 @@ docker run --rm --name abstractgateway \
   -p 8080:8080 \
   -e ABSTRACTGATEWAY_DATA_DIR=/data \
   -e ABSTRACTGATEWAY_USER_AUTH=1 \
-  -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
+  -e OPENAI_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime:/data" \
   ghcr.io/lpalbou/abstractgateway:latest
 ```
@@ -78,9 +78,9 @@ docker exec abstractgateway abstractgateway-config set-default output.text \
 ```
 
 Other host-native endpoints are also valid: LM Studio at
-`http://host.docker.internal:1234/v1`, Ollama's OpenAI-compatible API at
-`http://host.docker.internal:11434/v1`, or `mlx_lm.server` exposed on a host
-port. For fully native non-Docker installs with local engines, use
+`http://host.docker.internal:1234/v1` with `LMSTUDIO_BASE_URL`, Ollama at
+`http://host.docker.internal:11434` with `OLLAMA_BASE_URL`, or `mlx_lm.server`
+exposed on a host port. For fully native non-Docker installs with local engines, use
 `pip install "abstractgateway[apple]"` on Apple Silicon, and
 `pip install "abstractgateway[gpu]"` on GPU workstations or NVIDIA Docker builds.
 
@@ -147,7 +147,8 @@ Provider keys and endpoints:
 - `ANTHROPIC_API_KEY`
 - `OPENROUTER_API_KEY`
 - `PORTKEY_API_KEY` / `PORTKEY_CONFIG`
-- `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`
+- `OPENAI_BASE_URL` / `OPENAI_API_KEY` for generic OpenAI-compatible endpoints
+- `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY` as legacy operator aliases; prefer `OPENAI_BASE_URL` for AbstractCore discovery
 - `LMSTUDIO_BASE_URL`
 - `OLLAMA_BASE_URL`
 - `VLLM_BASE_URL`
@@ -194,7 +195,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.24-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.25-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
