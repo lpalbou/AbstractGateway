@@ -65,6 +65,29 @@ jobs:
           else:
               raise SystemExit(f"Timed out waiting for abstractgateway {version} on PyPI")
 
+          for attempt in range(1, 31):
+              status = os.system(
+                  "python -m pip install --dry-run --no-deps --no-cache-dir "
+                  "--index-url https://pypi.org/simple "
+                  f"'abstractgateway=={version}' > /tmp/abstractgateway-pip-visible.log 2>&1"
+              )
+              log = Path("/tmp/abstractgateway-pip-visible.log").read_text(
+                  encoding="utf-8",
+                  errors="replace",
+              )
+              print(log, end="" if log.endswith("\n") else "\n")
+              if status == 0:
+                  print(
+                      f"abstractgateway {version} is installable from the PyPI simple index"
+                  )
+                  break
+              print(f"PyPI simple index not ready for pip yet (attempt {attempt}/30).")
+              time.sleep(10)
+          else:
+              raise SystemExit(
+                  f"Timed out waiting for abstractgateway {version} on the PyPI simple index"
+              )
+
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as fh:
               print(f"version={version}", file=fh)
           PY
