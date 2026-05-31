@@ -23,6 +23,7 @@ RUN addgroup --system abstractgateway \
 
 COPY pyproject.toml README.md CHANGELOG.md /tmp/abstractgateway-src/
 COPY src /tmp/abstractgateway-src/src
+COPY flows/bundles/basic-agent.flow flows/bundles/basic-agent@0.0.1.flow /tmp/abstractgateway-src/flows/bundles/
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libmagic1 \

@@ -105,7 +105,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.22
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.23
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -113,7 +113,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.22
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.23
 ```
 
 The image installs the base `abstractgateway` package: HTTP server,
@@ -139,7 +139,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://host.docker.internal:1234/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.22
+  ghcr.io/lpalbou/abstractgateway-server:0.2.23
 ```
 
 Configure framework model defaults through execution-host capability routes:
@@ -517,13 +517,13 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e ABSTRACTGATEWAY_AUTH_TOKEN="$ABSTRACTGATEWAY_AUTH_TOKEN" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.22
+  ghcr.io/lpalbou/abstractgateway-server:0.2.23
 ```
 
 See [deployment.md](docs/deployment.md) for Compose, provider keys, and image
 customization.
 
-NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.22`
+NVIDIA hosts can try `ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.23`
 with the compose overlay in `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -607,6 +607,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.23] - 2026-05-31
+
+### Fixed
+- Fixed local-source Gateway container builds so the packaged `basic-agent` workflow bundle is present when Hatch builds the wheel inside the release image.
 
 ## [0.2.22] - 2026-05-31
 
@@ -2507,7 +2512,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.22
+docker pull ghcr.io/lpalbou/abstractgateway-server:0.2.23
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -2515,7 +2520,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.22
+docker pull ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.23
 ```
 
 The default image installs the base `abstractgateway` package, which includes:
@@ -2557,7 +2562,7 @@ docker run --rm --name abstractgateway-server \
   -e OPENAI_COMPATIBLE_BASE_URL="http://model-runner.docker.internal/engines/v1" \
   -v "$PWD/runtime/gateway:/data/gateway" \
   -v "$PWD/flows/bundles:/data/flows:ro" \
-  ghcr.io/lpalbou/abstractgateway-server:0.2.22
+  ghcr.io/lpalbou/abstractgateway-server:0.2.23
 ```
 
 Set the execution-host text route separately:
@@ -2679,7 +2684,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.22-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.23-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

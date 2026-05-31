@@ -33,6 +33,7 @@ RUN apt-get update \
 
 COPY pyproject.toml README.md CHANGELOG.md /tmp/abstractgateway-src/
 COPY src /tmp/abstractgateway-src/src
+COPY flows/bundles/basic-agent.flow flows/bundles/basic-agent@0.0.1.flow /tmp/abstractgateway-src/flows/bundles/
 
 RUN python -m pip install --upgrade pip \
     && if [ "$ABSTRACTGATEWAY_INSTALL_MODE" = "local" ]; then \
