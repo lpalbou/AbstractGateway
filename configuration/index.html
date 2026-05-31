@@ -982,13 +982,18 @@ the newer memory-agent API directly.</p>
 <p>Gateway has a first-class configuration helper:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>status
 abstractgateway-config<span class="w"> </span>init<span class="w"> </span>--env-file<span class="w"> </span>.env
+abstractgateway-config<span class="w"> </span>bootstrap-admin<span class="w"> </span>--print-token
 abstractgateway<span class="w"> </span>config<span class="w"> </span>status<span class="w"> </span>--json
 </code></pre></div>
 <p>It reports Gateway auth/data/store/runtime defaults, Core-server handoff
 configuration, memory-store selection, and package readiness. <code>init</code> writes a
 private env file with a generated Gateway token. General Core defaults remain
 available through <code>abstractcore-config</code>; hosted reusable endpoint profiles can
-also be managed by the Gateway Console and API.</p>
+also be managed by the Gateway Console and API.
+<code>bootstrap-admin</code> is the non-interactive setup path used by Docker images:
+when user auth is enabled, it ensures <code>default/admin</code> exists, stores only the
+token hash in <code>auth/users.json</code>, and can write the raw bootstrap token to
+<code>auth/bootstrap-admin-token</code> for first login.</p>
 <h2 id="core-environment-variables">Core environment variables<a class="headerlink" href="#core-environment-variables" title="Permanent link">&para;</a></h2>
 <h3 id="paths-workflow-source">Paths + workflow source<a class="headerlink" href="#paths-workflow-source" title="Permanent link">&para;</a></h3>
 <ul>

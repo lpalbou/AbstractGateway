@@ -705,13 +705,16 @@ and the Runtime-owned provider/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
 <p>Release images are published to GHCR. The default image is the light,
 portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server:0.2.23
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.2.24
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
 vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway-server-nvidia:0.2.23
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.2.24-gpu
 </code></pre></div>
+<p>Legacy aliases <code>ghcr.io/lpalbou/abstractgateway-server:*</code> and
+<code>ghcr.io/lpalbou/abstractgateway-server-nvidia:*</code> are still published for a
+transition period. New deployments should use <code>abstractgateway</code>.</p>
 <p>The default image installs the base <code>abstractgateway</code> package, which includes:</p>
 <ul>
 <li><code>AbstractRuntime</code></li>
@@ -740,16 +743,16 @@ production-ready only after a CUDA host build/smoke gate is added and passes.</p
 stack, while Docker Desktop runs Linux containers without Metal/MPS device
 access. The supported Docker shape is a lightweight Gateway container calling a
 host-native OpenAI-compatible inference endpoint:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--name<span class="w"> </span>abstractgateway-server<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-p<span class="w"> </span><span class="m">127</span>.0.0.1:8080:8080<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--name<span class="w"> </span>abstractgateway<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-p<span class="w"> </span><span class="m">8080</span>:8080<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_DATA_DIR</span><span class="o">=</span>/data<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">ABSTRACTGATEWAY_USER_AUTH</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-e<span class="w"> </span><span class="nv">OPENAI_COMPATIBLE_BASE_URL</span><span class="o">=</span><span class="s2">&quot;http://model-runner.docker.internal/engines/v1&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway:/data/gateway&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/flows/bundles:/data/flows:ro&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>ghcr.io/lpalbou/abstractgateway-server:0.2.23
+<span class="w">  </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime:/data&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>ghcr.io/lpalbou/abstractgateway:latest
 </code></pre></div>
 <p>Set the execution-host text route separately:</p>
-<div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>output.text<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>abstractgateway<span class="w"> </span>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>output.text<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--provider<span class="w"> </span>openai-compatible<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--model<span class="w"> </span>your-model<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--base-url<span class="w"> </span>http://model-runner.docker.internal/engines/v1
@@ -761,10 +764,10 @@ port. For fully native non-Docker installs with local engines, use
 <code>pip install "abstractgateway[apple]"</code> on Apple Silicon, and
 <code>pip install "abstractgateway[gpu]"</code> on GPU workstations or NVIDIA Docker builds.</p>
 <h2 id="compose-quickstart">Compose quickstart<a class="headerlink" href="#compose-quickstart" title="Permanent link">&para;</a></h2>
-<p>Create an env file from the template, set a strong token, then start the
-server:</p>
+<p>Create an env file from the template, adjust provider keys/defaults, then start
+the server. The default env keeps user auth enabled and bootstraps
+<code>default/admin</code> if missing:</p>
 <div class="highlight"><pre><span></span><code>cp<span class="w"> </span>docker/abstractgateway-server/.env.example<span class="w"> </span>docker/abstractgateway-server/.env
-python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import secrets; print(secrets.token_urlsafe(32))&#39;</span>
 docker<span class="w"> </span>compose<span class="w"> </span>--env-file<span class="w"> </span>docker/abstractgateway-server/.env<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d
 </code></pre></div>
@@ -775,18 +778,25 @@ Toolkit:</p>
 <span class="w">  </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.nvidia.yml<span class="w"> </span>up<span class="w"> </span>-d
 </code></pre></div>
 <p>The default compose profile binds to <code>127.0.0.1:8080</code>, mounts a durable Gateway
-data volume at <code>/data/gateway</code>, mounts bundles from <code>flows/bundles</code> at
-<code>/data/flows</code>, and exposes a container workspace at <code>/workspace</code>.</p>
+data volume at <code>/data</code>, mounts bundles from <code>flows/bundles</code> at <code>/data/flows</code>,
+and exposes a container workspace at <code>/workspace</code>.</p>
 <p>Smoke checks:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/api/health
 
-curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>http://127.0.0.1:8080/api/gateway/bundles
+<span class="nv">ADMIN_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-T<span class="w"> </span>abstractgateway<span class="w"> </span>cat<span class="w"> </span>/data/auth/bootstrap-admin-token<span class="k">)</span><span class="s2">&quot;</span>
+curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$ADMIN_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>http://127.0.0.1:8080/api/gateway/me
 </code></pre></div>
 <h2 id="core-configuration">Core configuration<a class="headerlink" href="#core-configuration" title="Permanent link">&para;</a></h2>
-<p>Required:</p>
+<p>Required for hosted/container user-auth mode:</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_AUTH_TOKEN</code>: bearer token for <code>/api/gateway/*</code></li>
+<li><code>ABSTRACTGATEWAY_USER_AUTH=1</code>: enables Gateway user tokens and per-user routing</li>
+<li><code>ABSTRACTGATEWAY_BOOTSTRAP_ADMIN=1</code>: creates <code>default/admin</code> if missing</li>
+</ul>
+<p>Optional:</p>
+<ul>
+<li><code>ABSTRACTGATEWAY_AUTH_TOKEN</code>: legacy shared admin bearer token for
+  compatibility/bootstrap APIs; browser apps should use Gateway user tokens</li>
 </ul>
 <p>Common:</p>
 <ul>
@@ -845,7 +855,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.23-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.24-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the
