@@ -933,18 +933,18 @@ require <code>abstractgateway[embeddings]</code>.</p>
 customization.</p>
 <p>On first start, the container creates <code>default/admin</code> and writes the token to
 <code>runtime/auth/bootstrap-admin-token</code>. NVIDIA hosts can try
-<code>ghcr.io/lpalbou/abstractgateway:0.2.24-gpu</code> with the compose overlay in
+<code>ghcr.io/lpalbou/abstractgateway:0.2.25-gpu</code> with the compose overlay in
 <code>docker/abstractgateway-server/compose.nvidia.yml</code>.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
 Apple MLX inference should run natively on macOS rather than in Docker because
 Linux containers do not get access to Apple's Metal/MLX runtime. The container
 can still use native macOS inference through an OpenAI-compatible endpoint:
-point <code>OPENAI_COMPATIBLE_BASE_URL</code> at Docker Model Runner on
-<code>http://model-runner.docker.internal/engines/v1</code>, LM Studio on
-<code>http://host.docker.internal:1234/v1</code>, <code>mlx_lm.server</code>, or Ollama's
-OpenAI-compatible API on <code>http://host.docker.internal:11434/v1</code> when the
-native Ollama model path uses MLX. For native non-Docker installs, use
+point <code>OPENAI_BASE_URL</code> at Docker Model Runner on
+<code>http://model-runner.docker.internal/engines/v1</code> or <code>mlx_lm.server</code>. For named
+local providers, set <code>LMSTUDIO_BASE_URL=http://host.docker.internal:1234/v1</code> or
+<code>OLLAMA_BASE_URL=http://host.docker.internal:11434</code> when the native Ollama model
+path uses MLX. For native non-Docker installs, use
 <code>pip install "abstractgateway[apple]"</code> on Apple Silicon, and
 <code>pip install "abstractgateway[gpu]"</code> on GPU workstations or NVIDIA Docker builds.</p>
 <h2 id="4-whats-stored-in-abstractgateway_data_dir-file-backend">4) What’s stored in <code>ABSTRACTGATEWAY_DATA_DIR</code> (file backend)<a class="headerlink" href="#4-whats-stored-in-abstractgateway_data_dir-file-backend" title="Permanent link">&para;</a></h2>
