@@ -60,9 +60,16 @@ def _bundle_bytes(*, bundle_id: str, bundle_version: str, flow_id: str = "root",
         "metadata": {"test": True},
     }
     buf = io.BytesIO()
+
+    def write_json(zf: zipfile.ZipFile, name: str, value: dict) -> None:
+        info = zipfile.ZipInfo(name)
+        info.date_time = (2026, 1, 1, 0, 0, 0)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        zf.writestr(info, json.dumps(value, ensure_ascii=False, indent=2))
+
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-        zf.writestr(f"flows/{flow_id}.json", json.dumps(_make_min_flow(flow_id, name=flow_name), ensure_ascii=False, indent=2))
+        write_json(zf, "manifest.json", manifest)
+        write_json(zf, f"flows/{flow_id}.json", _make_min_flow(flow_id, name=flow_name))
     return buf.getvalue()
 
 

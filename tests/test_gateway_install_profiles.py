@@ -22,7 +22,10 @@ def _pyproject() -> dict:
 
 
 def _sibling_pyproject(package_dir: str) -> dict:
-    return tomllib.loads((WORKSPACE_ROOT / package_dir / "pyproject.toml").read_text(encoding="utf-8"))
+    path = WORKSPACE_ROOT / package_dir / "pyproject.toml"
+    if not path.exists():
+        pytest.skip(f"monorepo sibling package is not available in this checkout: {package_dir}")
+    return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
 def test_base_install_is_remote_light_server() -> None:

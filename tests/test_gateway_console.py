@@ -78,9 +78,10 @@ def test_gateway_console_inline_javascript_submits_login_request() -> None:
 
     scripts = re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S)
     assert scripts
+    script_source = json.dumps("\n".join(scripts))
     harness = f"""
 import vm from "node:vm";
-const source = {json.dumps("\\n".join(scripts))};
+const source = {script_source};
 
 class Element {{
   constructor(id) {{
