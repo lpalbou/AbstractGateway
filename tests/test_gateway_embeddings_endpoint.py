@@ -194,6 +194,27 @@ def test_gateway_embeddings_endpoint_rejects_model_override(tmp_path: Path, monk
         assert "fixed" in r.text.lower()
 
 
+def test_embedding_config_ignores_legacy_capability_defaults_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    legacy = runtime_dir / "config" / "capability_defaults.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"version": 1, "routes": {"embedding.text": {"provider": "legacy-provider", "model": "legacy-embedding"}}}),
+        encoding="utf-8",
+    )
+
+    from abstractgateway.embeddings_config import resolve_embedding_config
+
+    with pytest.raises(RuntimeError) as exc:
+        resolve_embedding_config(base_dir=runtime_dir)
+
+    assert "No execution-host embedding.text capability default is configured" in str(exc.value)
+
+
 def test_remote_core_embeddings_client_posts_to_core_route(monkeypatch: pytest.MonkeyPatch) -> None:
     from abstractgateway.embeddings_config import EmbeddingRouteConfig, RemoteCoreEmbeddingsClient
 

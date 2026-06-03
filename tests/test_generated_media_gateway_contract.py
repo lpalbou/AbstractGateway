@@ -169,7 +169,7 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
         assert body["ok"] is True, body
         assert body["supported"] is True
         assert body["child_run_id"] == "child-image-1"
-        assert body["event_name"] is None
+        assert body["event_name"] == "abstract.progress"
         image_ref = body["image_artifact"]
         assert image_ref["content_type"] == "image/png"
         assert image_ref["filename"] == "generated.png"
@@ -303,6 +303,7 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
         assert body["ok"] is True, body
         assert body["supported"] is True
         assert body["child_run_id"] == "child-image-edit-1"
+        assert body["event_name"] == "abstract.progress"
         image_ref = body["image_artifact"]
         assert image_ref["content_type"] == "image/png"
         assert image_ref["filename"] == "edited.png"
@@ -567,13 +568,17 @@ def test_gateway_direct_music_generation_uses_runtime_child_run_contract(tmp_pat
     class StubRunFacade:
         def generate_music(self, parent_run_id: str, *, prompt: str, output: Dict[str, Any], params: Dict[str, Any], child_vars=None):
             _ = child_vars
-            child_run_id = "child-music-1"
-            assert prompt == "warm lo-fi piano with brushed drums"
-            assert output["modality"] == "music"
-            assert output["task"] == "music_generation"
-            assert output["provider"] == "acemusic"
-            assert output["model"] == "ace-step"
-            assert output["duration_s"] == 8
+            sound_mode = output.get("task") == "text_to_audio"
+            child_run_id = "child-sound-1" if sound_mode else "child-music-1"
+            assert prompt == ("short office notification chime" if sound_mode else "warm lo-fi piano with brushed drums")
+            assert output["modality"] == ("sound" if sound_mode else "music")
+            assert output["task"] == ("text_to_audio" if sound_mode else "text_to_music")
+            assert output["provider"] == ("stable-audio" if sound_mode else "acemusic")
+            assert output["model"] == ("stabilityai/stable-audio-open-small" if sound_mode else "ace-step")
+            assert output["tags"]["modality"] == ("sound" if sound_mode else "music")
+            assert output["tags"]["task"] == ("sound_generation" if sound_mode else "music_generation")
+            if not sound_mode:
+                assert output["duration_s"] == 8
             svc = gateway_routes.get_gateway_service()
             store = svc.stores.artifact_store
             tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
@@ -585,12 +590,12 @@ def test_gateway_direct_music_generation_uses_runtime_child_run_contract(tmp_pat
                 output={
                     "result": {
                         "outputs": {
-                            "music": [
+                            ("sound" if sound_mode else "music"): [
                                 {
                                     "modality": "music",
-                                    "task": "music_generation",
-                                    "provider": "acemusic",
-                                    "model": "ace-step",
+                                    "task": "sound_generation" if sound_mode else "music_generation",
+                                    "provider": "stable-audio" if sound_mode else "acemusic",
+                                    "model": "stabilityai/stable-audio-open-small" if sound_mode else "ace-step",
                                     "content_type": "audio/wav",
                                     "format": "wav",
                                     "artifact_ref": {
@@ -673,6 +678,24 @@ def test_gateway_direct_music_generation_uses_runtime_child_run_contract(tmp_pat
         content = client.get(f"/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content", headers=headers)
         assert content.status_code == 200, content.text
         assert content.content == _WAV_BYTES
+
+        sound = client.post(
+            f"/api/gateway/runs/{run_id}/music/generate",
+            json={
+                "prompt": "short office notification chime",
+                "task": "text_to_audio",
+                "music_provider": "stable-audio",
+                "music_model": "stabilityai/stable-audio-open-small",
+                "format": "wav",
+                "request_id": "sound-1",
+            },
+            headers=headers,
+        )
+        assert sound.status_code == 200, sound.text
+        sound_body = sound.json()
+        assert sound_body["ok"] is True, sound_body
+        assert sound_body["child_run_id"] == "child-sound-1"
+        assert sound_body["music_artifact"]["filename"] == "sound.wav"
 
         rejected = client.post(
             f"/api/gateway/runs/{run_id}/music/generate",

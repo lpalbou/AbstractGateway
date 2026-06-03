@@ -69,7 +69,7 @@ def _write_min_bundle(*, bundles_dir: Path) -> tuple[str, str]:
     return bundle_id, flow_id
 
 
-def test_provider_model_resolver_prefers_request_then_flow_defaults_then_capability_route(
+def test_provider_model_resolver_prefers_request_then_capability_route_then_flow_defaults(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -93,7 +93,7 @@ def test_provider_model_resolver_prefers_request_then_flow_defaults_then_capabil
     manager = ConfigurationManager()
     assert manager.set_capability_default("output.text", provider="lmstudio", model="qwen-local")
 
-    route = provider_defaults.resolve_gateway_provider_model(purpose="test")
+    route = provider_defaults.resolve_gateway_provider_model(flow_defaults=("ollama", "stale-flow-model"), purpose="test")
     assert (route.provider, route.model, route.source) == (
         "lmstudio",
         "qwen-local",
@@ -194,6 +194,30 @@ def test_provider_model_resolver_uses_execution_host_capability_default(
         "qwen-local",
         "abstractcore.capability_defaults",
     )
+
+
+def test_provider_model_resolver_ignores_legacy_gateway_defaults_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from abstractgateway import provider_defaults
+
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+
+    legacy = tmp_path / "runtime" / "config" / "capability_defaults.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"version": 1, "routes": {"output.text": {"provider": "legacy-provider", "model": "legacy-model"}}}),
+        encoding="utf-8",
+    )
+
+    resolved = provider_defaults.resolve_gateway_provider_model(base_dir=tmp_path / "runtime", purpose="test")
+
+    assert resolved.provider is None
+    assert resolved.model is None
+    assert "No provider/model is configured for test" in str(resolved.error)
 
 
 def test_provider_model_resolver_falls_back_to_abstractcore_capability_default(

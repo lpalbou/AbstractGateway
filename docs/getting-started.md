@@ -54,21 +54,27 @@ export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 # the packaged shipped bundle directory containing basic-agent.
 # export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
 
-# Required by default: the server refuses to start without a token.
-export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+# User auth is the normal browser-console/browser-app path.
+export ABSTRACTGATEWAY_USER_AUTH=1
 export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
 
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
-OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs` (use **Authorize** for bearer token)
+On first local start, Gateway creates `default/admin`, writes the browser-login
+token to `$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token`, and prints it
+in the terminal. Use that token with user `admin` in `/console` and browser
+apps. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
+bearer-token deployments, but it is not a browser sign-in token.
+
+OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs` (use **Authorize** with a Gateway user token)
 
 Smoke checks:
 
 ```bash
 curl -sS "http://127.0.0.1:8080/api/health"
 
-curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")" \
   "http://127.0.0.1:8080/api/gateway/bundles"
 ```
 
@@ -78,7 +84,7 @@ If `bundles.items` is empty, either:
 - upload a bundle via the API:
 
 ```bash
-curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")" \
   -F "file=@./my-bundle@0.1.0.flow" \
   -F "overwrite=false" \
   -F "reload=true" \
@@ -97,7 +103,7 @@ abstractgateway-config status
 First, discover entrypoints from `GET /api/gateway/bundles`. Then start a run:
 
 ```bash
-curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" -H "Content-Type: application/json" \
+curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")" -H "Content-Type: application/json" \
   -d '{"bundle_id":"my-bundle","input_data":{"prompt":"Hello"}}' \
   "http://127.0.0.1:8080/api/gateway/runs/start"
 ```
@@ -111,7 +117,7 @@ Notes:
 To launch a workflow periodically, start a **scheduled parent run**:
 
 ```bash
-curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" -H "Content-Type: application/json" \
+curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")" -H "Content-Type: application/json" \
   -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Ping"},"start_at":"now","interval":"1h","repeat_count":3}' \
   "http://127.0.0.1:8080/api/gateway/runs/schedule"
 ```

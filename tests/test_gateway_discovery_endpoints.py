@@ -120,8 +120,8 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
         assert body.get("default_provider") == "ollama"
         assert body.get("default_model") == "llama3"
         items = body.get("items") or []
-        assert [p.get("id") for p in items] == ["lmstudio", "ollama"]
-        assert [p.get("name") for p in items] == ["lmstudio", "ollama"]
+        assert {"lmstudio", "ollama"} <= {p.get("id") for p in items}
+        assert {"lmstudio", "ollama"} <= {p.get("name") for p in items}
         assert body.get("catalog") == {
             "contract": "gateway_catalog_v1",
             "version": 1,
@@ -138,7 +138,8 @@ def test_discovery_tools_and_providers_are_deterministic(tmp_path: Path, monkeyp
         providers2 = client.get("/api/gateway/discovery/providers?include_models=true", headers=headers)
         assert providers2.status_code == 200, providers2.text
         items2 = providers2.json().get("items") or []
-        assert items2[0].get("models") == ["qwen"]
+        lmstudio_item = next(item for item in items2 if item.get("name") == "lmstudio")
+        assert lmstudio_item.get("models") == ["qwen"]
         assert providers2.json().get("catalog", {}).get("include_models") is True
 
         models = client.get("/api/gateway/discovery/providers/lmstudio/models", headers=headers)
@@ -181,7 +182,7 @@ def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, mon
     with client:
         providers = client.get("/api/gateway/discovery/providers?include_models=false", headers=headers)
         assert providers.status_code == 200, providers.text
-        assert [item.get("name") for item in providers.json().get("items") or []] == ["lmstudio"]
+        assert "lmstudio" in [item.get("name") for item in providers.json().get("items") or []]
         assert providers.json().get("catalog", {}).get("include_models") is False
 
         models = client.get("/api/gateway/discovery/providers/lmstudio/models", headers=headers)
@@ -199,6 +200,8 @@ def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, mon
             "provider_name": "lmstudio",
             "base_url": None,
             "provider_api_key": None,
+            "input_type": None,
+            "output_type": None,
             "timeout_s": 30.0,
         },
     ]
@@ -229,6 +232,39 @@ def test_discovery_provider_models_accepts_base_url_override(tmp_path: Path, mon
             "provider_name": "lmstudio",
             "base_url": "http://192.168.1.188:1234/v1",
             "provider_api_key": None,
+            "input_type": None,
+            "output_type": None,
+            "timeout_s": 30.0,
+        }
+    ]
+
+
+def test_discovery_provider_models_accepts_capability_filters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict] = []
+
+    class StubDiscoveryFacade:
+        def list_provider_models(self, provider_name: str, **kwargs):
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": ["vision-language"]}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        models = client.get(
+            "/api/gateway/discovery/providers/lmstudio/models?input_type=image&output_type=text",
+            headers=headers,
+        )
+
+    assert models.status_code == 200, models.text
+    assert models.json().get("models") == ["vision-language"]
+    assert calls == [
+        {
+            "provider_name": "lmstudio",
+            "base_url": None,
+            "provider_api_key": None,
+            "input_type": "image",
+            "output_type": "text",
             "timeout_s": 30.0,
         }
     ]

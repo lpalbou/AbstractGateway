@@ -34,8 +34,8 @@ export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 # the packaged shipped bundle directory containing basic-agent.
 # export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
 
-# Required by default: the server refuses to start without a token.
-export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+# User auth is the normal browser-console/browser-app path.
+export ABSTRACTGATEWAY_USER_AUTH=1
 # Browser-origin allowlist (glob patterns). Default allows localhost; customize when exposing remotely.
 export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
 
@@ -49,22 +49,27 @@ Smoke checks:
 ```bash
 curl -sS "http://127.0.0.1:8080/api/health"
 
-curl -sS -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")" \
   "http://127.0.0.1:8080/api/gateway/bundles"
 ```
 
 ## Hosted user auth
 
-Local mode keeps `ABSTRACTGATEWAY_AUTH_TOKEN` as a Gateway admin token. Hosted
-mode can enable file-backed user principals and one runtime/data plane per user:
+`ABSTRACTGATEWAY_AUTH_TOKEN` is a legacy Gateway-level bearer token for
+server/operator access. Browser apps and `/console` should use file-backed user
+principals and one runtime/data plane per user:
 
 ```bash
 export ABSTRACTGATEWAY_USER_AUTH=1
-export ABSTRACTGATEWAY_AUTH_TOKEN="<admin-bootstrap-token>"
+abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
-Admins manage users through `/api/gateway/admin/users`; generated user bearer
-tokens are returned once and stored only as hashes under
+On first start, Gateway creates `default/admin`, writes the browser-login token
+to `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token`, and prints the token
+when bound to a loopback host. Use user `admin` plus that `agw_...` token in
+`/console`, AbstractFlow, AbstractCode Web, or AbstractObserver. Admins manage
+users through `/api/gateway/admin/users`; generated user bearer tokens are
+returned once and stored only as hashes under
 `<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`. User clients call
 `GET /api/gateway/me` after connecting to confirm the resolved principal and
 routing mode. Gateway rejects duplicate runtime ids within the same tenant, so
@@ -78,10 +83,24 @@ Gateway also serves a built-in control-plane console at `/console`. The console
 uses the same browser-session contract as hosted apps: sign in with a Gateway
 user id and its token. Because the console is served by Gateway, it uses the
 current origin and does not ask for a Gateway URL. You can then manage the
-current account, admin-only user records
-with optional email metadata, retained runtime reservations, and capability defaults selected from
-Gateway-discovered provider/model catalogs without storing the bearer token in
-browser storage.
+current account, admin-only user records with optional email metadata, retained
+runtime reservations, provider connections, and multimodal capability defaults
+selected from available providers without storing the bearer token in browser
+storage. Provider endpoint URLs/API keys are configured in the Providers tab;
+the Multimodal Capabilities tab only selects provider/model pairs. Direct
+providers such as `openai` and `anthropic` appear automatically when their
+required keys are already available from scoped Core config or environment.
+Reachable default local servers such as LM Studio (`http://localhost:1234/v1`)
+and Ollama (`http://localhost:11434`) are also surfaced automatically when
+Gateway can discover models from them. The Sandbox tab runs quick smoke tests
+against the selected multimodal capability defaults in a chat surface, including
+text chat, drag-and-drop attachments, inline image/video previews, and audio
+players for voice, sound, and music artifacts.
+Input fallback routes are explicit: `input.voice` selects the STT backend for
+speech attachments, and `input.video` selects an overrideable video/VLM fallback
+when the text route cannot or should not handle frames directly. If those routes
+are unconfigured and the primary text model lacks native support, Gateway/Core
+return a configuration error instead of silently probing installed packages.
 
 Browser apps should not keep user bearer tokens. They exchange the user token at
 `POST /api/gateway/session/login` for an opaque Gateway browser session and use
@@ -141,11 +160,21 @@ then rotate it or create named users from the console.
 Configure framework model defaults through execution-host capability routes:
 
 ```bash
-docker exec abstractgateway abstractgateway-config set-default output.text \
+docker exec abstractgateway abstractgateway-config set-default input.text \
   --provider lmstudio \
   --model your-model \
   --base-url http://host.docker.internal:1234/v1
 ```
+
+In user-auth mode this writes the Gateway baseline Core config at
+`/data/config/abstractcore.json`. Per-user runtime overrides use the same Core
+schema under `/data/users/<tenant>/<runtime>/runtime/config/abstractcore.json`;
+use `abstractgateway-config set-default --scope user --user alice ...` for
+operator-side scripting.
+
+`output.text` is a compatibility alias for this same text route. Gateway reports
+it as a read-only view of `input.text`, so LLM text input and output do not drift
+to different default models.
 
 On Apple Silicon, keep Metal/MLX inference native on macOS and run the
 lightweight Gateway container as the transport/control plane. Point
@@ -204,8 +233,11 @@ Discovery note:
 Workflow/Core-backed capabilities:
 - Generated images and videos are available to Runtime workflows through
   Runtime's media backend integrations, and the direct Gateway image/video
-  routes use the same Runtime/Core output-selector contracts. Video generation
-  exposes child-run progress through `abstract.progress` ledger records.
+  routes use the same Runtime/Core output-selector contracts. Image,
+  image-edit, text-to-video, and image-to-video direct routes expose child-run
+  progress through `abstract.progress` ledger records; image progress is
+  best-effort and may be limited to start/complete for backends that do not
+  report step progress.
 - Generated music is available through Gateway's direct Runtime-backed child-run
   route, with provider/model discovery exposed through Gateway capability
   contracts and music catalog endpoints for higher apps.

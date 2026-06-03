@@ -14,9 +14,10 @@ from abstractruntime.core.runtime import EffectOutcome
 from abstractruntime.visualflow_compiler import compile_visualflow
 from abstractruntime.workflow_bundle import WorkflowBundle, WorkflowBundleError, open_workflow_bundle
 
-from ..capability_defaults import core_server_token
+from ..capability_defaults import core_server_token, gateway_capability_defaults_payload
 from ..memory_store import build_gateway_memory_embedder, open_gateway_memory_store
 from ..provider_endpoint_profiles import ProviderEndpointProfileError, resolve_effective_endpoint_profile
+from ..provider_connections import configured_provider_request_kwargs
 from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from ..workflow_deprecations import WorkflowDeprecatedError, WorkflowDeprecationStore
 from ..workflow_catalog import (
@@ -86,6 +87,13 @@ def _attach_provider_endpoint_profile_resolver(*, runtime: Runtime, data_root: P
             return None
         return profile.private_resolution()
 
+    setter = getattr(llm_client, "set_provider_endpoint_profile_resolver", None)
+    if callable(setter):
+        try:
+            setter(_resolve)
+            return
+        except Exception:
+            pass
     try:
         setattr(llm_client, "resolve_provider_endpoint_profile", _resolve)
     except Exception:
@@ -108,7 +116,11 @@ def _resolve_gateway_default_endpoint_profile(
     if profile is None:
         if provider_s.startswith("endpoint:"):
             raise WorkflowBundleError(f"Gateway provider endpoint profile {provider_s!r} is not configured or is disabled.")
-        return provider_s, {}, None
+        return provider_s, configured_provider_request_kwargs(
+            provider_s,
+            current_base_dir=data_root,
+            root_base_dir=catalog_root,
+        ), None
 
     llm_kwargs: Dict[str, Any] = {}
     if profile.base_url:
@@ -982,6 +994,7 @@ class WorkflowBundleGatewayHost:
                 try:
                     provider, model = resolve_gateway_provider_model(
                         flow_defaults=_scan_flows_for_llm_defaults(flows_by_namespaced_id),
+                        base_dir=Path(data_root),
                         purpose="bundle LLM execution",
                     ).require()
                 except ProviderModelConfigError as e:
@@ -1028,6 +1041,8 @@ class WorkflowBundleGatewayHost:
                         tool_executor=tool_executor,
                         prompt_cache_export_root_dir=data_root / "prompt_cache_exports",
                         extra_effect_handlers=extra_effect_handlers,
+                        core_config_file=data_root / "config" / "abstractcore.json",
+                        capability_defaults=gateway_capability_defaults_payload(base_dir=data_root),
                     )
                 if provider_override:
                     try:

@@ -62,6 +62,12 @@ from ..provider_endpoint_profiles import (
     profile_id_from_virtual_provider,
     resolve_effective_endpoint_profile,
 )
+from ..provider_connections import (
+    builtin_provider_connection_specs,
+    builtin_provider_public_row,
+    configured_builtin_provider_public_rows,
+    configured_provider_request_kwargs,
+)
 from .. import host_metrics
 from ..run_retention import (
     DraftRunPurgeOptions,
@@ -947,7 +953,13 @@ def _resolve_gateway_provider_model_or_400(
     purpose: str,
 ) -> tuple[str, str]:
     try:
-        return resolve_gateway_provider_model(provider=provider, model=model, purpose=purpose).require()
+        svc = get_gateway_service()
+        return resolve_gateway_provider_model(
+            provider=provider,
+            model=model,
+            base_dir=Path(svc.config.data_dir),
+            purpose=purpose,
+        ).require()
     except ProviderModelConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -7252,6 +7264,7 @@ class VideoGenerateResponse(BaseModel):
 
 class MusicGenerateRequest(BaseModel):
     prompt: str = Field(..., max_length=20000, description="Music generation prompt.")
+    task: Optional[str] = Field(default=None, max_length=64, description="Optional audio task override: text_to_music or text_to_audio.")
     provider: Optional[str] = Field(default=None, max_length=80, description="Optional LLM/runtime provider override.")
     model: Optional[str] = Field(default=None, max_length=240, description="Optional LLM/runtime model override.")
     music_provider: Optional[str] = Field(default=None, max_length=120, description="Optional music provider override.")
@@ -8020,7 +8033,7 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         request_id=request_id,
         child_run_id=str(child.run_id),
         image_artifact=image_ref,
-        event_name=None,
+        event_name="abstract.progress",
     )
 
 
@@ -8219,7 +8232,7 @@ async def image_edit(run_id: str, req: ImageEditRequest) -> ImageGenerateRespons
         request_id=request_id,
         child_run_id=str(child.run_id),
         image_artifact=image_ref,
-        event_name=None,
+        event_name="abstract.progress",
     )
 
 
@@ -8633,18 +8646,29 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
 
     fmt = str(getattr(req, "format", "wav") or "wav").strip().lower() or "wav"
     session_id = str(getattr(run, "session_id", "") or "")
+    task_value = str(getattr(req, "task", "") or "").strip().lower().replace("-", "_") or "text_to_music"
+    if task_value in {"music", "song", "t2m", "music_generation"}:
+        task_value = "text_to_music"
+    elif task_value in {"sound", "sfx", "sound_effect", "sound_effects", "audio", "audio_generation"}:
+        task_value = "text_to_audio"
+    if task_value not in {"text_to_music", "text_to_audio", "lyrics_to_music"}:
+        raise HTTPException(status_code=400, detail="task must be one of text_to_music, text_to_audio, or lyrics_to_music")
+    response_task = "music_generation" if task_value in {"text_to_music", "lyrics_to_music"} else "sound_generation"
+    response_modality = "music" if response_task == "music_generation" else "sound"
+
     tags = {
         "kind": "generated_media",
-        "modality": "music",
-        "task": "music_generation",
-        "source": "gateway_direct_music",
+        "modality": response_modality,
+        "task": response_task,
+        "provider_task": task_value,
+        "source": "gateway_direct_music" if response_modality == "music" else "gateway_direct_sound",
         "request_id": request_id,
         "session_id": session_id,
         "format": fmt,
     }
     output_spec: Dict[str, Any] = {
-        "modality": "music",
-        "task": "music_generation",
+        "modality": response_modality,
+        "task": task_value,
         "format": fmt,
         "run_id": str(getattr(run, "run_id", rid)),
         "tags": tags,
@@ -8716,9 +8740,11 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
             error=str(e),
         )
 
-    result = _gateway_completed_child_result(child, operation="music generation")
+    result = _gateway_completed_child_result(child, operation=f"{response_modality} generation")
     outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
-    items = outputs.get("music") if isinstance(outputs, dict) else None
+    items = None
+    if isinstance(outputs, dict):
+        items = outputs.get("music") or outputs.get("sound") or outputs.get("audio")
     item = next((entry for entry in items if isinstance(entry, dict)), None) if isinstance(items, list) else None
     if not isinstance(item, dict):
         return MusicGenerateResponse(
@@ -8739,10 +8765,10 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
         request_id=request_id,
         session_id=session_id,
         fallback_content_type=fallback_content_type,
-        fallback_filename=f"music.{fmt_norm}",
-        modality="music",
-        task="music_generation",
-        source="gateway_direct_music",
+        fallback_filename=f"{response_modality}.{fmt_norm}",
+        modality=response_modality,
+        task=response_task,
+        source="gateway_direct_music" if response_modality == "music" else "gateway_direct_sound",
     )
     if not isinstance(music_ref, dict):
         return MusicGenerateResponse(
@@ -9332,7 +9358,80 @@ def _endpoint_profile_store_for_scope(*, scope: str, principal: GatewayPrincipal
 
 
 def _effective_endpoint_profile_public_rows(*, current_base_dir: Path, root_base_dir: Path) -> list[Dict[str, Any]]:
-    return [profile.public_dict() for profile in effective_endpoint_profiles(base_dir=current_base_dir, root_base_dir=root_base_dir)]
+    profiles = effective_endpoint_profiles(base_dir=current_base_dir, root_base_dir=root_base_dir)
+    rows = [profile.public_dict() for profile in profiles]
+    rows.extend(
+        configured_builtin_provider_public_rows(
+            current_base_dir=current_base_dir,
+            root_base_dir=root_base_dir,
+            skip_profile_ids=[profile.id for profile in profiles],
+        )
+    )
+    discovery, _err = _gateway_abstractcore_discovery_facade()
+    if discovery is not None:
+        rows.extend(
+            _reachable_default_local_provider_rows(
+                discovery=discovery,
+                current_base_dir=current_base_dir,
+                root_base_dir=root_base_dir,
+                existing_ids=[str(row.get("id") or row.get("provider_id") or "") for row in rows],
+            )
+        )
+    rows.sort(key=lambda row: str(row.get("display_name") or row.get("provider_id") or row.get("id") or "").lower())
+    return rows
+
+
+def _local_provider_autoprobe_timeout_s(default: float = 1.5) -> float:
+    try:
+        value = float(os.getenv("ABSTRACTGATEWAY_PROVIDER_AUTOPROBE_TIMEOUT_S") or default)
+    except Exception:
+        value = float(default)
+    return max(0.2, min(value, 5.0))
+
+
+def _reachable_default_local_provider_rows(
+    *,
+    discovery: Any,
+    current_base_dir: Path,
+    root_base_dir: Path,
+    existing_ids: Iterable[str],
+) -> list[Dict[str, Any]]:
+    existing = {str(value or "").strip().lower() for value in existing_ids if str(value or "").strip()}
+    rows: list[Dict[str, Any]] = []
+    for spec in builtin_provider_connection_specs():
+        if spec.provider_id not in {"lmstudio", "ollama"} or spec.provider_id in existing:
+            continue
+        direct_kwargs = configured_provider_request_kwargs(
+            spec.provider_id,
+            current_base_dir=current_base_dir,
+            root_base_dir=root_base_dir,
+        )
+        base_url = str(direct_kwargs.get("base_url") or spec.default_base_url or "").strip().rstrip("/")
+        if not base_url:
+            continue
+        try:
+            payload = discovery.list_provider_models(
+                spec.provider_id,
+                base_url=base_url,
+                provider_api_key=direct_kwargs.get("api_key"),
+                timeout_s=_local_provider_autoprobe_timeout_s(),
+            )
+        except Exception:
+            continue
+        raw_models = payload.get("models") if isinstance(payload, dict) else None
+        models = _dedupe_strings([str(m).strip() for m in raw_models if isinstance(m, str) and str(m).strip()]) if isinstance(raw_models, list) else []
+        if not models:
+            continue
+        row = builtin_provider_public_row(
+            spec.provider_id,
+            api_key=str(direct_kwargs.get("api_key") or ""),
+            base_url=base_url,
+            source="reachable-default",
+            discovered_models=models,
+        )
+        if row:
+            rows.append(row)
+    return rows
 
 
 def _resolve_endpoint_profile_for_request(request: Request, provider: Any) -> Optional[Any]:
@@ -9346,7 +9445,8 @@ def _resolve_endpoint_profile_for_request(request: Request, provider: Any) -> Op
 
 def _gateway_provider_endpoint_items(*, current_base_dir: Path, root_base_dir: Path) -> list[Dict[str, Any]]:
     items: list[Dict[str, Any]] = []
-    for profile in effective_endpoint_profiles(base_dir=current_base_dir, root_base_dir=root_base_dir):
+    profiles = effective_endpoint_profiles(base_dir=current_base_dir, root_base_dir=root_base_dir)
+    for profile in profiles:
         if not profile.enabled:
             continue
         public = profile.public_dict()
@@ -9367,6 +9467,36 @@ def _gateway_provider_endpoint_items(*, current_base_dir: Path, root_base_dir: P
                 "api_key_set": bool(profile.api_key),
                 "scope": profile.scope,
                 "capabilities": list(profile.capabilities),
+            }
+        )
+    builtin_rows = configured_builtin_provider_public_rows(
+        current_base_dir=current_base_dir,
+        root_base_dir=root_base_dir,
+        skip_profile_ids=[profile.id for profile in profiles],
+    )
+    for public in builtin_rows:
+        if public.get("enabled") is False:
+            continue
+        provider_id = str(public.get("provider_id") or public.get("id") or "").strip()
+        if not provider_id:
+            continue
+        items.append(
+            {
+                "id": provider_id,
+                "name": provider_id,
+                "display_name": public.get("display_name") or provider_id,
+                "label": public.get("display_name") or provider_id,
+                "description": public.get("description") or "",
+                "provider": provider_id,
+                "provider_family": public.get("provider_family") or provider_id,
+                "virtual": False,
+                "virtual_provider": False,
+                "provider_endpoint_profile": public,
+                "models": list(public.get("allowed_models") or []),
+                "base_url_configured": bool(public.get("base_url_configured")),
+                "api_key_set": bool(public.get("api_key_set")),
+                "scope": public.get("scope") or "core",
+                "capabilities": list(public.get("capabilities") or []),
             }
         )
     return items
@@ -11001,6 +11131,8 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "provider_models_task": "text_to_image",
                 "durability": "runtime_child_run",
                 "returns_child_run_id": True,
+                "progress_event_name": "abstract.progress",
+                "progress_scope": "child_run_ledger",
                 "formats": ["png", "jpeg", "webp"],
                 "max_image_bytes": _gateway_image_generation_max_bytes(),
                 **(
@@ -11033,6 +11165,8 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "mask_supported": True,
                 "durability": "runtime_child_run",
                 "returns_child_run_id": True,
+                "progress_event_name": "abstract.progress",
+                "progress_scope": "child_run_ledger",
                 "formats": ["png", "jpeg", "webp"],
                 "max_image_bytes": _gateway_image_generation_max_bytes(),
                 **(
@@ -11750,15 +11884,36 @@ async def audio_speech_models_catalog(
 ) -> Dict[str, Any]:
     """List TTS model ids through the Gateway Runtime discovery facade."""
     if providers_only:
-        out = _filter_voice_catalog_response(
-            _static_voice_providers_only_response(),
-            provider=provider,
-            model=None,
-            providers_only=True,
-        )
+        discovery, err = _gateway_abstractcore_discovery_facade()
+        if err or discovery is None or not callable(getattr(discovery, "get_voice_catalog", None)):
+            out = _filter_voice_catalog_response(
+                _static_voice_providers_only_response(),
+                provider=provider,
+                model=None,
+                providers_only=True,
+            )
+        else:
+            try:
+                out = _filter_voice_catalog_response(
+                    _runtime_discovery_payload(
+                        discovery.get_voice_catalog(
+                            base_url=base_url,
+                            provider_api_key=_request_provider_api_key(request),
+                            provider=provider,
+                            model=None,
+                            providers_only=True,
+                        )
+                    ),
+                    provider=provider,
+                    model=None,
+                    providers_only=True,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=str(e)) from e
+        out.setdefault("models", [])
         out["models"] = []
-        out["models_by_provider"] = {}
-        out["tts_models_by_provider"] = {}
+        out.setdefault("models_by_provider", {})
+        out.setdefault("tts_models_by_provider", {})
         return _gateway_catalog_response(
             out,
             kind="providers",
@@ -11837,7 +11992,42 @@ async def audio_transcription_models_catalog(
 ) -> Dict[str, Any]:
     """List STT model ids through the Gateway Runtime discovery facade."""
     if providers_only:
-        out = _static_transcription_providers_only_response(provider)
+        discovery, err = _gateway_abstractcore_discovery_facade()
+        if err or discovery is None or not callable(getattr(discovery, "get_voice_catalog", None)):
+            out = _static_transcription_providers_only_response(provider)
+        else:
+            try:
+                voice_out = _filter_voice_catalog_response(
+                    _runtime_discovery_payload(
+                        discovery.get_voice_catalog(
+                            base_url=base_url,
+                            provider_api_key=_request_provider_api_key(request),
+                            provider=provider,
+                            model=None,
+                            providers_only=True,
+                        )
+                    ),
+                    provider=provider,
+                    model=None,
+                    providers_only=True,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=str(e)) from e
+            stt_providers = _dedupe_strings(
+                [str(x).strip() for x in (voice_out.get("stt_providers") or []) if isinstance(x, str) and str(x).strip()]
+            )
+            out = dict(voice_out)
+            out["kind"] = "stt_providers"
+            out["available"] = bool(stt_providers)
+            out["providers"] = stt_providers
+            out["available_providers"] = stt_providers
+            out["stt_providers"] = stt_providers
+            out["tts_providers"] = []
+            out["models"] = []
+            out["models_by_provider"] = {}
+            out["stt_models_by_provider"] = {}
+            out["provider_models"] = []
+            out["active_provider"] = stt_providers[0] if stt_providers else None
         return _gateway_catalog_response(
             out,
             kind="providers",
@@ -12321,7 +12511,11 @@ async def discovery_providers(
             "default_source": payload.get("source") if isinstance(payload, dict) else None,
         }
     else:
-        defaults = resolve_gateway_provider_model(purpose="provider discovery defaults")
+        svc = get_gateway_service()
+        defaults = resolve_gateway_provider_model(
+            base_dir=Path(svc.config.data_dir),
+            purpose="provider discovery defaults",
+        )
         if defaults.provider and defaults.model:
             body = {
             "items": items,
@@ -12366,11 +12560,20 @@ async def discovery_provider_models(
         default=None,
         description="Optional upstream provider base URL used for model discovery.",
     ),
+    input_type: Optional[str] = Query(
+        default=None,
+        description="Optional model input capability filter: text, image, audio, or video.",
+    ),
+    output_type: Optional[str] = Query(
+        default=None,
+        description="Optional model output capability filter: text or embeddings.",
+    ),
 ) -> Dict[str, Any]:
     """List available models for a provider (best-effort; may require provider connectivity)."""
     prov = str(provider_name or "").strip()
     if not prov:
         raise HTTPException(status_code=400, detail="provider_name is required")
+    current_base, root_base = _gateway_profile_dirs()
     profile = _resolve_endpoint_profile_for_request(request, prov)
     discovery, err = _gateway_abstractcore_discovery_facade()
     if profile is not None:
@@ -12378,6 +12581,32 @@ async def discovery_provider_models(
         if profile.allowed_models:
             models = _dedupe_strings([str(m) for m in profile.allowed_models if str(m).strip()])
             models.sort()
+            filter_requested = bool(str(input_type or "").strip() or str(output_type or "").strip())
+            filter_error = ""
+            if filter_requested:
+                if err or discovery is None:
+                    filter_error = err or "Gateway runtime does not expose AbstractCore discovery helpers."
+                    models = []
+                else:
+                    try:
+                        payload = discovery.list_provider_models(
+                            profile.provider_family,
+                            base_url=profile.base_url or None,
+                            provider_api_key=profile.api_key or _request_provider_api_key(request),
+                            input_type=input_type,
+                            output_type=output_type,
+                            timeout_s=_provider_models_timeout_s(),
+                        )
+                        discovered = payload.get("models") if isinstance(payload, dict) else None
+                        discovered_set = {
+                            str(m).strip().lower()
+                            for m in discovered
+                            if isinstance(m, str) and str(m).strip()
+                        } if isinstance(discovered, list) else set()
+                        models = [model for model in models if model.lower() in discovered_set]
+                    except Exception as e:
+                        filter_error = str(e)
+                        models = []
             body = {
                 "provider": profile.virtual_provider_id,
                 "routed_provider": profile.provider_family,
@@ -12387,6 +12616,8 @@ async def discovery_provider_models(
                 "source": "abstractgateway.provider_endpoint_profiles",
                 "provider_endpoint_profile": profile_public,
             }
+            if filter_error:
+                body["error"] = filter_error
             return _gateway_catalog_response(
                 body,
                 kind="models",
@@ -12417,6 +12648,8 @@ async def discovery_provider_models(
                 profile.provider_family,
                 base_url=profile.base_url or None,
                 provider_api_key=profile.api_key or _request_provider_api_key(request),
+                input_type=input_type,
+                output_type=output_type,
                 timeout_s=_provider_models_timeout_s(),
             )
         except Exception as e:
@@ -12462,10 +12695,17 @@ async def discovery_provider_models(
             provider=prov,
         )
     try:
+        direct_kwargs = configured_provider_request_kwargs(
+            prov,
+            current_base_dir=current_base,
+            root_base_dir=root_base,
+        )
         payload = discovery.list_provider_models(
             prov,
-            base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            base_url=base_url or direct_kwargs.get("base_url"),
+            provider_api_key=_request_provider_api_key(request) or direct_kwargs.get("api_key"),
+            input_type=input_type,
+            output_type=output_type,
             timeout_s=_provider_models_timeout_s(),
         )
     except Exception as e:
@@ -17866,6 +18106,21 @@ class _GatewayProviderEndpointProfileModelDiscoveryRequest(BaseModel):
     api_key: Optional[str] = Field(default=None, max_length=65536)
 
 
+class _GatewaySandboxGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    capability: str = Field(default="output.text", max_length=80)
+    provider: str = Field(..., min_length=1, max_length=120)
+    model: str = Field(..., min_length=1, max_length=320)
+    prompt: str = Field(..., min_length=1, max_length=20000)
+    system_prompt: Optional[str] = Field(default=None, max_length=12000)
+    messages: Optional[List[Dict[str, Any]]] = Field(default=None)
+    attachments: Optional[List[Dict[str, Any]]] = Field(default=None)
+    client_context: Optional[Dict[str, Any]] = Field(default=None)
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=32000)
+
+
 class _GatewaySessionPromptCacheTarget(_GatewayPromptCacheTarget):
     bundle_id: Optional[str] = Field(default=None, max_length=160, description="Optional workflow bundle id.")
     bundle_version: Optional[str] = Field(default=None, max_length=80, description="Optional workflow bundle version.")
@@ -18504,6 +18759,7 @@ async def provider_endpoint_profiles_create(request: Request, req: _GatewayProvi
 async def provider_endpoint_profiles_discover_models(request: Request, req: _GatewayProviderEndpointProfileModelDiscoveryRequest) -> Dict[str, Any]:
     """Discover models for a draft or saved provider endpoint profile without exposing secrets."""
     _principal_from_request(request)
+    current_base, root_base = _gateway_profile_dirs()
     profile = None
     if isinstance(req.profile_id, str) and req.profile_id.strip():
         profile = _resolve_endpoint_profile_for_request(request, req.profile_id.strip()) or _resolve_endpoint_profile_for_request(
@@ -18517,7 +18773,14 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
         body_api_key = normalize_api_key(req.api_key) if req.api_key is not None else ""
     except ProviderEndpointProfileError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    provider_api_key = body_api_key or (profile.api_key if profile is not None else "") or _request_provider_api_key(request)
+    direct_kwargs = configured_provider_request_kwargs(
+        provider_family,
+        current_base_dir=current_base,
+        root_base_dir=root_base,
+    )
+    provider_api_key = body_api_key or (profile.api_key if profile is not None else "") or _request_provider_api_key(request) or direct_kwargs.get("api_key")
+    if not base_url and isinstance(direct_kwargs.get("base_url"), str):
+        base_url = str(direct_kwargs.get("base_url") or "").strip()
 
     discovery, err = _gateway_abstractcore_discovery_facade()
     profile_public = profile.public_dict() if profile is not None else None
@@ -18566,6 +18829,184 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
     if isinstance(payload, dict) and payload.get("error"):
         body["error"] = str(payload.get("error"))
     return body
+
+
+def _sandbox_provider_resolution(request: Request, provider: str) -> tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+    current_base, root_base = _gateway_profile_dirs()
+    profile = _resolve_endpoint_profile_for_request(request, provider)
+    if profile is not None:
+        kwargs: Dict[str, Any] = {}
+        if profile.base_url:
+            kwargs["base_url"] = profile.base_url
+        if profile.api_key:
+            kwargs["api_key"] = profile.api_key
+        return profile.provider_family, kwargs, profile.public_dict()
+    kwargs = configured_provider_request_kwargs(
+        provider,
+        current_base_dir=current_base,
+        root_base_dir=root_base,
+    )
+    return str(provider or "").strip(), kwargs, None
+
+
+def _sandbox_messages(req: _GatewaySandboxGenerateRequest) -> list[Dict[str, str]]:
+    messages: list[Dict[str, str]] = []
+    for item in req.messages or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = item.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        messages.append({"role": role, "content": _clamp_text(content.strip(), max_len=12000)})
+    messages.append({"role": "user", "content": _clamp_text(str(req.prompt or "").strip(), max_len=20000)})
+    return messages[-12:]
+
+
+def _sandbox_media_refs(req: _GatewaySandboxGenerateRequest) -> Optional[list[Dict[str, Any]]]:
+    out: list[Dict[str, Any]] = []
+    for item in req.attachments or []:
+        if not isinstance(item, dict):
+            continue
+        ref = dict(item)
+        nested = ref.get("artifact")
+        if isinstance(nested, dict):
+            ref = dict(nested)
+        artifact_id = ref.get("$artifact") or ref.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id.strip():
+            continue
+        ref["$artifact"] = artifact_id.strip()
+        ref["artifact_id"] = artifact_id.strip()
+        content_type = str(ref.get("content_type") or ref.get("mime_type") or ref.get("mime") or "").strip()
+        if content_type:
+            ref["content_type"] = content_type
+            ref.setdefault("mime_type", content_type)
+        modality = str(ref.get("modality") or "").strip().lower()
+        if not modality and content_type:
+            modality = _artifact_modality_from_content_type(content_type)
+            ref["modality"] = modality
+        if modality in {"image", "audio", "video", "text"}:
+            ref.setdefault("type", modality)
+        out.append(ref)
+    return out or None
+
+
+def _sandbox_client_context(req: _GatewaySandboxGenerateRequest) -> Optional[Dict[str, Any]]:
+    raw = req.client_context if isinstance(req.client_context, dict) else None
+    if not raw:
+        return None
+
+    def _text(key: str, *, max_len: int = 160) -> str:
+        value = raw.get(key)
+        if not isinstance(value, str):
+            return ""
+        return value.strip()[:max_len]
+
+    out: Dict[str, Any] = {"source": "browser_untrusted"}
+    local_datetime = _text("local_datetime", max_len=80)
+    if local_datetime and re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})?$", local_datetime):
+        out["local_datetime"] = local_datetime
+    utc_datetime = _text("utc_datetime", max_len=80)
+    if utc_datetime and re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$", utc_datetime):
+        out["utc_datetime"] = utc_datetime
+    timezone_name = _text("timezone", max_len=120)
+    if timezone_name and re.match(r"^[A-Za-z0-9_+./-]+$", timezone_name):
+        out["timezone"] = timezone_name
+    locale_name = _text("locale", max_len=80)
+    if locale_name and re.match(r"^[A-Za-z0-9_@.+-]+$", locale_name):
+        out["locale"] = locale_name
+    country = _text("country", max_len=8).upper()
+    if len(country) == 2 and country.isalpha():
+        out["country"] = country
+    locale_country = _text("locale_country", max_len=8).upper()
+    if len(locale_country) == 2 and locale_country.isalpha():
+        out["locale_country"] = locale_country
+    offset = raw.get("timezone_offset_minutes")
+    if isinstance(offset, (int, float)) and -14 * 60 <= float(offset) <= 14 * 60:
+        out["timezone_offset_minutes"] = int(offset)
+
+    return out if len(out) > 1 else None
+
+
+@router.post("/sandbox/generate")
+async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerateRequest) -> Dict[str, Any]:
+    """Run a small console sandbox generation against a selected provider/model."""
+    principal = _principal_from_request(request)
+    capability = str(req.capability or "output.text").strip().lower()
+    if capability not in {"input.text", "output.text", "text", "chat"}:
+        raise HTTPException(status_code=400, detail="The console sandbox currently supports text chat for provider/model smoke tests. Use configured media routes for generated media.")
+    provider = str(req.provider or "").strip()
+    model = str(req.model or "").strip()
+    if not provider or not model:
+        raise HTTPException(status_code=400, detail="provider and model are required")
+    routed_provider, llm_kwargs, profile_public = _sandbox_provider_resolution(request, provider)
+    params: Dict[str, Any] = {"temperature": 0.2}
+    if req.temperature is not None:
+        params["temperature"] = float(req.temperature)
+    if req.max_tokens is not None:
+        params["max_tokens"] = int(req.max_tokens)
+    trace_metadata: Dict[str, Any] = {
+        "user_id": str(principal.user_id or ""),
+        "tenant_id": str(principal.tenant_id or "default"),
+        "source": "gateway_console_sandbox",
+    }
+    client_context = _sandbox_client_context(req)
+    if client_context:
+        trace_metadata["client_context"] = client_context
+    params["trace_metadata"] = trace_metadata
+    try:
+        from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
+
+        svc = get_gateway_service()
+        current_base, root_base = _gateway_profile_dirs()
+        artifact_store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+        media = _sandbox_media_refs(req)
+        capability_defaults = gateway_capability_defaults_payload(base_dir=current_base)
+        llm = LocalAbstractCoreLLMClient(
+            provider=routed_provider,
+            model=model,
+            llm_kwargs=llm_kwargs or None,
+            artifact_store=artifact_store,
+            core_config_file=current_base / "config" / "abstractcore.json",
+            capability_defaults=capability_defaults,
+        )
+        resolver = getattr(llm, "set_provider_endpoint_profile_resolver", None)
+        if callable(resolver):
+            def _resolve_profile(provider_id: str) -> Optional[Dict[str, Any]]:
+                try:
+                    profile = resolve_effective_endpoint_profile(provider_id, base_dir=current_base, root_base_dir=root_base)
+                except ProviderEndpointProfileError:
+                    return None
+                if profile is None or not profile.enabled:
+                    return None
+                return profile.private_resolution()
+
+            resolver(_resolve_profile)
+        result = await asyncio.to_thread(
+            llm.generate,
+            prompt="",
+            messages=_sandbox_messages(req),
+            media=media,
+            system_prompt=str(req.system_prompt or "").strip() or "You are a concise test assistant in the AbstractGateway console sandbox.",
+            params=params,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    text = str(result.get("content") or result.get("text") or result.get("response") or "").strip() if isinstance(result, dict) else str(result or "").strip()
+    return {
+        "ok": True,
+        "capability": capability,
+        "provider": provider,
+        "routed_provider": routed_provider,
+        "model": model,
+        "response": text,
+        "usage": result.get("usage") if isinstance(result, dict) else None,
+        "provider_endpoint_profile": profile_public,
+    }
 
 
 @router.put("/config/provider-endpoint-profiles/{profile_id}")

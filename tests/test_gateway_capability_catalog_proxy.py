@@ -241,6 +241,44 @@ def test_speech_provider_only_catalog_uses_fast_static_provider_path(
     assert body["items"] == [{"id": "omnivoice", "label": "omnivoice", "provider": "omnivoice", "name": "omnivoice"}]
 
 
+def test_speech_provider_only_catalog_uses_runtime_voice_catalog_when_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {
+                "available": True,
+                "providers": ["remote-tts"],
+                "tts_providers": ["remote-tts"],
+                "stt_providers": [],
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/audio/speech/models?providers_only=true", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["providers"] == ["remote-tts"]
+    assert body["tts_providers"] == ["remote-tts"]
+    assert body["items"] == [{"id": "remote-tts", "label": "remote-tts", "provider": "remote-tts", "name": "remote-tts"}]
+    assert calls == [
+        {
+            "base_url": None,
+            "provider_api_key": None,
+            "provider": None,
+            "model": None,
+            "providers_only": True,
+        }
+    ]
+
+
 def test_transcription_provider_only_catalog_uses_fast_static_stt_provider_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -272,6 +310,46 @@ def test_transcription_provider_only_catalog_uses_fast_static_stt_provider_path(
     assert body["stt_providers"] == ["faster-whisper"]
     assert body["items"] == [
         {"id": "faster-whisper", "label": "faster-whisper", "provider": "faster-whisper", "name": "faster-whisper"}
+    ]
+
+
+def test_transcription_provider_only_catalog_uses_runtime_voice_catalog_when_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {
+                "available": True,
+                "providers": ["remote-tts"],
+                "tts_providers": ["remote-tts"],
+                "stt_providers": ["remote-stt"],
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/audio/transcriptions/models?providers_only=true", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["providers"] == ["remote-stt"]
+    assert body["available_providers"] == ["remote-stt"]
+    assert body["tts_providers"] == []
+    assert body["stt_providers"] == ["remote-stt"]
+    assert body["items"] == [{"id": "remote-stt", "label": "remote-stt", "provider": "remote-stt", "name": "remote-stt"}]
+    assert calls == [
+        {
+            "base_url": None,
+            "provider_api_key": None,
+            "provider": None,
+            "model": None,
+            "providers_only": True,
+        }
     ]
 
 

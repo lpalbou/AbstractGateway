@@ -46,9 +46,11 @@ abstractgateway config status --json
 
 It reports Gateway auth/data/store/runtime defaults, Core-server handoff
 configuration, memory-store selection, and package readiness. `init` writes a
-private env file with a generated Gateway token. General Core defaults remain
-available through `abstractcore-config`; hosted reusable endpoint profiles can
-also be managed by the Gateway Console and API.
+private env file for server/operator deployments. Gateway Console (`/console`)
+is the preferred place to configure provider connections, provider API keys,
+endpoint base URLs, users, and Gateway/user defaults. Provider URLs and keys
+belong to the Providers tab; the Multimodal Capabilities tab only chooses an
+available provider and a discovered model.
 `bootstrap-admin` is the non-interactive setup path used by Docker images:
 when user auth is enabled, it ensures `default/admin` exists, stores only the
 token hash in `auth/users.json`, and can write the raw bootstrap token to
@@ -70,16 +72,24 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
 
 ### Authentication and user routing
 
-Default local mode uses a Gateway bearer token:
+The normal browser-console/browser-app path uses Gateway user auth:
+
+- `ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_MODE=users`: enable
+  file-backed user principals and per-principal runtime routing
+- `abstractgateway serve`: when user auth is enabled, ensures `default/admin`
+  exists and writes the first-login token to
+  `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token`
+
+Legacy server/operator mode uses a Gateway bearer token:
 
 - `ABSTRACTGATEWAY_AUTH_TOKEN`: single Gateway admin token
 - `ABSTRACTGATEWAY_AUTH_TOKENS`: comma-separated Gateway admin tokens
 
-Hosted user-auth mode resolves bearer tokens to Gateway principals and routes
-each principal to a separate service/data plane:
+That legacy bearer token maps to `local-admin` and is not accepted by browser
+sign-in flows such as `/console` or AbstractFlow. User-auth mode resolves
+Gateway user bearer tokens to principals and routes each principal to a separate
+service/data plane:
 
-- `ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_MODE=users`: enable
-  file-backed user principals and per-principal runtime routing
 - `ABSTRACTGATEWAY_USER_AUTH_AUTO=1`: compatibility mode that also enables
   user auth when the registry file already exists
 - `ABSTRACTGATEWAY_USERS_FILE`: optional user registry path; default:
@@ -99,7 +109,7 @@ each principal to a separate service/data plane:
 - `/console`: built-in same-origin Gateway Console for session sign-in with
   Gateway user + token, account/runtime summary, admin user management, optional
   account email metadata, token rotation, retained runtime transfer/purge, and
-  capability defaults selected from Gateway-discovered provider/model catalogs
+  multimodal capability defaults selected from available providers
 
 User records include `tenant_id`, `user_id`, roles/scopes, enabled state, and a
 `runtime_id`. The registry stores password-grade bearer-token hashes only.
@@ -134,50 +144,120 @@ AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
 current user/session in hosted mode. They should not share one app-server
 Gateway token for all users.
 
-### Per-principal capability defaults
+### Runtime-scoped Core capability defaults
 
 In hosted user-auth mode, `GET /api/gateway/config/capability-defaults` returns
-the execution-host Core capability routes plus the Gateway/root baseline and any
-defaults configured for the current Gateway principal. The bootstrap
+the execution-host Core capability routes plus the Gateway/root baseline and
+any defaults configured for the current Gateway principal. The bootstrap
 `default/admin` principal edits the Gateway baseline when it uses the default
 runtime. Normal user writes to
 `PUT /api/gateway/config/capability-defaults/{kind}/{modality}` are stored under
-that principal's Gateway data plane and override the Gateway baseline only for
-that user:
+that principal's Gateway data plane as a Core config file and override the
+Gateway baseline only for that user:
 
 ```text
-<principal-runtime>/config/capability_defaults.json
+$ABSTRACTGATEWAY_DATA_DIR/config/abstractcore.json
+$ABSTRACTGATEWAY_DATA_DIR/users/<tenant>/<runtime>/runtime/config/abstractcore.json
 ```
 
 This lets operators set a Gateway default and lets hosted users choose
 remote-provider defaults for their own runtime without mutating the operator's
-global AbstractCore config or other users. The route schema and normalization
-still come from AbstractCore capability-default contracts. Provider API keys and
-raw secrets are not returned by these routes and require a separate per-request
-secret-injection boundary before hosted user secrets can be treated as fully
-isolated execution credentials.
+global AbstractCore config or other users. The route schema, normalization, and
+file format come from AbstractCore capability-default contracts. Gateway no
+longer reads or writes `config/capability_defaults.json`; existing overlay
+files are ignored. Recreate those defaults with
+`abstractgateway-config set-default ...`. Provider API keys and raw secrets are
+not returned by these routes. Use Gateway provider connections when a route
+default needs an API key or custom base URL.
 
-### Provider endpoint profiles
+CLI examples:
+
+```bash
+# Gateway baseline Core default
+abstractgateway-config set-default input.text \
+  --provider endpoint:openai-prod \
+  --model gpt-4.1
+
+# One user's runtime Core override
+abstractgateway-config set-default input.text \
+  --scope user \
+  --tenant default \
+  --user alice \
+  --provider endpoint:alice-openai \
+  --model gpt-4.1
+
+abstractgateway-config defaults --scope user --user alice
+```
+
+`input.text` is the canonical text LLM route. `output.text` is reported as a
+read-only derived view of `input.text`, and CLI/API writes to `output.text` are
+canonicalized to `input.text` for compatibility. `input.image` is a fallback
+image-understanding route only: when the selected `input.text` model is known
+from AbstractCore model capabilities to accept image input, the console marks
+`input.image` as covered by `input.text` and disables separate editing.
+`input.video` follows the same coverage model when the text model can handle
+visual frames, but it remains overrideable so operators can choose a dedicated
+video/VLM route. `input.voice` is the speech-to-text fallback route; if it is
+not configured and the selected text model cannot accept audio natively,
+Gateway/Core fail clearly instead of using a hidden installed STT backend.
+`input.sound` is for non-speech audio understanding and is not used as STT.
+Audio-language candidates such as `qwen3-omni-30b-a3b-instruct`,
+`qwen3-omni-30b-a3b-captioner`, `qwen2.5-omni-7b`, and
+`qwen2-audio-7b-instruct` are registry-known options when the configured
+provider can serve them. Qwen3.6 text/image/video defaults should not be treated
+as sound or music understanding models.
+
+### Provider connections
 
 Gateway Console and `POST /api/gateway/config/provider-endpoint-profiles` let
-signed-in users define reusable provider endpoint profiles. A profile includes a
-stable id, display name, description, provider family such as
-`openai-compatible`, optional base URL, optional API key, capabilities, and an
-optional model allowlist. The raw API key is write-only: responses include only
-`api_key_set` and a short fingerprint.
+signed-in users define reusable provider connections through a guided setup
+flow for `openai`, `anthropic`, `openrouter`, `portkey`, `lmstudio`, `ollama`,
+or `openai-compatible`. A connection includes a stable id, display name,
+description, optional base URL, optional API key, and optional advanced model
+allowlist. The raw API key is write-only: responses include only `api_key_set`
+and a short fingerprint. AbstractCore owns model capability metadata, so normal
+setup does not ask users to classify models manually.
 
-For OpenAI-compatible and other discoverable endpoints, the console can call the
-endpoint through `POST /api/gateway/config/provider-endpoint-profiles/discover-models`
-and populate a model picker. Leave all models unselected to keep live discovery
-active, or select one or more models to store a fixed allowlist.
+The console's **Test** action calls the selected provider through
+`POST /api/gateway/config/provider-endpoint-profiles/discover-models` and
+previews model discovery before saving. Leave the advanced model restriction
+empty to keep live discovery active, or select one or more models to store a
+fixed allowlist. The **Multimodal Capabilities** tab shows configured provider
+connections and direct providers that are already usable from scoped
+AbstractCore config or environment variables. It does not collect endpoint base
+URLs or API keys. Reachable default local servers such as LM Studio and Ollama
+also appear automatically when Gateway can discover models from their
+configured/default endpoint.
 
 Enabled profiles appear in `GET /api/gateway/discovery/providers` as virtual
-provider ids such as `endpoint:office-vllm`. Use that virtual id in Flow nodes
-or Gateway capability defaults. At runtime the Gateway host resolves the virtual
-provider to the real provider family, base URL, and API key for the transient
-AbstractRuntime call; workflow JSON and browser storage do not contain the raw
-secret. Normal users can manage user-scoped profiles. Gateway-scoped profiles
-require an admin principal.
+provider ids such as `endpoint:office-vllm`. Direct configured providers such
+as `openai` or `anthropic` also appear automatically when their required API
+key is available from scoped Core config or process environment. Use those
+provider ids in Flow nodes or Gateway capability defaults. At runtime the
+Gateway host resolves virtual providers to the real provider family, base URL,
+and API key for the transient AbstractRuntime call; direct providers use the
+scoped Core config/environment already available to the execution host.
+Workflow JSON and browser storage do not contain the raw secret. Normal users
+can manage user-scoped profiles. Gateway-scoped profiles require an admin
+principal.
+
+The console **Sandbox** tab reuses this configuration. It tests the selected
+multimodal capability default rather than an ad hoc provider/model pair. Text
+chat uses the configured text route, and generated media tests use configured
+routes such as `output.image`, `output.voice`, `output.sound`, `output.music`,
+or `output.video`. The Sandbox renders generated images, videos, voice, sound,
+and music artifacts inline when the route completes, while keeping artifact
+links available for opening the raw content. Text chat can include uploaded
+attachments such as images, audio, video, PDFs, Markdown, or text documents.
+Uploaded attachments are stored as Gateway artifacts and then materialized by
+Runtime into provider-ready media for AbstractCore, so vision-capable
+OpenAI-compatible text routes receive image uploads as native multimodal
+`image_url` content. Sandbox text turns also send bounded browser-local
+grounding context, including local datetime, timezone, timezone offset, and
+locale. Runtime may use that browser context for prompt grounding only; it keeps
+server-derived context as provenance and never uses browser metadata for auth,
+runtime routing, or credential selection. Country grounding is inferred from the
+browser timezone when possible, with locale only as a fallback.
 
 ### Workspace policy (filesystem scope)
 
@@ -244,9 +324,10 @@ Evidence: `src/abstractgateway/config.py`, `src/abstractgateway/runner.py`.
 
 Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.
 
-- `output.text` capability route
+- `input.text` capability route
   Default text route for LLM execution and Gateway LLM helper endpoints. Configure it through
-  `abstractgateway-config set-default output.text ...` or `abstractcore --set-global-default ...`.
+  `abstractgateway-config set-default input.text ...` or
+  `abstractcore config set-default input.text ...`.
   If no pair is configured, helpers return a clear configuration error instead of falling back to a
   hardcoded model.
   Evidence: `src/abstractgateway/provider_defaults.py`, `src/abstractgateway/hosts/bundle_host.py`
@@ -340,7 +421,7 @@ proxy to a remote AbstractCore server).
 Local heavy engines remain explicit opt-ins in the provider packages; Gateway
 does not implicitly install them.
 
-- `output.text` capability route: default text model for bundle LLM nodes
+- `input.text` capability route: default text model for bundle LLM nodes
 - `OPENAI_BASE_URL` / `OPENAI_API_KEY`: generic OpenAI-compatible text endpoint for AbstractCore providers
   - Apple/MLX Docker deployments should point the lightweight Gateway container
     at host-native inference, for example
@@ -360,10 +441,17 @@ does not implicitly install them.
 - `GET /api/gateway/audio/music/models`: proxies AbstractCore `/v1/audio/music/models` when configured.
 - `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured.
 - `GET /api/gateway/vision/models`: reports locally known/cached AbstractVision model ids when the in-process capability path is available.
-- `POST /api/gateway/runs/{run_id}/images/edit`: creates a durable Runtime child run for image-to-image edits and optional mask-guided edits.
+- `POST /api/gateway/runs/{run_id}/images/generate`: creates a durable Runtime child run for text-to-image and returns an artifact-backed image result. Optional `size`/`width`/`height` values are passed through only when the client supplies them.
+- `POST /api/gateway/runs/{run_id}/images/edit`: creates a durable Runtime child run for image-to-image edits and optional mask-guided edits. Optional `size`/`width`/`height` values are passed through only when the client supplies them.
 - `POST /api/gateway/runs/{run_id}/videos/generate`: creates a durable Runtime child run for text-to-video and returns an artifact-backed video result.
 - `POST /api/gateway/runs/{run_id}/videos/from_image`: creates a durable Runtime child run for image-to-video and returns an artifact-backed video result.
 - `POST /api/gateway/runs/{run_id}/music/generate`: creates a durable Runtime child run and returns an artifact-backed music result for thin clients.
+
+Direct image, image-edit, text-to-video, and image-to-video child runs advertise
+`event_name=abstract.progress`. Thin clients should stream the returned
+`child_run_id` ledger and render progress when the backend reports it; image
+backends that do not expose step progress still emit at least a start record and
+then the final artifact.
 
 Core catalog proxy settings:
 

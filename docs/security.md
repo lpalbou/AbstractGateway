@@ -8,18 +8,25 @@ Notes:
 - `/api/triage/action/*` uses signed action tokens and is not under `/api/gateway` (see `src/abstractgateway/routes/triage.py`).
 - Vulnerability reporting policy: see [../SECURITY.md](../SECURITY.md).
 
-## Default behavior (token required)
+## Default behavior
 
-By default, `abstractgateway serve` refuses to start if write endpoints are protected and no auth token is configured.  
+By default, `abstractgateway serve` refuses to start if write endpoints are
+protected and neither a legacy server/operator token nor Gateway user auth is
+configured.
 Evidence: startup self-check in `src/abstractgateway/cli.py` (`load_gateway_auth_policy_from_env`).
 
-Recommended dev setup:
+Recommended browser-console/browser-app setup:
 
 ```bash
-export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export ABSTRACTGATEWAY_USER_AUTH=1
+export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
+abstractgateway serve --host 127.0.0.1 --port 8080
+
+# Use this with Gateway user admin.
+cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token"
 ```
 
-Clients must send:
+API clients can send a Gateway user token:
 
 ```text
 Authorization: Bearer <token>
@@ -109,7 +116,7 @@ operations, email bridge routes, host metrics, model residency list/load/unload,
 server workspace file helpers, server-workspace artifact import/export, and
 global prompt-cache/bloc mutation routes. Regular users remain able to use
 their own runtime data plane for run, ledger, artifact upload, discovery, and
-per-principal capability-default routes.
+runtime-scoped Core capability-default routes.
 
 The route table is intentionally conservative around server filesystem access:
 browser-local files should use `/api/gateway/attachments/upload`; server
@@ -118,21 +125,21 @@ per-user workspace grant model exists.
 
 Capability discovery follows the same policy. Regular users can still discover
 ordinary run, ledger, artifact, upload, provider/model catalog, KG, and
-per-principal defaults surfaces, but admin-only workspace artifact
+runtime-scoped defaults surfaces, but admin-only workspace artifact
 import/export and provider prompt-cache controls are advertised as unavailable
 with machine-readable `admin_required` metadata. Session-level prompt-cache
 keys remain available for users; the private hash includes the current
 principal scope, so two users using the same session id/provider/model tuple do
 not collide in a shared provider control plane.
 
-Hosted provider secrets are supported through Gateway provider endpoint
-profiles. Profiles are stored under the relevant Gateway data plane, expose only
+Hosted provider secrets are supported through Gateway provider connections.
+Connections are stored under the relevant Gateway data plane, expose only
 non-secret metadata and a virtual provider id such as `endpoint:office-vllm`,
 and inject the raw key only into the transient Runtime provider call. Normal
-users can manage user-scoped profiles; Gateway-scoped profiles require an admin
-principal. The current capability-default cascade still uses execution-host Core
-defaults, then the Gateway/root baseline, then a per-user overlay under the
-user's Gateway data plane. A stronger encrypted vault, audit model, and
+users can manage user-scoped connections; Gateway-scoped connections require an
+admin principal. The current capability-default cascade uses execution-host
+Core defaults, then the Gateway/root Core config baseline, then the user's
+runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.
 
 ### Shared workflow catalog

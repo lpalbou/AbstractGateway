@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -743,7 +744,10 @@ def test_capability_defaults_are_isolated_by_gateway_principal(tmp_path: Path, m
         json={"provider": "openrouter", "model": "alice-model"},
     )
     assert saved.status_code == 200, saved.text
-    assert saved.json()["authority"] == "abstractgateway.principal"
+    assert saved.json()["authority"] == "abstractcore.runtime"
+    alice_core_config = tmp_path / "runtime" / "users" / "default" / "alice" / "runtime" / "config" / "abstractcore.json"
+    assert alice_core_config.exists()
+    assert not (alice_core_config.parent / "capability_defaults.json").exists()
 
     alice_defaults = client.get("/api/gateway/config/capability-defaults", headers=alice_headers)
     bob_defaults = client.get("/api/gateway/config/capability-defaults", headers=bob_headers)
@@ -761,6 +765,85 @@ def test_capability_defaults_are_isolated_by_gateway_principal(tmp_path: Path, m
     assert cleared.status_code == 200
     cleared_text = [r for r in cleared.json()["routes"] if r.get("key") == "output.text"][0]
     assert cleared_text.get("provider") != "openrouter"
+
+
+def test_sandbox_generation_receives_scoped_capability_defaults(tmp_path: Path, monkeypatch) -> None:
+    import abstractruntime.integrations.abstractcore.llm_client as llm_client_mod
+
+    captured: dict[str, Any] = {}
+
+    class FakeSandboxLLM:
+        def __init__(
+            self,
+            *,
+            provider: str,
+            model: str,
+            llm_kwargs=None,
+            artifact_store=None,
+            core_config_file=None,
+            capability_defaults=None,
+            **_kwargs: Any,
+        ) -> None:
+            _ = llm_kwargs, artifact_store
+            captured["provider"] = provider
+            captured["model"] = model
+            captured["core_config_file"] = str(core_config_file)
+            captured["capability_defaults"] = capability_defaults
+
+        def set_provider_endpoint_profile_resolver(self, resolver) -> None:
+            captured["resolver_attached"] = callable(resolver)
+
+        def generate(self, *, prompt, messages=None, media=None, system_prompt=None, params=None):
+            captured["generate"] = {
+                "prompt": prompt,
+                "messages": messages,
+                "media": media,
+                "system_prompt": system_prompt,
+                "params": params,
+            }
+            return {"content": "ok"}
+
+    monkeypatch.setattr(llm_client_mod, "LocalAbstractCoreLLMClient", FakeSandboxLLM)
+
+    client = _client(tmp_path, monkeypatch)
+    admin_headers = {"Authorization": "Bearer admin-token"}
+    alice = client.post(
+        "/api/gateway/admin/users",
+        headers=admin_headers,
+        json={"user_id": "alice", "tenant_id": "default", "roles": ["user"], "runtime_id": "alice"},
+    )
+    assert alice.status_code == 200, alice.text
+    alice_headers = {"Authorization": f"Bearer {alice.json()['token']}"}
+
+    saved = client.put(
+        "/api/gateway/config/capability-defaults/input/voice",
+        headers=alice_headers,
+        json={"provider": "faster-whisper", "model": "large-v3"},
+    )
+    assert saved.status_code == 200, saved.text
+
+    resp = client.post(
+        "/api/gateway/sandbox/generate",
+        headers=alice_headers,
+        json={
+            "capability": "input.text",
+            "provider": "lmstudio",
+            "model": "qwen/qwen3.5-9b",
+            "prompt": "what does it say?",
+            "attachments": [{"$artifact": "audio-1", "content_type": "audio/wav"}],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["response"] == "ok"
+    assert captured["resolver_attached"] is True
+    assert "users/default/alice/runtime/config/abstractcore.json" in captured["core_config_file"]
+    routes = {
+        row["key"]: row
+        for row in captured["capability_defaults"]["routes"]
+        if isinstance(row, dict) and row.get("key")
+    }
+    assert routes["input.voice"]["provider"] == "faster-whisper"
+    assert routes["input.voice"]["model"] == "large-v3"
 
 
 def test_gateway_defaults_are_inherited_by_users_until_user_override(tmp_path: Path, monkeypatch) -> None:
@@ -781,7 +864,8 @@ def test_gateway_defaults_are_inherited_by_users_until_user_override(tmp_path: P
         json={"provider": "openrouter", "model": "gateway-model"},
     )
     assert saved_gateway.status_code == 200, saved_gateway.text
-    assert saved_gateway.json()["authority"] == "abstractgateway.gateway"
+    assert saved_gateway.json()["authority"] == "abstractcore.gateway_runtime"
+    assert (tmp_path / "runtime" / "config" / "abstractcore.json").exists()
 
     alice = client.post(
         "/api/gateway/admin/users",
@@ -806,7 +890,7 @@ def test_gateway_defaults_are_inherited_by_users_until_user_override(tmp_path: P
     bob_text = [r for r in bob_inherited.json()["routes"] if r.get("key") == "output.text"][0]
     assert alice_text["provider"] == "openrouter"
     assert alice_text["model"] == "gateway-model"
-    assert alice_text["source"] == "abstractgateway.gateway"
+    assert alice_text["source"] == "abstractcore.gateway_runtime"
     assert bob_text["provider"] == "openrouter"
     assert bob_text["model"] == "gateway-model"
 
@@ -819,10 +903,77 @@ def test_gateway_defaults_are_inherited_by_users_until_user_override(tmp_path: P
     alice_text = [r for r in alice_override.json()["routes"] if r.get("key") == "output.text"][0]
     assert alice_text["provider"] == "anthropic"
     assert alice_text["model"] == "alice-model"
-    assert alice_text["source"] == "abstractgateway.principal"
+    assert alice_text["source"] == "abstractcore.runtime"
 
     bob_still_inherits = client.get("/api/gateway/config/capability-defaults", headers=bob_headers)
     bob_text = [r for r in bob_still_inherits.json()["routes"] if r.get("key") == "output.text"][0]
     assert bob_text["provider"] == "openrouter"
     assert bob_text["model"] == "gateway-model"
-    assert bob_text["source"] == "abstractgateway.gateway"
+    assert bob_text["source"] == "abstractcore.gateway_runtime"
+
+
+def test_user_runtime_legacy_capability_defaults_file_is_ignored(tmp_path: Path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    admin_headers = {"Authorization": "Bearer admin-token"}
+
+    alice = client.post(
+        "/api/gateway/admin/users",
+        headers=admin_headers,
+        json={"user_id": "alice", "tenant_id": "default", "roles": ["user"], "runtime_id": "alice"},
+    )
+    assert alice.status_code == 200
+    legacy = tmp_path / "runtime" / "users" / "default" / "alice" / "runtime" / "config" / "capability_defaults.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        json.dumps({"version": 1, "routes": {"output.text": {"provider": "legacy-provider", "model": "legacy-model"}}}),
+        encoding="utf-8",
+    )
+
+    alice_headers = {"Authorization": f"Bearer {alice.json()['token']}"}
+    response = client.get("/api/gateway/config/capability-defaults", headers=alice_headers)
+    assert response.status_code == 200
+    text_route = [r for r in response.json()["routes"] if r.get("key") == "output.text"][0]
+    assert text_route["configured"] is False
+    assert text_route.get("provider") != "legacy-provider"
+
+
+def test_removed_capability_default_overlay_is_ignored(tmp_path: Path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    bootstrap_headers = {"Authorization": "Bearer admin-token"}
+
+    admin_created = client.post(
+        "/api/gateway/admin/users",
+        headers=bootstrap_headers,
+        json={"user_id": "admin", "tenant_id": "default", "roles": ["admin", "user"], "runtime_id": "default"},
+    )
+    assert admin_created.status_code == 200
+    admin_headers = {"Authorization": f"Bearer {admin_created.json()['token']}"}
+
+    saved_gateway = client.put(
+        "/api/gateway/config/capability-defaults/output/text",
+        headers=admin_headers,
+        json={"provider": "openrouter", "model": "gateway-model"},
+    )
+    assert saved_gateway.status_code == 200
+
+    alice = client.post(
+        "/api/gateway/admin/users",
+        headers=admin_headers,
+        json={"user_id": "alice", "tenant_id": "default", "roles": ["user"], "runtime_id": "alice"},
+    )
+    assert alice.status_code == 200
+    alice_headers = {"Authorization": f"Bearer {alice.json()['token']}"}
+
+    old_overlay = tmp_path / "runtime" / "users" / "default" / "alice" / "runtime" / "config" / "capability_defaults.json"
+    old_overlay.parent.mkdir(parents=True)
+    old_overlay.write_text(
+        json.dumps({"version": 1, "routes": {"output.text": {"provider": "legacy", "model": "legacy-model"}}}),
+        encoding="utf-8",
+    )
+
+    alice_defaults = client.get("/api/gateway/config/capability-defaults", headers=alice_headers)
+    assert alice_defaults.status_code == 200
+    alice_text = [r for r in alice_defaults.json()["routes"] if r.get("key") == "output.text"][0]
+    assert alice_text["provider"] == "openrouter"
+    assert alice_text["model"] == "gateway-model"
+    assert alice_text["source"] == "abstractcore.gateway_runtime"

@@ -27,7 +27,8 @@ Use Gateway env vars for Gateway internals, then set framework model defaults th
 routes owned by the execution host.
 
 ```bash
-export ABSTRACTGATEWAY_AUTH_TOKEN="dev-local-token"
+export ABSTRACTGATEWAY_USER_AUTH=1
+export ABSTRACTGATEWAY_DATA_DIR="$HOME/.abstractgateway-local"
 
 # Local image generation on MPS through AbstractVision/Diffusers.
 export ABSTRACTGATEWAY_VISION_BACKEND="diffusers"
@@ -48,7 +49,7 @@ export ABSTRACTGATEWAY_VOICE_STT_MODEL="base"
 Set the default text route:
 
 ```bash
-abstractgateway-config set-default output.text \
+abstractgateway-config set-default input.text \
   --provider lmstudio \
   --model qwen/qwen3.6-35b-a3b \
   --base-url http://127.0.0.1:1234/v1
@@ -71,25 +72,26 @@ In another terminal with the same venv:
 
 ```bash
 source ~/.venvs/abstractframework-local/bin/activate
-export ABSTRACTGATEWAY_AUTH_TOKEN="dev-local-token"
+export ABSTRACTGATEWAY_DATA_DIR="$HOME/.abstractgateway-local"
+export GATEWAY_ADMIN_TOKEN="$(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")"
 ```
 
 Check that catalogs are not just defaults:
 
 ```bash
-curl -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+curl -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
   http://127.0.0.1:8080/api/gateway/voice/voices
 
-curl -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+curl -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
   http://127.0.0.1:8080/api/gateway/audio/speech/models
 
-curl -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+curl -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
   http://127.0.0.1:8080/api/gateway/audio/transcriptions/models
 
-curl -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+curl -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
   "http://127.0.0.1:8080/api/gateway/vision/provider_models?task=text_to_image"
 
-curl -H "Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN" \
+curl -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
   http://127.0.0.1:8080/api/gateway/vision/models
 ```
 
@@ -100,14 +102,11 @@ installed `abstractgateway serve --port 8080` process running.
 ## 5. Start Flow
 
 ```bash
-abstractflow serve \
-  --host 127.0.0.1 \
-  --port 3003 \
-  --gateway-url http://127.0.0.1:8080 \
-  --gateway-token "$ABSTRACTGATEWAY_AUTH_TOKEN"
+npx @abstractframework/flow --gateway-url http://127.0.0.1:8080 --port 3003
 ```
 
-Open `http://127.0.0.1:3003`.
+Open `http://127.0.0.1:3003` and sign in as Gateway user `admin` with
+`$GATEWAY_ADMIN_TOKEN`.
 
 In the editor, media nodes use Gateway catalogs:
 

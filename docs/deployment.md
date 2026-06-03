@@ -71,7 +71,7 @@ docker run --rm --name abstractgateway \
 Set the execution-host text route separately:
 
 ```bash
-docker exec abstractgateway abstractgateway-config set-default output.text \
+docker exec abstractgateway abstractgateway-config set-default input.text \
   --provider openai-compatible \
   --model your-model \
   --base-url http://model-runner.docker.internal/engines/v1
@@ -134,7 +134,7 @@ Optional:
 Common:
 
 - `ABSTRACTGATEWAY_ALLOWED_ORIGINS`: browser origin allowlist
-- `output.text` capability route: default for LLM/agent nodes
+- `input.text` capability route: default for LLM/agent nodes
 - `ABSTRACTGATEWAY_TOOL_MODE`: `approval`, `passthrough`, `delegated`, or local dev modes
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` or `sqlite`
 - `ABSTRACTGATEWAY_DB_PATH`: SQLite file, when using `sqlite`

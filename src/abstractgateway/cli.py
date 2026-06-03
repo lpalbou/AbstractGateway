@@ -117,6 +117,51 @@ def _is_public_bind_host(host: str) -> bool:
     return h in {"0.0.0.0", "::"}
 
 
+def _env_truthy(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_falsey(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return bool(default)
+    return str(raw).strip().lower() in {"0", "false", "no", "n", "off"}
+
+
+def _maybe_bootstrap_user_auth_admin(*, host: str) -> None:
+    if _env_falsey("ABSTRACTGATEWAY_BOOTSTRAP_ADMIN") or _env_falsey("ABSTRACTGATEWAY_AUTO_BOOTSTRAP_ADMIN"):
+        _stderr("Gateway user auth: enabled; admin auto-bootstrap disabled by env.")
+        return
+
+    from .config_cli import ensure_bootstrap_admin_user
+
+    token_file = os.getenv("ABSTRACTGATEWAY_BOOTSTRAP_ADMIN_TOKEN_FILE") or None
+    payload = ensure_bootstrap_admin_user(token_file=token_file)
+    user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+    tenant_id = str(user.get("tenant_id") or "default")
+    user_id = str(user.get("user_id") or "admin")
+    runtime_id = str(user.get("runtime_id") or user_id)
+    token_path = str(payload.get("token_file") or "")
+    token = str(payload.get("token") or "").strip()
+    can_print_raw_token = bool(token) and (
+        _env_truthy("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN") or _is_loopback_host(host)
+    )
+
+    _stderr("Gateway user auth: enabled.")
+    _stderr(f"Gateway admin user: {tenant_id}/{user_id} (runtime: {runtime_id})")
+    if token_path:
+        _stderr(f"Gateway admin token file: {token_path}")
+    if can_print_raw_token:
+        _stderr(f"Gateway admin token: {token}")
+    elif token_path:
+        _stderr(f"Gateway admin token: read with `cat {token_path}`")
+    else:
+        _stderr("Gateway admin token: unavailable; run `abstractgateway-config bootstrap-admin --rotate-token --print-token`.")
+
+
 def _is_weak_token(token: str) -> bool:
     t = str(token or "").strip()
     if not t:
@@ -267,6 +312,7 @@ def main(argv: list[str] | None = None) -> None:
 
         if load_gateway_auth_policy_from_env is not None:
             policy = load_gateway_auth_policy_from_env()
+            host = str(getattr(args, "host", "") or "")
 
             if (
                 bool(policy.enabled)
@@ -286,7 +332,9 @@ def main(argv: list[str] | None = None) -> None:
                     "This is required for security, especially if you bind to 0.0.0.0 or expose the gateway via ngrok."
                 )
 
-            host = str(getattr(args, "host", "") or "")
+            if bool(getattr(policy, "user_auth_enabled", False)):
+                _maybe_bootstrap_user_auth_admin(host=host)
+
             if _is_public_bind_host(host):
                 _stderr(
                     "[WARN] Gateway is binding to 0.0.0.0/:: (non-loopback). "

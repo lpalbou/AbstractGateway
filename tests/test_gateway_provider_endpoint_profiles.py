@@ -73,6 +73,17 @@ def _app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, user_auth: b
     return TestClient(app)
 
 
+def _without_local_autoprobes(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        call
+        for call in calls
+        if not (
+            call.get("provider_name") in {"lmstudio", "ollama"}
+            and call.get("timeout_s") == 1.5
+        )
+    ]
+
+
 def test_endpoint_profile_crud_surfaces_virtual_provider_without_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, Any]] = []
 
@@ -130,7 +141,9 @@ def test_endpoint_profile_crud_surfaces_virtual_provider_without_secret(tmp_path
         assert body["models"] == ["qwen/qwen3"]
         assert "secret-key" not in models.text
 
-    assert calls == [{"method": "list_providers", "include_models": False, "provider_api_key": None}]
+    assert [call for call in calls if call.get("method") == "list_providers"] == [
+        {"method": "list_providers", "include_models": False, "provider_api_key": None}
+    ]
 
 
 def test_endpoint_profile_model_discovery_uses_profile_url_and_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,11 +185,122 @@ def test_endpoint_profile_model_discovery_uses_profile_url_and_key(tmp_path: Pat
         assert models.json()["models"] == ["m1", "m2"]
         assert "profile-key" not in models.text
 
-    assert calls == [
+    assert _without_local_autoprobes(calls) == [
         {
             "provider_name": "openai-compatible",
             "base_url": "https://remote.example.test/v1",
             "provider_api_key": "profile-key",
+            "input_type": None,
+            "output_type": None,
+            "timeout_s": 30.0,
+        }
+    ]
+
+
+def test_endpoint_profile_allowed_models_are_intersected_with_capability_filters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **kwargs: Any) -> dict[str, Any]:
+            return {"items": []}
+
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": ["vlm-model", "other-compatible"]}
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={
+                "id": "office",
+                "display_name": "Office",
+                "provider_family": "openai-compatible",
+                "base_url": "https://office.example.test/v1",
+                "api_key": "office-key",
+                "scope": "gateway",
+                "allowed_models": ["text-only-model", "vlm-model"],
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        models = client.get(
+            "/api/gateway/discovery/providers/endpoint%3Aoffice/models?input_type=image&output_type=text",
+            headers=headers,
+        )
+
+    assert models.status_code == 200, models.text
+    assert models.json()["models"] == ["vlm-model"]
+    assert _without_local_autoprobes(calls) == [
+        {
+            "provider_name": "openai-compatible",
+            "base_url": "https://office.example.test/v1",
+            "provider_api_key": "office-key",
+            "input_type": "image",
+            "output_type": "text",
+            "timeout_s": 30.0,
+        }
+    ]
+
+
+@pytest.mark.parametrize("provider_family", ["openai", "anthropic"])
+def test_named_provider_connection_discovery_uses_profile_url_and_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_family: str,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **kwargs: Any) -> dict[str, Any]:
+            return {"items": []}
+
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": [f"{provider_family}-model"]}
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+
+    headers = {"Authorization": "Bearer admin-token"}
+    base_url = f"https://{provider_family}.example.test/v1"
+    with _app_client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={
+                "id": provider_family,
+                "display_name": provider_family.title(),
+                "provider_family": provider_family,
+                "base_url": base_url,
+                "api_key": f"{provider_family}-key",
+                "scope": "gateway",
+                "allowed_models": [],
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        models = client.get(f"/api/gateway/discovery/providers/endpoint%3A{provider_family}/models", headers=headers)
+        assert models.status_code == 200, models.text
+        assert models.json()["models"] == [f"{provider_family}-model"]
+        assert f"{provider_family}-key" not in models.text
+
+    assert _without_local_autoprobes(calls) == [
+        {
+            "provider_name": provider_family,
+            "base_url": base_url,
+            "provider_api_key": f"{provider_family}-key",
+            "input_type": None,
+            "output_type": None,
             "timeout_s": 30.0,
         }
     ]
@@ -211,7 +335,7 @@ def test_endpoint_profile_console_model_preview_uses_entered_endpoint_without_ec
     assert preview.json()["base_url_configured"] is True
     assert preview.json()["api_key_set"] is True
     assert "preview-key" not in preview.text
-    assert calls == [
+    assert _without_local_autoprobes(calls) == [
         {
             "provider_name": "openai-compatible",
             "base_url": "https://preview.example.test/v1",
@@ -258,7 +382,7 @@ def test_endpoint_profile_console_model_preview_can_use_saved_profile_key(tmp_pa
     assert preview.status_code == 200, preview.text
     assert preview.json()["models"] == ["saved-model"]
     assert "saved-key" not in preview.text
-    assert calls == [
+    assert _without_local_autoprobes(calls) == [
         {
             "provider_name": "openai-compatible",
             "base_url": "https://saved.example.test/v1",
@@ -266,6 +390,234 @@ def test_endpoint_profile_console_model_preview_can_use_saved_profile_key(tmp_pa
             "timeout_s": 30.0,
         }
     ]
+
+
+def test_configured_builtin_provider_surfaces_without_manual_endpoint_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **kwargs: Any) -> dict[str, Any]:
+            return {"items": [], "default_provider": None, "default_model": None}
+
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": ["claude-haiku-4-5"]}
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-env-key")
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        profiles = client.get("/api/gateway/config/provider-endpoint-profiles", headers=headers)
+        assert profiles.status_code == 200, profiles.text
+        row = next(item for item in profiles.json()["profiles"] if item["provider_id"] == "anthropic")
+        assert row["display_name"] == "Anthropic"
+        assert row["managed"] is False
+        assert row["api_key_set"] is True
+        assert row["scope"] == "environment"
+        assert "anthropic-env-key" not in profiles.text
+
+        providers = client.get("/api/gateway/discovery/providers?include_models=false", headers=headers)
+        assert providers.status_code == 200, providers.text
+        provider_item = next(item for item in providers.json()["items"] if item["name"] == "anthropic")
+        assert provider_item["display_name"] == "Anthropic"
+        assert provider_item["provider_endpoint_profile"]["managed"] is False
+        assert "anthropic-env-key" not in providers.text
+
+        models = client.get("/api/gateway/discovery/providers/anthropic/models", headers=headers)
+        assert models.status_code == 200, models.text
+        assert models.json()["models"] == ["claude-haiku-4-5"]
+        assert "anthropic-env-key" not in models.text
+
+    assert _without_local_autoprobes(calls) == [
+        {
+            "provider_name": "anthropic",
+            "base_url": None,
+            "provider_api_key": "anthropic-env-key",
+            "input_type": None,
+            "output_type": None,
+            "timeout_s": 30.0,
+        }
+    ]
+
+
+def test_configured_builtin_provider_can_use_gateway_core_config_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **kwargs: Any) -> dict[str, Any]:
+            return {"items": []}
+
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": ["gpt-5-nano"]}
+
+    from abstractcore.config.manager import ConfigurationManager
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    runtime_dir = tmp_path / "runtime"
+    manager = ConfigurationManager(config_file=runtime_dir / "config" / "abstractcore.json", apply_env=False)
+    assert manager.set_api_key("openai", "openai-config-key")
+
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        profiles = client.get("/api/gateway/config/provider-endpoint-profiles", headers=headers)
+        assert profiles.status_code == 200, profiles.text
+        row = next(item for item in profiles.json()["profiles"] if item["provider_id"] == "openai")
+        assert row["scope"] == "user"
+        assert row["api_key_set"] is True
+        assert "openai-config-key" not in profiles.text
+
+        models = client.get("/api/gateway/discovery/providers/openai/models", headers=headers)
+        assert models.status_code == 200, models.text
+        assert models.json()["models"] == ["gpt-5-nano"]
+        assert "openai-config-key" not in models.text
+
+    assert _without_local_autoprobes(calls) == [
+        {
+            "provider_name": "openai",
+            "base_url": None,
+            "provider_api_key": "openai-config-key",
+            "input_type": None,
+            "output_type": None,
+            "timeout_s": 30.0,
+        }
+    ]
+
+
+def test_reachable_local_default_provider_surfaces_without_manual_endpoint_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            if provider_name == "lmstudio":
+                return {"provider": provider_name, "models": ["local-qwen"]}
+            return {"provider": provider_name, "models": []}
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+    monkeypatch.delenv("LMSTUDIO_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        profiles = client.get("/api/gateway/config/provider-endpoint-profiles", headers=headers)
+
+    assert profiles.status_code == 200, profiles.text
+    row = next(item for item in profiles.json()["profiles"] if item["provider_id"] == "lmstudio")
+    assert row["display_name"] == "LM Studio"
+    assert row["base_url"] == "http://localhost:1234/v1"
+    assert row["managed"] is False
+    assert row["api_key_set"] is False
+    assert row["discovered_model_count"] == 1
+    assert calls[0]["provider_name"] == "lmstudio"
+    assert calls[0]["base_url"] == "http://localhost:1234/v1"
+
+
+def test_gateway_sandbox_text_generation_uses_server_side_endpoint_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeLLM:
+        def __init__(self, *, provider: str, model: str, llm_kwargs: dict[str, Any] | None = None, **_: Any) -> None:
+            calls.append({"provider": provider, "model": model, "llm_kwargs": llm_kwargs or {}})
+
+        def generate(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"generate": kwargs})
+            return {"content": "sandbox ok", "usage": {"total_tokens": 3}}
+
+    import abstractruntime.integrations.abstractcore.llm_client as llm_client
+
+    monkeypatch.setattr(llm_client, "LocalAbstractCoreLLMClient", FakeLLM)
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={
+                "id": "office-vllm",
+                "display_name": "Office vLLM",
+                "provider_family": "openai-compatible",
+                "base_url": "https://llm.example.test/v1",
+                "api_key": "profile-key",
+                "scope": "gateway",
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        res = client.post(
+            "/api/gateway/sandbox/generate",
+            headers=headers,
+            json={
+                "capability": "output.text",
+                "provider": "endpoint:office-vllm",
+                "model": "qwen/qwen3",
+                "prompt": "hello",
+                "attachments": [{"$artifact": "file-1", "content_type": "image/png", "filename": "brief.png"}],
+                "client_context": {
+                    "source": "browser",
+                    "local_datetime": "2026-06-01T11:22:33-04:00",
+                    "utc_datetime": "2026-06-01T15:22:33.000Z",
+                    "timezone": "America/New_York",
+                    "locale": "en-US",
+                    "country": "US",
+                    "timezone_offset_minutes": -240,
+                    "ignored": "not-forwarded",
+                },
+            },
+        )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["response"] == "sandbox ok"
+    assert "profile-key" not in res.text
+    assert calls[0] == {
+        "provider": "openai-compatible",
+        "model": "qwen/qwen3",
+        "llm_kwargs": {"base_url": "https://llm.example.test/v1", "api_key": "profile-key"},
+    }
+    assert calls[1]["generate"]["messages"][-1] == {"role": "user", "content": "hello"}
+    assert calls[1]["generate"]["media"] == [
+        {
+            "$artifact": "file-1",
+            "artifact_id": "file-1",
+            "content_type": "image/png",
+            "filename": "brief.png",
+            "mime_type": "image/png",
+            "modality": "image",
+            "type": "image",
+        }
+    ]
+    trace_metadata = calls[1]["generate"]["params"]["trace_metadata"]
+    assert trace_metadata["source"] == "gateway_console_sandbox"
+    assert trace_metadata["user_id"] == "local-admin"
+    assert trace_metadata["client_context"] == {
+        "source": "browser_untrusted",
+        "local_datetime": "2026-06-01T11:22:33-04:00",
+        "utc_datetime": "2026-06-01T15:22:33.000Z",
+        "timezone": "America/New_York",
+        "locale": "en-US",
+        "country": "US",
+        "timezone_offset_minutes": -240,
+    }
+
+
+def test_console_presents_provider_connections_without_capability_form() -> None:
+    from abstractgateway.console import gateway_console_html
+
+    html = gateway_console_html()
+    assert "Provider Connections" in html
+    assert "LM Studio" in html
+    assert "Ollama" in html
+    assert "Portkey" in html
+    assert "Custom OpenAI-compatible" in html
+    assert 'id="endpoint-capabilities"' not in html
 
 
 def test_non_admin_cannot_create_gateway_scoped_endpoint_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

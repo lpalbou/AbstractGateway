@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional, Tuple
 
 
@@ -31,11 +32,11 @@ def _clean_model(value: Any) -> Optional[str]:
     return text or None
 
 
-def _gateway_capability_text_default() -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _gateway_capability_text_default(*, base_dir: Optional[Path] = None) -> tuple[Optional[str], Optional[str], Optional[str]]:
     try:
         from .capability_defaults import gateway_capability_defaults_payload
 
-        payload = gateway_capability_defaults_payload()
+        payload = gateway_capability_defaults_payload(base_dir=base_dir)
         routes = payload.get("routes") if isinstance(payload, dict) else None
         if not isinstance(routes, list):
             return None, None, None
@@ -69,6 +70,7 @@ def resolve_gateway_provider_model(
     provider: Any = None,
     model: Any = None,
     flow_defaults: Optional[Tuple[str, str]] = None,
+    base_dir: Optional[Path] = None,
     purpose: str = "LLM helper",
 ) -> ProviderModelResolution:
     """Resolve the provider/model cascade used by Gateway LLM helper paths."""
@@ -87,21 +89,24 @@ def resolve_gateway_provider_model(
             error=provider_model_config_error(purpose=purpose),
         )
 
-    if flow_defaults:
-        flow_provider = _clean_provider(flow_defaults[0])
-        flow_model = _clean_model(flow_defaults[1])
-        if flow_provider and flow_model:
-            provider_s, model_s = flow_provider, flow_model
-            source = "flow_defaults"
-
+    # Gateway/Core capability defaults are the execution-host default authority.
+    # Flow-scanned pairs are only a legacy/no-default bootstrap fallback; otherwise
+    # stale or unrelated bundles can hijack Auto nodes.
     if not provider_s or not model_s:
-        cfg_provider, cfg_model, cfg_source = _gateway_capability_text_default()
+        cfg_provider, cfg_model, cfg_source = _gateway_capability_text_default(base_dir=base_dir)
         cfg_provider = _clean_provider(cfg_provider)
         cfg_model = _clean_model(cfg_model)
         if cfg_provider and cfg_model:
             provider_s = cfg_provider
             model_s = cfg_model
             source = cfg_source or "abstractcore_config"
+
+    if (not provider_s or not model_s) and flow_defaults:
+        flow_provider = _clean_provider(flow_defaults[0])
+        flow_model = _clean_model(flow_defaults[1])
+        if flow_provider and flow_model:
+            provider_s, model_s = flow_provider, flow_model
+            source = "flow_defaults"
 
     if provider_s and model_s:
         return ProviderModelResolution(provider=provider_s, model=model_s, source=source or "resolved")

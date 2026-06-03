@@ -48,13 +48,23 @@ Evidence: `src/abstractgateway/service.py` (workflow source switch), `src/abstra
 
 ### Why does `abstractgateway serve` refuse to start?
 
-By default, the server requires an auth token for `/api/gateway/*` and will fail-fast if none is configured.
+By default, the server requires either Gateway user auth or a legacy
+server/operator bearer token for `/api/gateway/*` and will fail fast if neither
+is configured.
 
-Fix:
+Recommended browser-app fix:
 
 ```bash
-export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export ABSTRACTGATEWAY_USER_AUTH=1
+export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
+abstractgateway serve --host 127.0.0.1 --port 8080
+
+# Use user admin plus this token for first login.
+cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token"
 ```
+
+Use `ABSTRACTGATEWAY_AUTH_TOKEN` only for legacy server/operator bearer-token
+deployments; it maps to `local-admin` and is not a browser sign-in token.
 
 Evidence: startup self-check in `src/abstractgateway/cli.py`, policy loading in `src/abstractgateway/security/gateway_security.py`.
 
@@ -159,10 +169,10 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/n
 
 ### My bundle fails with “LLM nodes but no default provider/model is configured”
 
-Configure the execution-host `output.text` route:
+Configure the execution-host `input.text` route:
 
 ```bash
-abstractgateway-config set-default output.text \
+abstractgateway-config set-default input.text \
   --provider lmstudio \
   --model qwen/qwen3.6-35b-a3b \
   --base-url http://127.0.0.1:1234/v1
@@ -240,8 +250,12 @@ POST /api/gateway/runs/{run_id}/videos/from_image
 
 The direct image and video endpoints use Runtime/Core output selectors and
 store the result as a run artifact, so they still require a configured
-Runtime-compatible vision/video backend. For long video runs, stream the
-returned `child_run_id` ledger and watch `abstract.progress` records.
+Runtime-compatible vision/video backend. Image dimensions are optional
+passthrough overrides; clients should not inject a default `512x512` request
+because supported sizes depend on the selected provider/model. For long media
+runs, stream the returned `child_run_id` ledger and watch `abstract.progress`
+records. Image progress is best-effort and may only show start/complete when the
+backend does not expose step progress.
 
 Generated music is exposed through Gateway's direct Runtime child-run route and
 its thin-client discovery/catalog contract:

@@ -24,7 +24,7 @@ def gateway_capability_defaults_payload(*, base_dir: Optional[Path] = None) -> D
             payload.setdefault("authority", "abstractcore.server")
             payload.setdefault("writable", True)
             payload.setdefault("source", "abstractcore.server")
-            return _apply_principal_overlay(payload, base_dir=base_dir)
+            return _apply_scoped_core_defaults(payload, base_dir=base_dir)
         except Exception as exc:
             payload = {
                 "ok": False,
@@ -34,9 +34,18 @@ def gateway_capability_defaults_payload(*, base_dir: Optional[Path] = None) -> D
                 "errors": [str(exc)],
                 "config_hint": "Gateway is configured to use a remote AbstractCore server; capability defaults must be read from that execution host.",
             }
-            return _apply_principal_overlay(payload, base_dir=base_dir)
+            return _apply_scoped_core_defaults(payload, base_dir=base_dir)
 
-    return _apply_principal_overlay(_local_core_payload(), base_dir=base_dir)
+    gateway_config_path = _gateway_core_config_path()
+    if gateway_config_path is not None:
+        payload = _core_config_payload(
+            gateway_config_path,
+            authority="abstractcore.gateway_runtime",
+            source="abstractcore.gateway_runtime",
+        )
+    else:
+        payload = _local_core_payload()
+    return _apply_scoped_core_defaults(payload, base_dir=base_dir)
 
 
 def save_gateway_capability_default(
@@ -59,10 +68,10 @@ def save_gateway_capability_default(
         "options": dict(options or {}) if isinstance(options, dict) else {},
     }
 
-    overlay_path = _principal_overlay_path(base_dir)
-    if overlay_path is not None:
-        _save_principal_overlay_route(
-            overlay_path,
+    scoped_config_path = _writable_scoped_core_config_path(base_dir)
+    if scoped_config_path is not None:
+        _save_core_config_route(
+            scoped_config_path,
             kind,
             modality,
             provider=body["provider"],
@@ -97,9 +106,9 @@ def clear_gateway_capability_default(kind: str, modality: Optional[str] = None, 
     if modality is None:
         kind, modality = _split_route(kind)
 
-    overlay_path = _principal_overlay_path(base_dir)
-    if overlay_path is not None:
-        _clear_principal_overlay_route(overlay_path, kind, modality)
+    scoped_config_path = _writable_scoped_core_config_path(base_dir)
+    if scoped_config_path is not None:
+        _clear_core_config_route(scoped_config_path, kind, modality)
         return gateway_capability_defaults_payload(base_dir=base_dir)
 
     if core_server_base_url():
@@ -132,74 +141,58 @@ def _local_core_payload() -> Dict[str, Any]:
     }
 
 
-def _principal_overlay_path(base_dir: Optional[Path]) -> Optional[Path]:
-    if base_dir is None:
-        return None
-    try:
-        from .users import gateway_user_auth_enabled
+def _core_config_payload(path: Path, *, authority: str, source: str) -> Dict[str, Any]:
+    from abstractcore.config.manager import ConfigurationManager
 
-        if not gateway_user_auth_enabled():
-            return None
-    except Exception:
-        return None
-    try:
-        return Path(base_dir).expanduser().resolve() / "config" / "capability_defaults.json"
-    except Exception:
-        return Path(base_dir) / "config" / "capability_defaults.json"
+    manager = ConfigurationManager(config_file=path, apply_env=False)
+    routes = manager.list_capability_defaults()
+    for row in routes:
+        if isinstance(row, dict) and bool(row.get("configured")):
+            row["source"] = source
+    return {
+        "ok": True,
+        "version": 1,
+        "authority": authority,
+        "writable": True,
+        "source": source,
+        "config_file": str(manager.config_file),
+        "routes": routes,
+        "errors": [],
+    }
 
 
-def _gateway_overlay_path() -> Optional[Path]:
+def _writable_scoped_core_config_path(base_dir: Optional[Path]) -> Optional[Path]:
     try:
         from .users import gateway_data_dir_from_env, gateway_user_auth_enabled
 
         if not gateway_user_auth_enabled():
             return None
-        return gateway_data_dir_from_env() / "config" / "capability_defaults.json"
+        if base_dir is not None:
+            return _core_config_path_for_base_dir(base_dir)
+        return gateway_data_dir_from_env() / "config" / "abstractcore.json"
     except Exception:
         return None
 
 
-def _load_principal_overlay(path: Path) -> Dict[str, Any]:
+def _core_config_path_for_base_dir(base_dir: Path) -> Path:
     try:
-        if not path.exists():
-            return {"version": 1, "routes": {}}
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return {"version": 1, "routes": {}}
-        routes = data.get("routes")
-        if not isinstance(routes, dict):
-            data["routes"] = {}
-        data["version"] = 1
-        return data
+        return Path(base_dir).expanduser().resolve() / "config" / "abstractcore.json"
     except Exception:
-        return {"version": 1, "routes": {}}
+        return Path(base_dir) / "config" / "abstractcore.json"
 
 
-def _write_principal_overlay(path: Path, data: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+def _gateway_core_config_path() -> Optional[Path]:
     try:
-        os.chmod(tmp, 0o600)
+        from .users import gateway_data_dir_from_env, gateway_user_auth_enabled
+
+        if not gateway_user_auth_enabled():
+            return None
+        return gateway_data_dir_from_env() / "config" / "abstractcore.json"
     except Exception:
-        pass
-    tmp.replace(path)
-    try:
-        os.chmod(path, 0o600)
-    except Exception:
-        pass
+        return None
 
 
-def _route_key(kind: str, modality: str) -> str:
-    try:
-        from abstractcore.config.capability_defaults import capability_route_key
-
-        return capability_route_key(kind, modality)
-    except Exception:
-        return f"{str(kind or '').strip().lower()}.{str(modality or '').strip().lower()}"
-
-
-def _save_principal_overlay_route(
+def _save_core_config_route(
     path: Path,
     kind: str,
     modality: str,
@@ -209,34 +202,26 @@ def _save_principal_overlay_route(
     base_url: Optional[str],
     options: Dict[str, Any],
 ) -> None:
-    key = _route_key(kind, modality)
-    data = _load_principal_overlay(path)
-    routes = data.setdefault("routes", {})
-    if not isinstance(routes, dict):
-        routes = {}
-        data["routes"] = routes
-    row: Dict[str, Any] = {}
-    if provider:
-        row["provider"] = provider
-    if model:
-        row["model"] = model
-    if base_url:
-        row["base_url"] = base_url
-    if options:
-        row["options"] = dict(options)
-    if row:
-        routes[key] = row
-    else:
-        routes.pop(key, None)
-    _write_principal_overlay(path, data)
+    from abstractcore.config.manager import ConfigurationManager
+
+    manager = ConfigurationManager(config_file=path, apply_env=False)
+    if not manager.set_capability_default(
+        kind,
+        modality,
+        provider=provider,
+        model=model,
+        base_url=base_url,
+        options=options,
+    ):
+        raise ValueError(f"Failed to set capability default {kind}.{modality}")
 
 
-def _clear_principal_overlay_route(path: Path, kind: str, modality: str) -> None:
-    data = _load_principal_overlay(path)
-    routes = data.setdefault("routes", {})
-    if isinstance(routes, dict):
-        routes.pop(_route_key(kind, modality), None)
-    _write_principal_overlay(path, data)
+def _clear_core_config_route(path: Path, kind: str, modality: str) -> None:
+    from abstractcore.config.manager import ConfigurationManager
+
+    manager = ConfigurationManager(config_file=path, apply_env=False)
+    if not manager.clear_capability_default(kind, modality):
+        raise ValueError(f"Failed to clear capability default {kind}.{modality}")
 
 
 def _same_path(a: Optional[Path], b: Optional[Path]) -> bool:
@@ -248,20 +233,33 @@ def _same_path(a: Optional[Path], b: Optional[Path]) -> bool:
         return str(a) == str(b)
 
 
-def _apply_overlay_routes(payload: Dict[str, Any], *, overlay_path: Path, source: str) -> tuple[Dict[str, Any], bool]:
-    data = _load_principal_overlay(overlay_path)
-    raw_routes = data.get("routes")
-    if not isinstance(raw_routes, dict) or not raw_routes:
+def _load_configured_routes_from_core_config(path: Path) -> Dict[str, Dict[str, Any]]:
+    try:
+        from abstractcore.config.manager import ConfigurationManager
+
+        manager = ConfigurationManager(config_file=path, apply_env=False)
+        routes: Dict[str, Dict[str, Any]] = {}
+        for row in manager.list_capability_defaults():
+            if not isinstance(row, dict):
+                continue
+            key = str(row.get("key") or "").strip()
+            if key and bool(row.get("configured")):
+                routes[key] = dict(row)
+        return routes
+    except Exception:
+        return {}
+
+
+def _apply_core_config_routes(payload: Dict[str, Any], *, config_path: Path, source: str) -> tuple[Dict[str, Any], bool]:
+    configured_routes = _load_configured_routes_from_core_config(config_path)
+    if not configured_routes:
         return payload, False
 
     try:
-        from abstractcore.config.capability_defaults import capability_defaults_from_dict, iter_capability_default_specs
+        from abstractcore.config.capability_defaults import iter_capability_default_specs
 
-        defaults = capability_defaults_from_dict(data)
-        overlay_routes = {key: route.to_dict() for key, route in defaults.routes.items() if route.configured()}
         specs = {spec.key: spec.to_dict() for spec in iter_capability_default_specs()}
     except Exception:
-        overlay_routes = {str(k): dict(v) for k, v in raw_routes.items() if isinstance(v, dict)}
         specs = {}
 
     existing_rows = payload.get("routes") if isinstance(payload.get("routes"), list) else []
@@ -272,7 +270,7 @@ def _apply_overlay_routes(payload: Dict[str, Any], *, overlay_path: Path, source
         key = str(row.get("key") or "").strip()
         if key:
             rows_by_key[key] = dict(row)
-    for key, route in overlay_routes.items():
+    for key, route in configured_routes.items():
         row = dict(specs.get(key, {"key": key}))
         row.update(route)
         row["key"] = key
@@ -285,12 +283,12 @@ def _apply_overlay_routes(payload: Dict[str, Any], *, overlay_path: Path, source
 
     payload = dict(payload)
     payload["routes"] = [rows_by_key[key] for key in sorted(rows_by_key)]
-    return payload, bool(overlay_routes)
+    return payload, bool(configured_routes)
 
 
-def _apply_principal_overlay(payload: Dict[str, Any], *, base_dir: Optional[Path]) -> Dict[str, Any]:
-    principal_path = _principal_overlay_path(base_dir)
-    gateway_path = _gateway_overlay_path()
+def _apply_scoped_core_defaults(payload: Dict[str, Any], *, base_dir: Optional[Path]) -> Dict[str, Any]:
+    principal_path = _core_config_path_for_base_dir(base_dir) if base_dir is not None and _gateway_core_config_path() is not None else None
+    gateway_path = _gateway_core_config_path()
     if principal_path is None and gateway_path is None:
         return payload
 
@@ -298,32 +296,35 @@ def _apply_principal_overlay(payload: Dict[str, Any], *, base_dir: Optional[Path
     gateway_applied = False
     principal_applied = False
     if gateway_path is not None:
-        payload, gateway_applied = _apply_overlay_routes(
-            payload,
-            overlay_path=gateway_path,
-            source="abstractgateway.gateway",
-        )
-        payload.setdefault("gateway_defaults", bool(gateway_applied))
         payload.setdefault("gateway_config_file", str(gateway_path))
+        if not _same_path(Path(str(payload.get("config_file") or "")), gateway_path):
+            payload, gateway_applied = _apply_core_config_routes(
+                payload,
+                config_path=gateway_path,
+                source="abstractcore.gateway_runtime",
+            )
+        else:
+            gateway_applied = any(bool(row.get("configured")) for row in payload.get("routes", []) if isinstance(row, dict))
+        payload["gateway_defaults"] = bool(gateway_applied)
 
     if principal_path is not None:
         payload.setdefault("principal_config_file", str(principal_path))
         if not _same_path(principal_path, gateway_path):
-            payload, principal_applied = _apply_overlay_routes(
+            payload, principal_applied = _apply_core_config_routes(
                 payload,
-                overlay_path=principal_path,
-                source="abstractgateway.principal",
+                config_path=principal_path,
+                source="abstractcore.runtime",
             )
         payload["principal_defaults"] = bool(principal_applied)
 
     payload["ok"] = bool(payload.get("ok", True))
     payload["writable"] = True
     if principal_applied:
-        payload["authority"] = "abstractgateway.principal"
-        payload["source"] = "abstractgateway.principal"
+        payload["authority"] = "abstractcore.runtime"
+        payload["source"] = "abstractcore.runtime"
     elif gateway_applied or _same_path(principal_path, gateway_path):
-        payload["authority"] = "abstractgateway.gateway"
-        payload["source"] = "abstractgateway.gateway"
+        payload["authority"] = "abstractcore.gateway_runtime"
+        payload["source"] = "abstractcore.gateway_runtime"
     return payload
 
 

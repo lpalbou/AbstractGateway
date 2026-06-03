@@ -21,13 +21,16 @@ All examples below assume:
 
 ```bash
 export BASE_URL="http://127.0.0.1:8080"
-export AUTH="Authorization: Bearer $ABSTRACTGATEWAY_AUTH_TOKEN"
+export AUTH="Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")"
 ```
 
-## Provider endpoint profiles
+## Provider connections
 
-Gateway-owned provider endpoint profiles let users create reusable hosted
-endpoints without putting raw API keys in workflow JSON or browser storage.
+Gateway-owned provider connections let users create reusable cloud, local, or
+OpenAI-compatible endpoints without putting raw API keys in workflow JSON or
+browser storage. The API route keeps the historical
+`provider-endpoint-profiles` name; the Console presents them as provider
+connections.
 
 - `GET /api/gateway/config/provider-endpoint-profiles`: list visible profiles.
 - `POST /api/gateway/config/provider-endpoint-profiles`: create a user- or
@@ -324,7 +327,7 @@ specific fields like `models`, `provider_models`, `profiles`, or `voices`.
 
 Provider discovery also reports the resolved default provider/model when one is
 configured. The resolver follows request values, flow pins, and the execution-host
-`output.text` capability route; if no pair exists, the response includes
+`input.text` capability route; if no pair exists, the response includes
 `default_error` rather than a hardcoded local model.
 
 It also includes a versioned thin-client contract:
@@ -440,12 +443,19 @@ Examples:
 Generated images are available through Runtime workflows when a compatible
 image backend is installed and configured. Gateway also exposes a direct image
 generation endpoint that uses the Runtime/Core output-selector contract rather
-than a provider-specific image client. The route stores the generated image as a
-run artifact and emits `abstract.media.image.generated` with:
+than a provider-specific image client. The route creates a durable child run,
+stores the generated image as a run artifact, and returns
+`event_name="abstract.progress"` so thin clients can stream the child-run ledger
+for progress:
 
 - `run_id`, `request_id`, `prompt`
 - optional `provider`, `model`, `size`, `width`, `height`, and `format`
 - `image_artifact`: `{"$artifact", "content_type", "filename", "sha256", "size_bytes"}`
+
+`size`, `width`, and `height` are optional passthrough request overrides. Do
+not inject a client-side default size. Different image providers/models accept
+different size sets; when the client leaves dimensions unset, Runtime/Core lets
+the configured backend use its default or `auto` behavior.
 
 If the active workflow runtime already has an AbstractCore LLM client, the route
 uses it. For tools-only workflows, the route can create a direct Runtime/Core
@@ -461,7 +471,8 @@ The request uses a source `image_artifact`, optional `mask_artifact`, the same
 provider/model and image backend selectors as image generation, and returns an
 artifact-backed edited image. Thin clients should feature-detect it from
 `capabilities.contracts.flow_editor.media.edited_image` or
-`capabilities.contracts.assistant.media.edited_image`.
+`capabilities.contracts.assistant.media.edited_image`. It uses the same
+child-run `abstract.progress` progress contract as direct image generation.
 
 Generated music follows the same direct child-run pattern. Thin clients should
 discover it from `capabilities.contracts.flow_editor.media.generated_music` or

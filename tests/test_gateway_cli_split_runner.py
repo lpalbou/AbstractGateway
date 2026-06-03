@@ -104,6 +104,47 @@ def test_cli_serve_requires_auth_token(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.basic
+def test_cli_serve_user_auth_bootstraps_admin_without_legacy_token(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from abstractgateway import cli as gateway_cli
+    from abstractgateway.users import GatewayUserRegistry
+
+    called: dict[str, object] = {}
+    uvicorn = types.ModuleType("uvicorn")
+
+    def _run(app: str, **kwargs: object) -> None:
+        called["app"] = app
+        called.update(kwargs)
+
+    uvicorn.run = _run  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "uvicorn", uvicorn)
+    monkeypatch.setattr(gateway_cli, "_resolve_default_console_level", lambda: logging.ERROR)
+    monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+
+    gateway_cli.main(["serve", "--host", "127.0.0.1", "--port", "9999", "--no-runner"])
+
+    token_file = tmp_path / "runtime" / "auth" / "bootstrap-admin-token"
+    token = token_file.read_text(encoding="utf-8").strip()
+    principal = GatewayUserRegistry().authenticate(token)
+    assert principal is not None
+    assert principal.user_id == "admin"
+    assert principal.tenant_id == "default"
+    assert principal.runtime_id == "default"
+    assert called["app"] == "abstractgateway.app:app"
+    assert called["host"] == "127.0.0.1"
+    err = capsys.readouterr().err
+    assert "Gateway user auth: enabled." in err
+    assert "Gateway admin user: default/admin" in err
+    assert "Gateway admin token file:" in err
+    assert f"Gateway admin token: {token}" in err
+
+
+@pytest.mark.basic
 def test_cli_serve_refuses_weak_token_on_public_bind(monkeypatch: pytest.MonkeyPatch) -> None:
     from abstractgateway import cli as gateway_cli
 

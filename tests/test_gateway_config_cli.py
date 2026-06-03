@@ -61,7 +61,7 @@ def test_gateway_config_init_writes_private_env_file(tmp_path: Path, capsys: pyt
     assert "ABSTRACTGATEWAY_PROVIDER" not in text
     assert "ABSTRACTGATEWAY_MODEL" not in text
     assert "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL" not in text
-    assert "abstractcore-config" in text
+    assert "Gateway Console" in text
 
     mode = stat.S_IMODE(env_file.stat().st_mode)
     assert mode & stat.S_IRWXG == 0
@@ -119,6 +119,114 @@ def test_gateway_config_defaults_set_list_and_clear(
     out = json.loads(capsys.readouterr().out)
     route = next(item for item in out["routes"] if item["key"] == "output.text")
     assert route["configured"] is False
+
+
+def test_gateway_config_defaults_write_gateway_and_user_scoped_core_configs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+
+    from abstractgateway.config_cli import main
+    from abstractgateway.users import GatewayUserRegistry
+
+    main(["set-default", "output.text", "--provider", "openrouter", "--model", "gateway-model"])
+    assert "Set execution-host capability default: output.text" in capsys.readouterr().out
+    gateway_config = tmp_path / "runtime" / "config" / "abstractcore.json"
+    assert gateway_config.exists()
+    assert not (gateway_config.parent / "capability_defaults.json").exists()
+
+    _record, _token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"], runtime_id="alice")
+    main(
+        [
+            "set-default",
+            "output.text",
+            "--scope",
+            "user",
+            "--user",
+            "alice",
+            "--provider",
+            "anthropic",
+            "--model",
+            "alice-model",
+        ]
+    )
+    assert "Set execution-host capability default: output.text" in capsys.readouterr().out
+    alice_config = tmp_path / "runtime" / "users" / "default" / "alice" / "runtime" / "config" / "abstractcore.json"
+    assert alice_config.exists()
+
+    main(["defaults", "--scope", "user", "--user", "alice", "--json"])
+    alice_payload = json.loads(capsys.readouterr().out)
+    alice_text = next(item for item in alice_payload["routes"] if item["key"] == "output.text")
+    assert alice_text["provider"] == "anthropic"
+    assert alice_text["model"] == "alice-model"
+    assert alice_text["source"] == "abstractcore.runtime"
+
+    _record, _token = GatewayUserRegistry().create_user(user_id="bob", roles=["user"], runtime_id="bob")
+    main(["defaults", "--scope", "user", "--user", "bob", "--json"])
+    bob_payload = json.loads(capsys.readouterr().out)
+    bob_text = next(item for item in bob_payload["routes"] if item["key"] == "output.text")
+    assert bob_text["provider"] == "openrouter"
+    assert bob_text["model"] == "gateway-model"
+    assert bob_text["source"] == "abstractcore.gateway_runtime"
+
+
+def test_gateway_config_defaults_ignore_legacy_capability_defaults_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+
+    legacy = tmp_path / "runtime" / "config" / "capability_defaults.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"version": 1, "routes": {"output.text": {"provider": "legacy-provider", "model": "legacy-model"}}}),
+        encoding="utf-8",
+    )
+
+    from abstractgateway.config_cli import main
+
+    main(["defaults", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    route = next(item for item in payload["routes"] if item["key"] == "output.text")
+    assert route["configured"] is False
+    assert route.get("provider") != "legacy-provider"
+
+    main(["set-default", "output.text", "--provider", "openrouter", "--model", "gateway-model"])
+    assert "Set execution-host capability default: output.text" in capsys.readouterr().out
+    data = json.loads((tmp_path / "runtime" / "config" / "abstractcore.json").read_text(encoding="utf-8"))
+    assert data["capability_defaults"]["routes"]["input.text"]["model"] == "gateway-model"
+    assert "output.text" not in data["capability_defaults"]["routes"]
+    assert json.loads(legacy.read_text(encoding="utf-8"))["routes"]["output.text"]["model"] == "legacy-model"
+
+
+def test_gateway_config_defaults_ignore_removed_overlay_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+
+    old_overlay = tmp_path / "runtime" / "config" / "capability_defaults.json"
+    old_overlay.parent.mkdir(parents=True)
+    old_overlay.write_text(
+        json.dumps({"version": 1, "routes": {"output.text": {"provider": "legacy", "model": "legacy-model"}}}),
+        encoding="utf-8",
+    )
+
+    from abstractgateway.config_cli import main
+
+    main(["defaults", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    route = next(item for item in payload["routes"] if item["key"] == "output.text")
+    assert route["configured"] is False
+    assert route.get("provider") != "legacy"
+    assert route.get("model") != "legacy-model"
 
 
 def test_gateway_config_bootstrap_admin_creates_user_and_token_file(
