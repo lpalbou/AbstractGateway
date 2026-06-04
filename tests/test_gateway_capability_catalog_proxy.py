@@ -140,23 +140,64 @@ def test_voice_catalog_static_fallback_surfaces_supertonic_builtin_profiles_with
     assert "supertonic" in providers["tts_providers"]
 
 
-def test_voice_catalog_static_fallback_surfaces_omnivoice_languages(
+def test_voice_catalog_static_fallback_surfaces_omnivoice_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
     monkeypatch.setattr(gateway_routes, "_module_available", lambda name: name == "omnivoice")
-    monkeypatch.setattr(gateway_routes, "_omnivoice_language_ids", lambda: ["en", "fr"])
 
     body = gateway_routes._static_voice_catalog_response(provider="omnivoice")
     assert body["tts_providers"] == ["omnivoice"]
-    assert body["tts_models_by_provider"] == {"omnivoice": ["en", "fr"]}
-    assert body["tts_model_roles_by_provider"] == {"omnivoice": "language"}
+    assert body["tts_models_by_provider"] == {"omnivoice": ["k2-fsa/OmniVoice"]}
+    assert body["tts_model_roles_by_provider"] == {"omnivoice": "model"}
 
     speech_models = gateway_routes._static_speech_models_response(provider="omnivoice")
-    assert speech_models["models"] == ["en", "fr"]
-    assert speech_models["tts_models_by_provider"] == {"omnivoice": ["en", "fr"]}
-    assert speech_models["tts_model_roles_by_provider"] == {"omnivoice": "language"}
+    assert speech_models["models"] == ["k2-fsa/OmniVoice"]
+    assert speech_models["tts_models_by_provider"] == {"omnivoice": ["k2-fsa/OmniVoice"]}
+    assert speech_models["tts_model_roles_by_provider"] == {"omnivoice": "model"}
+
+
+def test_voice_catalog_static_fallback_surfaces_piper_and_audiodit_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(
+        gateway_routes,
+        "_module_available",
+        lambda name: name in {"piper", "torch", "transformers"},
+    )
+    monkeypatch.setattr(
+        gateway_routes,
+        "_static_tts_model_ids_for_provider",
+        lambda provider: {
+            "piper": ["en_US-amy-medium"],
+            "audiodit": ["meituan-longcat/LongCat-AudioDiT-1B"],
+        }.get(str(provider), []),
+    )
+    monkeypatch.setattr(
+        gateway_routes,
+        "_static_piper_profile_records",
+        lambda: [
+            {
+                "id": "amy",
+                "profile_id": "amy",
+                "voice_id": "amy",
+                "label": "Piper amy",
+                "provider": "piper",
+                "engine_id": "piper",
+            }
+        ],
+    )
+
+    piper = gateway_routes._static_voice_catalog_response(provider="piper")
+    assert piper["tts_models_by_provider"] == {"piper": ["en_US-amy-medium"]}
+    assert piper["tts_voices_by_provider"] == {"piper": ["amy"]}
+
+    audiodit = gateway_routes._static_speech_models_response(provider="audiodit")
+    assert audiodit["models"] == ["meituan-longcat/LongCat-AudioDiT-1B"]
+    assert audiodit["tts_models_by_provider"] == {"audiodit": ["meituan-longcat/LongCat-AudioDiT-1B"]}
 
 
 def test_voice_catalog_proxies_configured_core_catalog_route(

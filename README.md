@@ -96,6 +96,11 @@ Gateway can discover models from them. The Sandbox tab runs quick smoke tests
 against the selected multimodal capability defaults in a chat surface, including
 text chat, drag-and-drop attachments, inline image/video previews, and audio
 players for voice, sound, and music artifacts.
+Defaults model pickers use Core route filters for LLM/embedding rows, for
+example `capability_route=input.image,output.text` and
+`capability_route=embedding.text`. Generated image/video/voice/sound/music rows
+continue to use capability plugin catalogs so readiness and download/setup state
+stay out of Core's raw model registry.
 Input fallback routes are explicit: `input.voice` selects the STT backend for
 speech attachments, and `input.video` selects an overrideable video/VLM fallback
 when the text route cannot or should not handle frames directly. If those routes
@@ -257,6 +262,9 @@ Workflow/Core-backed capabilities:
 ## Client contract (replay-first)
 
 - Clients **start runs**: `POST /api/gateway/runs/start`
+  - optional `thinking` sets the run-scoped `_runtime.thinking` default used by
+    Flow LLM/Agent nodes and AbstractAgent adapters when Core/provider support
+    reasoning controls
 - Clients can **schedule runs** (bundle mode): `POST /api/gateway/runs/schedule`
 - Clients **act** by submitting durable commands: `POST /api/gateway/commands`
   - supported types: `pause|resume|cancel|emit_event|update_schedule|compact_memory`

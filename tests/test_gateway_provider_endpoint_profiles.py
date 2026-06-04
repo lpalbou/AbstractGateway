@@ -192,6 +192,7 @@ def test_endpoint_profile_model_discovery_uses_profile_url_and_key(tmp_path: Pat
             "provider_api_key": "profile-key",
             "input_type": None,
             "output_type": None,
+            "capability_route": None,
             "timeout_s": 30.0,
         }
     ]
@@ -246,6 +247,62 @@ def test_endpoint_profile_allowed_models_are_intersected_with_capability_filters
             "provider_api_key": "office-key",
             "input_type": "image",
             "output_type": "text",
+            "capability_route": None,
+            "timeout_s": 30.0,
+        }
+    ]
+
+
+def test_endpoint_profile_allowed_models_are_intersected_with_capability_routes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **kwargs: Any) -> dict[str, Any]:
+            return {"items": []}
+
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": ["vlm-model", "other-compatible"]}
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={
+                "id": "office",
+                "display_name": "Office",
+                "provider_family": "openai-compatible",
+                "base_url": "https://office.example.test/v1",
+                "api_key": "office-key",
+                "scope": "gateway",
+                "allowed_models": ["text-only-model", "vlm-model"],
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        models = client.get(
+            "/api/gateway/discovery/providers/endpoint%3Aoffice/models?capability_route=input.image,output.text",
+            headers=headers,
+        )
+
+    assert models.status_code == 200, models.text
+    assert models.json()["models"] == ["vlm-model"]
+    assert _without_local_autoprobes(calls) == [
+        {
+            "provider_name": "openai-compatible",
+            "base_url": "https://office.example.test/v1",
+            "provider_api_key": "office-key",
+            "input_type": None,
+            "output_type": None,
+            "capability_route": ["input.image,output.text"],
             "timeout_s": 30.0,
         }
     ]
@@ -301,6 +358,7 @@ def test_named_provider_connection_discovery_uses_profile_url_and_key(
             "provider_api_key": f"{provider_family}-key",
             "input_type": None,
             "output_type": None,
+            "capability_route": None,
             "timeout_s": 30.0,
         }
     ]
@@ -439,6 +497,7 @@ def test_configured_builtin_provider_surfaces_without_manual_endpoint_profile(tm
             "provider_api_key": "anthropic-env-key",
             "input_type": None,
             "output_type": None,
+            "capability_route": None,
             "timeout_s": 30.0,
         }
     ]
@@ -485,6 +544,7 @@ def test_configured_builtin_provider_can_use_gateway_core_config_key(tmp_path: P
             "provider_api_key": "openai-config-key",
             "input_type": None,
             "output_type": None,
+            "capability_route": None,
             "timeout_s": 30.0,
         }
     ]

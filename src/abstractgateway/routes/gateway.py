@@ -28,7 +28,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
@@ -1042,6 +1042,10 @@ class StartRunRequest(BaseModel):
         ),
     )
     input_data: Dict[str, Any] = Field(default_factory=dict)
+    thinking: Optional[Union[bool, str]] = Field(
+        default=None,
+        description="Optional run-scoped reasoning/thinking control inherited by Flow LLM and Agent nodes when supported.",
+    )
     run_lifecycle: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Optional control-plane lifecycle metadata for this run, exposed as a sanitized run_lifecycle summary.",
@@ -2448,6 +2452,15 @@ def _ensure_input_runtime_namespace(input_data: Dict[str, Any]) -> Dict[str, Any
         runtime_ns = {}
         input_data["_runtime"] = runtime_ns
     return runtime_ns
+
+
+def _normalize_gateway_thinking(value: Any) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        clean = value.strip()
+        return clean or None
+    return None
 
 
 def _map_catalog_error(exc: Exception) -> HTTPException:
@@ -5076,6 +5089,9 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
         input_data = _sanitize_run_workspace_policy(input_data)
         input_data = _normalize_run_context_media(input_data)
+        thinking = _normalize_gateway_thinking(req.thinking)
+        if thinking is not None:
+            _ensure_input_runtime_namespace(input_data)["thinking"] = thinking
         if isinstance(req.run_lifecycle, dict):
             input_data["_run_lifecycle"] = dict(req.run_lifecycle)
         normalize_run_lifecycle_vars(input_data)
@@ -9128,6 +9144,76 @@ def _omnivoice_language_ids() -> list[str]:
         return list(_OMNIVOICE_FALLBACK_LANGUAGES)
 
 
+def _static_tts_model_ids_for_provider(provider: Any) -> list[str]:
+    provider_id = str(provider or "").strip().lower().replace("_", "-")
+    if provider_id == "piper":
+        try:
+            from abstractvoice.adapters.tts_piper import PiperTTSAdapter  # type: ignore
+
+            adapter = PiperTTSAdapter(language="en", allow_downloads=False, auto_load=False)
+            catalog = adapter.list_available_models()
+            models: list[str] = []
+            if isinstance(catalog, dict):
+                for lang_catalog in catalog.values():
+                    if not isinstance(lang_catalog, dict):
+                        continue
+                    for item in lang_catalog.values():
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("cached") is False:
+                            continue
+                        model = str(item.get("model_filename") or item.get("model") or item.get("model_id") or "").strip()
+                        if model:
+                            models.append(model)
+            return _dedupe_strings(models)
+        except Exception:
+            return []
+    if provider_id in {"supertonic", "omnivoice", "audiodit"}:
+        fallback = {
+            "supertonic": ["supertonic-3"],
+            "omnivoice": ["k2-fsa/OmniVoice"],
+            "audiodit": ["meituan-longcat/LongCat-AudioDiT-1B"],
+        }[provider_id]
+        try:
+            from abstractvoice.compatibility import _known_tts_models  # type: ignore
+
+            return _dedupe_strings(_known_tts_models().get(provider_id) or []) or list(fallback)
+        except Exception:
+            return list(fallback)
+    return []
+
+
+def _static_piper_profile_records() -> list[Dict[str, Any]]:
+    try:
+        from abstractvoice.adapters.tts_piper import PiperTTSAdapter  # type: ignore
+
+        adapter = PiperTTSAdapter(language="en", allow_downloads=False, auto_load=False)
+        profiles = []
+        for profile in adapter.get_profiles():
+            profile_id = str(getattr(profile, "profile_id", "") or "").strip()
+            if not profile_id:
+                continue
+            params = getattr(profile, "params", None)
+            tags = getattr(profile, "tags", None)
+            profiles.append(
+                {
+                    "id": profile_id,
+                    "profile_id": profile_id,
+                    "voice_id": profile_id,
+                    "label": str(getattr(profile, "label", "") or profile_id).strip() or profile_id,
+                    "description": str(getattr(profile, "description", "") or "").strip(),
+                    "provider": "piper",
+                    "engine_id": "piper",
+                    "qualified_id": f"piper:{profile_id}",
+                    "params": dict(params) if isinstance(params, dict) else {},
+                    "tags": dict(tags) if isinstance(tags, dict) else {},
+                }
+            )
+        return profiles
+    except Exception:
+        return []
+
+
 def _voice_profile_descriptors() -> list[Dict[str, Any]]:
     """Best-effort voice profile discovery without importing provider packages."""
     profiles: list[Dict[str, Any]] = []
@@ -10132,13 +10218,18 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         tts_voices_by_provider["openai"] = [str(item["id"]) for item in openai_profiles]
 
     if include("piper") and (_module_available("piper") or _module_available("piper_phonemize")):
+        piper_profiles = _static_piper_profile_records()
         add_provider("piper")
+        profiles.extend(piper_profiles)
+        tts_models_by_provider["piper"] = _static_tts_model_ids_for_provider("piper")
+        tts_profiles_by_provider["piper"] = [str(item["id"]) for item in piper_profiles if str(item.get("id") or "").strip()]
+        tts_voices_by_provider["piper"] = [str(item["id"]) for item in piper_profiles if str(item.get("id") or "").strip()]
 
     if include("omnivoice") and _module_available("omnivoice"):
         omni_profiles = _builtin_voice_profile_records("omnivoice")
         add_provider("omnivoice")
         profiles.extend(omni_profiles)
-        tts_models_by_provider["omnivoice"] = _omnivoice_language_ids()
+        tts_models_by_provider["omnivoice"] = _static_tts_model_ids_for_provider("omnivoice")
         tts_profiles_by_provider["omnivoice"] = [str(item["id"]) for item in omni_profiles]
         tts_voices_by_provider["omnivoice"] = [str(item["id"]) for item in omni_profiles]
 
@@ -10149,9 +10240,13 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
     if include("supertonic") and (supertonic_profiles or _module_available("onnxruntime")):
         add_provider("supertonic")
         profiles.extend(supertonic_profiles)
-        tts_models_by_provider["supertonic"] = ["supertonic-3"]
+        tts_models_by_provider["supertonic"] = _static_tts_model_ids_for_provider("supertonic")
         tts_profiles_by_provider["supertonic"] = [str(item["id"]) for item in supertonic_profiles]
         tts_voices_by_provider["supertonic"] = [str(item["id"]) for item in supertonic_profiles]
+
+    if include("audiodit") and _module_available("torch") and _module_available("transformers"):
+        add_provider("audiodit")
+        tts_models_by_provider["audiodit"] = _static_tts_model_ids_for_provider("audiodit")
 
     env_profiles = _voice_profile_descriptors()
     for item in env_profiles:
@@ -10183,7 +10278,7 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         "providers": tts_providers,
         "tts_models_by_provider": tts_models_by_provider,
         "tts_model_roles_by_provider": {
-            provider_id: "language" if provider_id == "omnivoice" else "model"
+            provider_id: "model"
             for provider_id in tts_providers
         },
         "tts_profiles_by_provider": tts_profiles_by_provider,
@@ -10302,9 +10397,17 @@ def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, 
     if (not provider_key or provider_key == "supertonic") and (
         _module_available("onnxruntime") or _has_builtin_voice_profiles("supertonic")
     ):
-        models_by_provider["supertonic"] = ["supertonic-3"]
+        models_by_provider["supertonic"] = _static_tts_model_ids_for_provider("supertonic")
+    if (not provider_key or provider_key == "piper") and (
+        _module_available("piper") or _module_available("piper_phonemize")
+    ):
+        piper_models = _static_tts_model_ids_for_provider("piper")
+        if piper_models:
+            models_by_provider["piper"] = piper_models
     if (not provider_key or provider_key == "omnivoice") and _module_available("omnivoice"):
-        models_by_provider["omnivoice"] = _omnivoice_language_ids()
+        models_by_provider["omnivoice"] = _static_tts_model_ids_for_provider("omnivoice")
+    if (not provider_key or provider_key == "audiodit") and _module_available("torch") and _module_available("transformers"):
+        models_by_provider["audiodit"] = _static_tts_model_ids_for_provider("audiodit")
     if not provider_key and engine and values:
         models_by_provider.setdefault(engine.lower(), _dedupe_strings(values))
     models = _dedupe_strings([model for provider_models in models_by_provider.values() for model in provider_models])
@@ -10319,7 +10422,7 @@ def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, 
         "models_by_provider": models_by_provider,
         "tts_models_by_provider": models_by_provider,
         "tts_model_roles_by_provider": {
-            provider_id: "language" if provider_id == "omnivoice" else "model"
+            provider_id: "model"
             for provider_id in providers
         },
         "controls": _voice_catalog_controls(),
@@ -11457,7 +11560,15 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
 
     common = {
         "runs": {
-            "start": {"available": True, "endpoint": _api_gateway_path("/runs/start")},
+            "start": {
+                "available": True,
+                "endpoint": _api_gateway_path("/runs/start"),
+                "thinking_control": {
+                    "field": "thinking",
+                    "runtime_field": "_runtime.thinking",
+                    "values": ["off", "low", "medium", "high", "xhigh"],
+                },
+            },
             "schedule": {"available": True, "endpoint": _api_gateway_path("/runs/schedule")},
             "summary": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}")},
             "list": {"available": True, "endpoint": _api_gateway_path("/runs")},
@@ -12568,6 +12679,10 @@ async def discovery_provider_models(
         default=None,
         description="Optional model output capability filter: text or embeddings.",
     ),
+    capability_route: Optional[List[str]] = Query(
+        default=None,
+        description="Precise capability route filter such as input.image, output.text, or embedding.text.",
+    ),
 ) -> Dict[str, Any]:
     """List available models for a provider (best-effort; may require provider connectivity)."""
     prov = str(provider_name or "").strip()
@@ -12581,7 +12696,11 @@ async def discovery_provider_models(
         if profile.allowed_models:
             models = _dedupe_strings([str(m) for m in profile.allowed_models if str(m).strip()])
             models.sort()
-            filter_requested = bool(str(input_type or "").strip() or str(output_type or "").strip())
+            filter_requested = bool(
+                str(input_type or "").strip()
+                or str(output_type or "").strip()
+                or any(str(route or "").strip() for route in (capability_route or []))
+            )
             filter_error = ""
             if filter_requested:
                 if err or discovery is None:
@@ -12595,6 +12714,7 @@ async def discovery_provider_models(
                             provider_api_key=profile.api_key or _request_provider_api_key(request),
                             input_type=input_type,
                             output_type=output_type,
+                            capability_route=capability_route,
                             timeout_s=_provider_models_timeout_s(),
                         )
                         discovered = payload.get("models") if isinstance(payload, dict) else None
@@ -12650,6 +12770,7 @@ async def discovery_provider_models(
                 provider_api_key=profile.api_key or _request_provider_api_key(request),
                 input_type=input_type,
                 output_type=output_type,
+                capability_route=capability_route,
                 timeout_s=_provider_models_timeout_s(),
             )
         except Exception as e:
@@ -12706,6 +12827,7 @@ async def discovery_provider_models(
             provider_api_key=_request_provider_api_key(request) or direct_kwargs.get("api_key"),
             input_type=input_type,
             output_type=output_type,
+            capability_route=capability_route,
             timeout_s=_provider_models_timeout_s(),
         )
     except Exception as e:

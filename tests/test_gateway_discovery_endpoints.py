@@ -202,6 +202,7 @@ def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, mon
             "provider_api_key": None,
             "input_type": None,
             "output_type": None,
+            "capability_route": None,
             "timeout_s": 30.0,
         },
     ]
@@ -234,6 +235,7 @@ def test_discovery_provider_models_accepts_base_url_override(tmp_path: Path, mon
             "provider_api_key": None,
             "input_type": None,
             "output_type": None,
+            "capability_route": None,
             "timeout_s": 30.0,
         }
     ]
@@ -252,7 +254,7 @@ def test_discovery_provider_models_accepts_capability_filters(tmp_path: Path, mo
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
         models = client.get(
-            "/api/gateway/discovery/providers/lmstudio/models?input_type=image&output_type=text",
+            "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.image,output.text",
             headers=headers,
         )
 
@@ -263,8 +265,9 @@ def test_discovery_provider_models_accepts_capability_filters(tmp_path: Path, mo
             "provider_name": "lmstudio",
             "base_url": None,
             "provider_api_key": None,
-            "input_type": "image",
-            "output_type": "text",
+            "input_type": None,
+            "output_type": None,
+            "capability_route": ["input.image,output.text"],
             "timeout_s": 30.0,
         }
     ]

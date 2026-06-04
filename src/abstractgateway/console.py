@@ -1931,7 +1931,7 @@ def gateway_console_html() -> str:
         };
       }
       if (key === "embedding.image") {
-        return textCatalog("image embeddings", { input_type: "image", output_type: "embeddings" });
+        return textCatalog("image embeddings", { capability_route: "input.image,embedding.image" });
       }
       if (key === "output.image") {
         return visionCatalog("image generation", "text_to_image");
@@ -1940,13 +1940,16 @@ def gateway_console_html() -> str:
         return visionCatalog("video generation", "text_to_video");
       }
       if (key === "input.image") {
-        return textCatalog("image input", { input_type: "image", output_type: "text" });
+        return textCatalog("image input", { capability_route: "input.image,output.text" });
       }
       if (key === "input.video") {
-        return textCatalog("video input", { input_type: "video", output_type: "text" });
+        return textCatalog("video input", { capability_route: "input.video,output.text" });
       }
       if (key === "input.sound" || key === "input.audio") {
-        return textCatalog("audio input", { input_type: "audio", output_type: "text" });
+        return textCatalog("audio input", { capability_route: "input.sound,output.text" });
+      }
+      if (key === "input.music") {
+        return textCatalog("music input", { capability_route: "input.music,output.text" });
       }
       if (key === "output.voice" || key === "output.audio") {
         return {
@@ -1987,7 +1990,7 @@ def gateway_console_html() -> str:
           emptyModels: "No music models discovered",
         };
       }
-      return textCatalog("text generation", { output_type: "text" });
+      return textCatalog("text generation", { capability_route: "output.text" });
     }
     function textCatalog(scope, filters = {}) {
       return {
@@ -2129,7 +2132,7 @@ def gateway_console_html() -> str:
 	      if (!provider) return [];
 	      const cacheKey = `text::${provider}`;
 	      if (!state.providerModels.has(cacheKey)) {
-	        const payload = await api(withQuery(`/api/gateway/discovery/providers/${encodeURIComponent(provider)}/models`, { output_type: "text" }));
+	        const payload = await api(withQuery(`/api/gateway/discovery/providers/${encodeURIComponent(provider)}/models`, { capability_route: "output.text" }));
 	        state.providerModels.set(cacheKey, parseModelItems(payload));
 	      }
 	      return state.providerModels.get(cacheKey) || [];
@@ -2683,7 +2686,7 @@ def gateway_console_html() -> str:
 	    }
 	    async function textDefaultCoversInput(row, rows) {
 	      const key = defaultRowKey(row);
-	      if (key !== "input.image" && key !== "input.video") return false;
+	      if (!["input.image", "input.video", "input.sound", "input.music"].includes(key)) return false;
 	      const textRow = findDefaultRow(rows, "input.text");
 	      if (!rowHasProviderModel(textRow)) return false;
 	      try {
@@ -2712,10 +2715,10 @@ def gateway_console_html() -> str:
 	        }
 	        return { ...row, derived_from: "input.text", read_only: true };
 	      }
-	      if (key === "input.image" || key === "input.video") {
+	      if (["input.image", "input.video", "input.sound", "input.music"].includes(key)) {
 	        if (row?.covered_by === "input.text" || await textDefaultCoversInput(row, rows)) {
 	          const textRow = findDefaultRow(rows, "input.text") || row;
-	          const videoOverrideable = key === "input.video";
+	          const overrideable = key !== "input.image";
 	          return {
 	            ...row,
 	            provider: textRow.provider || row.provider,
@@ -2725,9 +2728,9 @@ def gateway_console_html() -> str:
 	            configured: Boolean(textRow.provider && textRow.model) || defaultRowConfigured(row),
 	            source: textRow.source || row.source || "abstractcore.capability_defaults",
 	            covered_by: "input.text",
-	            coverage_mode: videoOverrideable ? "video_frames" : row.coverage_mode,
-	            overrideable: videoOverrideable,
-	            read_only: !videoOverrideable,
+	            coverage_mode: key === "input.video" ? "video_frames" : row.coverage_mode,
+	            overrideable,
+	            read_only: !overrideable,
 	          };
 	        }
 	      }

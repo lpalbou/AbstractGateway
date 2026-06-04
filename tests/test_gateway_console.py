@@ -36,8 +36,12 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert "/api/gateway/audio/transcriptions/models" in console.text
     assert "/api/gateway/audio/music/models" in console.text
     assert "/api/gateway/embeddings/models" in console.text
-    assert 'output_type: "text"' in console.text
-    assert 'input_type: "image"' in console.text
+    assert 'capability_route: "output.text"' in console.text
+    assert 'capability_route: "input.image,output.text"' in console.text
+    assert 'capability_route: "input.video,output.text"' in console.text
+    assert 'capability_route: "input.sound,output.text"' in console.text
+    assert 'capability_route: "input.music,output.text"' in console.text
+    assert 'visionCatalog("video generation", "text_to_video")' in console.text
     assert '<select id="modal-default-provider">' in console.text
     assert '<select id="modal-default-model">' in console.text
     assert '<select id="modal-default-voice">' in console.text
@@ -213,11 +217,23 @@ async function fetch(path, options = {{}}) {{
       principal: {{ tenant_id: "default", user_id: "admin", runtime_id: "default", roles: ["admin", "user"], admin: true }}
     }});
   }}
-  if (path === "/api/gateway/discovery/providers/openai/models?output_type=text") return response(200, {{ models: ["gpt-4.1"] }});
-  if (path === "/api/gateway/discovery/providers/endpoint%3Aopenai/models?output_type=text") return response(200, {{ models: ["gpt-4.1"] }});
-  if (path === "/api/gateway/discovery/providers/lmstudio/models?input_type=image&output_type=text") return response(200, {{ models: ["qwen/qwen3.6-35b-a3b"] }});
+  if (path === "/api/gateway/discovery/providers") return response(200, {{
+    items: [
+      {{ name: "openai", display_name: "OpenAI" }},
+      {{ name: "lmstudio", display_name: "LM Studio" }},
+      {{ name: "endpoint:openai", display_name: "OpenAI Production" }}
+    ]
+  }});
+  if (path === "/api/gateway/discovery/providers/openai/models?capability_route=output.text") return response(200, {{ models: ["gpt-4.1"] }});
+  if (path === "/api/gateway/discovery/providers/endpoint%3Aopenai/models?capability_route=output.text") return response(200, {{ models: ["gpt-4.1"] }});
+  if (path === "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.image%2Coutput.text") return response(200, {{ models: ["qwen/qwen3.6-35b-a3b"] }});
+  if (path === "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.video%2Coutput.text") return response(200, {{ models: ["qwen/qwen3.6-35b-a3b"] }});
+  if (path === "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.sound%2Coutput.text") return response(200, {{ models: ["qwen3-omni-30b-a3b-captioner"] }});
+  if (path === "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.music%2Coutput.text") return response(200, {{ models: ["qwen3-omni-30b-a3b-captioner"] }});
   if (path === "/api/gateway/vision/provider_models?task=text_to_image&providers_only=true") return response(200, {{ available_providers: ["mflux"] }});
   if (path === "/api/gateway/vision/provider_models?task=text_to_image&provider=mflux") return response(200, {{ provider_models: [{{ provider: "mflux", model: "flux-dev" }}] }});
+  if (path === "/api/gateway/vision/provider_models?task=text_to_video&providers_only=true") return response(200, {{ available_providers: ["mlx-gen"] }});
+  if (path === "/api/gateway/vision/provider_models?task=text_to_video&provider=mlx-gen") return response(200, {{ provider_models: [{{ provider: "mlx-gen", model: "Wan-AI/Wan2.2-TI2V-5B-Diffusers" }}] }});
   if (path === "/api/gateway/voice/voices?providers_only=true&compact=true") return response(200, {{ tts_providers: ["openai"] }});
   if (path === "/api/gateway/audio/speech/models?provider=openai") return response(200, {{ tts_models_by_provider: {{ openai: ["tts-1"] }} }});
   if (path === "/api/gateway/voice/voices?provider=openai&model=tts-1&compact=true") return response(200, {{
@@ -383,7 +399,7 @@ el("modal-default-provider").onchange();
 await new Promise((resolve) => setTimeout(resolve, 0));
 await new Promise((resolve) => setTimeout(resolve, 0));
 
-if (!calls.some((call) => call.path === "/api/gateway/discovery/providers/endpoint%3Aopenai/models?output_type=text")) {{
+if (!calls.some((call) => call.path === "/api/gateway/discovery/providers/endpoint%3Aopenai/models?capability_route=output.text")) {{
   throw new Error("default model discovery did not request models for the selected provider");
 }}
 if (!el("modal-default-model").children.some((child) => child.value === "gpt-4.1")) {{
@@ -433,11 +449,46 @@ async function assertDefaultModal(row, provider, model, providerPath, modelPath,
 }}
 
 await assertDefaultModal(
+  {{ key: "input.image", kind: "input", modality: "image", label: "Image Input" }},
+  "lmstudio",
+  "qwen/qwen3.6-35b-a3b",
+  "/api/gateway/discovery/providers",
+  "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.image%2Coutput.text"
+);
+await assertDefaultModal(
+  {{ key: "input.video", kind: "input", modality: "video", label: "Video Input" }},
+  "lmstudio",
+  "qwen/qwen3.6-35b-a3b",
+  "/api/gateway/discovery/providers",
+  "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.video%2Coutput.text"
+);
+await assertDefaultModal(
+  {{ key: "input.sound", kind: "input", modality: "sound", label: "Sound Input" }},
+  "lmstudio",
+  "qwen3-omni-30b-a3b-captioner",
+  "/api/gateway/discovery/providers",
+  "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.sound%2Coutput.text"
+);
+await assertDefaultModal(
+  {{ key: "input.music", kind: "input", modality: "music", label: "Music Input" }},
+  "lmstudio",
+  "qwen3-omni-30b-a3b-captioner",
+  "/api/gateway/discovery/providers",
+  "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.music%2Coutput.text"
+);
+await assertDefaultModal(
   {{ key: "output.image", kind: "output", modality: "image", label: "Image Output" }},
   "mflux",
   "flux-dev",
   "/api/gateway/vision/provider_models?task=text_to_image&providers_only=true",
   "/api/gateway/vision/provider_models?task=text_to_image&provider=mflux"
+);
+await assertDefaultModal(
+  {{ key: "output.video", kind: "output", modality: "video", label: "Video Output" }},
+  "mlx-gen",
+  "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+  "/api/gateway/vision/provider_models?task=text_to_video&providers_only=true",
+  "/api/gateway/vision/provider_models?task=text_to_video&provider=mlx-gen"
 );
 await assertDefaultModal(
   {{ key: "output.voice", kind: "output", modality: "voice", label: "Voice Output" }},
@@ -522,9 +573,12 @@ if (voiceSaveBody.options.voice !== "coral" || voiceSaveBody.options.quality_pre
 
 await context.renderDefaults({{
   routes: [
-    {{ key: "input.text", kind: "input", modality: "text", label: "Text Input", provider: "lmstudio", model: "qwen/qwen3.6-35b-a3b", configured: true }},
-    {{ key: "input.image", kind: "input", modality: "image", label: "Image Input", provider: "openai", model: "gpt-4o", configured: true }},
-    {{ key: "output.text", kind: "output", modality: "text", label: "Text Output", configured: false, derived_from: "input.text", read_only: true }},
+	    {{ key: "input.text", kind: "input", modality: "text", label: "Text Input", provider: "lmstudio", model: "qwen/qwen3.6-35b-a3b", configured: true }},
+	    {{ key: "input.image", kind: "input", modality: "image", label: "Image Input", provider: "openai", model: "gpt-4o", configured: true }},
+	    {{ key: "input.video", kind: "input", modality: "video", label: "Video Input", configured: false }},
+	    {{ key: "input.sound", kind: "input", modality: "sound", label: "Sound Input", configured: false }},
+	    {{ key: "input.music", kind: "input", modality: "music", label: "Music Input", configured: false }},
+	    {{ key: "output.text", kind: "output", modality: "text", label: "Text Output", configured: false, derived_from: "input.text", read_only: true }},
     {{ key: "output.image", kind: "output", modality: "image", label: "Image Output", provider: "mflux", model: "flux-dev", configured: true }},
     {{ key: "output.voice", kind: "output", modality: "voice", label: "Voice Output", provider: "openai", model: "tts-1", configured: true, options: {{ voice: "coral" }} }},
     {{ key: "output.music", kind: "output", modality: "music", label: "Music Output", provider: "acemusic", model: "ace-step", configured: true }},

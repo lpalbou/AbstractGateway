@@ -170,6 +170,14 @@ files are ignored. Recreate those defaults with
 not returned by these routes. Use Gateway provider connections when a route
 default needs an API key or custom base URL.
 
+Gateway model discovery delegates to AbstractRuntime's AbstractCore discovery
+facade. LLM and embedding default pickers can filter models with Core route keys
+such as `capability_route=input.image,output.text` or
+`capability_route=embedding.text`. Generated image/video/voice/sound/music
+defaults continue to use their capability plugin catalogs so provider readiness,
+download/setup state, and backend-specific metadata do not get written into the
+raw Core model registry.
+
 CLI examples:
 
 ```bash
@@ -201,6 +209,10 @@ video/VLM route. `input.voice` is the speech-to-text fallback route; if it is
 not configured and the selected text model cannot accept audio natively,
 Gateway/Core fail clearly instead of using a hidden installed STT backend.
 `input.sound` is for non-speech audio understanding and is not used as STT.
+`input.music` is the corresponding music-audio understanding route. `input.sound`
+and `input.music` may be shown as covered by `input.text` only when the selected
+text model is known to accept those native inputs, and both rows remain
+overrideable.
 Audio-language candidates such as `qwen3-omni-30b-a3b-instruct`,
 `qwen3-omni-30b-a3b-captioner`, `qwen2.5-omni-7b`, and
 `qwen2-audio-7b-instruct` are registry-known options when the configured
