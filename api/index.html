@@ -403,10 +403,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider-endpoint-profiles" class="md-nav__link">
+  <a href="#provider-connections" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Provider endpoint profiles
+        Provider connections
       
     </span>
   </a>
@@ -810,10 +810,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider-endpoint-profiles" class="md-nav__link">
+  <a href="#provider-connections" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Provider endpoint profiles
+        Provider connections
       
     </span>
   </a>
@@ -1098,11 +1098,14 @@
 See: <a href="../security/">security.md</a>.</p>
 <p>All examples below assume:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">BASE_URL</span><span class="o">=</span><span class="s2">&quot;http://127.0.0.1:8080&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">AUTH</span><span class="o">=</span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="s2">&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">AUTH</span><span class="o">=</span><span class="s2">&quot;Authorization: Bearer </span><span class="k">$(</span>cat<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">/auth/bootstrap-admin-token&quot;</span><span class="k">)</span><span class="s2">&quot;</span>
 </code></pre></div>
-<h2 id="provider-endpoint-profiles">Provider endpoint profiles<a class="headerlink" href="#provider-endpoint-profiles" title="Permanent link">&para;</a></h2>
-<p>Gateway-owned provider endpoint profiles let users create reusable hosted
-endpoints without putting raw API keys in workflow JSON or browser storage.</p>
+<h2 id="provider-connections">Provider connections<a class="headerlink" href="#provider-connections" title="Permanent link">&para;</a></h2>
+<p>Gateway-owned provider connections let users create reusable cloud, local, or
+OpenAI-compatible endpoints without putting raw API keys in workflow JSON or
+browser storage. The API route keeps the historical
+<code>provider-endpoint-profiles</code> name; the Console presents them as provider
+connections.</p>
 <ul>
 <li><code>GET /api/gateway/config/provider-endpoint-profiles</code>: list visible profiles.</li>
 <li><code>POST /api/gateway/config/provider-endpoint-profiles</code>: create a user- or
@@ -1140,6 +1143,10 @@ fixed profile allowlist or the live endpoint model catalog.</p>
 <span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/start&quot;</span>
 </code></pre></div>
 <p>Evidence: request/response models live in <code>src/abstractgateway/routes/gateway.py</code> (<code>StartRunRequest</code>, <code>start_run</code>).</p>
+<p>For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
+Structured LLM/Agent schemas are Runtime/Core-owned: <code>response</code> remains textual,
+and schema-conformant object values are available through the node <code>data</code> output
+for data edges such as Break Object and Switch.</p>
 <h3 id="2b-schedule-a-run-bundle-mode">2b) Schedule a run (bundle mode)<a class="headerlink" href="#2b-schedule-a-run-bundle-mode" title="Permanent link">&para;</a></h3>
 <p><code>POST /api/gateway/runs/schedule</code> starts a <strong>scheduled parent run</strong> that launches the target workflow as child runs over time.</p>
 <p>Example (run 3 times, every hour, starting now):</p>
@@ -1215,22 +1222,93 @@ raw bytes or local paths:</p>
 <span class="w">  </span><span class="nt">&quot;filename&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;input.png&quot;</span>
 <span class="p">}</span>
 </code></pre></div>
+<p>Gateway uses three distinct file-like source terms:</p>
+<ul>
+<li><code>Artifact</code>: a durable runtime-owned payload reference.</li>
+<li><code>Local File</code>: a browser/client upload source. Hosted clients should upload
+  bytes; browser-local paths are never interpreted as server paths.</li>
+<li><code>Server File</code> / <code>Server Folder</code>: user-facing wording for a workspace-scoped
+  server path under Gateway policy. The engineering contract is the canonical
+  <code>WorkspacePath</code> string returned by <code>/files/*</code>, artifact import/export, and
+  Runtime file nodes.</li>
+</ul>
+<p>Hosted local uploads stay artifact-backed:</p>
+<ul>
+<li>one local file upload creates one artifact ref;</li>
+<li>multiple local files create an ordered list of artifact refs in Flow;</li>
+<li>a local folder uploads one artifact per file and may send <code>source_path</code>
+  (for example <code>reports/2026/summary.md</code>) so relative member paths survive in
+  artifact provenance without exposing browser-local absolute paths.</li>
+</ul>
+<p>Upload a local file or folder member:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-F<span class="w"> </span><span class="s2">&quot;session_id=sess-1&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-F<span class="w"> </span><span class="s2">&quot;source_path=reports/summary.md&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-F<span class="w"> </span><span class="s2">&quot;file=@./summary.md&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/attachments/upload&quot;</span>
+</code></pre></div>
 <p>List run artifacts:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/artifacts&quot;</span>
 </code></pre></div>
 <p>List artifacts visible to a session:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/sessions/sess-1/artifacts&quot;</span>
 </code></pre></div>
+<p>Browse server workspace files/folders:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/files/list?path=&amp;include_directories=true&amp;limit=200&quot;</span>
+</code></pre></div>
+<p>Optional filters:
+- <code>path</code>: browse a specific workspace folder or mount alias.
+- <code>recursive=true</code>
+- <code>family=image|video|audio|document|text|code|json|archive|other</code>
+- <code>extensions=png,jpg</code> or newline-separated values
+- <code>query=substring</code>
+- <code>max_depth=&lt;n&gt;</code></p>
 <p>Search artifacts across Gateway storage:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/artifacts/search?scope=all&amp;modality=image&amp;query=logo&amp;tags=pin_id=image&quot;</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/artifacts/search?scope=all&amp;artifact_kind=image&amp;query=logo&amp;tags=pin_id=image&amp;include_stats=true&amp;limit=500&quot;</span>
 </code></pre></div>
 <p><code>scope</code> can be <code>all</code>, <code>session</code>, or <code>run</code>. Use <code>session_id</code> with
 <code>scope=session</code> and <code>run_id</code> with <code>scope=run</code>; omit both for <code>scope=all</code>.
-<code>modality</code> filters normalized artifact type (<code>image</code>, <code>audio</code>, <code>video</code>,
-<code>text</code>, <code>document</code>, <code>music</code>, <code>voice</code>, or <code>artifact</code>), <code>content_type</code> accepts
-exact values or prefixes such as <code>image/*</code>, and <code>tags</code> accepts either a JSON
-object or comma-separated <code>key=value</code> filters.</p>
+Search responses preserve the legacy row fields and also include
+<code>artifact_envelope_v1</code>, a normalized projection of Runtime-owned descriptors,
+access stats, and Gateway action links.</p>
+<p>Useful query parameters:
+- <code>artifact_kind</code>: UI-oriented kind filter. Comma-separated values match
+  <code>semantic_kind</code>, <code>render_kind</code>, or <code>modality</code>; generic <code>audio</code> means
+  unclassified audio and does not match canonical <code>voice</code>, <code>music</code>, or <code>sound</code>.
+  Single canonical kinds such as <code>music</code>, <code>voice</code>, <code>image</code>, <code>markdown</code>, or
+  <code>json</code> map to Runtime catalog filters. Multi-kind unions are supported, but
+  may be Gateway post-filters until Runtime exposes OR filters.
+- <code>semantic_kind</code> / <code>render_kind</code>: canonical descriptor filters when the caller
+  wants the two dimensions separately.
+- <code>modality</code>, <code>content_type</code>, <code>workflow_id</code>, <code>node_id</code>, <code>created_after</code>,
+  <code>created_before</code>, and <code>tags</code>: server filters for indexed descriptor fields.
+- <code>query</code>: case-insensitive metadata search. Gateway may post-filter this field
+  when Runtime cannot index it directly.
+- <code>include_stats=true</code>: include exact <code>stats.total</code>, byte totals, and facet
+  counts for the selected server-side filter set, independent of <code>limit</code>.
+- <code>limit</code>, <code>offset</code>, and <code>cursor</code>: bounded paging. The default Runtime Explorer
+  page size is 500; <code>limit&lt;=0</code> is bounded unless <code>debug_unlimited=true</code> is used
+  by an admin/debug caller.</p>
+<p><code>artifact_envelope_v1</code> contains normalized fields such as <code>semantic_kind</code>,
+<code>render_kind</code>, <code>workflow_id</code>, <code>node_id</code>, <code>turn_id</code>, <code>ledger_cursor</code>,
+<code>generation</code>, <code>producer</code>, <code>media</code>, <code>source_refs</code>, <code>access</code>, and <code>links</code>.
+Sparse producer metadata is represented as missing fields; Gateway does not
+invent provider/model provenance from filenames.</p>
+<p>Generated-media artifacts created by child runs and projected into the parent
+run preserve Runtime descriptors and structured metadata. Direct transcription
+routes store transcript artifacts with source-audio refs, language/prompt hints,
+provider/model when available, and bounded route parameters.
+Descriptor-provided action links are sanitized to relative Gateway/UI links
+before they appear in envelopes; raw external provider URLs should be represented
+as trace availability or Gateway-owned trace records.</p>
+<p>Content reads can label the access type for Runtime access stats:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/artifacts/&lt;artifact_id&gt;/content?access_action=preview&quot;</span>
+</code></pre></div>
+<p>Supported access actions are <code>content</code>, <code>preview</code>, and <code>download</code>. The shorter
+<code>access=preview</code> alias is also accepted.</p>
 <p>Import a server workspace path into a session artifact:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$AUTH</span><span class="s2">&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;session_id&quot;:&quot;sess-1&quot;,&quot;source&quot;:{&quot;kind&quot;:&quot;workspace_path&quot;,&quot;path&quot;:&quot;inputs/photo.png&quot;},&quot;pin_id&quot;:&quot;image&quot;}&#39;</span><span class="w"> </span><span class="se">\</span>
@@ -1249,6 +1327,11 @@ interpreted as Gateway workspace paths. In hosted user-auth mode, server
 workspace import/export and <code>/files/*</code> helpers require an admin principal.
 Ordinary users can still upload browser-local files and list/search artifacts in
 their own routed runtime.</p>
+<p>Canonical Gateway server paths use <code>rel/path</code> for the main workspace root and
+<code>mount_alias/rel/path</code> for approved mounts. When two allowed mounts share the
+same basename, Gateway emits deterministic digest-suffixed aliases so the same
+public path string can round-trip through <code>/files/*</code>, artifact import/export,
+and Runtime file nodes.</p>
 <h2 id="durable-commands-post-apigatewaycommands">Durable commands (<code>POST /api/gateway/commands</code>)<a class="headerlink" href="#durable-commands-post-apigatewaycommands" title="Permanent link">&para;</a></h2>
 <p>Commands are appended to a durable inbox and applied asynchronously by the runner.</p>
 <p>Request fields (see <code>SubmitCommandRequest</code> in <code>src/abstractgateway/routes/gateway.py</code>):
@@ -1307,7 +1390,7 @@ clients should read <code>catalog</code> plus <code>items</code>; older clients 
 specific fields like <code>models</code>, <code>provider_models</code>, <code>profiles</code>, or <code>voices</code>.</p>
 <p>Provider discovery also reports the resolved default provider/model when one is
 configured. The resolver follows request values, flow pins, and the execution-host
-<code>output.text</code> capability route; if no pair exists, the response includes
+<code>input.text</code> capability route; if no pair exists, the response includes
 <code>default_error</code> rather than a hardcoded local model.</p>
 <p>It also includes a versioned thin-client contract:</p>
 <ul>
@@ -1315,8 +1398,9 @@ configured. The resolver follows request values, flow pins, and the execution-ho
 <li><code>capabilities.contracts.common</code>: shared run start/list/summary/input/history,
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
   controls. <code>common.artifacts</code> includes run listing/content, session artifact
-  listing, artifact search, workspace import, and workspace export descriptors
-  when available. Permission-sensitive descriptors are principal-aware:
+  listing, artifact search with <code>artifact_envelope_v1</code>, exact stats/facets,
+  <code>artifact_kind</code> UI filtering, workspace import, and workspace export
+  descriptors when available. Permission-sensitive descriptors are principal-aware:
   ordinary users see admin-only workspace import/export and provider
   prompt-cache controls marked unavailable with <code>admin_required</code> metadata.</li>
 <li><code>capabilities.contracts.common.readiness</code>: compact Gateway-owned
@@ -1377,6 +1461,7 @@ reason codes.</p>
 - <code>POST /api/gateway/runs/{run_id}/audio/transcribe</code>
 - <code>POST /api/gateway/runs/{run_id}/images/generate</code>
 - <code>POST /api/gateway/runs/{run_id}/images/edit</code>
+- <code>POST /api/gateway/runs/{run_id}/images/upscale</code>
 - <code>POST /api/gateway/runs/{run_id}/videos/generate</code>
 - <code>POST /api/gateway/runs/{run_id}/videos/from_image</code>
 - <code>POST /api/gateway/runs/{run_id}/music/generate</code>
@@ -1385,7 +1470,8 @@ reason codes.</p>
 - <code>GET /api/gateway/audio/transcriptions/models</code>
 - <code>GET /api/gateway/audio/music/providers</code>
 - <code>GET /api/gateway/audio/music/models</code>
-- <code>GET /api/gateway/vision/provider_models</code></p>
+- <code>GET /api/gateway/vision/provider_models</code>
+- <code>GET /api/gateway/vision/adapters</code></p>
 <p>The catalog endpoints proxy AbstractCore Server routes when
 <code>ABSTRACTCORE_SERVER_BASE_URL</code>
 is configured. Gateway uses explicit Core auth settings for that hop and never
@@ -1410,13 +1496,21 @@ Gateway and capability-package environment variables.</p>
 <p>Generated images are available through Runtime workflows when a compatible
 image backend is installed and configured. Gateway also exposes a direct image
 generation endpoint that uses the Runtime/Core output-selector contract rather
-than a provider-specific image client. The route stores the generated image as a
-run artifact and emits <code>abstract.media.image.generated</code> with:</p>
+than a provider-specific image client. The route creates a durable child run,
+stores the generated image as a run artifact, and returns
+<code>event_name="abstract.progress"</code> so thin clients can stream the child-run ledger
+for progress:</p>
 <ul>
 <li><code>run_id</code>, <code>request_id</code>, <code>prompt</code></li>
-<li>optional <code>provider</code>, <code>model</code>, <code>size</code>, <code>width</code>, <code>height</code>, and <code>format</code></li>
-<li><code>image_artifact</code>: <code>{"$artifact", "content_type", "filename", "sha256", "size_bytes"}</code></li>
+<li>optional <code>provider</code>, <code>model</code>, <code>size</code>, <code>width</code>, <code>height</code>, <code>format</code>, batch
+  <code>count</code> / <code>n</code>, <code>seeds</code>, and ordered <code>lora_adapters</code></li>
+<li><code>image_artifact</code>: first generated image for compatibility</li>
+<li><code>image_artifacts</code>: full ordered image artifact list for batch generation</li>
 </ul>
+<p><code>size</code>, <code>width</code>, and <code>height</code> are optional passthrough request overrides. Do
+not inject a client-side default size. Different image providers/models accept
+different size sets; when the client leaves dimensions unset, Runtime/Core lets
+the configured backend use its default or <code>auto</code> behavior.</p>
 <p>If the active workflow runtime already has an AbstractCore LLM client, the route
 uses it. For tools-only workflows, the route can create a direct Runtime/Core
 client from request <code>provider</code>/<code>model</code> or the execution-host capability route
@@ -1427,10 +1521,25 @@ response instead of a failed run.</p>
 <li><code>POST /api/gateway/runs/{run_id}/images/edit</code></li>
 </ul>
 <p>The request uses a source <code>image_artifact</code>, optional <code>mask_artifact</code>, the same
-provider/model and image backend selectors as image generation, and returns an
-artifact-backed edited image. Thin clients should feature-detect it from
+provider/model and image backend selectors as image generation, plus optional
+batch <code>count</code> / <code>n</code>, <code>seeds</code>, and ordered <code>lora_adapters</code>, and returns an
+artifact-backed edited image. Batch responses also return <code>image_artifacts</code>.
+Thin clients should feature-detect it from
 <code>capabilities.contracts.flow_editor.media.edited_image</code> or
-<code>capabilities.contracts.assistant.media.edited_image</code>.</p>
+<code>capabilities.contracts.assistant.media.edited_image</code>. It uses the same
+child-run <code>abstract.progress</code> progress contract as direct image generation.</p>
+<p>Gateway also exposes a direct image-upscale sibling route:</p>
+<ul>
+<li><code>POST /api/gateway/runs/{run_id}/images/upscale</code></li>
+</ul>
+<p>The request uses a run-visible source <code>image_artifact</code>, optional provider/model
+selectors, and optional upscaler controls such as <code>scale</code>, <code>resolution</code>,
+<code>softness</code>, <code>seed</code>, <code>quantize</code>, and <code>vae_tiling</code>; <code>resolution</code> may be a
+shortest-edge integer or a scale factor such as <code>2x</code>. Thin clients should
+feature-detect it from <code>capabilities.contracts.flow_editor.media.upscaled_image</code>
+or <code>capabilities.contracts.assistant.media.upscaled_image</code>, list models with
+<code>GET /api/gateway/vision/provider_models?task=image_upscale</code>, and stream the
+returned child-run ledger for <code>abstract.progress</code> events.</p>
 <p>Generated music follows the same direct child-run pattern. Thin clients should
 discover it from <code>capabilities.contracts.flow_editor.media.generated_music</code> or
 <code>capabilities.contracts.assistant.media.generated_music</code>, list providers/models
@@ -1439,16 +1548,20 @@ from the music catalog routes, and treat the returned <code>child_run_id</code> 
 <p>Generated video also follows the direct child-run pattern:</p>
 <ul>
 <li><code>POST /api/gateway/runs/{run_id}/videos/generate</code> uses the Runtime/Core
-  <code>output.modality=video</code> / <code>task=text_to_video</code> contract.</li>
+  <code>output.modality=video</code> / <code>task=text_to_video</code> contract and accepts optional
+  batch <code>count</code> / <code>n</code>, <code>seeds</code>, ordered <code>lora_adapters</code>, and <code>flow_shift</code>.</li>
 <li><code>POST /api/gateway/runs/{run_id}/videos/from_image</code> accepts a run-visible
-  source <code>image_artifact</code> and uses <code>task=image_to_video</code>.</li>
+  source <code>image_artifact</code>, accepts the same optional batch/adapter/video
+  control fields, and uses <code>task=image_to_video</code>.</li>
 <li>Thin clients should discover these routes from
   <code>capabilities.contracts.flow_editor.media.generated_video</code> and
   <code>capabilities.contracts.flow_editor.media.image_to_video</code> (or the matching
   <code>assistant.media.*</code> entries), use
   <code>GET /api/gateway/vision/provider_models?task=text_to_video|image_to_video</code>
-  for model catalogs, and stream the returned <code>child_run_id</code> ledger for
-  <code>abstract.progress</code> events.</li>
+  for model catalogs, use <code>GET /api/gateway/vision/adapters</code> for compatible
+  installed adapter catalogs, stream the returned <code>child_run_id</code> ledger for
+  <code>abstract.progress</code> events, and read <code>video_artifacts</code> when batch generation
+  is requested.</li>
 </ul>
 <p>STT and listen contract notes:</p>
 <ul>

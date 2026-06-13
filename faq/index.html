@@ -1365,10 +1365,19 @@ For the full API surface, rely on the live OpenAPI spec (<code>/openapi.json</co
 <p>Evidence: <code>src/abstractgateway/service.py</code> (workflow source switch), <code>src/abstractgateway/hosts/bundle_host.py</code>.</p>
 <h2 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h2>
 <h3 id="why-does-abstractgateway-serve-refuse-to-start">Why does <code>abstractgateway serve</code> refuse to start?<a class="headerlink" href="#why-does-abstractgateway-serve-refuse-to-start" title="Permanent link">&para;</a></h3>
-<p>By default, the server requires an auth token for <code>/api/gateway/*</code> and will fail-fast if none is configured.</p>
-<p>Fix:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import secrets; print(secrets.token_urlsafe(32))&#39;</span><span class="k">)</span><span class="s2">&quot;</span>
+<p>By default, the server requires either Gateway user auth or a legacy
+server/operator bearer token for <code>/api/gateway/*</code> and will fail fast if neither
+is configured.</p>
+<p>Recommended browser-app fix:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_USER_AUTH</span><span class="o">=</span><span class="m">1</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_DATA_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway&quot;</span>
+abstractgateway<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+
+<span class="c1"># Use user admin plus this token for first login.</span>
+cat<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">/auth/bootstrap-admin-token&quot;</span>
 </code></pre></div>
+<p>Use <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> only for legacy server/operator bearer-token
+deployments; it maps to <code>local-admin</code> and is not a browser sign-in token.</p>
 <p>Evidence: startup self-check in <code>src/abstractgateway/cli.py</code>, policy loading in <code>src/abstractgateway/security/gateway_security.py</code>.</p>
 <h3 id="whats-the-difference-between-host-and-abstractgateway_allowed_origins">What’s the difference between <code>--host</code> and <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code>?<a class="headerlink" href="#whats-the-difference-between-host-and-abstractgateway_allowed_origins" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1440,8 +1449,8 @@ The background runner polls the inbox and applies commands asynchronously.</p>
 <code>pip show AbstractRuntime abstractcore</code>.</p>
 <p>Evidence: <code>src/abstractgateway/hosts/bundle_host.py</code> (imports under <code>needs_llm/needs_tools</code>).</p>
 <h3 id="my-bundle-fails-with-llm-nodes-but-no-default-providermodel-is-configured">My bundle fails with “LLM nodes but no default provider/model is configured”<a class="headerlink" href="#my-bundle-fails-with-llm-nodes-but-no-default-providermodel-is-configured" title="Permanent link">&para;</a></h3>
-<p>Configure the execution-host <code>output.text</code> route:</p>
-<div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>output.text<span class="w"> </span><span class="se">\</span>
+<p>Configure the execution-host <code>input.text</code> route:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>input.text<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--provider<span class="w"> </span>lmstudio<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--model<span class="w"> </span>qwen/qwen3.6-35b-a3b<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--base-url<span class="w"> </span>http://127.0.0.1:1234/v1
@@ -1493,13 +1502,24 @@ should execute those local engines itself.</p>
 Gateway's direct run-scoped endpoint:</p>
 <div class="highlight"><pre><span></span><code>POST /api/gateway/runs/{run_id}/images/generate
 POST /api/gateway/runs/{run_id}/images/edit
+POST /api/gateway/runs/{run_id}/images/upscale
 POST /api/gateway/runs/{run_id}/videos/generate
 POST /api/gateway/runs/{run_id}/videos/from_image
 </code></pre></div>
 <p>The direct image and video endpoints use Runtime/Core output selectors and
 store the result as a run artifact, so they still require a configured
-Runtime-compatible vision/video backend. For long video runs, stream the
-returned <code>child_run_id</code> ledger and watch <code>abstract.progress</code> records.</p>
+Runtime-compatible vision/video backend. Image dimensions are optional
+passthrough overrides; clients should not inject a default <code>512x512</code> request
+because supported sizes depend on the selected provider/model. Image/video
+routes also accept optional batch <code>count</code> / <code>n</code>, <code>seeds</code>, and ordered
+<code>lora_adapters</code>; video routes additionally accept <code>flow_shift</code>, and batch
+responses return <code>image_artifacts</code> / <code>video_artifacts</code> alongside the
+compatibility singular artifact fields. Use
+<code>GET /api/gateway/vision/adapters</code> when a thin client needs the compatible
+installed adapter catalog for a selected provider/model/task. For long media
+runs, stream the returned <code>child_run_id</code> ledger and watch <code>abstract.progress</code>
+records. Image progress is best-effort and may only show start/complete when the
+backend does not expose step progress.</p>
 <p>Generated music is exposed through Gateway's direct Runtime child-run route and
 its thin-client discovery/catalog contract:</p>
 <div class="highlight"><pre><span></span><code>POST /api/gateway/runs/{run_id}/music/generate

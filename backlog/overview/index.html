@@ -632,8 +632,8 @@ can trust without importing local gateway packages.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Planned: 0</li>
-<li>Proposed: 4</li>
-<li>Completed: 17</li>
+<li>Proposed: 3</li>
+<li>Completed: 20</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
@@ -652,13 +652,29 @@ can trust without importing local gateway packages.</p>
 <li>Completed: Gateway-owned thin-client surface readiness summary.</li>
 </ul>
 <h2 id="next-recommended-work">Next Recommended Work<a class="headerlink" href="#next-recommended-work" title="Permanent link">&para;</a></h2>
+<p>No active planned item is currently open in this backlog. Runtime-backed
+exposure of the latest Core/Vision image upscaling, adapter discovery, and
+richer media parameters is completed.</p>
 <p>The main Runtime-owned boundary work is now done for Gateway's prompt-cache,
 durable bloc, residency, workspace/comms/Telegram, operator snapshot, direct
 music, direct image edit, STT/listen contract surfaces, thin-client catalog
 normalization, and thin-client surface readiness summary. The remaining
 proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
 <h2 id="planned-items">Planned Items<a class="headerlink" href="#planned-items" title="Permanent link">&para;</a></h2>
-<p>No planned items at the moment.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Acceptance summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>None</td>
+<td>No active planned Gateway backlog item.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="proposed-items">Proposed Items<a class="headerlink" href="#proposed-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -817,6 +833,27 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
 <td>Gateway discovery routes now preserve legacy fields but also expose a versioned canonical <code>catalog</code> envelope plus <code>items</code> for thin clients.</td>
 <td><code>python -m pytest -q tests/test_gateway_capability_catalog_proxy.py tests/test_gateway_discovery_endpoints.py tests/test_capabilities_endpoint_contract.py</code>.</td>
 </tr>
+<tr>
+<td>Gateway PDF Runtime floor and E2E contract</td>
+<td>N/A</td>
+<td><a href="../completed/0056_gateway_pdf_runtime_floor_and_e2e_contract/">completed/0056_gateway_pdf_runtime_floor_and_e2e_contract.md</a></td>
+<td>Gateway now depends on Runtime <code>0.4.28</code> for VisualFlow PDF nodes and proves write/read PDF bundle execution through the normal run path.</td>
+<td><code>PYTHONPATH=src:../abstractruntime/src:../abstractcore:../abstractagent/src:../abstractmemory/src:../abstractsemantics/src:../abstractvision/src:../abstractvoice/src:../abstractmusic/src:../abstractaudio/src:../abstractvideo/src:../abstractsound/src python -m pytest tests/test_gateway_visualflow_file_nodes.py tests/test_gateway_install_profiles.py tests/test_gateway_artifacts_endpoint.py::test_gateway_artifacts_api_list_metadata_and_download -q</code>.</td>
+</tr>
+<tr>
+<td>Gateway Runtime Core Vision upscale surface</td>
+<td><code>planned/0057_gateway_runtime_core_vision_upscale_surface.md</code></td>
+<td><a href="../completed/0057_gateway_runtime_core_vision_upscale_surface/">completed/0057_gateway_runtime_core_vision_upscale_surface.md</a></td>
+<td>Gateway now exposes Runtime-backed image upscaling, advertises <code>upscaled_image</code> contracts/readiness, accepts <code>task=image_upscale</code> in Vision catalogs, and forwards richer media controls without calling Core directly.</td>
+<td><code>PYTHONPATH=src:../abstractruntime/src:../abstractcore python -m compileall -q src/abstractgateway/routes/gateway.py</code>; <code>PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_generated_media_gateway_contract.py::test_gateway_direct_image_upscale_uses_runtime_child_run_contract tests/test_gateway_capability_catalog_proxy.py::test_vision_provider_catalog_accepts_image_upscale_task tests/test_capabilities_endpoint_contract.py</code>.</td>
+</tr>
+<tr>
+<td>Gateway vision adapter and batch surface</td>
+<td><code>proposed/0058_gateway_vision_adapter_and_batch_surface.md</code></td>
+<td><a href="../completed/0058_gateway_vision_adapter_and_batch_surface/">completed/0058_gateway_vision_adapter_and_batch_surface.md</a></td>
+<td>Gateway now exposes Runtime-backed vision adapter discovery, forwards batch/seeds/LoRA/flow-shift media fields, and returns plural artifact refs for batch image/video generation without changing lower-package ownership.</td>
+<td><code>PYTHONPATH=src:../abstractruntime/src:../abstractcore:../abstractvision/src pytest -q tests/test_generated_media_gateway_contract.py tests/test_gateway_capability_catalog_proxy.py tests/test_capabilities_endpoint_contract.py</code>.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="deprecated-work">Deprecated Work<a class="headerlink" href="#deprecated-work" title="Permanent link">&para;</a></h2>
@@ -848,6 +885,8 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
   through Gateway when a Runtime/Core image backend is configured.</li>
 <li>Edited image support is now directly available through Gateway for run-scoped
   image-to-image and optional masked edits.</li>
+<li>Image upscaling is now directly available through Gateway for run-scoped
+  artifact-backed source images, using Runtime's durable child-run facade.</li>
 <li>Gateway now exposes run-scoped TTS, STT, and music generation contracts for
   higher apps, plus a host-capture <code>voice.listen</code> contract for clients that
   record locally and submit events or uploaded audio.</li>

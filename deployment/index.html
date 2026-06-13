@@ -705,12 +705,12 @@ and the Runtime-owned provider/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
 <p>Release images are published to GHCR. The default image is the light,
 portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.2.25
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.2.27
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
 vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.2.25-gpu
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.2.27-gpu
 </code></pre></div>
 <p>Legacy aliases <code>ghcr.io/lpalbou/abstractgateway-server:*</code> and
 <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:*</code> are still published for a
@@ -752,7 +752,7 @@ host-native OpenAI-compatible inference endpoint:</p>
 <span class="w">  </span>ghcr.io/lpalbou/abstractgateway:latest
 </code></pre></div>
 <p>Set the execution-host text route separately:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>abstractgateway<span class="w"> </span>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>output.text<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>abstractgateway<span class="w"> </span>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>input.text<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--provider<span class="w"> </span>openai-compatible<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--model<span class="w"> </span>your-model<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--base-url<span class="w"> </span>http://model-runner.docker.internal/engines/v1
@@ -801,7 +801,7 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Aut
 <p>Common:</p>
 <ul>
 <li><code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code>: browser origin allowlist</li>
-<li><code>output.text</code> capability route: default for LLM/agent nodes</li>
+<li><code>input.text</code> capability route: default for LLM/agent nodes</li>
 <li><code>ABSTRACTGATEWAY_TOOL_MODE</code>: <code>approval</code>, <code>passthrough</code>, <code>delegated</code>, or local dev modes</li>
 <li><code>ABSTRACTGATEWAY_STORE_BACKEND</code>: <code>file</code> or <code>sqlite</code></li>
 <li><code>ABSTRACTGATEWAY_DB_PATH</code>: SQLite file, when using <code>sqlite</code></li>
@@ -856,7 +856,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.25-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.2.27-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the

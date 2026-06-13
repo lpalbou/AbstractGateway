@@ -446,15 +446,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#default-behavior-token-required" class="md-nav__link">
+  <a href="#default-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Default behavior (token required)
+        Default behavior
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Default behavior (token required)">
+    <nav class="md-nav" aria-label="Default behavior">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -761,15 +761,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#default-behavior-token-required" class="md-nav__link">
+  <a href="#default-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Default behavior (token required)
+        Default behavior
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Default behavior (token required)">
+    <nav class="md-nav" aria-label="Default behavior">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1014,13 +1014,20 @@
 - <code>/api/health</code> is intentionally not protected.
 - <code>/api/triage/action/*</code> uses signed action tokens and is not under <code>/api/gateway</code> (see <code>src/abstractgateway/routes/triage.py</code>).
 - Vulnerability reporting policy: see <a href="../SECURITY.md">../SECURITY.md</a>.</p>
-<h2 id="default-behavior-token-required">Default behavior (token required)<a class="headerlink" href="#default-behavior-token-required" title="Permanent link">&para;</a></h2>
-<p>By default, <code>abstractgateway serve</code> refuses to start if write endpoints are protected and no auth token is configured.<br />
+<h2 id="default-behavior">Default behavior<a class="headerlink" href="#default-behavior" title="Permanent link">&para;</a></h2>
+<p>By default, <code>abstractgateway serve</code> refuses to start if write endpoints are
+protected and neither a legacy server/operator token nor Gateway user auth is
+configured.
 Evidence: startup self-check in <code>src/abstractgateway/cli.py</code> (<code>load_gateway_auth_policy_from_env</code>).</p>
-<p>Recommended dev setup:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import secrets; print(secrets.token_urlsafe(32))&#39;</span><span class="k">)</span><span class="s2">&quot;</span>
+<p>Recommended browser-console/browser-app setup:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_USER_AUTH</span><span class="o">=</span><span class="m">1</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_DATA_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway&quot;</span>
+abstractgateway<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+
+<span class="c1"># Use this with Gateway user admin.</span>
+cat<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">/auth/bootstrap-admin-token&quot;</span>
 </code></pre></div>
-<p>Clients must send:</p>
+<p>API clients can send a Gateway user token:</p>
 <div class="highlight"><pre><span></span><code>Authorization: Bearer &lt;token&gt;
 </code></pre></div>
 <h3 id="tenant-and-user-isolation">Tenant and user isolation<a class="headerlink" href="#tenant-and-user-isolation" title="Permanent link">&para;</a></h3>
@@ -1094,27 +1101,27 @@ operations, email bridge routes, host metrics, model residency list/load/unload,
 server workspace file helpers, server-workspace artifact import/export, and
 global prompt-cache/bloc mutation routes. Regular users remain able to use
 their own runtime data plane for run, ledger, artifact upload, discovery, and
-per-principal capability-default routes.</p>
+runtime-scoped Core capability-default routes.</p>
 <p>The route table is intentionally conservative around server filesystem access:
 browser-local files should use <code>/api/gateway/attachments/upload</code>; server
 workspace reads/imports/exports require an admin principal until a stronger
 per-user workspace grant model exists.</p>
 <p>Capability discovery follows the same policy. Regular users can still discover
 ordinary run, ledger, artifact, upload, provider/model catalog, KG, and
-per-principal defaults surfaces, but admin-only workspace artifact
+runtime-scoped defaults surfaces, but admin-only workspace artifact
 import/export and provider prompt-cache controls are advertised as unavailable
 with machine-readable <code>admin_required</code> metadata. Session-level prompt-cache
 keys remain available for users; the private hash includes the current
 principal scope, so two users using the same session id/provider/model tuple do
 not collide in a shared provider control plane.</p>
-<p>Hosted provider secrets are supported through Gateway provider endpoint
-profiles. Profiles are stored under the relevant Gateway data plane, expose only
+<p>Hosted provider secrets are supported through Gateway provider connections.
+Connections are stored under the relevant Gateway data plane, expose only
 non-secret metadata and a virtual provider id such as <code>endpoint:office-vllm</code>,
 and inject the raw key only into the transient Runtime provider call. Normal
-users can manage user-scoped profiles; Gateway-scoped profiles require an admin
-principal. The current capability-default cascade still uses execution-host Core
-defaults, then the Gateway/root baseline, then a per-user overlay under the
-user's Gateway data plane. A stronger encrypted vault, audit model, and
+users can manage user-scoped connections; Gateway-scoped connections require an
+admin principal. The current capability-default cascade uses execution-host
+Core defaults, then the Gateway/root Core config baseline, then the user's
+runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.</p>
 <h3 id="shared-workflow-catalog">Shared workflow catalog<a class="headerlink" href="#shared-workflow-catalog" title="Permanent link">&para;</a></h3>
 <p>Do not share workflows by pointing multiple users at another user's private
@@ -1174,6 +1181,11 @@ available at <code>GET /api/gateway/workflow-catalog</code>.</p>
 <p>Thin clients can discover the server policy via:
 - <code>GET /api/gateway/workspace/policy</code><br />
   Note: it returns <strong>mount names only</strong> (no absolute paths).</p>
+<p>Canonical public server paths use <code>rel/path</code> for the main workspace root and
+<code>mount_alias/rel/path</code> for approved mounts. When two allowed roots share the
+same basename, Gateway emits deterministic digest-suffixed mount aliases so
+the public path string stays stable across discovery, import/export, and
+Runtime execution.</p>
 <h3 id="permissive-mode-allow-thin-clients-to-choose-scope-trusted-machines-only">Permissive mode: allow thin clients to choose scope (trusted machines only)<a class="headerlink" href="#permissive-mode-allow-thin-clients-to-choose-scope-trusted-machines-only" title="Permanent link">&para;</a></h3>
 <p>To honor client-provided workspace knobs (<code>workspace_root</code>, <code>workspace_access_mode</code>, <code>workspace_allowed_paths</code>, <code>workspace_ignored_paths</code>) beyond the operator roots, enable one of:</p>
 <ul>
