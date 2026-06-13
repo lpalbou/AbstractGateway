@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 import pytest
@@ -799,5 +800,8 @@ if (!treeHas(el("sandbox-transcript"), (node) => node.id === "audio" && String(n
   throw new Error("sandbox SFX artifact should render as a blob-backed inline audio player");
 }}
 """
-    result = subprocess.run(["node", "--input-type=module", "-e", harness], capture_output=True, text=True, check=False)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        harness_path = Path(tmpdir) / "gateway-console-inline-test.mjs"
+        harness_path.write_text(harness, encoding="utf-8")
+        result = subprocess.run(["node", str(harness_path)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr

@@ -959,12 +959,23 @@ def _resolve_gateway_provider_model_or_400(
     model: Optional[str],
     purpose: str,
 ) -> tuple[str, str]:
+    def _gateway_service_base_dir(service: Any) -> Path:
+        cfg = getattr(service, "config", None)
+        data_dir = getattr(cfg, "data_dir", None)
+        if isinstance(data_dir, (str, Path)) and str(data_dir).strip():
+            return Path(str(data_dir)).expanduser().resolve()
+        stores = getattr(service, "stores", None)
+        base_dir = getattr(stores, "base_dir", None)
+        if isinstance(base_dir, (str, Path)) and str(base_dir).strip():
+            return Path(str(base_dir)).expanduser().resolve()
+        return gateway_data_dir_from_env().expanduser().resolve()
+
     try:
         svc = get_gateway_service()
         return resolve_gateway_provider_model(
             provider=provider,
             model=model,
-            base_dir=Path(svc.config.data_dir),
+            base_dir=_gateway_service_base_dir(svc),
             purpose=purpose,
         ).require()
     except ProviderModelConfigError as e:

@@ -205,9 +205,17 @@ def test_gateway_visualflow_write_pdf_and_read_pdf_use_run_workspace(tmp_path: P
         assert input_data.status_code == 200, input_data.text
         workspace_payload = input_data.json().get("workspace") or {}
 
-        ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=500", headers=headers)
-        assert ledger.status_code == 200, ledger.text
-        ledger_text = json.dumps(ledger.json().get("items") or [], sort_keys=True)
+        ledger_payload: dict = {}
+
+        def _ledger_contains_pdf_trace():
+            ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=500", headers=headers)
+            assert ledger.status_code == 200, ledger.text
+            ledger_payload["items"] = ledger.json().get("items") or []
+            ledger_text = json.dumps(ledger_payload["items"], sort_keys=True)
+            return "Gateway PDF Report" in ledger_text and "workspace-scoped PDF report" in ledger_text
+
+        _wait_until(_ledger_contains_pdf_trace, timeout_s=10.0, poll_s=0.1)
+        ledger_text = json.dumps(ledger_payload.get("items") or [], sort_keys=True)
 
     workspace = Path(str(workspace_payload.get("workspace_root") or ""))
     assert workspace.is_dir()
