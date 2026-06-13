@@ -52,6 +52,7 @@ def save_gateway_capability_default(
     kind: str,
     modality: Optional[str] = None,
     *,
+    task: Optional[str] = None,
     provider: Optional[str] = None,
     model: Optional[str] = None,
     base_url: Optional[str] = None,
@@ -60,6 +61,8 @@ def save_gateway_capability_default(
 ) -> Dict[str, Any]:
     if modality is None:
         kind, modality = _split_route(kind)
+        if "." in str(modality):
+            modality, task = str(modality).split(".", 1)
 
     body = {
         "provider": _clean(provider),
@@ -74,6 +77,7 @@ def save_gateway_capability_default(
             scoped_config_path,
             kind,
             modality,
+            task=task,
             provider=body["provider"],
             model=body["model"],
             base_url=body["base_url"],
@@ -82,7 +86,8 @@ def save_gateway_capability_default(
         return gateway_capability_defaults_payload(base_dir=base_dir)
 
     if core_server_base_url():
-        payload = _core_server_json("PUT", f"/config/capability-defaults/{kind}/{modality}", body)
+        suffix = f"/{task}" if _clean(task) else ""
+        payload = _core_server_json("PUT", f"/config/capability-defaults/{kind}/{modality}{suffix}", body)
         payload.setdefault("authority", "abstractcore.server")
         payload.setdefault("writable", True)
         return payload
@@ -93,6 +98,7 @@ def save_gateway_capability_default(
     if not manager.set_capability_default(
         kind,
         modality,
+        task=task,
         provider=body["provider"],
         model=body["model"],
         base_url=body["base_url"],
@@ -102,17 +108,26 @@ def save_gateway_capability_default(
     return _local_core_payload()
 
 
-def clear_gateway_capability_default(kind: str, modality: Optional[str] = None, *, base_dir: Optional[Path] = None) -> Dict[str, Any]:
+def clear_gateway_capability_default(
+    kind: str,
+    modality: Optional[str] = None,
+    *,
+    task: Optional[str] = None,
+    base_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
     if modality is None:
         kind, modality = _split_route(kind)
+        if "." in str(modality):
+            modality, task = str(modality).split(".", 1)
 
     scoped_config_path = _writable_scoped_core_config_path(base_dir)
     if scoped_config_path is not None:
-        _clear_core_config_route(scoped_config_path, kind, modality)
+        _clear_core_config_route(scoped_config_path, kind, modality, task=task)
         return gateway_capability_defaults_payload(base_dir=base_dir)
 
     if core_server_base_url():
-        payload = _core_server_json("DELETE", f"/config/capability-defaults/{kind}/{modality}")
+        suffix = f"/{task}" if _clean(task) else ""
+        payload = _core_server_json("DELETE", f"/config/capability-defaults/{kind}/{modality}{suffix}")
         payload.setdefault("authority", "abstractcore.server")
         payload.setdefault("writable", True)
         return payload
@@ -120,8 +135,9 @@ def clear_gateway_capability_default(kind: str, modality: Optional[str] = None, 
     from abstractcore.config.manager import ConfigurationManager
 
     manager = ConfigurationManager()
-    if not manager.clear_capability_default(kind, modality):
-        raise ValueError(f"Failed to clear capability default {kind}.{modality}")
+    if not manager.clear_capability_default(kind, modality, task=task):
+        suffix = f".{task}" if _clean(task) else ""
+        raise ValueError(f"Failed to clear capability default {kind}.{modality}{suffix}")
     return _local_core_payload()
 
 
@@ -197,6 +213,7 @@ def _save_core_config_route(
     kind: str,
     modality: str,
     *,
+    task: Optional[str] = None,
     provider: Optional[str],
     model: Optional[str],
     base_url: Optional[str],
@@ -208,20 +225,23 @@ def _save_core_config_route(
     if not manager.set_capability_default(
         kind,
         modality,
+        task=task,
         provider=provider,
         model=model,
         base_url=base_url,
         options=options,
     ):
-        raise ValueError(f"Failed to set capability default {kind}.{modality}")
+        suffix = f".{task}" if _clean(task) else ""
+        raise ValueError(f"Failed to set capability default {kind}.{modality}{suffix}")
 
 
-def _clear_core_config_route(path: Path, kind: str, modality: str) -> None:
+def _clear_core_config_route(path: Path, kind: str, modality: str, *, task: Optional[str] = None) -> None:
     from abstractcore.config.manager import ConfigurationManager
 
     manager = ConfigurationManager(config_file=path, apply_env=False)
-    if not manager.clear_capability_default(kind, modality):
-        raise ValueError(f"Failed to clear capability default {kind}.{modality}")
+    if not manager.clear_capability_default(kind, modality, task=task):
+        suffix = f".{task}" if _clean(task) else ""
+        raise ValueError(f"Failed to clear capability default {kind}.{modality}{suffix}")
 
 
 def _same_path(a: Optional[Path], b: Optional[Path]) -> bool:
@@ -274,9 +294,12 @@ def _apply_core_config_routes(payload: Dict[str, Any], *, config_path: Path, sou
         row = dict(specs.get(key, {"key": key}))
         row.update(route)
         row["key"] = key
-        if "." in key:
-            row.setdefault("kind", key.split(".", 1)[0])
-            row.setdefault("modality", key.split(".", 1)[1])
+        parts = [part for part in key.split(".") if part]
+        if len(parts) >= 2:
+            row.setdefault("kind", parts[0])
+            row.setdefault("modality", parts[1])
+            if len(parts) >= 3:
+                row.setdefault("task", parts[2])
         row["configured"] = True
         row["source"] = source
         rows_by_key[key] = row

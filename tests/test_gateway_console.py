@@ -42,6 +42,9 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'capability_route: "input.sound,output.text"' in console.text
     assert 'capability_route: "input.music,output.text"' in console.text
     assert 'visionCatalog("video generation", "text_to_video")' in console.text
+    assert 'visionCatalog("image edit", "image_to_image")' in console.text
+    assert 'visionCatalog("image restore / upscale", "image_upscale")' in console.text
+    assert 'visionCatalog("image to video", "image_to_video")' in console.text
     assert '<select id="modal-default-provider">' in console.text
     assert '<select id="modal-default-model">' in console.text
     assert '<select id="modal-default-voice">' in console.text
@@ -232,8 +235,14 @@ async function fetch(path, options = {{}}) {{
   if (path === "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.music%2Coutput.text") return response(200, {{ models: ["qwen3-omni-30b-a3b-captioner"] }});
   if (path === "/api/gateway/vision/provider_models?task=text_to_image&providers_only=true") return response(200, {{ available_providers: ["mflux"] }});
   if (path === "/api/gateway/vision/provider_models?task=text_to_image&provider=mflux") return response(200, {{ provider_models: [{{ provider: "mflux", model: "flux-dev" }}] }});
+  if (path === "/api/gateway/vision/provider_models?task=image_to_image&providers_only=true") return response(200, {{ available_providers: ["mlx-gen"] }});
+  if (path === "/api/gateway/vision/provider_models?task=image_to_image&provider=mlx-gen") return response(200, {{ provider_models: [{{ provider: "mlx-gen", model: "AbstractFramework/qwen-image-edit-2511-4bit" }}] }});
+  if (path === "/api/gateway/vision/provider_models?task=image_upscale&providers_only=true") return response(200, {{ available_providers: ["mlx-gen"] }});
+  if (path === "/api/gateway/vision/provider_models?task=image_upscale&provider=mlx-gen") return response(200, {{ provider_models: [{{ provider: "mlx-gen", model: "AbstractFramework/seedvr2-3b-8bit" }}] }});
   if (path === "/api/gateway/vision/provider_models?task=text_to_video&providers_only=true") return response(200, {{ available_providers: ["mlx-gen"] }});
   if (path === "/api/gateway/vision/provider_models?task=text_to_video&provider=mlx-gen") return response(200, {{ provider_models: [{{ provider: "mlx-gen", model: "Wan-AI/Wan2.2-TI2V-5B-Diffusers" }}] }});
+  if (path === "/api/gateway/vision/provider_models?task=image_to_video&providers_only=true") return response(200, {{ available_providers: ["mlx-gen"] }});
+  if (path === "/api/gateway/vision/provider_models?task=image_to_video&provider=mlx-gen") return response(200, {{ provider_models: [{{ provider: "mlx-gen", model: "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit" }}] }});
   if (path === "/api/gateway/voice/voices?providers_only=true&compact=true") return response(200, {{ tts_providers: ["openai"] }});
   if (path === "/api/gateway/audio/speech/models?provider=openai") return response(200, {{ tts_models_by_provider: {{ openai: ["tts-1"] }} }});
   if (path === "/api/gateway/voice/voices?provider=openai&model=tts-1&compact=true") return response(200, {{
@@ -255,6 +264,7 @@ async function fetch(path, options = {{}}) {{
     routes: [{{ key: "input.text", kind: "input", modality: "text", label: "Text Input", provider: "openai", model: "gpt-4.1", configured: true }}]
   }});
   if (path === "/api/gateway/config/capability-defaults/input/text" && options.method === "PUT") return response(200, {{ routes: [] }});
+  if (path === "/api/gateway/config/capability-defaults/output/image/image_to_image" && options.method === "PUT") return response(200, {{ routes: [] }});
   if (path === "/api/gateway/config/capability-defaults/output/voice" && options.method === "PUT") return response(200, {{ routes: [] }});
   if (path === "/api/gateway/attachments/upload" && options.method === "POST") {{
     return response(200, {{ ok: true, artifact: {{ "$artifact": "upload-1", artifact_id: "upload-1", content_type: "image/png", filename: "content.png", modality: "image" }} }});
@@ -477,18 +487,39 @@ await assertDefaultModal(
   "/api/gateway/discovery/providers/lmstudio/models?capability_route=input.music%2Coutput.text"
 );
 await assertDefaultModal(
-  {{ key: "output.image", kind: "output", modality: "image", label: "Image Output" }},
+  {{ key: "output.image.text_to_image", kind: "output", modality: "image", task: "text_to_image", label: "Image Generation" }},
   "mflux",
   "flux-dev",
   "/api/gateway/vision/provider_models?task=text_to_image&providers_only=true",
   "/api/gateway/vision/provider_models?task=text_to_image&provider=mflux"
 );
 await assertDefaultModal(
-  {{ key: "output.video", kind: "output", modality: "video", label: "Video Output" }},
+  {{ key: "output.image.image_to_image", kind: "output", modality: "image", task: "image_to_image", label: "Image Edit" }},
+  "mlx-gen",
+  "AbstractFramework/qwen-image-edit-2511-4bit",
+  "/api/gateway/vision/provider_models?task=image_to_image&providers_only=true",
+  "/api/gateway/vision/provider_models?task=image_to_image&provider=mlx-gen"
+);
+await assertDefaultModal(
+  {{ key: "output.image.image_upscale", kind: "output", modality: "image", task: "image_upscale", label: "Image Restore / Upscale" }},
+  "mlx-gen",
+  "AbstractFramework/seedvr2-3b-8bit",
+  "/api/gateway/vision/provider_models?task=image_upscale&providers_only=true",
+  "/api/gateway/vision/provider_models?task=image_upscale&provider=mlx-gen"
+);
+await assertDefaultModal(
+  {{ key: "output.video.text_to_video", kind: "output", modality: "video", task: "text_to_video", label: "Video Generation" }},
   "mlx-gen",
   "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
   "/api/gateway/vision/provider_models?task=text_to_video&providers_only=true",
   "/api/gateway/vision/provider_models?task=text_to_video&provider=mlx-gen"
+);
+await assertDefaultModal(
+  {{ key: "output.video.image_to_video", kind: "output", modality: "video", task: "image_to_video", label: "Image To Video" }},
+  "mlx-gen",
+  "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit",
+  "/api/gateway/vision/provider_models?task=image_to_video&providers_only=true",
+  "/api/gateway/vision/provider_models?task=image_to_video&provider=mlx-gen"
 );
 await assertDefaultModal(
   {{ key: "output.voice", kind: "output", modality: "voice", label: "Voice Output" }},
@@ -549,6 +580,25 @@ if (saveBody.base_url !== "https://models.example.test/v1" || saveBody.options.t
 }}
 
 await context.openDefaultModal({{
+  key: "output.image.image_to_image",
+  kind: "output",
+  modality: "image",
+  task: "image_to_image",
+  label: "Image Edit",
+  provider: "mlx-gen",
+  model: "AbstractFramework/qwen-image-edit-2511-4bit",
+}});
+el("save-default").onclick();
+await new Promise((resolve) => setTimeout(resolve, 0));
+await new Promise((resolve) => setTimeout(resolve, 0));
+const imageEditSaveCall = calls.find((call) => call.path === "/api/gateway/config/capability-defaults/output/image/image_to_image" && call.method === "PUT");
+if (!imageEditSaveCall) throw new Error("save image edit default did not call the task-specific capability default route");
+const imageEditSaveBody = JSON.parse(imageEditSaveCall.body);
+if (imageEditSaveBody.provider !== "mlx-gen" || imageEditSaveBody.model !== "AbstractFramework/qwen-image-edit-2511-4bit") {{
+  throw new Error("save image edit default did not preserve provider/model");
+}}
+
+await context.openDefaultModal({{
   key: "output.voice",
   kind: "output",
   modality: "voice",
@@ -578,8 +628,14 @@ await context.renderDefaults({{
 	    {{ key: "input.video", kind: "input", modality: "video", label: "Video Input", configured: false }},
 	    {{ key: "input.sound", kind: "input", modality: "sound", label: "Sound Input", configured: false }},
 	    {{ key: "input.music", kind: "input", modality: "music", label: "Music Input", configured: false }},
-	    {{ key: "output.text", kind: "output", modality: "text", label: "Text Output", configured: false, derived_from: "input.text", read_only: true }},
+    {{ key: "output.text", kind: "output", modality: "text", label: "Text Output", configured: false, derived_from: "input.text", read_only: true }},
     {{ key: "output.image", kind: "output", modality: "image", label: "Image Output", provider: "mflux", model: "flux-dev", configured: true }},
+    {{ key: "output.image.text_to_image", kind: "output", modality: "image", task: "text_to_image", label: "Image Generation", provider: "mflux", model: "flux-dev", configured: true }},
+    {{ key: "output.image.image_to_image", kind: "output", modality: "image", task: "image_to_image", label: "Image Edit", provider: "mlx-gen", model: "AbstractFramework/qwen-image-edit-2511-4bit", configured: true }},
+    {{ key: "output.image.image_upscale", kind: "output", modality: "image", task: "image_upscale", label: "Image Restore / Upscale", provider: "mlx-gen", model: "AbstractFramework/seedvr2-3b-8bit", configured: true }},
+    {{ key: "output.video", kind: "output", modality: "video", label: "Video Output", provider: "mlx-gen", model: "Wan-AI/Wan2.2-TI2V-5B-Diffusers", configured: true }},
+    {{ key: "output.video.text_to_video", kind: "output", modality: "video", task: "text_to_video", label: "Video Generation", provider: "mlx-gen", model: "Wan-AI/Wan2.2-TI2V-5B-Diffusers", configured: true }},
+    {{ key: "output.video.image_to_video", kind: "output", modality: "video", task: "image_to_video", label: "Image To Video", provider: "mlx-gen", model: "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit", configured: true }},
     {{ key: "output.voice", kind: "output", modality: "voice", label: "Voice Output", provider: "openai", model: "tts-1", configured: true, options: {{ voice: "coral" }} }},
     {{ key: "output.music", kind: "output", modality: "music", label: "Music Output", provider: "acemusic", model: "ace-step", configured: true }},
     {{ key: "output.sound", kind: "output", modality: "sound", label: "Sound Output", provider: "stable-audio", model: "stabilityai/stable-audio-open-small", configured: true }},
@@ -589,6 +645,12 @@ await context.renderDefaults({{
 }});
 if (el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("scene3d"))) {{
   throw new Error("scene3d defaults should be hidden in the Gateway Console for now");
+}}
+if (el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("output.image</code>"))) {{
+  throw new Error("broad output.image should be hidden when task-specific image defaults are present");
+}}
+if (el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("output.video</code>"))) {{
+  throw new Error("broad output.video should be hidden when task-specific video defaults are present");
 }}
 if (!el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("linked"))) {{
   throw new Error("output.text should render as linked to input.text");
@@ -693,7 +755,7 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 if (calls.some((call) => call.path === "/api/gateway/sandbox/generate")) {{
   throw new Error("Shift+Enter should leave message editing in place");
 }}
-el("sandbox-capability").value = "output.image";
+el("sandbox-capability").value = "output.image.text_to_image";
 el("sandbox-prompt").value = "a tiny joyful monkey";
 await context.runSandbox();
 await new Promise((resolve) => setTimeout(resolve, 0));

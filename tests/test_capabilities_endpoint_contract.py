@@ -113,6 +113,7 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert common.get("discovery", {}).get("embedding_models") == "/api/gateway/embeddings/models"
         assert common.get("discovery", {}).get("vision_provider_models") == "/api/gateway/vision/provider_models"
         assert common.get("discovery", {}).get("vision_models") == "/api/gateway/vision/models"
+        assert common.get("discovery", {}).get("vision_adapters") == "/api/gateway/vision/adapters"
         code_execution = common.get("execution", {}).get("code")
         assert code_execution.get("contract") == "code_execution_policy_v1"
         assert code_execution.get("default_mode") == "sandbox"
@@ -129,6 +130,7 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
             "items_field": "items",
             "provider_item_fields": ["id", "label", "provider"],
             "model_item_fields": ["id", "label", "provider", "tasks", "parameters"],
+            "adapter_item_fields": ["id", "label", "provider", "model", "tasks", "compatible_models"],
             "voice_item_fields": ["id", "label", "provider", "model", "voice_kind"],
         }
         readiness = common.get("readiness")
@@ -145,6 +147,7 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert surfaces.get("attachments", {}).get("upload") is True
         assert surfaces.get("workspace", {}).get("policy") is True
         assert surfaces.get("discovery", {}).get("audio_music_models") is True
+        assert surfaces.get("discovery", {}).get("vision_adapters") is True
         assert surfaces.get("visualflows", {}).get("crud_available") is True
         assert surfaces.get("prompt_cache", {}).get("provider_controls") is True
         assert surfaces.get("model_residency", {}).get("route_available") is True
@@ -174,6 +177,7 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert flow_editor.get("run_input_schema", {}).get("endpoint") == "/api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema"
         assert flow_editor.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/generate"
         assert flow_editor.get("media", {}).get("edited_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/edit"
+        assert flow_editor.get("media", {}).get("upscaled_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/upscale"
         assert flow_editor.get("media", {}).get("generated_video", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/videos/generate"
         assert flow_editor.get("media", {}).get("image_to_video", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/videos/from_image"
         assert flow_editor.get("media", {}).get("generated_voice", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/voice/tts"
@@ -189,9 +193,27 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert assistant.get("voice", {}).get("listen", {}).get("host_capture_required") is True
         assert isinstance(assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("route_available"), bool)
         assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/generate"
+        assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("adapter_catalog_endpoint") == "/api/gateway/vision/adapters"
+        assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("supports_batch") is True
+        assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("supports_lora_adapters") is True
+        assert assistant.get("media", {}).get("generated_image", {}).get("direct_endpoint", {}).get("artifact_list_field") == "image_artifacts"
         assert assistant.get("media", {}).get("edited_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/edit"
+        assert assistant.get("media", {}).get("edited_image", {}).get("direct_endpoint", {}).get("supports_batch") is True
+        assert assistant.get("media", {}).get("edited_image", {}).get("direct_endpoint", {}).get("supports_lora_adapters") is True
+        assert assistant.get("media", {}).get("upscaled_image", {}).get("direct_endpoint", {}).get("endpoint") == "/api/gateway/runs/{run_id}/images/upscale"
+        assert assistant.get("media", {}).get("upscaled_image", {}).get("direct_endpoint", {}).get("provider_models_task") == "image_upscale"
+        assert assistant.get("media", {}).get("upscaled_image", {}).get("direct_endpoint", {}).get("artifact_list_field") == "image_artifacts"
         assert assistant.get("media", {}).get("generated_video", {}).get("direct_endpoint", {}).get("provider_models_task") == "text_to_video"
+        assert assistant.get("media", {}).get("generated_video", {}).get("direct_endpoint", {}).get("adapter_catalog_endpoint") == "/api/gateway/vision/adapters"
+        assert assistant.get("media", {}).get("generated_video", {}).get("direct_endpoint", {}).get("supports_batch") is True
+        assert assistant.get("media", {}).get("generated_video", {}).get("direct_endpoint", {}).get("supports_lora_adapters") is True
+        assert assistant.get("media", {}).get("generated_video", {}).get("direct_endpoint", {}).get("supports_flow_shift") is True
+        assert assistant.get("media", {}).get("generated_video", {}).get("direct_endpoint", {}).get("artifact_list_field") == "video_artifacts"
         assert assistant.get("media", {}).get("image_to_video", {}).get("direct_endpoint", {}).get("provider_models_task") == "image_to_video"
+        assert assistant.get("media", {}).get("image_to_video", {}).get("direct_endpoint", {}).get("supports_batch") is True
+        assert assistant.get("media", {}).get("image_to_video", {}).get("direct_endpoint", {}).get("supports_lora_adapters") is True
+        assert assistant.get("media", {}).get("image_to_video", {}).get("direct_endpoint", {}).get("supports_flow_shift") is True
+        assert assistant.get("media", {}).get("image_to_video", {}).get("direct_endpoint", {}).get("artifact_list_field") == "video_artifacts"
         assert assistant.get("media", {}).get("generated_music", {}).get("direct_endpoint", {}).get("providers_endpoint") == "/api/gateway/audio/music/providers"
         assert assistant.get("media", {}).get("generated_music", {}).get("direct_endpoint", {}).get("provider_models_endpoint") == "/api/gateway/audio/music/models"
         assert assistant.get("prompt_cache", {}).get("provider_controls") is True
@@ -278,6 +300,9 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert media["edited_image"]["workflow"]["available"] is False
     assert media["edited_image"]["direct_endpoint"]["route_available"] is False
     assert media["edited_image"]["direct_endpoint"]["available"] is False
+    assert media["upscaled_image"]["workflow"]["available"] is False
+    assert media["upscaled_image"]["direct_endpoint"]["route_available"] is False
+    assert media["upscaled_image"]["direct_endpoint"]["available"] is False
     assert media["generated_video"]["direct_endpoint"]["route_available"] is False
     assert media["generated_video"]["direct_endpoint"]["available"] is False
     assert media["image_to_video"]["direct_endpoint"]["route_available"] is False
@@ -297,6 +322,7 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert residency["supports"]["text_generation"] is False
     assert residency["supports"]["image_generation"] is False
     assert residency["supports"]["image_to_image"] is False
+    assert residency["supports"]["image_upscale"] is False
     assert residency["supports"]["text_to_video"] is False
     assert residency["supports"]["image_to_video"] is False
     assert residency["supports"]["video_generation"] is False
@@ -486,6 +512,7 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
                     "text_generation": {"supported": True},
                     "image_generation": {"supported": True},
                     "image_to_image": {"supported": True},
+                    "image_upscale": {"supported": True},
                     "text_to_video": {"supported": True},
                     "image_to_video": {"supported": True},
                     "video_generation": {"supported": True},
@@ -516,6 +543,7 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     assert residency["mode"] == "remote_core_server"
     assert residency["supports"]["image_generation"] is True
     assert residency["supports"]["image_to_image"] is True
+    assert residency["supports"]["image_upscale"] is True
     assert residency["supports"]["text_to_video"] is True
     assert residency["supports"]["image_to_video"] is True
     assert residency["supports"]["video_generation"] is True
@@ -526,6 +554,7 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
         "text_generation",
         "image_generation",
         "image_to_image",
+        "image_upscale",
         "text_to_video",
         "image_to_video",
         "video_generation",
@@ -549,3 +578,5 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     assert media["direct_endpoint"]["available"] is True
     assert media["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/generate"
     assert contracts["assistant"]["media"]["edited_image"]["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/edit"
+    assert contracts["assistant"]["media"]["upscaled_image"]["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/upscale"
+    assert contracts["assistant"]["media"]["upscaled_image"]["direct_endpoint"]["provider_models_task"] == "image_upscale"

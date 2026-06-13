@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from abstractcore.utils.workspace_paths import build_workspace_mounts
+
 
 def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> None:
     bundles_dir.mkdir(parents=True, exist_ok=True)
@@ -370,3 +372,54 @@ def test_files_search_and_read_support_mounts(tmp_path: Path, monkeypatch: pytes
 
         rr_trav = client.get("/api/gateway/files/read?path=notes/../src/alpha.py", headers=headers)
         assert rr_trav.status_code == 403, rr_trav.text
+
+
+def test_files_search_and_read_use_deterministic_collision_mount_aliases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+
+    ws = tmp_path / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    first = tmp_path / "team-a" / "reports"
+    second = tmp_path / "team-b" / "reports"
+    first.mkdir(parents=True, exist_ok=True)
+    second.mkdir(parents=True, exist_ok=True)
+    (first / "alpha.txt").write_text("alpha\n", encoding="utf-8")
+    (second / "beta.txt").write_text("beta\n", encoding="utf-8")
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "1")
+
+    mounts = build_workspace_mounts(allowed_dirs=[first, second], used_names=set())
+    first_alias = next(name for name, path in mounts.items() if path == first.resolve())
+    second_alias = next(name for name, path in mounts.items() if path == second.resolve())
+
+    with client:
+        params = {
+            "query": ".txt",
+            "limit": 20,
+            "workspace_root": str(ws),
+            "workspace_access_mode": "workspace_or_allowed",
+            "workspace_allowed_paths": f"{first}\n{second}",
+        }
+        r = client.get("/api/gateway/files/search", params=params, headers=headers)
+        assert r.status_code == 200, r.text
+        items = r.json().get("items") or []
+        paths = {it.get("path") for it in items if isinstance(it, dict)}
+        assert f"{first_alias}/alpha.txt" in paths
+        assert f"{second_alias}/beta.txt" in paths
+
+        rr_first = client.get(
+            "/api/gateway/files/read",
+            params={**params, "path": f"{first_alias}/alpha.txt"},
+            headers=headers,
+        )
+        assert rr_first.status_code == 200, rr_first.text
+        assert rr_first.json().get("path") == f"{first_alias}/alpha.txt"
+
+        rr_second_abs = client.get(
+            "/api/gateway/files/read",
+            params={**params, "path": str(second / "beta.txt")},
+            headers=headers,
+        )
+        assert rr_second_abs.status_code == 200, rr_second_abs.text
+        assert rr_second_abs.json().get("path") == f"{second_alias}/beta.txt"

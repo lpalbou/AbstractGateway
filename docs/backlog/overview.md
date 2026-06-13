@@ -22,8 +22,8 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 0
-- Proposed: 4
-- Completed: 17
+- Proposed: 3
+- Completed: 20
 - Deprecated: 1
 - Recurrent: 0
 
@@ -43,6 +43,10 @@ can trust without importing local gateway packages.
 
 ## Next Recommended Work
 
+No active planned item is currently open in this backlog. Runtime-backed
+exposure of the latest Core/Vision image upscaling, adapter discovery, and
+richer media parameters is completed.
+
 The main Runtime-owned boundary work is now done for Gateway's prompt-cache,
 durable bloc, residency, workspace/comms/Telegram, operator snapshot, direct
 music, direct image edit, STT/listen contract surfaces, thin-client catalog
@@ -51,7 +55,9 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.
 
 ## Planned Items
 
-No planned items at the moment.
+| Item | Acceptance summary |
+| --- | --- |
+| None | No active planned Gateway backlog item. |
 
 ## Proposed Items
 
@@ -83,6 +89,9 @@ No planned items at the moment.
 | Gateway music generation contract for thin clients | `proposed/0052_gateway_music_generation_contract_for_thin_clients.md` | [completed/0052_gateway_music_generation_contract_for_thin_clients.md](completed/0052_gateway_music_generation_contract_for_thin_clients.md) | Gateway's direct music route and music catalogs were already present; the remaining workflow-availability truth gap is now closed and recorded as completed history. | `python -m pytest -q tests/test_capabilities_endpoint_contract.py tests/test_generated_media_gateway_contract.py tests/test_gateway_capability_catalog_proxy.py`. |
 | Gateway thin-client catalog and readiness contract polish | `proposed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md` | [completed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md](completed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md) | Gateway now exposes a compact `common.readiness` surface summary derived from its own contract descriptors, without inventing deeper lower-layer backend truth. | `python -m pytest -q tests/test_capabilities_endpoint_contract.py tests/test_gateway_capability_catalog_proxy.py tests/test_gateway_discovery_endpoints.py`. |
 | Gateway catalog envelope contract for thin clients | `proposed/0053_gateway_thin_client_catalog_and_readiness_contract_polish.md` (catalog half) | [completed/0054_gateway_catalog_envelope_contract_for_thin_clients.md](completed/0054_gateway_catalog_envelope_contract_for_thin_clients.md) | Gateway discovery routes now preserve legacy fields but also expose a versioned canonical `catalog` envelope plus `items` for thin clients. | `python -m pytest -q tests/test_gateway_capability_catalog_proxy.py tests/test_gateway_discovery_endpoints.py tests/test_capabilities_endpoint_contract.py`. |
+| Gateway PDF Runtime floor and E2E contract | N/A | [completed/0056_gateway_pdf_runtime_floor_and_e2e_contract.md](completed/0056_gateway_pdf_runtime_floor_and_e2e_contract.md) | Gateway now depends on Runtime `0.4.28` for VisualFlow PDF nodes and proves write/read PDF bundle execution through the normal run path. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore:../abstractagent/src:../abstractmemory/src:../abstractsemantics/src:../abstractvision/src:../abstractvoice/src:../abstractmusic/src:../abstractaudio/src:../abstractvideo/src:../abstractsound/src python -m pytest tests/test_gateway_visualflow_file_nodes.py tests/test_gateway_install_profiles.py tests/test_gateway_artifacts_endpoint.py::test_gateway_artifacts_api_list_metadata_and_download -q`. |
+| Gateway Runtime Core Vision upscale surface | `planned/0057_gateway_runtime_core_vision_upscale_surface.md` | [completed/0057_gateway_runtime_core_vision_upscale_surface.md](completed/0057_gateway_runtime_core_vision_upscale_surface.md) | Gateway now exposes Runtime-backed image upscaling, advertises `upscaled_image` contracts/readiness, accepts `task=image_upscale` in Vision catalogs, and forwards richer media controls without calling Core directly. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore python -m compileall -q src/abstractgateway/routes/gateway.py`; `PYTHONPATH=src:../abstractruntime/src:../abstractcore pytest -q tests/test_generated_media_gateway_contract.py::test_gateway_direct_image_upscale_uses_runtime_child_run_contract tests/test_gateway_capability_catalog_proxy.py::test_vision_provider_catalog_accepts_image_upscale_task tests/test_capabilities_endpoint_contract.py`. |
+| Gateway vision adapter and batch surface | `proposed/0058_gateway_vision_adapter_and_batch_surface.md` | [completed/0058_gateway_vision_adapter_and_batch_surface.md](completed/0058_gateway_vision_adapter_and_batch_surface.md) | Gateway now exposes Runtime-backed vision adapter discovery, forwards batch/seeds/LoRA/flow-shift media fields, and returns plural artifact refs for batch image/video generation without changing lower-package ownership. | `PYTHONPATH=src:../abstractruntime/src:../abstractcore:../abstractvision/src pytest -q tests/test_generated_media_gateway_contract.py tests/test_gateway_capability_catalog_proxy.py tests/test_capabilities_endpoint_contract.py`. |
 
 ## Deprecated Work
 
@@ -104,6 +113,8 @@ No planned items at the moment.
   through Gateway when a Runtime/Core image backend is configured.
 - Edited image support is now directly available through Gateway for run-scoped
   image-to-image and optional masked edits.
+- Image upscaling is now directly available through Gateway for run-scoped
+  artifact-backed source images, using Runtime's durable child-run facade.
 - Gateway now exposes run-scoped TTS, STT, and music generation contracts for
   higher apps, plus a host-capture `voice.listen` contract for clients that
   record locally and submit events or uploaded audio.

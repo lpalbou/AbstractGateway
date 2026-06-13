@@ -1916,7 +1916,7 @@ def gateway_console_html() -> str:
       return query ? `${path}?${query}` : path;
     }
     function defaultCatalogForRow(row) {
-      const { kind, modality } = defaultRowKindModality(row || {});
+      const { kind, modality, task } = defaultRowKindModality(row || {});
       const key = `${kind}.${modality}`;
       if (key === "embedding.text") {
         return {
@@ -1934,9 +1934,12 @@ def gateway_console_html() -> str:
         return textCatalog("image embeddings", { capability_route: "input.image,embedding.image" });
       }
       if (key === "output.image") {
+        if (task === "image_to_image") return visionCatalog("image edit", "image_to_image");
+        if (task === "image_upscale") return visionCatalog("image restore / upscale", "image_upscale");
         return visionCatalog("image generation", "text_to_image");
       }
       if (key === "output.video") {
+        if (task === "image_to_video") return visionCatalog("image to video", "image_to_video");
         return visionCatalog("video generation", "text_to_video");
       }
       if (key === "input.image") {
@@ -2655,7 +2658,15 @@ def gateway_console_html() -> str:
         $("endpoint-message").className = "message error";
       }
     }
-	    function routeKey(row) { return `${row.kind || ""}.${row.modality || ""}`; }
+	    function canonicalDefaultRouteTask(value) {
+	      const task = String(value || "").trim().toLowerCase().replaceAll("-", "_");
+	      return ["text_to_image", "image_to_image", "image_upscale", "text_to_video", "image_to_video"].includes(task) ? task : "";
+	    }
+	    function routeKey(row) {
+	      const base = `${row.kind || ""}.${row.modality || ""}`;
+	      const task = canonicalDefaultRouteTask(row.route_task || row.default_task || row.capability_task || row.task);
+	      return task ? `${base}.${task}` : base;
+	    }
 	    function defaultRowKey(row) {
 	      const key = row?.key || routeKey(row || {});
 	      return key && key !== "." ? key : "";
@@ -2671,8 +2682,9 @@ def gateway_console_html() -> str:
 	    }
 	    function defaultRowKindModality(row) {
 	      const key = defaultRowKey(row);
-	      const parts = key.split(".", 2);
-	      return { kind: parts[0] || row?.kind || "", modality: parts[1] || row?.modality || "" };
+	      const parts = key.split(".");
+	      const task = parts[2] || canonicalDefaultRouteTask(row?.route_task || row?.default_task || row?.capability_task || "");
+	      return { kind: parts[0] || row?.kind || "", modality: parts[1] || row?.modality || "", task };
 	    }
 	    function findDefaultRow(rows, key) {
 	      return (rows || []).find((row) => defaultRowKey(row) === key) || null;
@@ -2681,6 +2693,8 @@ def gateway_console_html() -> str:
 	      return Boolean(row?.provider && row?.model);
 	    }
 	    function visibleCapabilityDefaultRow(row) {
+	      const key = defaultRowKey(row || {});
+	      if (key === "output.image" || key === "output.video") return false;
 	      const { modality } = defaultRowKindModality(row || {});
 	      return String(modality || "").toLowerCase() !== "scene3d";
 	    }
@@ -2917,11 +2931,11 @@ def gateway_console_html() -> str:
 	    function sandboxRouteMode(key) {
 	      const value = String(key || "").trim().toLowerCase();
 	      if (value === "input.text" || value === "output.text") return "text";
-	      if (value === "output.image") return "image";
+	      if (value === "output.image" || value === "output.image.text_to_image") return "image";
 	      if (value === "output.voice") return "voice";
 	      if (value === "output.sound") return "sound";
 	      if (value === "output.music") return "music";
-	      if (value === "output.video") return "video";
+	      if (value === "output.video" || value === "output.video.text_to_video") return "video";
 	      return "text";
 	    }
 	    function sandboxRouteIcon(mode) {
@@ -2951,7 +2965,7 @@ def gateway_console_html() -> str:
 	      return `${key} - ${defaultRowCapability(row)}`;
 	    }
 	    function sandboxCandidateRows() {
-	      const wanted = new Set(["input.text", "output.text", "output.image", "output.voice", "output.sound", "output.music", "output.video"]);
+	      const wanted = new Set(["input.text", "output.text", "output.image.text_to_image", "output.voice", "output.sound", "output.music", "output.video.text_to_video"]);
 	      const byKey = new Map();
 	      for (const row of state.defaults || []) {
 	        if (!visibleCapabilityDefaultRow(row)) continue;
@@ -2960,7 +2974,7 @@ def gateway_console_html() -> str:
 	      }
 	      const textRow = byKey.get("input.text") || byKey.get("output.text") || { key: "input.text", kind: "input", modality: "text", label: "Text Chat" };
 	      const ordered = [textRow];
-	      for (const key of ["output.image", "output.voice", "output.music", "output.sound", "output.video"]) {
+	      for (const key of ["output.image.text_to_image", "output.voice", "output.music", "output.sound", "output.video.text_to_video"]) {
 	        if (byKey.has(key)) ordered.push(byKey.get(key));
 	      }
 	      return ordered;
@@ -3523,7 +3537,7 @@ def gateway_console_html() -> str:
 	            model,
 	            prompt: promptText,
 	            system_prompt: $("sandbox-system").value.trim() || null,
-	            messages: state.sandboxMessages.slice(-8),
+	            messages: state.sandboxMessages,
 	            attachments: attachments.map((item) => item.artifact).filter(Boolean),
 	            client_context: sandboxClientContext(),
 	          };
@@ -3828,7 +3842,7 @@ def gateway_console_html() -> str:
 	        const provider = $("modal-default-provider").value;
 	        const model = $("modal-default-model").value;
 	        if (!provider || !model) throw new Error("Select a discovered provider and model before saving.");
-	        const { kind, modality } = defaultRowKindModality(row);
+	        const { kind, modality, task } = defaultRowKindModality(row);
 	        const options = row.options && typeof row.options === "object" && !Array.isArray(row.options) ? { ...row.options } : {};
 	        if (isVoiceOutputDefault(row)) {
 	          delete options.voice;
@@ -3836,7 +3850,8 @@ def gateway_console_html() -> str:
 	          const voice = $("modal-default-voice").value;
 	          if (voice) options.voice = voice;
 	        }
-	        await api(`/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}`, {
+	        const taskPath = task ? `/${encodeURIComponent(task)}` : "";
+	        await api(`/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}${taskPath}`, {
 	          method: "PUT",
 	          body: JSON.stringify({
 	            provider,
@@ -3857,8 +3872,9 @@ def gateway_console_html() -> str:
 	    async function clearDefault(row = null) {
 	      const target = row || state.activeDefaultRow;
 	      if (!target) return;
-	      const { kind, modality } = defaultRowKindModality(target);
-	      await api(`/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}`, { method: "DELETE" });
+	      const { kind, modality, task } = defaultRowKindModality(target);
+	      const taskPath = task ? `/${encodeURIComponent(task)}` : "";
+	      await api(`/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}${taskPath}`, { method: "DELETE" });
 	      if (!row) closeDefaultModal();
 	      await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	    }

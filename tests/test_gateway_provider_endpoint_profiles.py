@@ -668,6 +668,51 @@ def test_gateway_sandbox_text_generation_uses_server_side_endpoint_credentials(t
     }
 
 
+def test_gateway_sandbox_text_generation_does_not_apply_console_prompt_caps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeLLM:
+        def __init__(self, *, provider: str, model: str, **_: Any) -> None:
+            calls.append({"provider": provider, "model": model})
+
+        def generate(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"generate": kwargs})
+            return {"content": "long prompt ok", "usage": {"total_tokens": 1}}
+
+    import abstractruntime.integrations.abstractcore.llm_client as llm_client
+
+    monkeypatch.setattr(llm_client, "LocalAbstractCoreLLMClient", FakeLLM)
+    long_prior = "p" * 13000
+    long_prompt = "x" * 21358
+    long_system = "s" * 13000
+    headers = {"Authorization": "Bearer admin-token"}
+
+    with _app_client(tmp_path, monkeypatch) as client:
+        res = client.post(
+            "/api/gateway/sandbox/generate",
+            headers=headers,
+            json={
+                "capability": "output.text",
+                "provider": "lmstudio",
+                "model": "qwen/qwen3.6-35b-a3b",
+                "prompt": long_prompt,
+                "system_prompt": long_system,
+                "max_tokens": 82000,
+                "messages": [
+                    {"role": "user", "content": long_prior},
+                    {"role": "assistant", "content": "ack"},
+                ],
+            },
+        )
+
+    assert res.status_code == 200, res.text
+    generate_call = calls[1]["generate"]
+    assert generate_call["system_prompt"] == long_system
+    assert generate_call["params"]["max_tokens"] == 82000
+    assert generate_call["messages"][0] == {"role": "user", "content": long_prior}
+    assert generate_call["messages"][-1] == {"role": "user", "content": long_prompt}
+
+
 def test_console_presents_provider_connections_without_capability_form() -> None:
     from abstractgateway.console import gateway_console_html
 

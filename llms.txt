@@ -26,19 +26,22 @@ Key invariants / defaults (evidence in code):
 
 Multimodal notes:
 - Capability discovery for thin clients: `GET /api/gateway/discovery/capabilities` (best-effort; reports installed optional capabilities like `voice`, `tools`, `visualflow`, `vision_fallback`, `media`, plus the versioned shared run contract including input-data/history-bundle read endpoints, direct media feature gates, voice `tts|stt|listen`, prompt-cache surfaces, and model-residency truth).
-- The shared artifact contract includes run artifact listing/content, session-visible artifact listing, cross-run/session/run artifact search, workspace-path import, and artifact-to-workspace export. Browser-local files use upload; Gateway workspace paths use import.
+- Vision adapter discovery for thin clients: `GET /api/gateway/vision/adapters` returns compatible installed adapters for a provider/model/task combination through Runtime's public discovery facade.
+- The shared artifact contract includes run artifact listing/content, session-visible artifact listing, cross-run/session/run artifact search, workspace-path import, and artifact-to-workspace export. `/api/gateway/artifacts/search` returns legacy row fields plus `artifact_envelope_v1`, exact stats/facets when `include_stats=true`, bounded paging, canonical descriptor filters, and a UI-oriented `artifact_kind` filter that keeps Voice, Music, Sound, and unclassified Audio distinct; single canonical kinds use Runtime catalog filters, while multi-kind unions may be Gateway post-filters until Runtime has OR filters. Browser-local files use upload; Gateway workspace paths use import.
+- Generated-media artifacts projected from child runs into parent runs preserve Runtime descriptors and structured metadata. Direct STT transcript artifacts include descriptor/source refs for the source audio artifact, language/prompt hints, provider/model when available, and redacted route parameters.
 - Direct Gateway voice/audio durable endpoints (when `abstractvoice` is installed on the gateway host):
   - STT: `POST /api/gateway/runs/{run_id}/audio/transcribe`
   - TTS: `POST /api/gateway/runs/{run_id}/voice/tts`
 - Direct Gateway image durable endpoints:
   - image generate: `POST /api/gateway/runs/{run_id}/images/generate`
   - image edit: `POST /api/gateway/runs/{run_id}/images/edit`
+  - image upscale: `POST /api/gateway/runs/{run_id}/images/upscale`
 - Direct Gateway video durable endpoints:
   - text-to-video: `POST /api/gateway/runs/{run_id}/videos/generate`
   - image-to-video: `POST /api/gateway/runs/{run_id}/videos/from_image`
 - Direct Gateway music durable endpoint:
   - music: `POST /api/gateway/runs/{run_id}/music/generate`
-- Generated and edited images plus text-to-video/image-to-video are available through Runtime workflows and the direct run-scoped routes when the corresponding Runtime/Core vision backend is configured. Image, image-edit, text-to-video, and image-to-video direct routes expose child-run progress on the returned child run ledger as `abstract.progress`; image progress is best-effort and may be limited to start/complete for backends that do not report step progress. Image dimensions are optional passthrough overrides and must not be injected as a universal `512x512` client default.
+- Generated, edited, and upscaled images plus text-to-video/image-to-video are available through Runtime workflows and the direct run-scoped routes when the corresponding Runtime/Core vision backend is configured. Image, image-edit, image-upscale, text-to-video, and image-to-video direct routes expose child-run progress on the returned child run ledger as `abstract.progress`; image progress is best-effort and may be limited to start/complete for backends that do not report step progress. Image dimensions and upscaler controls are optional passthrough overrides and must not be injected as universal client defaults. Direct image/video routes also preserve task-specific batch and adapter fields: `count` / `n`, `seeds`, ordered `lora_adapters`, and video `flow_shift`, and batch responses return `image_artifacts` / `video_artifacts` plus the compatibility singular artifact field.
 - Dynamic catalogs for thin clients are exposed at `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, `GET /api/gateway/audio/transcriptions/models`, `GET /api/gateway/audio/music/providers`, `GET /api/gateway/audio/music/models`, and `GET /api/gateway/vision/provider_models`; they proxy AbstractCore Server catalog routes when configured.
 - Catalog routes now add a Gateway-owned stable envelope: `catalog.contract=gateway_catalog_v1`, `catalog.version=1`, and canonical `items`, while still preserving legacy lower-layer fields for compatibility.
 - The shared client contract also exposes `common.readiness` as `gateway_surface_readiness_v1`: a compact surface-level summary derived from Gateway descriptors, media gates, memory, prompt-cache, and Runtime-backed model-residency truth.

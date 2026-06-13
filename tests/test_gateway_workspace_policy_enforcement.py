@@ -195,6 +195,7 @@ def test_server_file_endpoints_honor_client_scope_overrides_when_enabled(tmp_pat
             headers=headers,
         )
         assert r2.status_code == 200, r2.text
+        assert (r2.json() or {}).get("path") == "secret.txt"
         assert "secret" in str((r2.json() or {}).get("content") or "")
 
         r3 = client.post(
@@ -203,6 +204,8 @@ def test_server_file_endpoints_honor_client_scope_overrides_when_enabled(tmp_pat
             headers=headers,
         )
         assert r3.status_code == 200, r3.text
+        attachment = (r3.json() or {}).get("attachment") or {}
+        assert attachment.get("source_path") == "secret.txt"
 
 
 def test_sanitize_run_workspace_policy_accepts_outside_root_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,3 +229,42 @@ def test_sanitize_run_workspace_policy_accepts_outside_root_when_enabled(tmp_pat
     assert sanitized.get("workspace_root") == str(outside)
     assert sanitized.get("workspace_access_mode") == "all_except_ignored"
     assert str(outside) in str(sanitized.get("workspace_allowed_paths") or "")
+
+
+def test_open_run_workspace_uses_stored_workspace_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = tmp_path / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    opened: list[list[str]] = []
+
+    def _fake_command(path: Path) -> list[str]:
+        return ["open-test", str(path)]
+
+    async def _fake_launch(command: list[str]) -> None:
+        opened.append(list(command))
+
+    monkeypatch.setattr(gateway_routes, "_workspace_open_command", _fake_command)
+    monkeypatch.setattr(gateway_routes, "_launch_workspace_opener", _fake_launch)
+
+    with client:
+        start = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": "bundle-policy", "flow_id": "root", "input_data": {}},
+            headers=headers,
+        )
+        assert start.status_code == 200, start.text
+        run_id = start.json()["run_id"]
+
+        resp = client.post(f"/api/gateway/runs/{run_id}/workspace/open", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        workspace_root = Path(body["workspace_root"])
+        assert body["opened"] is True
+        assert workspace_root.exists()
+        assert workspace_root.is_dir()
+        assert opened == [["open-test", str(workspace_root)]]

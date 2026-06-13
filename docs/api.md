@@ -83,6 +83,11 @@ curl -sS -H "$AUTH" -H "Content-Type: application/json" \
 
 Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
 
+For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
+Structured LLM/Agent schemas are Runtime/Core-owned: `response` remains textual,
+and schema-conformant object values are available through the node `data` output
+for data edges such as Break Object and Switch.
+
 ### 2b) Schedule a run (bundle mode)
 
 `POST /api/gateway/runs/schedule` starts a **scheduled parent run** that launches the target workflow as child runs over time.
@@ -194,6 +199,34 @@ raw bytes or local paths:
 }
 ```
 
+Gateway uses three distinct file-like source terms:
+
+- `Artifact`: a durable runtime-owned payload reference.
+- `Local File`: a browser/client upload source. Hosted clients should upload
+  bytes; browser-local paths are never interpreted as server paths.
+- `Server File` / `Server Folder`: user-facing wording for a workspace-scoped
+  server path under Gateway policy. The engineering contract is the canonical
+  `WorkspacePath` string returned by `/files/*`, artifact import/export, and
+  Runtime file nodes.
+
+Hosted local uploads stay artifact-backed:
+
+- one local file upload creates one artifact ref;
+- multiple local files create an ordered list of artifact refs in Flow;
+- a local folder uploads one artifact per file and may send `source_path`
+  (for example `reports/2026/summary.md`) so relative member paths survive in
+  artifact provenance without exposing browser-local absolute paths.
+
+Upload a local file or folder member:
+
+```bash
+curl -sS -H "$AUTH" \
+  -F "session_id=sess-1" \
+  -F "source_path=reports/summary.md" \
+  -F "file=@./summary.md" \
+  "$BASE_URL/api/gateway/attachments/upload"
+```
+
 List run artifacts:
 
 ```bash
@@ -206,19 +239,76 @@ List artifacts visible to a session:
 curl -sS -H "$AUTH" "$BASE_URL/api/gateway/sessions/sess-1/artifacts"
 ```
 
+Browse server workspace files/folders:
+
+```bash
+curl -sS -H "$AUTH" \
+  "$BASE_URL/api/gateway/files/list?path=&include_directories=true&limit=200"
+```
+
+Optional filters:
+- `path`: browse a specific workspace folder or mount alias.
+- `recursive=true`
+- `family=image|video|audio|document|text|code|json|archive|other`
+- `extensions=png,jpg` or newline-separated values
+- `query=substring`
+- `max_depth=<n>`
+
 Search artifacts across Gateway storage:
 
 ```bash
 curl -sS -H "$AUTH" \
-  "$BASE_URL/api/gateway/artifacts/search?scope=all&modality=image&query=logo&tags=pin_id=image"
+  "$BASE_URL/api/gateway/artifacts/search?scope=all&artifact_kind=image&query=logo&tags=pin_id=image&include_stats=true&limit=500"
 ```
 
 `scope` can be `all`, `session`, or `run`. Use `session_id` with
 `scope=session` and `run_id` with `scope=run`; omit both for `scope=all`.
-`modality` filters normalized artifact type (`image`, `audio`, `video`,
-`text`, `document`, `music`, `voice`, or `artifact`), `content_type` accepts
-exact values or prefixes such as `image/*`, and `tags` accepts either a JSON
-object or comma-separated `key=value` filters.
+Search responses preserve the legacy row fields and also include
+`artifact_envelope_v1`, a normalized projection of Runtime-owned descriptors,
+access stats, and Gateway action links.
+
+Useful query parameters:
+- `artifact_kind`: UI-oriented kind filter. Comma-separated values match
+  `semantic_kind`, `render_kind`, or `modality`; generic `audio` means
+  unclassified audio and does not match canonical `voice`, `music`, or `sound`.
+  Single canonical kinds such as `music`, `voice`, `image`, `markdown`, or
+  `json` map to Runtime catalog filters. Multi-kind unions are supported, but
+  may be Gateway post-filters until Runtime exposes OR filters.
+- `semantic_kind` / `render_kind`: canonical descriptor filters when the caller
+  wants the two dimensions separately.
+- `modality`, `content_type`, `workflow_id`, `node_id`, `created_after`,
+  `created_before`, and `tags`: server filters for indexed descriptor fields.
+- `query`: case-insensitive metadata search. Gateway may post-filter this field
+  when Runtime cannot index it directly.
+- `include_stats=true`: include exact `stats.total`, byte totals, and facet
+  counts for the selected server-side filter set, independent of `limit`.
+- `limit`, `offset`, and `cursor`: bounded paging. The default Runtime Explorer
+  page size is 500; `limit<=0` is bounded unless `debug_unlimited=true` is used
+  by an admin/debug caller.
+
+`artifact_envelope_v1` contains normalized fields such as `semantic_kind`,
+`render_kind`, `workflow_id`, `node_id`, `turn_id`, `ledger_cursor`,
+`generation`, `producer`, `media`, `source_refs`, `access`, and `links`.
+Sparse producer metadata is represented as missing fields; Gateway does not
+invent provider/model provenance from filenames.
+
+Generated-media artifacts created by child runs and projected into the parent
+run preserve Runtime descriptors and structured metadata. Direct transcription
+routes store transcript artifacts with source-audio refs, language/prompt hints,
+provider/model when available, and bounded route parameters.
+Descriptor-provided action links are sanitized to relative Gateway/UI links
+before they appear in envelopes; raw external provider URLs should be represented
+as trace availability or Gateway-owned trace records.
+
+Content reads can label the access type for Runtime access stats:
+
+```bash
+curl -sS -H "$AUTH" \
+  "$BASE_URL/api/gateway/runs/<run_id>/artifacts/<artifact_id>/content?access_action=preview"
+```
+
+Supported access actions are `content`, `preview`, and `download`. The shorter
+`access=preview` alias is also accepted.
 
 Import a server workspace path into a session artifact:
 
@@ -244,6 +334,12 @@ interpreted as Gateway workspace paths. In hosted user-auth mode, server
 workspace import/export and `/files/*` helpers require an admin principal.
 Ordinary users can still upload browser-local files and list/search artifacts in
 their own routed runtime.
+
+Canonical Gateway server paths use `rel/path` for the main workspace root and
+`mount_alias/rel/path` for approved mounts. When two allowed mounts share the
+same basename, Gateway emits deterministic digest-suffixed aliases so the same
+public path string can round-trip through `/files/*`, artifact import/export,
+and Runtime file nodes.
 
 ## Durable commands (`POST /api/gateway/commands`)
 
@@ -336,8 +432,9 @@ It also includes a versioned thin-client contract:
 - `capabilities.contracts.common`: shared run start/list/summary/input/history,
   ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
   controls. `common.artifacts` includes run listing/content, session artifact
-  listing, artifact search, workspace import, and workspace export descriptors
-  when available. Permission-sensitive descriptors are principal-aware:
+  listing, artifact search with `artifact_envelope_v1`, exact stats/facets,
+  `artifact_kind` UI filtering, workspace import, and workspace export
+  descriptors when available. Permission-sensitive descriptors are principal-aware:
   ordinary users see admin-only workspace import/export and provider
   prompt-cache controls marked unavailable with `admin_required` metadata.
 - `capabilities.contracts.common.readiness`: compact Gateway-owned
@@ -408,6 +505,7 @@ Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - `POST /api/gateway/runs/{run_id}/images/generate`
 - `POST /api/gateway/runs/{run_id}/images/edit`
+- `POST /api/gateway/runs/{run_id}/images/upscale`
 - `POST /api/gateway/runs/{run_id}/videos/generate`
 - `POST /api/gateway/runs/{run_id}/videos/from_image`
 - `POST /api/gateway/runs/{run_id}/music/generate`
@@ -417,6 +515,7 @@ Current direct Gateway endpoints:
 - `GET /api/gateway/audio/music/providers`
 - `GET /api/gateway/audio/music/models`
 - `GET /api/gateway/vision/provider_models`
+- `GET /api/gateway/vision/adapters`
 
 The catalog endpoints proxy AbstractCore Server routes when
 `ABSTRACTCORE_SERVER_BASE_URL`
@@ -449,8 +548,10 @@ stores the generated image as a run artifact, and returns
 for progress:
 
 - `run_id`, `request_id`, `prompt`
-- optional `provider`, `model`, `size`, `width`, `height`, and `format`
-- `image_artifact`: `{"$artifact", "content_type", "filename", "sha256", "size_bytes"}`
+- optional `provider`, `model`, `size`, `width`, `height`, `format`, batch
+  `count` / `n`, `seeds`, and ordered `lora_adapters`
+- `image_artifact`: first generated image for compatibility
+- `image_artifacts`: full ordered image artifact list for batch generation
 
 `size`, `width`, and `height` are optional passthrough request overrides. Do
 not inject a client-side default size. Different image providers/models accept
@@ -468,11 +569,26 @@ Gateway also exposes a direct image-edit sibling route:
 - `POST /api/gateway/runs/{run_id}/images/edit`
 
 The request uses a source `image_artifact`, optional `mask_artifact`, the same
-provider/model and image backend selectors as image generation, and returns an
-artifact-backed edited image. Thin clients should feature-detect it from
+provider/model and image backend selectors as image generation, plus optional
+batch `count` / `n`, `seeds`, and ordered `lora_adapters`, and returns an
+artifact-backed edited image. Batch responses also return `image_artifacts`.
+Thin clients should feature-detect it from
 `capabilities.contracts.flow_editor.media.edited_image` or
 `capabilities.contracts.assistant.media.edited_image`. It uses the same
 child-run `abstract.progress` progress contract as direct image generation.
+
+Gateway also exposes a direct image-upscale sibling route:
+
+- `POST /api/gateway/runs/{run_id}/images/upscale`
+
+The request uses a run-visible source `image_artifact`, optional provider/model
+selectors, and optional upscaler controls such as `scale`, `resolution`,
+`softness`, `seed`, `quantize`, and `vae_tiling`; `resolution` may be a
+shortest-edge integer or a scale factor such as `2x`. Thin clients should
+feature-detect it from `capabilities.contracts.flow_editor.media.upscaled_image`
+or `capabilities.contracts.assistant.media.upscaled_image`, list models with
+`GET /api/gateway/vision/provider_models?task=image_upscale`, and stream the
+returned child-run ledger for `abstract.progress` events.
 
 Generated music follows the same direct child-run pattern. Thin clients should
 discover it from `capabilities.contracts.flow_editor.media.generated_music` or
@@ -483,16 +599,20 @@ from the music catalog routes, and treat the returned `child_run_id` plus
 Generated video also follows the direct child-run pattern:
 
 - `POST /api/gateway/runs/{run_id}/videos/generate` uses the Runtime/Core
-  `output.modality=video` / `task=text_to_video` contract.
+  `output.modality=video` / `task=text_to_video` contract and accepts optional
+  batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift`.
 - `POST /api/gateway/runs/{run_id}/videos/from_image` accepts a run-visible
-  source `image_artifact` and uses `task=image_to_video`.
+  source `image_artifact`, accepts the same optional batch/adapter/video
+  control fields, and uses `task=image_to_video`.
 - Thin clients should discover these routes from
   `capabilities.contracts.flow_editor.media.generated_video` and
   `capabilities.contracts.flow_editor.media.image_to_video` (or the matching
   `assistant.media.*` entries), use
   `GET /api/gateway/vision/provider_models?task=text_to_video|image_to_video`
-  for model catalogs, and stream the returned `child_run_id` ledger for
-  `abstract.progress` events.
+  for model catalogs, use `GET /api/gateway/vision/adapters` for compatible
+  installed adapter catalogs, stream the returned `child_run_id` ledger for
+  `abstract.progress` events, and read `video_artifacts` when batch generation
+  is requested.
 
 STT and listen contract notes:
 

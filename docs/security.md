@@ -215,6 +215,12 @@ Thin clients can discover the server policy via:
 - `GET /api/gateway/workspace/policy`  
   Note: it returns **mount names only** (no absolute paths).
 
+Canonical public server paths use `rel/path` for the main workspace root and
+`mount_alias/rel/path` for approved mounts. When two allowed roots share the
+same basename, Gateway emits deterministic digest-suffixed mount aliases so
+the public path string stays stable across discovery, import/export, and
+Runtime execution.
+
 ### Permissive mode: allow thin clients to choose scope (trusted machines only)
 
 To honor client-provided workspace knobs (`workspace_root`, `workspace_access_mode`, `workspace_allowed_paths`, `workspace_ignored_paths`) beyond the operator roots, enable one of:

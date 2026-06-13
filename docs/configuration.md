@@ -151,7 +151,8 @@ the execution-host Core capability routes plus the Gateway/root baseline and
 any defaults configured for the current Gateway principal. The bootstrap
 `default/admin` principal edits the Gateway baseline when it uses the default
 runtime. Normal user writes to
-`PUT /api/gateway/config/capability-defaults/{kind}/{modality}` are stored under
+`PUT /api/gateway/config/capability-defaults/{kind}/{modality}` or
+`PUT /api/gateway/config/capability-defaults/{kind}/{modality}/{task}` are stored under
 that principal's Gateway data plane as a Core config file and override the
 Gateway baseline only for that user:
 
@@ -162,8 +163,9 @@ $ABSTRACTGATEWAY_DATA_DIR/users/<tenant>/<runtime>/runtime/config/abstractcore.j
 
 This lets operators set a Gateway default and lets hosted users choose
 remote-provider defaults for their own runtime without mutating the operator's
-global AbstractCore config or other users. The route schema, normalization, and
-file format come from AbstractCore capability-default contracts. Gateway no
+global AbstractCore config or other users. The route schema, normalization,
+task-specific generated-media suffixes, and file format come from AbstractCore
+capability-default contracts. Gateway no
 longer reads or writes `config/capability_defaults.json`; existing overlay
 files are ignored. Recreate those defaults with
 `abstractgateway-config set-default ...`. Provider API keys and raw secrets are
@@ -256,9 +258,14 @@ principal.
 The console **Sandbox** tab reuses this configuration. It tests the selected
 multimodal capability default rather than an ad hoc provider/model pair. Text
 chat uses the configured text route, and generated media tests use configured
-routes such as `output.image`, `output.voice`, `output.sound`, `output.music`,
-or `output.video`. The Sandbox renders generated images, videos, voice, sound,
-and music artifacts inline when the route completes, while keeping artifact
+routes such as `output.image.text_to_image`, `output.video.text_to_video`,
+`output.voice`, `output.sound`, and `output.music`. Image edit, image upscale,
+and image-to-video are configured separately in the Multimodal Capabilities tab
+through `output.image.image_to_image`, `output.image.image_upscale`, and
+`output.video.image_to_video`. The console presents these concrete
+generated-media routes instead of the broad `output.image` and `output.video`
+compatibility defaults. The Sandbox renders generated images, videos,
+voice, sound, and music artifacts inline when the route completes, while keeping artifact
 links available for opening the raw content. Text chat can include uploaded
 attachments such as images, audio, video, PDFs, Markdown, or text documents.
 Uploaded attachments are stored as Gateway artifacts and then materialized by
@@ -453,13 +460,15 @@ does not implicitly install them.
 - `GET /api/gateway/audio/music/models`: proxies AbstractCore `/v1/audio/music/models` when configured.
 - `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured.
 - `GET /api/gateway/vision/models`: reports locally known/cached AbstractVision model ids when the in-process capability path is available.
-- `POST /api/gateway/runs/{run_id}/images/generate`: creates a durable Runtime child run for text-to-image and returns an artifact-backed image result. Optional `size`/`width`/`height` values are passed through only when the client supplies them.
-- `POST /api/gateway/runs/{run_id}/images/edit`: creates a durable Runtime child run for image-to-image edits and optional mask-guided edits. Optional `size`/`width`/`height` values are passed through only when the client supplies them.
-- `POST /api/gateway/runs/{run_id}/videos/generate`: creates a durable Runtime child run for text-to-video and returns an artifact-backed video result.
-- `POST /api/gateway/runs/{run_id}/videos/from_image`: creates a durable Runtime child run for image-to-video and returns an artifact-backed video result.
+- `GET /api/gateway/vision/adapters`: lists installed compatible vision adapters for a provider/model/task combination through Runtime's discovery facade.
+- `POST /api/gateway/runs/{run_id}/images/generate`: creates a durable Runtime child run for text-to-image and returns an artifact-backed image result. Optional `size`/`width`/`height`, batch `count` / `n`, `seeds`, and ordered `lora_adapters` values are passed through only when the client supplies them. Batch responses also return `image_artifacts` alongside the compatibility `image_artifact`.
+- `POST /api/gateway/runs/{run_id}/images/edit`: creates a durable Runtime child run for image-to-image edits and optional mask-guided edits. Optional `size`/`width`/`height`, batch `count` / `n`, `seeds`, and ordered `lora_adapters` values are passed through only when the client supplies them. Batch responses also return `image_artifacts`.
+- `POST /api/gateway/runs/{run_id}/images/upscale`: creates a durable Runtime child run for image upscaling from a run-visible `image_artifact`. Optional `resolution` accepts a shortest-edge integer or a scale factor such as `2x`; `scale`, `softness`, `seed`, `quantize`, and `vae_tiling` values are passed through only when the client supplies them.
+- `POST /api/gateway/runs/{run_id}/videos/generate`: creates a durable Runtime child run for text-to-video and returns an artifact-backed video result. Optional batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift` values are passed through only when the client supplies them. Batch responses also return `video_artifacts`.
+- `POST /api/gateway/runs/{run_id}/videos/from_image`: creates a durable Runtime child run for image-to-video and returns an artifact-backed video result. Optional batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift` values are passed through only when the client supplies them. Batch responses also return `video_artifacts`.
 - `POST /api/gateway/runs/{run_id}/music/generate`: creates a durable Runtime child run and returns an artifact-backed music result for thin clients.
 
-Direct image, image-edit, text-to-video, and image-to-video child runs advertise
+Direct image, image-edit, image-upscale, text-to-video, and image-to-video child runs advertise
 `event_name=abstract.progress`. Thin clients should stream the returned
 `child_run_id` ledger and render progress when the backend reports it; image
 backends that do not expose step progress still emit at least a start record and

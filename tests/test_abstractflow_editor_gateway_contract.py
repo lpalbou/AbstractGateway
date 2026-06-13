@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -35,8 +37,50 @@ def _editor_flow_payload() -> dict:
                         {"id": "exec-out", "label": "", "type": "execution"},
                         {"id": "prompt", "label": "Prompt", "type": "string"},
                         {"id": "max_iterations", "label": "Max Iterations", "type": "integer"},
+                        {"id": "source_image", "label": "Source Image", "type": "artifact_image"},
+                        {
+                            "id": "reference_files",
+                            "label": "Reference Files",
+                            "type": "array",
+                            "schema": {
+                                "type": "array",
+                                "x-abstract-type": "artifacts_text",
+                                "x-abstract-items-type": "artifact_text",
+                                "x-abstract-artifact-modality": "text",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": True,
+                                    "required": ["$artifact"],
+                                    "properties": {
+                                        "$artifact": {"type": "string", "minLength": 1},
+                                        "artifact_id": {"type": "string"},
+                                        "run_id": {"type": "string"},
+                                        "artifact_run_id": {"type": "string"},
+                                        "content_type": {"type": "string"},
+                                        "filename": {"type": "string"},
+                                        "source_path": {"type": "string"},
+                                        "modality": {"type": "string"},
+                                    },
+                                    "x-abstract-type": "artifact_text",
+                                    "x-abstract-artifact-modality": "text",
+                                },
+                            },
+                        },
                     ],
-                    "pinDefaults": {"prompt": "hello from the editor", "max_iterations": 3},
+                    "pinDefaults": {
+                        "prompt": "hello from the editor",
+                        "max_iterations": 3,
+                        "source_image": {
+                            "$artifact": "img-default",
+                            "artifact_id": "img-default",
+                            "run_id": "run-default",
+                            "content_type": "image/png",
+                        },
+                        "reference_files": [
+                            {"$artifact": "doc-1", "artifact_id": "doc-1", "run_id": "run-default", "content_type": "text/plain"},
+                            {"$artifact": "doc-2", "artifact_id": "doc-2", "run_id": "run-default", "content_type": "text/plain"},
+                        ],
+                    },
                 },
             },
             {
@@ -48,6 +92,35 @@ def _editor_flow_payload() -> dict:
                     "label": "On Flow End",
                     "inputs": [{"id": "exec-in", "label": "", "type": "execution"}],
                     "outputs": [],
+                },
+            },
+            {
+                "id": "schema_call",
+                "type": "llm_call",
+                "position": {"x": 320.0, "y": 320.0},
+                "data": {
+                    "nodeType": "llm_call",
+                    "label": "LLM Call",
+                    "inputs": [
+                        {"id": "exec-in", "label": "", "type": "execution"},
+                        {"id": "prompt", "label": "prompt", "type": "string"},
+                        {"id": "resp_schema", "label": "resp_schema", "type": "object"},
+                    ],
+                    "outputs": [
+                        {"id": "exec-out", "label": "", "type": "execution"},
+                        {"id": "response", "label": "response", "type": "string"},
+                    ],
+                    "pinDefaults": {
+                        "prompt": "classify the editor contract",
+                        "resp_schema": {
+                            "type": "object",
+                            "properties": {
+                                "choice": {"type": "string", "enum": ["approve", "reject"]},
+                            },
+                            "required": ["choice"],
+                        },
+                    },
+                    "effectConfig": {"provider": "lmstudio", "model": "unit-test-model"},
                 },
             },
         ],
@@ -77,6 +150,34 @@ def _wait_until(fn, *, timeout_s: float = 5.0, poll_s: float = 0.05) -> None:
     if last_error is not None:
         raise last_error
     raise AssertionError("condition did not become true before timeout")
+
+
+def test_editor_run_input_schema_preserves_artifact_pin_contract() -> None:
+    from abstractgateway.routes.gateway import _entrypoint_input_schema_from_visualflow
+
+    flow = _editor_flow_payload()
+    schema = _entrypoint_input_schema_from_visualflow(flow)
+    inputs = schema.get("inputs")
+    assert isinstance(inputs, list)
+    source = next((item for item in inputs if isinstance(item, dict) and item.get("id") == "source_image"), None)
+    assert source is not None
+    assert source.get("type") == "artifact_image"
+    prop = schema.get("input_data_schema", {}).get("properties", {}).get("source_image", {})
+    assert prop.get("type") == "object"
+    assert prop.get("required") == ["$artifact"]
+    assert prop.get("x-abstract-type") == "artifact_image"
+    assert prop.get("x-abstract-artifact-modality") == "image"
+    assert prop.get("properties", {}).get("$artifact", {}).get("minLength") == 1
+
+    references = next((item for item in inputs if isinstance(item, dict) and item.get("id") == "reference_files"), None)
+    assert references is not None
+    assert references.get("type") == "array"
+    reference_prop = schema.get("input_data_schema", {}).get("properties", {}).get("reference_files", {})
+    assert reference_prop.get("type") == "array"
+    assert reference_prop.get("x-abstract-type") == "artifacts_text"
+    assert reference_prop.get("x-abstract-items-type") == "artifact_text"
+    assert reference_prop.get("x-abstract-artifact-modality") == "text"
+    assert reference_prop.get("items", {}).get("required") == ["$artifact"]
 
 
 @pytest.mark.basic
@@ -136,6 +237,12 @@ def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeyp
         assert published.get("bundle_id") == "editor-contract"
         assert published.get("bundle_version") == "0.0.0"
 
+        with zipfile.ZipFile(Path(str(published.get("bundle_path"))), "r") as zf:
+            published_flow = json.loads(zf.read(f"flows/{flow_id}.json"))
+        published_schema_node = next(n for n in published_flow["nodes"] if n["id"] == "schema_call")
+        published_schema = published_schema_node["data"]["pinDefaults"]["resp_schema"]
+        assert published_schema["properties"]["choice"]["enum"] == ["approve", "reject"]
+
         draft_publish = client.post(
             f"/api/gateway/visualflows/{flow_id}/publish",
             json={"bundle_id": "editor-contract", "bundle_version": "draft.editor-session", "overwrite": True, "reload_gateway": True},
@@ -190,12 +297,25 @@ def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeyp
         assert schema_body.get("workflow_id") == f"editor-contract@0.0.0:{flow_id}"
         inputs = schema_body.get("inputs")
         assert isinstance(inputs, list)
-        assert {item.get("id") for item in inputs if isinstance(item, dict)} == {"prompt", "max_iterations"}
-        assert schema_body.get("defaults") == {"prompt": "hello from the editor", "max_iterations": 3}
+        assert {item.get("id") for item in inputs if isinstance(item, dict)} == {"prompt", "max_iterations", "source_image"}
+        assert schema_body.get("defaults") == {
+            "prompt": "hello from the editor",
+            "max_iterations": 3,
+            "source_image": {
+                "$artifact": "img-default",
+                "artifact_id": "img-default",
+                "run_id": "run-default",
+                "content_type": "image/png",
+            },
+        }
         props = schema_body.get("input_data_schema", {}).get("properties")
         assert isinstance(props, dict)
         assert props.get("prompt", {}).get("type") == "string"
         assert props.get("max_iterations", {}).get("type") == "integer"
+        assert props.get("source_image", {}).get("type") == "object"
+        assert props.get("source_image", {}).get("x-abstract-type") == "artifact_image"
+        assert props.get("source_image", {}).get("x-abstract-artifact-modality") == "image"
+        assert props.get("source_image", {}).get("required") == ["$artifact"]
 
         start = client.post(
             "/api/gateway/runs/start",

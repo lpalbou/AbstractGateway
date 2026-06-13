@@ -244,6 +244,7 @@ Gateway's direct run-scoped endpoint:
 ```text
 POST /api/gateway/runs/{run_id}/images/generate
 POST /api/gateway/runs/{run_id}/images/edit
+POST /api/gateway/runs/{run_id}/images/upscale
 POST /api/gateway/runs/{run_id}/videos/generate
 POST /api/gateway/runs/{run_id}/videos/from_image
 ```
@@ -252,7 +253,13 @@ The direct image and video endpoints use Runtime/Core output selectors and
 store the result as a run artifact, so they still require a configured
 Runtime-compatible vision/video backend. Image dimensions are optional
 passthrough overrides; clients should not inject a default `512x512` request
-because supported sizes depend on the selected provider/model. For long media
+because supported sizes depend on the selected provider/model. Image/video
+routes also accept optional batch `count` / `n`, `seeds`, and ordered
+`lora_adapters`; video routes additionally accept `flow_shift`, and batch
+responses return `image_artifacts` / `video_artifacts` alongside the
+compatibility singular artifact fields. Use
+`GET /api/gateway/vision/adapters` when a thin client needs the compatible
+installed adapter catalog for a selected provider/model/task. For long media
 runs, stream the returned `child_run_id` ledger and watch `abstract.progress`
 records. Image progress is best-effort and may only show start/complete when the
 backend does not expose step progress.

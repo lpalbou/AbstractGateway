@@ -54,6 +54,19 @@ def _stub_runtime_effect_handlers(monkeypatch: pytest.MonkeyPatch) -> None:
         del run, default_next_node
         payload = dict(effect.payload or {})
         prompt = payload.get("prompt")
+        response_schema = payload.get("response_schema")
+        if isinstance(response_schema, dict) and response_schema:
+            data = {"choice": "approve", "confidence": 0.99}
+            return EffectOutcome.completed(
+                {
+                    "content": json.dumps(data, separators=(",", ":")),
+                    "data": data,
+                    "tool_calls": [],
+                    "model": payload.get("model"),
+                    "provider": payload.get("provider"),
+                    "prompt": str(prompt or ""),
+                }
+            )
         # Deterministic response for tests. ReAct logic treats this as a final answer.
         return EffectOutcome.completed(
             {
@@ -169,6 +182,330 @@ def test_gateway_bundle_llm_call_completes_offline(tmp_path: Path, monkeypatch: 
         assert ledger.status_code == 200, ledger.text
         items = ledger.json().get("items") or []
         assert any(isinstance(i, dict) and isinstance(i.get("effect"), dict) and i["effect"].get("type") == "llm_call" for i in items)
+
+
+def test_gateway_bundle_structured_llm_data_pin_executes_through_break_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+
+    flow_id = "root"
+    schema = {
+        "type": "object",
+        "properties": {
+            "choice": {"type": "string", "enum": ["approve", "reject"]},
+            "confidence": {"type": "number"},
+        },
+        "required": ["choice"],
+    }
+    flow = {
+        "id": flow_id,
+        "name": "structured-llm-data-test",
+        "description": "",
+        "interfaces": [],
+        "nodes": [
+            {
+                "id": "start",
+                "type": "on_flow_start",
+                "position": {"x": 32.0, "y": 224.0},
+                "data": {"nodeType": "on_flow_start", "label": "On Flow Start", "inputs": [], "outputs": [{"id": "exec-out", "label": "", "type": "execution"}]},
+            },
+            {
+                "id": "call",
+                "type": "llm_call",
+                "position": {"x": 288.0, "y": 224.0},
+                "data": {
+                    "nodeType": "llm_call",
+                    "label": "LLM Call",
+                    "inputs": [
+                        {"id": "exec-in", "label": "", "type": "execution"},
+                        {"id": "prompt", "label": "prompt", "type": "string"},
+                        {"id": "resp_schema", "label": "resp_schema", "type": "object"},
+                    ],
+                    "outputs": [
+                        {"id": "exec-out", "label": "", "type": "execution"},
+                        {"id": "response", "label": "response", "type": "string"},
+                        {"id": "data", "label": "data", "type": "object"},
+                    ],
+                    "pinDefaults": {"prompt": "classify the request", "resp_schema": schema},
+                    "effectConfig": {"provider": "ollama", "model": "qwen3:1.7b"},
+                },
+            },
+            {
+                "id": "break",
+                "type": "break_object",
+                "position": {"x": 544.0, "y": 224.0},
+                "data": {
+                    "nodeType": "break_object",
+                    "label": "Break Object",
+                    "inputs": [{"id": "object", "label": "object", "type": "object"}],
+                    "outputs": [
+                        {"id": "choice", "label": "choice", "type": "string"},
+                        {"id": "confidence", "label": "confidence", "type": "number"},
+                    ],
+                    "breakConfig": {"selectedPaths": ["choice", "confidence"]},
+                },
+            },
+            {
+                "id": "end",
+                "type": "on_flow_end",
+                "position": {"x": 800.0, "y": 224.0},
+                "data": {
+                    "nodeType": "on_flow_end",
+                    "label": "On Flow End",
+                    "inputs": [
+                        {"id": "exec-in", "label": "", "type": "execution"},
+                        {"id": "choice", "label": "choice", "type": "string"},
+                    ],
+                    "outputs": [],
+                },
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "sourceHandle": "exec-out", "target": "call", "targetHandle": "exec-in"},
+            {"id": "e2", "source": "call", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+            {"id": "e3", "source": "call", "sourceHandle": "data", "target": "break", "targetHandle": "object"},
+            {"id": "e4", "source": "break", "sourceHandle": "choice", "target": "end", "targetHandle": "choice"},
+        ],
+        "entryNode": "start",
+    }
+
+    bundle_id, _entry = _write_bundle(
+        bundles_dir=bundles_dir, bundle_id="bundle-structured-llm-data", flows={flow_id: flow}, entrypoint=flow_id
+    )
+    _stub_runtime_effect_handlers(monkeypatch)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    import sys
+
+    assert "abstractflow" not in sys.modules
+
+    from abstractgateway.app import app
+    from abstractgateway.service import get_gateway_service
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        run_id = r.json()["run_id"]
+
+        def _is_completed():
+            rr = client.get(f"/api/gateway/runs/{run_id}", headers=headers)
+            assert rr.status_code == 200, rr.text
+            return rr.json().get("status") == "completed"
+
+        _wait_until(_is_completed, timeout_s=10.0, poll_s=0.1)
+
+        ledger = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=500", headers=headers)
+        assert ledger.status_code == 200, ledger.text
+        items = ledger.json().get("items") or []
+        llm_records = [
+            item
+            for item in items
+            if isinstance(item, dict)
+            and isinstance(item.get("effect"), dict)
+            and item["effect"].get("type") == "llm_call"
+        ]
+        assert llm_records
+        assert (llm_records[-1].get("result") or {}).get("data") == {"choice": "approve", "confidence": 0.99}
+
+        state = get_gateway_service().host.run_store.load(run_id)
+        assert state is not None
+        assert state.output == {"choice": "approve", "success": True}
+        temp = state.vars.get("_temp") or {}
+        effects = temp.get("effects") or {}
+        assert effects["call"]["data"] == {"choice": "approve", "confidence": 0.99}
+
+
+def test_gateway_bundle_structured_llm_data_pin_feeds_answer_user_and_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+
+    flow_id = "root"
+    schema = {
+        "type": "object",
+        "properties": {
+            "choice": {"type": "string", "enum": ["approve", "reject"]},
+            "confidence": {"type": "number"},
+        },
+        "required": ["choice", "confidence"],
+    }
+    flow = {
+        "id": flow_id,
+        "name": "structured-answer-switch-test",
+        "description": "",
+        "interfaces": [],
+        "nodes": [
+            {
+                "id": "start",
+                "type": "on_flow_start",
+                "position": {"x": 32.0, "y": 224.0},
+                "data": {
+                    "nodeType": "on_flow_start",
+                    "label": "On Flow Start",
+                    "inputs": [],
+                    "outputs": [{"id": "exec-out", "label": "", "type": "execution"}],
+                },
+            },
+            {
+                "id": "call",
+                "type": "llm_call",
+                "position": {"x": 288.0, "y": 224.0},
+                "data": {
+                    "nodeType": "llm_call",
+                    "label": "LLM Call",
+                    "inputs": [
+                        {"id": "exec-in", "label": "", "type": "execution"},
+                        {"id": "prompt", "label": "prompt", "type": "string"},
+                        {"id": "resp_schema", "label": "resp_schema", "type": "object"},
+                    ],
+                    "outputs": [
+                        {"id": "exec-out", "label": "", "type": "execution"},
+                        {"id": "response", "label": "response", "type": "string"},
+                        {"id": "data", "label": "data", "type": "object"},
+                    ],
+                    "pinDefaults": {"prompt": "classify the request", "resp_schema": schema},
+                    "effectConfig": {"provider": "ollama", "model": "qwen3:1.7b"},
+                },
+            },
+            {
+                "id": "break",
+                "type": "break_object",
+                "position": {"x": 544.0, "y": 224.0},
+                "data": {
+                    "nodeType": "break_object",
+                    "label": "Break Object",
+                    "inputs": [{"id": "object", "label": "object", "type": "object"}],
+                    "outputs": [
+                        {"id": "choice", "label": "choice", "type": "string"},
+                        {"id": "confidence", "label": "confidence", "type": "number"},
+                    ],
+                    "breakConfig": {"selectedPaths": ["choice", "confidence"]},
+                },
+            },
+            {
+                "id": "answer-choice",
+                "type": "answer_user",
+                "position": {"x": 704.0, "y": 224.0},
+                "data": {
+                    "nodeType": "answer_user",
+                    "label": "Answer User",
+                    "inputs": [
+                        {"id": "exec-in", "label": "", "type": "execution"},
+                        {"id": "message", "label": "message", "type": "string"},
+                        {"id": "level", "label": "level", "type": "string"},
+                    ],
+                    "outputs": [
+                        {"id": "exec-out", "label": "", "type": "execution"},
+                        {"id": "message", "label": "message", "type": "string"},
+                    ],
+                    "pinDefaults": {"message": "fallback", "level": "message"},
+                },
+            },
+            {
+                "id": "switch",
+                "type": "switch",
+                "position": {"x": 864.0, "y": 224.0},
+                "data": {
+                    "nodeType": "switch",
+                    "label": "Switch",
+                    "inputs": [
+                        {"id": "exec-in", "label": "", "type": "execution"},
+                        {"id": "value", "label": "value", "type": "string"},
+                    ],
+                    "outputs": [
+                        {"id": "case:approve", "label": "approve", "type": "execution"},
+                        {"id": "default", "label": "default", "type": "execution"},
+                    ],
+                    "switchConfig": {"cases": [{"id": "approve", "value": "approve"}]},
+                },
+            },
+            {
+                "id": "answer-approved",
+                "type": "answer_user",
+                "position": {"x": 1024.0, "y": 224.0},
+                "data": {
+                    "nodeType": "answer_user",
+                    "label": "Answer User",
+                    "inputs": [
+                        {"id": "exec-in", "label": "", "type": "execution"},
+                        {"id": "message", "label": "message", "type": "string"},
+                    ],
+                    "outputs": [{"id": "exec-out", "label": "", "type": "execution"}],
+                    "pinDefaults": {"message": "Approved pathway"},
+                },
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "sourceHandle": "exec-out", "target": "call", "targetHandle": "exec-in"},
+            {"id": "e2", "source": "call", "sourceHandle": "exec-out", "target": "answer-choice", "targetHandle": "exec-in"},
+            {"id": "e3", "source": "call", "sourceHandle": "data", "target": "break", "targetHandle": "object"},
+            {"id": "e4", "source": "break", "sourceHandle": "choice", "target": "answer-choice", "targetHandle": "message"},
+            {"id": "e5", "source": "answer-choice", "sourceHandle": "exec-out", "target": "switch", "targetHandle": "exec-in"},
+            {"id": "e6", "source": "break", "sourceHandle": "choice", "target": "switch", "targetHandle": "value"},
+            {"id": "e7", "source": "switch", "sourceHandle": "case:approve", "target": "answer-approved", "targetHandle": "exec-in"},
+        ],
+        "entryNode": "start",
+    }
+
+    bundle_id, _entry = _write_bundle(
+        bundles_dir=bundles_dir, bundle_id="bundle-structured-answer-switch", flows={flow_id: flow}, entrypoint=flow_id
+    )
+    _stub_runtime_effect_handlers(monkeypatch)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+    from abstractgateway.service import get_gateway_service
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        run_id = r.json()["run_id"]
+
+        def _is_completed():
+            rr = client.get(f"/api/gateway/runs/{run_id}", headers=headers)
+            assert rr.status_code == 200, rr.text
+            return rr.json().get("status") == "completed"
+
+        _wait_until(_is_completed, timeout_s=10.0, poll_s=0.1)
+
+        state = get_gateway_service().host.run_store.load(run_id)
+        assert state is not None
+        assert state.output == {"success": True, "result": {"message": "Approved pathway", "level": "message"}}
+        temp = state.vars.get("_temp") or {}
+        effects = temp.get("effects") or {}
+        assert effects["call"]["data"] == {"choice": "approve", "confidence": 0.99}
+        assert effects["answer-choice"]["message"] == "approve"
+        assert effects["answer-approved"]["message"] == "Approved pathway"
+        assert state.vars["_last_output"]["branch"] == "case:approve"
 
 
 def test_gateway_bundle_auto_llm_runtime_prefers_gateway_capability_default_over_scanned_flow_default(

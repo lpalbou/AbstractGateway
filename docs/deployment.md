@@ -11,7 +11,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.25
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.27
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -19,7 +19,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.25-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.27-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -195,7 +195,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.25-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.27-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

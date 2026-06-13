@@ -115,3 +115,48 @@ def test_gateway_attachments_upload_creates_session_scoped_artifact(tmp_path: Pa
         r3 = client.get(f"/api/gateway/runs/session_memory_s1/artifacts/{artifact_id}/content", headers=headers)
         assert r3.status_code == 200, r3.text
         assert r3.content == payload
+
+
+def test_gateway_attachments_upload_preserves_client_relative_source_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-attachments-upload-path", flow_id="root")
+
+    ws = tmp_path / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/attachments/upload",
+            data={"session_id": "s2", "source_path": r"folder\\sub/../sub/report.txt"},
+            files={"file": ("report.txt", b"hello", "text/plain")},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        attachment = body.get("attachment") or {}
+        assert isinstance(attachment, dict)
+        assert attachment.get("source_path") == "client:folder/sub/report.txt"
+
+        artifact_id = attachment.get("$artifact")
+        assert isinstance(artifact_id, str) and artifact_id.strip()
+
+        listing = client.get("/api/gateway/runs/session_memory_s2/artifacts", headers=headers)
+        assert listing.status_code == 200, listing.text
+        items = listing.json().get("items") or []
+        found = next((it for it in items if isinstance(it, dict) and it.get("artifact_id") == artifact_id), None)
+        assert isinstance(found, dict)
+        tags = found.get("tags") or {}
+        assert isinstance(tags, dict)
+        assert tags.get("path") == "client:folder/sub/report.txt"

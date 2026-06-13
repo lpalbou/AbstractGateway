@@ -767,6 +767,60 @@ def test_capability_defaults_are_isolated_by_gateway_principal(tmp_path: Path, m
     assert cleared_text.get("provider") != "openrouter"
 
 
+def test_task_capability_defaults_are_isolated_by_gateway_principal(tmp_path: Path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    admin_headers = {"Authorization": "Bearer admin-token"}
+
+    alice = client.post(
+        "/api/gateway/admin/users",
+        headers=admin_headers,
+        json={"user_id": "alice", "tenant_id": "default", "roles": ["user"], "runtime_id": "alice"},
+    )
+    bob = client.post(
+        "/api/gateway/admin/users",
+        headers=admin_headers,
+        json={"user_id": "bob", "tenant_id": "default", "roles": ["user"], "runtime_id": "bob"},
+    )
+    assert alice.status_code == 200
+    assert bob.status_code == 200
+    alice_headers = {"Authorization": f"Bearer {alice.json()['token']}"}
+    bob_headers = {"Authorization": f"Bearer {bob.json()['token']}"}
+
+    saved = client.put(
+        "/api/gateway/config/capability-defaults/output/image/image_upscale",
+        headers=alice_headers,
+        json={
+            "provider": "mlx-gen",
+            "model": "AbstractFramework/seedvr2-3b-8bit",
+            "options": {"resolution": "2x", "softness": 0.25},
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    alice_core_config = tmp_path / "runtime" / "users" / "default" / "alice" / "runtime" / "config" / "abstractcore.json"
+    persisted = json.loads(alice_core_config.read_text(encoding="utf-8"))
+    assert persisted["capability_defaults"]["routes"]["output.image.image_upscale"]["model"] == "AbstractFramework/seedvr2-3b-8bit"
+
+    alice_defaults = client.get("/api/gateway/config/capability-defaults", headers=alice_headers)
+    bob_defaults = client.get("/api/gateway/config/capability-defaults", headers=bob_headers)
+    assert alice_defaults.status_code == 200
+    assert bob_defaults.status_code == 200
+
+    alice_rows = {r.get("key"): r for r in alice_defaults.json()["routes"]}
+    bob_rows = {r.get("key"): r for r in bob_defaults.json()["routes"]}
+    alice_upscale = alice_rows["output.image.image_upscale"]
+    bob_upscale = bob_rows["output.image.image_upscale"]
+    assert alice_upscale["provider"] == "mlx-gen"
+    assert alice_upscale["model"] == "AbstractFramework/seedvr2-3b-8bit"
+    assert alice_upscale["options"] == {"resolution": "2x", "softness": 0.25}
+    assert bob_upscale.get("provider") != "mlx-gen"
+    assert bob_upscale.get("model") != "AbstractFramework/seedvr2-3b-8bit"
+
+    cleared = client.delete("/api/gateway/config/capability-defaults/output/image/image_upscale", headers=alice_headers)
+    assert cleared.status_code == 200
+    cleared_upscale = [r for r in cleared.json()["routes"] if r.get("key") == "output.image.image_upscale"][0]
+    assert cleared_upscale["configured"] is False
+
+
 def test_sandbox_generation_receives_scoped_capability_defaults(tmp_path: Path, monkeypatch) -> None:
     import abstractruntime.integrations.abstractcore.llm_client as llm_client_mod
 

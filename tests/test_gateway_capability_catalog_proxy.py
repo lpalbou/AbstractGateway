@@ -488,6 +488,119 @@ def test_vision_provider_catalog_items_use_available_providers_only(
     assert [item["id"] for item in body["items"]] == ["mlx-gen"]
 
 
+def test_vision_provider_catalog_accepts_image_upscale_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_vision_provider_models(self, **kwargs) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {
+                "available": True,
+                "task": "image_upscale",
+                "providers": ["mlx-gen"],
+                "available_providers": ["mlx-gen"],
+                "models": [
+                    {
+                        "provider": "mlx-gen",
+                        "model": "AbstractFramework/seedvr2-3b-8bit",
+                        "id": "mlx-gen/AbstractFramework/seedvr2-3b-8bit",
+                        "task": "image_upscale",
+                    }
+                ],
+                "models_by_provider": {"mlx-gen": ["AbstractFramework/seedvr2-3b-8bit"]},
+                "provider_models": [{"provider": "mlx-gen", "model": "AbstractFramework/seedvr2-3b-8bit"}],
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/vision/provider_models?task=image_upscale&provider=mlx-gen", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert calls[0]["task"] == "image_upscale"
+    assert body["models_by_provider"] == {"mlx-gen": ["AbstractFramework/seedvr2-3b-8bit"]}
+    assert body["catalog"]["task"] == "image_upscale"
+    assert body["items"][0]["provider"] == "mlx-gen"
+
+
+def test_vision_adapter_catalog_proxies_runtime_adapter_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_vision_adapters(self, **kwargs: Any) -> Dict[str, Any]:
+            calls.append(dict(kwargs))
+            return {
+                "available": True,
+                "provider": "mlx-gen",
+                "task": "text_to_video",
+                "model": "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit",
+                "adapters": [
+                    {
+                        "id": "documentary-motion",
+                        "label": "Documentary Motion",
+                        "provider": "mlx-gen",
+                        "model": "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit",
+                        "tasks": ["text_to_video", "image_to_video"],
+                        "compatible_models": [
+                            "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit",
+                            "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit",
+                        ],
+                    }
+                ],
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    headers = {**headers, "X-AbstractCore-Provider-API-Key": "provider-secret"}
+    with client:
+        resp = client.get(
+            "/api/gateway/vision/adapters?task=text_to_video&provider=mlx-gen&model=AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit&base_url=http://provider.test/v1",
+            headers=headers,
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "abstractruntime.discovery_facade"
+    assert body["route_available"] is True
+    assert body["available"] is True
+    assert body["catalog"]["kind"] == "adapters"
+    assert body["catalog"]["scope"] == "vision"
+    assert body["catalog"]["task"] == "text_to_video"
+    assert body["catalog"]["provider"] == "mlx-gen"
+    assert body["catalog"]["model"] == "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit"
+    assert body["items"] == [
+        {
+            "id": "documentary-motion",
+            "label": "Documentary Motion",
+            "provider": "mlx-gen",
+            "model": "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit",
+            "tasks": ["text_to_video", "image_to_video"],
+            "compatible_models": [
+                "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit",
+                "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit",
+            ],
+        }
+    ]
+    assert calls == [
+        {
+            "model": "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit",
+            "task": "text_to_video",
+            "base_url": "http://provider.test/v1",
+            "provider_api_key": "provider-secret",
+            "provider": "mlx-gen",
+        }
+    ]
+
+
 def test_gateway_vision_catalog_routes_local_mflux_without_diffusers_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 

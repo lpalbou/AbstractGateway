@@ -119,7 +119,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.25
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.27
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -127,7 +127,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.25-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.27-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
@@ -205,6 +205,7 @@ Current direct Gateway APIs:
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - `POST /api/gateway/runs/{run_id}/images/generate`
 - `POST /api/gateway/runs/{run_id}/images/edit`
+- `POST /api/gateway/runs/{run_id}/images/upscale`
 - `POST /api/gateway/runs/{run_id}/videos/generate`
 - `POST /api/gateway/runs/{run_id}/videos/from_image`
 - `POST /api/gateway/runs/{run_id}/music/generate`
@@ -215,8 +216,11 @@ Current direct Gateway APIs:
 - `GET /api/gateway/audio/music/models`
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/models`
+- `GET /api/gateway/vision/adapters`
 - `/api/gateway/artifacts/search` cross-run/session/run artifact search with
-  modality, content-type, text, and tag filters
+  canonical `artifact_envelope_v1` rows, exact stats/facets, bounded paging,
+  descriptor filters, and UI-friendly `artifact_kind` filtering for
+  Voice/Music/Sound/unclassified audio and text/media render kinds
 - `/api/gateway/prompt_cache/*` provider/model operator controls
 - `/api/gateway/prompt_cache/saved|save|load` Runtime-backed host-local export/import admin aliases
 - `/api/gateway/sessions/{session_id}/prompt_cache/*` session lifecycle controls
@@ -243,11 +247,19 @@ Workflow/Core-backed capabilities:
   progress through `abstract.progress` ledger records; image progress is
   best-effort and may be limited to start/complete for backends that do not
   report step progress.
+- Direct image/video requests preserve task-specific batch and adapter fields:
+  `count` / `n`, `seeds`, ordered `lora_adapters`, and video `flow_shift`.
+  Batch responses keep compatibility singular fields (`image_artifact`,
+  `video_artifact`) and also return the full `image_artifacts` /
+  `video_artifacts` lists.
 - Generated music is available through Gateway's direct Runtime-backed child-run
   route, with provider/model discovery exposed through Gateway capability
   contracts and music catalog endpoints for higher apps.
 - Catalog routes now return a canonical `items` array and a `catalog` metadata
   block so higher apps can stop parsing route-local payload variants.
+- Vision adapter discovery is available through
+  `GET /api/gateway/vision/adapters`, routed through Runtime's public discovery
+  facade.
 - Audio transcription is available through a direct Runtime-backed child-run
   route, and the capability contract also exposes `voice.listen` as a
   host-capture command surface for higher apps that record locally before

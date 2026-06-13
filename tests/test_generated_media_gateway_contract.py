@@ -94,10 +94,17 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
             assert output["task"] == "image_generation"
             assert output["provider"] == "mflux"
             assert output["model"] == "AbstractFramework/flux.2-klein-4b-4bit"
+            assert output["count"] == 2
+            assert output["seeds"] == [11, 12]
+            assert output["lora_adapters"] == [
+                {"id": "cinematic-lighting", "scale": 0.7},
+                {"id": "ink-outline", "scale": 0.35},
+            ]
             svc = gateway_routes.get_gateway_service()
             store = svc.stores.artifact_store
             tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
-            meta = store.store(_PNG_BYTES, content_type="image/png", run_id=child_run_id, tags=tags)
+            meta_1 = store.store(_PNG_BYTES, content_type="image/png", run_id=child_run_id, tags=tags)
+            meta_2 = store.store(_PNG_BYTES + b"2", content_type="image/png", run_id=child_run_id, tags=tags)
             return SimpleNamespace(
                 run_id=child_run_id,
                 status=RunStatus.COMPLETED,
@@ -114,10 +121,24 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
                                     "content_type": "image/png",
                                     "format": "png",
                                     "artifact_ref": {
-                                        "$artifact": meta.artifact_id,
-                                        "artifact_id": meta.artifact_id,
+                                        "$artifact": meta_1.artifact_id,
+                                        "artifact_id": meta_1.artifact_id,
                                         "content_type": "image/png",
                                         "size_bytes": len(_PNG_BYTES),
+                                    },
+                                },
+                                {
+                                    "modality": "image",
+                                    "task": "image_generation",
+                                    "provider": "mflux",
+                                    "model": "AbstractFramework/flux.2-klein-4b-4bit",
+                                    "content_type": "image/png",
+                                    "format": "png",
+                                    "artifact_ref": {
+                                        "$artifact": meta_2.artifact_id,
+                                        "artifact_id": meta_2.artifact_id,
+                                        "content_type": "image/png",
+                                        "size_bytes": len(_PNG_BYTES) + 1,
                                     },
                                 }
                             ]
@@ -150,6 +171,12 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
         assert direct["endpoint"] == "/api/gateway/runs/{run_id}/images/generate"
         assert direct["durability"] == "runtime_child_run"
         assert direct["returns_child_run_id"] is True
+        assert direct["supports_batch"] is True
+        assert direct["batch_count_field"] == "count"
+        assert direct["batch_seed_field"] == "seeds"
+        assert direct["supports_lora_adapters"] is True
+        assert direct["artifact_list_field"] == "image_artifacts"
+        assert direct["adapter_catalog_endpoint"] == "/api/gateway/vision/adapters"
 
         generated = client.post(
             f"/api/gateway/runs/{run_id}/images/generate",
@@ -160,6 +187,12 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
                 "image_provider": "mflux",
                 "image_model": "AbstractFramework/flux.2-klein-4b-4bit",
                 "format": "png",
+                "count": 2,
+                "seeds": [11, 12],
+                "lora_adapters": [
+                    {"id": "cinematic-lighting", "scale": 0.7},
+                    {"id": "ink-outline", "scale": 0.35},
+                ],
                 "request_id": "img-1",
             },
             headers=headers,
@@ -171,8 +204,10 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
         assert body["child_run_id"] == "child-image-1"
         assert body["event_name"] == "abstract.progress"
         image_ref = body["image_artifact"]
+        assert len(body["image_artifacts"]) == 2
+        assert body["image_artifacts"][0] == image_ref
         assert image_ref["content_type"] == "image/png"
-        assert image_ref["filename"] == "generated.png"
+        assert image_ref["filename"] == "generated_1.png"
         assert image_ref["size_bytes"] == len(_PNG_BYTES)
         assert image_ref["sha256"]
 
@@ -218,12 +253,19 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
             assert output["provider"] == "mflux"
             assert output["model"] == "AbstractFramework/flux.2-klein-4b-4bit"
             assert output["strength"] == 0.6
+            assert output["count"] == 2
+            assert output["seeds"] == [21, 22]
+            assert output["lora_adapters"] == [
+                {"id": "watercolor", "scale": 0.8},
+                {"id": "paper-grain", "scale": 0.25},
+            ]
             assert media[0]["role"] == "source"
             assert media[1]["role"] == "mask"
             svc = gateway_routes.get_gateway_service()
             store = svc.stores.artifact_store
             tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
-            meta = store.store(_PNG_BYTES, content_type="image/png", run_id=child_run_id, tags=tags)
+            meta_1 = store.store(_PNG_BYTES, content_type="image/png", run_id=child_run_id, tags=tags)
+            meta_2 = store.store(_PNG_BYTES + b"2", content_type="image/png", run_id=child_run_id, tags=tags)
             return SimpleNamespace(
                 run_id=child_run_id,
                 status=RunStatus.COMPLETED,
@@ -240,10 +282,24 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
                                     "content_type": "image/png",
                                     "format": "png",
                                     "artifact_ref": {
-                                        "$artifact": meta.artifact_id,
-                                        "artifact_id": meta.artifact_id,
+                                        "$artifact": meta_1.artifact_id,
+                                        "artifact_id": meta_1.artifact_id,
                                         "content_type": "image/png",
                                         "size_bytes": len(_PNG_BYTES),
+                                    },
+                                },
+                                {
+                                    "modality": "image",
+                                    "task": "image_edit",
+                                    "provider": "mflux",
+                                    "model": "AbstractFramework/flux.2-klein-4b-4bit",
+                                    "content_type": "image/png",
+                                    "format": "png",
+                                    "artifact_ref": {
+                                        "$artifact": meta_2.artifact_id,
+                                        "artifact_id": meta_2.artifact_id,
+                                        "content_type": "image/png",
+                                        "size_bytes": len(_PNG_BYTES) + 1,
                                     },
                                 }
                             ]
@@ -281,6 +337,9 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
         assert direct["endpoint"] == "/api/gateway/runs/{run_id}/images/edit"
         assert direct["provider_models_task"] == "image_to_image"
         assert direct["mask_supported"] is True
+        assert direct["supports_batch"] is True
+        assert direct["supports_lora_adapters"] is True
+        assert direct["artifact_list_field"] == "image_artifacts"
 
         edited = client.post(
             f"/api/gateway/runs/{run_id}/images/edit",
@@ -294,6 +353,12 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
                 "image_model": "AbstractFramework/flux.2-klein-4b-4bit",
                 "strength": 0.6,
                 "format": "png",
+                "count": 2,
+                "seeds": [21, 22],
+                "lora_adapters": [
+                    {"id": "watercolor", "scale": 0.8},
+                    {"id": "paper-grain", "scale": 0.25},
+                ],
                 "request_id": "img-edit-1",
             },
             headers=headers,
@@ -305,8 +370,136 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
         assert body["child_run_id"] == "child-image-edit-1"
         assert body["event_name"] == "abstract.progress"
         image_ref = body["image_artifact"]
+        assert len(body["image_artifacts"]) == 2
+        assert body["image_artifacts"][0] == image_ref
         assert image_ref["content_type"] == "image/png"
-        assert image_ref["filename"] == "edited.png"
+        assert image_ref["filename"] == "edited_1.png"
+        assert image_ref["size_bytes"] == len(_PNG_BYTES)
+        assert image_ref["sha256"]
+
+        artifact_id = image_ref["$artifact"]
+        content = client.get(f"/api/gateway/runs/{run_id}/artifacts/{artifact_id}/content", headers=headers)
+        assert content.status_code == 200, content.text
+        assert content.content == _PNG_BYTES
+
+
+def test_gateway_direct_image_upscale_uses_runtime_child_run_contract(tmp_path: Path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_image_bundle(bundles_dir=bundles_dir, bundle_id="image-upscale-contract", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTVISION_BACKEND", "mflux")
+
+    import abstractgateway.routes.gateway as gateway_routes
+    from abstractruntime.core.models import RunStatus
+
+    monkeypatch.setattr(gateway_routes, "_gateway_has_local_mflux_preset", lambda _model_id: True)
+
+    class StubRunFacade:
+        def upscale_image(self, parent_run_id: str, *, media, output: Dict[str, Any], params: Dict[str, Any], child_vars=None):
+            _ = parent_run_id, params, child_vars
+            child_run_id = "child-image-upscale-1"
+            assert output["modality"] == "image"
+            assert output["task"] == "image_upscale"
+            assert output["provider"] == "mlx-gen"
+            assert output["model"] == "AbstractFramework/seedvr2-3b-8bit"
+            assert "scale" not in output
+            assert output["resolution"] == "2x"
+            assert output["softness"] == 0.25
+            assert output["quantize"] == 8
+            assert output["vae_tiling"] is True
+            assert media[0]["role"] == "source"
+            svc = gateway_routes.get_gateway_service()
+            store = svc.stores.artifact_store
+            tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
+            meta = store.store(_PNG_BYTES, content_type="image/png", run_id=child_run_id, tags=tags)
+            return SimpleNamespace(
+                run_id=child_run_id,
+                status=RunStatus.COMPLETED,
+                error=None,
+                output={
+                    "result": {
+                        "outputs": {
+                            "image": [
+                                {
+                                    "modality": "image",
+                                    "task": "image_upscale",
+                                    "provider": "mlx-gen",
+                                    "model": "AbstractFramework/seedvr2-3b-8bit",
+                                    "content_type": "image/png",
+                                    "format": "png",
+                                    "artifact_ref": {
+                                        "$artifact": meta.artifact_id,
+                                        "artifact_id": meta.artifact_id,
+                                        "content_type": "image/png",
+                                        "size_bytes": len(_PNG_BYTES),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (StubRunFacade(), None))
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        start = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": "image-upscale-contract", "bundle_version": "0.0.0", "flow_id": "root", "session_id": "sess-upscale", "input_data": {}},
+            headers=headers,
+        )
+        assert start.status_code == 200, start.text
+        run_id = start.json()["run_id"]
+
+        _wait_until(lambda: client.get(f"/api/gateway/runs/{run_id}", headers=headers).json().get("status") == "completed")
+
+        svc = gateway_routes.get_gateway_service()
+        store = svc.stores.artifact_store
+        source_meta = store.store(b"png-source", content_type="image/png", run_id="session_memory_sess-upscale", tags={"session_id": "sess-upscale"})
+
+        caps = client.get("/api/gateway/discovery/capabilities", headers=headers)
+        assert caps.status_code == 200, caps.text
+        direct = caps.json()["capabilities"]["contracts"]["assistant"]["media"]["upscaled_image"]["direct_endpoint"]
+        assert direct["route_available"] is True
+        assert direct["available"] is True
+        assert direct["endpoint"] == "/api/gateway/runs/{run_id}/images/upscale"
+        assert direct["provider_models_task"] == "image_upscale"
+        assert direct["artifact_list_field"] == "image_artifacts"
+
+        upscaled = client.post(
+            f"/api/gateway/runs/{run_id}/images/upscale",
+            json={
+                "image_artifact": {"$artifact": source_meta.artifact_id, "content_type": "image/png"},
+                "image_provider": "mlx-gen",
+                "image_model": "AbstractFramework/seedvr2-3b-8bit",
+                "resolution": "2x",
+                "softness": 0.25,
+                "quantize": 8,
+                "vae_tiling": True,
+                "format": "png",
+                "request_id": "img-upscale-1",
+            },
+            headers=headers,
+        )
+        assert upscaled.status_code == 200, upscaled.text
+        body = upscaled.json()
+        assert body["ok"] is True, body
+        assert body["supported"] is True
+        assert body["child_run_id"] == "child-image-upscale-1"
+        image_ref = body["image_artifact"]
+        assert body["image_artifacts"] == [image_ref]
+        assert image_ref["content_type"] == "image/png"
+        assert image_ref["filename"] == "upscaled.png"
         assert image_ref["size_bytes"] == len(_PNG_BYTES)
         assert image_ref["sha256"]
 
@@ -345,10 +538,18 @@ def test_gateway_direct_video_generation_uses_runtime_child_run_contract(tmp_pat
             assert output["model"] == "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
             assert output["frames"] == 41
             assert output["fps"] == 24
+            assert output["count"] == 2
+            assert output["seeds"] == [41, 42]
+            assert output["flow_shift"] == 3.0
+            assert output["lora_adapters"] == [
+                {"id": "documentary-motion", "scale": 0.6},
+                {"id": "cool-grade", "scale": 0.25},
+            ]
             svc = gateway_routes.get_gateway_service()
             store = svc.stores.artifact_store
             tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
-            meta = store.store(_MP4_BYTES, content_type="video/mp4", run_id=child_run_id, tags=tags)
+            meta_1 = store.store(_MP4_BYTES, content_type="video/mp4", run_id=child_run_id, tags=tags)
+            meta_2 = store.store(_MP4_BYTES + b"2", content_type="video/mp4", run_id=child_run_id, tags=tags)
             return SimpleNamespace(
                 run_id=child_run_id,
                 status=RunStatus.COMPLETED,
@@ -365,10 +566,24 @@ def test_gateway_direct_video_generation_uses_runtime_child_run_contract(tmp_pat
                                     "content_type": "video/mp4",
                                     "format": "mp4",
                                     "artifact_ref": {
-                                        "$artifact": meta.artifact_id,
-                                        "artifact_id": meta.artifact_id,
+                                        "$artifact": meta_1.artifact_id,
+                                        "artifact_id": meta_1.artifact_id,
                                         "content_type": "video/mp4",
                                         "size_bytes": len(_MP4_BYTES),
+                                    },
+                                },
+                                {
+                                    "modality": "video",
+                                    "task": "text_to_video",
+                                    "provider": "mlx-gen",
+                                    "model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+                                    "content_type": "video/mp4",
+                                    "format": "mp4",
+                                    "artifact_ref": {
+                                        "$artifact": meta_2.artifact_id,
+                                        "artifact_id": meta_2.artifact_id,
+                                        "content_type": "video/mp4",
+                                        "size_bytes": len(_MP4_BYTES) + 1,
                                     },
                                 }
                             ]
@@ -401,6 +616,10 @@ def test_gateway_direct_video_generation_uses_runtime_child_run_contract(tmp_pat
         assert direct["endpoint"] == "/api/gateway/runs/{run_id}/videos/generate"
         assert direct["provider_models_task"] == "text_to_video"
         assert direct["progress_event_name"] == "abstract.progress"
+        assert direct["supports_batch"] is True
+        assert direct["supports_lora_adapters"] is True
+        assert direct["supports_flow_shift"] is True
+        assert direct["artifact_list_field"] == "video_artifacts"
 
         generated = client.post(
             f"/api/gateway/runs/{run_id}/videos/generate",
@@ -413,6 +632,13 @@ def test_gateway_direct_video_generation_uses_runtime_child_run_contract(tmp_pat
                 "frames": 41,
                 "fps": 24,
                 "format": "mp4",
+                "count": 2,
+                "seeds": [41, 42],
+                "flow_shift": 3.0,
+                "lora_adapters": [
+                    {"id": "documentary-motion", "scale": 0.6},
+                    {"id": "cool-grade", "scale": 0.25},
+                ],
                 "request_id": "video-1",
             },
             headers=headers,
@@ -424,8 +650,10 @@ def test_gateway_direct_video_generation_uses_runtime_child_run_contract(tmp_pat
         assert body["child_run_id"] == "child-video-1"
         assert body["event_name"] == "abstract.progress"
         video_ref = body["video_artifact"]
+        assert len(body["video_artifacts"]) == 2
+        assert body["video_artifacts"][0] == video_ref
         assert video_ref["content_type"] == "video/mp4"
-        assert video_ref["filename"] == "video.mp4"
+        assert video_ref["filename"] == "video_1.mp4"
         assert video_ref["size_bytes"] == len(_MP4_BYTES)
 
         artifact_id = video_ref["$artifact"]
@@ -462,10 +690,18 @@ def test_gateway_direct_image_to_video_uses_runtime_child_run_contract(tmp_path:
             assert output["task"] == "image_to_video"
             assert output["provider"] == "mlx-gen"
             assert output["model"] == "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+            assert output["count"] == 2
+            assert output["seeds"] == [51, 52]
+            assert output["flow_shift"] == 2.5
+            assert output["lora_adapters"] == [
+                {"id": "documentary-motion", "scale": 0.65},
+                {"id": "cool-grade", "scale": 0.2},
+            ]
             svc = gateway_routes.get_gateway_service()
             store = svc.stores.artifact_store
             tags = output.get("tags") if isinstance(output.get("tags"), dict) else {}
-            meta = store.store(_MP4_BYTES, content_type="video/mp4", run_id=child_run_id, tags=tags)
+            meta1 = store.store(_MP4_BYTES, content_type="video/mp4", run_id=child_run_id, tags=tags)
+            meta2 = store.store(_MP4_BYTES, content_type="video/mp4", run_id=child_run_id, tags=tags)
             return SimpleNamespace(
                 run_id=child_run_id,
                 status=RunStatus.COMPLETED,
@@ -482,8 +718,22 @@ def test_gateway_direct_image_to_video_uses_runtime_child_run_contract(tmp_path:
                                     "content_type": "video/mp4",
                                     "format": "mp4",
                                     "artifact_ref": {
-                                        "$artifact": meta.artifact_id,
-                                        "artifact_id": meta.artifact_id,
+                                        "$artifact": meta1.artifact_id,
+                                        "artifact_id": meta1.artifact_id,
+                                        "content_type": "video/mp4",
+                                        "size_bytes": len(_MP4_BYTES),
+                                    },
+                                },
+                                {
+                                    "modality": "video",
+                                    "task": "image_to_video",
+                                    "provider": "mlx-gen",
+                                    "model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+                                    "content_type": "video/mp4",
+                                    "format": "mp4",
+                                    "artifact_ref": {
+                                        "$artifact": meta2.artifact_id,
+                                        "artifact_id": meta2.artifact_id,
                                         "content_type": "video/mp4",
                                         "size_bytes": len(_MP4_BYTES),
                                     },
@@ -521,6 +771,10 @@ def test_gateway_direct_image_to_video_uses_runtime_child_run_contract(tmp_path:
         assert direct["available"] is True
         assert direct["endpoint"] == "/api/gateway/runs/{run_id}/videos/from_image"
         assert direct["provider_models_task"] == "image_to_video"
+        assert direct["supports_batch"] is True
+        assert direct["supports_lora_adapters"] is True
+        assert direct["supports_flow_shift"] is True
+        assert direct["artifact_list_field"] == "video_artifacts"
 
         generated = client.post(
             f"/api/gateway/runs/{run_id}/videos/from_image",
@@ -530,6 +784,13 @@ def test_gateway_direct_image_to_video_uses_runtime_child_run_contract(tmp_path:
                 "video_provider": "mlx-gen",
                 "video_model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
                 "format": "mp4",
+                "count": 2,
+                "seeds": [51, 52],
+                "flow_shift": 2.5,
+                "lora_adapters": [
+                    {"id": "documentary-motion", "scale": 0.65},
+                    {"id": "cool-grade", "scale": 0.2},
+                ],
                 "request_id": "image-to-video-1",
             },
             headers=headers,
@@ -540,8 +801,10 @@ def test_gateway_direct_image_to_video_uses_runtime_child_run_contract(tmp_path:
         assert body["supported"] is True
         assert body["child_run_id"] == "child-image-to-video-1"
         video_ref = body["video_artifact"]
+        assert len(body["video_artifacts"]) == 2
+        assert body["video_artifacts"][0] == video_ref
         assert video_ref["content_type"] == "video/mp4"
-        assert video_ref["filename"] == "video.mp4"
+        assert video_ref["filename"] == "video_1.mp4"
         assert video_ref["size_bytes"] == len(_MP4_BYTES)
 
         artifact_id = video_ref["$artifact"]

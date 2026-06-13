@@ -34,10 +34,17 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Respon
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from abstractcore.utils.workspace_paths import (
+    WorkspacePathError,
+    build_workspace_mounts,
+    resolve_workspace_path as resolve_canonical_workspace_path,
+)
+from abstractcore.utils.file_filters import file_matches_filters, guess_file_family, normalize_extensions
 from abstractruntime.core.run_lifecycle import normalize_run_lifecycle_vars
 from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore
 from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord, WaitReason
+from abstractruntime.storage.artifacts import build_artifact_descriptor_payload
 
 from ..memory_store import (
     memory_backend_unavailable_reason,
@@ -1076,6 +1083,36 @@ class PurgeDraftRunsRequest(BaseModel):
     delete_workspaces: bool = Field(default=True, description="Delete Gateway-owned per-run workspaces under the Gateway data dir.")
 
 
+def _workspace_open_command(path: Path) -> List[str]:
+    system = platform.system().lower()
+    if system == "darwin":
+        opener = shutil.which("open") or "open"
+        return [opener, str(path)]
+    if system == "windows":
+        return ["explorer", str(path)]
+
+    xdg = shutil.which("xdg-open")
+    if xdg:
+        return [xdg, str(path)]
+    gio = shutil.which("gio")
+    if gio:
+        return [gio, "open", str(path)]
+    raise HTTPException(status_code=501, detail="No supported directory opener found on this Gateway host")
+
+
+async def _launch_workspace_opener(command: List[str]) -> None:
+    def _launch() -> None:
+        subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+
+    await asyncio.to_thread(_launch)
+
+
 # ---------------------------------------------------------------------
 # VisualFlow storage + publishing (gateway-first)
 # ---------------------------------------------------------------------
@@ -1564,17 +1601,71 @@ class ArtifactListItem(BaseModel):
     sha256: Optional[str] = None
     modality: Optional[str] = None
     ref: Optional[Dict[str, Any]] = None
+    semantic_kind: Optional[str] = None
+    render_kind: Optional[str] = None
+    task: Optional[str] = None
+    classification_source: Optional[str] = None
+    session_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+    node_id: Optional[str] = None
+    step_id: Optional[str] = None
+    effect_id: Optional[str] = None
+    turn_id: Optional[str] = None
+    ledger_cursor: Optional[str] = None
+    parent_run_id: Optional[str] = None
+    actor_id: Optional[str] = None
+    title: Optional[str] = None
+    media: Dict[str, Any] = Field(default_factory=dict)
+    generation: Dict[str, Any] = Field(default_factory=dict)
+    producer: Dict[str, Any] = Field(default_factory=dict)
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+    source_refs: list[Dict[str, Any]] = Field(default_factory=list)
+    access: Dict[str, Any] = Field(default_factory=dict)
+    links: Dict[str, Any] = Field(default_factory=dict)
+    available_actions: list[str] = Field(default_factory=list)
+    provider_trace_available: bool = False
+    audit_available: bool = False
+    legacy_inferred: bool = False
+    raw_metadata: Dict[str, Any] = Field(default_factory=dict)
+    descriptor: Dict[str, Any] = Field(default_factory=dict)
+    artifact_envelope_v1: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ArtifactListResponse(BaseModel):
     items: list[ArtifactListItem] = Field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    has_more: bool = False
+    cursor: Optional[str] = None
+    next_cursor: Optional[str] = None
+    facets: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ArtifactSearchResponse(ArtifactListResponse):
     scope: str = Field(default="all")
     query: Optional[str] = None
     modality: Optional[str] = None
+    artifact_kind: Optional[str] = None
+    semantic_kind: Optional[str] = None
+    render_kind: Optional[str] = None
+    content_type: Optional[str] = None
+    order_by: str = Field(default="created_at")
+    order: str = Field(default="desc")
     tags: Dict[str, str] = Field(default_factory=dict)
+
+
+class ArtifactStatsResponse(BaseModel):
+    ok: bool = True
+    scope: str = Field(default="all")
+    total: int = 0
+    total_bytes: int = 0
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    facets: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    supported_filters: list[str] = Field(default_factory=list)
+    default_page_size: int = 500
 
 
 class AttachmentIngestRequest(BaseModel):
@@ -2161,6 +2252,8 @@ def _extract_entrypoint_inputs_from_visualflow(raw: Any) -> list[Dict[str, Any]]
             continue
         label = str(p.get("label") or pid).strip() or pid
         item: Dict[str, Any] = {"id": pid, "label": label, "type": ptype or "unknown"}
+        if isinstance(p.get("schema"), dict):
+            item["schema"] = dict(p.get("schema"))
         if pid in pin_defaults:
             item["default"] = pin_defaults.get(pid)
         out.append(item)
@@ -2172,6 +2265,21 @@ def _json_schema_for_visualflow_pin_type(pin_type: str) -> Dict[str, Any]:
     raw = str(pin_type or "").strip()
     t = raw.lower()
     schema: Dict[str, Any] = {}
+    artifact_ref_schema = {
+        "type": "object",
+        "additionalProperties": True,
+        "required": ["$artifact"],
+        "properties": {
+            "$artifact": {"type": "string", "minLength": 1},
+            "artifact_id": {"type": "string"},
+            "run_id": {"type": "string"},
+            "artifact_run_id": {"type": "string"},
+            "content_type": {"type": "string"},
+            "filename": {"type": "string"},
+            "source_path": {"type": "string"},
+            "modality": {"type": "string"},
+        },
+    }
     if t in {
         "string",
         "str",
@@ -2180,16 +2288,33 @@ def _json_schema_for_visualflow_pin_type(pin_type: str) -> Dict[str, Any]:
         "path",
         "file",
         "directory",
+        "workspace_file",
+        "workspace_folder",
         "provider",
         "model",
         "provider_text",
         "model_text",
         "provider_image",
         "model_image",
+        "provider_video",
+        "model_video",
         "provider_voice",
         "model_voice",
+        "provider_music",
+        "model_music",
     }:
         schema["type"] = "string"
+    elif t in {"artifact", "artifact_image", "artifact_audio", "artifact_text", "artifact_video"}:
+        schema.update(dict(artifact_ref_schema))
+        if t.startswith("artifact_"):
+            schema["x-abstract-artifact-modality"] = t.removeprefix("artifact_")
+    elif t in {"artifacts", "artifacts_image", "artifacts_audio", "artifacts_text", "artifacts_video"}:
+        schema["type"] = "array"
+        item_schema = dict(artifact_ref_schema)
+        if t.startswith("artifacts_"):
+            item_schema["x-abstract-artifact-modality"] = t.removeprefix("artifacts_")
+            schema["x-abstract-artifact-modality"] = t.removeprefix("artifacts_")
+        schema["items"] = item_schema
     elif t in {"number", "float", "double"}:
         schema["type"] = "number"
     elif t in {"integer", "int"}:
@@ -2223,8 +2348,11 @@ def _entrypoint_input_schema_from_visualflow(raw: Any) -> Dict[str, Any]:
         label = str(item.get("label") or pid).strip() or pid
         pin_type = str(item.get("type") or "unknown").strip() or "unknown"
         has_default = "default" in item
+        custom_schema = item.get("schema") if isinstance(item.get("schema"), dict) else None
 
         prop = _json_schema_for_visualflow_pin_type(pin_type)
+        if custom_schema:
+            prop.update(dict(custom_schema))
         if label and label != pid:
             prop["title"] = label
         if has_default:
@@ -2710,46 +2838,9 @@ def _normalize_workspace_access_mode(raw: Any) -> str:
     return "workspace_only"
 
 
-def _slug_mount_name(name: str) -> str:
-    """Stable mount name (<= 32 chars, lower-case, [a-z0-9_-])."""
-    raw = str(name or "").strip().lower()
-    if not raw:
-        return "mount"
-    out: list[str] = []
-    prev_dash = False
-    for ch in raw:
-        if "a" <= ch <= "z" or "0" <= ch <= "9" or ch in {"_", "-"}:
-            out.append(ch)
-            prev_dash = ch == "-"
-            continue
-        if not prev_dash:
-            out.append("-")
-            prev_dash = True
-    s = "".join(out).strip("-")
-    if not s:
-        return "mount"
-    return s[:32]
-
-
 def _mounts_from_allowed_paths(*, allowed_dirs: list[Path], used_names: set[str]) -> Dict[str, Path]:
     """Build deterministic {mount_name -> root} for allowed roots outside workspace_root."""
-    out: Dict[str, Path] = {}
-    for d in allowed_dirs:
-        if not isinstance(d, Path):
-            continue
-        try:
-            resolved = d.resolve()
-        except Exception:
-            resolved = d
-        base = _slug_mount_name(getattr(resolved, "name", "") or "mount")
-        name = base
-        i = 2
-        while name in used_names:
-            name = f"{base}-{i}"
-            i += 1
-        used_names.add(name)
-        out[name] = resolved
-    return out
+    return build_workspace_mounts(allowed_dirs=allowed_dirs, used_names=used_names)
 
 
 def _parse_any_string_list(raw: Any) -> list[str]:
@@ -3334,6 +3425,197 @@ def _get_file_index(
         return out
 
 
+def _blocked_workspace_path(path: Path, blocked: tuple[Path, ...]) -> bool:
+    return bool(blocked and _is_under_allowed_roots(path, list(blocked)))
+
+
+def _workspace_entry_payload(*, root: Path, child: Path, virtual_path: str, mount: Optional[str] = None) -> Dict[str, Any]:
+    kind = "folder" if child.is_dir() else "file"
+    item: Dict[str, Any] = {
+        "path": virtual_path,
+        "name": child.name,
+        "kind": kind,
+        "family": "folder" if kind == "folder" else guess_file_family(child),
+    }
+    if mount:
+        item["mount"] = mount
+    if kind == "file":
+        try:
+            item["size_bytes"] = int(child.stat().st_size)
+        except Exception:
+            pass
+    return item
+
+
+def _workspace_child_virtual_path(base_virtual_path: str, child_rel: str) -> str:
+    base0 = str(base_virtual_path or "").strip().strip("/")
+    rel0 = str(child_rel or "").strip().strip("/")
+    if not base0:
+        return rel0
+    if not rel0:
+        return base0
+    return f"{base0}/{rel0}"
+
+
+def _list_workspace_root_entries(
+    *,
+    base: Path,
+    mounts: Dict[str, Path],
+    blocked: tuple[Path, ...],
+    limit: int,
+    include_directories: bool,
+    family: str,
+    extensions: set[str],
+    query: str,
+) -> tuple[list[Dict[str, Any]], bool]:
+    out: list[Dict[str, Any]] = []
+    truncated = False
+    query_l = query.lower()
+    ignore = AbstractIgnore.for_path(base)
+
+    for child in sorted(base.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+        if _blocked_workspace_path(child, blocked):
+            continue
+        if ignore.is_ignored(child, is_dir=child.is_dir()):
+            continue
+        if child.is_dir():
+            if not include_directories:
+                continue
+            item = _workspace_entry_payload(root=base, child=child, virtual_path=child.name)
+        else:
+            if not file_matches_filters(child, family=family, extensions=extensions):
+                continue
+            item = _workspace_entry_payload(root=base, child=child, virtual_path=child.name)
+        haystack = f"{item['path']} {item['name']}".lower()
+        if query_l and query_l not in haystack:
+            continue
+        out.append(item)
+        if len(out) >= limit:
+            truncated = True
+            return out, truncated
+
+    for mount_name in sorted(mounts.keys()):
+        root = mounts.get(mount_name)
+        if not isinstance(root, Path):
+            continue
+        item = {"path": mount_name, "name": mount_name, "kind": "folder", "family": "folder", "mount": mount_name}
+        haystack = f"{mount_name} {mount_name}".lower()
+        if query_l and query_l not in haystack:
+            continue
+        out.append(item)
+        if len(out) >= limit:
+            truncated = True
+            return out, truncated
+    return out, truncated
+
+
+def _list_workspace_entries(
+    *,
+    base: Path,
+    mounts: Dict[str, Path],
+    blocked: tuple[Path, ...],
+    raw_path: str,
+    mode: str,
+    recursive: bool,
+    include_directories: bool,
+    family: str,
+    extensions: set[str],
+    query: str,
+    limit: int,
+    max_depth: int,
+) -> tuple[str, list[Dict[str, Any]], bool]:
+    if not str(raw_path or "").strip():
+        items, truncated = _list_workspace_root_entries(
+            base=base,
+            mounts=mounts,
+            blocked=blocked,
+            limit=limit,
+            include_directories=include_directories,
+            family=family,
+            extensions=extensions,
+            query=query,
+        )
+        return "", items, truncated
+
+    resolved, virtual_path, root = _resolve_request_workspace_path(
+        raw_path=str(raw_path or ""),
+        base=base,
+        mounts=mounts,
+        blocked=blocked,
+        mode=mode,
+    )
+    _reject_ignored_workspace_path(resolved, root=root, is_dir=True)
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="Folder not found")
+    if not resolved.is_dir():
+        raise HTTPException(status_code=400, detail="Path is not a folder")
+    folder_handle = str(virtual_path or str(raw_path or "").strip() or resolved)
+
+    query_l = str(query or "").strip().lower()
+    out: list[Dict[str, Any]] = []
+    truncated = False
+    ignore = AbstractIgnore.for_path(resolved)
+
+    def _append(child: Path, rel_posix: str) -> bool:
+        nonlocal truncated
+        if _blocked_workspace_path(child, blocked):
+            return False
+        if ignore.is_ignored(child, is_dir=child.is_dir()):
+            return False
+        entry_path = _workspace_child_virtual_path(folder_handle, rel_posix)
+        if child.is_dir():
+            if not include_directories:
+                return False
+            item = _workspace_entry_payload(root=resolved, child=child, virtual_path=entry_path)
+        else:
+            if not file_matches_filters(child, family=family, extensions=extensions):
+                return False
+            item = _workspace_entry_payload(root=resolved, child=child, virtual_path=entry_path)
+        haystack = f"{item['path']} {item['name']}".lower()
+        if query_l and query_l not in haystack:
+            return False
+        out.append(item)
+        if len(out) >= limit:
+            truncated = True
+            return True
+        return False
+
+    if not recursive:
+        for child in sorted(resolved.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+            rel = child.relative_to(resolved).as_posix()
+            if _append(child, rel):
+                break
+        return folder_handle, out, truncated
+
+    for dirpath, dirnames, filenames in os.walk(resolved):
+        current = Path(dirpath)
+        rel_dir = current.relative_to(resolved).as_posix() if current != resolved else ""
+        depth = 0 if not rel_dir else len([part for part in rel_dir.split("/") if part])
+        kept_dirs: list[str] = []
+        for dirname in sorted(dirnames):
+            child = current / dirname
+            if ignore.is_ignored(child, is_dir=True) or _blocked_workspace_path(child, blocked):
+                continue
+            if max_depth > 0 and depth + 1 > max_depth:
+                continue
+            kept_dirs.append(dirname)
+            if include_directories:
+                rel = child.relative_to(resolved).as_posix()
+                if _append(child, rel):
+                    break
+        dirnames[:] = kept_dirs
+        if truncated:
+            break
+        for filename in sorted(filenames):
+            child = current / filename
+            rel = child.relative_to(resolved).as_posix()
+            if _append(child, rel):
+                break
+        if truncated:
+            break
+    return folder_handle, out, truncated
+
+
 def _resolve_workspace_path(*, base: Path, mounts: Dict[str, Path], raw_path: str) -> tuple[Path, str, Optional[str], Path]:
     """Resolve a user-supplied path against the primary workspace root + mounts.
 
@@ -3344,88 +3626,17 @@ def _resolve_workspace_path(*, base: Path, mounts: Dict[str, Path], raw_path: st
     Returns:
         (resolved_path, virtual_path_normalized, mount_name_or_none, root_used)
     """
-    p_raw0 = str(raw_path or "").strip()
-    # Tolerate "@path" handles (used by attachments and some clients).
-    if p_raw0.startswith("@"):
-        p_raw0 = p_raw0[1:].lstrip()
-    if not p_raw0:
-        raise HTTPException(status_code=400, detail="path is required")
-
-    p_raw = p_raw0.replace("\\", "/")
-    p = Path(p_raw).expanduser()
-
-    if p.is_absolute():
-        try:
-            resolved = p.resolve()
-        except Exception:
-            raise HTTPException(status_code=400, detail="invalid absolute path")
-
-        # Prefer the most specific root (longest path) that contains the resolved path.
-        candidates: list[tuple[int, Optional[str], Path]] = []
-        try:
-            resolved.relative_to(base)
-            candidates.append((len(str(base)), None, base))
-        except Exception:
-            pass
-        for name, root in (mounts or {}).items():
-            if not isinstance(root, Path):
-                continue
-            try:
-                resolved.relative_to(root)
-                candidates.append((len(str(root)), str(name), root))
-            except Exception:
-                continue
-        if not candidates:
-            raise HTTPException(status_code=403, detail="path is outside workspace roots")
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        _len, mount, root = candidates[0]
-        try:
-            rel = resolved.relative_to(root).as_posix()
-        except Exception:
-            rel = ""
-        if mount:
-            virt = f"{mount}/{rel}" if rel else str(mount)
-        else:
-            virt = rel
-        return resolved, virt, mount, root
-
-    # Virtual path (relative): interpret first segment as a mount name when prefixed like `mount/...`.
-    virt_raw = p_raw.strip()
-    while virt_raw.startswith("./"):
-        virt_raw = virt_raw[2:]
-
-    parts = [seg for seg in virt_raw.split("/") if seg not in ("", ".")]
-    mount: Optional[str] = None
-    root = base
-    rel_part = virt_raw
-
-    # Require `mount/...` (at least one `/`) to avoid collisions with root-level filenames.
-    if len(parts) >= 2:
-        candidate = parts[0]
-        if candidate in (mounts or {}):
-            mount = candidate
-            root = mounts[candidate]
-            rel_part = "/".join(parts[1:])
-
     try:
-        resolved = (root / Path(rel_part)).resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid path")
-    try:
-        resolved.relative_to(root)
-    except Exception:
-        raise HTTPException(status_code=403, detail="path escapes workspace root")
-
-    try:
-        rel_norm = resolved.relative_to(root).as_posix()
-    except Exception:
-        rel_norm = Path(rel_part).as_posix()
-    if mount:
-        virt_norm = f"{mount}/{rel_norm}" if rel_norm else str(mount)
-    else:
-        virt_norm = rel_norm
-
-    return resolved, virt_norm, mount, root
+        resolved = resolve_canonical_workspace_path(
+            base=base,
+            mounts=mounts,
+            raw_path=raw_path,
+            workspace_root_name=base.name,
+        )
+    except WorkspacePathError as exc:
+        status_code = 403 if exc.kind in {"outside_workspace_roots", "path_escape"} else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return resolved.resolved_path, resolved.virtual_path, resolved.mount_name, resolved.root_path
 
 
 def _max_attachment_bytes() -> int:
@@ -3469,7 +3680,7 @@ def _resolve_request_workspace_path(
     mounts: Dict[str, Path],
     blocked: tuple[Path, ...],
     mode: str,
-) -> tuple[Path, str, Path]:
+) -> tuple[Path, Optional[str], Path]:
     if mode == "all_except_ignored":
         p_raw = str(raw_path or "").strip()
         if p_raw.startswith("@"):
@@ -3477,15 +3688,26 @@ def _resolve_request_workspace_path(
         p2 = Path(p_raw).expanduser()
         if p2.is_absolute():
             try:
-                resolved = p2.resolve()
-            except Exception:
-                raise HTTPException(status_code=400, detail="invalid absolute path")
-            virt = str(resolved)
-            root = resolved.parent
+                resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=p_raw)
+            except HTTPException as exc:
+                if exc.status_code != 403:
+                    raise
+                try:
+                    resolved = p2.resolve()
+                except Exception:
+                    raise HTTPException(status_code=400, detail="invalid absolute path")
+                virt = None
+                root = resolved.parent
         else:
-            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts={}, raw_path=p_raw)
+            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=p_raw)
     else:
-        resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=raw_path)
+        raw_text = str(raw_path or "").strip().strip("/")
+        if raw_text and raw_text in mounts:
+            resolved = mounts[raw_text]
+            virt = raw_text
+            root = resolved
+        else:
+            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=raw_path)
 
     if blocked and _is_under_allowed_roots(resolved, list(blocked)):
         raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
@@ -3515,6 +3737,272 @@ def _artifact_meta_dict(meta: Any) -> Dict[str, Any]:
     to_dict = getattr(meta, "to_dict", None)
     out = to_dict() if callable(to_dict) else {}
     return out if isinstance(out, dict) else {}
+
+
+def _dict_from_attr_or_raw(meta: Any, attr: str, raw: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    obj = getattr(meta, attr, None)
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        try:
+            out = to_dict()
+            return out if isinstance(out, dict) else {}
+        except Exception:
+            return {}
+    if isinstance(obj, dict):
+        return dict(obj)
+    raw0 = raw if isinstance(raw, dict) else _artifact_meta_dict(meta)
+    value = raw0.get(attr)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _artifact_descriptor_dict(meta: Any, raw: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return _dict_from_attr_or_raw(meta, "descriptor", raw)
+
+
+def _artifact_access_dict(meta: Any, raw: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return _dict_from_attr_or_raw(meta, "access", raw)
+
+
+def _clean_str(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _clean_lower(value: Any) -> str:
+    return _clean_str(value).lower()
+
+
+def _first_clean(*values: Any) -> str:
+    for value in values:
+        text = _clean_str(value)
+        if text:
+            return text
+    return ""
+
+
+def _artifact_render_kind_from_content_type(content_type: Optional[str]) -> str:
+    ct = _clean_lower(content_type)
+    if ct.startswith("image/"):
+        return "image"
+    if ct.startswith("audio/"):
+        return "audio"
+    if ct.startswith("video/"):
+        return "video"
+    if ct in {
+        "application/javascript",
+        "application/x-javascript",
+        "application/typescript",
+        "application/x-python-code",
+        "application/x-sh",
+        "application/x-shellscript",
+        "text/javascript",
+        "text/jsx",
+        "text/typescript",
+        "text/tsx",
+        "text/x-python",
+        "text/x-shellscript",
+        "text/x-script.python",
+        "text/x-go",
+        "text/x-rust",
+        "text/x-java-source",
+        "text/x-c",
+        "text/x-c++",
+        "text/x-csharp",
+        "text/x-php",
+        "text/x-ruby",
+    }:
+        return "code"
+    if "pdf" in ct:
+        return "document"
+    if ct in {"application/json", "application/x-ndjson"} or "json" in ct:
+        return "json"
+    if "html" in ct:
+        return "html"
+    if "markdown" in ct:
+        return "markdown"
+    if ct.startswith("text/") or "xml" in ct or "yaml" in ct or "toml" in ct or "csv" in ct:
+        return "text"
+    return "binary"
+
+
+def _artifact_legacy_semantic_kind(*, tags: Dict[str, str], content_type: Optional[str], modality: str, render_kind: str) -> str:
+    task = _clean_lower(tags.get("task") or tags.get("provider_task") or tags.get("kind") or tags.get("source"))
+    modality0 = _clean_lower(modality or tags.get("modality"))
+    haystack = " ".join([task, modality0, _clean_lower(tags.get("filename")), _clean_lower(tags.get("path")), _clean_lower(tags.get("name"))])
+    if any(token in haystack for token in ["music", "song", "text_to_music", "t2m"]):
+        return "music"
+    if any(token in haystack for token in ["tts", "voice", "speech", "speaker", "clone"]):
+        return "voice"
+    if any(token in haystack for token in ["stt", "transcript", "transcription"]):
+        return "transcript"
+    if any(token in haystack for token in ["sound", "recording"]):
+        return "sound"
+    if any(token in haystack for token in ["source_code", "code_generation", "script", "executable", "program"]):
+        return "code"
+    if modality0 in {"voice", "music", "sound"}:
+        return modality0
+    if render_kind in {"image", "video", "audio", "markdown", "html", "json", "document", "code", "text"}:
+        return render_kind
+    if _clean_lower(content_type).startswith("audio/"):
+        return "audio"
+    return "artifact"
+
+
+def _artifact_title_from_descriptor(
+    *,
+    artifact_id: str,
+    tags: Dict[str, str],
+    descriptor: Dict[str, Any],
+    filename: str,
+    source_path: str,
+    semantic_kind: str,
+) -> str:
+    generation = descriptor.get("generation") if isinstance(descriptor.get("generation"), dict) else {}
+    producer = descriptor.get("producer") if isinstance(descriptor.get("producer"), dict) else {}
+    for value in (
+        tags.get("title"),
+        tags.get("name"),
+        tags.get("label"),
+        generation.get("title"),
+        generation.get("prompt_title"),
+        producer.get("task"),
+        filename,
+        Path(source_path).name if source_path else "",
+    ):
+        text = _clean_str(value)
+        if text:
+            return text
+    kind = semantic_kind.replace("_", " ").strip().title() if semantic_kind else "Artifact"
+    return f"{kind} {artifact_id[:12]}"
+
+
+def _safe_gateway_artifact_link(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("/api/gateway/") or text.startswith("#/"):
+        return text
+    return ""
+
+
+def _artifact_api_links(*, run_id: str, artifact_id: str, descriptor: Dict[str, Any]) -> Dict[str, Any]:
+    links = descriptor.get("links") if isinstance(descriptor.get("links"), dict) else {}
+    out: Dict[str, Any] = {}
+    for key, value in dict(links or {}).items():
+        safe_value = _safe_gateway_artifact_link(value)
+        if safe_value:
+            out[str(key)] = safe_value
+    if run_id and artifact_id:
+        rid = str(run_id)
+        aid = str(artifact_id)
+        out.setdefault("detail", f"/api/gateway/runs/{rid}/artifacts/{aid}")
+        out.setdefault("content", f"/api/gateway/runs/{rid}/artifacts/{aid}/content")
+        out.setdefault("preview", f"/api/gateway/runs/{rid}/artifacts/{aid}/content?access=preview")
+        out.setdefault("download", f"/api/gateway/runs/{rid}/artifacts/{aid}/content?access=download")
+        out.setdefault("run_artifacts", f"/api/gateway/runs/{rid}/artifacts")
+        out.setdefault("ledger", f"/api/gateway/runs/{rid}/ledger")
+        out.setdefault("history_bundle", f"/api/gateway/runs/{rid}/history_bundle")
+        out.setdefault("run", f"/api/gateway/runs/{rid}")
+        out.setdefault("observe_route", f"#/observe/{rid}")
+    return out
+
+
+def _artifact_envelope_v1(meta: Any, *, include_raw_metadata: bool = False) -> Dict[str, Any]:
+    raw = _artifact_meta_dict(meta)
+    artifact_id = _clean_str(getattr(meta, "artifact_id", "") or raw.get("artifact_id"))
+    tags = getattr(meta, "tags", None)
+    tags0 = dict(tags or raw.get("tags") or {}) if isinstance(tags or raw.get("tags"), dict) else {}
+    tags1: Dict[str, str] = {str(k): str(v) for k, v in tags0.items() if str(k or "").strip()}
+    descriptor = _artifact_descriptor_dict(meta, raw)
+    access = _artifact_access_dict(meta, raw)
+    content_type = _first_clean(getattr(meta, "content_type", None), raw.get("content_type"))
+    run_id = _first_clean(getattr(meta, "run_id", None), raw.get("run_id"), descriptor.get("run_id"), tags1.get("run_id"))
+    filename = _first_clean(tags1.get("filename"), raw.get("filename"))
+    source_path = _first_clean(tags1.get("path"), tags1.get("source_path"), raw.get("source_path"))
+    sha256 = _first_clean(tags1.get("sha256"), raw.get("sha256"))
+    render_kind = _clean_lower(descriptor.get("render_kind")) or _artifact_render_kind_from_content_type(content_type)
+    modality = _clean_lower(descriptor.get("modality")) or _clean_lower(tags1.get("modality")) or _artifact_modality_from_content_type(content_type)
+    semantic_kind = _clean_lower(descriptor.get("semantic_kind")) or _artifact_legacy_semantic_kind(
+        tags=tags1,
+        content_type=content_type,
+        modality=modality,
+        render_kind=render_kind,
+    )
+    task = _clean_lower(descriptor.get("task")) or _clean_lower(tags1.get("task"))
+    classification_source = _clean_str(descriptor.get("classification_source")) or "gateway_legacy_projection"
+    media = descriptor.get("media") if isinstance(descriptor.get("media"), dict) else {}
+    generation = descriptor.get("generation") if isinstance(descriptor.get("generation"), dict) else {}
+    producer = descriptor.get("producer") if isinstance(descriptor.get("producer"), dict) else {}
+    provenance = descriptor.get("provenance") if isinstance(descriptor.get("provenance"), dict) else {}
+    source_refs = descriptor.get("source_refs") if isinstance(descriptor.get("source_refs"), list) else []
+    links = _artifact_api_links(run_id=run_id, artifact_id=artifact_id, descriptor=descriptor)
+    provider_trace_ref = _first_clean(
+        links.get("provider_trace"),
+        links.get("provider_trace_url"),
+        links.get("provider_trace_id"),
+        producer.get("trace_id") if isinstance(producer, dict) else "",
+        producer.get("provider_trace_id") if isinstance(producer, dict) else "",
+        provenance.get("provider_trace_id") if isinstance(provenance, dict) else "",
+    )
+    audit_ref = _first_clean(links.get("audit"), links.get("audit_tail"), provenance.get("audit_ref") if isinstance(provenance, dict) else "")
+    title = _artifact_title_from_descriptor(
+        artifact_id=artifact_id,
+        tags=tags1,
+        descriptor=descriptor,
+        filename=filename,
+        source_path=source_path,
+        semantic_kind=semantic_kind,
+    )
+    actions = {
+        "preview": bool(run_id and artifact_id),
+        "download": bool(run_id and artifact_id),
+        "open_run": bool(run_id),
+        "open_ledger": bool(run_id),
+        "open_provider_trace": bool(provider_trace_ref),
+    }
+    envelope: Dict[str, Any] = {
+        "schema": "abstractgateway.artifact_envelope.v1",
+        "schema_version": 1,
+        "artifact_id": artifact_id,
+        "run_id": run_id or None,
+        "content_type": content_type or None,
+        "size_bytes": getattr(meta, "size_bytes", None) if getattr(meta, "size_bytes", None) is not None else raw.get("size_bytes"),
+        "created_at": _first_clean(getattr(meta, "created_at", None), raw.get("created_at")) or None,
+        "filename": filename or None,
+        "source_path": source_path or None,
+        "sha256": sha256 or None,
+        "semantic_kind": semantic_kind,
+        "render_kind": render_kind,
+        "modality": modality,
+        "task": task,
+        "classification_source": classification_source,
+        "session_id": _first_clean(descriptor.get("session_id"), tags1.get("session_id")) or None,
+        "workflow_id": _first_clean(descriptor.get("workflow_id"), tags1.get("workflow_id"), tags1.get("workflow")) or None,
+        "node_id": _first_clean(descriptor.get("node_id"), tags1.get("node_id"), tags1.get("node")) or None,
+        "step_id": _first_clean(descriptor.get("step_id"), tags1.get("step_id")) or None,
+        "effect_id": _first_clean(descriptor.get("effect_id"), tags1.get("effect_id"), tags1.get("effect_idempotency_key")) or None,
+        "turn_id": _first_clean(descriptor.get("turn_id"), tags1.get("turn_id"), tags1.get("turn")) or None,
+        "ledger_cursor": _first_clean(descriptor.get("ledger_cursor"), tags1.get("ledger_cursor"), tags1.get("step_cursor")) or None,
+        "parent_run_id": _first_clean(descriptor.get("parent_run_id"), tags1.get("parent_run_id")) or None,
+        "actor_id": _first_clean(descriptor.get("actor_id"), tags1.get("actor_id")) or None,
+        "title": title,
+        "tags": tags1,
+        "descriptor": descriptor,
+        "access": access,
+        "media": dict(media or {}),
+        "generation": dict(generation or {}),
+        "producer": dict(producer or {}),
+        "provenance": dict(provenance or {}),
+        "source_refs": source_refs,
+        "links": links,
+        "actions": actions,
+        "available_actions": [name for name, available in actions.items() if available],
+        "provider_trace_available": bool(provider_trace_ref),
+        "audit_available": bool(audit_ref),
+        "legacy_inferred": classification_source in {"gateway_legacy_projection", "runtime_tags", "runtime_mime_inferred"},
+    }
+    if include_raw_metadata:
+        envelope["raw_metadata"] = raw
+    return envelope
 
 
 def _canonical_artifact_ref(meta: Any, *, tags: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -3554,18 +4042,47 @@ def _artifact_list_item(meta: Any) -> Optional[ArtifactListItem]:
     tags = getattr(meta, "tags", None)
     tags0 = dict(tags or {}) if isinstance(tags, dict) else {}
     ref = _canonical_artifact_ref(meta, tags=tags0)
+    envelope = _artifact_envelope_v1(meta)
     return ArtifactListItem(
         artifact_id=artifact_id,
-        run_id=str(getattr(meta, "run_id", "") or "").strip() or None,
-        content_type=getattr(meta, "content_type", None),
-        size_bytes=getattr(meta, "size_bytes", None),
-        created_at=getattr(meta, "created_at", None),
+        run_id=str(envelope.get("run_id") or getattr(meta, "run_id", "") or "").strip() or None,
+        content_type=envelope.get("content_type") or getattr(meta, "content_type", None),
+        size_bytes=envelope.get("size_bytes") if envelope.get("size_bytes") is not None else getattr(meta, "size_bytes", None),
+        created_at=envelope.get("created_at") or getattr(meta, "created_at", None),
         tags=tags0,
-        filename=str(tags0.get("filename") or "").strip() or None,
-        source_path=str(tags0.get("path") or "").strip() or None,
-        sha256=str(tags0.get("sha256") or "").strip() or None,
-        modality=str(tags0.get("modality") or "").strip() or _artifact_modality_from_content_type(getattr(meta, "content_type", None)),
+        filename=str(envelope.get("filename") or tags0.get("filename") or "").strip() or None,
+        source_path=str(envelope.get("source_path") or tags0.get("path") or "").strip() or None,
+        sha256=str(envelope.get("sha256") or tags0.get("sha256") or "").strip() or None,
+        modality=str(envelope.get("modality") or tags0.get("modality") or "").strip() or _artifact_modality_from_content_type(getattr(meta, "content_type", None)),
         ref=ref,
+        semantic_kind=str(envelope.get("semantic_kind") or "").strip() or None,
+        render_kind=str(envelope.get("render_kind") or "").strip() or None,
+        task=str(envelope.get("task") or "").strip() or None,
+        classification_source=str(envelope.get("classification_source") or "").strip() or None,
+        session_id=str(envelope.get("session_id") or "").strip() or None,
+        workflow_id=str(envelope.get("workflow_id") or "").strip() or None,
+        node_id=str(envelope.get("node_id") or "").strip() or None,
+        step_id=str(envelope.get("step_id") or "").strip() or None,
+        effect_id=str(envelope.get("effect_id") or "").strip() or None,
+        turn_id=str(envelope.get("turn_id") or "").strip() or None,
+        ledger_cursor=str(envelope.get("ledger_cursor") or "").strip() or None,
+        parent_run_id=str(envelope.get("parent_run_id") or "").strip() or None,
+        actor_id=str(envelope.get("actor_id") or "").strip() or None,
+        title=str(envelope.get("title") or "").strip() or None,
+        media=dict(envelope.get("media") or {}),
+        generation=dict(envelope.get("generation") or {}),
+        producer=dict(envelope.get("producer") or {}),
+        provenance=dict(envelope.get("provenance") or {}),
+        source_refs=list(envelope.get("source_refs") or []),
+        access=dict(envelope.get("access") or {}),
+        links=dict(envelope.get("links") or {}),
+        available_actions=list(envelope.get("available_actions") or []),
+        provider_trace_available=bool(envelope.get("provider_trace_available")),
+        audit_available=bool(envelope.get("audit_available")),
+        legacy_inferred=bool(envelope.get("legacy_inferred")),
+        raw_metadata={},
+        descriptor=dict(envelope.get("descriptor") or {}),
+        artifact_envelope_v1=envelope,
     )
 
 
@@ -3618,7 +4135,23 @@ def _artifact_text_matches(item: ArtifactListItem, query: str) -> bool:
         item.source_path or "",
         item.sha256 or "",
         item.modality or "",
+        item.semantic_kind or "",
+        item.render_kind or "",
+        item.task or "",
+        item.workflow_id or "",
+        item.node_id or "",
+        item.turn_id or "",
+        item.ledger_cursor or "",
+        item.title or "",
     ]
+    envelope = item.artifact_envelope_v1 or {}
+    for key in ("generation", "producer", "provenance", "media"):
+        value = envelope.get(key)
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if isinstance(v, (str, int, float, bool)):
+                    haystack.append(str(k))
+                    haystack.append(str(v))
     for k, v in (item.tags or {}).items():
         haystack.append(str(k))
         haystack.append(str(v))
@@ -3630,13 +4163,56 @@ def _artifact_matches_filters(
     *,
     query: str = "",
     modality: str = "",
+    artifact_kind: str = "",
+    semantic_kind: str = "",
+    render_kind: str = "",
+    workflow_id: str = "",
+    node_id: str = "",
+    created_after: str = "",
+    created_before: str = "",
     content_type: str = "",
     tags: Optional[Dict[str, str]] = None,
 ) -> bool:
+    expected_artifact_kind = str(artifact_kind or "").strip().lower()
+    if expected_artifact_kind:
+        allowed = {part.strip() for part in re.split(r"[,|]", expected_artifact_kind) if part.strip()}
+        semantic = str(item.semantic_kind or "").strip().lower()
+        render = str(item.render_kind or "").strip().lower()
+        modality0 = str(item.modality or "").strip().lower()
+
+        def _kind_matches(value: str) -> bool:
+            if value in {"audio", "unclassified_audio"}:
+                generic_semantic = semantic in {"", "(none)", "audio", "artifact", "binary", "other"}
+                return generic_semantic and (render == "audio" or modality0 == "audio" or semantic == "audio")
+            if value == "other":
+                return semantic in {"", "(none)", "artifact", "binary", "other"} or render in {"", "binary", "other"}
+            return value in {semantic, render, modality0}
+
+        if allowed and not any(_kind_matches(value) for value in allowed):
+            return False
+
+    expected_semantic_kind = str(semantic_kind or "").strip().lower()
+    if expected_semantic_kind:
+        allowed = {part.strip() for part in re.split(r"[,|]", expected_semantic_kind) if part.strip()}
+        if allowed and str(item.semantic_kind or "").strip().lower() not in allowed:
+            return False
+
+    expected_render_kind = str(render_kind or "").strip().lower()
+    if expected_render_kind:
+        allowed = {part.strip() for part in re.split(r"[,|]", expected_render_kind) if part.strip()}
+        if allowed and str(item.render_kind or "").strip().lower() not in allowed:
+            return False
+
     expected_modality = str(modality or "").strip().lower()
     if expected_modality and expected_modality not in {"artifact", "any", "all", "*"}:
         actual = str(item.modality or "").strip().lower()
-        if expected_modality == "audio":
+        allowed = {part.strip() for part in re.split(r"[,|]", expected_modality) if part.strip()}
+        if "audio" in allowed:
+            allowed.update({"voice", "music", "sound", "recording"})
+        if allowed:
+            if actual not in allowed:
+                return False
+        elif expected_modality == "audio":
             if actual not in {"audio", "voice", "music", "sound"}:
                 return False
         elif actual != expected_modality:
@@ -3651,6 +4227,16 @@ def _artifact_matches_filters(
         elif actual_ct != expected_content_type:
             return False
 
+    if workflow_id and str(item.workflow_id or "").strip() != str(workflow_id).strip():
+        return False
+    if node_id and str(item.node_id or "").strip() != str(node_id).strip():
+        return False
+    created_at = str(item.created_at or "")
+    if created_after and created_at < str(created_after):
+        return False
+    if created_before and created_at > str(created_before):
+        return False
+
     for k, v in (tags or {}).items():
         if str((item.tags or {}).get(k) or "") != str(v):
             return False
@@ -3664,7 +4250,6 @@ def _artifact_search_candidates(
     scope: str,
     session_id: str = "",
     run_id: str = "",
-    limit: int,
 ) -> list[ArtifactListItem]:
     scope0 = str(scope or "all").strip().lower()
     seen: set[str] = set()
@@ -3700,7 +4285,7 @@ def _artifact_search_candidates(
         list_all = getattr(store, "list_all", None)
         if callable(list_all):
             try:
-                for meta in list_all(limit=max(int(limit) * 10, 10_000)) or []:
+                for meta in list_all(limit=0) or []:
                     if _artifact_visible_to_session(meta, sid):
                         add_meta(meta)
             except Exception:
@@ -3709,13 +4294,421 @@ def _artifact_search_candidates(
         list_all = getattr(store, "list_all", None)
         if not callable(list_all):
             raise HTTPException(status_code=400, detail="Artifact store does not support all-artifact listing")
-        for meta in list_all(limit=max(int(limit) * 10, 10_000)) or []:
+        for meta in list_all(limit=0) or []:
             add_meta(meta)
     else:
         raise HTTPException(status_code=400, detail="scope must be one of all|session|run")
 
     rows.sort(key=lambda r: str(r.created_at or ""), reverse=True)
     return rows
+
+
+def _artifact_content_type_is_prefix(value: str) -> bool:
+    return str(value or "").strip().endswith("/*")
+
+
+def _artifact_runtime_filters(
+    *,
+    scope: str,
+    session_id: str = "",
+    run_id: str = "",
+    modality: str = "",
+    semantic_kind: str = "",
+    render_kind: str = "",
+    workflow_id: str = "",
+    node_id: str = "",
+    content_type: str = "",
+    created_after: str = "",
+    created_before: str = "",
+    tags: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    scope0 = str(scope or "all").strip().lower() or "all"
+    filters: Dict[str, Any] = {}
+    if scope0 == "run":
+        rid = str(run_id or "").strip()
+        if not rid:
+            raise HTTPException(status_code=400, detail="run_id is required when scope=run")
+        filters["run_id"] = rid
+    elif scope0 == "session":
+        sid = str(session_id or "").strip()
+        if not sid:
+            raise HTTPException(status_code=400, detail="session_id is required when scope=session")
+        filters["session_id"] = sid
+    elif scope0 != "all":
+        raise HTTPException(status_code=400, detail="scope must be one of all|session|run")
+    if str(modality or "").strip():
+        filters["modality"] = str(modality).strip().lower()
+    if str(semantic_kind or "").strip():
+        filters["semantic_kind"] = str(semantic_kind).strip().lower()
+    if str(render_kind or "").strip():
+        filters["render_kind"] = str(render_kind).strip().lower()
+    if str(workflow_id or "").strip():
+        filters["workflow_id"] = str(workflow_id).strip()
+    if str(node_id or "").strip():
+        filters["node_id"] = str(node_id).strip()
+    ct = str(content_type or "").strip().lower()
+    if ct and not _artifact_content_type_is_prefix(ct):
+        filters["content_type"] = ct
+    if str(created_after or "").strip():
+        filters["created_after"] = str(created_after).strip()
+    if str(created_before or "").strip():
+        filters["created_before"] = str(created_before).strip()
+    if tags:
+        filters["tags"] = dict(tags)
+    return filters
+
+
+def _artifact_filter_needs_post_filter(*values: str) -> bool:
+    return any("," in str(value or "") or "|" in str(value or "") for value in values)
+
+
+_ARTIFACT_STATS_FACETS = ["semantic_kind", "render_kind", "modality", "content_type", "workflow_id", "node_id", "run_id"]
+_ARTIFACT_KIND_INDEXED_SEMANTIC = {"voice", "music", "sound", "recording", "image", "video", "markdown", "html", "json", "document", "code", "text", "transcript"}
+
+
+def _artifact_kind_runtime_mapping(
+    artifact_kind: str,
+    *,
+    semantic_kind: str,
+    render_kind: str,
+) -> tuple[str, str, bool]:
+    """Map one UI artifact kind to Runtime catalog filters when it is exact."""
+    raw = str(artifact_kind or "").strip().lower()
+    if not raw:
+        return semantic_kind, render_kind, False
+    values = {part.strip() for part in re.split(r"[,|]", raw) if part.strip()}
+    if len(values) != 1:
+        return semantic_kind, render_kind, True
+    value = next(iter(values))
+    if value == "unclassified_audio":
+        value = "audio"
+    if value == "audio":
+        return semantic_kind or "audio", render_kind or "audio", False
+    if value in _ARTIFACT_KIND_INDEXED_SEMANTIC:
+        return semantic_kind or value, render_kind, False
+    return semantic_kind, render_kind, True
+
+
+def _artifact_stats_from_store(
+    store: Any,
+    *,
+    filters: Dict[str, Any],
+    warnings: Optional[list[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    warnings0 = list(warnings or [])
+    stats_fn = getattr(store, "stats", None)
+    if callable(stats_fn):
+        try:
+            raw = stats_fn(facets=list(_ARTIFACT_STATS_FACETS), **dict(filters or {}))
+            if isinstance(raw, dict):
+                total_bytes = int(raw.get("total_bytes") or raw.get("byte_total") or 0)
+                return {
+                    "total": int(raw.get("total") or 0),
+                    "total_bytes": total_bytes,
+                    "byte_total": total_bytes,
+                    "facets": {field: dict((raw.get("facets") or {}).get(field) or {}) for field in _ARTIFACT_STATS_FACETS},
+                    "filters": {k: v for k, v in (raw.get("filters") or filters or {}).items() if v not in (None, "", {})},
+                    "warnings": warnings0 + list(raw.get("warnings") or []),
+                    "exact": bool(raw.get("exact", True)),
+                    "source": str(raw.get("source") or "runtime_catalog"),
+                }
+        except Exception:
+            warnings0.append("runtime_stats_unavailable")
+
+    count_fn = getattr(store, "count", None)
+    facet_fn = getattr(store, "facet_counts", None)
+    if callable(count_fn) and callable(facet_fn):
+        try:
+            return {
+                "total": int(count_fn(**dict(filters or {}))),
+                "total_bytes": 0,
+                "byte_total": 0,
+                "facets": {field: dict(facet_fn(field, **dict(filters or {})) or {}) for field in _ARTIFACT_STATS_FACETS},
+                "filters": {k: v for k, v in (filters or {}).items() if v not in (None, "", {})},
+                "warnings": warnings0 + ["runtime_byte_total_unavailable"],
+                "exact": True,
+                "source": "runtime_catalog",
+            }
+        except Exception:
+            return None
+    return None
+
+
+def _artifact_rows_from_store_search(
+    store: Any,
+    *,
+    scope: str,
+    session_id: str = "",
+    run_id: str = "",
+    modality: str = "",
+    artifact_kind: str = "",
+    semantic_kind: str = "",
+    render_kind: str = "",
+    workflow_id: str = "",
+    node_id: str = "",
+    content_type: str = "",
+    query: str = "",
+    tags: Optional[Dict[str, str]] = None,
+    created_after: str = "",
+    created_before: str = "",
+    offset: int = 0,
+    limit: int = 100,
+    cursor: str = "",
+    order: str = "desc",
+    order_by: str = "created_at",
+    include_stats: bool = False,
+) -> tuple[list[ArtifactListItem], int, Optional[Dict[str, Any]], list[str], bool]:
+    scope0 = str(scope or "all").strip().lower() or "all"
+    query0 = str(query or "").strip()
+    content_type0 = str(content_type or "").strip().lower()
+    order0 = "asc" if str(order or "desc").strip().lower() == "asc" else "desc"
+    tag_filter = dict(tags or {})
+    warnings: list[str] = []
+    search_fn = getattr(store, "search", None)
+    count_fn = getattr(store, "count", None)
+    mapped_semantic_kind, mapped_render_kind, artifact_kind_needs_post_filter = _artifact_kind_runtime_mapping(
+        artifact_kind,
+        semantic_kind=str(semantic_kind or ""),
+        render_kind=str(render_kind or ""),
+    )
+    runtime_filters = _artifact_runtime_filters(
+        scope=scope0,
+        session_id=session_id,
+        run_id=run_id,
+        modality=modality,
+        semantic_kind=mapped_semantic_kind,
+        render_kind=mapped_render_kind,
+        workflow_id=workflow_id,
+        node_id=node_id,
+        content_type=content_type0,
+        created_after=created_after,
+        created_before=created_before,
+        tags=tag_filter,
+    )
+    post_filter_needed = bool(
+        query0
+        or artifact_kind_needs_post_filter
+        or _artifact_content_type_is_prefix(content_type0)
+        or scope0 == "session"
+        or _artifact_filter_needs_post_filter(modality, semantic_kind, render_kind)
+    )
+
+    if not callable(search_fn) or post_filter_needed:
+        if post_filter_needed:
+            warnings.append("query_or_scope_requires_gateway_post_filter")
+        rows = _artifact_search_candidates(store, scope=scope0, session_id=session_id, run_id=run_id)
+        rows = [
+            item
+            for item in rows
+            if _artifact_matches_filters(
+                item,
+                query=query0,
+                modality=modality,
+                artifact_kind=artifact_kind,
+                semantic_kind=semantic_kind,
+                render_kind=render_kind,
+                workflow_id=workflow_id,
+                node_id=node_id,
+                created_after=created_after,
+                created_before=created_before,
+                content_type=content_type0,
+                tags=tag_filter,
+            )
+        ]
+        rows = _artifact_sort_rows(rows, order_by=order_by, order=order0)
+        stats = _artifact_stats_from_rows(rows, filters=runtime_filters, warnings=warnings) if include_stats else None
+        return rows, len(rows), stats, warnings, False
+
+    lim = int(limit)
+    off = max(0, int(offset or 0))
+    runtime_can_sort = str(order_by or "created_at").strip().lower() == "created_at"
+    stats = _artifact_stats_from_store(store, filters=runtime_filters, warnings=warnings) if include_stats else None
+    cursor0 = str(cursor or "").strip()
+    runtime_can_prepage = runtime_can_sort and not cursor0
+    search_limit = lim if lim > 0 and runtime_can_prepage else 0
+    try:
+        metas = search_fn(offset=off if runtime_can_prepage else 0, limit=search_limit, order=order0, **runtime_filters)
+    except TypeError:
+        warnings.append("runtime_search_filters_unsupported")
+        rows = _artifact_search_candidates(store, scope=scope0, session_id=session_id, run_id=run_id)
+        rows = [
+            item
+            for item in rows
+            if _artifact_matches_filters(
+                item,
+                query=query0,
+                modality=modality,
+                artifact_kind=artifact_kind,
+                semantic_kind=semantic_kind,
+                render_kind=render_kind,
+                workflow_id=workflow_id,
+                node_id=node_id,
+                created_after=created_after,
+                created_before=created_before,
+                content_type=content_type0,
+                tags=tag_filter,
+            )
+        ]
+        rows = _artifact_sort_rows(rows, order_by=order_by, order=order0)
+        stats = _artifact_stats_from_rows(rows, filters=runtime_filters, warnings=warnings) if include_stats else None
+        return rows, len(rows), stats, warnings, False
+    rows_all = []
+    for meta in metas or []:
+        item = _artifact_list_item(meta)
+        if item is not None:
+            rows_all.append(item)
+    if not runtime_can_sort:
+        rows_all = _artifact_sort_rows(rows_all, order_by=order_by, order=order0)
+
+    if stats is not None:
+        for warning in stats.get("warnings") or []:
+            warning0 = str(warning or "").strip()
+            if warning0 and warning0 not in warnings:
+                warnings.append(warning0)
+        total = int(stats.get("total") or 0)
+        return rows_all, total, stats, warnings, runtime_can_prepage
+
+    total = 0
+    if callable(count_fn):
+        try:
+            total = int(count_fn(**runtime_filters))
+        except Exception:
+            total = off + len(rows_all)
+    else:
+        total = off + len(rows_all)
+    return rows_all, total, None, warnings, runtime_can_prepage
+
+
+def _artifact_stats_from_rows(rows: list[ArtifactListItem], *, filters: Dict[str, Any], warnings: Optional[list[str]] = None) -> Dict[str, Any]:
+    facets: Dict[str, Dict[str, int]] = {
+        "semantic_kind": {},
+        "render_kind": {},
+        "modality": {},
+        "content_type": {},
+        "workflow_id": {},
+        "node_id": {},
+        "run_id": {},
+    }
+    byte_total = 0
+    for row in rows:
+        if isinstance(row.size_bytes, int) and row.size_bytes >= 0:
+            byte_total += int(row.size_bytes)
+        values = {
+            "semantic_kind": row.semantic_kind or "",
+            "render_kind": row.render_kind or "",
+            "modality": row.modality or "",
+            "content_type": row.content_type or "",
+            "workflow_id": row.workflow_id or "",
+            "node_id": row.node_id or "",
+            "run_id": row.run_id or "",
+        }
+        for field, value in values.items():
+            key = str(value or "").strip() or "(none)"
+            facets[field][key] = int(facets[field].get(key, 0)) + 1
+    return {
+        "total": len(rows),
+        "total_bytes": byte_total,
+        "byte_total": byte_total,
+        "facets": facets,
+        "filters": {k: v for k, v in (filters or {}).items() if v not in (None, "", {})},
+        "warnings": list(warnings or []),
+        "exact": True,
+        "source": "runtime_catalog" if "query_or_scope_requires_gateway_post_filter" not in set(warnings or []) else "gateway_post_filter",
+    }
+
+
+def _artifact_sort_rows(rows: list[ArtifactListItem], *, order_by: str = "created_at", order: str = "desc") -> list[ArtifactListItem]:
+    order_by0 = str(order_by or "created_at").strip().lower()
+    reverse = str(order or "desc").strip().lower() != "asc"
+
+    def _key(row: ArtifactListItem) -> tuple[Any, ...]:
+        if order_by0 in {"size", "size_bytes"}:
+            return (int(row.size_bytes) if isinstance(row.size_bytes, int) else -1, str(row.created_at or ""), str(row.artifact_id or ""))
+        if order_by0 in {"last_access", "last_accessed_at"}:
+            return (str((row.access or {}).get("last_accessed_at") or ""), str(row.created_at or ""), str(row.artifact_id or ""))
+        if order_by0 in {"semantic_kind", "type"}:
+            return (str(row.semantic_kind or ""), str(row.render_kind or ""), str(row.created_at or ""), str(row.artifact_id or ""))
+        if order_by0 == "render_kind":
+            return (str(row.render_kind or ""), str(row.semantic_kind or ""), str(row.created_at or ""), str(row.artifact_id or ""))
+        if order_by0 == "workflow":
+            return (str(row.workflow_id or ""), str(row.created_at or ""), str(row.artifact_id or ""))
+        if order_by0 == "run":
+            return (str(row.run_id or ""), str(row.created_at or ""), str(row.artifact_id or ""))
+        if order_by0 == "turn":
+            return (str(row.turn_id or row.ledger_cursor or ""), str(row.created_at or ""), str(row.artifact_id or ""))
+        return (str(row.created_at or ""), str(row.artifact_id or ""))
+
+    return sorted(rows, key=_key, reverse=reverse)
+
+
+def _artifact_cursor_for_item(item: ArtifactListItem) -> str:
+    return f"{str(item.created_at or '')}|{str(item.artifact_id or '')}"
+
+
+def _artifact_apply_cursor(rows: list[ArtifactListItem], *, cursor: str, order: str = "desc") -> list[ArtifactListItem]:
+    cursor0 = str(cursor or "").strip()
+    if not cursor0:
+        return rows
+    if "|" in cursor0:
+        created, artifact_id = cursor0.split("|", 1)
+    else:
+        created, artifact_id = cursor0, ""
+    key = (created, artifact_id)
+    desc = str(order or "desc").strip().lower() != "asc"
+    out: list[ArtifactListItem] = []
+    for row in rows:
+        row_key = (str(row.created_at or ""), str(row.artifact_id or ""))
+        if desc:
+            if row_key < key:
+                out.append(row)
+        elif row_key > key:
+            out.append(row)
+    return out
+
+
+def _artifact_page(
+    rows: list[ArtifactListItem],
+    *,
+    offset: int,
+    limit: int,
+    reported_offset: Optional[int] = None,
+    cursor: str = "",
+    order: str = "desc",
+    total_count: Optional[int] = None,
+    stats: Optional[Dict[str, Any]] = None,
+    warnings: Optional[list[str]] = None,
+) -> ArtifactListResponse:
+    rows0 = _artifact_apply_cursor(rows, cursor=cursor, order=order)
+    total = len(rows) if total_count is None else max(0, int(total_count))
+    start = max(0, int(offset))
+    lim = int(limit)
+    if lim <= 0:
+        page = rows0[start:]
+    else:
+        page = rows0[start : start + lim]
+    response_offset = start if reported_offset is None else max(0, int(reported_offset))
+    remaining_start = response_offset if total_count is not None and reported_offset is not None and not cursor else start
+    page_remaining = remaining_start + len(page) < (len(rows0) if total_count is None or cursor else total)
+    next_cursor = _artifact_cursor_for_item(page[-1]) if page and page_remaining else None
+    return ArtifactListResponse(
+        items=page,
+        total=total,
+        offset=response_offset,
+        limit=lim,
+        has_more=page_remaining,
+        cursor=str(cursor or "").strip() or None,
+        next_cursor=next_cursor,
+        facets=dict((stats or {}).get("facets") or {}),
+        stats=dict(stats or {}),
+        warnings=list(warnings or []),
+    )
+
+
+def _artifact_effective_limit(limit: int, *, debug_unlimited: bool = False) -> int:
+    lim = int(limit)
+    if lim <= 0:
+        return 0 if debug_unlimited else 500
+    return min(lim, 10_000)
 
 
 def _artifact_store_or_500(svc: Any) -> Any:
@@ -3736,6 +4729,30 @@ def _load_artifact_metadata_or_404(store: Any, artifact_id: str) -> Any:
     if meta is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
     return meta
+
+
+def _record_artifact_access_best_effort(
+    store: Any,
+    artifact_id: str,
+    *,
+    action: str,
+    run_id: str = "",
+    session_id: str = "",
+    actor_id: str = "gateway",
+) -> None:
+    record_fn = getattr(store, "record_access", None)
+    if not callable(record_fn):
+        return
+    try:
+        record_fn(
+            str(artifact_id),
+            action=str(action or "access").strip().lower() or "access",
+            actor_id=str(actor_id or "gateway"),
+            session_id=str(session_id or "").strip() or None,
+            run_id=str(run_id or "").strip() or None,
+        )
+    except Exception:
+        return
 
 
 def _store_session_artifact(
@@ -3805,6 +4822,27 @@ def _store_session_artifact(
     return {"ok": True, "run_id": str(rid), "artifact": ref, "metadata": _artifact_meta_dict(meta)}
 
 
+def _normalize_client_source_path(raw: Optional[str], fallback_filename: str) -> str:
+    text = str(raw or "").strip().replace("\\", "/")
+    parts: List[str] = []
+    for piece in text.split("/"):
+        segment = str(piece or "").strip()
+        if not segment or segment == ".":
+            continue
+        if segment == "..":
+            if parts:
+                parts.pop()
+            continue
+        if re.fullmatch(r"[A-Za-z]:", segment):
+            continue
+        segment = segment.replace(":", "_")
+        if segment:
+            parts.append(segment)
+    if not parts:
+        parts = [str(fallback_filename or "upload.bin").strip() or "upload.bin"]
+    return f"client:{'/'.join(parts)}"
+
+
 def _artifact_visible_to_session(meta: Any, session_id: str) -> bool:
     sid = str(session_id or "").strip()
     if not sid:
@@ -3841,7 +4879,7 @@ def _validate_run_start_artifact_refs(*, store: Any, input_data: Dict[str, Any],
     for path, ref in refs:
         artifact_id = str(ref.get("$artifact") or ref.get("artifact_id") or "").strip()
         meta = _load_artifact_metadata_or_404(store, artifact_id)
-        ref_run_id = str(ref.get("run_id") or "").strip()
+        ref_run_id = str(ref.get("run_id") or ref.get("artifact_run_id") or "").strip()
         meta_run_id = str(getattr(meta, "run_id", "") or "").strip()
         if ref_run_id and meta_run_id and ref_run_id != meta_run_id:
             raise HTTPException(status_code=400, detail=f"Artifact ref at {path} has mismatched run_id")
@@ -3849,10 +4887,6 @@ def _validate_run_start_artifact_refs(*, store: Any, input_data: Dict[str, Any],
             if _artifact_visible_to_session(meta, session_id):
                 continue
             if ref_run_id and meta_run_id and ref_run_id == meta_run_id:
-                tags = getattr(meta, "tags", None)
-                tagged_session = str(tags.get("session_id") or "").strip() if isinstance(tags, dict) else ""
-                if meta_run_id.startswith("session_memory_") and tagged_session and tagged_session != str(session_id).strip():
-                    raise HTTPException(status_code=404, detail=f"Artifact ref at {path} is not visible to session")
                 continue
             raise HTTPException(status_code=404, detail=f"Artifact ref at {path} is not visible to session")
         if not ref_run_id:
@@ -5931,6 +6965,57 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     }
 
 
+@router.post("/runs/{run_id}/workspace/open")
+async def open_run_workspace(run_id: str, request: Request) -> Dict[str, Any]:
+    """Reveal a run's server-side workspace directory on the Gateway host.
+
+    This is an operator/local-development convenience. It is intentionally admin-only
+    because it triggers an OS action on the Gateway machine.
+    """
+
+    _require_admin_principal(request)
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    vars_obj = getattr(run, "vars", None)
+    raw_root = vars_obj.get("workspace_root") if isinstance(vars_obj, dict) else None
+    if not isinstance(raw_root, str) or not raw_root.strip():
+        raise HTTPException(status_code=409, detail="Run does not have a workspace_root")
+    try:
+        workspace_root = _resolve_user_path(raw_root, base=_workspace_root())
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid workspace_root: {e}")
+    if not workspace_root.exists():
+        raise HTTPException(status_code=404, detail=f"Run workspace does not exist: {workspace_root}")
+    if not workspace_root.is_dir():
+        raise HTTPException(status_code=409, detail=f"Run workspace is not a directory: {workspace_root}")
+
+    command = _workspace_open_command(workspace_root)
+    try:
+        await _launch_workspace_opener(command)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=501, detail=f"Directory opener is unavailable: {e}") from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open run workspace: {e}") from e
+    return {
+        "ok": True,
+        "opened": True,
+        "run_id": str(getattr(run, "run_id", rid)),
+        "workspace_root": str(workspace_root),
+        "opener": Path(command[0]).name,
+    }
+
+
 @router.get("/runs/{run_id}/history_bundle")
 async def get_run_history_bundle(
     run_id: str,
@@ -5988,53 +7073,169 @@ async def get_run_history_bundle(
 
 @router.get("/artifacts/search", response_model=ArtifactSearchResponse)
 async def search_artifacts(
+    request: Request,
     scope: str = Query("all", description="Search scope: all|session|run."),
     session_id: Optional[str] = Query(None, description="Session id when scope=session."),
     run_id: Optional[str] = Query(None, description="Run id when scope=run."),
     modality: Optional[str] = Query(None, description="Optional artifact modality: image|audio|video|text|file."),
+    artifact_kind: Optional[str] = Query(None, description="Optional UI artifact kind filter. Comma-separated values match semantic_kind, render_kind, or modality."),
+    semantic_kind: Optional[str] = Query(None, description="Optional canonical semantic kind, e.g. voice|music|image|markdown."),
+    render_kind: Optional[str] = Query(None, description="Optional canonical render kind, e.g. audio|image|json|markdown."),
+    workflow_id: Optional[str] = Query(None, description="Optional workflow id filter when indexed by Runtime."),
+    node_id: Optional[str] = Query(None, description="Optional node id filter when indexed by Runtime."),
     content_type: Optional[str] = Query(None, description="Optional exact content type or prefix like image/*."),
     query: Optional[str] = Query(None, description="Case-insensitive metadata text search."),
     tags: Optional[str] = Query(None, description="Optional tag filters as JSON object or key=value list."),
-    limit: int = Query(100, ge=1, le=2000, description="Maximum number of artifacts (most recent first)."),
+    limit: int = Query(500, ge=-1, le=10_000, description="Maximum number of artifacts (most recent first); 0 or -1 is bounded to 500 unless debug_unlimited=true."),
+    offset: int = Query(0, ge=0, description="Result offset for pagination."),
+    cursor: Optional[str] = Query(None, description="Optional stable cursor returned by a previous page."),
+    order_by: str = Query("created_at", description="Sort key: created_at|size_bytes|last_accessed_at|semantic_kind|render_kind|workflow|run|turn."),
+    order: str = Query("desc", description="desc|asc by (created_at, artifact_id)."),
+    created_after: Optional[str] = Query(None, description="created_at >= value, ISO string compare."),
+    created_before: Optional[str] = Query(None, description="created_at <= value, ISO string compare."),
+    include_stats: bool = Query(False, description="Include exact stats/facets for the selected server-side scope."),
+    debug_unlimited: bool = Query(False, description="Allow limit<=0 to return all rows. Intended for admin/debug use."),
 ) -> ArtifactSearchResponse:
-    """Search artifact metadata by scope, modality, content type, free text, and tags."""
+    """Search artifact metadata with v1 envelopes, bounded pages, and optional exact stats."""
     svc = get_gateway_service()
     store = _artifact_store_or_500(svc)
     scope0 = str(scope or "all").strip().lower() or "all"
     tag_filter = _parse_artifact_tag_filter(tags)
-    rows = _artifact_search_candidates(
+    if bool(debug_unlimited):
+        _require_admin_principal(request)
+    effective_limit = _artifact_effective_limit(int(limit), debug_unlimited=bool(debug_unlimited))
+    rows, total, stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
         store,
         scope=scope0,
         session_id=str(session_id or ""),
         run_id=str(run_id or ""),
-        limit=int(limit),
+        modality=str(modality or ""),
+        artifact_kind=str(artifact_kind or ""),
+        semantic_kind=str(semantic_kind or ""),
+        render_kind=str(render_kind or ""),
+        workflow_id=str(workflow_id or ""),
+        node_id=str(node_id or ""),
+        content_type=str(content_type or ""),
+        query=str(query or ""),
+        tags=tag_filter,
+        created_after=str(created_after or ""),
+        created_before=str(created_before or ""),
+        offset=int(offset),
+        limit=effective_limit,
+        cursor=str(cursor or ""),
+        order=str(order or "desc"),
+        order_by=str(order_by or "created_at"),
+        include_stats=bool(include_stats),
     )
-    rows = [
-        item
-        for item in rows
-        if _artifact_matches_filters(
-            item,
-            query=str(query or ""),
-            modality=str(modality or ""),
-            content_type=str(content_type or ""),
-            tags=tag_filter,
-        )
-    ]
+    paged = _artifact_page(
+        rows,
+        offset=0 if rows_pre_paged else int(offset),
+        reported_offset=int(offset) if rows_pre_paged else None,
+        limit=effective_limit,
+        cursor=str(cursor or ""),
+        order=str(order or "desc"),
+        total_count=int(total),
+        stats=stats,
+        warnings=warnings,
+    )
     return ArtifactSearchResponse(
         scope=scope0,
         query=str(query or "").strip() or None,
         modality=str(modality or "").strip() or None,
+        artifact_kind=str(artifact_kind or "").strip() or None,
+        semantic_kind=str(semantic_kind or "").strip() or None,
+        render_kind=str(render_kind or "").strip() or None,
+        content_type=str(content_type or "").strip() or None,
+        order_by=str(order_by or "created_at").strip().lower() or "created_at",
+        order=str(order or "desc").strip().lower() or "desc",
         tags=tag_filter,
-        items=rows[: int(limit)],
+        items=paged.items,
+        total=int(total),
+        offset=paged.offset,
+        limit=paged.limit,
+        has_more=paged.has_more,
+        cursor=paged.cursor,
+        next_cursor=paged.next_cursor,
+        facets=paged.facets,
+        stats=paged.stats,
+        warnings=paged.warnings,
+    )
+
+
+@router.get("/artifacts/stats", response_model=ArtifactStatsResponse)
+async def artifact_stats(
+    scope: str = Query("all", description="Stats scope: all|session|run."),
+    session_id: Optional[str] = Query(None, description="Session id when scope=session."),
+    run_id: Optional[str] = Query(None, description="Run id when scope=run."),
+    modality: Optional[str] = Query(None, description="Optional artifact modality filter."),
+    semantic_kind: Optional[str] = Query(None, description="Optional semantic kind filter."),
+    render_kind: Optional[str] = Query(None, description="Optional render kind filter."),
+    workflow_id: Optional[str] = Query(None, description="Optional workflow id filter."),
+    node_id: Optional[str] = Query(None, description="Optional node id filter."),
+    content_type: Optional[str] = Query(None, description="Optional exact content type or prefix like image/*."),
+    query: Optional[str] = Query(None, description="Case-insensitive metadata text search."),
+    tags: Optional[str] = Query(None, description="Optional tag filters as JSON object or key=value list."),
+    created_after: Optional[str] = Query(None, description="created_at >= value, ISO string compare."),
+    created_before: Optional[str] = Query(None, description="created_at <= value, ISO string compare."),
+) -> ArtifactStatsResponse:
+    """Return exact artifact counts/facets for a selected Gateway-visible scope."""
+    svc = get_gateway_service()
+    store = _artifact_store_or_500(svc)
+    tag_filter = _parse_artifact_tag_filter(tags)
+    rows, _total, stats, _warnings, _rows_pre_paged = _artifact_rows_from_store_search(
+        store,
+        scope=str(scope or "all").strip().lower() or "all",
+        session_id=str(session_id or ""),
+        run_id=str(run_id or ""),
+        modality=str(modality or ""),
+        semantic_kind=str(semantic_kind or ""),
+        render_kind=str(render_kind or ""),
+        workflow_id=str(workflow_id or ""),
+        node_id=str(node_id or ""),
+        content_type=str(content_type or ""),
+        query=str(query or ""),
+        tags=tag_filter,
+        created_after=str(created_after or ""),
+        created_before=str(created_before or ""),
+        offset=0,
+        limit=0,
+        order="desc",
+        include_stats=True,
+    )
+    stats0 = stats or _artifact_stats_from_rows(rows, filters={}, warnings=[])
+    return ArtifactStatsResponse(
+        ok=True,
+        scope=str(scope or "all").strip().lower() or "all",
+        total=int(stats0.get("total") or 0),
+        total_bytes=int(stats0.get("total_bytes") or stats0.get("byte_total") or 0),
+        filters=dict(stats0.get("filters") or {}),
+        facets=dict(stats0.get("facets") or {}),
+        supported_filters=[
+            "scope",
+            "session_id",
+            "run_id",
+            "modality",
+            "semantic_kind",
+            "render_kind",
+            "workflow_id",
+            "node_id",
+            "content_type",
+            "created_after",
+            "created_before",
+            "tags",
+            "query",
+        ],
+        default_page_size=500,
     )
 
 
 @router.get("/runs/{run_id}/artifacts", response_model=ArtifactListResponse)
 async def list_run_artifacts(
     run_id: str,
-    limit: int = Query(200, ge=1, le=2000, description="Maximum number of artifacts (most recent first)."),
+    limit: int = Query(500, ge=-1, le=10_000, description="Maximum number of artifacts (most recent first); 0 or -1 is bounded to 500."),
+    offset: int = Query(0, ge=0, description="Result offset for pagination."),
 ) -> ArtifactListResponse:
-    """List artifacts associated with a run (read-only, v0)."""
+    """List artifacts associated with a run."""
     svc = get_gateway_service()
     rs = svc.host.run_store
     try:
@@ -6048,33 +7249,31 @@ async def list_run_artifacts(
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
-    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
-    list_fn = getattr(store, "list_by_run", None)
-    if not callable(list_fn):
-        raise HTTPException(status_code=400, detail="Artifact store does not support listing by run")
-
-    try:
-        items0 = list_fn(str(run_id))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list artifacts: {e}")
-
-    rows: list[ArtifactListItem] = []
-    for m in items0 or []:
-        try:
-            item = _artifact_list_item(m)
-            if item is not None:
-                rows.append(item)
-        except Exception:
-            continue
-
-    rows.sort(key=lambda r: str(r.created_at or ""), reverse=True)
-    return ArtifactListResponse(items=rows[: int(limit)])
+    store = _artifact_store_or_500(svc)
+    effective_limit = _artifact_effective_limit(int(limit))
+    rows, total, _stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
+        store,
+        scope="run",
+        run_id=str(run_id),
+        offset=int(offset),
+        limit=effective_limit,
+        order="desc",
+    )
+    return _artifact_page(
+        rows,
+        offset=0 if rows_pre_paged else int(offset),
+        reported_offset=int(offset) if rows_pre_paged else None,
+        limit=effective_limit,
+        total_count=total,
+        warnings=warnings,
+    )
 
 
 @router.get("/sessions/{session_id}/artifacts", response_model=ArtifactListResponse)
 async def list_session_artifacts(
     session_id: str,
-    limit: int = Query(200, ge=1, le=2000, description="Maximum number of artifacts (most recent first)."),
+    limit: int = Query(500, ge=-1, le=10_000, description="Maximum number of artifacts (most recent first); 0 or -1 is bounded to 500."),
+    offset: int = Query(0, ge=0, description="Result offset for pagination."),
 ) -> ArtifactListResponse:
     """List artifacts visible to a session for run-start input selection."""
     sid = str(session_id or "").strip()
@@ -6087,36 +7286,24 @@ async def list_session_artifacts(
         raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
 
     store = _artifact_store_or_500(svc)
-    seen: set[str] = set()
-    rows: list[ArtifactListItem] = []
-
-    list_by_run = getattr(store, "list_by_run", None)
-    if callable(list_by_run):
-        try:
-            for meta in list_by_run(str(owner_run_id)) or []:
-                item = _artifact_list_item(meta)
-                if item is not None and item.artifact_id not in seen:
-                    seen.add(item.artifact_id)
-                    rows.append(item)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to list session artifacts: {e}")
-
-    list_all = getattr(store, "list_all", None)
-    if callable(list_all):
-        try:
-            for meta in list_all(limit=max(int(limit) * 10, 10_000)) or []:
-                if not _artifact_visible_to_session(meta, sid):
-                    continue
-                item = _artifact_list_item(meta)
-                if item is not None and item.artifact_id not in seen:
-                    seen.add(item.artifact_id)
-                    rows.append(item)
-        except Exception:
-            # Session owner artifacts were already listed above; older stores may not support list_all.
-            pass
-
-    rows.sort(key=lambda r: str(r.created_at or ""), reverse=True)
-    return ArtifactListResponse(items=rows[: int(limit)])
+    effective_limit = _artifact_effective_limit(int(limit))
+    rows, total, _stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
+        store,
+        scope="session",
+        session_id=sid,
+        run_id=str(owner_run_id),
+        offset=int(offset),
+        limit=effective_limit,
+        order="desc",
+    )
+    return _artifact_page(
+        rows,
+        offset=0 if rows_pre_paged else int(offset),
+        reported_offset=int(offset) if rows_pre_paged else None,
+        limit=effective_limit,
+        total_count=total,
+        warnings=warnings,
+    )
 
 
 @router.get("/runs/{run_id}/artifacts/{artifact_id}")
@@ -6136,12 +7323,29 @@ async def get_run_artifact_metadata(run_id: str, artifact_id: str) -> Dict[str, 
     store = _artifact_store_or_500(svc)
     meta = _load_artifact_metadata_or_404(store, artifact_id)
     _assert_artifact_visible_to_run(meta=meta, run=run, run_id=str(run_id), field_name="artifact")
-
-    return _artifact_meta_dict(meta)
+    _record_artifact_access_best_effort(
+        store,
+        artifact_id,
+        action="metadata",
+        run_id=str(run_id),
+        session_id=str(getattr(run, "session_id", "") or ""),
+    )
+    try:
+        meta = _load_artifact_metadata_or_404(store, artifact_id)
+    except Exception:
+        pass
+    body = _artifact_meta_dict(meta)
+    body["artifact_envelope_v1"] = _artifact_envelope_v1(meta)
+    return body
 
 
 @router.get("/runs/{run_id}/artifacts/{artifact_id}/content")
-async def download_run_artifact_content(run_id: str, artifact_id: str) -> StreamingResponse:
+async def download_run_artifact_content(
+    run_id: str,
+    artifact_id: str,
+    access_action: str = Query("content", description="Access action for stats: preview|download|content."),
+    access: Optional[str] = Query(None, description="Alias for access_action, used by artifact links."),
+) -> StreamingResponse:
     """Download artifact bytes (streaming best-effort)."""
     svc = get_gateway_service()
     rs = svc.host.run_store
@@ -6157,6 +7361,16 @@ async def download_run_artifact_content(run_id: str, artifact_id: str) -> Stream
     store = _artifact_store_or_500(svc)
     meta = _load_artifact_metadata_or_404(store, artifact_id)
     _assert_artifact_visible_to_run(meta=meta, run=run, run_id=str(run_id), field_name="artifact")
+    action0 = str(access or access_action or "content").strip().lower()
+    if action0 not in {"preview", "download", "content", "open", "read"}:
+        action0 = "content"
+    _record_artifact_access_best_effort(
+        store,
+        artifact_id,
+        action=action0,
+        run_id=str(run_id),
+        session_id=str(getattr(run, "session_id", "") or ""),
+    )
 
     content_type = str(getattr(meta, "content_type", None) or "application/octet-stream")
 
@@ -6291,6 +7505,14 @@ async def export_run_artifact_content(run_id: str, artifact_id: str, req: Artifa
                 tmp.unlink()
         except Exception:
             pass
+
+    _record_artifact_access_best_effort(
+        store,
+        artifact_id,
+        action="export",
+        run_id=str(run_id),
+        session_id=str(getattr(run, "session_id", "") or ""),
+    )
 
     return {
         "ok": True,
@@ -7198,8 +8420,13 @@ class ImageGenerateRequest(BaseModel):
     format: str = Field(default="png", max_length=16, description="Desired output format, usually png/jpeg/webp.")
     negative_prompt: Optional[str] = Field(default=None, max_length=8000)
     seed: Optional[int] = Field(default=None)
+    count: Optional[int] = Field(default=None, ge=1, le=64, description="Optional number of images to generate in one call.")
+    n: Optional[int] = Field(default=None, ge=1, le=64, description="Compatibility alias for count.")
+    seeds: Optional[List[int]] = Field(default=None, description="Optional explicit batch seeds. When count is omitted, its length defines the batch size.")
     steps: Optional[int] = Field(default=None, ge=1, le=500)
     guidance_scale: Optional[float] = Field(default=None)
+    guidance_2: Optional[float] = Field(default=None, description="Optional second-stage guidance for models that expose it.")
+    lora_adapters: Optional[List[Dict[str, Any]]] = Field(default=None, description="Optional ordered LoRA adapter stack.")
     quality: Optional[str] = Field(default=None, max_length=32)
     style: Optional[str] = Field(default=None, max_length=64)
     request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
@@ -7213,6 +8440,7 @@ class ImageGenerateResponse(BaseModel):
     request_id: str
     child_run_id: Optional[str] = None
     image_artifact: Optional[Dict[str, Any]] = None
+    image_artifacts: List[Dict[str, Any]] = Field(default_factory=list)
     event_name: Optional[str] = None
     code: Optional[str] = None
     error: Optional[str] = None
@@ -7232,8 +8460,13 @@ class ImageEditRequest(BaseModel):
     format: str = Field(default="png", max_length=16, description="Desired output format, usually png/jpeg/webp.")
     negative_prompt: Optional[str] = Field(default=None, max_length=8000)
     seed: Optional[int] = Field(default=None)
+    count: Optional[int] = Field(default=None, ge=1, le=64, description="Optional number of edited images to generate in one call.")
+    n: Optional[int] = Field(default=None, ge=1, le=64, description="Compatibility alias for count.")
+    seeds: Optional[List[int]] = Field(default=None, description="Optional explicit batch seeds. When count is omitted, its length defines the batch size.")
     steps: Optional[int] = Field(default=None, ge=1, le=500)
     guidance_scale: Optional[float] = Field(default=None)
+    guidance_2: Optional[float] = Field(default=None, description="Optional second-stage guidance for models that expose it.")
+    lora_adapters: Optional[List[Dict[str, Any]]] = Field(default=None, description="Optional ordered LoRA adapter stack.")
     strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     quality: Optional[str] = Field(default=None, max_length=32)
     style: Optional[str] = Field(default=None, max_length=64)
@@ -7256,14 +8489,71 @@ class VideoGenerateRequest(BaseModel):
     format: str = Field(default="mp4", max_length=16, description="Desired output format, usually mp4.")
     negative_prompt: Optional[str] = Field(default=None, max_length=8000)
     seed: Optional[int] = Field(default=None)
+    count: Optional[int] = Field(default=None, ge=1, le=64, description="Optional number of videos to generate in one call.")
+    n: Optional[int] = Field(default=None, ge=1, le=64, description="Compatibility alias for count.")
+    seeds: Optional[List[int]] = Field(default=None, description="Optional explicit batch seeds. When count is omitted, its length defines the batch size.")
     steps: Optional[int] = Field(default=None, ge=1, le=1000)
     guidance_scale: Optional[float] = Field(default=None)
+    guidance_2: Optional[float] = Field(default=None, description="Optional second-stage guidance for dual-transformer video models.")
+    flow_shift: Optional[float] = Field(default=None, description="Optional flow-shift control for models that expose it.")
+    lora_adapters: Optional[List[Dict[str, Any]]] = Field(default=None, description="Optional ordered LoRA adapter stack.")
     request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
     extra: Optional[Dict[str, Any]] = Field(default=None, description="Optional provider-specific video-generation extras.")
 
 
 class ImageToVideoRequest(VideoGenerateRequest):
     image_artifact: Dict[str, Any] = Field(..., description="Source image artifact ref dict like {'$artifact': '...'}")
+
+
+class ImageUpscaleRequest(BaseModel):
+    image_artifact: Dict[str, Any] = Field(..., description="Source image artifact ref dict like {'$artifact': '...'}")
+    provider: Optional[str] = Field(default=None, max_length=80, description="Optional LLM/runtime provider override.")
+    model: Optional[str] = Field(default=None, max_length=240, description="Optional LLM/runtime model override.")
+    image_provider: Optional[str] = Field(default=None, max_length=80, description="Optional image backend/provider override.")
+    image_model: Optional[str] = Field(default=None, max_length=240, description="Optional image upscaler model id/name.")
+    format: str = Field(default="png", max_length=16, description="Desired output format, usually png/jpeg/webp.")
+    scale: Optional[str] = Field(default=None, max_length=32, description="Upscale factor such as 2x.")
+    resolution: Optional[Union[int, str]] = Field(default=None, description="Optional target shortest-edge pixels or scale factor such as 2x.")
+    softness: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Optional upscaler softness control.")
+    seed: Optional[int] = Field(default=None)
+    quantize: Optional[int] = Field(default=None, ge=1, le=16, description="Optional provider quantization hint when supported.")
+    vae_tiling: Optional[bool] = Field(default=None, description="Force tiled VAE encode/decode when supported; leave unset for the MLX-Gen SeedVR2 runtime policy.")
+    request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
+    extra: Optional[Dict[str, Any]] = Field(default=None, description="Optional provider-specific image-upscale extras.")
+
+    @model_validator(mode="after")
+    def normalize_resolution(self) -> "ImageUpscaleRequest":
+        raw = self.resolution
+        if raw is None:
+            return self
+        if isinstance(raw, bool):
+            raise ValueError("resolution must be a positive integer shortest edge or scale factor such as 2x.")
+        if isinstance(raw, int):
+            if raw <= 0 or raw > 16384:
+                raise ValueError("resolution must be between 1 and 16384 pixels.")
+            return self
+        text = str(raw).strip()
+        if not text:
+            self.resolution = None
+            return self
+        lowered = text.lower()
+        if lowered.endswith("x"):
+            try:
+                scale_value = float(lowered[:-1])
+            except Exception as exc:
+                raise ValueError("resolution must be a positive scale factor such as 2x.") from exc
+            if scale_value <= 0:
+                raise ValueError("resolution scale factor must be positive.")
+            self.resolution = text
+            return self
+        try:
+            parsed = int(float(text))
+        except Exception as exc:
+            raise ValueError("resolution must be a positive integer shortest edge or scale factor such as 2x.") from exc
+        if parsed <= 0 or parsed > 16384:
+            raise ValueError("resolution must be between 1 and 16384 pixels.")
+        self.resolution = parsed
+        return self
 
 
 class VideoGenerateResponse(BaseModel):
@@ -7273,6 +8563,7 @@ class VideoGenerateResponse(BaseModel):
     request_id: str
     child_run_id: Optional[str] = None
     video_artifact: Optional[Dict[str, Any]] = None
+    video_artifacts: List[Dict[str, Any]] = Field(default_factory=list)
     event_name: Optional[str] = None
     code: Optional[str] = None
     error: Optional[str] = None
@@ -7434,6 +8725,51 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         tags["provider"] = stt_provider_name
     if stt_model_name:
         tags["model"] = stt_model_name
+    source_audio_ref: Dict[str, Any] = {
+        "kind": "artifact",
+        "role": "source_audio",
+        "artifact_id": str(_audio_artifact_id),
+        "run_id": str(_artifact_meta_value(meta_in, "run_id") or ""),
+        "content_type": str(_artifact_meta_value(meta_in, "content_type") or ""),
+    }
+    generation: Dict[str, Any] = {}
+    if prompt_hint:
+        generation["prompt"] = prompt_hint
+    if language_hint:
+        generation["language"] = language_hint
+    params_meta: Dict[str, Any] = {}
+    if response_format:
+        params_meta["response_format"] = response_format
+    if source_format:
+        params_meta["source_format"] = source_format
+    if temperature is not None:
+        params_meta["temperature"] = temperature
+    if params_meta:
+        generation["params"] = params_meta
+    producer: Dict[str, Any] = {
+        "package": "abstractgateway",
+        "capability_route": "audio.transcribe",
+    }
+    if stt_provider_name:
+        producer["provider"] = stt_provider_name
+    if stt_model_name:
+        producer["model"] = stt_model_name
+    descriptor, structured_metadata = build_artifact_descriptor_payload(
+        semantic_kind="transcript",
+        render_kind="text",
+        modality="text",
+        task="transcription",
+        content_type="text/plain; charset=utf-8",
+        session_id=str(getattr(run, "session_id", "") or ""),
+        workflow_id=str(getattr(run, "workflow_id", "") or ""),
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        source="gateway_direct_transcription",
+        producer=producer,
+        generation=generation,
+        source_refs=[source_audio_ref],
+        metadata_schema="abstractruntime.transcript_artifact_metadata.v1",
+    )
     try:
         meta = await asyncio.to_thread(
             store_fn,
@@ -7441,6 +8777,8 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
             content_type="text/plain; charset=utf-8",
             run_id=str(getattr(run, "run_id", rid)),
             tags=tags,
+            metadata=structured_metadata,
+            descriptor=descriptor,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store transcript artifact: {e}")
@@ -7506,6 +8844,40 @@ def _gateway_generated_video_content_type(fmt: str) -> Tuple[str, str]:
     return "application/octet-stream", "bin"
 
 
+def _gateway_requested_generation_count(req: Any) -> Optional[int]:
+    count = getattr(req, "count", None)
+    alias = getattr(req, "n", None)
+    if count is not None and alias is not None and int(count) != int(alias):
+        raise HTTPException(status_code=400, detail="count and n must match when both are provided.")
+    if count is not None:
+        return int(count)
+    if alias is not None:
+        return int(alias)
+    seeds = getattr(req, "seeds", None)
+    if isinstance(seeds, list) and seeds:
+        return len(seeds)
+    return None
+
+
+def _gateway_requested_generation_seeds(req: Any) -> Optional[List[int]]:
+    seeds = getattr(req, "seeds", None)
+    if not isinstance(seeds, list) or not seeds:
+        return None
+    return [int(seed) for seed in seeds]
+
+
+def _gateway_requested_lora_adapters(req: Any) -> Optional[List[Dict[str, Any]]]:
+    raw = getattr(req, "lora_adapters", None)
+    if not isinstance(raw, list) or not raw:
+        return None
+    adapters: List[Dict[str, Any]] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail=f"lora_adapters[{index}] must be an object.")
+        adapters.append({str(key): value for key, value in item.items() if value is not None})
+    return adapters or None
+
+
 def _gateway_image_generation_max_bytes() -> int:
     raw = _env_first("ABSTRACTGATEWAY_IMAGE_MAX_BYTES", "ABSTRACTCORE_IMAGE_MAX_BYTES")
     try:
@@ -7528,6 +8900,69 @@ def _artifact_id_from_meta(meta: Any) -> str:
 def _artifact_tags_from_meta(meta: Any) -> Dict[str, Any]:
     tags = _artifact_meta_value(meta, "tags")
     return dict(tags) if isinstance(tags, dict) else {}
+
+
+def _artifact_structured_metadata_from_meta(meta: Any) -> Dict[str, Any]:
+    data = _artifact_meta_value(meta, "metadata")
+    if isinstance(data, dict):
+        return dict(data)
+    raw = _artifact_meta_dict(meta)
+    data = raw.get("metadata")
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def _descriptor_with_projection(
+    *,
+    meta: Any,
+    parent_run_id: str,
+    child_run_id: str,
+    source_artifact_id: str,
+    tags: Dict[str, Any],
+) -> Dict[str, Any]:
+    descriptor = _artifact_descriptor_dict(meta)
+    out = dict(descriptor) if isinstance(descriptor, dict) else {}
+    for desc_key, tag_keys in {
+        "session_id": ("session_id",),
+        "workflow_id": ("workflow_id", "workflow"),
+        "node_id": ("node_id", "node"),
+        "step_id": ("step_id",),
+        "effect_id": ("effect_id", "effect_idempotency_key"),
+        "turn_id": ("turn_id", "turn"),
+        "ledger_cursor": ("ledger_cursor", "step_cursor"),
+        "actor_id": ("actor_id",),
+    }.items():
+        for tag_key in tag_keys:
+            value = str(tags.get(tag_key) or "").strip()
+            if value:
+                out[desc_key] = value
+                break
+    provenance = out.get("provenance") if isinstance(out.get("provenance"), dict) else {}
+    provenance = dict(provenance)
+    provenance.setdefault("source", str(tags.get("source") or "gateway_child_projection"))
+    if tags.get("source"):
+        provenance["projection_source"] = str(tags.get("source"))
+    provenance["run_id"] = str(parent_run_id)
+    provenance["projected_from_run_id"] = str(child_run_id)
+    provenance["projected_from_artifact_id"] = str(source_artifact_id)
+    out["provenance"] = provenance
+
+    source_refs = out.get("source_refs") if isinstance(out.get("source_refs"), list) else []
+    next_refs = list(source_refs)
+    projection_ref = {
+        "kind": "artifact",
+        "role": "projected_from",
+        "artifact_id": str(source_artifact_id),
+        "run_id": str(child_run_id),
+    }
+    if not any(
+        isinstance(ref, dict)
+        and str(ref.get("artifact_id") or "") == str(source_artifact_id)
+        and str(ref.get("role") or "") == "projected_from"
+        for ref in next_refs
+    ):
+        next_refs.append(projection_ref)
+    out["source_refs"] = next_refs
+    return out
 
 
 def _artifact_content_bytes(store: Any, artifact_id: str) -> Optional[bytes]:
@@ -7643,8 +9078,23 @@ def _gateway_project_artifact_to_parent_run(
         merged_tags.update({str(k): v for k, v in tags.items() if v not in (None, "")})
         merged_tags.setdefault("projected_from_artifact_id", str(artifact_id))
         merged_tags.setdefault("projected_from_run_id", meta_run_id)
+        structured_metadata = _artifact_structured_metadata_from_meta(meta)
+        descriptor = _descriptor_with_projection(
+            meta=meta,
+            parent_run_id=str(run_id),
+            child_run_id=meta_run_id,
+            source_artifact_id=str(artifact_id),
+            tags=merged_tags,
+        )
         try:
-            meta = store_fn(blob, content_type=content_type, run_id=str(run_id), tags=merged_tags)
+            meta = store_fn(
+                blob,
+                content_type=content_type,
+                run_id=str(run_id),
+                tags=merged_tags,
+                metadata=structured_metadata,
+                descriptor=descriptor,
+            )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to project generated media artifact into parent run: {e}") from e
         new_artifact_id = _artifact_id_from_meta(meta)
@@ -7666,9 +9116,12 @@ def _gateway_generated_image_ref_from_result(
     request_id: str,
     fmt: str,
     session_id: str,
+    prompt: str = "",
+    output_spec: Optional[Dict[str, Any]] = None,
     task: str = "image_generation",
     source: str = "gateway_direct_image",
     filename_stem: str = "generated",
+    output_index: int = 0,
 ) -> Optional[Dict[str, Any]]:
     if not isinstance(result, dict):
         return None
@@ -7702,6 +9155,58 @@ def _gateway_generated_image_ref_from_result(
         if not callable(store_fn):
             raise HTTPException(status_code=500, detail="Artifact store does not support storing generated images")
         sha256 = hashlib.sha256(image_bytes).hexdigest()
+        spec = dict(output_spec or {}) if isinstance(output_spec, dict) else {}
+        generation: Dict[str, Any] = {"requested_format": fmt_norm, "output_index": int(output_index)}
+        if str(prompt or "").strip():
+            generation["prompt"] = str(prompt or "").strip()
+        params_meta = {
+            str(k): v
+            for k, v in spec.items()
+            if k
+            not in {
+                "artifact_id",
+                "data",
+                "input",
+                "media",
+                "modality",
+                "model",
+                "output",
+                "prompt",
+                "provider",
+                "run_id",
+                "tags",
+                "task",
+                "text",
+                "type",
+            }
+            and v is not None
+        }
+        if params_meta:
+            generation["params"] = params_meta
+        producer: Dict[str, Any] = {
+            "package": "abstractgateway",
+            "capability_route": task,
+        }
+        provider = str(item0.get("provider") or spec.get("provider") or "").strip()
+        model = str(item0.get("model") or spec.get("model") or "").strip()
+        if provider:
+            producer["provider"] = provider
+        if model:
+            producer["model"] = model
+        descriptor, structured_metadata = build_artifact_descriptor_payload(
+            semantic_kind="image",
+            render_kind="image",
+            modality="image",
+            task=task,
+            content_type=content_type,
+            session_id=session_id,
+            run_id=run_id,
+            request_id=request_id,
+            source=source,
+            producer=producer,
+            generation=generation,
+            metadata_schema="abstractruntime.generated_media_metadata.v1",
+        )
         meta = store_fn(
             image_bytes,
             content_type=content_type,
@@ -7716,6 +9221,8 @@ def _gateway_generated_image_ref_from_result(
                 "sha256": sha256,
                 "format": fmt_norm,
             },
+            metadata=structured_metadata,
+            descriptor=descriptor,
         )
         artifact_id = str(getattr(meta, "artifact_id", "") or "")
         if not artifact_id and isinstance(meta, dict):
@@ -7796,6 +9303,53 @@ def _gateway_generated_image_ref_from_result(
     if size_i is not None:
         out["size_bytes"] = int(size_i)
     return out
+
+
+def _gateway_generated_image_refs_from_result(
+    *,
+    result: Any,
+    store: Any,
+    run_id: str,
+    request_id: str,
+    fmt: str,
+    session_id: str,
+    prompt: str = "",
+    output_spec: Optional[Dict[str, Any]] = None,
+    task: str = "image_generation",
+    source: str = "gateway_direct_image",
+    filename_stem: str = "generated",
+) -> List[Dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+    outputs = result.get("outputs")
+    if not isinstance(outputs, dict):
+        return []
+    images = outputs.get("image")
+    if not isinstance(images, list):
+        return []
+    refs: List[Dict[str, Any]] = []
+    multiple = len([item for item in images if isinstance(item, dict)]) > 1
+    for index, item in enumerate(images):
+        if not isinstance(item, dict):
+            continue
+        stem = f"{filename_stem}_{index + 1}" if multiple else filename_stem
+        ref = _gateway_generated_image_ref_from_result(
+            result={"outputs": {"image": [item]}},
+            store=store,
+            run_id=run_id,
+            request_id=request_id,
+            fmt=fmt,
+            session_id=session_id,
+            prompt=prompt,
+            output_spec=output_spec,
+            task=task,
+            source=source,
+            filename_stem=stem,
+            output_index=index,
+        )
+        if isinstance(ref, dict):
+            refs.append(ref)
+    return refs
 
 
 def _gateway_generated_artifact_ref_from_item(
@@ -7888,6 +9442,47 @@ def _gateway_generated_artifact_ref_from_item(
     return out
 
 
+def _gateway_generated_video_refs_from_result(
+    *,
+    result: Any,
+    store: Any,
+    run_id: str,
+    request_id: str,
+    fmt: str,
+    session_id: str,
+    task: str,
+    source: str,
+    filename_stem: str = "video",
+) -> List[Dict[str, Any]]:
+    outputs = result.get("outputs") if isinstance(result, dict) else None
+    items = outputs.get("video") if isinstance(outputs, dict) else None
+    if not isinstance(items, list):
+        return []
+    fallback_content_type, fmt_norm = _gateway_generated_video_content_type(fmt)
+    refs: List[Dict[str, Any]] = []
+    multiple = len([item for item in items if isinstance(item, dict)]) > 1
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        fallback_filename = f"{filename_stem}_{index + 1}.{fmt_norm}" if multiple else f"{filename_stem}.{fmt_norm}"
+        ref = _gateway_generated_artifact_ref_from_item(
+            item,
+            store=store,
+            run_id=run_id,
+            request_id=request_id,
+            session_id=session_id,
+            fallback_content_type=fallback_content_type,
+            fallback_filename=fallback_filename,
+            modality="video",
+            task=task,
+            source=source,
+            include_sha256=False,
+        )
+        if isinstance(ref, dict):
+            refs.append(ref)
+    return refs
+
+
 def _gateway_completed_child_result(child: RunState, *, operation: str) -> Dict[str, Any]:
     if child.status != RunStatus.COMPLETED:
         raise HTTPException(
@@ -7965,12 +9560,22 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         "seed",
         "steps",
         "guidance_scale",
+        "guidance_2",
         "quality",
         "style",
     ):
         value = getattr(req, key, None)
         if value is not None:
             output_spec[key] = value
+    batch_count = _gateway_requested_generation_count(req)
+    if batch_count is not None:
+        output_spec["count"] = batch_count
+    seeds = _gateway_requested_generation_seeds(req)
+    if seeds is not None:
+        output_spec["seeds"] = seeds
+    lora_adapters = _gateway_requested_lora_adapters(req)
+    if lora_adapters is not None:
+        output_spec["lora_adapters"] = lora_adapters
     if isinstance(req.extra, dict) and req.extra:
         output_spec["extra"] = dict(req.extra)
     image_provider = str(getattr(req, "image_provider", "") or "").strip()
@@ -8020,18 +9625,20 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         )
 
     result = _gateway_completed_child_result(child, operation="image generation")
-    image_ref = _gateway_generated_image_ref_from_result(
+    image_refs = _gateway_generated_image_refs_from_result(
         result=result,
         store=store,
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
         fmt=fmt,
         session_id=session_id,
+        prompt=prompt,
+        output_spec=output_spec,
         task="image_generation",
         source="gateway_direct_image",
         filename_stem="generated",
     )
-    if not image_ref:
+    if not image_refs:
         return ImageGenerateResponse(
             ok=False,
             supported=False,
@@ -8048,7 +9655,8 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
         child_run_id=str(child.run_id),
-        image_artifact=image_ref,
+        image_artifact=image_refs[0],
+        image_artifacts=image_refs,
         event_name="abstract.progress",
     )
 
@@ -8140,6 +9748,7 @@ async def image_edit(run_id: str, req: ImageEditRequest) -> ImageGenerateRespons
         "seed",
         "steps",
         "guidance_scale",
+        "guidance_2",
         "strength",
         "quality",
         "style",
@@ -8147,6 +9756,15 @@ async def image_edit(run_id: str, req: ImageEditRequest) -> ImageGenerateRespons
         value = getattr(req, key, None)
         if value is not None:
             output_spec[key] = value
+    batch_count = _gateway_requested_generation_count(req)
+    if batch_count is not None:
+        output_spec["count"] = batch_count
+    seeds = _gateway_requested_generation_seeds(req)
+    if seeds is not None:
+        output_spec["seeds"] = seeds
+    lora_adapters = _gateway_requested_lora_adapters(req)
+    if lora_adapters is not None:
+        output_spec["lora_adapters"] = lora_adapters
     if isinstance(req.extra, dict) and req.extra:
         output_spec["extra"] = dict(req.extra)
     image_provider = str(getattr(req, "image_provider", "") or "").strip()
@@ -8219,18 +9837,20 @@ async def image_edit(run_id: str, req: ImageEditRequest) -> ImageGenerateRespons
         )
 
     result = _gateway_completed_child_result(child, operation="image edit")
-    image_ref = _gateway_generated_image_ref_from_result(
+    image_refs = _gateway_generated_image_refs_from_result(
         result=result,
         store=store,
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
         fmt=fmt,
         session_id=session_id,
+        prompt=prompt,
+        output_spec=output_spec,
         task="image_edit",
         source="gateway_direct_image_edit",
         filename_stem="edited",
     )
-    if not image_ref:
+    if not image_refs:
         return ImageGenerateResponse(
             ok=False,
             supported=False,
@@ -8247,7 +9867,171 @@ async def image_edit(run_id: str, req: ImageEditRequest) -> ImageGenerateRespons
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
         child_run_id=str(child.run_id),
-        image_artifact=image_ref,
+        image_artifact=image_refs[0],
+        image_artifacts=image_refs,
+        event_name="abstract.progress",
+    )
+
+
+@router.post("/runs/{run_id}/images/upscale", response_model=ImageGenerateResponse)
+async def image_upscale(run_id: str, req: ImageUpscaleRequest) -> ImageGenerateResponse:
+    """Delegate image upscaling to Runtime-owned durable child execution."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Artifact store is not available")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    source_ref = getattr(req, "image_artifact", None)
+    source_artifact_id, source_meta = _resolve_scoped_input_artifact(
+        store=store,
+        run=run,
+        run_id=rid,
+        artifact_ref=source_ref,
+        field_name="image_artifact",
+        expected_content_prefix="image/",
+    )
+
+    run_facade, err = _gateway_abstractcore_run_facade()
+    upscale_image_fn = getattr(run_facade, "upscale_image", None) if run_facade is not None else None
+    if err or run_facade is None or not callable(upscale_image_fn):
+        return ImageGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="image_upscale_unavailable",
+            error=err or "Gateway runtime does not expose AbstractCore durable image upscaling helpers.",
+        )
+
+    fmt = str(getattr(req, "format", "png") or "png").strip().lower() or "png"
+    session_id = str(getattr(run, "session_id", "") or "")
+    tags = {
+        "kind": "generated_media",
+        "modality": "image",
+        "task": "image_upscale",
+        "source": "gateway_direct_image_upscale",
+        "request_id": request_id,
+        "session_id": session_id,
+        "format": fmt,
+    }
+    output_spec: Dict[str, Any] = {
+        "modality": "image",
+        "task": "image_upscale",
+        "format": fmt,
+        "run_id": str(getattr(run, "run_id", rid)),
+        "tags": tags,
+    }
+    for key in ("scale", "resolution", "softness", "seed", "quantize", "vae_tiling"):
+        value = getattr(req, key, None)
+        if value is not None:
+            output_spec[key] = value
+    if isinstance(req.extra, dict) and req.extra:
+        output_spec["extra"] = dict(req.extra)
+    image_provider = str(getattr(req, "image_provider", "") or "").strip()
+    image_model = str(getattr(req, "image_model", "") or "").strip()
+    if image_provider:
+        output_spec["provider"] = image_provider
+    if image_model:
+        output_spec["model"] = image_model
+
+    source_item: Dict[str, Any] = {
+        "$artifact": source_artifact_id,
+        "artifact_id": source_artifact_id,
+        "type": "image",
+        "role": "source",
+    }
+    source_content_type = str(getattr(source_meta, "content_type", "") or "").strip()
+    if source_content_type:
+        source_item["content_type"] = source_content_type
+
+    params: Dict[str, Any] = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": session_id,
+            "request_id": request_id,
+        },
+    }
+    child_vars: Optional[Dict[str, Any]] = None
+    runtime_provider = str(getattr(req, "provider", "") or "").strip()
+    runtime_model = str(getattr(req, "model", "") or "").strip()
+    if runtime_provider or runtime_model:
+        runtime_ns: Dict[str, Any] = {}
+        if runtime_provider:
+            runtime_ns["provider"] = runtime_provider
+        if runtime_model:
+            runtime_ns["model"] = runtime_model
+        child_vars = {"_runtime": runtime_ns}
+
+    try:
+        child = await asyncio.to_thread(
+            upscale_image_fn,
+            str(getattr(run, "run_id", rid)),
+            media=[source_item],
+            output=output_spec,
+            params=params,
+            child_vars=child_vars,
+        )
+    except Exception as e:
+        return ImageGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="image_upscale_error",
+            error=str(e),
+        )
+
+    result = _gateway_completed_child_result(child, operation="image upscale")
+    image_refs = _gateway_generated_image_refs_from_result(
+        result=result,
+        store=store,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        fmt=fmt,
+        session_id=session_id,
+        prompt="",
+        output_spec=output_spec,
+        task="image_upscale",
+        source="gateway_direct_image_upscale",
+        filename_stem="upscaled",
+    )
+    if not image_refs:
+        return ImageGenerateResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="image_upscale_no_artifact",
+            error="Image upscale completed without a stored image artifact.",
+        )
+
+    return ImageGenerateResponse(
+        ok=True,
+        supported=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        child_run_id=str(child.run_id),
+        image_artifact=image_refs[0],
+        image_artifacts=image_refs,
         event_name="abstract.progress",
     )
 
@@ -8321,10 +10105,23 @@ async def video_generate(run_id: str, req: VideoGenerateRequest) -> VideoGenerat
         "seed",
         "steps",
         "guidance_scale",
+        "guidance_2",
     ):
         value = getattr(req, key, None)
         if value is not None:
             output_spec[key] = value
+    batch_count = _gateway_requested_generation_count(req)
+    if batch_count is not None:
+        output_spec["count"] = batch_count
+    seeds = _gateway_requested_generation_seeds(req)
+    if seeds is not None:
+        output_spec["seeds"] = seeds
+    flow_shift = getattr(req, "flow_shift", None)
+    if flow_shift is not None:
+        output_spec["flow_shift"] = flow_shift
+    lora_adapters = _gateway_requested_lora_adapters(req)
+    if lora_adapters is not None:
+        output_spec["lora_adapters"] = lora_adapters
     if output_spec.get("frames") is None and output_spec.get("num_frames") is not None:
         output_spec["frames"] = output_spec["num_frames"]
     if isinstance(req.extra, dict) and req.extra:
@@ -8376,35 +10173,18 @@ async def video_generate(run_id: str, req: VideoGenerateRequest) -> VideoGenerat
         )
 
     result = _gateway_completed_child_result(child, operation="video generation")
-    outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
-    items = outputs.get("video") if isinstance(outputs, dict) else None
-    item = next((entry for entry in items if isinstance(entry, dict)), None) if isinstance(items, list) else None
-    if not isinstance(item, dict):
-        return VideoGenerateResponse(
-            ok=False,
-            supported=False,
-            run_id=str(getattr(run, "run_id", rid)),
-            request_id=request_id,
-            child_run_id=str(child.run_id),
-            code="generated_video_no_artifact",
-            error="Video generation completed without a stored video artifact.",
-        )
-
-    fallback_content_type, fmt_norm = _gateway_generated_video_content_type(fmt)
-    video_ref = _gateway_generated_artifact_ref_from_item(
-        item,
+    video_refs = _gateway_generated_video_refs_from_result(
+        result=result,
         store=store,
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
+        fmt=fmt,
         session_id=session_id,
-        fallback_content_type=fallback_content_type,
-        fallback_filename=f"video.{fmt_norm}",
-        modality="video",
         task="text_to_video",
         source="gateway_direct_video",
-        include_sha256=False,
+        filename_stem="video",
     )
-    if not isinstance(video_ref, dict):
+    if not video_refs:
         return VideoGenerateResponse(
             ok=False,
             supported=False,
@@ -8421,7 +10201,8 @@ async def video_generate(run_id: str, req: VideoGenerateRequest) -> VideoGenerat
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
         child_run_id=str(child.run_id),
-        video_artifact=video_ref,
+        video_artifact=video_refs[0],
+        video_artifacts=video_refs,
         event_name="abstract.progress",
     )
 
@@ -8505,10 +10286,23 @@ async def image_to_video(run_id: str, req: ImageToVideoRequest) -> VideoGenerate
         "seed",
         "steps",
         "guidance_scale",
+        "guidance_2",
     ):
         value = getattr(req, key, None)
         if value is not None:
             output_spec[key] = value
+    batch_count = _gateway_requested_generation_count(req)
+    if batch_count is not None:
+        output_spec["count"] = batch_count
+    seeds = _gateway_requested_generation_seeds(req)
+    if seeds is not None:
+        output_spec["seeds"] = seeds
+    flow_shift = getattr(req, "flow_shift", None)
+    if flow_shift is not None:
+        output_spec["flow_shift"] = flow_shift
+    lora_adapters = _gateway_requested_lora_adapters(req)
+    if lora_adapters is not None:
+        output_spec["lora_adapters"] = lora_adapters
     if output_spec.get("frames") is None and output_spec.get("num_frames") is not None:
         output_spec["frames"] = output_spec["num_frames"]
     if isinstance(req.extra, dict) and req.extra:
@@ -8571,35 +10365,18 @@ async def image_to_video(run_id: str, req: ImageToVideoRequest) -> VideoGenerate
         )
 
     result = _gateway_completed_child_result(child, operation="image-to-video generation")
-    outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
-    items = outputs.get("video") if isinstance(outputs, dict) else None
-    item = next((entry for entry in items if isinstance(entry, dict)), None) if isinstance(items, list) else None
-    if not isinstance(item, dict):
-        return VideoGenerateResponse(
-            ok=False,
-            supported=False,
-            run_id=str(getattr(run, "run_id", rid)),
-            request_id=request_id,
-            child_run_id=str(child.run_id),
-            code="image_to_video_no_artifact",
-            error="Image-to-video generation completed without a stored video artifact.",
-        )
-
-    fallback_content_type, fmt_norm = _gateway_generated_video_content_type(fmt)
-    video_ref = _gateway_generated_artifact_ref_from_item(
-        item,
+    video_refs = _gateway_generated_video_refs_from_result(
+        result=result,
         store=store,
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
+        fmt=fmt,
         session_id=session_id,
-        fallback_content_type=fallback_content_type,
-        fallback_filename=f"video.{fmt_norm}",
-        modality="video",
         task="image_to_video",
         source="gateway_direct_image_to_video",
-        include_sha256=False,
+        filename_stem="video",
     )
-    if not isinstance(video_ref, dict):
+    if not video_refs:
         return VideoGenerateResponse(
             ok=False,
             supported=False,
@@ -8616,7 +10393,8 @@ async def image_to_video(run_id: str, req: ImageToVideoRequest) -> VideoGenerate
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
         child_run_id=str(child.run_id),
-        video_artifact=video_ref,
+        video_artifact=video_refs[0],
+        video_artifacts=video_refs,
         event_name="abstract.progress",
     )
 
@@ -9656,6 +11434,7 @@ def _gateway_catalog_contract_descriptor() -> Dict[str, Any]:
         "items_field": "items",
         "provider_item_fields": ["id", "label", "provider"],
         "model_item_fields": ["id", "label", "provider", "tasks", "parameters"],
+        "adapter_item_fields": ["id", "label", "provider", "model", "tasks", "compatible_models"],
         "voice_item_fields": ["id", "label", "provider", "model", "voice_kind"],
     }
 
@@ -9871,6 +11650,65 @@ def _gateway_catalog_model_items(
     return _gateway_catalog_dedupe_items(items)
 
 
+def _gateway_catalog_adapter_item(
+    value: Any,
+    *,
+    provider: Optional[str] = None,
+    task: Optional[str] = None,
+    model: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    out = dict(value)
+    adapter_id = str(
+        out.get("id")
+        or out.get("adapter_id")
+        or out.get("name")
+        or out.get("adapter")
+        or ""
+    ).strip()
+    if not adapter_id:
+        return None
+    provider_id = str(out.get("provider") or provider or "").strip()
+    label = str(out.get("label") or out.get("name") or adapter_id).strip() or adapter_id
+    out["id"] = adapter_id
+    out["label"] = label
+    if provider_id:
+        out["provider"] = provider_id
+    model_value = str(out.get("model") or model or "").strip()
+    if model_value:
+        out["model"] = model_value
+    tasks = _catalog_string_list(out.get("compatible_tasks"))
+    if not tasks:
+        tasks = _catalog_string_list(out.get("tasks"))
+    if not tasks and isinstance(task, str) and task.strip():
+        tasks = [task.strip()]
+    if tasks:
+        out["tasks"] = tasks
+    compatible_models = _catalog_string_list(out.get("compatible_models"))
+    if compatible_models:
+        out["compatible_models"] = compatible_models
+    return out
+
+
+def _gateway_catalog_adapter_items(
+    payload: Dict[str, Any],
+    *,
+    provider: Optional[str] = None,
+    task: Optional[str] = None,
+    model: Optional[str] = None,
+) -> list[Dict[str, Any]]:
+    values = payload.get("adapters")
+    if not isinstance(values, list):
+        return []
+    items: list[Dict[str, Any]] = []
+    for value in values:
+        item = _gateway_catalog_adapter_item(value, provider=provider, task=task, model=model)
+        if item is not None:
+            items.append(item)
+    return _gateway_catalog_dedupe_items(items, key_fields=("provider", "id", "model"))
+
+
 def _gateway_catalog_voice_items(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
     merged: Dict[tuple[str, str, str], Dict[str, Any]] = {}
     for key, voice_kind in (("profiles", "profile"), ("voices", "voice"), ("cloned_voices", "clone")):
@@ -10017,6 +11855,7 @@ def _gateway_readiness_descriptor(
     durable_blocs = prompt_cache.get("durable_blocs") if isinstance(prompt_cache.get("durable_blocs"), dict) else {}
     generated_image = assistant_media.get("generated_image") if isinstance(assistant_media.get("generated_image"), dict) else {}
     edited_image = assistant_media.get("edited_image") if isinstance(assistant_media.get("edited_image"), dict) else {}
+    upscaled_image = assistant_media.get("upscaled_image") if isinstance(assistant_media.get("upscaled_image"), dict) else {}
     generated_video = assistant_media.get("generated_video") if isinstance(assistant_media.get("generated_video"), dict) else {}
     image_to_video_media = assistant_media.get("image_to_video") if isinstance(assistant_media.get("image_to_video"), dict) else {}
     generated_voice = assistant_media.get("generated_voice") if isinstance(assistant_media.get("generated_voice"), dict) else {}
@@ -10089,6 +11928,7 @@ def _gateway_readiness_descriptor(
                 "audio_music_models": isinstance(discovery.get("audio_music_models"), str) and bool(str(discovery.get("audio_music_models")).strip()),
                 "vision_provider_models": isinstance(discovery.get("vision_provider_models"), str) and bool(str(discovery.get("vision_provider_models")).strip()),
                 "vision_models": isinstance(discovery.get("vision_models"), str) and bool(str(discovery.get("vision_models")).strip()),
+                "vision_adapters": isinstance(discovery.get("vision_adapters"), str) and bool(str(discovery.get("vision_adapters")).strip()),
                 "tools": isinstance(discovery.get("tools"), str) and bool(str(discovery.get("tools")).strip()),
                 "semantics": isinstance(discovery.get("semantics"), str) and bool(str(discovery.get("semantics")).strip()),
             },
@@ -10139,6 +11979,12 @@ def _gateway_readiness_descriptor(
                     **_surface(edited_image.get("direct_endpoint") if isinstance(edited_image.get("direct_endpoint"), dict) else {}),
                     "workflow_available": bool(edited_image.get("workflow", {}).get("available"))
                     if isinstance(edited_image.get("workflow"), dict)
+                    else False,
+                },
+                "upscaled_image": {
+                    **_surface(upscaled_image.get("direct_endpoint") if isinstance(upscaled_image.get("direct_endpoint"), dict) else {}),
+                    "workflow_available": bool(upscaled_image.get("workflow", {}).get("available"))
+                    if isinstance(upscaled_image.get("workflow"), dict)
                     else False,
                 },
                 "generated_video": {
@@ -11198,6 +13044,7 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
     direct_route_available = run_facade is not None and not run_err
     generated_video_route_available = bool(direct_route_available and callable(getattr(run_facade, "generate_video", None)))
     image_to_video_route_available = bool(direct_route_available and callable(getattr(run_facade, "image_to_video", None)))
+    image_upscale_route_available = bool(direct_route_available and callable(getattr(run_facade, "upscale_image", None)))
     direct_configured = bool(direct_route_available and _gateway_direct_image_configured())
     workflow_image_available = bool(
         direct_route_available and direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
@@ -11207,6 +13054,9 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
     )
     workflow_image_to_video_available = bool(
         image_to_video_route_available and direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
+    )
+    workflow_image_upscale_available = bool(
+        image_upscale_route_available and direct_configured and (vision_plugin.get("available") or abstractvision.get("installed"))
     )
     voice_direct = _voice_contract_descriptor(caps, kind="tts")
     music_plugin = _plugin_capability(caps, "music")
@@ -11232,6 +13082,13 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "endpoint": _api_gateway_path("/runs/{run_id}/images/generate"),
                 "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
                 "provider_models_task": "text_to_image",
+                "adapter_catalog_endpoint": _api_gateway_path("/vision/adapters"),
+                "supports_batch": True,
+                "batch_count_field": "count",
+                "batch_seed_field": "seeds",
+                "supports_lora_adapters": True,
+                "supports_lora_stack": True,
+                "artifact_list_field": "image_artifacts",
                 "durability": "runtime_child_run",
                 "returns_child_run_id": True,
                 "progress_event_name": "abstract.progress",
@@ -11264,6 +13121,13 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "endpoint": _api_gateway_path("/runs/{run_id}/images/edit"),
                 "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
                 "provider_models_task": "image_to_image",
+                "adapter_catalog_endpoint": _api_gateway_path("/vision/adapters"),
+                "supports_batch": True,
+                "batch_count_field": "count",
+                "batch_seed_field": "seeds",
+                "supports_lora_adapters": True,
+                "supports_lora_stack": True,
+                "artifact_list_field": "image_artifacts",
                 "input_modes": ["artifact"],
                 "mask_supported": True,
                 "durability": "runtime_child_run",
@@ -11276,6 +13140,41 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                     {"config_hint": str(run_err or "Gateway runtime is not wired to AbstractCore durable media helpers.")}
                     if not direct_route_available
                     else {"config_hint": "Configure AbstractVision or an AbstractCore-backed image runtime for image edits."}
+                    if not direct_configured
+                    else {}
+                ),
+            },
+        },
+        "upscaled_image": {
+            "workflow": {
+                "available": workflow_image_upscale_available,
+                "backend": vision_plugin.get("selected_backend") if isinstance(vision_plugin, dict) else None,
+                "event_contract": "workflow_artifact",
+                **(
+                    {"config_hint": str(vision_plugin.get("install_hint") or "Install/configure AbstractVision or an AbstractCore image upscaler backend.")}
+                    if not workflow_image_upscale_available
+                    else {}
+                ),
+            },
+            "direct_endpoint": {
+                "available": bool(image_upscale_route_available and direct_configured),
+                "route_available": image_upscale_route_available,
+                "configured": direct_configured,
+                "endpoint": _api_gateway_path("/runs/{run_id}/images/upscale"),
+                "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
+                "provider_models_task": "image_upscale",
+                "artifact_list_field": "image_artifacts",
+                "input_modes": ["artifact"],
+                "durability": "runtime_child_run",
+                "returns_child_run_id": True,
+                "progress_event_name": "abstract.progress",
+                "progress_scope": "child_run_ledger",
+                "formats": ["png", "jpeg", "webp"],
+                "max_image_bytes": _gateway_image_generation_max_bytes(),
+                **(
+                    {"config_hint": str(run_err or "Gateway runtime is not wired to AbstractCore durable image upscaling helpers.")}
+                    if not image_upscale_route_available
+                    else {"config_hint": "Configure AbstractVision or an AbstractCore-backed image upscaler runtime."}
                     if not direct_configured
                     else {}
                 ),
@@ -11300,6 +13199,14 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "endpoint": _api_gateway_path("/runs/{run_id}/videos/generate"),
                 "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
                 "provider_models_task": "text_to_video",
+                "adapter_catalog_endpoint": _api_gateway_path("/vision/adapters"),
+                "supports_batch": True,
+                "batch_count_field": "count",
+                "batch_seed_field": "seeds",
+                "supports_lora_adapters": True,
+                "supports_lora_stack": True,
+                "supports_flow_shift": True,
+                "artifact_list_field": "video_artifacts",
                 "delivery_modes": ["artifact"],
                 "input_modes": ["prompt"],
                 "durability": "runtime_child_run",
@@ -11336,6 +13243,14 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "endpoint": _api_gateway_path("/runs/{run_id}/videos/from_image"),
                 "provider_models_endpoint": _api_gateway_path("/vision/provider_models"),
                 "provider_models_task": "image_to_video",
+                "adapter_catalog_endpoint": _api_gateway_path("/vision/adapters"),
+                "supports_batch": True,
+                "batch_count_field": "count",
+                "batch_seed_field": "seeds",
+                "supports_lora_adapters": True,
+                "supports_lora_stack": True,
+                "supports_flow_shift": True,
+                "artifact_list_field": "video_artifacts",
                 "delivery_modes": ["artifact"],
                 "input_modes": ["artifact"],
                 "durability": "runtime_child_run",
@@ -11588,10 +13503,44 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         },
         "artifacts": {
             "list": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts")},
-            "search": {"available": True, "endpoint": _api_gateway_path("/artifacts/search")},
+            "search": {
+                "available": True,
+                "endpoint": _api_gateway_path("/artifacts/search"),
+                "envelope": "artifact_envelope_v1",
+                "stats": True,
+                "pagination": ["offset", "cursor"],
+                "indexed_filters": [
+                    "semantic_kind",
+                    "render_kind",
+                    "modality",
+                    "content_type",
+                    "run_id",
+                    "session_id",
+                    "workflow_id",
+                    "node_id",
+                    "created_after",
+                    "created_before",
+                    "tags",
+                ],
+                "post_filter_fields": ["query", "content_type_prefix", "artifact_kind"],
+                "ui_filters": {
+                    "artifact_kind": {
+                        "matches": ["semantic_kind", "render_kind", "modality"],
+                        "separator": ",",
+                        "exact": True,
+                    }
+                },
+            },
+            "stats": {"available": True, "endpoint": _api_gateway_path("/artifacts/stats"), "schema": "artifact_stats_v1"},
             "session_list": {"available": True, "endpoint": _api_gateway_path("/sessions/{session_id}/artifacts")},
             "metadata": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}")},
-            "content": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}/content")},
+            "content": {
+                "available": True,
+                "endpoint": _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}/content"),
+                "access_action_query": "access",
+                "access_action_aliases": ["access", "access_action"],
+                "access_actions": ["content", "preview", "download"],
+            },
             "import": _admin_only_endpoint(_api_gateway_path("/artifacts/import"), resource="workspace"),
             "export": _admin_only_endpoint(
                 _api_gateway_path("/runs/{run_id}/artifacts/{artifact_id}/export"),
@@ -11602,7 +13551,15 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "upload": {"available": True, "endpoint": _api_gateway_path("/attachments/upload")},
             "max_upload_bytes": int(_server_workspace_policy_public().get("max_attachment_bytes") or 0),
         },
-        "workspace": {"policy_endpoint": _api_gateway_path("/workspace/policy")},
+        "workspace": {
+            "policy_endpoint": _api_gateway_path("/workspace/policy"),
+            "list_files": {"available": True, "endpoint": _api_gateway_path("/files/list")},
+            "search_files": {"available": True, "endpoint": _api_gateway_path("/files/search")},
+            "open_run_directory": _admin_only_endpoint(
+                _api_gateway_path("/runs/{run_id}/workspace/open"),
+                resource="workspace",
+            ),
+        },
         "configuration": {
             "capability_defaults": {
                 "available": True,
@@ -11627,6 +13584,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "embedding_models": _api_gateway_path("/embeddings/models"),
             "vision_provider_models": _api_gateway_path("/vision/provider_models"),
             "vision_models": _api_gateway_path("/vision/models"),
+            "vision_adapters": _api_gateway_path("/vision/adapters"),
             "tools": _api_gateway_path("/discovery/tools"),
             "semantics": _api_gateway_path("/semantics"),
             "catalog_contract": _gateway_catalog_contract_descriptor(),
@@ -12339,7 +14297,7 @@ async def vision_provider_models_catalog(
     request: Request,
     task: Optional[str] = Query(
         default=None,
-        description="Optional provider catalog task filter: text_to_image, image_to_image, text_to_video, or image_to_video.",
+        description="Optional provider catalog task filter: text_to_image, image_to_image, image_upscale, text_to_video, or image_to_video.",
     ),
     base_url: Optional[str] = Query(
         default=None,
@@ -12350,10 +14308,11 @@ async def vision_provider_models_catalog(
 ) -> Dict[str, Any]:
     """List Vision provider model catalogs through the Gateway Runtime discovery facade."""
     task_value = str(task or "").strip() or None
-    if task_value and task_value not in {"text_to_image", "image_to_image", "text_to_video", "image_to_video"}:
+    valid_vision_tasks = {"text_to_image", "image_to_image", "image_upscale", "text_to_video", "image_to_video"}
+    if task_value and task_value not in valid_vision_tasks:
         raise HTTPException(
             status_code=400,
-            detail="task must be one of: text_to_image, image_to_image, text_to_video, image_to_video",
+            detail="task must be one of: text_to_image, image_to_image, image_upscale, text_to_video, image_to_video",
         )
     discovery, err = _gateway_abstractcore_discovery_facade()
     if err or discovery is None:
@@ -12457,6 +14416,79 @@ async def vision_models_catalog(request: Request) -> Dict[str, Any]:
         kind="models",
         scope="vision",
         items=_gateway_catalog_model_items(out, detail_keys=("models",), value_keys=("models",)),
+    )
+
+
+@router.get("/vision/adapters")
+async def vision_adapters_catalog(
+    request: Request,
+    model: Optional[str] = Query(default=None, description="Optional exact model id filter for adapter compatibility."),
+    task: Optional[str] = Query(
+        default=None,
+        description="Optional adapter compatibility task filter: text_to_image, image_to_image, text_to_video, or image_to_video.",
+    ),
+    base_url: Optional[str] = Query(
+        default=None,
+        description="Optional provider/catalog base URL forwarded to the configured AbstractCore adapter catalog route.",
+    ),
+    provider: Optional[str] = Query(default=None, description="Optional provider/backend filter."),
+) -> Dict[str, Any]:
+    """List compatible installed vision adapters through the Gateway Runtime discovery facade."""
+    task_value = str(task or "").strip() or None
+    valid_tasks = {"text_to_image", "image_to_image", "text_to_video", "image_to_video"}
+    if task_value and task_value not in valid_tasks:
+        raise HTTPException(
+            status_code=400,
+            detail="task must be one of: text_to_image, image_to_image, text_to_video, image_to_video",
+        )
+    model_value = str(model or "").strip() or None
+    discovery, err = _gateway_abstractcore_discovery_facade()
+    if err or discovery is None:
+        out = _runtime_discovery_payload(
+            {
+                "available": False,
+                "model": model_value,
+                "task": task_value,
+                "provider": provider,
+                "adapters": [],
+                "count": 0,
+                "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+            }
+        )
+        return _gateway_catalog_response(
+            out,
+            kind="adapters",
+            scope="vision",
+            items=[],
+            task=task_value,
+            provider=provider,
+            metadata={"model": model_value},
+        )
+    try:
+        payload = discovery.list_vision_adapters(
+            model=model_value,
+            task=task_value,
+            base_url=base_url,
+            provider_api_key=_request_provider_api_key(request),
+            provider=provider,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    out = _runtime_discovery_payload(payload)
+    out.setdefault("model", model_value)
+    out.setdefault("task", task_value)
+    out.setdefault("provider", provider)
+    out.setdefault("adapters", [])
+    out.setdefault("count", len(out["adapters"]) if isinstance(out.get("adapters"), list) else 0)
+    items = _gateway_catalog_adapter_items(out, provider=provider, task=task_value, model=model_value)
+    return _gateway_catalog_response(
+        out,
+        kind="adapters",
+        scope="vision",
+        items=items,
+        task=task_value,
+        provider=provider,
+        metadata={"model": model_value},
     )
 
 
@@ -18234,13 +20266,13 @@ class _GatewaySandboxGenerateRequest(BaseModel):
     capability: str = Field(default="output.text", max_length=80)
     provider: str = Field(..., min_length=1, max_length=120)
     model: str = Field(..., min_length=1, max_length=320)
-    prompt: str = Field(..., min_length=1, max_length=20000)
-    system_prompt: Optional[str] = Field(default=None, max_length=12000)
+    prompt: str = Field(..., min_length=1)
+    system_prompt: Optional[str] = Field(default=None)
     messages: Optional[List[Dict[str, Any]]] = Field(default=None)
     attachments: Optional[List[Dict[str, Any]]] = Field(default=None)
     client_context: Optional[Dict[str, Any]] = Field(default=None)
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(default=None, ge=1, le=32000)
+    max_tokens: Optional[int] = Field(default=None, ge=1)
 
 
 class _GatewaySessionPromptCacheTarget(_GatewayPromptCacheTarget):
@@ -18275,6 +20307,7 @@ def _gateway_model_residency_contract_descriptor() -> Dict[str, Any]:
         "text_generation",
         "image_generation",
         "image_to_image",
+        "image_upscale",
         "text_to_video",
         "image_to_video",
         "video_generation",
@@ -18982,9 +21015,9 @@ def _sandbox_messages(req: _GatewaySandboxGenerateRequest) -> list[Dict[str, str
         content = item.get("content")
         if not isinstance(content, str) or not content.strip():
             continue
-        messages.append({"role": role, "content": _clamp_text(content.strip(), max_len=12000)})
-    messages.append({"role": "user", "content": _clamp_text(str(req.prompt or "").strip(), max_len=20000)})
-    return messages[-12:]
+        messages.append({"role": role, "content": content.strip()})
+    messages.append({"role": "user", "content": str(req.prompt or "").strip()})
+    return messages
 
 
 def _sandbox_media_refs(req: _GatewaySandboxGenerateRequest) -> Optional[list[Dict[str, Any]]]:
@@ -19210,12 +21243,47 @@ async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabil
     return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
 
 
+@router.put("/config/capability-defaults/{kind}/{modality}/{task}")
+async def capability_defaults_task_put(kind: str, modality: str, task: str, req: _GatewayCapabilityDefaultRequest) -> Dict[str, Any]:
+    """Persist one task-specific execution-host Core/Runtime capability route default."""
+    svc = get_gateway_service()
+    try:
+        save_gateway_capability_default(
+            kind,
+            modality,
+            task=task,
+            provider=req.provider,
+            model=req.model,
+            base_url=req.base_url,
+            options=req.options,
+            base_dir=Path(svc.config.data_dir),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+
+
 @router.delete("/config/capability-defaults/{kind}/{modality}")
 async def capability_defaults_delete(kind: str, modality: str) -> Dict[str, Any]:
     """Clear one execution-host Core/Runtime capability route default."""
     svc = get_gateway_service()
     try:
         clear_gateway_capability_default(kind, modality, base_dir=Path(svc.config.data_dir))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+
+
+@router.delete("/config/capability-defaults/{kind}/{modality}/{task}")
+async def capability_defaults_task_delete(kind: str, modality: str, task: str) -> Dict[str, Any]:
+    """Clear one task-specific execution-host Core/Runtime capability route default."""
+    svc = get_gateway_service()
+    try:
+        clear_gateway_capability_default(kind, modality, task=task, base_dir=Path(svc.config.data_dir))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -20066,6 +22134,64 @@ async def workspace_policy() -> Dict[str, Any]:
     return {"ok": True, "policy": _server_workspace_policy_public()}
 
 
+@router.get("/files/list")
+async def files_list(
+    path: str = Query("", description="Workspace-relative folder path (or mounted folder path). Leave empty to browse the workspace root."),
+    recursive: bool = Query(False, description="When true, recurse into subfolders."),
+    include_directories: bool = Query(True, description="When true, include folders in the result list."),
+    family: str = Query("any", description="Optional file family filter: any|image|video|audio|document|text|code|json|archive|other."),
+    extensions: Optional[str] = Query(None, description="Optional comma/newline-separated extension filter without dots."),
+    query: str = Query("", description="Optional case-insensitive substring filter on path/name."),
+    limit: int = Query(200, ge=1, le=5000),
+    max_depth: int = Query(0, ge=0, le=50, description="Optional recursive depth limit; 0 means unlimited."),
+    workspace_root: Optional[str] = Query(None, description="Optional workspace root override for this listing."),
+    workspace_access_mode: Optional[str] = Query(None, description="Workspace access mode (workspace_only|workspace_or_allowed)."),
+    workspace_allowed_paths: Optional[str] = Query(None, description="Newline-separated allowed root directories (mounted for browse)."),
+    workspace_ignored_paths: Optional[str] = Query(None, description="Newline-separated ignored paths (blocked)."),
+) -> Dict[str, Any]:
+    """List workspace entries for server-file/folder browsing."""
+    base_default = _workspace_root()
+    mounts_default = _workspace_mounts()
+    base = base_default
+    mounts = mounts_default
+    blocked: tuple[Path, ...] = ()
+    mode = "workspace_only"
+
+    if _client_workspace_scope_overrides_enabled():
+        has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
+        if has_scope:
+            base, mounts, blocked, mode = _effective_workspace_scope(
+                default_base=base_default,
+                workspace_root=workspace_root,
+                workspace_access_mode=workspace_access_mode,
+                workspace_allowed_paths=workspace_allowed_paths,
+                workspace_ignored_paths=workspace_ignored_paths,
+            )
+
+    try:
+        folder_path, items, truncated = await asyncio.to_thread(
+            _list_workspace_entries,
+            base=base,
+            mounts=mounts,
+            blocked=blocked,
+            raw_path=path,
+            mode=mode,
+            recursive=bool(recursive),
+            include_directories=bool(include_directories),
+            family=str(family or "any").strip().lower() or "any",
+            extensions=normalize_extensions(extensions),
+            query=str(query or "").strip(),
+            limit=int(limit),
+            max_depth=int(max_depth),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"folder_path": folder_path, "items": items, "truncated": truncated}
+
+
 @router.get("/files/search")
 async def files_search(
     query: str = Query(..., description="Case-insensitive substring match on file path/name."),
@@ -20177,34 +22303,20 @@ async def files_read(
                 workspace_ignored_paths=workspace_ignored_paths,
             )
 
-    if mode == "all_except_ignored":
-        p_raw = str(path or "").strip()
-        if p_raw.startswith("@"):
-            p_raw = p_raw[1:].lstrip()
-        p2 = Path(p_raw).expanduser()
-        if p2.is_absolute():
-            try:
-                resolved = p2.resolve()
-            except Exception:
-                raise HTTPException(status_code=400, detail="invalid absolute path")
-            virt = str(resolved)
-            root = resolved.parent
-        else:
-            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts={}, raw_path=p_raw)
-    else:
-        resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
+    resolved, virt, root = _resolve_request_workspace_path(
+        raw_path=path,
+        base=base,
+        mounts=mounts,
+        blocked=blocked,
+        mode=mode,
+    )
 
     if blocked and _is_under_allowed_roots(resolved, list(blocked)):
         raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
 
     content = read_workspace_file(str(resolved), start_line=start_line, end_line=end_line)
 
-    out_path = str(virt) if isinstance(virt, str) and virt.strip() else None
-    if not out_path:
-        try:
-            out_path = resolved.relative_to(root).as_posix()
-        except Exception:
-            out_path = str(resolved)
+    out_path = str(virt).strip() if isinstance(virt, str) and virt.strip() else str(resolved)
 
     return {"path": out_path, "content": content}
 
@@ -20242,22 +22354,13 @@ async def files_skim(
                 workspace_ignored_paths=workspace_ignored_paths,
             )
 
-    if mode == "all_except_ignored":
-        p_raw = str(path or "").strip()
-        if p_raw.startswith("@"):
-            p_raw = p_raw[1:].lstrip()
-        p2 = Path(p_raw).expanduser()
-        if p2.is_absolute():
-            try:
-                resolved = p2.resolve()
-            except Exception:
-                raise HTTPException(status_code=400, detail="invalid absolute path")
-            virt = str(resolved)
-            root = resolved.parent
-        else:
-            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts={}, raw_path=p_raw)
-    else:
-        resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=path)
+    resolved, virt, root = _resolve_request_workspace_path(
+        raw_path=path,
+        base=base,
+        mounts=mounts,
+        blocked=blocked,
+        mode=mode,
+    )
 
     if blocked and _is_under_allowed_roots(resolved, list(blocked)):
         raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
@@ -20269,12 +22372,7 @@ async def files_skim(
         tail_lines=tail_lines,
     )
 
-    out_path = str(virt) if isinstance(virt, str) and virt.strip() else None
-    if not out_path:
-        try:
-            out_path = resolved.relative_to(root).as_posix()
-        except Exception:
-            out_path = str(resolved)
+    out_path = str(virt).strip() if isinstance(virt, str) and virt.strip() else str(resolved)
 
     return {"path": out_path, "content": content}
 
@@ -20328,7 +22426,7 @@ async def import_artifact(req: ArtifactImportRequest) -> Dict[str, Any]:
     if not content_type:
         guessed, _enc = mimetypes.guess_type(filename)
         content_type = str(guessed or "application/octet-stream")
-    rel = str(virt) if isinstance(virt, str) and virt.strip() else str(resolved)
+    rel = str(virt).strip() if isinstance(virt, str) and virt.strip() else ""
 
     extra_tags: Dict[str, str] = {"purpose": str(req.purpose or "run_input").strip() or "run_input"}
     if req.pin_id and str(req.pin_id).strip():
@@ -20407,7 +22505,7 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
         guessed, _enc = mimetypes.guess_type(filename)
         content_type = str(guessed or "application/octet-stream")
 
-    rel = str(virt) if isinstance(virt, str) and virt.strip() else str(resolved)
+    rel = str(virt).strip() if isinstance(virt, str) and virt.strip() else ""
     stored = _store_session_artifact(
         svc=svc,
         session_id=sid,
@@ -20431,6 +22529,10 @@ async def attachments_upload(
     content_type: Optional[str] = Form(
         None,
         description="Optional content type override (defaults to uploaded content_type or best-effort guess).",
+    ),
+    source_path: Optional[str] = Form(
+        None,
+        description="Optional client-relative path to preserve folder hierarchy (for example docs/report.txt).",
     ),
 ) -> Dict[str, Any]:
     """Upload bytes as an artifact-backed attachment.
@@ -20461,7 +22563,7 @@ async def attachments_upload(
         content_type_final = str(guessed or "application/octet-stream")
 
     # Prefix client uploads to avoid collisions with server workspace virtual paths.
-    handle = f"client:{filename_final}"
+    handle = _normalize_client_source_path(source_path, filename_final)
     stored = _store_session_artifact(
         svc=svc,
         session_id=sid,
