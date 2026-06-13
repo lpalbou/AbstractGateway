@@ -32,7 +32,7 @@ def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
     assert "AbstractRuntime>=0.4.28" in deps
-    assert "abstractagent>=0.3.11" in deps
+    assert "abstractagent>=0.3.10" in deps
     assert "AbstractMemory[lancedb]>=0.2.6" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
@@ -128,7 +128,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     apple = "\n".join(extras["apple"])
     assert "AbstractRuntime[apple]>=0.4.28" in apple
-    assert "abstractagent[apple]>=0.3.11" in apple
+    assert "abstractagent[apple]>=0.3.10" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.2.6" in apple
     assert "abstractcore[" not in apple
@@ -137,7 +137,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
     assert "AbstractRuntime[gpu]>=0.4.28" in gpu
-    assert "abstractagent[gpu]>=0.3.11" in gpu
+    assert "abstractagent[gpu]>=0.3.10" in gpu
     assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu

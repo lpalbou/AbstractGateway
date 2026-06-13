@@ -13,7 +13,7 @@ authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
   "AbstractRuntime>=0.4.28",
-  "abstractagent>=0.3.11",
+  "abstractagent>=0.3.10",
   "AbstractMemory[lancedb]>=0.2.6",
   "requests<3.0.0,>=2.32.5",
   "urllib3<3.0.0,>=2.5.0",
@@ -41,7 +41,7 @@ embeddings = [
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
   "AbstractRuntime[apple]>=0.4.28",
-  "abstractagent[apple]>=0.3.11",
+  "abstractagent[apple]>=0.3.10",
   "AbstractMemory[all-apple]>=0.2.6",
 ]
 
@@ -49,7 +49,7 @@ apple = [
 # Python installs and for the NVIDIA Docker image.
 gpu = [
   "AbstractRuntime[gpu]>=0.4.28",
-  "abstractagent[gpu]>=0.3.11",
+  "abstractagent[gpu]>=0.3.10",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]
 dev = [

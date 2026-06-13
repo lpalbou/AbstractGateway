@@ -34,12 +34,12 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Respon
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from abstractcore.utils.workspace_paths import (
+from abstractruntime.utils.workspace_paths import (
     WorkspacePathError,
     build_workspace_mounts,
     resolve_workspace_path as resolve_canonical_workspace_path,
 )
-from abstractcore.utils.file_filters import file_matches_filters, guess_file_family, normalize_extensions
+from abstractruntime.utils.file_filters import file_matches_filters, guess_file_family, normalize_extensions
 from abstractruntime.core.run_lifecycle import normalize_run_lifecycle_vars
 from abstractruntime.storage.commands import CommandRecord
 from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore

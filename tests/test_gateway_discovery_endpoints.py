@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from abstractcore.utils.workspace_paths import build_workspace_mounts
+from abstractruntime.utils.workspace_paths import build_workspace_mounts
 
 
 def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> None:
