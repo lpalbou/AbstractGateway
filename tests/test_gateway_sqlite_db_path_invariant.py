@@ -35,7 +35,7 @@ def test_gateway_host_config_defaults_to_shipped_basic_agent_bundles(monkeypatch
     cfg = GatewayHostConfig.from_env()
 
     assert cfg.flows_dir.name == "bundles"
-    assert (cfg.flows_dir / "basic-agent.flow").is_file() or (cfg.flows_dir / "basic-agent@0.0.1.flow").is_file()
+    assert (cfg.flows_dir / "basic-agent.flow").is_file()
 
 
 @pytest.mark.basic

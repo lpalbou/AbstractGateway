@@ -31,8 +31,8 @@ def _sibling_pyproject(package_dir: str) -> dict:
 def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
-    assert "AbstractRuntime>=0.4.28" in deps
-    assert "abstractagent>=0.3.10" in deps
+    assert "AbstractRuntime>=0.4.29" in deps
+    assert "abstractagent>=0.3.12" in deps
     assert "AbstractMemory[lancedb]>=0.2.6" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
@@ -56,7 +56,7 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     music_base = "\n".join(_sibling_pyproject("abstractmusic")["project"].get("dependencies", []))
 
     runtime_base = "\n".join(runtime_project["dependencies"])
-    assert "abstractcore[remote,tools,vision,voice,audio,music]>=2.13.37" in runtime_base
+    assert "abstractcore[remote,tools,vision,voice,audio,music]>=2.13.38" in runtime_base
     assert "pypdf" in runtime_base
     assert "reportlab" in runtime_base
     assert "pymupdf" not in runtime_base.lower()
@@ -70,8 +70,8 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     assert "anthropic" in core_remote
 
     assert "abstractvision>=0.3.26" in "\n".join(core_extras["vision"])
-    assert "abstractvoice>=0.10.17" in "\n".join(core_extras["voice"])
-    assert "abstractvoice>=0.10.17" in "\n".join(core_extras["audio"])
+    assert "abstractvoice>=0.10.18" in "\n".join(core_extras["voice"])
+    assert "abstractvoice>=0.10.18" in "\n".join(core_extras["audio"])
     assert "abstractmusic>=0.1.13" in "\n".join(core_extras["music"])
     core_light_capabilities = "\n".join(
         [
@@ -118,7 +118,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]>=2.13.37" in embeddings
+    assert "abstractcore[embeddings]>=2.13.38" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras
@@ -127,8 +127,8 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[apple]>=0.4.28" in apple
-    assert "abstractagent[apple]>=0.3.10" in apple
+    assert "AbstractRuntime[apple]>=0.4.29" in apple
+    assert "abstractagent[apple]>=0.3.12" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.2.6" in apple
     assert "abstractcore[" not in apple
@@ -136,8 +136,8 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[gpu]>=0.4.28" in gpu
-    assert "abstractagent[gpu]>=0.3.10" in gpu
+    assert "AbstractRuntime[gpu]>=0.4.29" in gpu
+    assert "abstractagent[gpu]>=0.3.12" in gpu
     assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu
@@ -165,9 +165,15 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
     sdist_force = build["sdist"]["force-include"]
 
     assert wheel_force["flows/bundles/basic-agent.flow"] == "abstractgateway/flows/bundles/basic-agent.flow"
-    assert wheel_force["flows/bundles/basic-agent@0.0.1.flow"] == "abstractgateway/flows/bundles/basic-agent@0.0.1.flow"
+    assert (
+        wheel_force["flows/bundles/abstractassistant-orchestrator@0.0.0.flow"]
+        == "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
+    )
     assert sdist_force["flows/bundles/basic-agent.flow"] == "flows/bundles/basic-agent.flow"
-    assert sdist_force["flows/bundles/basic-agent@0.0.1.flow"] == "flows/bundles/basic-agent@0.0.1.flow"
+    assert (
+        sdist_force["flows/bundles/abstractassistant-orchestrator@0.0.0.flow"]
+        == "flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
+    )
 
 
 def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> None:
@@ -182,11 +188,11 @@ def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> 
     assert "ABSTRACTGATEWAY_DATA_DIR=/data" in dockerfile
     assert "ABSTRACTGATEWAY_FLOWS_DIR=/data/flows" not in dockerfile
     assert "ENTRYPOINT [\"abstractgateway-docker-entrypoint\"]" in dockerfile
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.2.27}" in compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.2.28}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS: ${ABSTRACTGATEWAY_EXTRAS:-}" in compose
     assert "ABSTRACTGATEWAY_USER_AUTH: ${ABSTRACTGATEWAY_USER_AUTH:-1}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS:-gpu" in nvidia_compose
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.2.27-gpu}" in nvidia_compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.2.28-gpu}" in nvidia_compose
     assert "context: ../.." in nvidia_compose
 
 

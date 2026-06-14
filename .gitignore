@@ -180,5 +180,8 @@ web/runtime/
 my-folder/
 runtime/
 
-# Local publisher scratch bundle inspected during release prep.
-flows/bundles/article@dev.flow
+# Only the shipped Gateway bundles are tracked. Draft/dev bundles stay local
+# unless explicitly force-added for a deliberate release.
+flows/bundles/*
+!flows/bundles/basic-agent.flow
+!flows/bundles/abstractassistant-orchestrator@0.0.0.flow

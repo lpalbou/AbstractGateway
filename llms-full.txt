@@ -129,7 +129,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.27
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.28
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -137,7 +137,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.27-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.28-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
@@ -589,7 +589,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.2.27-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.2.28-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -673,6 +673,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.28] - 2026-06-14
+
+### Changed
+- Raised the Gateway dependency floors to `AbstractRuntime>=0.4.29`, `abstractagent>=0.3.12`, and `abstractcore[embeddings]>=2.13.38` across the base and hardware profiles so published installs consume the released Runtime/Core/Agent contract from this wave.
+- Release packaging now ships only the supported Gateway bundles `basic-agent.flow` and `abstractassistant-orchestrator@0.0.0.flow`; local draft bundles under `flows/bundles/` are ignored by default and no longer ride along into sdists, wheels, or Docker source copies.
 
 ## [0.2.27] - 2026-06-06
 
@@ -2403,8 +2409,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors:
-- `AbstractRuntime>=0.4.26`
-- `abstractagent>=0.3.10`
+- `AbstractRuntime>=0.4.29`
+- `abstractagent>=0.3.12`
 - `AbstractMemory[lancedb]>=0.2.6`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -2896,7 +2902,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.27
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.28
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -2904,7 +2910,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.27-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.28-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -3080,7 +3086,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.27-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.28-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

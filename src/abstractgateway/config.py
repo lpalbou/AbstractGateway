@@ -67,7 +67,7 @@ def _default_flows_dir() -> str:
     ]
     for candidate in candidates:
         try:
-            if (candidate / "basic-agent.flow").is_file() or (candidate / "basic-agent@0.0.1.flow").is_file():
+            if (candidate / "basic-agent.flow").is_file():
                 return str(candidate)
         except Exception:
             continue
