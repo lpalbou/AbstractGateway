@@ -83,6 +83,7 @@ class GatewayHostConfig:
 
     data_dir: Path
     flows_dir: Path
+    framework_flows_dir: Optional[Path] = None
     root_data_dir: Optional[Path] = None
     tenant_id: str = "default"
     user_id: str = "admin"
@@ -142,6 +143,7 @@ class GatewayHostConfig:
         return GatewayHostConfig(
             data_dir=data_dir,
             flows_dir=flows_dir,
+            framework_flows_dir=flows_dir,
             root_data_dir=data_dir,
             tenant_id="default",
             user_id="admin",

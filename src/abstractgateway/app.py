@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .console import gateway_console_html
 
-from .routes import gateway_router, triage_router
+from .routes import entities_router, entity_replay_router, gateway_router, triage_router
 from .security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_env
 
 
@@ -52,8 +52,31 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+# Entities routers first: their literal paths (/gateway/entities/...) must win
+# over any parametrized /gateway/... routes in the main gateway router.
+app.include_router(entities_router, prefix="/api")
+app.include_router(entity_replay_router, prefix="/api")
 app.include_router(gateway_router, prefix="/api")
 app.include_router(triage_router, prefix="/api")
+
+
+# Unhandled-exception responses must still carry CORS headers. Starlette's
+# ServerErrorMiddleware sits OUTSIDE user middleware, so a raw 500 from an
+# unhandled exception bypasses CORSMiddleware — browsers then mask the real
+# status as a generic "Failed to fetch" (live incident: identity-record
+# verbatim clicks 500'd unhandled and the maintainer saw a network error
+# instead of the status). Handling the exception HERE keeps the response
+# inside the middleware stack, so CORS headers ride it.
+@app.exception_handler(Exception)
+async def _unhandled_exception_cors_safe(request, exc):  # noqa: ANN001 - FastAPI handler signature
+    import logging
+
+    from fastapi.responses import JSONResponse
+
+    logging.getLogger("abstractgateway").exception(
+        "Unhandled exception on %s %s", getattr(request, "method", "?"), getattr(getattr(request, "url", None), "path", "?")
+    )
+    return JSONResponse(status_code=500, content={"detail": f"Internal error: {type(exc).__name__}: {exc}"})
 
 # OpenAPI docs: advertise bearer auth for Swagger UI.
 def _apply_gateway_bearer_auth_docs(openapi_schema: dict) -> dict:

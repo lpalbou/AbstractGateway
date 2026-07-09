@@ -7,6 +7,220 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- ONE mind substrate per entity (maintainer ruling 2026-07-09 06:32: "i
+  don't see the point in having potentially different models for visit and
+  own time"): the operator's provider+model choice persists in the entity's
+  home (`substrate.yaml`, operator-owned like `tool_policy.yaml`), exposed
+  via `GET`/`PUT /{name}/substrate`, and resolved identically by chat opens
+  AND loop starts: request override > home file > operator env > loud
+  refusal — still no code default anywhere. Tests:
+  `tests/test_gateway_entity_substrate.py`.
+
+### Changed
+- Entity mind substrate has NO code default anymore (maintainer ruling
+  2026-07-09 04:26: "I decide which provider and model is used … NO
+  FALLBACK"): `DEFAULT_ENTITY_CHAT_PROVIDER`/`_MODEL` (which silently
+  elected OVH `gpt-oss-120b`) are removed; `resolve_substrate` resolves
+  request body > operator env (`ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER`/
+  `_MODEL`) and otherwise REFUSES with a 400 naming the picker, on both
+  `chat/open` and `loop/start`. Thin clients (AbstractObserver) present
+  discovery-fed provider/model dropdowns and always send the explicit
+  choice.
+- Entity attention defaults (maintainer ruling 2026-07-09): the recall shelf
+  default widens 24 -> 36 ("it needs to retrieve more memories to function";
+  at 65536 the 12% token budget still seats 36 rich digests).
+
+### Fixed
+- Entity chat idle-reaper now runs on its own daemon-thread clock instead of
+  only inside `open()`: an idle web visit used to hold the entity's yielded
+  own-time loop asleep indefinitely when no new visitor arrived (live
+  failure 2026-07-09 — Castor stuck asleep ~3h after a browser tab idled).
+  Idle sessions now close (with reflection) and wake the loop on time.
+
+### Added
+- Persistent-shell teardown on the tools-only bundle host path (agency-parity 0220): the
+  Runtime built without an LLM client now also registers `register_shell_session_teardown`,
+  so run-scoped shell sessions are reaped at terminal transitions on every gateway runtime
+  construction path (the LLM paths inherit it from the abstractruntime factories).
+- `inject_guidance` runner command (agency-parity 0217): steers a running agent by appending
+  operator guidance to the target run's (and descendants') durable `_runtime.inbox`, which the
+  ReAct loop drains at its next `reason` cycle — mid-run redirection without cancel/restart.
+  Hardened against a durable-state race found in adversarial review: a terminal-status guard +
+  re-check-before-save mean a stale RUNNING snapshot can never resurrect a COMPLETED/FAILED/
+  CANCELLED run (a narrow best-effort loss window remains; full single-writer routing is a
+  follow-up). Tests: `tests/test_gateway_inject_guidance.py`.
+- Entity FREEZE (admin hibernation): `POST /{name}/loop/stop` accepts
+  `{"mode": "freeze", "reason": ...}` — kills the loop process immediately
+  via `life.hard_stop_loop` (no boundary wait, no ceremony, nothing changes
+  in the memory graph), sets the entity state to `paused` (the door refuses
+  visits until an admin wakes him), and records the `own_time_frozen`
+  biography marker. Default mode stays `graceful` (durable boundary-honored
+  command). The three verbs — freeze / sleep / graceful stop — are
+  documented in `docs/guide/summoned-entities.md` §7.
+- Entity own-time loop control is now command-based end to end (maintainer
+  ruling 2026-07-08): `entity_loop.py` is a thin adapter over the runtime's
+  life-loop surface — start via `spawn_loop_process`, stop via
+  `request_loop_stop` (a durable command in the home's inbox, consumed at the
+  loop's next boundary), status via `loop_process_status`. The gateway no
+  longer writes STOP sentinel files or parses loop internals; the runtime
+  owns the home's files (single-writer discipline). New host-marker kinds
+  `own_time_started` / `own_time_stop_requested` are registered (they were
+  silently dropped before — the marker try/except hid the kind-vocabulary
+  gap). Tests: `tests/test_gateway_entities_loop.py`.
+- Wide attention defaults for summoned-entity surfaces (maintainer ruling
+  2026-07-08, after the live A/B on Castor): shelf_size 24 and
+  context_window 65536 are now CODE defaults
+  (`DEFAULT_ENTITY_CHAT_SHELF_SIZE` / `DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW`
+  in `entity_chat.py`), resolved request-body > env
+  (`ABSTRACTGATEWAY_ENTITY_CHAT_*`) > default on BOTH the chat door and the
+  loop-start route. Previously the env vars were the only way to escape the
+  20k floor and the 12-seat shelf ("only 6 memories" ceiling).
+- Durable event delivery for `emit_event` commands (`payload.durable: true`):
+  after resuming parked `WAIT_EVENT` listeners (unchanged), the runner now
+  also appends the event envelope — with a per-run monotonic `seq` — to the
+  `events_inbox` run var of every non-terminal run declaring the mailbox
+  (`events_mailbox` var == event name; string or list of names). This closes
+  the busy-listener drop: events posted while a run works are queued and
+  drained at the run's next loop boundary (see
+  `docs/guide/event-inbox-agent.md` at the repo root and the
+  `event-inbox-react-agent` AbstractFlow example). Inbox capped at 500
+  (drop-oldest, `events_inbox_dropped` counter). Same best-effort concurrency
+  posture as `inject_guidance`. Tests:
+  `tests/test_runner_emit_event_durable.py`.
+- Added summoned-entity lifecycle (a2a 0004: the gateway owns entity lifecycle;
+  no new package). Entity homes live under `<data_dir>/entities/<slug>/`
+  (attested `spark.yaml` stored byte-verbatim, per-entity `memory.sqlite3`
+  graph+journal, `home.sqlite3` diary book, gateway `manifest.json` with
+  reserved key-id fields). Composes shipped AbstractMemory/AbstractRuntime
+  pieces only — `lint_spark`/`engram`/`self_records`/`gradation`/
+  `open_questions`, `DiaryStore`/`render_summon_prelude`/chain verifiers.
+- Added `abstractgateway entity chat <name>` — the one-command summon
+  (resolves the home from the registry and forwards to the runtime chat
+  driver, so the two entry points cannot drift).
+- Added `abstractgateway entity create|list|inspect|verify` CLI and
+  `POST/GET /api/gateway/entities[...]` endpoints. There is deliberately no
+  delete surface anywhere (never-purge is structural). Inspection surfaces
+  the wake-reason triad (open questions / open problems / incubating ideas —
+  the autonomy drivers the future heartbeat will read).
+- Added `POST /api/gateway/entities/{name}/summon`: renders the identity
+  prelude (pure read; a refused prelude aborts the summon with the reason
+  verbatim — no truncated-header fallback) and starts the run with the
+  reserved-seats posture (`self_fraction > 0`) stamped host-side.
+- Added the identity floor + entity-elected hyperfocus rule to the deposit
+  gate: no channel may summon below the engine-exported
+  `SELF_FRACTION_FLOOR` (0.05); reductions below the posture default (0.5)
+  are accepted only from the entity-reflection channel (the entity
+  consciously electing hyperfocus); raising identity presence stays
+  unrestricted. Seat rendering is guaranteed engine-side.
+- Added the 20,000-token context floor for summons (maintainer ruling):
+  declared windows below `ENTITY_CONTEXT_FLOOR` are refused; undeclared
+  windows proceed with a labeled warning. Summons derive the session's
+  recall budget from memory's context-scaled `entity_recall_budget` profile
+  (posture applied) and carry it in the stamp for in-session injection.
+- Added the entity deposit gate (`entity_gate.py`): actors derive from the
+  CHANNEL (workplace / entity-reflection / operator), never from payloads.
+  Summon stamps are HMAC-signed over (entity, channel, session, run id) and
+  verified at the routing layer before any home opens; payload-claimed
+  actors fail loudly; identity-kind writes, diary forgery via formation,
+  self-scope belief revision, foreign scope ladders, and beyond-journal
+  `as_of` anchors are rejected from workplace sessions; verified
+  participants are door-stamped into recall and formation.
+- Added the entity replay serving end (a2a 0005): `GET
+  /api/gateway/entities/{name}/replay` (bounded NDJSON history read) and
+  `GET /api/gateway/entities/{name}/replay/stream` (SSE live tail,
+  `Last-Event-ID` resume) serve memory's frozen stream v1 merged with
+  gateway host markers (`family="host"`: summon / prelude_refused /
+  session_closed at fractional seq positions). Diary display blocks stay
+  redacted for all HTTP audiences.
+- Added sleep/wake/pause (a2a 0008): `abstractgateway entity
+  sleep|wake|pause <name>` and `POST/GET
+  /api/gateway/entities/{name}/state` write through the runtime's single
+  state writer, host-mark every transition into the replay stream, refuse
+  summons against non-awake entities (the no-summon window enforced by
+  state), and run the dream pass inside `sleep --dream`. `entity
+  list`/`inspect` surface the state; rest remains the entity's own
+  election.
+- Added verbatim-on-click: `GET
+  /api/gateway/entities/{name}/records/{graph_id}/verbatim` serves the
+  lossless exchange behind a memory record from the home's own artifact
+  store. Pure read (no access recording); diary records refuse via
+  multi-signal detection (kind, scope, private flag, entry_id) and a
+  content backstop refuses any verbatim carrying an unstripped diary
+  fence (the known formation-leak class). Identity records
+  (values/purposes/traits) serve the attested spark text — the engram
+  sets their `payload_ref` to the spark file, so their verbatim IS the
+  seed document; other non-artifact refs answer with an honest 404
+  instead of an unhandled traceback (live-incident fix). Born-digest
+  kinds (interest, dream) answer 200 with the digest text and
+  `born_digest: true` — their digest IS their complete text, so "the
+  words you see are all the words there are" is an answer, not a 404.
+- Added the operator diary door (maintainer ruling — reads are visible
+  events): `GET /api/gateway/entities/{name}/diary/{entry_id}?reason=...`
+  serves a book entry (private included) to the operator channel; the
+  `reason` is required and every disclosure lands a `diary_read` host
+  marker (entry id + reason) in the replay stream before the words
+  return. The record-verbatim endpoint's structural diary refusal is
+  unchanged.
+- Unhandled exceptions now return JSON 500s through the middleware stack
+  so CORS headers ride error responses — browsers previously rendered
+  such failures as a generic "Failed to fetch", masking the real status.
+- Added the identity card (a2a 0009, maintainer: "something to know our
+  companion"): `GET /api/gateway/entities/{name}/card` and
+  `abstractgateway entity card <name>` serve the memory engine's
+  `entity_card` compositor (identity, age+context, current state as a
+  window, likes/dislikes with G+/G− channels separate, open/resolved
+  questions via the entity's own resolves convention, key moments,
+  discoveries — every section carrying provenance; `?as_of=<seq>` anchors
+  the whole card at a journal moment) plus the gateway overlays: manifest
+  name/birth/age, operator state, mind substrate (newest substrate-stamped
+  record), and host moments merged from the marker stream and the home's
+  `state_history.jsonl` (door transitions deduped; anchored cards filter
+  markers by seq and honestly omit the timestamp-only history ledger).
+  The gateway's initial thin composition was replaced by the engine read
+  the same day it shipped (one compositor; a second truth can drift).
+- Added hosted entity chat (a2a 0007, the maintainer's chat drawer):
+  `POST /api/gateway/entities/{name}/chat/open|.../turn|.../close` +
+  `GET .../chat` host the runtime chat driver's `ChatSession` behind the
+  operator-authed HTTP surface — the web chat and the `entity chat` CLI
+  share one turn loop. Auto-yield of the entity's own-time loop mirrors
+  `--pause-loop` (HTTP-bounded wait, loud 409 on timeout, stale
+  auto-yield adopted with the wake duty); one live session per home
+  (409 otherwise); paused/asleep entities refuse with the recorded
+  reason; a refused prelude aborts the open verbatim; the close runs the
+  reflection pass and wakes the loop; idle sessions are reaped by the
+  next open. Turn responses carry `tools_ran` as a driver-authored data
+  field (the marker-imitation lesson: never derived from reply prose).
+  Visits land `summon`/`session_closed` host markers on the replay
+  stream.
+- Added `POST /api/gateway/entities/auth/probe` (the observer's
+  control-strip gate): a deliberately WRITE-classed probe — dev postures
+  can exempt loopback GETs from auth, so only a write-classed request
+  answers "would the state/chat/diary doors accept me?". Returns the
+  caller's principal when the write middleware accepts; controls stay
+  hidden on 401/403.
+- Operator-access ruling (maintainer, 2026-07-08): the operator sees
+  everything. The record-verbatim endpoint's diary-shaped 403 and
+  unstripped-diary-fence 403 are removed — diary-shaped records serve
+  the book entry, host-marking a `diary_read` into the stream first
+  (visibility kept, friction gone); the diary door's `reason` is now
+  optional (defaults to "operator review"). The entity-adjacent
+  boundary at the effect layer (deposit gate; workplace channels cannot
+  read the book) is unchanged.
+- The web chat open now runs the reflection-loss salvage (a2a 0007):
+  if a previous session died unreflected (the driver's write-ahead
+  `pending_reflection.json` marker), its look-back runs as the open's
+  first act — over the ENDED session's own sheet, attributed to its own
+  session id — and the response carries it as `salvage`. Version-
+  tolerant (older drivers skip with a labeled warning); a salvage
+  failure never blocks the new visit.
+- Declared `pyyaml` as a direct dependency (previously transitive via
+  `uvicorn[standard]`); the attested spark document makes it load-bearing.
+- Added the shipped `dp-research@0.1.0.flow` WorkflowBundle: a `dp-` production
+  research family with planning, an enforced investigate/review loop,
+  three-lens adversarial review, structured audit outputs, and timestamped
+  Markdown/PDF/DOCX export paths.
+
 ## [0.2.28] - 2026-06-14
 
 ### Changed

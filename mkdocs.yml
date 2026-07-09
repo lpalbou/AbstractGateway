@@ -39,6 +39,7 @@ nav:
   - Deployment: deployment.md
   - API Overview: api.md
   - Architecture: architecture.md
+  - Summoned Entities: entities.md
   - Security: security.md
   - Operator Tooling: maintenance.md
   - FAQ: faq.md

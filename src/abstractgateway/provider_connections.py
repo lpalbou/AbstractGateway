@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+# Boundary rule: Gateway imports AbstractRuntime, never AbstractCore directly.
+# AbstractCore config reads go through the Runtime config facade.
+from abstractruntime.integrations.abstractcore import config_facade
+
 
 @dataclass(frozen=True)
 class BuiltinProviderConnectionSpec:
@@ -260,26 +264,14 @@ def _scoped_core_config_paths(*, current_base_dir: Path, root_base_dir: Path) ->
 
     if not user_auth:
         try:
-            from abstractcore.config.manager import ConfigurationManager
-
-            manager = ConfigurationManager(apply_env=False)
-            add(Path(manager.config_file), "abstractcore.config")
+            add(Path(config_facade.capability_default_config_file(apply_env=False)), "abstractcore.config")
         except Exception:
             pass
     return paths
 
 
 def _api_key_from_core_config(path: Path, attr: str) -> str:
-    if not Path(path).exists():
-        return ""
-    try:
-        from abstractcore.config.manager import ConfigurationManager
-
-        manager = ConfigurationManager(config_file=path, apply_env=False)
-        value = getattr(manager.config.api_keys, attr, None)
-        return str(value or "").strip()
-    except Exception:
-        return ""
+    return config_facade.read_config_api_key(path, attr)
 
 
 def _env_first(keys: Iterable[str]) -> str:

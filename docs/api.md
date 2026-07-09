@@ -502,6 +502,7 @@ The editor observes runs with the core lifecycle endpoints above:
 
 Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/voice/tts`
+- `POST /api/gateway/runs/{run_id}/voice/tts/stream`
 - `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - `POST /api/gateway/runs/{run_id}/images/generate`
 - `POST /api/gateway/runs/{run_id}/images/edit`
@@ -516,6 +517,11 @@ Current direct Gateway endpoints:
 - `GET /api/gateway/audio/music/models`
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/adapters`
+
+`/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
+returns JSON Lines stream events for progressive playback when discovery advertises
+`capabilities.contracts.assistant.voice.tts.streaming=true`; successful streams still
+finish with a Runtime-owned child-run audio artifact.
 
 The catalog endpoints proxy AbstractCore Server routes when
 `ABSTRACTCORE_SERVER_BASE_URL`

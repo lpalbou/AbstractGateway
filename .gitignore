@@ -185,3 +185,8 @@ runtime/
 flows/bundles/*
 !flows/bundles/basic-agent.flow
 !flows/bundles/abstractassistant-orchestrator@0.0.0.flow
+!flows/bundles/dp-research@0.1.0.flow
+
+# Editor/agent workspace state (never release material)
+.cursor/
+.DS_Store

@@ -32,6 +32,7 @@ Multimodal notes:
 - Direct Gateway voice/audio durable endpoints (when `abstractvoice` is installed on the gateway host):
   - STT: `POST /api/gateway/runs/{run_id}/audio/transcribe`
   - TTS: `POST /api/gateway/runs/{run_id}/voice/tts`
+  - TTS stream: `POST /api/gateway/runs/{run_id}/voice/tts/stream` (JSON Lines; advertised through `capabilities.contracts.assistant.voice.tts.streaming`; successful streams still return a Runtime child-run artifact)
 - Direct Gateway image durable endpoints:
   - image generate: `POST /api/gateway/runs/{run_id}/images/generate`
   - image edit: `POST /api/gateway/runs/{run_id}/images/edit`

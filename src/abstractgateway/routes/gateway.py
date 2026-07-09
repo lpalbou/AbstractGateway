@@ -10,6 +10,7 @@ This is intentionally replay-first:
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime
 import hashlib
 import io
@@ -8274,6 +8275,17 @@ class VoiceTTSResponse(BaseModel):
     audio_artifact: Dict[str, Any]
 
 
+def _voice_stream_jsonl(event: Dict[str, Any]) -> bytes:
+    payload = dict(event)
+    audio = payload.pop("audio", None)
+    if isinstance(audio, (bytes, bytearray)):
+        payload["audio_b64"] = base64.b64encode(bytes(audio)).decode("ascii")
+        payload.setdefault("size_bytes", len(audio))
+    elif audio is not None:
+        payload["audio"] = audio
+    return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+
+
 @router.post("/runs/{run_id}/voice/tts", response_model=VoiceTTSResponse)
 async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     """Delegate TTS to Runtime-owned durable child execution."""
@@ -8395,6 +8407,123 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         request_id=request_id,
         child_run_id=str(child.run_id),
         audio_artifact=audio_ref,
+    )
+
+
+@router.post("/runs/{run_id}/voice/tts/stream")
+async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingResponse:
+    """Stream Runtime-owned TTS events as JSON Lines."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    text = str(getattr(req, "text", "") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    fmt = str(getattr(req, "format", "wav") or "wav").strip().lower()
+    if fmt == "wave":
+        fmt = "wav"
+    if fmt != "wav":
+        raise HTTPException(status_code=422, detail="Streaming voice TTS currently supports format=wav only.")
+
+    run_facade, err = _gateway_abstractcore_run_facade()
+    if err or run_facade is None:
+        raise HTTPException(status_code=503, detail=err or "Gateway runtime does not expose AbstractCore durable media helpers.")
+    stream_voice = getattr(run_facade, "stream_voice", None)
+    if not callable(stream_voice):
+        raise HTTPException(status_code=503, detail="Gateway runtime does not expose streaming voice synthesis.")
+
+    voice = getattr(req, "voice", None)
+    profile = getattr(req, "profile", None)
+    model = getattr(req, "model", None)
+    provider = getattr(req, "provider", None)
+    quality_preset = str(getattr(req, "quality_preset", None) or getattr(req, "quality", None) or "").strip()
+    instructions = str(getattr(req, "instructions", "") or "").strip()
+    speed = getattr(req, "speed", None)
+    voice_name = str(voice).strip() if isinstance(voice, str) and voice.strip() else None
+    profile_name = str(profile).strip() if isinstance(profile, str) and profile.strip() else None
+    model_name = str(model).strip() if isinstance(model, str) and model.strip() else None
+    provider_name = str(provider).strip() if isinstance(provider, str) and provider.strip() else None
+
+    output_spec: Dict[str, Any] = {
+        "modality": "voice",
+        "task": "tts",
+        "format": "wav",
+    }
+    if voice_name:
+        output_spec["voice"] = voice_name
+    if profile_name:
+        output_spec["profile"] = profile_name
+    if model_name:
+        output_spec["model"] = model_name
+    if provider_name:
+        output_spec["provider"] = provider_name
+    if speed is not None:
+        output_spec["speed"] = speed
+    if quality_preset:
+        output_spec["quality_preset"] = quality_preset
+    if instructions:
+        output_spec["instructions"] = instructions
+
+    params = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": str(getattr(run, "session_id", "") or ""),
+            "request_id": request_id,
+        }
+    }
+
+    try:
+        events = stream_voice(
+            str(getattr(run, "run_id", rid)),
+            text=text,
+            output=output_spec,
+            params=params,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS stream setup failed: {e}")
+
+    def _iter_events():
+        try:
+            for event in events:
+                if isinstance(event, dict):
+                    event.setdefault("request_id", request_id)
+                    yield _voice_stream_jsonl(event)
+                else:
+                    yield _voice_stream_jsonl({"type": "event", "request_id": request_id, "value": str(event)})
+        except GeneratorExit:
+            close = getattr(events, "close", None)
+            if callable(close):
+                close()
+            raise
+        except Exception as e:
+            yield _voice_stream_jsonl({"type": "error", "ok": False, "request_id": request_id, "error": str(e)})
+        finally:
+            close = getattr(events, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
+    return StreamingResponse(
+        _iter_events(),
+        media_type="application/x-ndjson",
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -12864,6 +12993,7 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
     installed = bool(abstractvoice.get("installed"))
     run_facade, run_err = _gateway_abstractcore_run_facade()
     route_available = run_facade is not None and not run_err
+    stream_route_available = bool(route_available and callable(getattr(run_facade, "stream_voice", None)))
     configured = bool(plugin_available) or bool(
         _env_first(
             "ABSTRACTGATEWAY_VOICE_TTS_ENGINE" if kind == "tts" else "ABSTRACTGATEWAY_VOICE_STT_ENGINE",
@@ -12892,6 +13022,7 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
             "configured": configured,
             "unsupported": not installed,
             "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
+            "stream_endpoint": _api_gateway_path("/runs/{run_id}/voice/tts/stream"),
             "catalog_endpoint": _api_gateway_path("/voice/voices"),
             "models_endpoint": _api_gateway_path("/audio/speech/models"),
             "active_model": _env_first(
@@ -12901,7 +13032,13 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
                 "ABSTRACTVOICE_OPENAI_COMPATIBLE_TTS_MODEL",
                 "ABSTRACTVOICE_REMOTE_TTS_MODEL",
             ),
-            "delivery_modes": ["artifact"],
+            "delivery_modes": ["artifact", "stream"] if stream_route_available else ["artifact"],
+            "preferred_delivery_mode": "stream" if stream_route_available else "artifact",
+            "stream_transport": "jsonl" if stream_route_available else None,
+            "stream_content_types": ["audio/wav"] if stream_route_available else [],
+            "stream_chunk_format": "wav-segment" if stream_route_available else None,
+            "stream_returns_artifact": bool(stream_route_available),
+            "stream_final_artifact_policy": "runtime_child_run_final_artifact" if stream_route_available else None,
             "formats": ["wav", "mp3"],
             "content_types": {"wav": "audio/wav", "mp3": "audio/mpeg"},
             "controls": {
@@ -12912,7 +13049,7 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
                 "voice_clone": {"supported": True},
             },
             "voices": _voice_profile_descriptors(),
-            "streaming": False,
+            "streaming": bool(stream_route_available),
             "durability": "runtime_child_run",
             "returns_child_run_id": True,
             **({"selected_backend": plugin.get("selected_backend")} if plugin.get("selected_backend") else {}),

@@ -43,6 +43,8 @@ class GatewayService:
     embeddings_client: Optional[Any] = None
     telegram_bridge: Optional[Any] = None
     email_bridge: Optional[Any] = None
+    entity_registry: Optional[Any] = None
+    entity_chat_host: Optional[Any] = None
 
 
 _service: Optional[GatewayService] = None
@@ -135,6 +137,7 @@ def _config_for_principal(principal: GatewayPrincipal) -> GatewayHostConfig:
         base,
         data_dir=data_dir,
         flows_dir=flows_dir,
+        framework_flows_dir=base.framework_flows_dir or base.flows_dir,
         root_data_dir=base.root_data_dir or base.data_dir,
         tenant_id=tenant,
         user_id=safe_principal_component(principal.user_id, default="user"),
@@ -219,9 +222,15 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         root_data_dir = Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir).expanduser().resolve()
         tenant_id = safe_principal_component(getattr(cfg, "tenant_id", "default"), default="default")
         catalog_bundles_dir = workflow_catalog_bundles_root_from_env(root_data_dir) / "tenant_catalog" / tenant_id
+        framework_bundles_dir = getattr(cfg, "framework_flows_dir", None)
+        if framework_bundles_dir is not None:
+            framework_bundles_dir = Path(framework_bundles_dir).expanduser().resolve()
+            if framework_bundles_dir == Path(cfg.flows_dir).expanduser().resolve():
+                framework_bundles_dir = None
         host = WorkflowBundleGatewayHost.load_from_dir(
             bundles_dir=cfg.flows_dir,
             data_dir=cfg.data_dir,
+            framework_bundles_dir=framework_bundles_dir,
             catalog_bundles_dir=catalog_bundles_dir,
             catalog_root_data_dir=root_data_dir,
             catalog_tenant_id=tenant_id,
@@ -297,6 +306,23 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         ecfg = EmailBridgeConfig.from_env(base_dir=cfg.data_dir)
         email_bridge = EmailBridge(config=ecfg, host=host, runner=runner, artifact_store=stores.artifact_store)
 
+    # Entity lifecycle (a2a 0004): the registry hosts entity homes under this
+    # service's data dir; the routing installer claims the MEMORY_* seam +
+    # DIARY_* effect types on the host runtime and refuses to shadow existing
+    # claimants (a collision means the wiring drifted — loud by design).
+    from .entities import EntityRegistry
+    from .entity_chat import EntityChatHost
+    from .entity_gate import install_entity_routing
+
+    entity_registry = EntityRegistry(data_dir=cfg.data_dir)
+    install_entity_routing(
+        host.runtime,
+        registry=entity_registry,
+        run_store=stores.run_store,
+        artifact_store=stores.artifact_store,
+    )
+    entity_chat_host = EntityChatHost(entity_registry)
+
     return GatewayService(
         config=cfg,
         stores=stores,
@@ -310,6 +336,8 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         embeddings_client=embeddings_client,
         telegram_bridge=telegram_bridge,
         email_bridge=email_bridge,
+        entity_registry=entity_registry,
+        entity_chat_host=entity_chat_host,
     )
 
 
@@ -411,8 +439,55 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
             service.runner.stop()
         except Exception:
             pass
+        try:
+            chat_host = getattr(service, "entity_chat_host", None)
+            if chat_host is not None:
+                # Reflect + close live visits FIRST (they hold their own home
+                # handles and may owe the own-time loop a wake).
+                chat_host.close_all()
+        except Exception:
+            pass
+        try:
+            registry = getattr(service, "entity_registry", None)
+            if registry is not None:
+                registry.close_all()
+        except Exception:
+            pass
     except Exception:
         pass
+
+
+def _summarize_run_output(value: Any, *, max_string: int = 50_000, max_items: int = 80, max_depth: int = 8) -> Any:
+    """Return an HTTP-safe, bounded projection of a run's final output."""
+
+    def _trunc(text: str) -> str:
+        if len(text) <= max_string:
+            return text
+        return text[:max_string].rstrip() + f"\n#TRUNCATION: output string truncated from {len(text)} chars"
+
+    def _walk(cur: Any, *, depth: int) -> Any:
+        if depth > max_depth:
+            return "#TRUNCATION: output depth limit reached"
+        if cur is None or isinstance(cur, (bool, int, float)):
+            return cur
+        if isinstance(cur, str):
+            return _trunc(cur)
+        if isinstance(cur, (list, tuple)):
+            out = [_walk(item, depth=depth + 1) for item in list(cur)[:max_items]]
+            if len(cur) > max_items:
+                out.append(f"#TRUNCATION: output list truncated from {len(cur)} items")
+            return out
+        if isinstance(cur, dict):
+            out: Dict[str, Any] = {}
+            items = list(cur.items())
+            for key, item in items[:max_items]:
+                out[str(key)] = _walk(item, depth=depth + 1)
+            if len(items) > max_items:
+                out["#TRUNCATION"] = f"output object truncated from {len(items)} keys"
+            return out
+        return _trunc(str(cur))
+
+    return _walk(value, depth=0)
 
 
 def run_summary(run: Any) -> Dict[str, Any]:
@@ -447,6 +522,7 @@ def run_summary(run: Any) -> Dict[str, Any]:
         # projection of vars._run_lifecycle, not the full run input payload.
         "run_lifecycle": None,
         "is_draft": False,
+        "output": None,
     }
     try:
         lifecycle = extract_run_lifecycle(getattr(run, "vars", None))
@@ -545,4 +621,10 @@ def run_summary(run: Any) -> Dict[str, Any]:
             "allow_free_text": getattr(waiting, "allow_free_text", None),
             "details": getattr(waiting, "details", None),
         }
+    try:
+        output = getattr(run, "output", None)
+        if output is not None:
+            out["output"] = _summarize_run_output(output)
+    except Exception:
+        out["output"] = None
     return out

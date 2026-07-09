@@ -782,6 +782,19 @@ class GatewaySecurityMiddleware:
                 token = ""
                 if auth.lower().startswith("bearer "):
                     token = auth.split(" ", 1)[1].strip()
+                if not token and is_read:
+                    # SSE/EventSource cannot set headers: accept the
+                    # credential as ?access_token= on READS ONLY (writes
+                    # keep the header/session discipline). The audit log
+                    # already redacts query VALUES (keys-only logging).
+                    try:
+                        from urllib.parse import parse_qs
+
+                        qs = scope.get("query_string") or b""
+                        values = parse_qs(qs.decode("utf-8", errors="replace")).get("access_token") or []
+                        token = str(values[0]).strip() if values else ""
+                    except Exception:
+                        token = ""
                 if token:
                     presented_token_fp = _sha256_hex(token)[:12]
                     principal = self._authenticate_token(token)
@@ -921,7 +934,7 @@ class GatewaySecurityMiddleware:
                     buffered_body = b"".join(chunks)
 
             # Concurrency limits: separate pool for SSE streams.
-            is_sse = path.endswith("/ledger/stream")
+            is_sse = path.endswith("/ledger/stream") or path.endswith("/voice/tts/stream")
             sem = self._sse_sema if is_sse else self._sema
             acquired = await self._try_acquire(sem)
             if not acquired:

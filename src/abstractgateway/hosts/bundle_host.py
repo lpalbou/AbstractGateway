@@ -610,6 +610,7 @@ class WorkflowBundleGatewayHost:
     bundles_dir: Path
     data_dir: Path
     dynamic_flows_dir: Path
+    framework_bundles_dir: Optional[Path]
     catalog_bundles_dir: Optional[Path]
     catalog_root_data_dir: Optional[Path]
     catalog_tenant_id: str
@@ -751,6 +752,7 @@ class WorkflowBundleGatewayHost:
         *,
         bundles_dir: Path,
         data_dir: Path,
+        framework_bundles_dir: Optional[Path] = None,
         catalog_bundles_dir: Optional[Path] = None,
         catalog_root_data_dir: Optional[Path] = None,
         catalog_tenant_id: str = "default",
@@ -779,7 +781,20 @@ class WorkflowBundleGatewayHost:
         catalog_user = safe_principal_component(catalog_user_id, default="admin")
         catalog_policy_secret = load_or_create_workflow_policy_secret(catalog_root)
 
-        def _load_bundle_path(p: Path, *, source_scope: str, source_tenant_id: str = "default") -> None:
+        def _bundle_paths_from_dir(path: Path) -> list[Path]:
+            if path.is_file():
+                return [path]
+            if path.exists() and path.is_dir():
+                return sorted([p for p in path.glob("*.flow") if p.is_file()])
+            return []
+
+        def _load_bundle_path(
+            p: Path,
+            *,
+            source_scope: str,
+            source_tenant_id: str = "default",
+            source_kind: str = "user",
+        ) -> None:
             try:
                 b = open_workflow_bundle(p)
                 public_bid = str(getattr(getattr(b, "manifest", None), "bundle_id", "") or "").strip()
@@ -803,20 +818,24 @@ class WorkflowBundleGatewayHost:
                     "host_bundle_id": bid,
                     "bundle_version": bver,
                     "path": str(p),
+                    "source_kind": source_kind,
                 }
             except Exception as e:
                 logger.warning("Failed to load bundle %s: %s", p, e)
 
         private_bundle_ids: set[str] = set()
-        private_paths: list[Path]
-        if base.is_file():
-            private_paths = [base]
-        else:
-            private_paths = sorted([p for p in base.glob("*.flow") if p.is_file()])
+        private_paths = _bundle_paths_from_dir(base)
         for p in private_paths:
             before = set(bundles_by_id.keys())
-            _load_bundle_path(p, source_scope="private")
+            _load_bundle_path(p, source_scope="private", source_kind="user")
             private_bundle_ids.update(set(bundles_by_id.keys()) - before)
+
+        framework_base = Path(framework_bundles_dir).expanduser().resolve() if framework_bundles_dir is not None else None
+        if framework_base is not None and framework_base != base:
+            framework_paths = _bundle_paths_from_dir(framework_base)
+            if framework_paths:
+                for p in framework_paths:
+                    _load_bundle_path(p, source_scope="private", source_kind="framework")
 
         catalog_base = Path(catalog_bundles_dir).expanduser().resolve() if catalog_bundles_dir is not None else None
         if catalog_base is not None and catalog_base.exists() and catalog_base.is_dir():
@@ -825,6 +844,7 @@ class WorkflowBundleGatewayHost:
                     p,
                     source_scope=CATALOG_SCOPE_TENANT,
                     source_tenant_id=catalog_tenant,
+                    source_kind="catalog",
                 )
 
         if not bundles_by_id:
@@ -1025,6 +1045,8 @@ class WorkflowBundleGatewayHost:
                         ledger_store=ledger_store,
                         artifact_store=artifact_store,
                         tool_executor=tool_executor,
+                        core_config_file=data_root / "config" / "abstractcore.json",
+                        capability_defaults=gateway_capability_defaults_payload(base_dir=data_root),
                     )
                     if extra_effect_handlers:
                         handlers = getattr(runtime, "_handlers", None)
@@ -1074,6 +1096,14 @@ class WorkflowBundleGatewayHost:
                     setter = getattr(runtime, "set_tool_executor_for_resume", None)
                     if callable(setter):
                         setter(tool_executor)
+                except Exception:
+                    pass
+                # Run-scoped persistent shell sessions (backlog 0220) must be reaped on
+                # terminal runs even on this tools-only runtime path.
+                try:  # pragma: no cover
+                    from abstractruntime.integrations.abstractcore.factory import register_shell_session_teardown
+
+                    register_shell_session_teardown(runtime)
                 except Exception:
                     pass
         else:
@@ -1237,6 +1267,7 @@ class WorkflowBundleGatewayHost:
             bundles_dir=base,
             data_dir=data_root,
             dynamic_flows_dir=dynamic_dir,
+            framework_bundles_dir=framework_base,
             catalog_bundles_dir=catalog_base,
             catalog_root_data_dir=catalog_root,
             catalog_tenant_id=catalog_tenant,
@@ -1280,6 +1311,7 @@ class WorkflowBundleGatewayHost:
         new_host = WorkflowBundleGatewayHost.load_from_dir(
             bundles_dir=self.bundles_dir,
             data_dir=self.data_dir,
+            framework_bundles_dir=self.framework_bundles_dir,
             catalog_bundles_dir=self.catalog_bundles_dir,
             catalog_root_data_dir=self.catalog_root_data_dir,
             catalog_tenant_id=self.catalog_tenant_id,
@@ -1301,6 +1333,7 @@ class WorkflowBundleGatewayHost:
             self.memory_store = new_host.memory_store
             self.memory_store_info = new_host.memory_store_info
             self._default_bundle_id = new_host._default_bundle_id
+            self.framework_bundles_dir = new_host.framework_bundles_dir
             self.deprecation_store = new_host.deprecation_store
             self.catalog_bundles_dir = new_host.catalog_bundles_dir
             self.catalog_root_data_dir = new_host.catalog_root_data_dir
@@ -1462,9 +1495,15 @@ class WorkflowBundleGatewayHost:
         # Gateway-owned deployment settings are handed to Runtime explicitly as
         # JSON-safe run state. Lower packages should not read ABSTRACTGATEWAY_*
         # environment names directly.
-        prompt_cache_raw = _env("ABSTRACTGATEWAY_PROMPT_CACHE")
-        prompt_cache_enabled = _bool_text(prompt_cache_raw)
-        if prompt_cache_enabled is not None and not isinstance(rt_ns.get("prompt_cache"), dict):
+        #
+        # Prompt caching defaults ON (backlog 0212): the runtime derives a session-scoped
+        # cache key (requires a session_id), so reuse cannot cross sessions. Precedence:
+        # explicit run-level `_runtime.prompt_cache` (any shape) > ABSTRACTGATEWAY_PROMPT_CACHE
+        # env > default enabled.
+        if "prompt_cache" not in rt_ns:
+            prompt_cache_enabled = _bool_text(_env("ABSTRACTGATEWAY_PROMPT_CACHE"))
+            if prompt_cache_enabled is None:
+                prompt_cache_enabled = True
             rt_ns["prompt_cache"] = {"enabled": bool(prompt_cache_enabled), "version": 1}
 
         max_attachment_bytes = _int_text(_env("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES"))

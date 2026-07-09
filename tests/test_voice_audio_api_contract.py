@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+import base64
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
@@ -64,6 +65,7 @@ def _patch_gateway_capabilities(
 ) -> None:
     calls = calls if calls is not None else {}
     calls.setdefault("tts", [])
+    calls.setdefault("tts_stream", [])
     calls.setdefault("stt", [])
 
     from abstractruntime.core.models import RunStatus
@@ -119,6 +121,39 @@ def _patch_gateway_capabilities(
                     }
                 },
             )
+
+        def stream_voice(self, parent_run_id: str, *, text: str, output: Dict[str, Any], params: Dict[str, Any], child_vars=None):
+            calls["tts_stream"].append(
+                {
+                    "parent_run_id": parent_run_id,
+                    "text": text,
+                    "voice": output.get("voice"),
+                    "profile": output.get("profile"),
+                    "provider": output.get("provider"),
+                    "model": output.get("model"),
+                    "format": output.get("format"),
+                    "params": params,
+                    "child_vars": child_vars,
+                }
+            )
+            yield {
+                "type": "runtime_start",
+                "ok": True,
+                "child_run_id": "child-tts-stream-1",
+                "chunk_format": "wav-segment",
+            }
+            yield {
+                "type": "audio",
+                "sequence": 0,
+                "content_type": "audio/wav",
+                "audio_b64": base64.b64encode(tts_bytes).decode("ascii"),
+            }
+            yield {
+                "type": "done",
+                "ok": True,
+                "child_run_id": "child-tts-stream-1",
+                "audio_artifact": {"$artifact": "art-stream-1", "content_type": "audio/wav"},
+            }
 
         def transcribe_audio(self, parent_run_id: str, *, media, prompt=None, output=None, params=None, child_vars=None):
             calls["stt"].append(
@@ -356,6 +391,49 @@ def test_voice_tts_offloads_synthesis_to_threadpool(tmp_path: Path, monkeypatch:
         assert tts.status_code == 200, tts.text
 
     assert offloaded
+
+
+@pytest.mark.basic
+def test_voice_tts_stream_returns_runtime_jsonl_events(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-voice-stream", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    headers = {"Authorization": f"Bearer {token}"}
+    calls: dict = {}
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:chunk", calls=calls)
+
+    with TestClient(app) as client:
+        caps = client.get("/api/gateway/discovery/capabilities", headers=headers)
+        assert caps.status_code == 200, caps.text
+        tts_caps = caps.json()["capabilities"]["contracts"]["assistant"]["voice"]["tts"]
+        assert "stream" in tts_caps["delivery_modes"]
+        assert tts_caps["stream_endpoint"].endswith("/runs/{run_id}/voice/tts/stream")
+        assert tts_caps["stream_transport"] == "jsonl"
+
+        resp = client.post(
+            "/api/gateway/runs/session_memory_s1/voice/tts/stream",
+            json={"text": "hello", "request_id": "req-tts-stream", "format": "wav", "profile": "alloy"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    lines = [json.loads(line) for line in resp.content.decode("utf-8").splitlines() if line.strip()]
+    assert [line["type"] for line in lines] == ["runtime_start", "audio", "done"]
+    assert lines[0]["request_id"] == "req-tts-stream"
+    assert lines[1]["audio_b64"] == base64.b64encode(b"tts:chunk").decode("ascii")
+    assert calls["tts_stream"][0]["profile"] == "alloy"
+    assert calls["tts_stream"][0]["format"] == "wav"
 
 
 @pytest.mark.basic

@@ -169,10 +169,18 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
         wheel_force["flows/bundles/abstractassistant-orchestrator@0.0.0.flow"]
         == "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
     )
+    assert (
+        wheel_force["flows/bundles/dp-research@0.1.0.flow"]
+        == "abstractgateway/flows/bundles/dp-research@0.1.0.flow"
+    )
     assert sdist_force["flows/bundles/basic-agent.flow"] == "flows/bundles/basic-agent.flow"
     assert (
         sdist_force["flows/bundles/abstractassistant-orchestrator@0.0.0.flow"]
         == "flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
+    )
+    assert (
+        sdist_force["flows/bundles/dp-research@0.1.0.flow"]
+        == "flows/bundles/dp-research@0.1.0.flow"
     )
 
 

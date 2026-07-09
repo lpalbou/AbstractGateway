@@ -390,7 +390,7 @@ class GatewayRunner:
 
     def _apply_command(self, rec: CommandRecord) -> None:
         typ = str(rec.type or "").strip().lower()
-        if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory"}:
+        if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory", "inject_guidance"}:
             raise ValueError(f"Unknown command type '{typ}'")
 
         payload = dict(rec.payload or {})
@@ -423,6 +423,81 @@ class GatewayRunner:
         if typ == "compact_memory":
             self._apply_compact_memory(payload, run_id=run_id, command_id=str(rec.command_id), client_id=rec.client_id)
             return
+
+        if typ == "inject_guidance":
+            self._apply_inject_guidance(payload, run_id=run_id)
+            return
+
+    def _apply_inject_guidance(self, payload: Dict[str, Any], *, run_id: str) -> None:
+        """Steer a running agent by appending guidance to its durable inbox (backlog 0217c).
+
+        The ReAct loop drains `_runtime.inbox` at the start of each `reason` cycle and renders it on
+        the trailing (cache-safe) message. This is the framework-native, notify-shaped way to
+        redirect a run mid-flight without cancel/restart.
+
+        Concurrency (adversarial-review hardening): a tick worker also saves the same run, so a naive
+        load→append→save from this thread can (a) lose the guidance if the tick's save lands last, or
+        (b) — the dangerous case — resurrect a COMPLETED run if our stale RUNNING snapshot overwrites
+        the tick's terminal save. We defend against (b) hard and narrow (a):
+          - Only inject into NON-terminal runs (skip COMPLETED/FAILED/CANCELLED).
+          - Re-load the freshest snapshot immediately before saving and re-check it is still
+            non-terminal; abort the save if it went terminal in the window (never clobber a terminal
+            state). This eliminates resurrection.
+        A residual best-effort loss window remains (a concurrent tick save can still land last); a
+        full fix routes the mutation through the single tick-writer and is tracked as a follow-up in
+        backlog 0217. Guidance is safe to re-issue.
+        """
+        text = payload.get("guidance")
+        if not isinstance(text, str) or not text.strip():
+            text = payload.get("text") if isinstance(payload.get("text"), str) else None
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("inject_guidance requires payload.guidance (non-empty string)")
+        guidance = text.strip()
+
+        runtime = Runtime(run_store=self.run_store, ledger_store=self.ledger_store, artifact_store=self.artifact_store)
+        # Target the run and its descendants so the actual agent loop (a child run) is reached.
+        targets = self._list_descendant_run_ids(runtime, run_id)
+        _TERMINAL = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
+
+        def _is_terminal(r: Any) -> bool:
+            return getattr(r, "status", None) in _TERMINAL
+
+        applied = 0
+        found_injectable = False
+        for rid in targets:
+            run = self.run_store.load(rid)
+            if run is None:
+                continue
+            vars_obj = getattr(run, "vars", None)
+            if not isinstance(vars_obj, dict):
+                continue
+            runtime_ns = vars_obj.get("_runtime")
+            if not isinstance(runtime_ns, dict):
+                # Only inject into runs that model an agent inbox (have a _runtime namespace).
+                continue
+            # Never inject into (or save over) a run that has already finished.
+            if _is_terminal(run):
+                continue
+            found_injectable = True
+            inbox = runtime_ns.get("inbox")
+            if not isinstance(inbox, list):
+                inbox = []
+                runtime_ns["inbox"] = inbox
+            inbox.append({"role": "system", "content": guidance})
+            # Re-check terminal status on the freshest persisted snapshot immediately before saving.
+            # If the run finished in the meantime, DROP the save — a stale RUNNING snapshot must never
+            # overwrite a terminal state (the resurrection bug). This does not fully close the loss
+            # window, but it makes durable-state corruption impossible.
+            latest = self.run_store.load(rid)
+            if latest is not None and _is_terminal(latest):
+                continue
+            self.run_store.save(run)
+            applied += 1
+        if applied == 0 and found_injectable:
+            # Injectable runs existed but all finished before we could save — not an error.
+            return
+        if applied == 0:
+            raise KeyError(f"No inbox-bearing run found for '{run_id}' to inject guidance into")
 
     def _apply_run_control(self, typ: str, *, run_id: str, payload: Dict[str, Any], apply_to_tree: bool) -> None:
         runtime = Runtime(run_store=self.run_store, ledger_store=self.ledger_store, artifact_store=self.artifact_store)
@@ -532,6 +607,101 @@ class GatewayRunner:
                 continue
             runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
             runtime.resume(workflow=wf, run_id=r.run_id, wait_key=wait_key, payload=envelope, max_steps=0)
+
+        # Durable mailbox delivery (opt-in via payload.durable, backlog: event-inbox agents).
+        #
+        # Plain emit_event only reaches runs *currently parked* on the wait key; an event sent
+        # while a listener is busy (mid-LLM/tool cycle) would be silently dropped. With
+        # `durable: true`, the envelope is ALSO appended to the `events_inbox` run var of every
+        # non-terminal run that declares the matching mailbox (`events_mailbox` var == event
+        # name; str or list-of-str). Listener loops drain the inbox with a monotonic `seq`
+        # cursor (append-only on this side, cursor-only on the reader side), so no
+        # read-then-clear race exists between the runner thread and run ticks.
+        #
+        # Same concurrency posture as inject_guidance: commands apply on the runner loop
+        # thread; a concurrent tick save can race the append (best-effort, re-send if needed).
+        if payload.get("durable") is True or str(payload.get("durable") or "").strip().lower() in {"1", "true", "yes"}:
+            self._deliver_durable_event(name=name2, envelope=envelope)
+
+    _EVENTS_INBOX_CAP = 500
+
+    def _deliver_durable_event(self, *, name: str, envelope: Dict[str, Any]) -> None:
+        """Append an event envelope to the `events_inbox` of mailbox-declaring runs."""
+        list_runs = getattr(self.run_store, "list_runs", None)
+        if not callable(list_runs):
+            return
+
+        limit = int(self._cfg.run_scan_limit)
+        candidates: list[Any] = []
+        try:
+            candidates.extend(list_runs(status=RunStatus.RUNNING, limit=limit) or [])
+        except Exception:
+            pass
+        try:
+            candidates.extend(list_runs(status=RunStatus.WAITING, limit=limit) or [])
+        except Exception:
+            pass
+
+        def _declares_mailbox(vars_obj: Any) -> bool:
+            if not isinstance(vars_obj, dict):
+                return False
+            declared = vars_obj.get("events_mailbox")
+            if isinstance(declared, str):
+                return declared.strip() == name
+            if isinstance(declared, list):
+                return any(isinstance(m, str) and m.strip() == name for m in declared)
+            return False
+
+        seen: set[str] = set()
+        for r in candidates:
+            rid = str(getattr(r, "run_id", "") or "")
+            if not rid or rid in seen:
+                continue
+            seen.add(rid)
+            if not _declares_mailbox(getattr(r, "vars", None)):
+                continue
+
+            # Re-load fresh state: the resume pass above may have just saved this run.
+            run = self.run_store.load(rid)
+            if run is None:
+                continue
+            vars_obj = getattr(run, "vars", None)
+            if not isinstance(vars_obj, dict) or not _declares_mailbox(vars_obj):
+                continue
+
+            inbox = vars_obj.get("events_inbox")
+            if not isinstance(inbox, list):
+                inbox = []
+                vars_obj["events_inbox"] = inbox
+
+            try:
+                seq = int(vars_obj.get("events_inbox_seq") or 0) + 1
+            except Exception:
+                seq = 1
+            vars_obj["events_inbox_seq"] = seq
+
+            entry = dict(envelope)
+            entry["seq"] = seq
+            inbox.append(entry)
+
+            # Bounded mailbox: drop-oldest beyond the cap, visibly counted.
+            if len(inbox) > self._EVENTS_INBOX_CAP:
+                overflow = len(inbox) - self._EVENTS_INBOX_CAP
+                del inbox[:overflow]
+                try:
+                    dropped = int(vars_obj.get("events_inbox_dropped") or 0) + overflow
+                except Exception:
+                    dropped = overflow
+                vars_obj["events_inbox_dropped"] = dropped
+                logger.warning(
+                    "GatewayRunner: events_inbox overflow for run %s (mailbox=%s): dropped %s oldest",
+                    rid,
+                    name,
+                    overflow,
+                )
+
+            run.updated_at = utc_now_iso()
+            self.run_store.save(run)
 
     def _list_descendant_run_ids(self, runtime: Runtime, root_run_id: str) -> list[str]:
         """Return root + descendants (best-effort)."""

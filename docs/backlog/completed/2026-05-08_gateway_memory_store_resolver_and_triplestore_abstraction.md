@@ -97,7 +97,8 @@ Then Gateway should enforce behavior:
 - AbstractMemory planned item:
   - `docs/backlog/planned/002_sqlite_database_compatibility_and_store_capabilities.md`
 - AbstractMemory proposed item:
-  - `docs/backlog/proposed/2026-05-08_gateway_memory_install_and_config_boundary.md`
+  - `docs/backlog/proposed/0008_gateway_memory_install_and_config_boundary.md`
+    (renamed from `2026-05-08_gateway_memory_install_and_config_boundary.md` on 2026-07-05)
 - Gateway install/config proposal:
   - `docs/backlog/proposed/2026-05-08_gateway_install_profiles_and_config_entrypoint.md`
 

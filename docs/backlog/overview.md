@@ -22,7 +22,7 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 0
-- Proposed: 3
+- Proposed: 30
 - Completed: 20
 - Deprecated: 1
 - Recurrent: 0
@@ -43,15 +43,40 @@ can trust without importing local gateway packages.
 
 ## Next Recommended Work
 
-No active planned item is currently open in this backlog. Runtime-backed
-exposure of the latest Core/Vision image upscaling, adapter discovery, and
-richer media parameters is completed.
+A 2026-07-05 adversarial review (three code/security/product reviewers plus
+dedicated design reviews of the ops suite and SSE streaming) produced a phased
+roadmap now captured as proposed items `0059`-`0081`. The prior inward
+contract/boundary work is largely complete; the review's finding is that effort
+should shift to (a) restoring truth the code has drifted from, (b) making the
+already-shipped hosted multi-user mode safe and durable, (c) unblocking velocity
+and shrinking the trust surface, and (d) letting external clients cross the
+contract boundary.
 
-The main Runtime-owned boundary work is now done for Gateway's prompt-cache,
-durable bloc, residency, workspace/comms/Telegram, operator snapshot, direct
-music, direct image edit, STT/listen contract surfaces, thin-client catalog
-normalization, and thin-client surface readiness summary. The remaining
-proposed work is deeper provider/backend truth rather than boundary cleanup.
+Recommended sequencing:
+
+- Phase 0 (truth and footguns): `0059` import boundary + abstractcore regression,
+  `0060` fail-closed auth/network defaults, `0061` documentation/contract truth.
+- Phase 1 (safe + durable hosted multi-user): `0084` per-user RBAC + workspace
+  grants, `0062` tenant execution isolation tiers (depends on `0084`), `0063`
+  eager run rehydration + runner lock-retry, `0064` per-principal quotas +
+  retention, `0065` auth DoS hardening, `0079` secret-at-rest + ledger-redaction,
+  `0080` audit reads/integrity + session signature.
+- Phase 2 (velocity + trust surface): `0066` decompose the router, `0067` ops
+  suite boundary + durable execution (layer C with `0083`), `0068` externalize
+  console, `0069` unified settings + generated config docs, `0070` authorization
+  contract test + exception audit, `0081` failure-mode test suite, `0083`
+  agentic orchestration parity to retire codex.
+- Phase 3 (adoptability): `0071` client SDKs, `0072` conformance kit + frozen
+  event vocabulary, `0073` webhooks/event egress, `0074` OpenAI-compatible
+  facade, `0082` ledger replay integrity + durable cursor (prerequisite spike),
+  then `0075` event-driven ledger streaming.
+- Phase 4 (scale + hosted viability, behind explicit triggers): `0076` scale-out
+  runner leasing + durable-log tail, `0077` usage metering/analytics, `0078`
+  premium-control-plane SLOs + deprecation policy.
+
+The pre-existing deeper provider/backend truth item (`0055`) and the three
+older proposed items remain valid and are folded into the phases above where
+relevant.
 
 ## Planned Items
 
@@ -64,9 +89,35 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.
 | Item | Promotion criteria |
 | --- | --- |
 | [2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md](proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md) | Remaining optional hardening: draft-bundle cleanup and default memory-scope isolation; run-tree purge is implemented. |
-| [2026-05-13_shared_identity_context.md](proposed/2026-05-13_shared_identity_context.md) | Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work. |
+| [2026-05-13_shared_identity_context.md](proposed/2026-05-13_shared_identity_context.md) | Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work. Related: `0062`, `0064`. |
 | [0055_gateway_provider_backend_readiness_truth_for_thin_clients.md](proposed/0055_gateway_provider_backend_readiness_truth_for_thin_clients.md) | Promote when Runtime/Core can supply selected backend/provider/model and stable degraded-state truth for Gateway to relay to thin clients. |
 | [offline_first_gateway_connectivity.md](proposed/offline_first_gateway_connectivity.md) | Promote when offline-first connectivity guarantees become a near-term product commitment. |
+| [0059_enforce_gateway_import_boundary_and_fix_abstractcore_regression.md](proposed/0059_enforce_gateway_import_boundary_and_fix_abstractcore_regression.md) | Phase 0. Promote now for the CI guard + ledger correction; facade migration when Runtime adds a config facade. |
+| [0060_fail_closed_auth_and_network_defaults.md](proposed/0060_fail_closed_auth_and_network_defaults.md) | Phase 0. Promote now; catastrophic-downside, near-zero-cost footguns. |
+| [0061_documentation_truth_and_contract_consistency.md](proposed/0061_documentation_truth_and_contract_consistency.md) | Phase 0. Promote now; cheapest trust repairs. |
+| [0062_tenant_execution_isolation_tiers.md](proposed/0062_tenant_execution_isolation_tiers.md) | Phase 1. Promote Tier 1 with 0084 (safety floor for shipped multi-user); Tier 2/3 sandboxing with untrusted-tenant commitment. Admins run unsandboxed; regular users sandboxed. |
+| [0084_user_rbac_and_workspace_grants.md](proposed/0084_user_rbac_and_workspace_grants.md) | Phase 1 foundation. Promote with 0062 Tier 1 — per-user rwx workspace grants are the policy ceiling execution isolation enforces. |
+| [0063_eager_run_rehydration_and_runner_lease_retry.md](proposed/0063_eager_run_rehydration_and_runner_lease_retry.md) | Phase 1. Promote lock-retry now; eager rehydration with per-principal lifecycle work. |
+| [0064_per_principal_quotas_and_nondraft_retention.md](proposed/0064_per_principal_quotas_and_nondraft_retention.md) | Phase 1. Promote with 0062 Tier 1. |
+| [0065_auth_dos_hardening_token_index_and_rate_limits.md](proposed/0065_auth_dos_hardening_token_index_and_rate_limits.md) | Phase 1. Promote with hosted multi-user hardening. |
+| [0066_decompose_gateway_router_god_module.md](proposed/0066_decompose_gateway_router_god_module.md) | Phase 2. Promote after Phase 0; unblocks most other work. |
+| [0067_self_hosting_ops_suite_boundary.md](proposed/0067_self_hosting_ops_suite_boundary.md) | Phase 2. Promote layer A (trust-domain) now; B with 0066; C with 0083 when durable self-evolution is prioritized. |
+| [0068_externalize_console_static_assets.md](proposed/0068_externalize_console_static_assets.md) | Phase 2. Promote with/after 0066. |
+| [0069_unified_gateway_settings_and_generated_config_docs.md](proposed/0069_unified_gateway_settings_and_generated_config_docs.md) | Phase 2. Promote after 0066 or independently. |
+| [0070_route_authorization_contract_test_and_exception_audit.md](proposed/0070_route_authorization_contract_test_and_exception_audit.md) | Phase 2. Promote the auth contract test with 0066. |
+| [0071_official_client_sdks_render_kit.md](proposed/0071_official_client_sdks_render_kit.md) | Phase 3. Promote after/with 0072. |
+| [0072_client_conformance_kit_and_frozen_event_vocabulary.md](proposed/0072_client_conformance_kit_and_frozen_event_vocabulary.md) | Phase 3. Promote with or just before 0071. |
+| [0073_run_lifecycle_webhooks_event_egress.md](proposed/0073_run_lifecycle_webhooks_event_egress.md) | Phase 3. Promote after 0075 (efficient triggering) or with a poll-based trigger. |
+| [0074_openai_compatible_facade.md](proposed/0074_openai_compatible_facade.md) | Phase 3. Promote after 0071/0072 or as a demo spike. |
+| [0075_event_driven_ledger_streaming.md](proposed/0075_event_driven_ledger_streaming.md) | Phase 3. Promote AFTER 0082; then single-node design; multi-worker bridge follows demand (0076 triggers). |
+| [0082_ledger_replay_integrity_and_durable_cursor.md](proposed/0082_ledger_replay_integrity_and_durable_cursor.md) | Phase 3 prerequisite. Promote FIRST, before 0075/0076 — pins the durable cursor + replay-equivalence invariants so streaming cannot break replay. |
+| [0083_agentic_orchestration_parity_to_retire_codex.md](proposed/0083_agentic_orchestration_parity_to_retire_codex.md) | Phase 2/3 enabler. Promote when durable self-evolution (0067-C) is prioritized; primarily AbstractRuntime/AbstractAgent work that lets the framework retire the codex subprocess. |
+| [0076_scale_out_runner_leasing_and_durable_log_tail.md](proposed/0076_scale_out_runner_leasing_and_durable_log_tail.md) | Phase 4. Promote only when explicit scale triggers are measured. |
+| [0077_usage_metering_quotas_analytics.md](proposed/0077_usage_metering_quotas_analytics.md) | Phase 4. Promote when hosted use goes beyond trusted teams. |
+| [0078_premium_control_plane_slos_and_deprecation_policy.md](proposed/0078_premium_control_plane_slos_and_deprecation_policy.md) | Phase 4. Promote early once 0075 yields real single-node numbers. |
+| [0079_secret_at_rest_encryption_and_ledger_redaction_audit.md](proposed/0079_secret_at_rest_encryption_and_ledger_redaction_audit.md) | Phase 1. Promote with hosted multi-user hardening. |
+| [0080_audit_reads_integrity_and_session_signature.md](proposed/0080_audit_reads_integrity_and_session_signature.md) | Phase 1. Promote with hosted multi-user hardening. |
+| [0081_failure_mode_test_suite.md](proposed/0081_failure_mode_test_suite.md) | Phase 2. Promote alongside 0063/0075 or incrementally now. |
 
 ## Completed Work Ledger
 

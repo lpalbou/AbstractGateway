@@ -671,11 +671,20 @@ def test_gateway_bundle_model_residency_only_uses_remote_core_runtime(
 
     calls: list[Dict[str, Any]] = []
 
+    from abstractcore.config.manager import ConfigurationManager
     from abstractruntime.core.models import EffectType, RunStatus
     from abstractruntime.core.runtime import EffectOutcome, Runtime
     from abstractruntime.integrations.abstractcore import factory as ac_factory
     from abstractruntime.storage.artifacts import InMemoryArtifactStore
     from abstractruntime.storage.in_memory import InMemoryLedgerStore, InMemoryRunStore
+
+    core_config = runtime_dir / "config" / "abstractcore.json"
+    manager = ConfigurationManager(config_file=core_config, apply_env=False)
+    assert manager.set_capability_default(
+        "output.image.text_to_image",
+        provider="mlx-gen",
+        model="AbstractFramework/qwen-image-2512-8bit",
+    )
 
     def _fake_create_remote_runtime(**kwargs: Any) -> Runtime:
         calls.append(dict(kwargs))
@@ -708,6 +717,8 @@ def test_gateway_bundle_model_residency_only_uses_remote_core_runtime(
 
     monkeypatch.setattr(ac_factory, "create_remote_runtime", _fake_create_remote_runtime)
     monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
     monkeypatch.delenv("ABSTRACTGATEWAY_PROVIDER", raising=False)
     monkeypatch.delenv("ABSTRACTGATEWAY_MODEL", raising=False)
 
@@ -741,6 +752,13 @@ def test_gateway_bundle_model_residency_only_uses_remote_core_runtime(
     assert calls
     assert calls[0]["server_base_url"] == "http://core.test/v1"
     assert calls[0]["model"] == "default"
+    assert calls[0]["core_config_file"] == runtime_dir / "config" / "abstractcore.json"
+    image_route = next(
+        row
+        for row in calls[0]["capability_defaults"]["routes"]
+        if isinstance(row, dict) and row.get("key") == "output.image.text_to_image"
+    )
+    assert image_route["model"] == "AbstractFramework/qwen-image-2512-8bit"
     assert any(
         isinstance(item, dict)
         and isinstance(item.get("effect"), dict)

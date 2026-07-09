@@ -8,6 +8,10 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, Optional
 
+# Boundary rule: Gateway imports AbstractRuntime, never AbstractCore directly.
+# AbstractCore config management is reached through the Runtime config facade.
+from abstractruntime.integrations.abstractcore import config_facade
+
 
 def gateway_capability_defaults_payload(*, base_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Return execution-host capability defaults through the Gateway control plane.
@@ -92,10 +96,7 @@ def save_gateway_capability_default(
         payload.setdefault("writable", True)
         return payload
 
-    from abstractcore.config.manager import ConfigurationManager
-
-    manager = ConfigurationManager()
-    if not manager.set_capability_default(
+    if not config_facade.set_capability_default(
         kind,
         modality,
         task=task,
@@ -132,36 +133,27 @@ def clear_gateway_capability_default(
         payload.setdefault("writable", True)
         return payload
 
-    from abstractcore.config.manager import ConfigurationManager
-
-    manager = ConfigurationManager()
-    if not manager.clear_capability_default(kind, modality, task=task):
+    if not config_facade.clear_capability_default(kind, modality, task=task):
         suffix = f".{task}" if _clean(task) else ""
         raise ValueError(f"Failed to clear capability default {kind}.{modality}{suffix}")
     return _local_core_payload()
 
 
 def _local_core_payload() -> Dict[str, Any]:
-    from abstractcore.config.manager import ConfigurationManager
-
-    manager = ConfigurationManager()
     return {
         "ok": True,
         "version": 1,
         "authority": "abstractcore.local",
         "writable": True,
         "source": "abstractcore.local",
-        "config_file": str(manager.config_file),
-        "routes": manager.list_capability_defaults(),
+        "config_file": config_facade.capability_default_config_file(),
+        "routes": config_facade.list_capability_defaults(),
         "errors": [],
     }
 
 
 def _core_config_payload(path: Path, *, authority: str, source: str) -> Dict[str, Any]:
-    from abstractcore.config.manager import ConfigurationManager
-
-    manager = ConfigurationManager(config_file=path, apply_env=False)
-    routes = manager.list_capability_defaults()
+    routes = config_facade.list_capability_defaults(config_file=path, apply_env=False)
     for row in routes:
         if isinstance(row, dict) and bool(row.get("configured")):
             row["source"] = source
@@ -171,7 +163,7 @@ def _core_config_payload(path: Path, *, authority: str, source: str) -> Dict[str
         "authority": authority,
         "writable": True,
         "source": source,
-        "config_file": str(manager.config_file),
+        "config_file": config_facade.capability_default_config_file(config_file=path, apply_env=False),
         "routes": routes,
         "errors": [],
     }
@@ -219,10 +211,7 @@ def _save_core_config_route(
     base_url: Optional[str],
     options: Dict[str, Any],
 ) -> None:
-    from abstractcore.config.manager import ConfigurationManager
-
-    manager = ConfigurationManager(config_file=path, apply_env=False)
-    if not manager.set_capability_default(
+    if not config_facade.set_capability_default(
         kind,
         modality,
         task=task,
@@ -230,16 +219,15 @@ def _save_core_config_route(
         model=model,
         base_url=base_url,
         options=options,
+        config_file=path,
+        apply_env=False,
     ):
         suffix = f".{task}" if _clean(task) else ""
         raise ValueError(f"Failed to set capability default {kind}.{modality}{suffix}")
 
 
 def _clear_core_config_route(path: Path, kind: str, modality: str, *, task: Optional[str] = None) -> None:
-    from abstractcore.config.manager import ConfigurationManager
-
-    manager = ConfigurationManager(config_file=path, apply_env=False)
-    if not manager.clear_capability_default(kind, modality, task=task):
+    if not config_facade.clear_capability_default(kind, modality, task=task, config_file=path, apply_env=False):
         suffix = f".{task}" if _clean(task) else ""
         raise ValueError(f"Failed to clear capability default {kind}.{modality}{suffix}")
 
@@ -255,11 +243,8 @@ def _same_path(a: Optional[Path], b: Optional[Path]) -> bool:
 
 def _load_configured_routes_from_core_config(path: Path) -> Dict[str, Dict[str, Any]]:
     try:
-        from abstractcore.config.manager import ConfigurationManager
-
-        manager = ConfigurationManager(config_file=path, apply_env=False)
         routes: Dict[str, Dict[str, Any]] = {}
-        for row in manager.list_capability_defaults():
+        for row in config_facade.list_capability_defaults(config_file=path, apply_env=False):
             if not isinstance(row, dict):
                 continue
             key = str(row.get("key") or "").strip()
@@ -276,9 +261,7 @@ def _apply_core_config_routes(payload: Dict[str, Any], *, config_path: Path, sou
         return payload, False
 
     try:
-        from abstractcore.config.capability_defaults import iter_capability_default_specs
-
-        specs = {spec.key: spec.to_dict() for spec in iter_capability_default_specs()}
+        specs = config_facade.capability_default_specs()
     except Exception:
         specs = {}
 

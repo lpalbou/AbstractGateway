@@ -299,7 +299,17 @@ def main(argv: list[str] | None = None) -> None:
         help="Repo root containing docs/backlog (defaults to ABSTRACTGATEWAY_TRIAGE_REPO_ROOT or CWD)",
     )
 
+    from .entity_cli import add_entity_subparser
+
+    add_entity_subparser(sub)
+
     args = parser.parse_args(argv)
+
+    if args.cmd == "entity":
+        from .entity_cli import run_entity_command
+
+        run_entity_command(args)
+        return
 
     if args.cmd == "serve":
         # ------------------------------------------------------------------
