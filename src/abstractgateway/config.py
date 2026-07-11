@@ -59,6 +59,26 @@ def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def declared_door_address() -> Optional[str]:
+    """The door's ONE operator-declared canonical address (plan item 5,
+    GW-F): `ABSTRACTGATEWAY_DECLARED_ADDRESS`, e.g. "127.0.0.1:8080" or
+    "entities.example.org". Unset = the door claims no address (handles are
+    simply not rendered — the door never guesses what it cannot know; it
+    binds 0.0.0.0 and clients dial many routes).
+
+    Lives in config (renaming.md, approved c398): this is door-wide SERVING
+    config, not an entity concept — the next consumer (federation links,
+    webhooks, rendered URLs) must not import an entity module to read it.
+    `render_handle()` (entity-flavored) stays in `entities.py`.
+
+    RELOCATION-STABLE KEYS (core C1 pin): this value renders HANDLES ONLY.
+    Nothing at rest — entity_id, stamps, gradation targets, cache keys,
+    marker streams — may ever derive from it; localhost -> VPS must stay
+    one config edit with zero records touched (laurent's consequence (d))."""
+    raw = (os.getenv("ABSTRACTGATEWAY_DECLARED_ADDRESS") or "").strip()
+    return raw or None
+
+
 def _default_flows_dir() -> str:
     package_root = Path(__file__).resolve().parent
     candidates = [

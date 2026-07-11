@@ -166,6 +166,12 @@ def _normalize_embedder(embedder: Optional[Any]) -> Optional[Any]:
     class _EmbeddingAdapter:
         def __init__(self, inner: Any) -> None:
             self._inner = inner
+            # Identity rides the wrap: the engine's embedder_model_id()
+            # reads `model`/`model_id`; an anonymous adapter over a named
+            # embedder would silently disable identity-vs-pin enforcement.
+            inner_model = getattr(inner, "model", None) or getattr(inner, "model_id", None)
+            if isinstance(inner_model, str) and inner_model.strip():
+                self.model = inner_model.strip()
 
         def embed_texts(self, texts: Any) -> Any:
             result = self._inner.embed_texts(texts)
@@ -192,13 +198,20 @@ def build_gateway_memory_embedder(*, base_dir: Path) -> Optional[Any]:
         )
 
         class _Embedder:
-            def __init__(self, client: Any) -> None:
+            def __init__(self, client: Any, model: str = "") -> None:
                 self._client = client
+                # Embedding-space identity (plan item 3 / memory M1): the
+                # engine's `embedder_model_id()` reads a `model` attribute to
+                # enforce identity-vs-pin at open. Without this the HTTP
+                # wrapper was anonymous and only DIMENSION enforcement could
+                # fire for gateway-opened homes.
+                if model:
+                    self.model = model
 
             def embed_texts(self, texts: Any) -> Any:
                 return self._client.embed_texts(texts).embeddings
 
-        return _normalize_embedder(_Embedder(emb_client))
+        return _normalize_embedder(_Embedder(emb_client, model=str(embedding_route.model or "")))
     except Exception:
         return None
 

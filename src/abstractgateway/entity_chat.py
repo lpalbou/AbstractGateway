@@ -195,6 +195,7 @@ class _HostedChat:
     yielded_loop: bool
     opened_at: str
     model_info: Dict[str, str]
+    lease: Any = None       # the visit's home-lease window (GW-A); released at close
     last_activity: float = 0.0
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     closed: bool = False
@@ -247,7 +248,11 @@ class EntityChatHost:
         participants: Optional[List[str]] = None,
         context_window: Optional[int] = None,
         shelf_size: Optional[int] = None,
-        max_output_tokens: int = 2048,
+        # Output headroom (agency-caps audit, maintainer 2026-07-11): parity
+        # with the visit LLM handler — a report/rich-answer turn must not be
+        # cut mid-thought. Per-entity operator config is queued for the
+        # creation modal (substrate config is already surfaced there).
+        max_output_tokens: int = 4096,
         enable_tools: bool = True,
         enable_workspace: bool = False,
     ) -> Dict[str, Any]:
@@ -374,6 +379,29 @@ class EntityChatHost:
                     "wake him first (`entity wake`) or let his loop negotiate the visit",
                 )
 
+        # One writer per home (plan item 1, GW-A): the visit IS a write
+        # window. Acquired AFTER the auto-yield (the loop's day lease is
+        # released at the boundary we just waited for); anything still
+        # holding the home — a CLI visit, a dream pass, a maintenance run —
+        # refuses this open loudly, naming the holder. The auto-yield
+        # negotiation stays ABOVE the lease (policy); this is the belt.
+        lease: Any = None
+        try:
+            from abstractruntime.storage.lease import DirectoryLeaseHeld, acquire_directory_lease
+
+            try:
+                lease = acquire_directory_lease(home_dir, holder="visit-host")
+            except DirectoryLeaseHeld as e:
+                if yielded:
+                    write_entity_state(home_dir, "awake", reason="visit open aborted (home has a writer)")
+                raise ChatOpenRefused(409, str(e))
+        except ImportError:
+            # Older runtime without storage.lease: no site acquires (the
+            # loop's sites are absent too) — labeled, never silent.
+            env_warnings.append(
+                "#FALLBACK runtime predates the home lease; visit opened without the writer mutex"
+            )
+
         try:
             home = open_home(home_dir, embedder=self._registry._resolve_embedder())
             llm_kwargs: Dict[str, Any] = {"model": model, "max_output_tokens": int(max_output_tokens)}
@@ -398,10 +426,14 @@ class EntityChatHost:
             session = ChatSession(home, llm, **session_kwargs)
         except SystemExit as e:
             # A refused prelude aborts the summon — the reasons travel verbatim.
+            if lease is not None:
+                lease.release()
             if yielded:
                 write_entity_state(home_dir, "awake", reason="visit aborted (prelude refused)")
             raise ChatOpenRefused(409, f"summon refused: {'; '.join(quiet) or e}")
         except BaseException:
+            if lease is not None:
+                lease.release()
             if yielded:
                 write_entity_state(home_dir, "awake", reason="visit aborted (open failed)")
             raise
@@ -431,6 +463,7 @@ class EntityChatHost:
             yielded_loop=yielded,
             opened_at=datetime.now(timezone.utc).isoformat(),
             model_info={"provider": str(provider), "model": str(model)},
+            lease=lease,
             last_activity=_time.monotonic(),
         )
         with self._lock:
@@ -699,6 +732,13 @@ class EntityChatHost:
                 self._sessions.pop(hosted.chat_id, None)
                 if self._by_slug.get(hosted.entity_slug) == hosted.chat_id:
                     del self._by_slug[hosted.entity_slug]
+            # The visit's write window ends HERE — after the home closed and
+            # the wake write landed (both are home writes under this hold).
+            if getattr(hosted, "lease", None) is not None:
+                try:
+                    hosted.lease.release()
+                except Exception:
+                    pass  # fd close releases the kernel lock regardless
 
         self._marker(
             hosted, "session_closed",

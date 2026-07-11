@@ -70,6 +70,16 @@ class CreateEntityRequest(BaseModel):
         default=True,
         description="Framework lint (requires the shared_vulnerability core value); disabling is a deliberate operator override",
     )
+    embedding_model: Optional[str] = Field(
+        default=None,
+        description="Embedder identity as an explicit BIRTH choice (plan item 3 / M1 pin); "
+        "None = pin the door's resolved embedder identity",
+    )
+    embedding_dimension: Optional[int] = Field(
+        default=None, ge=1,
+        description="Embedding dimension for the pin; None = probed from the resolved embedder "
+        "(memory locks it at first write when unknowable)",
+    )
 
 
 @router.post("", status_code=201)
@@ -83,6 +93,8 @@ async def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
             spark=req.spark,
             spark_text=req.spark_text,
             framework=bool(req.framework),
+            embedding_model=req.embedding_model,
+            embedding_dimension=req.embedding_dimension,
         )
     except ValueError as e:
         # Lint errors, name mismatches, and spark-drift refusals are written
@@ -175,13 +187,50 @@ async def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, A
     close)."""
     target = str(req.state or "").strip().lower()
     closed: Optional[Dict[str, Any]] = None
+    closed_durable: Optional[Dict[str, Any]] = None
     if target in ("asleep", "paused"):
+        # Legacy in-process chat session (until the /chat surface retires).
+        # A missing chat host (503 from _chat_host on a hand-built service)
+        # is a GRACEFUL SKIP here, not a hard error — this is a teardown of
+        # a surface that may not exist; the durable-visit teardown below is
+        # the one that matters on the migration path.
         try:
             closed = _chat_host().close_open_visit(name, reflect=(target == "asleep"))
+        except HTTPException as e:
+            if e.status_code != 503:
+                raise
+            closed = None  # no chat host on this service shape — skip it
+        except Exception:
+            closed = None
+        # DURABLE visit run (the migration path): an open /visit must be
+        # torn down by the same emergency-stop, not left ticking while the
+        # badge flips. sleep = graceful close (reflection runs); pause = the
+        # hard freeze (closed_by=pause -> skip_reflection, no cognition —
+        # runtime a0bd1df completes it with reflection_pending). The state
+        # itself remains the coordination authority; this makes it effective.
+        try:
+            from ..entity_visits import VisitRefused
+
+            host = _visit_host()
+            live = host.status(name)
+            if live.get("open") and live.get("run_id"):
+                try:
+                    closed_durable = host.close(
+                        name, live["run_id"],
+                        closed_by=("pause" if target == "paused" else "sleep"),
+                        reason=req.reason or f"{target} requested by operator",
+                    )
+                except VisitRefused as e:
+                    # The teardown FAILED (e.g. a concurrent turn holds the
+                    # lease). The state still flips (it is the coordination
+                    # authority), but the failure is LABELED in the response
+                    # — never a silent None that reads as "no visit was open".
+                    closed_durable = {"error": e.detail, "teardown_failed": True,
+                                      "run_id": live.get("run_id")}
         except HTTPException:
             raise
         except Exception:
-            closed = None  # no chat host on this service shape
+            closed_durable = None  # no visit host on this service shape
     try:
         result = _registry().set_state(name=name, state=req.state, reason=req.reason, dream=bool(req.dream))
     except KeyError as e:
@@ -190,6 +239,19 @@ async def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, A
         raise HTTPException(status_code=400, detail=str(e))
     if closed is not None:
         result["closed_visit"] = {"turns": closed.get("turns"), "summary": closed.get("summary")}
+    if closed_durable is not None:
+        if closed_durable.get("teardown_failed"):
+            result["closed_visit_run"] = {
+                "run_id": closed_durable.get("run_id"),
+                "teardown_failed": True,
+                "error": closed_durable.get("error"),
+            }
+        else:
+            result["closed_visit_run"] = {
+                "run_id": closed_durable.get("run_id"),
+                "status": closed_durable.get("status"),
+                "output": closed_durable.get("output"),
+            }
     return result
 
 
@@ -200,6 +262,248 @@ async def get_entity_state(name: str) -> Dict[str, Any]:
         return _registry().state_of(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ------------------------------------------------------------- visit runs
+# GW-C endpoint half (plan items 7/9/10): visits as DURABLE RUNS in the
+# entity's own runtime — the migration path off the in-process chat host.
+# The legacy /chat surface stays untouched until the A/B rules the switch.
+
+
+def _visit_host():
+    """The durable-visit host. Built by the service factory and cached on
+    the service; the per-registry fallback covers only hand-built services
+    (tests) — a per-REQUEST host would drop the in-process open-locks and
+    meet index, so it is cached on the registry, never rebuilt per call."""
+    from ..entity_visits import EntityVisitHost
+
+    svc = get_gateway_service()
+    host = getattr(svc, "entity_visit_host", None)
+    if host is not None and getattr(host, "_registry", None) is _registry():
+        return host
+    registry = _registry()
+    cached = getattr(registry, "_visit_host_singleton", None)
+    if cached is None or getattr(cached, "_registry", None) is not registry:
+        cached = EntityVisitHost(registry)
+        registry._visit_host_singleton = cached
+    return cached
+
+
+class OpenVisitRequest(BaseModel):
+    session_id: Optional[str] = Field(default=None, description="Stable session id (None = minted)")
+
+
+class VisitTurnRequest(BaseModel):
+    text: str = Field(..., description="What you say this turn")
+    speaker: Optional[str] = Field(default=None, description="namespace:name of the voice (default: first participant)")
+
+
+class VisitCloseRequest(BaseModel):
+    closed_by: str = Field(
+        default="operator",
+        description="operator | sleep (reflection runs) | pause (hard freeze: skip_reflection, no cognition)",
+    )
+    reason: str = Field(default="", description="Why — reaches the reflection look-back (sleep/operator)")
+
+
+@router.post("/{name}/visit/open")
+async def open_visit(name: str, req: OpenVisitRequest) -> Dict[str, Any]:
+    """Open a DURABLE visit: one run in the entity's own runtime, stamped at
+    creation (visit_id + participants + posture ride the stamp), ticked to
+    the first PARK. A gateway restart no longer kills this conversation —
+    /turn continues it with the same run_id.
+
+    WHO is present is DOOR-DERIVED, never client-claimed (the situation
+    contract, same as the summon endpoint): the sole visitor is the
+    authenticated principal (auth-off local gateway = the operator), and
+    the entity stamps itself. A payload cannot engrave a false co-presence
+    (person:laurent) into an append-only life — so there is no participants
+    field to send."""
+    from ..entity_visits import VisitRefused
+    from ..security.principal import current_gateway_principal
+
+    principal = current_gateway_principal()
+    visitor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    try:
+        return _visit_host().open(name, participants=[visitor], session_id=req.session_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.post("/{name}/visit/{run_id}/turn")
+async def visit_turn(name: str, run_id: str, req: VisitTurnRequest) -> Dict[str, Any]:
+    from ..entity_visits import VisitRefused
+
+    try:
+        return _visit_host().turn(name, run_id, text=req.text, speaker=req.speaker)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.post("/{name}/visit/{run_id}/close")
+async def visit_close(name: str, run_id: str, req: VisitCloseRequest) -> Dict[str, Any]:
+    from ..entity_visits import VisitRefused
+
+    try:
+        return _visit_host().close(name, run_id, closed_by=req.closed_by, reason=req.reason)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.post("/{name}/visit/{run_id}/tick")
+async def visit_tick(name: str, run_id: str) -> Dict[str, Any]:
+    """Drive-to-park (walkthrough step 5b: after a mid-turn kill the run is
+    RUNNING-not-parked; this drives it to its next park/terminal without a
+    message). Idempotent on parked and terminal runs."""
+    from ..entity_visits import VisitRefused
+
+    try:
+        return _visit_host().tick(name, run_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.get("/{name}/visit")
+async def visit_status(name: str) -> Dict[str, Any]:
+    from ..entity_visits import VisitRefused
+
+    try:
+        return _visit_host().status(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+# ------------------------------------------------------------- entity meets
+# Item 14 (the north-star substrate's first realizable shape): two entities
+# in one conversation as TWO correlated durable legs, one visit_id, mutual
+# relay, one home lease at a time. Same-door only in v0 (cross-door needs
+# the federation transport, deferred).
+
+
+def _meet_host():
+    """The meet host over the durable-visit host (shares its open-locks so
+    a meet leg and a solo open on the same home cannot race). Built by the
+    factory; the per-registry fallback (tests) reuses the same visit host."""
+    from ..entity_meets import EntityMeetHost
+
+    svc = get_gateway_service()
+    host = getattr(svc, "entity_meet_host", None)
+    if host is not None and getattr(getattr(host, "_visits", None), "_registry", None) is _registry():
+        return host
+    registry = _registry()
+    cached = getattr(registry, "_meet_host_singleton", None)
+    if cached is None or getattr(getattr(cached, "_visits", None), "_registry", None) is not registry:
+        cached = EntityMeetHost(_visit_host())
+        registry._meet_host_singleton = cached
+    return cached
+
+
+class OpenMeetRequest(BaseModel):
+    entity_a: str = Field(..., description="First entity name")
+    entity_b: str = Field(..., description="Second entity name (must differ)")
+    session_id: Optional[str] = Field(default=None, description="Stable meet session id (None = minted)")
+
+
+class MeetRelayRequest(BaseModel):
+    opener: str = Field(..., description="'a' or 'b' — which side speaks this exchange")
+    text: str = Field(..., description="What the opener says; the reply is relayed to the other entity")
+
+
+class MeetCloseRequest(BaseModel):
+    reason: str = Field(default="", description="Why — reaches each leg's reflection")
+
+
+@router.post("/meets/open")
+async def open_meet(req: OpenMeetRequest) -> Dict[str, Any]:
+    """Open a two-entity meet: both legs summoned under ONE visit_id, each
+    in its own home runtime. The authenticated principal is the CONVENER —
+    stamped into both legs and the author of every steering line (honest
+    attribution: neither entity is ever recorded saying the operator's
+    words). Never half-opens — if the second entity refuses, the first leg
+    is closed."""
+    from ..entity_meets import VisitRefused
+    from ..security.principal import current_gateway_principal
+
+    principal = current_gateway_principal()
+    convener = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    try:
+        return _meet_host().open(
+            req.entity_a, req.entity_b, session_id=req.session_id, convener=convener
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.post("/meets/{meet_id}/relay")
+async def relay_meet(meet_id: str, req: MeetRelayRequest) -> Dict[str, Any]:
+    from ..entity_meets import VisitRefused
+
+    try:
+        return _meet_host().relay(meet_id, opener=req.opener, text=req.text)
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.post("/meets/{meet_id}/close")
+async def close_meet(meet_id: str, req: MeetCloseRequest) -> Dict[str, Any]:
+    from ..entity_meets import VisitRefused
+
+    try:
+        return _meet_host().close(meet_id, reason=req.reason)
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.get("/meets/{meet_id}")
+async def meet_status(meet_id: str) -> Dict[str, Any]:
+    from ..entity_meets import VisitRefused
+
+    try:
+        return _meet_host().status(meet_id)
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+class ReembedRequest(BaseModel):
+    embedding_model: Optional[str] = Field(
+        default=None,
+        description="Verification only: must match the door's resolved embedder "
+        "(reconfigure the embeddings route first, then reembed)",
+    )
+    reason: str = Field(default="", description="Why — journaled by the engine and host-marked by the door")
+
+
+@router.post("/{name}/reembed")
+async def reembed_entity(name: str, req: ReembedRequest) -> Dict[str, Any]:
+    """The M1b repair verb (operator-gated, never routine): re-derive the
+    home's vector index with the door's resolved embedder under the
+    maintenance lease; atomic swap engine-side; the act lands in BOTH
+    planes (engine journal claim + door host marker). A held home refuses
+    409 naming the holder — retry at the writer's next boundary."""
+    try:
+        from abstractruntime.storage.lease import DirectoryLeaseHeld
+    except ImportError:  # older runtime: the registry already labels this path
+        DirectoryLeaseHeld = ()  # type: ignore[assignment]
+    try:
+        return _registry().reembed(name=name, embedding_model=req.embedding_model, reason=req.reason)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except DirectoryLeaseHeld as e:  # type: ignore[misc]
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -258,8 +562,11 @@ class OpenChatRequest(BaseModel):
         "maintainer 2026-07-09: widened so the entity retrieves enough memories to function)",
     )
     max_output_tokens: int = Field(default=2048)
-    enable_tools: bool = Field(default=True, description="Tier-1 tool blocks (web_search / diary_list / diary_read / read_memory)")
-    enable_workspace: bool = Field(default=False, description="Workspace tools contained to <home>/workspace/")
+    enable_tools: bool = Field(default=True, description="Entity tools per the home's tool_policy.yaml (ruled defaults: the full set)")
+    enable_workspace: bool = Field(
+        default=False,
+        description="Deprecated no-op (2026-07-11 ruling: workspace tools are in the default grant; narrow via tool_policy.yaml)",
+    )
 
 
 class ChatTurnRequest(BaseModel):
@@ -868,8 +1175,9 @@ async def get_entity_tool_policy(name: str) -> Dict[str, Any]:
     home_dir = registry.entities_dir / manifest.slug
     phases: Dict[str, Any] = {}
     for phase in PHASES:
-        # Display resolution: the bare default posture (visit shows tier-1;
-        # a per-session --workspace flag is not the file's business).
+        # Display resolution: the bare default posture — visit/resident show
+        # the full ruled default (tier-1 + workspace, maintainer 2026-07-11),
+        # sleep the read-only exploration set; enable_workspace is inert.
         grant = resolve_tool_grant(home_dir, phase, enable_workspace=False)
         phases[phase] = {"tools": list(grant.tools), "source": grant.source, "notes": list(grant.notes)}
     return {
@@ -893,6 +1201,171 @@ async def put_entity_tool_policy(name: str, req: PutToolPolicyRequest) -> Dict[s
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return await get_entity_tool_policy(name)
+
+
+# ------------------------------------------------------------ system prompt
+# The operator's editable prompt layers (maintainer, 2026-07-11: "a
+# tab/badge for system prompt that we could rewrite"). The overlay lives in
+# the home (<home>/system_prompt.yaml, beside substrate.yaml); sessions read
+# it at summon time. The identity prelude and the tools contract are shown
+# but never text-editable here: identity evolves by the entity's own acts,
+# and the tools text derives from the actual grant (the tools tab edits it).
+
+
+class PutPromptOverlayRequest(BaseModel):
+    overlay: Dict[str, str] = Field(
+        ...,
+        description=(
+            'Editable prompt layers, e.g. {"conversation": "...", "visit": "...", '
+            '"own_time": "...", "operator": "..."}. WHOLE-DOCUMENT REPLACE: an '
+            "absent key reverts to the built-in default exactly like an empty "
+            "string — send every layer you want kept."
+        ),
+    )
+
+
+@router.get("/{name}/prompt")
+async def get_entity_prompt(name: str) -> Dict[str, Any]:
+    """The system prompt as its layers: rendered identity prelude
+    (read-only), each editable layer with its current text + source
+    (default | overlay), the built-in defaults for reference, and the
+    grant-derived tools preview (visit-phase composition — the own_time
+    layer previews as its own text). Rendering identity never deposits
+    usage; opening the home only touches disk to initialize empty db
+    files on a never-opened home."""
+    from abstractruntime.identity.chat import compose_system_base, default_prompt_texts, open_home
+    from abstractruntime.identity.prelude import render_summon_prelude
+    from abstractruntime.identity.prompt_overlay import OVERLAY_FILENAME, read_prompt_overlay
+    from abstractruntime.identity.tool_policy import resolve_tool_grant
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+
+    overlay = read_prompt_overlay(home_dir)
+    overlay_error = overlay.pop("#error", None)
+    defaults = default_prompt_texts()
+    layers = {
+        key: {
+            "text": overlay.get(key, "" if key == "operator" else defaults[key]),
+            "source": "overlay" if key in overlay else "default",
+        }
+        for key in defaults
+    }
+
+    # The rendered head, exactly as the next visit summon would compose it
+    # (pure read; a refused prelude reports its reasons instead of a 500).
+    # No embedder: the prelude render never touches vectors, and a prompt
+    # preview must not block on embeddings reachability.
+    prelude_text = ""
+    preview = ""
+    warnings: List[str] = []
+    try:
+        home = open_home(home_dir)
+    except (SystemExit, Exception) as e:  # open_home refuses via SystemExit — never kill the worker
+        raise HTTPException(status_code=500, detail=f"home open failed: {e}")
+    try:
+        prelude = render_summon_prelude(
+            home.ms, home.diary, entity_id=home.entity_id, budget=1600, spark=home.spark
+        )
+        warnings.extend(str(w) for w in prelude.get("warnings", []))
+        if not prelude.get("refused"):
+            prelude_text = str(prelude.get("text") or "")
+            grant = resolve_tool_grant(home_dir, "visit", enable_workspace=False)
+            preview = compose_system_base(
+                prelude_text,
+                phase="visit",
+                overlay=overlay,
+                allowed_tools=tuple(grant.tools),
+                workspace_enabled=grant.workspace_enabled,
+            )
+    finally:
+        home.close()
+    raw_file: Optional[str] = None
+    if overlay_error:
+        # Show the unreadable file's bytes so a hand-edit is recoverable
+        # instead of silently clobbered by the next save.
+        warnings.append("#FALLBACK system_prompt.yaml unreadable; built-in defaults used")
+        try:
+            raw_file = (home_dir / OVERLAY_FILENAME).read_text(encoding="utf-8")
+        except Exception:
+            raw_file = None
+    if "conversation" in overlay and "```diary" not in overlay["conversation"]:
+        warnings.append(
+            "the conversation rewrite no longer explains the ```diary election syntax — "
+            "diary elections may quietly stop"
+        )
+
+    return {
+        "layers": layers,
+        "defaults": defaults,
+        "prelude": prelude_text,
+        "preview": preview,
+        "warnings": warnings,
+        "editable": list(defaults.keys()),
+        "raw_file": raw_file,
+    }
+
+
+@router.put("/{name}/prompt")
+async def put_entity_prompt(name: str, req: PutPromptOverlayRequest) -> Dict[str, Any]:
+    from abstractruntime.identity.chat import default_prompt_texts
+    from abstractruntime.identity.prompt_overlay import write_prompt_overlay
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    # A layer pasted back byte-identical to its default is NOT a rewrite —
+    # storing it would badge "rewritten" forever and freeze the text against
+    # future default improvements ("copy to editor" + save unchanged).
+    defaults = default_prompt_texts()
+    overlay = {
+        key: value
+        for key, value in (req.overlay or {}).items()
+        if str(value).strip() != str(defaults.get(key, "")).strip()
+    }
+    try:
+        write_prompt_overlay(registry.entities_dir / manifest.slug, overlay)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # MARKER-FIRST (adversary find, 2026-07-11): an operator prompt change
+    # is a host act on the entity's story — without a marker, standing
+    # instructions could change silently between sessions while every
+    # other operator act (summons, state, diary reads) is on the stream.
+    # Word-free: layer names + short content hashes (drift is detectable,
+    # the words themselves stay in the home file).
+    try:
+        import hashlib as _hashlib
+
+        from ..entity_replay import record_host_marker
+
+        home = registry.get_home(manifest.slug)
+        # Empty values in `overlay` mean REVERT (write drops them); the
+        # marker hashes only the layers that remain live after this write.
+        live = {k: str(v).strip() for k, v in overlay.items() if str(v).strip()}
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="prompt_overlay_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details={
+                "channel": "operator",
+                "layers": {
+                    key: _hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+                    for key, text in sorted(live.items())
+                },
+                "reverted": sorted(k for k in (req.overlay or {}) if k not in live),
+            },
+        )
+    except Exception:
+        pass  # a marker failure never blocks the operator's write
+    return await get_entity_prompt(name)
 
 
 # --------------------------------------------------------------- substrate

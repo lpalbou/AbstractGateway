@@ -117,7 +117,7 @@ def test_summon_starts_a_stamped_run(client: TestClient):
     assert r2.status_code == 200, r2.text
     body = r2.json()
     run_id = body["run_id"]
-    assert body["entity_id"].startswith("entity:castor@home-")
+    assert body["entity_id"] == "entity:castor"  # clean keys, plan item 6
     assert body["channel"] == "workplace"
     assert "You are Castor." in body["prelude"]["text"]
     assert body["session_id"].startswith("entity-castor-")

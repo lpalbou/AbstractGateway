@@ -294,4 +294,21 @@ async def gateway_console() -> HTMLResponse:
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "healthy", "service": "abstractgateway"}
+    """Liveness + runner visibility.
+
+    Always HTTP 200 (liveness contract for Docker/launcher probes), but
+    `status` degrades to "degraded" when a runner is enabled yet locked out of
+    the singleton tick lock with no fresh peer heartbeat — the state where
+    runs are accepted but ticked by nobody (invisible before this surface).
+    """
+    from .service import gateway_runner_health_snapshot
+
+    body = {"status": "healthy", "service": "abstractgateway"}
+    try:
+        runner_snapshot = gateway_runner_health_snapshot()
+    except Exception as e:
+        runner_snapshot = {"initialized": False, "degraded": False, "error": f"{type(e).__name__}: {e}"}
+    body["runner"] = runner_snapshot
+    if runner_snapshot.get("degraded"):
+        body["status"] = "degraded"
+    return body

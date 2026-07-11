@@ -361,9 +361,9 @@ abstractgateway runner
 abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
 ```
 
-The runner uses a lock file (`gateway_runner.lock`) to prevent double-ticking on the same data dir.
+The runner uses a lock file (`gateway_runner.lock`) to prevent double-ticking on the same data dir. A locked-out runner keeps retrying acquisition in the background; a newly started process asks a live holder to yield (newest process wins), and the holder heartbeats the lock file so `GET /api/health` can report whether anyone is actually ticking the data dir (`runner.runners[].status`).
 
-Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock acquisition in `src/abstractgateway/runner.py`.
+Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle (`_run`/`_acquire_singleton_lock`/`runner_status`) in `src/abstractgateway/runner.py`.
 
 ## Related docs
 

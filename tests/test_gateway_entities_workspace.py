@@ -98,10 +98,19 @@ def test_tool_policy_get_put_roundtrip():
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
 
+        from abstractruntime.identity.tool_policy import (
+            ALL_TOOL_NAMES,
+            SLEEP_DEFAULT_TOOL_NAMES,
+        )
+
         before = client.get("/api/gateway/entities/Castor/tool-policy").json()
         assert before["phases"]["visit"]["source"] == "default"
-        assert "web_search" in before["phases"]["visit"]["tools"]
-        assert before["phases"]["sleep"]["tools"] == []
+        # Ruled defaults (maintainer 2026-07-11), EXACT lists against the
+        # imported constants (order included — a wrong extra tool or a
+        # reorder must fail, not pass a loose membership check).
+        assert before["phases"]["visit"]["tools"] == list(ALL_TOOL_NAMES)
+        assert before["phases"]["resident"]["tools"] == list(ALL_TOOL_NAMES)
+        assert before["phases"]["sleep"]["tools"] == list(SLEEP_DEFAULT_TOOL_NAMES)
         assert set(before["tiers"]) == {"tier1", "workspace"}
 
         put = client.put(

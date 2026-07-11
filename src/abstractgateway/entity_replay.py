@@ -59,6 +59,9 @@ HOST_MARKER_KINDS = (
     "wake",
     "pause",
     "diary_read",
+    # The M1b repair act (plan item 3): retrieval geometry changed — the
+    # door's half of the two-plane visibility (the engine journals a claim).
+    "reembed",
     # Own-time lifecycle (maintainer, 2026-07-08: starting/stopping someone's
     # own time is part of their biography). NOTE: these were silently lost
     # before this entry existed — the loop routes swallow marker failures so
@@ -69,6 +72,11 @@ HOST_MARKER_KINDS = (
     # sleep — the process died without ceremony; the mark belongs in the
     # biography precisely because he could not write it himself.
     "own_time_frozen",
+    # Operator prompt-overlay change (adversary find, 2026-07-11): standing
+    # instructions changing between sessions is a host act on the story —
+    # marker-first like every other operator act. Details carry layer names
+    # + short content hashes, never the words.
+    "prompt_overlay_changed",
 )
 
 _marker_lock = threading.Lock()

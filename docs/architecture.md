@@ -72,7 +72,7 @@ flowchart LR
     them, and direct private-bundle routes reject catalog-internal ids.
 - **Runner worker**:
   - Polls the durable command inbox and applies commands; ticks RUNNING runs forward (`src/abstractgateway/runner.py`).
-  - A filesystem lock (`gateway_runner.lock`) prevents double-ticking in split-process deployments.
+  - A filesystem lock (`gateway_runner.lock`) prevents double-ticking in split-process deployments. Refused acquisition is retried continuously (never one-shot), a live wrong holder is asked to yield via a one-shot takeover request (`gateway_runner.takeover`, newest process wins), the holder heartbeats the lock file mtime, and lock state is surfaced on `GET /api/health` plus `StartRunResponse.runner_warning` when nobody provably ticks the data dir.
 
 ## Durable contract (replay-first)
 

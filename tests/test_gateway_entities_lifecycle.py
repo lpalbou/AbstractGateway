@@ -53,7 +53,10 @@ def test_slug_normalization_and_refusal():
 def test_create_plants_home_and_is_idempotent(registry: EntityRegistry):
     first = registry.create(name="Castor", spark=_spark())
     assert first.created is True
-    assert first.entity_id.startswith("entity:castor@home-")
+    # Clean keys (plan item 6): NEW homes engrave entity:<name> — the
+    # random suffix died with name-unique-per-door; home_id survives as
+    # the internal birth marker in the manifest only.
+    assert first.entity_id == "entity:castor"
 
     home_dir = registry.entities_dir / "castor"
     assert (home_dir / "spark.yaml").exists()
@@ -61,6 +64,7 @@ def test_create_plants_home_and_is_idempotent(registry: EntityRegistry):
     assert (home_dir / "home.sqlite3").exists()
     manifest = json.loads((home_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["entity_id"] == first.entity_id
+    assert manifest["home_id"].startswith("home-")  # birth marker, not identity
     assert manifest["spark_version"] == 1
     assert manifest["public_key_id"] is None  # reserved for the 008 keys work
 

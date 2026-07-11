@@ -48,6 +48,17 @@ def add_entity_subparser(sub: Any) -> None:
         action="store_true",
         help="Lint without the framework-mandatory shared_vulnerability core value (deliberate operator override)",
     )
+    create.add_argument(
+        "--embedding-model",
+        default=None,
+        help="Embedder identity as an explicit birth choice (M1 pin; default: pin the door's resolved embedder)",
+    )
+    create.add_argument(
+        "--embedding-dimension",
+        type=int,
+        default=None,
+        help="Embedding dimension for the pin (default: probed from the resolved embedder)",
+    )
 
     entity_sub.add_parser("list", parents=[common], help="List entity homes under the data dir")
 
@@ -74,6 +85,19 @@ def add_entity_subparser(sub: Any) -> None:
     pause = entity_sub.add_parser("pause", parents=[common], help="Hard freeze (nothing runs, not even dreams)")
     pause.add_argument("name", help="Entity name or slug")
     pause.add_argument("--reason", default="", help="Why (he is told on resume — honesty rule)")
+
+    reembed = entity_sub.add_parser(
+        "reembed",
+        parents=[common],
+        help="Repair verb (M1b, never routine): re-derive the home's vector index with the "
+        "door's resolved embedder; atomic swap; journaled + host-marked",
+    )
+    reembed.add_argument("name", help="Entity name or slug")
+    reembed.add_argument(
+        "--embedding-model", default=None,
+        help="Verification: must match the door's resolved embedder (reconfigure the route first)",
+    )
+    reembed.add_argument("--reason", default="", help="Why — journaled with the act")
 
     chat = entity_sub.add_parser(
         "chat",
@@ -130,6 +154,8 @@ def run_entity_command(args: Any) -> None:
                 name=str(args.name),
                 spark_text=spark_text,
                 framework=not bool(getattr(args, "non_framework", False)),
+                embedding_model=getattr(args, "embedding_model", None),
+                embedding_dimension=getattr(args, "embedding_dimension", None),
             )
         except ValueError as e:
             raise SystemExit(str(e)) from e
@@ -230,6 +256,32 @@ def run_entity_command(args: Any) -> None:
             chat_argv += ["--shelf-size", str(int(args.shelf_size))]
         chat_argv += ["--embedding-model", str(args.embedding_model)]
         raise SystemExit(chat_main(chat_argv))
+
+    if cmd == "reembed":
+        try:
+            payload = registry.reembed(
+                name=str(args.name),
+                embedding_model=getattr(args, "embedding_model", None),
+                reason=str(getattr(args, "reason", "") or ""),
+            )
+        except KeyError as e:
+            raise SystemExit(str(e).strip("'\"")) from e
+        except ValueError as e:
+            raise SystemExit(str(e)) from e
+        except Exception as e:
+            # DirectoryLeaseHeld (runtime) and engine aborts: loud, named, no traceback.
+            raise SystemExit(str(e)) from e
+        old = payload.get("old_pin") or {}
+        new = payload.get("new_pin") or {}
+        lines = [
+            f"Reembedded: {old.get('model_id') or 'unpinned'} -> {new.get('model_id') or '?'} "
+            f"({new.get('dimension')}d), {payload.get('vectored')}/{payload.get('rows')} rows vectored",
+            "Both planes carry the act (journal claim + host marker). Neighbors may shift — that is the substrate effect, on the record.",
+        ]
+        for w in payload.get("warnings") or []:
+            lines.append(f"  {w}")
+        _emit(payload, as_json=bool(args.json), human_lines=lines)
+        return
 
     if cmd == "verify":
         try:

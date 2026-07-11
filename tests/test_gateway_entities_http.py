@@ -50,7 +50,8 @@ def test_entity_lifecycle_over_http():
         body = r.json()
         assert body["created"] is True
         entity_id = body["entity_id"]
-        assert entity_id.startswith("entity:castor@home-")
+        # Clean keys (plan item 6): new homes engrave entity:<name>.
+        assert entity_id == "entity:castor"
 
         # Idempotent re-create (same spark): re-adoption, not re-creation.
         r2 = client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()})

@@ -7,6 +7,130 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- GatewayRunner singleton-lock hardening (stuck-run incident, root-cause
+  lane): when two `abstractgateway serve` processes shared one data_dir (an
+  orphaned older process surviving a launcher port replace), the port-serving
+  process's runner lost the one-shot `gateway_runner.lock` flock race and
+  bailed with a single invisible `logger.warning` — every run it accepted was
+  ticked by NOBODY and hung forever on its entry node with zero ledger
+  records. Layered fix, flock stays the sole mutual-exclusion primitive
+  (verified: the kernel frees a dead holder's flock even on SIGKILL, so
+  refusal always means a LIVE holder):
+  - the runner worker thread now RETRIES acquisition (≤1s cadence) instead of
+    giving up once, so a freed lock is picked up without a process restart;
+  - a newly-starting process writes a one-shot takeover request
+    (`gateway_runner.takeover`); a live holder's loop drains in-flight ticks,
+    releases the flock, and drops to passive standby (yielded runners never
+    request takeovers — no ping-pong; simultaneous multi-worker startups
+    converge to exactly one stable ticker);
+  - the holder heartbeats the lock file mtime every loop iteration so any
+    process can distinguish "live peer ticks this data_dir" (benign standby)
+    from "nobody ticks" (degraded);
+  - loud surfaces: `GET /api/health` now reports per-service
+    `runner.runners[]` status (`active` / `standby_peer_active` /
+    `degraded_no_ticker` / `disabled`, holder pid, heartbeat age) and degrades
+    top-level `status` (still HTTP 200 — liveness contract); `StartRunResponse`
+    gains an additive optional `runner_warning` populated only when the run
+    was accepted while nobody provably ticks the data_dir.
+  Env: `ABSTRACTGATEWAY_RUNNER_LOCK_STALE_S` (heartbeat staleness threshold,
+  default 10s). Tests: `tests/test_gateway_runner_singleton_lock.py`.
+- GatewayRunner silent-swallow hardening (stuck-run incident, reviewer-B
+  lane): a RUNNING run whose workflow could not be resolved
+  (`runtime_and_workflow_for_run` raising — deleted draft, tombstoned
+  catalog version, principal-scoped bundle not loaded) was caught at
+  DEBUG and re-submitted every 0.25s poll forever: stuck RUNNING, zero
+  ledger, no error — the same user-visible symptom as the refused
+  runner-singleton lock, reachable with a healthy lock. `_tick_run` now
+  counts consecutive resolution failures per run (one WARNING per streak)
+  and promotes the run to FAILED with a
+  `system:workflow_resolution:<run_id>` ledger record after
+  `workflow_resolution_failure_limit` consecutive failures (default 40 ≈
+  10s — tolerates catalog-loading startup races). Only RUNNING runs are
+  promoted (parity with the tick-exception path). Additionally, the
+  per-run `runtime_and_workflow_for_run` calls inside
+  `_repair_terminal_subworkflow_waits`, `_resume_subworkflow_parents`,
+  and `_apply_emit_event` are now guarded per-run: one unresolvable run
+  no longer silently aborts repair/resume/event-delivery for every other
+  run behind it in the loop. Tests:
+  `tests/test_runner_tick_resolution_failure.py`.
+- Crash-orphan visit recovery (walkthrough gate re-run, agency c505): a
+  SIGKILL landing mid-tick (post-ANSWER, pre-park) leaves the visit run
+  RUNNING, not WAITING — a plain `/turn` resume 409'd "Run is not waiting"
+  and forced the visitor client to know the `/tick` host-internal. `/turn`
+  now drives a non-terminal RUNNING run to its next park FIRST, then takes
+  the message (a WAITING run drives zero steps; a terminal run falls
+  through to the honest 409). The one-life-one-visit gate and `GET /visit`
+  already consult the DURABLE per-entity store on every call (no
+  in-memory-only registry exists) — pinned now by a host-amnesia
+  regression that proves a second open still refuses after the in-memory
+  host is forgotten. Tests:
+  `test_turn_recovers_a_crash_orphaned_running_run`,
+  `test_one_life_gate_consults_the_durable_store_after_amnesia`.
+- Adversarial-review wave over the visit tool wiring (two fable5
+  adversaries, both P0s fixed same-night): (1) `diary_read` through
+  TOOL_CALLS now returns the canonical `$act_only` REFERENCE frame instead
+  of the book's words — the effect result rests in the per-home run
+  ledger/vars (surfaces that travel on directory copy), so materialized
+  text there was a G1 privacy leak AND unusable (the react observe
+  fail-safe suppressed it); words now resolve only at send time. Pinned by
+  a byte-grep over the WAL-checkpointed run store. (2) The shared entity
+  router (`install_entity_routing`) now caches (home, handlers) PAIRS and
+  rebuilds on home identity change — reembed's eviction closed the cached
+  engine and left the router serving handlers over a closed connection
+  until process restart. (3) An operator ZERO grant (`visit: []`) now
+  denies all tool calls — the empty allowlist used to fall OPEN to tier-1
+  through `native_tool_elections`' `or`-default. (4) ONE per-turn tool
+  budget bounds a turn across effects, from runtime's ruled
+  `MAX_TOOL_BLOCKS_PER_TURN` (20, maintainer 2026-07-11 05:25) —
+  imported, not a second literal; the earlier ad-hoc 24 + hidden 8/batch
+  sub-cap are gone. (5) The react-middle build moved inside the
+  yielded-loop restore window (a 503 at open used to strand the own-time
+  loop asleep in visiting posture). (6) `EntityHome.close()` closes the
+  book ledger's database too (reembed leaked one connection per pass).
+  Scripted-LLM test fixtures now RAISE on script exhaustion so call-count
+  drift fails loudly (two pause tests' skip_reflection proofs were
+  previously vacuous).
+- Entity visits can now actually USE TOOLS (the Mnemosyne fabrication
+  incident, maintainer 2026-07-11 — root cause three-bench-converged:
+  native-tool-channel substrates essentially never write fenced tool
+  text): the door's per-entity LLM_CALL handler forwards payload `tools`
+  + `params` and returns `tool_calls`/`finish_reason`/`usage` (empty
+  content is not a failure when tool calls arrived), and a per-entity
+  TOOL_CALLS effect handler now exists — native calls execute through
+  runtime's OWN entity executors (`native_tool_elections` +
+  `execute_tool_elections`: web_search/fetch_url/diary_list/diary_read/
+  workspace trio; diary reads join the verified path through the
+  routing-wrapped DIARY_READ handler). Grant authority is
+  `<home>/tool_policy.yaml` phase=visit (read FRESH per call — per-phase
+  edits persist across restarts by construction); effective allowlist =
+  grant ∩ payload; TOOL_CALLS is stamp-gated like LLM_CALL. Fixture
+  proof: a visit that writes a real file through a granted native
+  write_file call (`test_visit_actually_writes_a_file_through_the_grant`).
+- Reembed repair verb no longer trips the M1 mismatch it exists to repair
+  (walkthrough catch #2, agency c424): the pass now opens the home in the
+  REPAIR POSTURE (no embedder — always legal under M1, memory's c454
+  contract), runs `reembed_store` with the target embedder under the
+  maintenance lease, and evicts the door's cached home/runtime handles so
+  the next open binds the NEW pin. An anonymous embedder with no explicit
+  target warns loudly (pin records model_id=None; dimension-only
+  enforcement). Regression: `test_reembed_repairs_across_a_route_flip`.
+
+### Changed
+- React is UNCONDITIONAL for entity visits (maintainer ruling 2026-07-11
+  00:49: "all summoned entities are by definition react agents. it's not
+  even a choice — remove that parameter"): the
+  `ABSTRACTGATEWAY_VISIT_REACT_MIDDLE` env knob is DELETED; every new
+  visit/meet open builds abstractagent's ReAct cycle as runtime's
+  `react_middle`, with the entity's GRANTED tools declared natively in
+  the payload (declarations match runtime's entity executor arg shapes;
+  `act_only=True` on diary_read; read/search_memory not declared until
+  their driver resolvers are reachable outside ChatSession). The arm
+  stays recorded per run; a pre-ruling run that recorded v0 still
+  rebuilds its own graph (durable-arm contract — never swap a graph
+  under a parked run). Missing abstractagent refuses visit opens loudly
+  (503).
+
 ### Added
 - ONE mind substrate per entity (maintainer ruling 2026-07-09 06:32: "i
   don't see the point in having potentially different models for visit and
@@ -18,6 +142,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/test_gateway_entity_substrate.py`.
 
 ### Changed
+- Renaming sign-off executed (approved by the maintainer, commons c398):
+  `declared_door_address()` moved `entities.py` -> `config.py` (door-wide
+  serving config, not an entity concept; `render_handle` stays
+  entity-homed). Same-day consumer syncs: all gateway lease call sites now
+  import `abstractruntime.storage.lease` (`DirectoryLease*`,
+  `acquire/read_directory_lease` — runtime's re-home, dotfile
+  `.writer_lease`), and the reembed verb calls memory's `reembed_store`
+  (was `reembed_home`).
 - Entity mind substrate has NO code default anymore (maintainer ruling
   2026-07-09 04:26: "I decide which provider and model is used … NO
   FALLBACK"): `DEFAULT_ENTITY_CHAT_PROVIDER`/`_MODEL` (which silently

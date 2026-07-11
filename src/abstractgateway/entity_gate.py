@@ -58,6 +58,7 @@ __all__ = [
     "SUMMON_POSTURE_BUDGET",
     "finalize_summon_stamp",
     "install_entity_routing",
+    "wrap_entity_runtime_routing",
     "mint_summon_stamp",
     "verify_summon_stamp",
 ]
@@ -205,6 +206,7 @@ def mint_summon_stamp(
     participants: List[str],
     prelude_as_of_seq: Optional[int] = None,
     budget_profile: Optional[Dict[str, Any]] = None,
+    visit_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """A PROVISIONAL stamp (no run_id yet — the runtime generates run ids at
     start). Provisional stamps NEVER verify; `finalize_summon_stamp` binds
@@ -215,7 +217,24 @@ def mint_summon_stamp(
     `budget_profile` is advisory posture data (the session's default recall
     budget, derived from the declared context window) — deliberately outside
     the MAC: tampering with it cannot cross the floor/posture rules, which
-    the gate re-checks on every explicit budget."""
+    the gate re-checks on every explicit budget.
+
+    `visit_id` (item 14) is the door-minted correlation key for visit runs:
+    both legs of a cross-runtime visit carry the SAME string.
+
+    NAMING CONVENTION (maintainer ruling, commons c338): `visit_id` is the
+    FIRST INSTANCE of the framework's generic interaction-correlation
+    convention — door-minted once, opaque, carried as data, KIND-free. Any
+    interaction between principals reuses THIS key rather than minting a
+    second spelling: meets already stamp it for a two-entity conversation
+    that is not strictly a visit; project work sessions will reuse it. The
+    name stays where it was born; the concept is generic.
+
+    Deliberately outside the MAC (memory's no-attack verdict, c278:
+    correlation grants nothing — no scope, rights, or home crossing rides
+    it; the form gate
+    injects it from the VERIFIED stamp and drops payload claims, so
+    engraved correlation can only ever carry the minter's string)."""
     if channel not in _CHANNELS:
         raise ValueError(f"unknown entity channel {channel!r} (one of {_CHANNELS})")
     return {
@@ -225,6 +244,7 @@ def mint_summon_stamp(
         "participants": [str(p) for p in participants],
         "prelude_as_of_seq": prelude_as_of_seq,
         "budget_profile": dict(budget_profile) if budget_profile else None,
+        "visit_id": str(visit_id) if visit_id else None,
         "nonce": secrets.token_hex(16),
         "run_id": None,
         "sig": None,
@@ -254,7 +274,15 @@ def verify_summon_stamp(stamp: Any, *, data_dir: Path, run: Any) -> Tuple[bool, 
     stamp's run_id is THIS run, and the run's session matches the signed
     session. Every failure names the door."""
     if not isinstance(stamp, dict):
-        return False, "no entity stamp on this run (entity effects require a gateway-minted summon stamp)"
+        # Kind-agnostic wording (maintainer c338: the framework is more than
+        # the entities): a generic run hitting MEMORY_*/DIARY_* on this
+        # gateway should learn the ROUTING fact — these effects are routed
+        # to attested owners here — not be told it forgot entity jargon.
+        return False, (
+            "this run carries no attestation for memory/diary effects — on this gateway "
+            "those effects route to attested owners (a door-minted summon stamp); "
+            "runs opened outside the door cannot use them"
+        )
     entity_id = str(stamp.get("entity_id") or "")
     channel = str(stamp.get("channel") or "")
     session_id = str(stamp.get("session_id") or "")
@@ -507,17 +535,27 @@ def _gate_form(payload: Dict[str, Any], *, stamp: Dict[str, Any]) -> Optional[st
                     "the entity's elected act (DIARY_WRITE); the graph records the act automatically"
                 )
 
-    # Door-stamped participants on formed records (situation contract).
+    # Door-stamped participants on formed records (situation contract) +
+    # the visit_id engraving rule (memory c278, adopted at the door):
+    # engraved correlation is FOREVER, so visit_id copies from the VERIFIED
+    # STAMP only — payload-claimed values are DROPPED, exactly like actors
+    # and participants. Absent on the stamp = absent on the record (a solo
+    # visit fakes no correlation).
     stamped = [str(p) for p in (stamp.get("participants") or [])]
-    if stamped:
-        records = payload.get("records")
-        if isinstance(records, list):
-            for rec in records:
-                if isinstance(rec, dict):
-                    attrs = rec.get("attributes")
-                    attrs = dict(attrs) if isinstance(attrs, dict) else {}
-                    attrs["participants"] = stamped
-                    rec["attributes"] = attrs
+    stamp_visit_id = str(stamp.get("visit_id") or "") or None
+    records = payload.get("records")
+    if isinstance(records, list) and (stamped or stamp_visit_id is not None):
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            attrs = rec.get("attributes")
+            attrs = dict(attrs) if isinstance(attrs, dict) else {}
+            if stamped:
+                attrs["participants"] = stamped
+            attrs.pop("visit_id", None)  # payload claims never engrave
+            if stamp_visit_id is not None:
+                attrs["visit_id"] = stamp_visit_id
+            rec["attributes"] = attrs
     return None
 
 
@@ -638,36 +676,44 @@ def install_entity_routing(
     if not isinstance(handlers_attr, dict):
         raise TypeError("runtime does not expose an effect-handler map to install entity routing on")
 
-    raw_handlers_by_slug: Dict[str, Dict[Any, Any]] = {}
+    # Cache (home, handlers) PAIRS keyed by slug and rebuild whenever the
+    # registry serves a DIFFERENT home object (identity check): handlers
+    # bind the home's engine (memory/diary/artifacts) at build time, and a
+    # maintenance eviction (reembed's repair posture closes + drops the
+    # cached home) would otherwise leave this closure serving handlers over
+    # a CLOSED single-connection engine forever — every subsequent entity
+    # effect failing until process restart (adversary find, 2026-07-11).
+    handlers_by_slug: Dict[str, Tuple[EntityHome, Dict[Any, Any]]] = {}
     cache_lock = threading.Lock()
 
     def _home_handlers(slug: str) -> Tuple[EntityHome, Dict[Any, Any]]:
         with cache_lock:
             home = registry.get_home(slug)
-            cached = raw_handlers_by_slug.get(slug)
-            if cached is None:
-                cached = {
-                    **build_memory_seam_effect_handlers(
-                        memory_system=home.memory,
-                        run_store=run_store,
-                        now_iso=utc_now_iso,
-                        # PER-HOME artifact store ((b)-move parity with the
-                        # home-direct driver, a2a 0003): turn verbatims are
-                        # part of the LIFE and must travel when the home
-                        # directory is copied — the gateway-wide store would
-                        # split them from it.
-                        artifact_store=FileArtifactStore(str(home.home_dir / "artifacts")),
-                        strict=True,
-                    ),
-                    **build_diary_effect_handlers(
-                        entity_id=home.entity_id,
-                        diary_store=home.diary,
-                        memory_system=home.memory,
-                        now_iso=utc_now_iso,
-                    ),
-                }
-                raw_handlers_by_slug[slug] = cached
-            return home, cached
+            cached = handlers_by_slug.get(slug)
+            if cached is not None and cached[0] is home:
+                return cached
+            handlers = {
+                **build_memory_seam_effect_handlers(
+                    memory_system=home.memory,
+                    run_store=run_store,
+                    now_iso=utc_now_iso,
+                    # PER-HOME artifact store ((b)-move parity with the
+                    # home-direct driver, a2a 0003): turn verbatims are
+                    # part of the LIFE and must travel when the home
+                    # directory is copied — the gateway-wide store would
+                    # split them from it.
+                    artifact_store=FileArtifactStore(str(home.home_dir / "artifacts")),
+                    strict=True,
+                ),
+                **build_diary_effect_handlers(
+                    entity_id=home.entity_id,
+                    diary_store=home.diary,
+                    memory_system=home.memory,
+                    now_iso=utc_now_iso,
+                ),
+            }
+            handlers_by_slug[slug] = (home, handlers)
+            return home, handlers
 
     _payload_gates = {
         EffectType.MEMORY_RECALL: _gate_recall,
@@ -735,3 +781,97 @@ def install_entity_routing(
                 "entity routing refuses to shadow it"
             )
         handlers_attr[etype] = _make_router(etype)
+
+
+def wrap_entity_runtime_routing(entity_runtime: Any, *, data_dir: Path) -> None:
+    """GW-C (plan items 8/9): the door's stamp-verification wrap over ONE
+    per-entity runtime (`abstractruntime.identity.entity_runtime`).
+
+    The composition binds the RAW home handlers (stamp-agnostic — exactly
+    what the home-direct driver uses); this wrap makes the frozen spec's
+    line true for door-served visit runs: "the visit path JOINS the
+    verified path". Every entity effect on this runtime now requires a
+    verifying stamp (own or session-matching ancestor — the run TREE rule),
+    passes the same payload gates as the shared router, and — one runtime =
+    one home — the stamp must name THIS home's entity, which is stronger
+    than the shared router's slug dispatch.
+
+    Crypto stays at the routing layer: the raw handlers beneath are
+    untouched; the ancestor walk reads the per-entity RUN STORE (visit
+    child runs live in the home's own store, never the global one).
+    Wrapping twice raises — a double-wrapped door is wiring drift.
+    """
+    from abstractruntime.core.models import Effect, EffectType
+    from abstractruntime.core.runtime import EffectOutcome
+
+    runtime = getattr(entity_runtime, "runtime", None)
+    handlers_attr = getattr(runtime, "_handlers", None)
+    if not isinstance(handlers_attr, dict):
+        raise TypeError("entity_runtime does not expose an effect-handler map to wrap")
+    home = entity_runtime.home  # ChatHome: duck-typed .entity_id + .memory (gate needs both)
+    run_store = entity_runtime.run_store
+    expected_entity = str(home.entity_id)
+
+    payload_gates = {
+        EffectType.MEMORY_RECALL: _gate_recall,
+        EffectType.MEMORY_FORM: _gate_form,
+        EffectType.MEMORY_ADJUST: _gate_adjust,
+        EffectType.MEMORY_APPRAISE: _gate_appraise,
+    }
+
+    def _make_wrap(etype: Any, raw: Any):
+        def _gated(run: Any, effect: Any, default_next_node: Optional[str]):
+            stamp, err = resolve_run_stamp(run, data_dir=data_dir, run_store=run_store)
+            if stamp is None:
+                return EffectOutcome.failed(f"{etype.value} refused at the entity door: {err}")
+            stamped_entity = str(stamp.get("entity_id") or "")
+            if stamped_entity != expected_entity:
+                return EffectOutcome.failed(
+                    f"{etype.value} refused: stamp names {stamped_entity!r} but this runtime "
+                    f"hosts {expected_entity!r} — one life, one runtime; a foreign stamp never "
+                    "crosses homes"
+                )
+            payload = dict(effect.payload or {})
+            gate = payload_gates.get(etype)
+            if gate is not None:
+                if etype == EffectType.MEMORY_RECALL:
+                    err2 = gate(payload, home=home, stamp=stamp)
+                else:
+                    err2 = gate(payload, stamp=stamp)
+                if err2:
+                    return EffectOutcome.failed(f"{etype.value} refused at the entity door: {err2}")
+            return raw(run, Effect(type=effect.type, payload=payload, result_key=effect.result_key), default_next_node)
+
+        _gated._entity_routing_wrapped = True  # type: ignore[attr-defined]
+        return _gated
+
+    routed_types = [
+        EffectType.MEMORY_RECALL,
+        EffectType.MEMORY_ACCESS,
+        EffectType.MEMORY_FORM,
+        EffectType.MEMORY_ADJUST,
+        EffectType.MEMORY_APPRAISE,
+        EffectType.DIARY_WRITE,
+        EffectType.DIARY_READ,
+        # LLM_CALL is stamp-gated too (no payload gate): the G1 act-only
+        # wrapper inside it dereferences diary words through the RAW
+        # DIARY_READ handler it captured at composition — gating the outer
+        # call is what makes that dereference run only on verified runs
+        # ("the visit path joins the verified path", the deref included).
+        EffectType.LLM_CALL,
+        # TOOL_CALLS is stamp-gated for the same reason (no payload gate):
+        # tools are the ENTITY'S HANDS — a stampless run must not borrow
+        # them. The grant intersection inside the handler stays the tool
+        # authority; this gate is the door's identity check before it.
+        EffectType.TOOL_CALLS,
+    ]
+    for etype in routed_types:
+        raw = handlers_attr.get(etype)
+        if raw is None:
+            continue  # a composition without this handler has nothing to gate
+        if getattr(raw, "_entity_routing_wrapped", False):
+            raise RuntimeError(
+                f"effect type {etype.value!r} is already door-wrapped on this runtime; "
+                "wrapping twice is wiring drift and stays loud"
+            )
+        handlers_attr[etype] = _make_wrap(etype, raw)

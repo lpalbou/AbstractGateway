@@ -12,10 +12,13 @@ Key properties (v0):
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import os
+import random
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +67,24 @@ class GatewayHost(Protocol):
     def runtime_and_workflow_for_run(self, run_id: str) -> tuple[Runtime, Any]: ...
 
 
+def _default_lock_stale_after_s() -> float:
+    """Heartbeat staleness threshold for the singleton lock (seconds).
+
+    A holder heartbeats the lock file mtime every loop iteration; a reader that
+    sees a heartbeat older than this concludes "nobody is ticking this data_dir"
+    (wedged or foreign holder) and surfaces it loudly. Env-tunable so tests and
+    unusual deployments can tighten/relax it without code changes.
+    """
+    raw = os.getenv("ABSTRACTGATEWAY_RUNNER_LOCK_STALE_S")
+    if raw is None or not str(raw).strip():
+        return 10.0
+    try:
+        val = float(str(raw).strip())
+        return val if val > 0 else 10.0
+    except Exception:
+        return 10.0
+
+
 @dataclass(frozen=True)
 class GatewayRunnerConfig:
     poll_interval_s: float = 0.25
@@ -71,6 +92,11 @@ class GatewayRunnerConfig:
     tick_max_steps: int = 100
     tick_workers: int = 4
     run_scan_limit: int = 200
+    # Consecutive workflow-resolution failures tolerated before a RUNNING run is
+    # promoted to FAILED (~10s at the default 0.25s poll). Tolerates transient
+    # startup races (catalog bundles still loading) while refusing to leave a
+    # run silently spinning RUNNING forever with zero ledger.
+    workflow_resolution_failure_limit: int = 40
 
 
 class GatewayRunner:
@@ -104,10 +130,46 @@ class GatewayRunner:
 
         self._singleton_lock_path = self._base_dir / "gateway_runner.lock"
         self._singleton_lock_fh = None
+        self._takeover_path = self._base_dir / "gateway_runner.takeover"
+        self._lock_stale_after_s = _default_lock_stale_after_s()
+
+        # Singleton-lock observability state. The incident class this guards:
+        # a run-ACCEPTING gateway process whose runner lost the lock race to an
+        # orphaned older process — every run it creates is ticked by nobody and
+        # hangs forever on the entry node with zero ledger records, while the
+        # only trace is a single logger.warning. State transitions here feed
+        # runner_status() (health surface) and inactive_warning() (run-start).
+        self._state_lock = threading.Lock()
+        self._lock_held = False
+        self._lock_refused_flag = False
+        self._lock_holder_pid: Optional[int] = None
+        self._lock_acquired_at: Optional[str] = None
+        self._takeover_requested = False
+        self._takeover_requested_at: Optional[str] = None
+        self._yielded_to_pid: Optional[int] = None
+        self._last_lock_error: Optional[str] = None
+        self._loop_running = False
+
+        # run_id -> consecutive runtime_and_workflow_for_run failures.
+        # Entries exist only while a run keeps failing resolution; cleared on
+        # success, on promotion to FAILED, and when the run leaves RUNNING.
+        self._resolution_failures: Dict[str, int] = {}
+        self._resolution_failures_lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
         return self._enable
+
+    @property
+    def lock_refused(self) -> bool:
+        """True while this enabled runner is locked out by another process."""
+        with self._state_lock:
+            return bool(self._lock_refused_flag)
+
+    @property
+    def lock_held(self) -> bool:
+        with self._state_lock:
+            return bool(self._lock_held)
 
     @property
     def command_store(self) -> CommandStore:
@@ -126,18 +188,25 @@ class GatewayRunner:
         return self._host.artifact_store
 
     def start(self) -> None:
+        """Start (or ensure) the runner worker thread.
+
+        The thread owns the whole singleton-lock lifecycle: it retries
+        acquisition until it wins (so a lock freed by a dying holder is picked
+        up within one retry interval instead of waiting for the next
+        run-start), requests a one-shot takeover from a live holder (newest
+        process wins — gateway startup semantics are "replace"), and runs the
+        tick loop only while actually holding the kernel lock. A refused lock
+        is therefore a visible, recoverable state — never a silent dead end.
+        """
         if not self._enable:
             logger.info("GatewayRunner disabled by config/env")
             return
         if self._thread is not None and self._thread.is_alive():
             return
-        if not self._acquire_singleton_lock():
-            logger.warning("GatewayRunner not started: another process holds %s", self._singleton_lock_path)
-            return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="abstractgateway-runner", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="abstractgateway-runner", daemon=True)
         self._thread.start()
-        logger.info("GatewayRunner started (base_dir=%s)", self._base_dir)
+        logger.info("GatewayRunner worker started (base_dir=%s)", self._base_dir)
 
     def stop(self, timeout_s: float = 5.0) -> None:
         self._stop.set()
@@ -149,6 +218,9 @@ class GatewayRunner:
         except Exception:
             pass
         self._release_singleton_lock()
+        with self._state_lock:
+            self._loop_running = False
+            self._lock_refused_flag = False
 
     def emit_event(
         self,
@@ -195,26 +267,71 @@ class GatewayRunner:
         self._apply_emit_event(body, default_session_id=sid, client_id=client_id)
 
     def _acquire_singleton_lock(self) -> bool:
-        """Best-effort process singleton lock (prevents multi-worker double ticking)."""
+        """Best-effort process singleton lock (prevents multi-worker double ticking).
+
+        flock() semantics (verified by test_flock_autoreleases_when_holder_process_dies):
+        the kernel releases the lock the instant the holding process exits, even
+        on SIGKILL — a *dead* holder never blocks acquisition. Refusal therefore
+        always means a LIVE process holds the lock; staleness handling reduces
+        to (a) retrying (dead holder → next attempt wins) and (b) the takeover
+        handshake for a live-but-wrong holder. Content is diagnostics only —
+        the flock itself is the single source of mutual-exclusion truth.
+        """
         try:
             import fcntl  # Unix only
         except Exception:  # pragma: no cover
+            with self._state_lock:
+                self._lock_held = True
+                self._lock_refused_flag = False
+                self._last_lock_error = "flock unsupported on this platform (no mutual exclusion)"
             return True
         try:
             self._singleton_lock_path.parent.mkdir(parents=True, exist_ok=True)
             fh = self._singleton_lock_path.open("a", encoding="utf-8")
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fh.write(f"pid={os.getpid()}\n")
-            fh.flush()
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except Exception:
+                # Read holder diagnostics from the file we just failed to lock.
+                holder_pid = self._read_lock_holder_pid()
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+                with self._state_lock:
+                    self._lock_held = False
+                    self._lock_refused_flag = True
+                    self._lock_holder_pid = holder_pid
+                return False
+            # Acquired: truncate stale holder info and write ours. Truncation
+            # must happen AFTER flock — an O_TRUNC open before holding would
+            # clobber a live holder's diagnostics.
+            try:
+                fh.seek(0)
+                fh.truncate()
+                fh.write(f"pid={os.getpid()}\nacquired_at={utc_now_iso()}\n")
+                fh.flush()
+            except Exception:
+                pass
             self._singleton_lock_fh = fh
+            with self._state_lock:
+                self._lock_held = True
+                self._lock_refused_flag = False
+                self._lock_holder_pid = os.getpid()
+                self._lock_acquired_at = utc_now_iso()
+                self._yielded_to_pid = None
+                self._last_lock_error = None
             return True
-        except Exception:
+        except Exception as e:
             try:
                 if self._singleton_lock_fh is not None:
                     self._singleton_lock_fh.close()
             except Exception:
                 pass
             self._singleton_lock_fh = None
+            with self._state_lock:
+                self._lock_held = False
+                self._lock_refused_flag = True
+                self._last_lock_error = f"{type(e).__name__}: {e}"
             return False
 
     def _release_singleton_lock(self) -> None:
@@ -224,23 +341,315 @@ class GatewayRunner:
         except Exception:
             pass
         self._singleton_lock_fh = None
+        with self._state_lock:
+            self._lock_held = False
+
+    def _read_lock_holder_pid(self) -> Optional[int]:
+        """Parse the holder pid from the lock file (diagnostics only)."""
+        try:
+            text = self._singleton_lock_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return None
+        pid: Optional[int] = None
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("pid="):
+                try:
+                    pid = int(line[len("pid="):].strip())
+                except Exception:
+                    continue
+        return pid
+
+    def _lock_heartbeat_age_s(self) -> Optional[float]:
+        """Seconds since the lock holder last heartbeat (mtime), or None."""
+        try:
+            return max(0.0, time.time() - self._singleton_lock_path.stat().st_mtime)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _pid_alive(pid: Optional[int]) -> bool:
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Exists but owned by another user — treat as alive.
+            return True
+        except Exception:
+            return False
+
+    # -- takeover handshake -------------------------------------------------
+    #
+    # A live-but-wrong holder (orphaned older gateway on the same data_dir)
+    # cannot be stolen from at the flock level without killing it. Instead the
+    # NEW process writes a one-shot takeover request; the holder's loop checks
+    # it each iteration, drains in-flight ticks, releases the flock, and drops
+    # to passive standby (it may re-acquire a FREE lock later but never issues
+    # takeover requests itself). Ownership only ever transfers through the
+    # kernel lock, so two concurrent tickers remain structurally impossible,
+    # and simultaneous multi-worker startups converge to exactly one stable
+    # ticker (the newest requester) instead of ping-ponging.
+
+    def _request_takeover_once(self) -> None:
+        with self._state_lock:
+            if self._takeover_requested:
+                return
+            self._takeover_requested = True
+            self._takeover_requested_at = utc_now_iso()
+        payload = {"pid": os.getpid(), "requested_at": utc_now_iso()}
+        try:
+            tmp = self._takeover_path.with_suffix(f".tmp.{os.getpid()}.{random.randint(0, 1_000_000)}")
+            tmp.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+            os.replace(tmp, self._takeover_path)
+            logger.warning(
+                "GatewayRunner: singleton lock held by live pid %s; requested takeover of %s (newest process wins)",
+                self._read_lock_holder_pid(),
+                self._singleton_lock_path,
+            )
+        except Exception as e:
+            logger.warning("GatewayRunner: failed to write takeover request %s: %s", self._takeover_path, e)
+
+    def _read_takeover_request(self) -> Optional[int]:
+        try:
+            raw = self._takeover_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
+        try:
+            pid = int((json.loads(raw) or {}).get("pid"))
+            return pid if pid > 0 else None
+        except Exception:
+            # Unreadable request file: treat as garbage and remove it so it
+            # cannot wedge the handshake forever.
+            self._clear_takeover_request(only_pid=None)
+            return None
+
+    def _clear_takeover_request(self, *, only_pid: Optional[int]) -> None:
+        """Remove the takeover file (optionally only when it names only_pid)."""
+        try:
+            if only_pid is not None:
+                pid = self._read_takeover_request()
+                if pid is not None and pid != only_pid:
+                    return
+            self._takeover_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    def _takeover_yield_requested(self) -> bool:
+        """Holder-side check: should this loop yield the lock to a newer process?"""
+        pid = self._read_takeover_request()
+        if pid is None:
+            return False
+        if pid == os.getpid():
+            # Our own leftover request (we since acquired) — clean it up.
+            self._clear_takeover_request(only_pid=pid)
+            return False
+        if not self._pid_alive(pid):
+            # Requester died before acquiring; drop the stale request.
+            self._clear_takeover_request(only_pid=pid)
+            return False
+        with self._state_lock:
+            self._yielded_to_pid = pid
+        return True
+
+    def _drain_inflight(self, *, timeout_s: Optional[float] = None) -> bool:
+        """Wait for in-flight tick futures to finish (no new ones are scheduled).
+
+        Yielding the lock while ticks are still executing would let the new
+        holder tick the same runs concurrently — the exact double-ticking the
+        lock exists to prevent. Unbounded by default: correctness beats speed,
+        and the requester keeps retrying while we drain.
+        """
+        started = time.time()
+        while not self._stop.is_set():
+            with self._inflight_lock:
+                if not self._inflight:
+                    return True
+            if timeout_s is not None and (time.time() - started) > timeout_s:
+                return False
+            time.sleep(0.05)
+        return False
+
+    def runner_status(self) -> Dict[str, Any]:
+        """Snapshot of runner liveness for health/status surfaces.
+
+        `status` values:
+        - disabled: runner intentionally off for this process (split mode)
+        - active: this process holds the lock and its loop is ticking
+        - standby_peer_active: lock held by another live process with a fresh
+          heartbeat (legitimate co-worker/split-runner is ticking)
+        - degraded_no_ticker: enabled but locked out with no fresh peer
+          heartbeat — runs accepted by this process may hang; loud state
+        - starting: worker thread not (yet) in a settled state
+        """
+        with self._state_lock:
+            lock_held = bool(self._lock_held)
+            refused = bool(self._lock_refused_flag)
+            holder_pid = self._lock_holder_pid
+            acquired_at = self._lock_acquired_at
+            takeover_at = self._takeover_requested_at
+            yielded_to = self._yielded_to_pid
+            last_error = self._last_lock_error
+            loop_running = bool(self._loop_running)
+
+        thread_alive = bool(self._thread is not None and self._thread.is_alive())
+        heartbeat_age = self._lock_heartbeat_age_s()
+        if holder_pid is None and not lock_held:
+            # Opportunistic peer visibility (e.g. split mode: this API process
+            # never contends for the lock but operators still want to see the
+            # dedicated runner process on /api/health).
+            holder_pid = self._read_lock_holder_pid()
+        holder_alive = self._pid_alive(holder_pid) if (holder_pid and not lock_held) else None
+        heartbeat_fresh = heartbeat_age is not None and heartbeat_age <= float(self._lock_stale_after_s)
+
+        if not self._enable:
+            status = "disabled"
+        elif lock_held and loop_running:
+            status = "active"
+        elif refused and heartbeat_fresh:
+            status = "standby_peer_active"
+        elif refused:
+            status = "degraded_no_ticker"
+        else:
+            status = "starting" if thread_alive else "inactive"
+
+        out: Dict[str, Any] = {
+            "enabled": bool(self._enable),
+            "status": status,
+            "active": bool(lock_held and loop_running),
+            "thread_alive": thread_alive,
+            "lock_held": lock_held,
+            "lock_refused": refused,
+            "lock_holder_pid": holder_pid,
+            "lock_holder_alive": holder_alive,
+            "lock_heartbeat_age_s": round(heartbeat_age, 3) if heartbeat_age is not None else None,
+            "lock_stale_after_s": float(self._lock_stale_after_s),
+            "lock_acquired_at": acquired_at,
+            "takeover_requested_at": takeover_at,
+            "yielded_to_pid": yielded_to,
+            "pid": os.getpid(),
+        }
+        if last_error:
+            out["lock_error"] = last_error
+        return out
+
+    def inactive_warning(self) -> Optional[str]:
+        """Loud, honest warning when runs accepted here may not be ticked.
+
+        Returns a message ONLY in the dangerous state: runner enabled, lock
+        refused, and no fresh holder heartbeat proving someone else ticks this
+        data_dir. A live co-worker with a fresh heartbeat (legit multi-worker /
+        split deployment) stays quiet — runs are ticked by the peer.
+        """
+        if not self._enable:
+            return None
+        st = self.runner_status()
+        if st.get("status") != "degraded_no_ticker":
+            return None
+        holder = st.get("lock_holder_pid")
+        age = st.get("lock_heartbeat_age_s")
+        return (
+            "gateway runner is NOT ticking runs in this process: singleton lock "
+            f"{self._singleton_lock_path.name} is held by pid {holder} "
+            f"(heartbeat {'unknown' if age is None else f'{age}s old'}); runs may hang until the "
+            "lock holder yields or is stopped. See /api/health runner status."
+        )
 
     # ---------------------------------------------------------------------
     # Main loop
     # ---------------------------------------------------------------------
 
-    def _loop(self) -> None:
-        cursor = int(self._cursor_store.load() or 0)
+    def _run(self) -> None:
+        """Worker thread: acquire (with retry + one-shot takeover) then loop.
+
+        Lifecycle: acquire-retry phase -> tick loop (heartbeats the lock file,
+        watches for takeover requests) -> on yield: drain in-flight ticks,
+        release the flock, grace-sleep, back to acquire-retry (passive: a
+        yielded/standby runner re-acquires only a FREE lock; it never requests
+        takeover — that right belongs to newly-starting processes).
+        """
+        retry_interval = min(1.0, max(0.1, float(self._cfg.poll_interval_s or 0.25)))
+        dead_holder_logged: Optional[int] = None
         while not self._stop.is_set():
-            try:
-                cursor = self._poll_commands(cursor)
-            except Exception as e:
-                logger.exception("GatewayRunner command poll error: %s", e)
-            try:
-                self._schedule_ticks()
-            except Exception as e:
-                logger.exception("GatewayRunner tick scheduling error: %s", e)
-            self._stop.wait(timeout=float(self._cfg.poll_interval_s or 0.25))
+            if not self._acquire_singleton_lock():
+                holder = self._read_lock_holder_pid()
+                with self._state_lock:
+                    ever_held = self._lock_acquired_at is not None
+                if holder is not None and holder != os.getpid() and self._pid_alive(holder) and not ever_held:
+                    # Takeover is exclusively a FRESH process's right ("newest
+                    # wins"). A runner that ever held the lock and later lost
+                    # it (it yielded) must stand by passively, otherwise the
+                    # yielded holder immediately steals the lock back and the
+                    # two processes ping-pong ownership forever.
+                    self._request_takeover_once()
+                elif holder is not None and not self._pid_alive(holder) and holder != dead_holder_logged:
+                    # Dead holder: flock auto-frees on process death, so the
+                    # next retry normally wins. Reaching this branch while the
+                    # lock stays refused means the lock CONTENT is stale/lying
+                    # (e.g. inherited fd) — log once per holder, keep retrying.
+                    dead_holder_logged = holder
+                    logger.warning(
+                        "GatewayRunner: lock %s refused but recorded holder pid %s is dead; retrying acquisition",
+                        self._singleton_lock_path,
+                        holder,
+                    )
+                self._stop.wait(timeout=retry_interval)
+                continue
+
+            # Acquired: we own ticking until we stop or yield.
+            self._clear_takeover_request(only_pid=os.getpid())
+            logger.info("GatewayRunner started (base_dir=%s)", self._base_dir)
+            yielded = self._loop()
+            if not yielded:
+                return
+            # Yield path: hand the lock to the requesting process and drop to
+            # passive standby. Grace-sleep so the requester (retrying at
+            # <=1s cadence) acquires before we re-attempt.
+            self._drain_inflight()
+            self._release_singleton_lock()
+            with self._state_lock:
+                target = self._yielded_to_pid
+            logger.warning(
+                "GatewayRunner: yielded singleton lock %s to requesting pid %s; standing by",
+                self._singleton_lock_path,
+                target,
+            )
+            self._stop.wait(timeout=max(2.0 * retry_interval, 1.0))
+
+    def _loop(self) -> bool:
+        """Tick loop while holding the lock. Returns True when yielding to a takeover."""
+        with self._state_lock:
+            self._loop_running = True
+        try:
+            cursor = int(self._cursor_store.load() or 0)
+            while not self._stop.is_set():
+                # Heartbeat: prove to other processes that this holder is alive
+                # AND polling (a wedged holder stops heartbeating and readers
+                # report degraded_no_ticker instead of trusting the flock).
+                try:
+                    os.utime(self._singleton_lock_path, None)
+                except Exception:
+                    pass
+                if self._takeover_yield_requested():
+                    return True
+                try:
+                    cursor = self._poll_commands(cursor)
+                except Exception as e:
+                    logger.exception("GatewayRunner command poll error: %s", e)
+                try:
+                    self._schedule_ticks()
+                except Exception as e:
+                    logger.exception("GatewayRunner tick scheduling error: %s", e)
+                self._stop.wait(timeout=float(self._cfg.poll_interval_s or 0.25))
+            return False
+        finally:
+            with self._state_lock:
+                self._loop_running = False
 
     def _poll_commands(self, cursor: int) -> int:
         items, next_cursor = self._command_store.list_after(after=int(cursor or 0), limit=int(self._cfg.command_batch_limit))
@@ -345,7 +754,13 @@ class GatewayRunner:
                 if isinstance(err, str) and err.strip():
                     child_out.setdefault("error", err.strip())
 
-            runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
+            try:
+                runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
+            except Exception as e:
+                # One unresolvable parent must not abort repair for every other
+                # waiting parent behind it in this loop (the caller swallows).
+                logger.debug("GatewayRunner: repair skip %s (workflow unresolvable): %s", r.run_id, e)
+                continue
             payload: Dict[str, Any] = {"sub_run_id": sub_run_id.strip(), "output": child_out}
             try:
                 include_traces = bool(details.get("include_traces") or details.get("includeTraces"))
@@ -605,7 +1020,13 @@ class GatewayRunner:
                 continue
             if _is_pause_wait(getattr(r, "waiting", None), run_id=str(getattr(r, "run_id", "") or "")):
                 continue
-            runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
+            try:
+                runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
+            except Exception as e:
+                # One unresolvable listener must not break event delivery to
+                # every other matching WAIT_EVENT run behind it.
+                logger.warning("GatewayRunner: emit_event skip %s (workflow unresolvable): %s", r.run_id, e)
+                continue
             runtime.resume(workflow=wf, run_id=r.run_id, wait_key=wait_key, payload=envelope, max_steps=0)
 
         # Durable mailbox delivery (opt-in via payload.durable, backlog: event-inbox agents).
@@ -730,12 +1151,77 @@ class GatewayRunner:
     # Tick execution + subworkflow parent resumption
     # ---------------------------------------------------------------------
 
+    def _clear_resolution_failure(self, run_id: str) -> None:
+        with self._resolution_failures_lock:
+            self._resolution_failures.pop(run_id, None)
+
+    def _note_resolution_failure(self, run_id: str, exc: Exception) -> None:
+        with self._resolution_failures_lock:
+            count = int(self._resolution_failures.get(run_id, 0)) + 1
+            self._resolution_failures[run_id] = count
+
+        limit = max(1, int(self._cfg.workflow_resolution_failure_limit or 40))
+        if count == 1:
+            # One visible warning per failure streak; per-poll repeats stay at
+            # debug (warning-noise rule: the runner re-submits every 0.25s).
+            logger.warning(
+                "GatewayRunner: cannot resolve workflow for run %s (%s: %s); "
+                "run stays RUNNING and will be FAILED after %s consecutive failures",
+                run_id,
+                type(exc).__name__,
+                exc,
+                limit,
+            )
+        else:
+            logger.debug("GatewayRunner: cannot build runtime for %s (attempt %s): %s", run_id, count, exc)
+        if count < limit:
+            return
+
+        err = f"WorkflowResolutionError: {type(exc).__name__}: {exc} (after {count} consecutive attempts)"
+        try:
+            latest = self.run_store.load(run_id)
+            if latest is None:
+                self._clear_resolution_failure(run_id)
+                return
+            if getattr(latest, "status", None) != RunStatus.RUNNING:
+                # Only RUNNING runs are promoted (parity with the tick-exception
+                # path). Reset the counter so non-RUNNING due-waits re-accrue
+                # instead of re-attempting promotion on every poll.
+                self._clear_resolution_failure(run_id)
+                return
+            latest.status = RunStatus.FAILED
+            latest.error = err
+            latest.updated_at = utc_now_iso()
+            self.run_store.save(latest)
+            logger.error("GatewayRunner: failing run %s — workflow unresolvable: %s", run_id, err)
+            try:
+                rec = StepRecord.start(
+                    run=latest,
+                    node_id=str(getattr(latest, "current_node", None) or "runtime"),
+                    effect=None,
+                    idempotency_key=f"system:workflow_resolution:{run_id}",
+                )
+                rec.finish_failure(err)
+                self.ledger_store.append(rec)
+            except Exception:
+                logger.exception("GatewayRunner: failed to append workflow_resolution record for %s", run_id)
+            self._clear_resolution_failure(run_id)
+        except Exception:
+            logger.exception("GatewayRunner: failed to promote unresolvable run %s to FAILED", run_id)
+
     def _tick_run(self, run_id: str) -> None:
         try:
             runtime, wf = self._host.runtime_and_workflow_for_run(run_id)
         except Exception as e:
-            logger.debug("GatewayRunner: cannot build runtime for %s: %s", run_id, e)
+            # A RUNNING run whose workflow cannot be resolved (deleted draft,
+            # tombstoned catalog version, principal-scoped bundle not loaded)
+            # is re-submitted every poll and would otherwise spin RUNNING
+            # forever with zero ledger and no error — the same user-visible
+            # symptom as a dead runner. Count consecutive failures and promote
+            # the run to FAILED (with a ledger record) once the limit is hit.
+            self._note_resolution_failure(run_id, e)
             return
+        self._clear_resolution_failure(run_id)
 
         try:
             state = runtime.tick(workflow=wf, run_id=run_id, max_steps=int(self._cfg.tick_max_steps or 100))
@@ -815,7 +1301,13 @@ class GatewayRunner:
                 continue
             if _is_pause_wait(wait, run_id=str(getattr(r, "run_id", "") or "")):
                 continue
-            runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
+            try:
+                runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
+            except Exception as e:
+                # One unresolvable parent must not abort resumption of other
+                # parents waiting on the same child (the caller swallows).
+                logger.warning("GatewayRunner: parent-resume skip %s (workflow unresolvable): %s", r.run_id, e)
+                continue
             payload: Dict[str, Any] = {"sub_run_id": child_run_id, "output": child_output}
             try:
                 include_traces = bool(details.get("include_traces") or details.get("includeTraces"))

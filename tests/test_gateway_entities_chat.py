@@ -112,7 +112,8 @@ def test_chat_open_turn_close_over_http(monkeypatch: pytest.MonkeyPatch):
         assert body["prelude_tokens"] > 0
         assert "person:laurent" in body["participants"]
         # The entity is a participant in its own life (driver rule).
-        assert any(p.startswith("entity:castor@") for p in body["participants"])
+        # Clean keys (item 6): new homes stamp the clean entity:<name>.
+        assert "entity:castor" in body["participants"]
 
         status = client.get("/api/gateway/entities/Castor/chat").json()
         assert status["open"] is True and status["chat_id"] == chat_id

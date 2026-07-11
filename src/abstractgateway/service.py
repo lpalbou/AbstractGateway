@@ -45,6 +45,8 @@ class GatewayService:
     email_bridge: Optional[Any] = None
     entity_registry: Optional[Any] = None
     entity_chat_host: Optional[Any] = None
+    entity_visit_host: Optional[Any] = None
+    entity_meet_host: Optional[Any] = None
 
 
 _service: Optional[GatewayService] = None
@@ -95,6 +97,42 @@ def get_gateway_service() -> GatewayService:
         if _service is None:
             _service = create_default_gateway_service()
         return _service
+
+
+def gateway_runner_health_snapshot() -> Dict[str, Any]:
+    """Peek-only runner liveness for the public health surface.
+
+    Reports on ALREADY-INSTANTIATED services (never constructs one — a public,
+    unauthenticated liveness probe must not trigger bundle compilation or store
+    creation). The incident class this surfaces: a run-accepting gateway whose
+    runner lost the singleton lock to another process and silently ticks
+    nothing (runs hang forever on their entry node with zero ledger records).
+    """
+    with _service_lock:
+        services = []
+        if _service is not None:
+            services.append(_service)
+        services.extend(list(_services_by_principal.values()))
+
+    runners: list[Dict[str, Any]] = []
+    degraded = False
+    for svc in services:
+        runner = getattr(svc, "runner", None)
+        status_fn = getattr(runner, "runner_status", None)
+        if not callable(status_fn):
+            continue
+        try:
+            st = dict(status_fn() or {})
+        except Exception as e:
+            st = {"status": "error", "error": f"{type(e).__name__}: {e}"}
+        # Identify the service without leaking filesystem paths on a public route.
+        cfg = getattr(svc, "config", None)
+        st["tenant_id"] = str(getattr(cfg, "tenant_id", "") or "") or None
+        st["runtime_id"] = str(getattr(cfg, "runtime_id", "") or "") or None
+        if st.get("status") == "degraded_no_ticker":
+            degraded = True
+        runners.append(st)
+    return {"initialized": bool(runners), "degraded": degraded, "runners": runners}
 
 
 def gateway_multi_user_enabled() -> bool:
@@ -313,8 +351,17 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     from .entities import EntityRegistry
     from .entity_chat import EntityChatHost
     from .entity_gate import install_entity_routing
+    from .entity_meets import EntityMeetHost
+    from .entity_visits import EntityVisitHost
+    from .users import gateway_user_registry_path_from_env
 
-    entity_registry = EntityRegistry(data_dir=cfg.data_dir)
+    # Entity principals (GW-H) must land in the file the AUTH layer reads —
+    # resolve it from the SAME resolver auth uses, so a per-principal data
+    # root never grows a private users file authentication ignores.
+    entity_registry = EntityRegistry(
+        data_dir=cfg.data_dir,
+        users_registry_path=gateway_user_registry_path_from_env(),
+    )
     install_entity_routing(
         host.runtime,
         registry=entity_registry,
@@ -322,6 +369,12 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         artifact_store=stores.artifact_store,
     )
     entity_chat_host = EntityChatHost(entity_registry)
+    # Durable-visit + meet hosts constructed ONCE at the factory (frozen
+    # dataclass lesson): a per-request host would drop the in-process
+    # open-locks and the meet index. The meet host shares the visit host so
+    # a meet leg and a solo open on one home take the same per-slug lock.
+    entity_visit_host = EntityVisitHost(entity_registry)
+    entity_meet_host = EntityMeetHost(entity_visit_host)
 
     return GatewayService(
         config=cfg,
@@ -338,6 +391,8 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         email_bridge=email_bridge,
         entity_registry=entity_registry,
         entity_chat_host=entity_chat_host,
+        entity_visit_host=entity_visit_host,
+        entity_meet_host=entity_meet_host,
     )
 
 

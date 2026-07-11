@@ -49,17 +49,26 @@ import secrets
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 __all__ = [
     "EntityHome",
     "EntityManifest",
     "EntityRegistry",
+    "HomeCollisionError",
     "entity_slug",
 ]
 
 ENTITY_FORMAT_VERSION = 1
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+# Literal path segments that live INSIDE the `/entities/{name}` route
+# namespace (POST /entities/auth/probe, /entities/meets/...). An entity
+# with one of these names would be unreachable behind the literal route —
+# a booby trap of the route-shadowing class — so the name is refused at
+# the slug boundary (it can then never exist anywhere: manifests, homes,
+# principals).
+RESERVED_ENTITY_NAMES = frozenset({"auth", "meets"})
 
 SPARK_FILENAME = "spark.yaml"
 MEMORY_FILENAME = "memory.sqlite3"
@@ -72,6 +81,18 @@ MANIFEST_FILENAME = "manifest.json"
 SELF_SCOPE = "self"
 DIARY_SCOPE = "diary"
 LIFE_SCOPE = "life"
+
+
+def render_handle(slug: str) -> Optional[str]:
+    """`<name>@<declared address>` when the door declares one, else None.
+
+    The address itself is door-wide serving config and lives in
+    `config.declared_door_address` (renaming.md, approved c398); the
+    HANDLE rendering is entity vocabulary and correctly stays here."""
+    from .config import declared_door_address
+
+    address = declared_door_address()
+    return f"{slug}@{address}" if address else None
 
 
 def entity_slug(name: str) -> str:
@@ -90,6 +111,11 @@ def entity_slug(name: str) -> str:
             "(lowercase letters/digits/hyphen/underscore, max 64 chars, "
             f"must start alphanumeric; got {slug!r})"
         )
+    if slug in RESERVED_ENTITY_NAMES:
+        raise ValueError(
+            f"entity name {raw!r} is reserved (a literal API path segment under "
+            f"/entities — an entity named {slug!r} would be unreachable); pick another name"
+        )
     return slug
 
 
@@ -97,6 +123,17 @@ def _utc_now_iso() -> str:
     from abstractruntime.core.runtime import utc_now_iso
 
     return utc_now_iso()
+
+
+class HomeCollisionError(KeyError):
+    """A home directory whose manifest names a DIFFERENT entity than the
+    directory (a moved/copied home landed under an occupied or wrong name).
+
+    Phase-1 naming pin (plan item 2, GW-B): the directory name IS the
+    registry key — a mismatch is refused loudly, never served as whichever
+    identity happens to answer. Subclasses KeyError so every existing
+    route's not-found handling still applies (the home is not a valid
+    registry entry UNDER THAT NAME)."""
 
 
 @dataclass(frozen=True)
@@ -164,7 +201,14 @@ class EntityHome:
     is never bypassable from gateway code.
     """
 
-    def __init__(self, *, home_dir: Path, manifest: EntityManifest, embedder: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        home_dir: Path,
+        manifest: EntityManifest,
+        embedder: Any = None,
+        embedding_pin: Optional[Dict[str, Any]] = None,
+    ) -> None:
         from abstractmemory import MemorySystem, SQLiteJournal, SQLiteTripleStore
         from abstractruntime.identity import DiaryStore
         from abstractruntime.storage.sqlite import SqliteDatabase, SqliteLedgerStore
@@ -178,13 +222,33 @@ class EntityHome:
         # reject the kwarg and the home runs with the facade-side embedder
         # only (cue embedding works; store-side cosine degrades with the
         # engine's own labeled warning).
-        try:
-            self.store = SQLiteTripleStore(memory_path, embedder=embedder)
-        except TypeError:
-            self.store = SQLiteTripleStore(memory_path)
+        self.embedding_pin_warning: Optional[str] = None
+        if embedding_pin is not None:
+            # Creation-time pin (plan item 3, memory M1): embedder identity
+            # is a BIRTH choice. Only the create path passes it; opens of
+            # existing homes read the store's own persisted pin. An engine
+            # predating the pin drops to the labeled first-write fallback —
+            # degraded loudly, never silently.
+            try:
+                self.store = SQLiteTripleStore(memory_path, embedder=embedder, embedding_pin=embedding_pin)
+            except TypeError:
+                self.embedding_pin_warning = (
+                    "#FALLBACK engine predates the embedding pin (memory M1); the birth choice "
+                    "could not be written — first-write pinning applies"
+                )
+                try:
+                    self.store = SQLiteTripleStore(memory_path, embedder=embedder)
+                except TypeError:
+                    self.store = SQLiteTripleStore(memory_path)
+        else:
+            try:
+                self.store = SQLiteTripleStore(memory_path, embedder=embedder)
+            except TypeError:
+                self.store = SQLiteTripleStore(memory_path)
         self.journal = SQLiteJournal(memory_path)
         self.memory = MemorySystem(store=self.store, journal=self.journal, embedder=embedder)
-        self._book_ledger = SqliteLedgerStore(SqliteDatabase(str(self.home_dir / BOOK_FILENAME)))
+        self._book_db = SqliteDatabase(str(self.home_dir / BOOK_FILENAME))
+        self._book_ledger = SqliteLedgerStore(self._book_db)
         self.diary = DiaryStore(entity_id=manifest.entity_id, ledger_store=self._book_ledger)
 
     # -- identity ----------------------------------------------------------
@@ -319,6 +383,14 @@ class EntityHome:
                 "memory_seq": self.memory.current_seq(),
             },
         }
+        # The home's embedding-space identity (M1 pin) — operator visibility;
+        # None when the engine predates the pin or the home is unpinned.
+        pin_reader = getattr(self.store, "embedding_pin", None)
+        if callable(pin_reader):
+            try:
+                payload["embedding_pin"] = pin_reader()
+            except Exception:
+                payload["embedding_pin"] = None
         if self.memory.current_seq() != seq_before:
             # Defensive honesty: every read above is pure by contract; if any
             # future edit breaks that, surface it rather than silently deposit.
@@ -458,8 +530,15 @@ class EntityHome:
             spark_error = f"spark verification failed: {e}"
         checks["spark"] = {"ok": spark_ok, "marker_hash": marker_hash, "error": spark_error}
 
+        # Two id generations, both valid for life (plan item 6): NEW homes
+        # engrave the clean `entity:<name>` (name-unique-per-door makes the
+        # random suffix pointless); existing homes keep their legacy
+        # `entity:<slug>@<home_id>` engraving forever (append-only journals
+        # — nothing renames). home_id stays the internal birth marker in
+        # BOTH generations (never spoken, never a key, never rewritten).
         manifest_ok = (
-            self.manifest.entity_id == f"entity:{self.manifest.slug}@{self.manifest.home_id}"
+            self.manifest.entity_id
+            in (f"entity:{self.manifest.slug}", f"entity:{self.manifest.slug}@{self.manifest.home_id}")
             and bool(self.manifest.slug)
             and bool(self.manifest.home_id)
         )
@@ -493,7 +572,11 @@ class EntityHome:
         return best
 
     def close(self) -> None:
-        for obj in (self.store, self.journal, self.memory):
+        # The book ledger's database closes too (adversary find: reembed's
+        # repair posture made close() a routine mid-life operation — each
+        # pass leaked the home.sqlite3 connection and skipped its WAL
+        # checkpoint, breaking the copy-clean rule the run store honors).
+        for obj in (self.store, self.journal, self.memory, self._book_db):
             close = getattr(obj, "close", None)
             if callable(close):
                 try:
@@ -508,14 +591,20 @@ class EntityCreateResult:
     created: bool  # False = the same spark was already engrammed (idempotent re-run)
     manifest: Dict[str, Any]
     warnings: List[str] = field(default_factory=list)
+    # GW-H (plan item 4): the entity's door principal — user_id/roles/minted.
+    # NEVER carries a credential (door-issued secrets do not travel).
+    principal: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "entity_id": self.entity_id,
             "created": self.created,
             "manifest": dict(self.manifest),
             "warnings": list(self.warnings),
         }
+        if self.principal is not None:
+            out["principal"] = dict(self.principal)
+        return out
 
 
 class EntityRegistry:
@@ -536,17 +625,30 @@ class EntityRegistry:
     everything lights up with zero further gateway work.
     """
 
-    def __init__(self, *, data_dir: Path, embedder_factory: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        data_dir: Path,
+        embedder_factory: Any = None,
+        users_registry_path: Optional[Path] = None,
+    ) -> None:
         self.data_dir = Path(data_dir)
         self.entities_dir = self.data_dir / "entities"
         self._create_lock = threading.Lock()
         self._open_homes: Dict[str, EntityHome] = {}
+        self._entity_runtimes: Dict[str, Any] = {}  # slug -> EntityRuntime (GW-C)
         self._open_lock = threading.Lock()
         self._embedder_factory = embedder_factory
         self._embedder: Any = None
         self._embedder_resolved = False
         self._embedder_lock = threading.Lock()
         self._embedder_warning: Optional[str] = None
+        # GW-H: WHERE entity principals are minted. The principal must land
+        # in the file the door's AUTH layer actually reads — the service
+        # factory passes that resolved path (one resolver, no second copy).
+        # None (hand-built registries, unit tests) = registry-local
+        # `<data_dir>/auth/users.json`, honoring the env override.
+        self._users_registry_path = Path(users_registry_path) if users_registry_path else None
 
     def _resolve_embedder(self) -> Any:
         """Resolve the home embedder once (lazy — the factory may probe an
@@ -584,6 +686,8 @@ class EntityRegistry:
         spark: Optional[Mapping[str, Any]] = None,
         spark_text: Optional[str] = None,
         framework: bool = True,
+        embedding_model: Optional[str] = None,
+        embedding_dimension: Optional[int] = None,
     ) -> EntityCreateResult:
         """Create (or idempotently re-adopt) an entity home.
 
@@ -592,6 +696,13 @@ class EntityRegistry:
         surfaced verbatim (they are written for humans): re-running the same
         spark is a no-op (`created=False`); a CHANGED document under the
         same version is refused — the spark is for life.
+
+        Embedder pin (plan item 3, memory M1): embedder identity is an
+        explicit BIRTH choice. `embedding_model`/`embedding_dimension`
+        declare it; when absent, the pin derives from the RESOLVED embedder
+        (the identity the home will actually live with — pinning a name the
+        route does not serve would brick the home at its next open). No
+        embedder and no declaration = no pin, labeled (first-write fallback).
         """
         import yaml
         from abstractmemory import DEFAULT_SPARK_TEMPLATE, canonical_spark_hash, engram, lint_spark
@@ -661,12 +772,21 @@ class EntityRegistry:
                 manifest = EntityManifest.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
             else:
                 # The manifest is written BEFORE the engram: it fixes the
-                # entity_id (slug@home_id), so a crash between manifest and
-                # engram retries into the SAME identity instead of minting a
-                # second home_id over a half-planted core.
+                # entity_id, so a crash between manifest and engram retries
+                # into the SAME identity instead of minting a second home_id
+                # over a half-planted core.
+                #
+                # CLEAN KEYS (plan item 6, phase 2): NEW homes engrave
+                # `entity:<name>` — name-unique-per-door (GW-B) makes the
+                # random suffix pointless, and memory's M3 pins that owner
+                # strings are opaque either way. Existing homes keep their
+                # legacy `entity:<slug>@<home_id>` engraving for life
+                # (append-only journals; nothing renames). home_id lives on
+                # in BOTH generations as the internal birth marker — never
+                # spoken in the id, never a key, never rewritten.
                 home_id = f"home-{secrets.token_hex(4)}"
                 manifest = EntityManifest(
-                    entity_id=f"entity:{slug}@{home_id}",
+                    entity_id=f"entity:{slug}",
                     name=str(spark_doc.get("name") or name).strip(),
                     slug=slug,
                     home_id=home_id,
@@ -681,7 +801,16 @@ class EntityRegistry:
             # The embedder rides creation too: the engram rows are the FIRST
             # records of the life, and record one deserves a vector (rows
             # formed vectorless stay vectorless until re-embedding exists).
-            home = EntityHome(home_dir=home_dir, manifest=manifest, embedder=self._resolve_embedder())
+            embedder = self._resolve_embedder()
+            pin, pin_warnings = self._birth_embedding_pin(
+                embedder, embedding_model=embedding_model, embedding_dimension=embedding_dimension
+            )
+            warnings.extend(pin_warnings)
+            home = EntityHome(
+                home_dir=home_dir, manifest=manifest, embedder=embedder, embedding_pin=pin
+            )
+            if home.embedding_pin_warning:
+                warnings.append(home.embedding_pin_warning)
             try:
                 result = engram(
                     home.memory,
@@ -692,12 +821,143 @@ class EntityRegistry:
             finally:
                 home.close()
 
+            principal, principal_warnings = self._ensure_entity_principal(manifest)
+            warnings.extend(principal_warnings)
+
         return EntityCreateResult(
             entity_id=manifest.entity_id,
             created=bool(result.created),
             manifest=manifest.to_dict(),
             warnings=warnings + list(result.warnings),
+            principal=principal,
         )
+
+    def _ensure_entity_principal(
+        self, manifest: EntityManifest
+    ) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+        """GW-H (plan item 4): entities are authenticated USERS of the door.
+
+        Minted at creation (and at adoption when absent — a copied home
+        re-authenticates at its NEW door, the stamp-secret rule): user_id =
+        the name (slug), roles = ("entity",) — NEVER admin — scopes = its
+        own home. The issued credential is DISCARDED here, deliberately:
+        door-issued secrets never travel and never rest in the home (a
+        copied directory carries zero authority); phase 3 binds a fresh
+        credential at the summon/visit boundary when something actually
+        needs to authenticate. Idempotent: an existing principal is never
+        rotated or widened by a re-create.
+
+        REGISTRY FILE: the service factory injects the auth layer's own
+        resolved path (`users_registry_path`) so minted principals are
+        readable by the door that authenticates — a per-principal data root
+        must never grow a private users file auth ignores. Entities are
+        DOOR-GLOBAL identities (laurent's consequence (a): one door, one
+        castor) — on a shared users file two tenants share the entity
+        namespace by design, and an existing same-name entity principal is
+        adopted (minted=False), never re-minted."""
+        from .users import GatewayUserRegistry
+
+        import os
+
+        raw = os.getenv("ABSTRACTGATEWAY_USERS_FILE")
+        registry_path = self._users_registry_path or (
+            Path(str(raw)).expanduser().resolve()
+            if raw and str(raw).strip()
+            else self.data_dir / "auth" / "users.json"
+        )
+        try:
+            reg = GatewayUserRegistry(path=registry_path)
+            existing = reg.get_user(manifest.slug)
+            if existing is not None:
+                out = {
+                    "user_id": existing.user_id,
+                    "roles": list(existing.roles),
+                    "minted": False,
+                }
+                if "admin" in existing.roles:
+                    # Never-admin is the plan's line; an admin-shaped record
+                    # under an entity's name is operator drift — refuse to
+                    # treat it as the entity's principal, loudly.
+                    return None, [
+                        f"#FALLBACK a user record named {manifest.slug!r} already exists WITH ADMIN "
+                        "ROLES — not adopting it as the entity principal (entities are never admin); "
+                        "rename or demote that record"
+                    ]
+                return out, []
+            record, _token = reg.create_user(
+                user_id=manifest.slug,
+                roles=["entity"],
+                scopes=[f"entity:{manifest.slug}"],
+                runtime_id=manifest.slug,
+            )
+            # _token drops out of scope here — discarded by design.
+            return {"user_id": record.user_id, "roles": list(record.roles), "minted": True}, []
+        except Exception as e:
+            # A principal-mint failure must not orphan a half-created home:
+            # the identity (spark/engram/manifest) is planted; the principal
+            # can be re-minted by the next create call. Labeled, never silent.
+            return None, [f"#FALLBACK entity principal not minted ({e}); re-run create to mint it"]
+
+    def _birth_embedding_pin(
+        self,
+        embedder: Any,
+        *,
+        embedding_model: Optional[str],
+        embedding_dimension: Optional[int],
+    ) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+        """The M1 pin payload for a NEW home, derived honestly (never a
+        hardcoded name the route might not serve):
+
+        - explicit `embedding_model` = the operator's birth choice; if the
+          resolved embedder DECLARES a different identity, refuse loudly —
+          a home born with a pin its own door cannot satisfy would refuse
+          every open (no silent mixing, from the first minute).
+        - no explicit choice = pin the RESOLVED embedder's identity (model
+          attribute when declared; dimension probed with one embed call).
+        - no embedder and no choice = no pin, labeled: the home is born
+          vectorless and memory's first-write fallback applies.
+        """
+        warnings: List[str] = []
+        model_id: Optional[str] = (embedding_model or "").strip() or None
+        dimension: Optional[int] = int(embedding_dimension) if embedding_dimension else None
+
+        resolved_id: Optional[str] = None
+        if embedder is not None:
+            for attr in ("model", "model_id"):
+                value = getattr(embedder, attr, None)
+                if isinstance(value, str) and value.strip():
+                    resolved_id = value.strip()
+                    break
+
+        if model_id and resolved_id and model_id != resolved_id:
+            raise ValueError(
+                f"embedding birth choice {model_id!r} does not match the door's resolved "
+                f"embedder {resolved_id!r} — a home pinned to a model its door cannot serve "
+                "would refuse every open. Configure the embeddings route to the chosen model "
+                "or drop the explicit choice (the resolved identity is pinned by default)."
+            )
+        if model_id is None:
+            model_id = resolved_id
+
+        if dimension is None and embedder is not None:
+            try:
+                vectors = embedder.embed_texts(["dimension probe"])
+                first = list(vectors[0]) if vectors else []
+                dimension = len(first) or None
+            except Exception as e:
+                warnings.append(
+                    f"#FALLBACK embedding dimension probe failed ({e}); the pin carries the "
+                    "model only — memory locks the dimension at first write"
+                )
+
+        if model_id is None and dimension is None:
+            if embedder is None:
+                warnings.append(
+                    "#FALLBACK home born without an embedding pin (no embedder resolved, no "
+                    "birth choice declared) — memory's labeled first-write pinning applies"
+                )
+            return None, warnings
+        return {"model_id": model_id, "dimension": dimension, "source": "creation"}, warnings
 
     # -- open / list / reads -----------------------------------------------
 
@@ -706,7 +966,20 @@ class EntityRegistry:
         manifest_path = self.entities_dir / slug / MANIFEST_FILENAME
         if not manifest_path.exists():
             raise KeyError(f"entity {slug!r} not found under {self.entities_dir}")
-        return EntityManifest.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
+        manifest = EntityManifest.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
+        # Naming pin (plan item 2, GW-B): the directory name is the registry
+        # key. A manifest claiming a different slug means a home was moved or
+        # copied under this name — refuse loudly rather than answering as
+        # whichever identity the manifest happens to carry. The name is how
+        # the door resolves a life; a mismatch is never a valid entry.
+        if manifest.slug != slug:
+            raise HomeCollisionError(
+                f"home directory {slug!r} carries a manifest for entity {manifest.slug!r} "
+                f"({manifest.entity_id}) — a moved or copied home under a colliding name. "
+                "Restore the directory to the entity's own name (one name, one home, one door) "
+                "or remove the stray copy; the registry refuses to serve a mismatched home."
+            )
+        return manifest
 
     def open(self, name: str, *, embedder: Any = None) -> EntityHome:
         """Open a FRESH home handle (caller owns close()). For long-lived
@@ -735,6 +1008,333 @@ class EntityRegistry:
                 self._open_homes[slug] = home
             return home
 
+    def get_entity_runtime(self, name: str) -> Any:
+        """GW-C (plan items 8/9): the door's cached PER-ENTITY runtime — one
+        `EntityRuntime` per slug (runtime R2's composition over
+        `runtime_<slug>.sqlite3` INSIDE the home), door-wrapped at
+        construction so every entity effect requires a verifying stamp
+        ("the visit path joins the verified path", frozen seam spec).
+        Closed by `close_all()`. Lookups resolve through `manifest_for`, so
+        the naming pins (moved-home refusal) fire before any store opens.
+
+        The LLM_CALL handler is composed HERE (the host supplies provider
+        wiring per the R2 contract): late-bound — it resolves the home's
+        substrate at CALL time (one substrate per entity; a PUT between
+        turns takes effect on the next call, no runtime rebuild) and the
+        G1 act-only wrap applies automatically inside `open_entity_runtime`
+        because DIARY_READ is present."""
+        manifest = self.manifest_for(name)
+        slug = manifest.slug
+        embedder = self._resolve_embedder()  # outside _open_lock (it locks too)
+        with self._open_lock:
+            er = self._entity_runtimes.get(slug)
+            if er is None:
+                from abstractruntime.core.models import EffectType
+                from abstractruntime.identity.entity_runtime import open_entity_runtime
+
+                from .entity_gate import wrap_entity_runtime_routing
+
+                er = open_entity_runtime(
+                    self.entities_dir / slug,
+                    embedder=embedder,
+                    extra_handlers={
+                        EffectType.LLM_CALL: self._entity_llm_handler(slug),
+                        # G5(ii): the entity's HANDS — without this handler the
+                        # react cycle always ran reason->final-answer with empty
+                        # hands and the model fabricated acts in prose (the
+                        # Mnemosyne incident's other half).
+                        EffectType.TOOL_CALLS: self._entity_tool_handler(slug),
+                    },
+                )
+                if str(er.home.entity_id) != manifest.entity_id:
+                    entity_id = str(er.home.entity_id)
+                    er.close()
+                    raise HomeCollisionError(
+                        f"home at {slug!r} opened as {entity_id!r} but the manifest names "
+                        f"{manifest.entity_id!r} — engram/manifest drift; refusing to serve"
+                    )
+                wrap_entity_runtime_routing(er, data_dir=self.data_dir)
+                self._entity_runtimes[slug] = er
+            return er
+
+    def _entity_llm_handler(self, slug: str) -> Any:
+        """The door's LLM_CALL handler for one entity's runtime: substrate
+        resolved PER CALL through the no-fallback chain (request override is
+        not a concept here — the run speaks with the entity's ONE mind), the
+        client built through entity_chat's late-bound factory (tests patch
+        `entity_chat._default_llm_factory`, the chat-host lesson).
+
+        NATIVE TOOLS PASS THROUGH (G5, the Mnemosyne fabrication root
+        cause — three benches converged: gpt-oss-class substrates never
+        write fenced tool text; they call tools NATIVELY, and a handler
+        that drops payload `tools` and reads only `content` throws the
+        model's genuine tool intent away, so "helpful" fabrication ships
+        instead). This handler forwards the payload's `tools` + `params`
+        to the provider and returns `tool_calls`/`finish_reason`/`usage`
+        beside `content`. Empty content is NOT a failure when tool calls
+        arrived — a native tool-call response legitimately has no prose."""
+
+        def handler(run: Any, effect: Any, default_next_node: Any = None) -> Any:
+            import os as _os
+
+            from abstractruntime.core.runtime import EffectOutcome
+
+            from . import entity_chat as _ec
+
+            home_dir = self.entities_dir / slug
+            try:
+                provider, model = _ec.resolve_substrate(None, None, home_dir=home_dir)
+            except _ec.ChatOpenRefused as e:
+                return EffectOutcome.failed(f"LLM_CALL refused: {e.detail}")
+
+            # Output headroom (agency-caps audit, maintainer 2026-07-11): a
+            # summoned entity writing a report or a rich final answer must not
+            # be cut mid-thought. 4096 is generous-but-bounded (caps bound
+            # runaway, not ambition); the fuller fix — operator-configurable
+            # per entity beside substrate.yaml — is queued for the creation
+            # modal (substrate config is already surfaced there).
+            llm_kwargs: Dict[str, Any] = {"model": model, "max_output_tokens": 4096}
+            if str(provider).strip().lower() in ("lmstudio", "openai-compatible", "openai_compatible"):
+                llm_kwargs["base_url"] = (
+                    _os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_BASE_URL") or "http://127.0.0.1:1234/v1"
+                ).strip()
+            factory = _ec._default_llm_factory  # late-bound module attribute
+            llm = factory(str(provider).strip().lower(), **llm_kwargs)
+
+            payload = dict(effect.payload or {})
+            gen_kwargs: Dict[str, Any] = {
+                "messages": payload.get("messages"),
+                "system_prompt": payload.get("system_prompt"),
+            }
+            tools = payload.get("tools")
+            if isinstance(tools, list) and tools:
+                gen_kwargs["tools"] = list(tools)
+            params = payload.get("params")
+            if isinstance(params, dict) and params:
+                gen_kwargs["params"] = dict(params)
+            out = llm.generate(**gen_kwargs)
+
+            def _field(name: str) -> Any:
+                value = getattr(out, name, None)
+                if value is None and isinstance(out, dict):
+                    value = out.get(name)
+                return value
+
+            content = _field("content")
+            tool_calls = _field("tool_calls")
+            result: Dict[str, Any] = {"content": content if isinstance(content, str) else ""}
+            if isinstance(tool_calls, list) and tool_calls:
+                result["tool_calls"] = tool_calls
+            for key in ("finish_reason", "usage", "model"):
+                value = _field(key)
+                if value is not None:
+                    result[key] = value
+            if not result["content"].strip() and not result.get("tool_calls"):
+                return EffectOutcome.failed("LLM returned no content for the visit turn")
+            return EffectOutcome.completed(result)
+
+        return handler
+
+    def _entity_tool_handler(self, slug: str) -> Any:
+        """The door's TOOL_CALLS handler for one entity's runtime (G5(ii)):
+        native tool calls execute through the ENTITY'S OWN toolset — the
+        same executors the chat driver uses (`execute_tool_elections`), so
+        tool semantics stay runtime's; the door only composes.
+
+        GRANT AUTHORITY (laurent 00:49, ruling 2): `<home>/tool_policy.yaml`
+        is the ONE surface — read FRESH per call, so per-phase edits persist
+        across restarts and apply mid-visit without a rebuild. The effective
+        allowlist is grant ∩ payload `allowed_tools`; names outside it are
+        refused with runtime's own refusal text (the grant stays the only
+        authority; the BUNDLE never decides the entity's hands).
+
+        DIARY READS join the verified path: the resolver invokes the
+        runtime's REGISTERED DIARY_READ handler (routing-wrapped — stamp
+        checks + act-only apply) with the visit's own run. read/search
+        memory are not yet executable here (the driver's resolvers are
+        ChatSession methods — runtime's inventory-expansion lane); they are
+        neither declared to the model nor silently dropped: a call for them
+        refuses honestly like any ungranted name."""
+
+        def handler(run: Any, effect: Any, default_next_node: Any = None) -> Any:
+            from abstractruntime.core.models import Effect, EffectType
+            from abstractruntime.core.runtime import EffectOutcome
+            from abstractruntime.identity.act_only import ACT_ONLY_TOOLS
+            from abstractruntime.identity.tool_policy import resolve_tool_grant
+            from abstractruntime.identity.tools import (
+                MAX_TOOL_BLOCKS_PER_TURN,
+                WorkspaceRoot,
+                execute_tool_elections,
+                native_tool_elections,
+            )
+
+            # ONE per-turn tool budget, from runtime's ruled constant (20,
+            # maintainer 2026-07-11 05:25) — IMPORTED, never a second literal
+            # (the drift the ruling was angry about: the door carried 24 +
+            # a hidden 8/batch sub-cap that could cut a legitimate cycle
+            # BELOW the turn budget). The per-turn budget is the ONLY bound;
+            # a single react cycle may fold many calls into one effect and
+            # they all run until the shared turn budget is spent, then honest
+            # refusals. Below 20 is an operator's choice, never a code default.
+            turn_cap = int(MAX_TOOL_BLOCKS_PER_TURN)
+
+            home_dir = self.entities_dir / slug
+            with self._open_lock:
+                er = self._entity_runtimes.get(slug)
+            if er is None:
+                return EffectOutcome.failed(
+                    "TOOL_CALLS refused: no live runtime for this home (wiring drift — report this)"
+                )
+
+            payload = dict(effect.payload or {})
+            calls = payload.get("tool_calls")
+            if not isinstance(calls, list) or not calls:
+                return EffectOutcome.completed({"mode": "executed", "results": []})
+
+            grant = resolve_tool_grant(home_dir, "visit")
+            payload_allow = payload.get("allowed_tools")
+            if isinstance(payload_allow, list) and payload_allow:
+                wanted = {str(t).strip() for t in payload_allow if str(t).strip()}
+                allowed = tuple(t for t in grant.tools if t in wanted)
+            else:
+                allowed = tuple(grant.tools)
+            notices: List[str] = list(grant.notes)
+
+            def _refusal(call_dict: Dict[str, Any], error: str) -> Dict[str, Any]:
+                fn = call_dict.get("function") if isinstance(call_dict.get("function"), dict) else {}
+                return {
+                    "call_id": str(call_dict.get("call_id") or call_dict.get("id") or "").strip() or None,
+                    "name": str(call_dict.get("name") or fn.get("name") or "").strip().lower(),
+                    "success": False,
+                    "output": None,
+                    "error": error,
+                }
+
+            # EMPTY GRANT DENIES ALL (adversary find): an empty allowlist
+            # must never reach native_tool_elections, whose `allowed or
+            # TIER1` default treats "empty" as "unspecified" and would fall
+            # OPEN to tier-1 against the operator's explicit zero grant.
+            if not allowed:
+                return EffectOutcome.completed(
+                    {
+                        "mode": "executed",
+                        "results": [
+                            _refusal(c if isinstance(c, dict) else {},
+                                     "tool call refused: the operator's tool policy grants no tools for visits")
+                            for c in calls
+                        ],
+                        "notices": notices,
+                    }
+                )
+
+            # Per-turn budget: counter keyed on the BRIDGE-stamped turn id
+            # (the handler runs inside the owning tick — the single-writer
+            # contract makes this run-var mutation safe; it persists with
+            # the run like every other var).
+            turn_id = str(((run.vars or {}).get("_runtime") or {}).get("turn_id") or "")
+            visit_ns = run.vars.setdefault("_visit", {}) if isinstance(run.vars, dict) else {}
+            budget = visit_ns.get("tool_budget")
+            if not isinstance(budget, dict) or str(budget.get("turn_id") or "") != turn_id:
+                budget = {"turn_id": turn_id, "executed": 0}
+                visit_ns["tool_budget"] = budget
+
+            def _act_only_result(call_dict: Dict[str, Any], election: Any) -> Dict[str, Any]:
+                """G1 for tool results (adversary find — the frozen spec's
+                'the effect handler IS the privacy mechanism'): an act-only
+                tool's WORDS must never enter the effect result, which the
+                runtime rests in the per-home run ledger + node traces. The
+                result is the canonical `$act_only` REFERENCE frame; the
+                react observe node renders it as the durable ref message and
+                the LLM wrapper dereferences it fresh from the book at SEND
+                time (wire copy only). The read itself never runs here."""
+                from abstractruntime.identity.tools import _resolve_entry_id  # runtime ask: export publicly
+
+                requested = str(election.body or "").strip().splitlines()[0].strip() if election.body else ""
+                resolved_id, note = _resolve_entry_id(er.home.diary, requested)
+                if not resolved_id:
+                    return _refusal(call_dict, note or f"diary entry {requested!r} not found in the book")
+                gist = ""
+                try:
+                    for entry in er.home.diary.list_entries():
+                        if str(entry.get("entry_id") or "") == resolved_id:
+                            if str(entry.get("visibility") or "") != "private":
+                                gist = str(entry.get("gist") or "").strip()
+                            break
+                except Exception:  # noqa: BLE001 - gist is optional garnish, never load-bearing
+                    gist = ""
+                frame: Dict[str, Any] = {"tool": election.name, "entry_id": resolved_id}
+                if gist:
+                    frame["gist"] = gist
+                return {
+                    "call_id": str(call_dict.get("call_id") or call_dict.get("id") or "").strip() or None,
+                    "name": election.name,
+                    "success": True,
+                    "output": {"$act_only": frame},
+                    "error": None,
+                }
+
+            workspace = WorkspaceRoot(home_dir) if grant.workspace_enabled else None
+
+            results: List[Dict[str, Any]] = []
+            for call in calls:
+                call_dict = call if isinstance(call, dict) else {}
+                remaining = turn_cap - int(budget.get("executed") or 0)
+                if remaining <= 0:
+                    results.append(_refusal(
+                        call_dict,
+                        f"tool call refused: this turn's tool budget ({turn_cap}) is spent — "
+                        "answer with what you have",
+                    ))
+                    continue
+                elections, markers, call_notices = native_tool_elections(
+                    [call_dict],
+                    allowed_names=allowed,
+                    max_elections=remaining,
+                )
+                notices.extend(call_notices)
+                if not elections:
+                    results.append(_refusal(call_dict, markers[-1] if markers else "tool call refused"))
+                    continue
+                budget["executed"] = int(budget.get("executed") or 0) + 1
+                election = elections[0]
+                if election.name in ACT_ONLY_TOOLS:
+                    results.append(_act_only_result(call_dict, election))
+                    continue
+
+                def _no_materialized_read(entry_id: str) -> Dict[str, Any]:
+                    # Unreachable: act-only names are intercepted above. A
+                    # loud raise beats a silent leak if the set ever drifts.
+                    raise RuntimeError(
+                        "diary_read materialization is forbidden on the visit tool path "
+                        "(act-only routes return references)"
+                    )
+
+                _msg, exec_notices = execute_tool_elections(
+                    elections,
+                    diary_store=er.home.diary,
+                    diary_read_effect=_no_materialized_read,
+                    workspace=workspace,
+                )
+                notices.extend(exec_notices)
+                results.append(
+                    {
+                        "call_id": str(call_dict.get("call_id") or call_dict.get("id") or "").strip() or None,
+                        "name": election.name,
+                        # A tool that ran and returned an honest error string is
+                        # still an EXECUTED tool (driver semantics: a failed
+                        # lookup is information, not an aborted turn).
+                        "success": True,
+                        "output": str(election.result or ""),
+                        "error": None,
+                    }
+                )
+            out: Dict[str, Any] = {"mode": "executed", "results": results}
+            if notices:
+                out["notices"] = notices
+            return EffectOutcome.completed(out)
+
+        return handler
+
     def list_entities(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         if not self.entities_dir.exists():
@@ -748,8 +1348,23 @@ class EntityRegistry:
             except Exception as e:
                 out.append({"slug": child.name, "error": f"unreadable manifest: {e}"})
                 continue
+            if manifest.slug != child.name:
+                # Naming pin (GW-B): a moved/copied home under a colliding
+                # name is LABELED, never listed as healthy and never hidden —
+                # the operator must see the stray copy to fix it.
+                out.append({
+                    "slug": child.name,
+                    "error": (
+                        f"moved-home collision: directory {child.name!r} carries a manifest "
+                        f"for entity {manifest.slug!r} ({manifest.entity_id}); lookups refuse it"
+                    ),
+                })
+                continue
             entry: Dict[str, Any] = {
                 **manifest.to_dict(),
+                # Reachability, not identity (GW-F): rendered from the
+                # declared address, absent when the door declares none.
+                "handle": render_handle(manifest.slug),
                 "files": {
                     "spark": (child / SPARK_FILENAME).exists(),
                     "memory": (child / MEMORY_FILENAME).exists(),
@@ -811,12 +1426,41 @@ class EntityRegistry:
             from abstractmemory import dream_pass
 
             eid = manifest.entity_id
-            result = dream_pass(
-                home.memory,
-                scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
-                owner_id=eid,
-            )
-            dream_result = dict(result) if isinstance(result, dict) else {"result": result}
+
+            # One writer per home (plan item 1, GW-A): the dream pass is a
+            # writer window (holder="dream"). A held home SKIPS the pass
+            # with an honest label — sleep is never blocked, and the pass
+            # is idempotent (the runtime's loop-side dream window words its
+            # refusal identically). Older runtimes without storage.lease
+            # run leaseless with a labeled warning.
+            lease: Any = None
+            lease_warning: Optional[str] = None
+            try:
+                from abstractruntime.storage.lease import DirectoryLeaseHeld, acquire_directory_lease
+
+                try:
+                    lease = acquire_directory_lease(self.entities_dir / manifest.slug, holder="dream")
+                except DirectoryLeaseHeld as e:
+                    dream_result = {
+                        "skipped": True,
+                        "warning": f"#FALLBACK {e} — dream pass skipped; it is idempotent, the next sleep runs it",
+                    }
+            except ImportError:
+                lease_warning = "#FALLBACK runtime predates the home lease; dream pass ran without the writer mutex"
+
+            if dream_result is None:
+                try:
+                    result = dream_pass(
+                        home.memory,
+                        scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
+                        owner_id=eid,
+                    )
+                    dream_result = dict(result) if isinstance(result, dict) else {"result": result}
+                    if lease_warning:
+                        dream_result["warning"] = lease_warning
+                finally:
+                    if lease is not None:
+                        lease.release()
 
         # The moment enters the observable story (family="host"); marker
         # kinds are the VERBS (sleep/wake/pause) — moments, not states.
@@ -838,13 +1482,160 @@ class EntityRegistry:
         )
         return {"state": written, "prior": prior, "marker_seq": marker["seq"], "dream": dream_result}
 
+    def reembed(
+        self,
+        *,
+        name: str,
+        embedding_model: Optional[str] = None,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """The M1b repair verb (plan item 3): re-derive the home's vector
+        index with the door's RESOLVED embedder and swap atomically —
+        memory's `reembed_store` under the maintenance lease (item 1), with
+        the host marker beside the engine's journaled claim.
+
+        ONE embedder source, deliberately: the door's embeddings route. An
+        explicit `embedding_model` is a VERIFICATION, not a construction
+        request — when it names a model the resolved embedder does not
+        serve, the verb refuses (reconfigure the route first, then reembed;
+        an index migrated into a space the door cannot serve would refuse
+        every open). Not advised, never routine: same memories, different
+        neighbors — the operator owns the act, both planes record it.
+
+        REPAIR-POSTURE OPEN (walkthrough catch #2, c424; memory's contract
+        c454): the pass opens the home WITHOUT an embedder — a vectorless
+        open is always legal under M1 (mismatch checks pass when either
+        side is absent). Opening with the route's embedder here made the
+        verb trip the exact pin!=route refusal it exists to repair (the
+        M1b ceremony's precondition IS a flipped route). The target
+        embedder enters through `reembed_store(embedder=...)` alone; the
+        whole open+pass window runs under the lease; cached door handles
+        for this home are evicted so the next touch binds the NEW pin."""
+        from abstractmemory import reembed_store
+
+        manifest = self.manifest_for(name)
+        home_dir = self.entities_dir / manifest.slug
+
+        embedder = self._resolve_embedder()
+        if embedder is None:
+            raise ValueError(
+                "no embedder resolved at this door (embeddings route unconfigured or failing) — "
+                "reembed needs the NEW space to migrate into; configure embedding.text first"
+                + (f" [{self._embedder_warning}]" if self._embedder_warning else "")
+            )
+        resolved_id: Optional[str] = None
+        for attr in ("model", "model_id"):
+            value = getattr(embedder, attr, None)
+            if isinstance(value, str) and value.strip():
+                resolved_id = value.strip()
+                break
+        chosen = (embedding_model or "").strip() or None
+        if chosen and resolved_id and chosen != resolved_id:
+            raise ValueError(
+                f"reembed target {chosen!r} does not match the door's resolved embedder "
+                f"{resolved_id!r} — reconfigure the embeddings route to the chosen model first "
+                "(an index migrated into a space this door cannot serve would refuse every open)"
+            )
+
+        # Maintenance is a writer like any other (plan invariant): the lease
+        # refuses while a visit, the loop's day, or a dream holds the home.
+        # Older runtimes without storage.lease run on the engine's
+        # in-transaction count guard alone — labeled, never silent.
+        lease: Any = None
+        warnings_out: List[str] = []
+        try:
+            from abstractruntime.storage.lease import acquire_directory_lease
+
+            lease = acquire_directory_lease(home_dir, holder="maintenance")
+        except ImportError:
+            warnings_out.append(
+                "#FALLBACK runtime predates the home lease; reembed ran on the engine's "
+                "count-guard backstop only"
+            )
+        # DirectoryLeaseHeld propagates to the caller (409 at the route, loud in the CLI).
+
+        if chosen is None and resolved_id is None:
+            # Memory's note (b): an anonymous embedder pins model_id=None —
+            # legal, but enforcement then rests on DIMENSION alone. Loud.
+            warnings_out.append(
+                "#FALLBACK the resolved embedder does not name its model and no explicit "
+                "embedding_model was given — the new pin records model_id=None; "
+                "space enforcement rests on dimension alone"
+            )
+
+        try:
+            # Evict cached handles FIRST (under the lease — nothing live
+            # holds the home): they were opened against the OLD pin/route
+            # posture and must not serve a swapped space with stale bindings.
+            self._evict_home_handles(manifest.slug)
+
+            repair_home = EntityHome(home_dir=home_dir, manifest=manifest, embedder=None)
+            try:
+                result = reembed_store(
+                    repair_home.memory,
+                    embedder=embedder,
+                    owner_id=manifest.entity_id,
+                    model_id=chosen or resolved_id,
+                    reason=reason or "operator reembed via gateway",
+                )
+                journal_seq = int(repair_home.memory.current_seq())
+            finally:
+                repair_home.close()
+        finally:
+            if lease is not None:
+                lease.release()
+
+        from .entity_replay import record_host_marker
+
+        marker = record_host_marker(
+            entities_dir=self.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="reembed",
+            journal_seq=journal_seq,
+            details={
+                "old_pin": result.get("old_pin"),
+                "new_pin": result.get("new_pin"),
+                "rows": result.get("rows"),
+                "vectored": result.get("vectored"),
+                "reason": reason or None,
+                "journal_marker_record_id": result.get("marker_record_id"),
+            },
+        )
+        out = dict(result)
+        out["marker_seq"] = marker["seq"]
+        if warnings_out:
+            out["warnings"] = warnings_out
+        return out
+
+    def _evict_home_handles(self, slug: str) -> None:
+        """Drop + close this home's cached door handles (home + entity
+        runtime). Used by maintenance passes that change what an open MEANS
+        (reembed swaps the embedding space): the next touch re-opens
+        against the current pin + route instead of serving stale bindings."""
+        with self._open_lock:
+            stale_home = self._open_homes.pop(slug, None)
+            stale_er = self._entity_runtimes.pop(slug, None)
+        if stale_er is not None:
+            try:
+                stale_er.close()
+            except Exception:
+                pass
+        if stale_home is not None:
+            try:
+                stale_home.close()
+            except Exception:
+                pass
+
     def inspect(self, name: str, **kwargs: Any) -> Dict[str, Any]:
         home = self.open(name)
         try:
             payload = home.inspect(**kwargs)
+            slug = home.manifest.slug
         finally:
             home.close()
         payload["state"] = self.state_of(name)
+        payload["handle"] = render_handle(slug)
         return payload
 
     def card(
@@ -877,6 +1668,7 @@ class EntityRegistry:
         finally:
             home.close()
         payload["state"] = self.state_of(name)
+        payload["handle"] = render_handle(slug)  # reachability, not identity (GW-F)
         if as_of is not None:
             payload["state"]["note"] = "state is current — anchored cards do not rewind the operator state"
 
@@ -939,5 +1731,12 @@ class EntityRegistry:
         with self._open_lock:
             homes = list(self._open_homes.values())
             self._open_homes.clear()
+            runtimes = list(self._entity_runtimes.values())
+            self._entity_runtimes.clear()
+        for er in runtimes:
+            try:
+                er.close()  # checkpoints the run store; the home dir stays copy-clean
+            except Exception:
+                pass
         for home in homes:
             home.close()

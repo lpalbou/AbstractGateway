@@ -1077,6 +1077,12 @@ class StartRunRequest(BaseModel):
 
 class StartRunResponse(BaseModel):
     run_id: str
+    # Populated ONLY when this gateway process accepted the run while its
+    # runner is enabled but locked out of the singleton tick lock with no
+    # fresh peer heartbeat (i.e. nobody is provably ticking this data_dir).
+    # Additive + optional: older clients ignore it. Legitimate split/multi-
+    # worker deployments (live peer heartbeat) stay quiet.
+    runner_warning: Optional[str] = None
 
 
 class PurgeDraftRunsRequest(BaseModel):
@@ -6102,6 +6108,26 @@ async def get_workflow_flow(workflow_id: str) -> Dict[str, Any]:
     raise HTTPException(status_code=404, detail=f"Workflow '{wid}' not found")
 
 
+def _runner_inactive_warning(svc: Any) -> Optional[str]:
+    """Warning text when runs accepted by this process may never be ticked.
+
+    Delegates to GatewayRunner.inactive_warning(): non-None only when the
+    runner is enabled, the singleton tick lock is refused, AND no fresh peer
+    heartbeat proves another process ticks this data_dir (the silent-hang
+    incident class). Never raises — run acceptance must not depend on it.
+    """
+    try:
+        warn_fn = getattr(getattr(svc, "runner", None), "inactive_warning", None)
+        if callable(warn_fn):
+            warning = warn_fn()
+            if isinstance(warning, str) and warning.strip():
+                logger.warning("StartRun accepted while runner inactive: %s", warning)
+                return warning
+    except Exception:
+        return None
+    return None
+
+
 @router.post("/runs/start", response_model=StartRunResponse)
 async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     svc = get_gateway_service()
@@ -6210,7 +6236,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         raise HTTPException(status_code=404, detail=msg)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start run: {e}")
-    return StartRunResponse(run_id=str(run_id))
+    return StartRunResponse(run_id=str(run_id), runner_warning=_runner_inactive_warning(svc))
 
 
 @router.post("/runs/schedule", response_model=StartRunResponse)
@@ -6461,7 +6487,7 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start scheduled run: {e}")
 
-    return StartRunResponse(run_id=str(run_id))
+    return StartRunResponse(run_id=str(run_id), runner_warning=_runner_inactive_warning(svc))
 
 
 @router.post("/runs/purge_drafts")
