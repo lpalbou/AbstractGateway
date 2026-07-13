@@ -1115,6 +1115,18 @@ class WorkflowBundleGatewayHost:
                 effect_handlers=extra_effect_handlers,
             )
 
+        # H4 steer door: every runtime that TICKS runs for this data root
+        # drains the root's durable steer sidecar at iteration boundaries
+        # (Runtime._drain_steer_messages) — without this attach, steers
+        # accepted by the /commands door would queue forever. Per-root
+        # sidecar = per-principal steer isolation for free.
+        try:
+            from ..steering import attach_steer_store
+
+            attach_steer_store(runtime, Path(data_root))
+        except Exception:  # pragma: no cover - steering must never block runtime construction
+            logger.warning("#FALLBACK could not attach steer sidecar for %s", data_root, exc_info=True)
+
         # Register derived workflows required by VisualFlow semantics:
         # - per-Agent-node ReAct subworkflows
         # - per-OnEvent-node listener workflows (Blueprint-style)

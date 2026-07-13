@@ -118,6 +118,7 @@ relevant.
 | [0079_secret_at_rest_encryption_and_ledger_redaction_audit.md](proposed/0079_secret_at_rest_encryption_and_ledger_redaction_audit.md) | Phase 1. Promote with hosted multi-user hardening. |
 | [0080_audit_reads_integrity_and_session_signature.md](proposed/0080_audit_reads_integrity_and_session_signature.md) | Phase 1. Promote with hosted multi-user hardening. |
 | [0081_failure_mode_test_suite.md](proposed/0081_failure_mode_test_suite.md) | Phase 2. Promote alongside 0063/0075 or incrementally now. |
+| [0085_runner_lock_adversary_followups.md](proposed/0085_runner_lock_adversary_followups.md) | Hardening residue of the 2026-07-11 runner-lock handover (adversary F3-F13, non-blocking; P0/P1 already fixed + pinned). Runner items (F3-F8) promotable any time — each is small + testable; launcher items (F9-F13) need observer/flow coordination on their duplicated script copies. |
 
 ## Completed Work Ledger
 

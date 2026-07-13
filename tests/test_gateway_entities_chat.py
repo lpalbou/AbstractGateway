@@ -382,7 +382,7 @@ def test_life_state_is_one_mutually_exclusive_phase(monkeypatch: pytest.MonkeyPa
 
         client.post(f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close")
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
-        assert ls["phase"] in ("awake", "resting", "own_time")
+        assert ls["phase"] in ("awake", "resting", "personal")
 
 
 def test_set_sleep_closes_an_open_visit(monkeypatch: pytest.MonkeyPatch):

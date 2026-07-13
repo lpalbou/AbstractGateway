@@ -141,11 +141,16 @@ refused preludes. Markers are gateway bookkeeping (like run ledgers), stored
 outside the home directory, and take fractional sequence positions so they
 interleave without ever colliding with the journal.
 
-Privacy: diary content never enters the stream — the engine redacts diary
-display blocks at the source (`{"redacted": "diary"}`), and every HTTP
-consumer of these endpoints is a non-entity audience, so the topology of the
-diary is visible (the entity wrote *something*, it connects to *something*)
-while the words stay in the book.
+Privacy: the engine redacts diary display blocks at the source
+(`{"redacted": "diary"}`). These HTTP endpoints serve the OPERATOR audience,
+so the serving end resolves that marker into the entry's **gist** — the
+entity's one-sentence summary, or the first ~120 characters when no explicit
+gist exists (the 2026-07-08 operator-audience ruling; `_operator_diary_display`).
+So the operator sees the diary's topology (the entity wrote *something*, it
+connects to *something*) **and a gist of what it was about** — never the full
+verbatim prose, which stays in the book and is fetched one entry at a time
+through the operator diary door (`GET .../diary/{entry_id}`, a marker-first
+recorded read). The redaction marker itself is never served raw.
 
 ### Reading a record's verbatim
 
@@ -160,10 +165,13 @@ the verbatim is the lossless original). Three shapes:
 - **Born-digest records** (interests, dreams): born as words — their
   digest is their complete text, never a compression. Served as-is with
   `born_digest: true` ("the words you see are all the words there are").
-- **Diary projections**: refused (403) by multiple independent signals,
-  plus a content backstop that refuses any verbatim carrying an
-  unstripped diary block. The words stay in the book (operators use the
-  diary door below).
+- **Diary projections**: served to the **operator** from the book (the
+  2026-07-08 ruling — "the operator sees everything"; the prior 403
+  refusals were removed). The read is marker-first: a `diary_read` host
+  marker (entry id, kind, visibility) lands in the entity's replay stream
+  before the words return, so the disclosure is recorded in the entity's
+  biography. Private entries are included. Born-digest diary kinds
+  (interest/dream) serve their digest as the verbatim.
 
 ### The operator diary door (reads are visible events)
 
@@ -171,13 +179,16 @@ the verbatim is the lossless original). Three shapes:
 book entry — private included — to the **operator** channel. This is the
 maintainer's debugging ruling made honest rather than covert: the book
 already lives unencrypted on the operator's machine; this door makes the
-read *recorded* instead of silent. `reason` is required, and every
-disclosure lands a `diary_read` host marker (entry id + reason) in the
-entity's replay stream before the words return — the entity's biography
-shows who read it and why. Failed lookups disclose nothing and are not
-marked. The record-verbatim endpoint's structural diary refusal is
-untouched: that surface is reachable from entity-adjacent contexts; this
-one is the operator door.
+read *recorded* instead of silent. `reason` is **optional** (defaults to
+"operator review" — identity + act + timestamp is the audit value; a
+mandatory free-text field was friction, removed per the 2026-07-08 21:39
+ruling), and every disclosure lands a `diary_read` host marker (entry id +
+reason) in the entity's replay stream before the words return — the
+entity's biography shows who read it and why. Failed lookups disclose
+nothing and are not marked. Both full-content doors (this one and the
+record-verbatim endpoint above) serve the operator; the boundary that
+stays closed is the *effect* layer (a workplace channel cannot read the
+book), not the operator's HTTP surface.
 
 ## What can never be relaxed
 

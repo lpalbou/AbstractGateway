@@ -62,15 +62,19 @@ HOST_MARKER_KINDS = (
     # The M1b repair act (plan item 3): retrieval geometry changed — the
     # door's half of the two-plane visibility (the engine journals a claim).
     "reembed",
-    # Own-time lifecycle (maintainer, 2026-07-08: starting/stopping someone's
-    # own time is part of their biography). NOTE: these were silently lost
-    # before this entry existed — the loop routes swallow marker failures so
-    # a marker must never block his own time, which also hid the kind gap.
+    # Personal-phase (own time) lifecycle (maintainer, 2026-07-08: starting/
+    # stopping someone's own time is part of their biography). RULED SPELLING
+    # (c786 phase vocabulary): NEW writes use personal_*; the own_time_*
+    # twins stay listed because historical streams carry them engraved
+    # (append-only — the visit-id lesson) and the observer renders BOTH.
+    "personal_started",
+    "personal_stop_requested",
     "own_time_started",
     "own_time_stop_requested",
     # FREEZE (admin hibernation, maintainer ruling 2026-07-08): distinct from
     # sleep — the process died without ceremony; the mark belongs in the
     # biography precisely because he could not write it himself.
+    "personal_frozen",
     "own_time_frozen",
     # Operator prompt-overlay change (adversary find, 2026-07-11): standing
     # instructions changing between sessions is a host act on the story —
@@ -178,27 +182,55 @@ def read_host_markers(
     *,
     since_seq: float = 0.0,
     until_seq: Optional[float] = None,
+    include_lines: bool = False,
 ) -> List[Dict[str, Any]]:
     """Markers with since_seq < seq <= until_seq, in seq order. Unreadable
     lines are surfaced as a loud placeholder envelope, never silently
-    skipped (a gap in gateway-authored bookkeeping is a bug to see)."""
+    skipped (a gap in gateway-authored bookkeeping is a bug to see).
+
+    Torn-read honesty (adversary F8): readers take no lock against the
+    appender, so a read racing an append can see a TRUNCATED trailing line —
+    a transient artifact, not corruption. An unterminated final line is
+    skipped (the next read sees it whole); only terminated lines that fail
+    to parse surface as corrupt_marker, each with a DISTINCT negative seq
+    (-line_no) so live-tail dedup never collapses two real corruptions.
+
+    `include_lines=True` attaches the 1-based FILE line as `_line` on each
+    envelope (append-order truth for the live tail's marker cursor, F4);
+    callers strip it before the wire — the 0005 envelope shape is frozen."""
     path = _marker_path(entities_dir, slug)
     if not path.exists():
         return []
     out: List[Dict[str, Any]] = []
-    for i, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
+    raw = path.read_text(encoding="utf-8")
+    lines = raw.split("\n")
+    unterminated_tail = bool(raw) and not raw.endswith("\n")
+    for i, line in enumerate(lines):
         if not line.strip():
+            continue
+        if unterminated_tail and i == len(lines) - 1:
+            # Mid-append torn read: the appender has not finished this line.
             continue
         try:
             envelope = json.loads(line)
             seq = float(envelope.get("seq"))
         except (ValueError, TypeError) as e:
-            out.append({"family": "host", "seq": -1.0, "payload": {"kind": "corrupt_marker", "line": i + 1, "error": str(e)}})
+            envelope = {
+                "family": "host",
+                "seq": -float(i + 1),
+                "payload": {"kind": "corrupt_marker", "line": i + 1, "error": str(e)},
+            }
+            if include_lines:
+                envelope["_line"] = i + 1
+            out.append(envelope)
             continue
         if seq <= float(since_seq):
             continue
         if until_seq is not None and seq > float(until_seq):
             continue
+        if include_lines:
+            envelope = dict(envelope)
+            envelope["_line"] = i + 1
         out.append(envelope)
     out.sort(key=lambda e: float(e.get("seq") or 0.0))
     return out

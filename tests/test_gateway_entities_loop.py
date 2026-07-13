@@ -93,13 +93,13 @@ def test_loop_stop_is_a_durable_command_not_a_sentinel_file():
             for line in replay.text.splitlines()
             if line.strip()
         ]
-        assert "own_time_stop_requested" in kinds
+        assert "personal_stop_requested" in kinds, "ruled spelling (c786): new writes are personal_*"
 
 
 def test_loop_freeze_kills_now_pauses_state_and_marks_biography(monkeypatch: pytest.MonkeyPatch):
     """FREEZE (maintainer ruling): admin hibernation — process killed now (no
     boundary wait), entity paused (door closed until admin wake), biography
-    marked with own_time_frozen. The graceful path stays untouched."""
+    marked with personal_frozen. The graceful path stays untouched."""
     import abstractruntime.identity.life as life_mod
     from abstractgateway.service import get_gateway_service
 
@@ -145,7 +145,7 @@ def test_loop_freeze_kills_now_pauses_state_and_marks_biography(monkeypatch: pyt
             for line in replay.text.splitlines()
             if line.strip()
         ]
-        assert "own_time_frozen" in kinds
+        assert "personal_frozen" in kinds, "ruled spelling (c786): new writes are personal_*"
 
         # Unknown mode refuses loudly.
         r2 = client.post("/api/gateway/entities/Castor/loop/stop", json={"mode": "violent"})

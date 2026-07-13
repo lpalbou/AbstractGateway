@@ -13,6 +13,29 @@ _TITLE_TYPE_RE = re.compile(r"^\[(?P<type>bug|feature|task)\]\s*(?P<rest>.*)$", 
 _META_SOURCE_REPORT_RELPATH_RE = re.compile(r"^>\s*source\s+report\s+relpath\s*:\s*(?P<relpath>.+?)\s*$", re.IGNORECASE)
 _META_SOURCE_REPORT_ID_RE = re.compile(r"^>\s*source\s+report\s+id\s*:\s*(?P<id>.+?)\s*$", re.IGNORECASE)
 _INFER_SOURCE_REPORT_RELPATH_RE = re.compile(r"(?P<relpath>(?:bug_reports|feature_requests)/[A-Za-z0-9._-]{1,220}\.md)")
+# Board metadata (continuum c1087 ask 1; grammar pinned by their c1088
+# addendum so the two parsers can never disagree): `> Key: value` lines in
+# the HEADER BLOCK (before the first "## " section, first 60 lines).
+# Priority allows trailing prose after the value (\b, not $); labels
+# normalize comma-split -> trim -> lowercase -> spaces->hyphens, capped at
+# 40 chars per label / 12 labels.
+_META_PRIORITY_RE = re.compile(r"^>\s*priority\s*:\s*(?P<priority>P[0-3])\b", re.IGNORECASE)
+_META_LABELS_RE = re.compile(r"^>\s*labels\s*:\s*(?P<labels>.+)$", re.IGNORECASE)
+_LABEL_MAX_LEN = 40
+_LABELS_MAX_COUNT = 12
+_HEADER_SCAN_LINES = 60
+
+
+def _normalize_labels(raw: str) -> Tuple[str, ...]:
+    out: List[str] = []
+    for part in str(raw or "").split(","):
+        label = re.sub(r"\s+", "-", part.strip().lower())
+        if not label:
+            continue
+        out.append(label[:_LABEL_MAX_LEN])
+        if len(out) >= _LABELS_MAX_COUNT:
+            break
+    return tuple(out)
 
 
 @dataclass(frozen=True)
@@ -26,6 +49,10 @@ class BacklogItem:
     summary: str = ""
     source_report_relpath: str = ""
     source_report_id: str = ""
+    # Board metadata (c1087): "" / () when the item declares none — absent-key
+    # semantics, never a sentinel string.
+    priority: str = ""  # P0|P1|P2|P3
+    labels: Tuple[str, ...] = ()
 
     def ref(self) -> str:
         return str(self.path)
@@ -129,9 +156,16 @@ def parse_backlog_item(path: Path, *, kind: str) -> Optional[BacklogItem]:
 
     source_report_relpath = ""
     source_report_id = ""
+    priority = ""
+    labels: Tuple[str, ...] = ()
     lines = text.splitlines()
-    for raw in lines[:120]:
+    in_header = True
+    for line_no, raw in enumerate(lines[:120]):
         line = raw.strip()
+        # Board-metadata grammar (c1088): header block only — before the
+        # first "## " section and within the first 60 lines.
+        if line.startswith("## ") or line_no >= _HEADER_SCAN_LINES:
+            in_header = False
         if not line or not line.startswith(">"):
             continue
         m_sr = _META_SOURCE_REPORT_RELPATH_RE.match(line)
@@ -141,6 +175,16 @@ def parse_backlog_item(path: Path, *, kind: str) -> Optional[BacklogItem]:
         m_id = _META_SOURCE_REPORT_ID_RE.match(line)
         if m_id:
             source_report_id = str(m_id.group("id") or "").strip()
+            continue
+        if not in_header:
+            continue
+        m_pri = _META_PRIORITY_RE.match(line)
+        if m_pri and not priority:
+            priority = str(m_pri.group("priority") or "").strip().upper()
+            continue
+        m_lab = _META_LABELS_RE.match(line)
+        if m_lab and not labels:
+            labels = _normalize_labels(m_lab.group("labels"))
             continue
 
     if not source_report_relpath:
@@ -161,6 +205,8 @@ def parse_backlog_item(path: Path, *, kind: str) -> Optional[BacklogItem]:
         summary=summary,
         source_report_relpath=source_report_relpath,
         source_report_id=source_report_id,
+        priority=priority,
+        labels=labels,
     )
 
 

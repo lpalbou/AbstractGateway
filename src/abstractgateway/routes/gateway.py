@@ -1416,7 +1416,7 @@ class ScheduleRunRequest(BaseModel):
 class SubmitCommandRequest(BaseModel):
     command_id: str = Field(..., description="Client-supplied idempotency key (UUID recommended).")
     run_id: str = Field(..., description="Target run id (or session id for emit_event).")
-    type: str = Field(..., description="pause|resume|cancel|emit_event|update_schedule|compact_memory")
+    type: str = Field(..., description="pause|resume|cancel|emit_event|update_schedule|compact_memory|inject_guidance")
     payload: Dict[str, Any] = Field(default_factory=dict)
     ts: Optional[str] = Field(default=None, description="ISO timestamp (optional).")
     client_id: Optional[str] = None
@@ -6524,7 +6524,9 @@ async def get_run(run_id: str) -> Dict[str, Any]:
     svc = get_gateway_service()
     rs = svc.host.run_store
     try:
-        run = rs.load(str(run_id))
+        # H7c (agency live finding, c1085): one-shot store reads run OFF the
+        # event loop — sync SQLite on the loop pins /health for the duration.
+        run = await asyncio.to_thread(rs.load, str(run_id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run is None:
@@ -6595,221 +6597,239 @@ async def list_runs(
                 out["waiting"] = {"reason": reason, **({"until": until} if until else {})}
         return out
 
-    items: list[Dict[str, Any]] = []
-    used_index = False
-    runs_all_for_metrics: Optional[List[Any]] = None
-    if isinstance(rs, QueryableRunIndexStore):
-        try:
-            # Overfetch a bit to account for filtering internal runs or malformed rows.
-            internal_limit = max(200, int(limit) * 5) if (bool(root_only) or sid or filter_internal or not include_drafts) else int(limit)
-            rows = rs.list_run_index(status=status_enum, workflow_id=wid, session_id=sid, root_only=bool(root_only), limit=internal_limit)
-            for row in rows or []:
-                wf_id = str(row.get("workflow_id") or "").strip()
-                if filter_internal and wf_id.startswith("__"):
-                    continue
-                if bool(root_only) and str(row.get("parent_run_id") or "").strip():
-                    continue
-                summary = _summary_from_index_row(row)
+    # OFF-LOOP (H7c class, 2026-07-13 connect incident): this listing walks
+    # the whole run directory on file-backed stores (~1.6s at the operator's
+    # 3k-run scale) and previously ran ON the event loop with zero awaits —
+    # every parallel request (health, me, the app's connect waterfall) queued
+    # behind it, compounding one slow page into a pinned "Connecting…".
+    # The scan itself is the store's cost (runtime lane owns the index fix);
+    # the gateway's job is to never let it starve the loop.
+    def _collect_items() -> Dict[str, Any]:
+        items: list[Dict[str, Any]] = []
+        used_index = False
+        runs_all_for_metrics: Optional[List[Any]] = None
+        if isinstance(rs, QueryableRunIndexStore):
+            try:
+                # Overfetch a bit to account for filtering internal runs or malformed rows.
+                # SCALE NOTE (2026-07-13 connect incident, measured on the operator's
+                # 3,061-run file store): this page costs ~1.6s at limit=500 (fetch
+                # depth 2500) because JsonFileRunStore.list_run_index PARSES every
+                # candidate run file per call — and on real data MOST root runs are
+                # internal/draft (2500 fetched -> 277 visible), so a smaller first
+                # pass with a deep retry was MEASURED SLOWER (two scans, 2.9s), not
+                # faster. The honest fix is store-level (mtime-keyed index cache /
+                # sqlite run store), runtime's lane — not a cleverer overfetch here.
+                internal_limit = max(200, int(limit) * 5) if (bool(root_only) or sid or filter_internal or not include_drafts) else int(limit)
+                rows = rs.list_run_index(status=status_enum, workflow_id=wid, session_id=sid, root_only=bool(root_only), limit=internal_limit)
+                for row in rows or []:
+                    wf_id = str(row.get("workflow_id") or "").strip()
+                    if filter_internal and wf_id.startswith("__"):
+                        continue
+                    if bool(root_only) and str(row.get("parent_run_id") or "").strip():
+                        continue
+                    summary = _summary_from_index_row(row)
+                    if not include_drafts and bool(summary.get("is_draft") is True):
+                        continue
+                    items.append(summary)
+                    if len(items) >= int(limit):
+                        break
+                used_index = True
+            except Exception:
+                items = []
+                used_index = False
+
+        if not used_index:
+            try:
+                internal_limit = max(200, int(limit) * 5) if (sid or bool(root_only)) else int(limit)
+                runs = rs.list_runs(status=status_enum, workflow_id=wid, limit=internal_limit)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
+
+            runs_all = list(runs or [])
+            runs_all_for_metrics = runs_all
+            if sid:
+                runs_all = [r for r in runs_all if str(getattr(r, "session_id", "") or "").strip() == sid]
+
+            def _parent_id(run_obj: Any) -> str:
+                return str(getattr(run_obj, "parent_run_id", "") or "").strip()
+
+            runs_root = [r for r in runs_all if not _parent_id(r)] if bool(root_only) else runs_all
+
+            for r in runs_root:
+                if filter_internal:
+                    wf_id = getattr(r, "workflow_id", None)
+                    if isinstance(wf_id, str) and wf_id.startswith("__"):
+                        continue
+                summary = run_summary(r)
                 if not include_drafts and bool(summary.get("is_draft") is True):
                     continue
                 items.append(summary)
                 if len(items) >= int(limit):
                     break
-            used_index = True
-        except Exception:
-            items = []
-            used_index = False
 
-    if not used_index:
-        try:
-            internal_limit = max(200, int(limit) * 5) if (sid or bool(root_only)) else int(limit)
-            runs = rs.list_runs(status=status_enum, workflow_id=wid, limit=internal_limit)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
-
-        runs_all = list(runs or [])
-        runs_all_for_metrics = runs_all
-        if sid:
-            runs_all = [r for r in runs_all if str(getattr(r, "session_id", "") or "").strip() == sid]
-
-        def _parent_id(run_obj: Any) -> str:
-            return str(getattr(run_obj, "parent_run_id", "") or "").strip()
-
-        runs_root = [r for r in runs_all if not _parent_id(r)] if bool(root_only) else runs_all
-
-        for r in runs_root:
-            if filter_internal:
-                wf_id = getattr(r, "workflow_id", None)
-                if isinstance(wf_id, str) and wf_id.startswith("__"):
-                    continue
-            summary = run_summary(r)
-            if not include_drafts and bool(summary.get("is_draft") is True):
-                continue
-            items.append(summary)
-            if len(items) >= int(limit):
-                break
-
-    if bool(include_metrics):
-        run_ids = [str(it.get("run_id") or "").strip() for it in items if str(it.get("run_id") or "").strip()]
-        metrics_many = getattr(ledger_store, "metrics_many", None) if ledger_store is not None else None
-        metrics: Dict[str, Any] = {}
-        if callable(metrics_many):
-            try:
-                raw = metrics_many(run_ids)
-                metrics = raw if isinstance(raw, dict) else {}
-            except Exception:
-                metrics = {}
-        if not metrics and runs_all_for_metrics is not None:
-            # Fallback: derive per-run metrics from runtime-owned traces when a ledger metrics API isn't available.
-            def _rid(run_obj: Any) -> str:
-                return str(getattr(run_obj, "run_id", "") or "").strip()
-
-            def _parent_id(run_obj: Any) -> str:
-                return str(getattr(run_obj, "parent_run_id", "") or "").strip()
-
-            def _extract_run_trace_metrics(run_obj: Any) -> tuple[int, int, int]:
-                steps_done = 0
-                llm_calls = 0
-                tool_calls = 0
+        if bool(include_metrics):
+            run_ids = [str(it.get("run_id") or "").strip() for it in items if str(it.get("run_id") or "").strip()]
+            metrics_many = getattr(ledger_store, "metrics_many", None) if ledger_store is not None else None
+            metrics: Dict[str, Any] = {}
+            if callable(metrics_many):
                 try:
-                    vars_obj = getattr(run_obj, "vars", None)
-                    runtime_ns = vars_obj.get("_runtime") if isinstance(vars_obj, dict) else None
-                    traces = runtime_ns.get("node_traces") if isinstance(runtime_ns, dict) else None
-                    if not isinstance(traces, dict):
-                        return (0, 0, 0)
-                    for node_trace in traces.values():
-                        steps = node_trace.get("steps") if isinstance(node_trace, dict) else None
-                        if not isinstance(steps, list):
-                            continue
-                        for s in steps:
-                            if not isinstance(s, dict):
-                                continue
-                            st = str(s.get("status") or "").strip()
-                            if st != "completed":
-                                continue
-                            steps_done += 1
-                            eff = s.get("effect") if isinstance(s.get("effect"), dict) else None
-                            eff_type = str((eff or {}).get("type") or "").strip()
-                            if eff_type == "llm_call":
-                                llm_calls += 1
-                                continue
-                            if eff_type == "tool_calls":
-                                payload = eff.get("payload") if isinstance(eff, dict) and isinstance(eff.get("payload"), dict) else None
-                                calls = payload.get("tool_calls") if isinstance(payload, dict) else None
-                                if isinstance(calls, list):
-                                    tool_calls += len([c for c in calls if c is not None])
+                    raw = metrics_many(run_ids)
+                    metrics = raw if isinstance(raw, dict) else {}
                 except Exception:
-                    return (0, 0, 0)
-                return (int(steps_done), int(llm_calls), int(tool_calls))
+                    metrics = {}
+            if not metrics and runs_all_for_metrics is not None:
+                # Fallback: derive per-run metrics from runtime-owned traces when a ledger metrics API isn't available.
+                def _rid(run_obj: Any) -> str:
+                    return str(getattr(run_obj, "run_id", "") or "").strip()
 
-            metrics_self: Dict[str, tuple[int, int, int]] = {}
-            children_by_parent: Dict[str, list[str]] = {}
-            for r in runs_all_for_metrics:
-                rid0 = _rid(r)
-                if not rid0:
-                    continue
-                metrics_self[rid0] = _extract_run_trace_metrics(r)
-                pid = _parent_id(r)
-                if pid:
-                    children_by_parent.setdefault(pid, []).append(rid0)
+                def _parent_id(run_obj: Any) -> str:
+                    return str(getattr(run_obj, "parent_run_id", "") or "").strip()
 
-            def _aggregate(root_id: str) -> tuple[int, int, int]:
-                if not root_id:
-                    return (0, 0, 0)
-                steps = 0
-                llm = 0
-                tools = 0
-                from collections import deque
+                def _extract_run_trace_metrics(run_obj: Any) -> tuple[int, int, int]:
+                    steps_done = 0
+                    llm_calls = 0
+                    tool_calls = 0
+                    try:
+                        vars_obj = getattr(run_obj, "vars", None)
+                        runtime_ns = vars_obj.get("_runtime") if isinstance(vars_obj, dict) else None
+                        traces = runtime_ns.get("node_traces") if isinstance(runtime_ns, dict) else None
+                        if not isinstance(traces, dict):
+                            return (0, 0, 0)
+                        for node_trace in traces.values():
+                            steps = node_trace.get("steps") if isinstance(node_trace, dict) else None
+                            if not isinstance(steps, list):
+                                continue
+                            for s in steps:
+                                if not isinstance(s, dict):
+                                    continue
+                                st = str(s.get("status") or "").strip()
+                                if st != "completed":
+                                    continue
+                                steps_done += 1
+                                eff = s.get("effect") if isinstance(s.get("effect"), dict) else None
+                                eff_type = str((eff or {}).get("type") or "").strip()
+                                if eff_type == "llm_call":
+                                    llm_calls += 1
+                                    continue
+                                if eff_type == "tool_calls":
+                                    payload = eff.get("payload") if isinstance(eff, dict) and isinstance(eff.get("payload"), dict) else None
+                                    calls = payload.get("tool_calls") if isinstance(payload, dict) else None
+                                    if isinstance(calls, list):
+                                        tool_calls += len([c for c in calls if c is not None])
+                    except Exception:
+                        return (0, 0, 0)
+                    return (int(steps_done), int(llm_calls), int(tool_calls))
 
-                queue = deque([root_id])
-                seen: set[str] = set()
-                while queue and len(seen) < 5000:
-                    rid0 = str(queue.popleft() or "").strip()
-                    if not rid0 or rid0 in seen:
+                metrics_self: Dict[str, tuple[int, int, int]] = {}
+                children_by_parent: Dict[str, list[str]] = {}
+                for r in runs_all_for_metrics:
+                    rid0 = _rid(r)
+                    if not rid0:
                         continue
-                    seen.add(rid0)
-                    s, l, t = metrics_self.get(rid0, (0, 0, 0))
-                    steps += int(s)
-                    llm += int(l)
-                    tools += int(t)
-                    for cid in children_by_parent.get(rid0, []):
-                        if cid not in seen:
-                            queue.append(cid)
-                return (int(steps), int(llm), int(tools))
+                    metrics_self[rid0] = _extract_run_trace_metrics(r)
+                    pid = _parent_id(r)
+                    if pid:
+                        children_by_parent.setdefault(pid, []).append(rid0)
+
+                def _aggregate(root_id: str) -> tuple[int, int, int]:
+                    if not root_id:
+                        return (0, 0, 0)
+                    steps = 0
+                    llm = 0
+                    tools = 0
+                    from collections import deque
+
+                    queue = deque([root_id])
+                    seen: set[str] = set()
+                    while queue and len(seen) < 5000:
+                        rid0 = str(queue.popleft() or "").strip()
+                        if not rid0 or rid0 in seen:
+                            continue
+                        seen.add(rid0)
+                        s, l, t = metrics_self.get(rid0, (0, 0, 0))
+                        steps += int(s)
+                        llm += int(l)
+                        tools += int(t)
+                        for cid in children_by_parent.get(rid0, []):
+                            if cid not in seen:
+                                queue.append(cid)
+                    return (int(steps), int(llm), int(tools))
+
+                for item in items:
+                    rid = str(item.get("run_id") or "").strip()
+                    if not rid:
+                        continue
+                    s, l, t = _aggregate(rid)
+                    metrics[rid] = {"steps": s, "llm_calls": l, "tool_calls": t}
+            for item in items:
+                rid = str(item.get("run_id") or "").strip()
+                m = metrics.get(rid) if rid else None
+                if isinstance(m, dict):
+                    item["steps"] = m.get("steps")
+                    item["llm_calls"] = m.get("llm_calls")
+                    item["tool_calls"] = m.get("tool_calls")
+                    item["tokens_total"] = m.get("tokens_total")
+                else:
+                    item.setdefault("steps", None)
+                    item.setdefault("llm_calls", None)
+                    item.setdefault("tool_calls", None)
+                    item.setdefault("tokens_total", None)
+
+        if bool(include_ledger_len) and ledger_store is not None:
+            run_ids = [str(it.get("run_id") or "").strip() for it in items if str(it.get("run_id") or "").strip()]
+            counts: Dict[str, Any] = {}
+            try:
+                count_many = getattr(ledger_store, "count_many", None)
+                if callable(count_many):
+                    raw = count_many(run_ids)
+                    counts = raw if isinstance(raw, dict) else {}
+            except Exception:
+                counts = {}
+
+            def _coerce_ledger_count(raw: Any) -> Optional[int]:
+                try:
+                    return int(raw)
+                except Exception:
+                    return None
+
+            def _ledger_len_from_store(rid: str) -> Optional[int]:
+                count_fn = getattr(ledger_store, "count", None)
+                if callable(count_fn):
+                    direct = _coerce_ledger_count(count_fn(rid))
+                    if direct is not None:
+                        return direct
+                try:
+                    records = ledger_store.list(rid)
+                except Exception:
+                    return None
+                return int(len(records) if isinstance(records, list) else 0)
 
             for item in items:
                 rid = str(item.get("run_id") or "").strip()
                 if not rid:
                     continue
-                s, l, t = _aggregate(rid)
-                metrics[rid] = {"steps": s, "llm_calls": l, "tool_calls": t}
-        for item in items:
-            rid = str(item.get("run_id") or "").strip()
-            m = metrics.get(rid) if rid else None
-            if isinstance(m, dict):
-                item["steps"] = m.get("steps")
-                item["llm_calls"] = m.get("llm_calls")
-                item["tool_calls"] = m.get("tool_calls")
-                item["tokens_total"] = m.get("tokens_total")
-            else:
-                item.setdefault("steps", None)
-                item.setdefault("llm_calls", None)
-                item.setdefault("tool_calls", None)
-                item.setdefault("tokens_total", None)
-
-    if bool(include_ledger_len) and ledger_store is not None:
-        run_ids = [str(it.get("run_id") or "").strip() for it in items if str(it.get("run_id") or "").strip()]
-        counts: Dict[str, Any] = {}
-        try:
-            count_many = getattr(ledger_store, "count_many", None)
-            if callable(count_many):
-                raw = count_many(run_ids)
-                counts = raw if isinstance(raw, dict) else {}
-        except Exception:
-            counts = {}
-
-        def _coerce_ledger_count(raw: Any) -> Optional[int]:
-            try:
-                return int(raw)
-            except Exception:
-                return None
-
-        def _ledger_len_from_store(rid: str) -> Optional[int]:
-            count_fn = getattr(ledger_store, "count", None)
-            if callable(count_fn):
-                direct = _coerce_ledger_count(count_fn(rid))
-                if direct is not None:
-                    return direct
-            try:
-                records = ledger_store.list(rid)
-            except Exception:
-                return None
-            return int(len(records) if isinstance(records, list) else 0)
-
-        for item in items:
-            rid = str(item.get("run_id") or "").strip()
-            if not rid:
-                continue
-            if rid in counts:
-                ledger_len = _coerce_ledger_count(counts.get(rid))
-                if ledger_len is None:
+                if rid in counts:
+                    ledger_len = _coerce_ledger_count(counts.get(rid))
+                    if ledger_len is None:
+                        ledger_len = _ledger_len_from_store(rid)
+                else:
                     ledger_len = _ledger_len_from_store(rid)
-            else:
-                ledger_len = _ledger_len_from_store(rid)
 
-            status0 = str(item.get("status") or "").strip().lower()
-            if ledger_len == 0 and status0 in {"completed", "failed", "cancelled"}:
-                # Defensive fallback: some older/newer LedgerStore implementations
-                # can return 0 for terminal runs even when ledger rows are present.
-                try:
-                    ledger_entries = ledger_store.list(rid)
-                    if isinstance(ledger_entries, list):
-                        ledger_len = int(len(ledger_entries))
-                except Exception:
-                    pass
-            item["ledger_len"] = ledger_len
+                status0 = str(item.get("status") or "").strip().lower()
+                if ledger_len == 0 and status0 in {"completed", "failed", "cancelled"}:
+                    # Defensive fallback: some older/newer LedgerStore implementations
+                    # can return 0 for terminal runs even when ledger rows are present.
+                    try:
+                        ledger_entries = ledger_store.list(rid)
+                        if isinstance(ledger_entries, list):
+                            ledger_len = int(len(ledger_entries))
+                    except Exception:
+                        pass
+                item["ledger_len"] = ledger_len
 
-    return {"items": items}
+        return {"items": items}
+
+    return await asyncio.to_thread(_collect_items)
 
 
 @router.get("/runs/{run_id}/input_data")
@@ -7087,7 +7107,11 @@ async def get_run_history_bundle(
 
     try:
         store = getattr(getattr(svc, "stores", None), "artifact_store", None)
-        bundle = export_run_history_bundle(
+        # H7c (agency live finding, c1085): a busy-store bundle export took
+        # 28s WALL on the event loop and pinned /health for the duration —
+        # the whole export (run tree walk + ledger reads) runs off-loop.
+        bundle = await asyncio.to_thread(
+            export_run_history_bundle,
             run_id=rid,
             run_store=svc.host.run_store,
             ledger_store=svc.host.ledger_store,
@@ -7571,12 +7595,14 @@ async def get_ledger(
 ) -> Dict[str, Any]:
     svc = get_gateway_service()
     try:
-        run0 = svc.host.run_store.load(str(run_id))
+        # H7c (agency c1085): store reads off the event loop — a large ledger
+        # materialization on the loop pins every other request.
+        run0 = await asyncio.to_thread(svc.host.run_store.load, str(run_id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run0 is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
-    ledger = svc.host.ledger_store.list(str(run_id))
+    ledger = await asyncio.to_thread(svc.host.ledger_store.list, str(run_id))
     if not isinstance(ledger, list):
         ledger = []
     a = int(after or 0)
@@ -7593,38 +7619,73 @@ async def get_ledger_batch(req: LedgerBatchRequest) -> Dict[str, Any]:
     """
     svc = get_gateway_service()
     limit = int(req.limit or 200)
-    out: Dict[str, Any] = {}
 
-    for it in req.runs or []:
-        rid = str(getattr(it, "run_id", "") or "").strip()
-        if not rid:
-            continue
-        try:
-            if svc.host.run_store.load(rid) is None:
+    def _collect() -> Dict[str, Any]:
+        # H7c (agency c1085): the whole multi-run read batch runs off-loop —
+        # this endpoint exists to absorb observer fanout, which made it the
+        # BIGGEST single on-loop reader before this.
+        out: Dict[str, Any] = {}
+        for it in req.runs or []:
+            rid = str(getattr(it, "run_id", "") or "").strip()
+            if not rid:
                 continue
+            try:
+                if svc.host.run_store.load(rid) is None:
+                    continue
+            except Exception:
+                continue
+            after = int(getattr(it, "after", 0) or 0)
+            if after < 0:
+                after = 0
+
+            ledger = svc.host.ledger_store.list(rid)
+            if not isinstance(ledger, list):
+                ledger = []
+
+            items = ledger[after : after + limit]
+            next_after = after + len(items)
+            out[rid] = {"items": items, "next_after": next_after}
+        return out
+
+    return {"runs": await asyncio.to_thread(_collect)}
+
+
+def _ledger_news_count(ledger_store: Any, run_id: str) -> int:
+    """Record count for the stream's news check — the store's fast `count()`
+    when it exists (JSONL/SQLite both ship one), else len(list()). Runs on a
+    worker thread (H7b discipline)."""
+    fn = getattr(ledger_store, "count", None)
+    if callable(fn):
+        try:
+            return int(fn(run_id))
         except Exception:
-            continue
-        after = int(getattr(it, "after", 0) or 0)
-        if after < 0:
-            after = 0
-
-        ledger = svc.host.ledger_store.list(rid)
-        if not isinstance(ledger, list):
-            ledger = []
-
-        items = ledger[after : after + limit]
-        next_after = after + len(items)
-        out[rid] = {"items": items, "next_after": next_after}
-
-    return {"runs": out}
+            pass
+    try:
+        records = ledger_store.list(run_id)
+        return len(records) if isinstance(records, list) else 0
+    except Exception:
+        return 0
 
 
 @router.get("/runs/{run_id}/ledger/stream")
 async def stream_ledger(
+    request: Request,
     run_id: str,
     after: int = Query(0, ge=0, description="Cursor: number of records already consumed."),
     heartbeat_s: float = Query(5.0, gt=0.1, le=60.0),
 ) -> StreamingResponse:
+    """Run-ledger live tail (SSE).
+
+    H7b loop discipline (hooks plan; the c975 starvation class): every store
+    read runs OFF the event loop via asyncio.to_thread; idle polls check the
+    cheap record COUNT and only materialize the full list when there is news
+    (the previous body re-read the ENTIRE ledger every 0.25s per client —
+    O(N) work per idle poll at resident scale); abandoned clients are
+    detected and stop the generator. Poll-shaped by DESIGN: under the
+    split-runner deployment the API and runner are separate processes, so
+    the in-process ObservableLedgerStore.subscribe can never see the
+    runner's appends — the durable store is the only cross-process truth.
+    """
     svc = get_gateway_service()
     run_id2 = str(run_id)
     rs = svc.host.run_store
@@ -7648,12 +7709,24 @@ async def stream_ledger(
         last_status_check = last_emit
         terminal = _is_terminal(getattr(run0, "status", None))
         while True:
-            ledger = svc.host.ledger_store.list(run_id2)
-            if not isinstance(ledger, list):
-                ledger = []
+            if await request.is_disconnected():
+                return
             if cursor < 0:
                 cursor = 0
-            if cursor < len(ledger):
+            # Cheap news check first; materialize the list only when the
+            # count moved past the cursor. The count probe and list() can
+            # DISAGREE persistently (adversary F1, live-verified: a corrupt
+            # JSONL line counts in count() but is dropped by list(); same
+            # class on SQLite via ledger_heads) — so emission truth comes
+            # from the MATERIALIZED list, and a news-signal that produces
+            # nothing falls through to the idle branch (sleep + heartbeat +
+            # terminal), never a hot re-loop.
+            emitted = False
+            known = await asyncio.to_thread(_ledger_news_count, svc.host.ledger_store, run_id2)
+            if cursor < known:
+                ledger = await asyncio.to_thread(svc.host.ledger_store.list, run_id2)
+                if not isinstance(ledger, list):
+                    ledger = []
                 while cursor < len(ledger):
                     item = ledger[cursor]
                     data = json.dumps({"cursor": cursor + 1, "record": item}, ensure_ascii=False)
@@ -7661,12 +7734,16 @@ async def stream_ledger(
                     yield b"event: step\n"
                     yield f"data: {data}\n\n".encode("utf-8")
                     cursor += 1
+                    emitted = True
                     last_emit = asyncio.get_event_loop().time()
-            else:
+            if not emitted:
                 now = asyncio.get_event_loop().time()
 
                 # When the run is terminal and we've streamed all known records, close the stream
                 # so clients can finalize their UI state (don't hang forever on keep-alives).
+                # One FINAL drain happened above (count+list this iteration), so a status
+                # event appended just after the terminal save (F6 window) is
+                # caught by the next loop pass before `terminal` is re-read.
                 if terminal:
                     payload = json.dumps({"run_id": run_id2, "cursor": cursor, "status": "terminal"}, ensure_ascii=False)
                     yield b"event: done\n"
@@ -7677,7 +7754,7 @@ async def stream_ledger(
                 if (now - last_status_check) >= 0.75:
                     last_status_check = now
                     try:
-                        cur_run = rs.load(run_id2)
+                        cur_run = await asyncio.to_thread(rs.load, run_id2)
                         terminal = _is_terminal(getattr(cur_run, "status", None))
                     except Exception:
                         # If status lookup fails, keep streaming keep-alives.
@@ -13667,7 +13744,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "commands": {
                 "available": True,
                 "endpoint": _api_gateway_path("/commands"),
-                "types": ["pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory"],
+                "types": ["pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory", "inject_guidance"],
             },
         },
         "ledger": {
@@ -16206,6 +16283,10 @@ class BacklogItemSummary(BaseModel):
     task_type: str = Field(default="task", description="bug|feature|task")
     summary: str = ""
     parsed: bool = True
+    # Board metadata (continuum c1087 ask 1): parsed at list time from the
+    # `> Priority:` / `> Labels:` header conventions — kills the client N+1.
+    priority: str = Field(default="", description="P0|P1|P2|P3 ('' = undeclared)")
+    labels: List[str] = Field(default_factory=list, description="Comma-list from '> Labels:' ([] = undeclared)")
 
 
 class BacklogListResponse(BaseModel):
@@ -16292,6 +16373,15 @@ class BacklogRef(BaseModel):
 class BacklogExecuteBatchRequest(BaseModel):
     execution_mode: Optional[str] = Field(default=None, description="Execution mode override: uat|inplace.")
     items: List[BacklogRef] = Field(default_factory=list, description="Ordered backlog items to execute sequentially (planned items).")
+    target_model: Optional[str] = Field(
+        default=None,
+        description="Per-task executor model override; validated against ABSTRACTGATEWAY_BACKLOG_EXEC_ALLOWED_MODELS (refused loudly otherwise).",
+    )
+    target_reasoning_effort: Optional[str] = Field(
+        default=None, description="Per-task reasoning-effort override: minimal|low|medium|high."
+    )
+    dor: Optional[str] = Field(default=None, description="Definition-of-Ready gate: dor=check refuses 409 naming which members failed.")
+    override: bool = Field(default=False, description="Operator override of the DoR gate.")
 
 
 class BacklogMergeRequest(BaseModel):
@@ -16420,6 +16510,15 @@ class BacklogExecLogTailResponse(BaseModel):
     bytes: int = 0
     truncated: bool = False
     content: str = ""
+    # Offset-follow cursor (continuum c1072 ask 2): the byte offset the
+    # NEXT `after_bytes` request should resume from (= file size when this
+    # response was read). A follower re-requests with after_bytes=next_offset
+    # and receives only the delta — the ledger `after` contract, byte-shaped.
+    next_offset: int = 0
+    # True when the caller's after_bytes exceeded the current file size,
+    # i.e. the log was TRUNCATED/rotated under the follower — the client
+    # should reset its cursor to 0 (honest, never a silent gap).
+    reset: bool = False
 
 
 class BacklogExecActiveItem(BaseModel):
@@ -18151,6 +18250,17 @@ async def backlog_exec_log_tail(
     request_id: str,
     name: str = Query(default="events", description="Log name: events|stderr|last_message"),
     max_bytes: int = Query(default=80_000, ge=1024, le=400_000, description="Tail size in bytes (bounded)."),
+    after_bytes: Optional[int] = Query(
+        default=None,
+        ge=0,
+        description=(
+            "Offset-follow cursor (continuum c1072): return only the log DELTA from "
+            "this byte offset to EOF (still bounded by max_bytes), instead of the "
+            "trailing window. Resume from the response's next_offset. When after_bytes "
+            "exceeds the current file size (rotation/truncation), reset=true is returned "
+            "and the tail falls back to the trailing window."
+        ),
+    ),
 ) -> BacklogExecLogTailResponse:
     repo_root = _triage_repo_root_from_env()
     if repo_root is None:
@@ -18188,18 +18298,35 @@ async def backlog_exec_log_tail(
         raise HTTPException(status_code=400, detail="Invalid log path")
 
     if not path.exists():
-        return BacklogExecLogTailResponse(request_id=rid, name=nm, bytes=0, truncated=False, content="")
+        return BacklogExecLogTailResponse(request_id=rid, name=nm, bytes=0, truncated=False, content="", next_offset=0)
 
     data = b""
     truncated = False
+    reset = False
+    next_offset = 0
     try:
         with open(path, "rb") as f:
             f.seek(0, os.SEEK_END)
             size = int(f.tell() or 0)
-            start = max(0, size - int(max_bytes))
-            truncated = start > 0
-            f.seek(start, os.SEEK_SET)
-            data = f.read(int(max_bytes))
+            if after_bytes is not None:
+                # Offset-follow: return only the delta after_bytes..EOF
+                # (bounded). A cursor past EOF means the file rotated under
+                # the follower — reset to the trailing window, flag it.
+                start = int(after_bytes)
+                if start > size:
+                    reset = True
+                    start = max(0, size - int(max_bytes))
+                truncated = start > 0
+                f.seek(start, os.SEEK_SET)
+                data = f.read(int(max_bytes))
+                next_offset = start + len(data)
+            else:
+                # Legacy trailing-window read (unchanged default).
+                start = max(0, size - int(max_bytes))
+                truncated = start > 0
+                f.seek(start, os.SEEK_SET)
+                data = f.read(int(max_bytes))
+                next_offset = start + len(data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read log: {e}")
 
@@ -18207,7 +18334,10 @@ async def backlog_exec_log_tail(
         text = data.decode("utf-8", errors="replace")
     except Exception:
         text = ""
-    return BacklogExecLogTailResponse(request_id=rid, name=nm, bytes=len(data), truncated=bool(truncated), content=text)
+    return BacklogExecLogTailResponse(
+        request_id=rid, name=nm, bytes=len(data), truncated=bool(truncated),
+        content=text, next_offset=int(next_offset), reset=bool(reset),
+    )
 
 
 @router.get("/audit/tail", response_model=AuditLogTailResponse)
@@ -18433,7 +18563,8 @@ async def backlog_list(kind: str) -> BacklogListResponse:
     dir_path = repo_root / "docs" / "backlog" / k
     if not dir_path.exists():
         return BacklogListResponse(items=[])
-    parsed_items = list(iter_backlog_items(dir_path, kind=k))
+    # H7c discipline: this reads EVERY item file — off the event loop.
+    parsed_items = list(await asyncio.to_thread(iter_backlog_items, dir_path, kind=k))
     parsed_items.sort(key=lambda i: int(getattr(i, "item_id", 0)), reverse=True)
 
     parsed_names = {item.path.name for item in parsed_items}
@@ -18454,6 +18585,8 @@ async def backlog_list(kind: str) -> BacklogListResponse:
                 task_type=str(getattr(item, "task_type", "task") or "task"),
                 summary=str(item.summary or ""),
                 parsed=True,
+                priority=str(getattr(item, "priority", "") or ""),
+                labels=list(getattr(item, "labels", ()) or ()),
             )
         )
 
@@ -19295,13 +19428,91 @@ async def backlog_merge(req: BacklogMergeRequest) -> BacklogMergeResponse:
     raise HTTPException(status_code=409, detail=last_err or "Could not allocate a unique backlog filename")
 
 
+_EXEC_REASONING_EFFORTS = {"minimal", "low", "medium", "high"}
+
+
+def _apply_exec_target_override(
+    *,
+    requested_model: Optional[str],
+    requested_effort: Optional[str],
+    target_agent: str,
+    target_model: Optional[str],
+    target_reasoning_effort: Optional[str],
+) -> tuple[str, Optional[str], Optional[str]]:
+    """Per-task executor override (continuum c1087 ask 2), OPERATOR-GATED.
+
+    Models validate against ABSTRACTGATEWAY_BACKLOG_EXEC_ALLOWED_MODELS (a
+    comma list of model ids the operator declares assignable). An absent or
+    empty set means overrides are REFUSED loudly — an unconfigured door never
+    silently widens into arbitrary model spend (the no-code-default rule).
+    Reasoning effort validates against the executor's enum. The env-stamped
+    defaults pass through untouched when no override is requested.
+    """
+    model = str(requested_model or "").strip()
+    effort = str(requested_effort or "").strip().lower()
+
+    if effort:
+        if effort not in _EXEC_REASONING_EFFORTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid target_reasoning_effort (expected {'|'.join(sorted(_EXEC_REASONING_EFFORTS))})",
+            )
+        target_reasoning_effort = effort
+
+    if model:
+        raw_allowed = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_ALLOWED_MODELS") or "").strip()
+        try:
+            from ..maintenance.backlog_exec_runner import normalize_codex_model_id  # type: ignore
+
+            normalize = normalize_codex_model_id
+        except Exception:  # pragma: no cover - runner module always ships
+            normalize = lambda m: str(m).strip()  # noqa: E731
+        allowed = {normalize(s) for s in (x.strip() for x in raw_allowed.split(",")) if s}
+        requested_norm = normalize(model)
+        if not allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "target_model overrides are not enabled on this gateway — the operator declares "
+                    "assignable models via ABSTRACTGATEWAY_BACKLOG_EXEC_ALLOWED_MODELS"
+                ),
+            )
+        if requested_norm not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"target_model {requested_norm!r} is not in the operator-declared allowed set ({sorted(allowed)})",
+            )
+        target_model = requested_norm
+        target_agent = f"codex:{requested_norm}"
+
+    return target_agent, target_model, target_reasoning_effort
+
+
 @router.post("/backlog/{kind}/{filename}/execute", response_model=BacklogExecuteResponse)
 async def backlog_execute(
     kind: str,
     filename: str,
     execution_mode: Optional[str] = Query(default=None, description="Execution mode override: uat|inplace."),
+    target_model: Optional[str] = Query(
+        default=None,
+        description="Per-task executor model override; validated against ABSTRACTGATEWAY_BACKLOG_EXEC_ALLOWED_MODELS (refused loudly otherwise).",
+    ),
+    target_reasoning_effort: Optional[str] = Query(
+        default=None, description="Per-task reasoning-effort override: minimal|low|medium|high."
+    ),
+    dor: Optional[str] = Query(
+        default=None,
+        description="Definition-of-Ready gate (continuum c1088 ask 3): dor=check refuses 409 unless the spec passes the DoR checks.",
+    ),
+    override: bool = Query(default=False, description="Operator override of the DoR gate (dor=check) — records dor_overridden=true."),
 ) -> BacklogExecuteResponse:
     mode_override = str(execution_mode or "").strip().lower()
+    # Capture the caller's override BEFORE the stamping block below rebinds
+    # the same names with env-config values.
+    requested_model = target_model
+    requested_effort = target_reasoning_effort
+    dor_requested = str(dor or "").strip().lower() == "check"
+    dor_overridden = bool(override)
     repo_root = _triage_repo_root_from_env()
     if repo_root is None:
         raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
@@ -19337,6 +19548,23 @@ async def backlog_execute(
         raise HTTPException(status_code=409, detail=f"Backlog item is already {st}")
 
     content = _read_text_bounded(path, max_chars=500_000)
+
+    # DoR gate (continuum c1088 ask 3 / contract c1124): server-side mirror of
+    # the client checklist so a curl can't bypass readiness. The operator
+    # outranks it via override=true (recorded on the queue payload).
+    if dor_requested and not dor_overridden:
+        from ..maintenance.backlog_dor import evaluate_dor
+        from ..maintenance.backlog_parser import parse_backlog_item
+
+        parsed = parse_backlog_item(path, kind=k)
+        task_type = str(getattr(parsed, "task_type", "task") or "task") if parsed else "task"
+        ready, checks = evaluate_dor(content, task_type)
+        if not ready:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "definition_of_ready_failed", "checks": [c.to_dict() for c in checks]},
+            )
+
     prompt = _DEFAULT_BACKLOG_EXEC_PROMPT_PREFIX + "\n\nBacklog item:\n\n" + content
 
     request_id = uuid.uuid4().hex[:16]
@@ -19371,6 +19599,14 @@ async def backlog_execute(
         else:
             raise HTTPException(status_code=400, detail="Invalid execution_mode (expected uat|inplace)")
 
+    target_agent, target_model, target_reasoning_effort = _apply_exec_target_override(
+        requested_model=requested_model,
+        requested_effort=requested_effort,
+        target_agent=target_agent,
+        target_model=target_model,
+        target_reasoning_effort=target_reasoning_effort,
+    )
+
     payload = {
         "created_at": datetime.datetime.now().astimezone().isoformat(),
         "request_id": request_id,
@@ -19380,6 +19616,7 @@ async def backlog_execute(
         "target_agent": target_agent,
         "target_model": target_model,
         "target_reasoning_effort": target_reasoning_effort,
+        "dor_overridden": bool(dor_requested and dor_overridden),
         "prompt": prompt,
     }
     try:
@@ -19424,6 +19661,27 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
         joined = ", ".join(overlapping[:5])
         more = f" (+{len(overlapping) - 5} more)" if len(overlapping) > 5 else ""
         raise HTTPException(status_code=409, detail=f"One or more backlog items are already queued/running: {joined}{more}")
+
+    # DoR gate per member (continuum c1124: "refuse naming WHICH members failed").
+    if str(getattr(req, "dor", None) or "").strip().lower() == "check" and not bool(getattr(req, "override", False)):
+        from ..maintenance.backlog_dor import evaluate_dor
+        from ..maintenance.backlog_parser import parse_backlog_item
+
+        failed_members: List[Dict[str, Any]] = []
+        for r in resolved:
+            parsed = parse_backlog_item(Path(r["path"]), kind=str(r["kind"]))
+            task_type = str(getattr(parsed, "task_type", "task") or "task") if parsed else "task"
+            member_md = _read_text_bounded(Path(r["path"]), max_chars=500_000)
+            ready, checks = evaluate_dor(member_md, task_type)
+            if not ready:
+                failed_members.append(
+                    {"relpath": r["relpath"], "checks": [c.to_dict() for c in checks if not c.ok]}
+                )
+        if failed_members:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "definition_of_ready_failed", "members": failed_members},
+            )
 
     prompt_parts: List[str] = []
     prompt_parts.append(_DEFAULT_BACKLOG_EXEC_PROMPT_PREFIX)
@@ -19492,6 +19750,14 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
             execution_mode = "inplace"
         else:
             raise HTTPException(status_code=400, detail="Invalid execution_mode (expected uat|inplace)")
+
+    target_agent, target_model, target_reasoning_effort = _apply_exec_target_override(
+        requested_model=getattr(req, "target_model", None),
+        requested_effort=getattr(req, "target_reasoning_effort", None),
+        target_agent=target_agent,
+        target_model=target_model,
+        target_reasoning_effort=target_reasoning_effort,
+    )
 
     payload = {
         "created_at": datetime.datetime.now().astimezone().isoformat(),
@@ -22756,11 +23022,57 @@ async def attachments_upload(
 async def submit_command(req: SubmitCommandRequest) -> SubmitCommandResponse:
     svc = get_gateway_service()
     typ = str(req.type or "").strip()
-    if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory"}:
+    if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory", "inject_guidance"}:
         raise HTTPException(
             status_code=400,
-            detail="type must be one of pause|resume|cancel|emit_event|update_schedule|compact_memory",
+            detail="type must be one of pause|resume|cancel|emit_event|update_schedule|compact_memory|inject_guidance",
         )
+
+    # H4 steer door: entity visit runs refuse raw steers SYNCHRONOUSLY (the
+    # H5 rite is not built; runtime's Runtime.steer refuses asynchronously as
+    # the authoritative backstop — this gives the caller the honest answer at
+    # the door instead of a queued command that fails later).
+    #
+    # TWO STORES (adversary F2): production visit runs live in the PER-HOME
+    # store (<home>/runtime_<slug>.sqlite3), never the runner store — so a
+    # steer at a visit run loads None here. The door consults the visit
+    # host's served-run cache for the rite 403, and an entirely unknown run
+    # refuses 404 NOW (the runner could only KeyError it into a log the
+    # caller never sees — accepted-then-silently-dead is the dishonest shape).
+    if typ == "inject_guidance":
+        try:
+            run = svc.runner.run_store.load(str(req.run_id))
+        except Exception:
+            run = None
+        _visit_rite_detail = (
+            f"run '{req.run_id}' is an entity visit run; raw steers are refused — "
+            "entity steering requires the steer rite (hooks plan H5). "
+            "Speak through the visit channel instead."
+        )
+        if run is None:
+            visit_host = getattr(svc, "entity_visit_host", None)
+            if visit_host is not None and visit_host.is_visit_run(str(req.run_id)):
+                raise HTTPException(status_code=403, detail=_visit_rite_detail)
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"run '{req.run_id}' is not in this principal's run store — inject_guidance "
+                    "targets gateway-hosted runs; entity visits are steered through the visit "
+                    "channel, never raw commands"
+                ),
+            )
+        is_visit_vars = isinstance(run.vars, dict) and isinstance(run.vars.get("_visit"), dict)
+        # Exact-id match, mirroring runtime's _refuse_entity_steer — a
+        # substring heuristic could refuse unrelated workflows. Imported
+        # from the owning module (adversary F9: a workflow-id bump must not
+        # silently un-guard the door); literal fallback for older runtimes.
+        try:
+            from abstractruntime.identity.visit_workflow import VISIT_WORKFLOW_ID as _visit_wf_id
+        except Exception:
+            _visit_wf_id = "entity-visit@1"
+        is_visit_workflow = str(getattr(run, "workflow_id", "") or "") == _visit_wf_id
+        if is_visit_vars or is_visit_workflow:
+            raise HTTPException(status_code=403, detail=_visit_rite_detail)
 
     record = CommandRecord(
         command_id=str(req.command_id),

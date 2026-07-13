@@ -167,6 +167,33 @@ def test_backlog_exec_config_and_requests_endpoints(tmp_path: Path, monkeypatch:
         t = tail.json()
         assert t["name"] == "events"
         assert "line2" in t["content"]
+        # Offset-follow cursor (continuum c1072 ask 2): next_offset = file size.
+        assert t["next_offset"] == len("line1\nline2\n")
+        assert t["reset"] is False
+
+        # A follow from next_offset returns ONLY the delta appended since.
+        cursor = t["next_offset"]
+        (run_dir / "codex_events.jsonl").write_text("line1\nline2\nline3\n", encoding="utf-8")
+        delta = client.get(
+            f"/api/gateway/backlog/exec/requests/cccccccccccccccc/logs/tail?name=events&after_bytes={cursor}"
+        ).json()
+        assert delta["content"] == "line3\n", "offset-follow returns only the delta, not the whole tail"
+        assert delta["next_offset"] == len("line1\nline2\nline3\n")
+        assert delta["reset"] is False
+
+        # No new bytes: empty delta, cursor unchanged (near-free idle poll).
+        idle = client.get(
+            f"/api/gateway/backlog/exec/requests/cccccccccccccccc/logs/tail?name=events&after_bytes={delta['next_offset']}"
+        ).json()
+        assert idle["content"] == "" and idle["next_offset"] == delta["next_offset"]
+
+        # Rotation: a cursor past EOF resets to the trailing window, flagged.
+        (run_dir / "codex_events.jsonl").write_text("fresh\n", encoding="utf-8")
+        rotated = client.get(
+            "/api/gateway/backlog/exec/requests/cccccccccccccccc/logs/tail?name=events&after_bytes=99999"
+        ).json()
+        assert rotated["reset"] is True
+        assert "fresh" in rotated["content"]
 
 
 @pytest.mark.basic

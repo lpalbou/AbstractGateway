@@ -61,6 +61,7 @@ __all__ = [
     "wrap_entity_runtime_routing",
     "mint_summon_stamp",
     "verify_summon_stamp",
+    "resolved_phase",
 ]
 
 CHANNEL_WORKPLACE = "workplace"
@@ -192,9 +193,102 @@ def _stamp_secret(data_dir: Path) -> str:
         return secret
 
 
-def _sign(secret: str, *, entity_id: str, channel: str, session_id: str, nonce: str, run_id: str) -> str:
+# Phase vocabulary is OWNED by runtime (config-object plan N7, d33cfbe): the
+# door imports the canonical set + normalizer from the abstractruntime root,
+# never a second copy (the diary_type-clamp lesson). PHASE_VISIT is the
+# migration target for phase-less v1 stamps.
+from abstractruntime import PHASE_SLEEP, PHASE_VISIT, canonical_phase  # noqa: E402
+
+
+def _sign_v1(secret: str, *, entity_id: str, channel: str, session_id: str, nonce: str, run_id: str) -> str:
+    """The pre-phase basis (config-object migration: ACCEPT-OLD-AS-VISIT).
+
+    Kept verifiable so parked/in-flight v1 stamps re-verify on restart
+    instead of self-DoS'ing a live run for zero security (a tampered stamp
+    fails either basis). A v1 stamp resolves phase='visit' — visit was the
+    only authority pre-migration and its default is the full toolset."""
     basis = "|".join(("entity-stamp-v1", entity_id, channel, session_id, nonce, run_id))
     return hmac.new(secret.encode("utf-8"), basis.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _sign_v2(
+    secret: str,
+    *,
+    entity_id: str,
+    channel: str,
+    session_id: str,
+    nonce: str,
+    run_id: str,
+    phase: str,
+    participants: List[str],
+    reflection_nodes: List[str],
+) -> str:
+    """The phase-bearing basis (config-object N2 + the close-reflection
+    ruling). The version tag `entity-stamp-v2` is INSIDE the MAC, so a v2
+    stamp cannot be downgraded to v1 by stripping the phase field — stripping
+    it makes v1 verification recompute a DIFFERENT signature and fail
+    (semantics c700 V5: verify-time chain-break by design).
+
+    THREE new signed fields, each with a distinct threat it closes:
+    - phase: without it a validly-stamped sleep run could flip to own_time
+      and grab the full toolset (N2).
+    - participants: engraved as co-presence + valence targets — an unsigned
+      witness list is forgeable (memory c673; agency c675 retires the 0007
+      co-presence-forgeability caveat).
+    - reflection_nodes: the close-reflection segment authority (agency c705
+      catch, ruled option (a)) — an unsigned node set would be the one
+      remaining unsigned channel-escalation lever on a workplace run.
+
+    Deterministic serialization (sorted keys, tight separators) so mint and
+    verify agree byte-for-byte; participants/reflection_nodes are order-
+    preserving lists (the caller's order is part of what was attested).
+
+    VERBATIM-BYTES RULE (runtime adversary F7): the MAC signs the phase
+    string AS GIVEN — canonicalization happens at MINT (once, into the
+    stored stamp), never inside the basis. Re-canonicalizing here would
+    make the recompute track the CURRENT alias map, so any future
+    respelling (own_time->personal happened this very wave) would silently
+    invalidate every parked durable run's stamp of that phase at resume —
+    a self-DoS with zero security gain (a tampered phase fails
+    compare_digest over verbatim bytes just the same)."""
+    extra = json.dumps(
+        {
+            "phase": str(phase),
+            "participants": [str(p) for p in participants],
+            "reflection_nodes": [str(n) for n in reflection_nodes],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    basis = "|".join(("entity-stamp-v2", entity_id, channel, session_id, nonce, run_id, extra))
+    return hmac.new(secret.encode("utf-8"), basis.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _stamp_is_v2(stamp: Dict[str, Any]) -> bool:
+    """A stamp is v2 iff it declares a phase. Detection is by presence, not a
+    separate version field, so a v2 stamp with its phase stripped is treated
+    as v1 and fails signature (the downgrade guard). New mints are always
+    v2; only genuinely-old persisted stamps are v1."""
+    return stamp.get("phase") is not None
+
+
+def resolved_phase(stamp: Optional[Dict[str, Any]]) -> str:
+    """The canonical phase a verified stamp carries. A v1 (phase-less) stamp
+    resolves to visit — identical authority to pre-migration, NOT a widen
+    (own-time runs never carried a door stamp; visit's default is full)."""
+    if not isinstance(stamp, dict):
+        return PHASE_VISIT
+    raw = stamp.get("phase")
+    if raw is None or not str(raw).strip():
+        return PHASE_VISIT
+    try:
+        return canonical_phase(str(raw))
+    except Exception:
+        # An unknown phase on a stamp that PASSED verification is a wiring
+        # bug (mint should have canonicalized), not an attack — fail visit
+        # is the safe reading, but surface it: callers log the stamp.
+        return PHASE_VISIT
 
 
 def mint_summon_stamp(
@@ -207,6 +301,8 @@ def mint_summon_stamp(
     prelude_as_of_seq: Optional[int] = None,
     budget_profile: Optional[Dict[str, Any]] = None,
     visit_id: Optional[str] = None,
+    phase: str = PHASE_VISIT,
+    reflection_nodes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """A PROVISIONAL stamp (no run_id yet — the runtime generates run ids at
     start). Provisional stamps NEVER verify; `finalize_summon_stamp` binds
@@ -237,11 +333,22 @@ def mint_summon_stamp(
     engraved correlation can only ever carry the minter's string)."""
     if channel not in _CHANNELS:
         raise ValueError(f"unknown entity channel {channel!r} (one of {_CHANNELS})")
+    # Canonicalize the phase AT MINT (semantics c700 V5): the MAC signs the
+    # canonical spelling only, so a legacy alias inside the signed basis can
+    # never cause a verify-time chain-break. An unknown phase raises here —
+    # the door refuses to mint an unresolvable authority.
+    canonical = canonical_phase(phase)
     return {
         "entity_id": str(entity_id),
         "channel": str(channel),
         "session_id": str(session_id),
         "participants": [str(p) for p in participants],
+        "phase": canonical,
+        # The signed close-reflection segment (empty for non-visit sessions):
+        # only these nodes may narrow-widen workplace -> entity-reflection at
+        # effect time (agency c705 ruling (a)). Door-minted; the workflow
+        # cannot add to it.
+        "reflection_nodes": [str(n) for n in (reflection_nodes or [])],
         "prelude_as_of_seq": prelude_as_of_seq,
         "budget_profile": dict(budget_profile) if budget_profile else None,
         "visit_id": str(visit_id) if visit_id else None,
@@ -257,14 +364,31 @@ def finalize_summon_stamp(stamp: Dict[str, Any], *, data_dir: Path, run_id: str)
     run and fails verification)."""
     final = dict(stamp)
     final["run_id"] = str(run_id)
-    final["sig"] = _sign(
-        _stamp_secret(data_dir),
-        entity_id=str(final.get("entity_id") or ""),
-        channel=str(final.get("channel") or ""),
-        session_id=str(final.get("session_id") or ""),
-        nonce=str(final.get("nonce") or ""),
-        run_id=str(run_id),
-    )
+    secret = _stamp_secret(data_dir)
+    if _stamp_is_v2(final):
+        final["sig"] = _sign_v2(
+            secret,
+            entity_id=str(final.get("entity_id") or ""),
+            channel=str(final.get("channel") or ""),
+            session_id=str(final.get("session_id") or ""),
+            nonce=str(final.get("nonce") or ""),
+            run_id=str(run_id),
+            phase=str(final.get("phase") or PHASE_VISIT),
+            participants=[str(p) for p in (final.get("participants") or [])],
+            reflection_nodes=[str(n) for n in (final.get("reflection_nodes") or [])],
+        )
+    else:
+        # A provisional stamp minted without a phase (should not happen for
+        # new mints — mint defaults phase=visit — but kept so an externally
+        # constructed v1 provisional still finalizes to a verifiable v1).
+        final["sig"] = _sign_v1(
+            secret,
+            entity_id=str(final.get("entity_id") or ""),
+            channel=str(final.get("channel") or ""),
+            session_id=str(final.get("session_id") or ""),
+            nonce=str(final.get("nonce") or ""),
+            run_id=str(run_id),
+        )
     return final
 
 
@@ -293,10 +417,34 @@ def verify_summon_stamp(stamp: Any, *, data_dir: Path, run: Any) -> Tuple[bool, 
         return False, "entity stamp is incomplete or provisional (missing run binding/signature)"
     if channel not in _CHANNELS:
         return False, f"entity stamp names an unknown channel {channel!r}"
-    expected = _sign(
-        _stamp_secret(data_dir),
-        entity_id=entity_id, channel=channel, session_id=session_id, nonce=nonce, run_id=run_id,
-    )
+    secret = _stamp_secret(data_dir)
+    if _stamp_is_v2(stamp):
+        # A v2 stamp declares a phase. Recompute over the SIGNED BYTES
+        # VERBATIM (runtime adversary F7): the stored phase string goes into
+        # the basis exactly as persisted — canonicalization is a RESOLUTION
+        # concern (resolved_phase), never a MAC concern. If verify re-
+        # canonicalized, a stamp signed under a previous canon (e.g.
+        # phase="own_time" before the c786 rename) would recompute over the
+        # NEW canon and fail compare_digest — a parked durable run would
+        # self-DoS at resume on a pure vocabulary move. Tampering is still
+        # caught: any byte change to the phase changes the basis. Mint
+        # canonicalizes ONCE, so new stamps always carry the canon of their
+        # mint day; resolution maps legacy spellings forward.
+        expected = _sign_v2(
+            secret,
+            entity_id=entity_id, channel=channel, session_id=session_id, nonce=nonce, run_id=run_id,
+            phase=str(stamp.get("phase") or ""),
+            participants=[str(p) for p in (stamp.get("participants") or [])],
+            reflection_nodes=[str(n) for n in (stamp.get("reflection_nodes") or [])],
+        )
+    else:
+        # Phase absent -> v1 basis. If this stamp WAS a v2 stamp with its
+        # phase stripped, its recorded sig was computed over the v2 basis and
+        # this v1 recompute will NOT match — the downgrade guard.
+        expected = _sign_v1(
+            secret,
+            entity_id=entity_id, channel=channel, session_id=session_id, nonce=nonce, run_id=run_id,
+        )
     if not hmac.compare_digest(sig, expected):
         return False, "entity stamp signature is invalid (stamps are minted by this gateway, never by clients)"
     actual_run_id = str(getattr(run, "run_id", "") or "")
@@ -366,6 +514,63 @@ def channel_actor(channel: str, *, session_id: str) -> str:
     if channel == CHANNEL_WORKPLACE:
         return f"workplace:{session_id}"
     return channel
+
+
+def in_reflection_segment(stamp: Dict[str, Any], run: Any) -> bool:
+    """The close-reflection segment authority (config-object ruling, option
+    (a)): a WORKPLACE visit run executing one of the door-SIGNED
+    reflection_nodes IS the entity's own reflection for that window.
+
+    Structural, not payload-trusted: reflection_nodes ride the v2 MAC (only
+    the door minted them; the workflow cannot add to the set), and
+    run.current_node is host-written durable state (the same trust class as
+    the parent-link walk — host-written state extends the channel, never
+    widens it). Only workplace runs are ever widened; entity-reflection and
+    operator channels are already privileged and need no segment.
+    """
+    if str(stamp.get("channel") or "") != CHANNEL_WORKPLACE:
+        return False
+    nodes = stamp.get("reflection_nodes")
+    if not isinstance(nodes, list) or not nodes:
+        return False
+    current = str(getattr(run, "current_node", "") or "")
+    return bool(current) and current in {str(n) for n in nodes}
+
+
+def _is_reflection_form_act(payload: Dict[str, Any]) -> Optional[str]:
+    """The NARROW act set the reflection segment may run as entity-reflection
+    (memory c714, a CLOSED set): interest FORM into ('self', entity), OR
+    summary FORM carrying `summarizes` edges. Returns the reason it is NOT a
+    reflection act (so the caller refuses in-segment non-listed kinds — spoof
+    pin 3: an identity kind beyond interest, e.g. value into self, stays
+    untouchable through every channel a visit carries), or None when it IS a
+    reflection act."""
+    scope = str(payload.get("scope") or "").strip().lower()
+    records = payload.get("records")
+    if not isinstance(records, list) or not records:
+        return "the reflection segment forms records; an empty FORM is not a reflection act"
+    for rec in records:
+        kind = str((rec or {}).get("kind") or "memory").strip().lower() if isinstance(rec, dict) else "memory"
+        if kind == "interest" and scope == SELF_SCOPE:
+            continue
+        if kind == "summary":
+            edges = (rec or {}).get("edges") if isinstance(rec, dict) else None
+            has_summarizes = isinstance(edges, list) and any(
+                (isinstance(e, (list, tuple)) and len(e) >= 1 and str(e[0]).strip().lower() == "summarizes")
+                for e in edges
+            )
+            if has_summarizes:
+                continue
+            return (
+                f"a summary FORM in the reflection segment must carry `summarizes` edges "
+                f"(record kind={kind!r} scope={scope!r} did not)"
+            )
+        return (
+            f"record kind={kind!r} into scope={scope!r} is not a reflection act — the close-"
+            "reflection segment may only form interest→self or summary-with-summarizes-edges; "
+            "identity kinds beyond interest stay the entity's own deliberate act"
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -488,10 +693,30 @@ def _gate_recall(payload: Dict[str, Any], *, home: EntityHome, stamp: Dict[str, 
     return None
 
 
-def _gate_form(payload: Dict[str, Any], *, stamp: Dict[str, Any]) -> Optional[str]:
+def _gate_form(
+    payload: Dict[str, Any],
+    *,
+    stamp: Dict[str, Any],
+    phase: str = PHASE_VISIT,
+    segment: bool = False,
+) -> Optional[str]:
     entity_id = str(stamp.get("entity_id") or "")
     channel = str(stamp.get("channel") or "")
     session_id = str(stamp.get("session_id") or "")
+
+    # N4 (sleep deposits nothing, memory c673/c678): a verified sleep-phase
+    # session may not FORM, regardless of channel or segment. Checked FIRST
+    # (memory c714 gate-order) so no future phase can be argued around via
+    # segment membership. The engine's own review-gated passes (dream,
+    # tending) remain the only graph-writers inside the sleep window; a sleep
+    # workflow's products go to the WORKSPACE, and the waking entity or the
+    # engine pass forms the records ("waking evidence disposes", mechanical).
+    if phase == PHASE_SLEEP:
+        return (
+            "MEMORY_FORM refused: phase 'sleep' deposits nothing — the sleep window is for the "
+            "engine's own consolidation/dream passes; a sleep workflow's products go to the "
+            "workspace, and the waking entity (or the engine pass) forms the records"
+        )
 
     scope = str(payload.get("scope") or "").strip().lower()
     owner = str(payload.get("owner_id") or "").strip()
@@ -516,24 +741,44 @@ def _gate_form(payload: Dict[str, Any], *, stamp: Dict[str, Any]) -> Optional[st
         )
 
     if channel == CHANNEL_WORKPLACE:
-        if scope in (SELF_SCOPE, DIARY_SCOPE):
-            return (
-                f"MEMORY_FORM into the {scope!r} scope is not a workplace act — identity records "
-                "come from the engram or the entity's own reflection; diary entries go through "
-                "DIARY_WRITE (the entity's elected act)"
-            )
-        for i, rec in enumerate(payload.get("records") or []):
-            kind = str((rec or {}).get("kind") or "memory").strip().lower() if isinstance(rec, dict) else "memory"
-            if kind in _IDENTITY_KINDS:
+        # The close-reflection segment (config-object ruling option (a)): a
+        # workplace visit's REFLECT/APPLY window IS the entity's own
+        # reflection. Inside it, the NARROW act set (interest→self, summary-
+        # with-summarizes-edges) resolves as entity-reflection; anything else
+        # in the segment refuses (spoof pin 3 — identity kinds beyond interest
+        # stay untouchable through every channel a visit carries).
+        if segment:
+            not_reflection = _is_reflection_form_act(payload)
+            if not_reflection is not None:
+                return f"MEMORY_FORM refused in the close-reflection segment: {not_reflection}"
+            # A reflection act: the door is the authority — stamp
+            # provenance.actor=entity-reflection (payload claims are
+            # decorative). Then fall through to participant/visit_id engraving.
+            for rec in payload.get("records") or []:
+                if isinstance(rec, dict):
+                    prov = rec.get("provenance")
+                    prov = dict(prov) if isinstance(prov, dict) else {}
+                    prov["actor"] = CHANNEL_ENTITY_REFLECTION
+                    rec["provenance"] = prov
+        else:
+            if scope in (SELF_SCOPE, DIARY_SCOPE):
                 return (
-                    f"records[{i}] kind={kind!r} is an identity kind — workplaces propose, only the "
-                    "self disposes (entity-reflection or operator channels write identity)"
+                    f"MEMORY_FORM into the {scope!r} scope is not a workplace act — identity records "
+                    "come from the engram or the entity's own reflection; diary entries go through "
+                    "DIARY_WRITE (the entity's elected act)"
                 )
-            if kind == "diary":
-                return (
-                    f"records[{i}] kind='diary' cannot be formed by a workplace turn — the diary is "
-                    "the entity's elected act (DIARY_WRITE); the graph records the act automatically"
-                )
+            for i, rec in enumerate(payload.get("records") or []):
+                kind = str((rec or {}).get("kind") or "memory").strip().lower() if isinstance(rec, dict) else "memory"
+                if kind in _IDENTITY_KINDS:
+                    return (
+                        f"records[{i}] kind={kind!r} is an identity kind — workplaces propose, only the "
+                        "self disposes (entity-reflection or operator channels write identity)"
+                    )
+                if kind == "diary":
+                    return (
+                        f"records[{i}] kind='diary' cannot be formed by a workplace turn — the diary is "
+                        "the entity's elected act (DIARY_WRITE); the graph records the act automatically"
+                    )
 
     # Door-stamped participants on formed records (situation contract) +
     # the visit_id engraving rule (memory c278, adopted at the door):
@@ -559,10 +804,27 @@ def _gate_form(payload: Dict[str, Any], *, stamp: Dict[str, Any]) -> Optional[st
     return None
 
 
-def _gate_adjust(payload: Dict[str, Any], *, stamp: Dict[str, Any]) -> Optional[str]:
+def _gate_adjust(
+    payload: Dict[str, Any],
+    *,
+    stamp: Dict[str, Any],
+    phase: str = PHASE_VISIT,
+    segment: bool = False,
+) -> Optional[str]:
     entity_id = str(stamp.get("entity_id") or "")
     channel = str(stamp.get("channel") or "")
     session_id = str(stamp.get("session_id") or "")
+
+    # N4: sleep deposits nothing (memory c673/c678) — MEMORY_ADJUST is a
+    # graph write, refused in the sleep window regardless of channel/segment.
+    # ADJUST is NOT in the close-reflection narrow act set (segment widening
+    # does not apply): salience/close in a visit stays a workplace act.
+    if phase == PHASE_SLEEP:
+        return (
+            "MEMORY_ADJUST refused: phase 'sleep' deposits nothing — salience and belief revision "
+            "are awake acts; the sleep window's only writers are the engine's own review-gated passes"
+        )
+    del segment  # ADJUST has no reflection-segment widening (documented above)
 
     scope = str(payload.get("scope") or "").strip().lower()
     owner = str(payload.get("owner_id") or "").strip()
@@ -597,10 +859,25 @@ def _gate_adjust(payload: Dict[str, Any], *, stamp: Dict[str, Any]) -> Optional[
     return None
 
 
-def _gate_appraise(payload: Dict[str, Any], *, stamp: Dict[str, Any]) -> Optional[str]:
+def _gate_appraise(
+    payload: Dict[str, Any],
+    *,
+    stamp: Dict[str, Any],
+    phase: str = PHASE_VISIT,
+    segment: bool = False,
+) -> Optional[str]:
     entity_id = str(stamp.get("entity_id") or "")
     channel = str(stamp.get("channel") or "")
     session_id = str(stamp.get("session_id") or "")
+
+    # N4: an APPRAISE commit deposits valence (a graph write) — refused in
+    # the sleep window. (Routine-band APPRAISE IS in the reflection segment's
+    # narrow act set below, but sleep is not a reflection window.)
+    if phase == PHASE_SLEEP:
+        return (
+            "MEMORY_APPRAISE refused: phase 'sleep' deposits nothing — feelings are appraised while "
+            "awake; the sleep window's only writers are the engine's own review-gated passes"
+        )
 
     # Valence lives in the entity's self scope (keystone convention); a
     # summoned session appraises AS this entity, into this entity.
@@ -620,14 +897,71 @@ def _gate_appraise(payload: Dict[str, Any], *, stamp: Dict[str, Any]) -> Optiona
     # channel-derived one. A payload claiming a privileged actor is not an
     # error to correct silently — it is the exact spoof the door exists to
     # stop, so it fails loudly.
+    #
+    # In the close-reflection segment a routine-band APPRAISE IS the entity's
+    # own reflection (memory c714 narrow act) — the derived actor is
+    # entity-reflection so the feeling lands as the entity's own, and a
+    # payload claiming that actor is CONSISTENT (not a spoof) in the segment.
+    effective_channel = CHANNEL_ENTITY_REFLECTION if segment else channel
     claimed = str(payload.get("actor") or "").strip()
-    derived = channel_actor(channel, session_id=session_id)
+    derived = channel_actor(effective_channel, session_id=session_id)
     if claimed and claimed != derived:
         return (
             f"payload claims actor {claimed!r} but this run's channel derives {derived!r} — "
             "actors are stamped by the door, never claimed by payloads"
         )
     payload["actor"] = derived
+    return None
+
+
+def _gate_access(
+    payload: Dict[str, Any],
+    *,
+    stamp: Dict[str, Any],
+    phase: str = PHASE_VISIT,
+    segment: bool = False,
+) -> Optional[str]:
+    """MEMORY_ACCESS is the commit_selection strengthening path (usage/trail
+    counters — the ONLY way recall deposits). It carries no payload rewriting
+    normally, but N4 (memory c673/c678) refuses the COMMIT in the sleep
+    window: a sleep workflow that recalls-and-commits would deposit usage
+    from sleep — the literal D2-of-sleep violation. Pure reads
+    (MEMORY_RECALL, journal=False posture) stay open; only the commit is
+    barred, so tending/consolidation reads are unaffected."""
+    del segment  # ACCESS has no reflection-segment widening
+    if phase == PHASE_SLEEP:
+        return (
+            "MEMORY_ACCESS commit refused: phase 'sleep' deposits nothing — commit_selection is the "
+            "only strengthening path, and depositing usage from sleep is the D2-of-sleep violation; "
+            "pure recall reads stay open, only the commit is barred"
+        )
+    return None
+
+
+def _gate_diary_write(
+    payload: Dict[str, Any],
+    *,
+    stamp: Dict[str, Any],
+    phase: str = PHASE_VISIT,
+    segment: bool = False,
+) -> Optional[str]:
+    """DIARY_WRITE binds its author at construction (no payload rewriting) —
+    the diary is the entity's own elected act. The one phase rule
+    (defense-in-depth for N4, memory c673/c678): at verified sleep, refuse.
+
+    Today a sleep run is structurally kept out by state (no summon while
+    asleep), so this is unreachable — but the deposit gate must COVER it, not
+    rely on the accident, so the "sleep deposits nothing" invariant holds
+    the instant a sleep producer first routes through the door (adversary
+    find, 2026-07-11 — the doc claimed DIARY_WRITE was covered; now it is).
+    Elections are an awake act."""
+    del payload, segment
+    if phase == PHASE_SLEEP:
+        return (
+            "DIARY_WRITE refused: phase 'sleep' deposits nothing — a diary entry is the entity's "
+            "elected act while awake; the sleep window's only writers are the engine's own "
+            "review-gated passes"
+        )
     return None
 
 
@@ -720,8 +1054,9 @@ def install_entity_routing(
         EffectType.MEMORY_FORM: _gate_form,
         EffectType.MEMORY_ADJUST: _gate_adjust,
         EffectType.MEMORY_APPRAISE: _gate_appraise,
-        # MEMORY_ACCESS commits a trace produced by a gated recall; DIARY_*
-        # bind the author at construction — no payload rewriting needed.
+        EffectType.MEMORY_ACCESS: _gate_access,  # N4: refuse the sleep-window commit
+        EffectType.DIARY_WRITE: _gate_diary_write,  # N4 defense-in-depth: refuse at sleep
+        # DIARY_READ binds the author at construction — no payload rewriting.
     }
 
     def _make_router(etype: Any):
@@ -748,10 +1083,15 @@ def install_entity_routing(
             payload = dict(effect.payload or {})
             gate = _payload_gates.get(etype)
             if gate is not None:
+                # phase (N4) + reflection segment (close-reflection ruling)
+                # are derived from the VERIFIED stamp + host-written
+                # current_node — never payload-claimed.
+                phase = resolved_phase(stamp)
+                segment = in_reflection_segment(stamp, run)
                 if etype == EffectType.MEMORY_RECALL:
                     err2 = gate(payload, home=home, stamp=stamp)
                 else:
-                    err2 = gate(payload, stamp=stamp)
+                    err2 = gate(payload, stamp=stamp, phase=phase, segment=segment)
                 if err2:
                     return EffectOutcome.failed(f"{etype.value} refused at the entity door: {err2}")
 
@@ -817,6 +1157,8 @@ def wrap_entity_runtime_routing(entity_runtime: Any, *, data_dir: Path) -> None:
         EffectType.MEMORY_FORM: _gate_form,
         EffectType.MEMORY_ADJUST: _gate_adjust,
         EffectType.MEMORY_APPRAISE: _gate_appraise,
+        EffectType.MEMORY_ACCESS: _gate_access,  # N4: refuse the sleep-window commit (durable visit lane)
+        EffectType.DIARY_WRITE: _gate_diary_write,  # N4 defense-in-depth: refuse at sleep
     }
 
     def _make_wrap(etype: Any, raw: Any):
@@ -834,10 +1176,17 @@ def wrap_entity_runtime_routing(entity_runtime: Any, *, data_dir: Path) -> None:
             payload = dict(effect.payload or {})
             gate = payload_gates.get(etype)
             if gate is not None:
+                # Same derivation as the shared router: phase (N4) + the
+                # close-reflection segment come from the verified stamp +
+                # host-written current_node, never the payload. THIS is the
+                # durable-visit lane, where the close-reflection collision
+                # agency caught (c705) actually fires.
+                phase = resolved_phase(stamp)
+                segment = in_reflection_segment(stamp, run)
                 if etype == EffectType.MEMORY_RECALL:
                     err2 = gate(payload, home=home, stamp=stamp)
                 else:
-                    err2 = gate(payload, stamp=stamp)
+                    err2 = gate(payload, stamp=stamp, phase=phase, segment=segment)
                 if err2:
                     return EffectOutcome.failed(f"{etype.value} refused at the entity door: {err2}")
             return raw(run, Effect(type=effect.type, payload=payload, result_key=effect.result_key), default_next_node)

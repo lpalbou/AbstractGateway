@@ -605,16 +605,22 @@ class EntityChatHost:
     # client re-derived state from three raw sources and they contradicted).
     # Computed SERVER-SIDE with a single precedence so clients never re-derive
     # (and re-bug) it. Mutually exclusive by construction: exactly one `phase`.
-    _LIFE_PHASES = ("visiting", "paused", "asleep", "own_time", "resting", "awake")
+    # SPELLING (c786 phase vocabulary): the running-loop value is "personal"
+    # (the ruled word for the entity's own time) so the operator never reads
+    # a retired word; the own_time_running/own_time_phase FIELD NAMES stay —
+    # they are a served API contract consumers already read, and renaming
+    # fields breaks clients for zero semantic gain (flagged to observer).
+    _LIFE_PHASES = ("visiting", "paused", "asleep", "personal", "resting", "awake")
 
     def life_state(self, name: str) -> Dict[str, Any]:
         """The gateway-computed life phase — one mutually-exclusive answer the
         observer consumes directly. Precedence (visiting wins, matching the
         client contract it replaces): a visit outranks everything (the loop is
-        auto-yielded under it); operator paused/asleep outrank own-time; a
-        running loop is own_time (mid-day, phase=day) or resting (between
-        days); awake is the floor. `own_time_running` is reported alongside so
-        a viewer can show the loop is alive WITHOUT contradicting the phase."""
+        auto-yielded under it); operator paused/asleep outrank the personal
+        phase; a running loop is personal (mid-day, phase=day) or resting
+        (between days); awake is the floor. `own_time_running` is reported
+        alongside so a viewer can show the loop is alive WITHOUT contradicting
+        the phase."""
         from .entity_loop import loop_status
 
         manifest = self._registry.manifest_for(name)
@@ -633,7 +639,7 @@ class EntityChatHost:
         elif str(state.get("state") or "awake") == "asleep":
             phase = "asleep"
         elif loop_running and loop_phase == "day":
-            phase = "own_time"
+            phase = "personal"
         elif loop_running:
             phase = "resting"
         else:

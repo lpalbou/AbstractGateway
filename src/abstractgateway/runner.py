@@ -208,16 +208,44 @@ class GatewayRunner:
         self._thread.start()
         logger.info("GatewayRunner worker started (base_dir=%s)", self._base_dir)
 
-    def stop(self, timeout_s: float = 5.0) -> None:
+    def stop(self, timeout_s: float = 5.0, *, drain_timeout_s: float = 30.0) -> None:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout_s)
         self._thread = None
+        # No NEW ticks will be scheduled (the loop thread is gone); cancel
+        # QUEUED futures. cancel_futures does NOT interrupt an ALREADY-RUNNING
+        # tick.
         try:
             self._executor.shutdown(wait=False, cancel_futures=True)  # type: ignore[call-arg]
         except Exception:
             pass
-        self._release_singleton_lock()
+        # DRAIN BEFORE RELEASE (adversary find, 2026-07-11 — the wave's own
+        # central invariant): releasing the flock while a tick is still
+        # executing on an executor thread lets another runner (a live standby
+        # peer, or a same-data_dir twin after invalidate_gateway_service_for_
+        # runtime) acquire and tick the SAME run concurrently — duplicated
+        # StepRecords, double-executed effects (LLM spend / tool calls), and
+        # last-writer-wins clobbering a WAITING transition back to RUNNING.
+        # The yield path already drains before releasing; stop() must too.
+        # _stop is set, so ignore it here (an unbounded stop-blocked drain
+        # would defeat itself).
+        drained = self._drain_inflight(timeout_s=max(0.0, float(drain_timeout_s)), ignore_stop=True)
+        if drained:
+            self._release_singleton_lock()
+        else:
+            # A genuinely wedged tick (e.g. a no-timeout provider call). Keep
+            # HOLDING the flock rather than double-tick: on uvicorn shutdown
+            # the fd closes on process exit (kernel releases); the rare
+            # same-process teardown that outlives a wedged tick leaks this
+            # lock until exit — the lesser evil vs ledger corruption, and
+            # loud so an operator sees it.
+            logger.error(
+                "GatewayRunner.stop: in-flight ticks did not drain within %ss; HOLDING singleton "
+                "lock %s to avoid concurrent double-ticking (released on process exit)",
+                drain_timeout_s,
+                self._singleton_lock_path,
+            )
         with self._state_lock:
             self._loop_running = False
             self._lock_refused_flag = False
@@ -234,12 +262,20 @@ class GatewayRunner:
         event_id: Optional[str] = None,
         emitted_at: Optional[str] = None,
         client_id: Optional[str] = None,
-    ) -> None:
+        durable: bool = False,
+    ) -> Dict[str, int]:
         """Emit an external event into the runtime (resume matching WAIT_EVENT runs).
 
         This is a thin wrapper around the internal emit_event command handling so
         integrations (Telegram bridge, webhooks, etc.) don't need to know the
-        command-store format.
+        command-store format. `durable=True` additionally appends the envelope
+        to the `events_inbox` of every non-terminal run declaring the mailbox
+        (the resident-agent drain contract) — a busy resident receives the
+        event at its next loop boundary instead of dropping it.
+
+        Returns receiver counts {"resumed": n, "appended": m} — callers whose
+        correctness depends on SOMEONE receiving the event (the agora bridge's
+        cursor) must treat 0+0 as non-delivery, never as success.
         """
 
         name2 = str(name or "").strip()
@@ -255,6 +291,8 @@ class GatewayRunner:
             "session_id": sid,
             "payload": payload,
         }
+        if durable:
+            body["durable"] = True
         if isinstance(workflow_id, str) and workflow_id.strip():
             body["workflow_id"] = workflow_id.strip()
         if isinstance(run_id, str) and run_id.strip():
@@ -264,7 +302,8 @@ class GatewayRunner:
         if isinstance(emitted_at, str) and emitted_at.strip():
             body["emitted_at"] = emitted_at.strip()
 
-        self._apply_emit_event(body, default_session_id=sid, client_id=client_id)
+        counts = self._apply_emit_event(body, default_session_id=sid, client_id=client_id)
+        return counts if isinstance(counts, dict) else {"resumed": 0, "appended": 0}
 
     def _acquire_singleton_lock(self) -> bool:
         """Best-effort process singleton lock (prevents multi-worker double ticking).
@@ -457,16 +496,21 @@ class GatewayRunner:
             self._yielded_to_pid = pid
         return True
 
-    def _drain_inflight(self, *, timeout_s: Optional[float] = None) -> bool:
+    def _drain_inflight(self, *, timeout_s: Optional[float] = None, ignore_stop: bool = False) -> bool:
         """Wait for in-flight tick futures to finish (no new ones are scheduled).
 
         Yielding the lock while ticks are still executing would let the new
         holder tick the same runs concurrently — the exact double-ticking the
         lock exists to prevent. Unbounded by default: correctness beats speed,
         and the requester keeps retrying while we drain.
+
+        `ignore_stop`: the yield path drains while the loop keeps running, so
+        it stops early if a shutdown is requested; the stop() path drains
+        AFTER setting _stop, so it must ignore _stop (bounded by timeout_s)
+        or it would return immediately and abandon a running tick.
         """
         started = time.time()
-        while not self._stop.is_set():
+        while ignore_stop or not self._stop.is_set():
             with self._inflight_lock:
                 if not self._inflight:
                     return True
@@ -601,8 +645,20 @@ class GatewayRunner:
                 self._stop.wait(timeout=retry_interval)
                 continue
 
-            # Acquired: we own ticking until we stop or yield.
-            self._clear_takeover_request(only_pid=os.getpid())
+            # Acquired: we own ticking until we stop or yield. Clear the
+            # takeover file UNCONDITIONALLY (adversary find, 2026-07-11): a
+            # stale request naming a REUSED-alive pid (a leftover file plus a
+            # reboot/pid-reshuffle) would otherwise make every loop iteration
+            # yield to a process that never actually requested — drain,
+            # release, re-acquire the freed lock, yield again: a silent
+            # permanent yield-loop (the original incident, invisibly). The
+            # acquirer has won the kernel lock; any pending request is moot
+            # (a peer that still wants takeover is refused and re-observes a
+            # live ticker, reporting standby_peer_active, never degraded). No
+            # legitimate handshake is harmed: a live holder never re-acquires
+            # between a requester's write and its own yield, so nothing clears
+            # a fresh request out from under the handshake.
+            self._clear_takeover_request(only_pid=None)
             logger.info("GatewayRunner started (base_dir=%s)", self._base_dir)
             yielded = self._loop()
             if not yielded:
@@ -844,23 +900,22 @@ class GatewayRunner:
             return
 
     def _apply_inject_guidance(self, payload: Dict[str, Any], *, run_id: str) -> None:
-        """Steer a running agent by appending guidance to its durable inbox (backlog 0217c).
+        """Steer a running agent through the DURABLE steer sidecar (H4, hooks plan).
 
-        The ReAct loop drains `_runtime.inbox` at the start of each `reason` cycle and renders it on
-        the trailing (cache-safe) message. This is the framework-native, notify-shaped way to
-        redirect a run mid-flight without cancel/restart.
+        The gateway no longer writes run vars for steering: `Runtime.steer()`
+        (runtime 2ce4a60) appends to the sidecar; the run's OWN tick drains
+        pending steers into `_runtime.inbox` at the next iteration boundary
+        (exactly-once via the run-owned `_runtime.steer_watermark`) and acks
+        with an `abstract.steer_seen` ledger record. This closes the
+        load→append→save loss/resurrection window the old body documented
+        (backlog 0217 follow-up: DONE by adopting the single-tick-writer).
 
-        Concurrency (adversarial-review hardening): a tick worker also saves the same run, so a naive
-        load→append→save from this thread can (a) lose the guidance if the tick's save lands last, or
-        (b) — the dangerous case — resurrect a COMPLETED run if our stale RUNNING snapshot overwrites
-        the tick's terminal save. We defend against (b) hard and narrow (a):
-          - Only inject into NON-terminal runs (skip COMPLETED/FAILED/CANCELLED).
-          - Re-load the freshest snapshot immediately before saving and re-check it is still
-            non-terminal; abort the save if it went terminal in the window (never clobber a terminal
-            state). This eliminates resurrection.
-        A residual best-effort loss window remains (a concurrent tick save can still land last); a
-        full fix routes the mutation through the single tick-writer and is tracked as a follow-up in
-        backlog 0217. Guidance is safe to re-issue.
+        Entity visit runs REFUSE raw steers (runtime's H5 interim guard
+        raises PermissionError; the HTTP door also pre-refuses with 403) —
+        the command fails loudly with the rite message, never a silent drop.
+
+        #FALLBACK: when abstractruntime predates the sidecar, the legacy
+        direct-write path applies (labeled), preserving the old semantics.
         """
         text = payload.get("guidance")
         if not isinstance(text, str) or not text.strip():
@@ -869,9 +924,81 @@ class GatewayRunner:
             raise ValueError("inject_guidance requires payload.guidance (non-empty string)")
         guidance = text.strip()
 
-        runtime = Runtime(run_store=self.run_store, ledger_store=self.ledger_store, artifact_store=self.artifact_store)
+        from .steering import gateway_steer_sidecar
+
+        sidecar = gateway_steer_sidecar(self._base_dir)
+        runtime = Runtime(
+            run_store=self.run_store,
+            ledger_store=self.ledger_store,
+            artifact_store=self.artifact_store,
+            steer_store=sidecar,
+        )
         # Target the run and its descendants so the actual agent loop (a child run) is reached.
         targets = self._list_descendant_run_ids(runtime, run_id)
+        _TERMINAL = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
+
+        def _is_terminal(r: Any) -> bool:
+            return getattr(r, "status", None) in _TERMINAL
+
+        if sidecar is None:
+            self._apply_inject_guidance_legacy(guidance, targets=targets, run_id=run_id)
+            return
+
+        applied = 0
+        found_injectable = False
+        refusals: list[str] = []
+        for rid in targets:
+            run = self.run_store.load(rid)
+            if run is None:
+                continue
+            vars_obj = getattr(run, "vars", None)
+            if not isinstance(vars_obj, dict):
+                continue
+            runtime_ns = vars_obj.get("_runtime")
+            if not isinstance(runtime_ns, dict):
+                # Guard for runs without a _runtime namespace. NOTE (adversary
+                # F7): Runtime.start seeds _runtime into EVERY run, so in
+                # practice this filters nothing — parent workflow shells DO
+                # receive steers and steer_seen acks (same behavior as the
+                # legacy body). Kept as a cheap shape guard, not targeting.
+                continue
+            if _is_terminal(run):
+                continue
+            found_injectable = True
+            try:
+                runtime.steer(rid, guidance)
+                applied += 1
+            except PermissionError as e:
+                # Entity visit run: the H5 refusal is the correct outcome and
+                # must surface on the command record, not vanish.
+                refusals.append(str(e))
+            except ValueError:
+                # Run went terminal between load and steer — not an error.
+                continue
+        if refusals and applied:
+            # Mixed tree (adversary F7): some runs steered, some refused —
+            # the command succeeds for the steerables, but the refusals must
+            # not vanish silently ("never a silent drop" is H4's line).
+            logger.warning(
+                "inject_guidance partial refusal for '%s': %d steered, %d refused (%s)",
+                run_id,
+                applied,
+                len(refusals),
+                "; ".join(refusals),
+            )
+        if refusals and applied == 0:
+            raise PermissionError("; ".join(refusals))
+        if applied == 0 and found_injectable:
+            # Injectable runs existed but all finished before the steer — not an error.
+            return
+        if applied == 0:
+            raise KeyError(f"No inbox-bearing run found for '{run_id}' to inject guidance into")
+
+    def _apply_inject_guidance_legacy(self, guidance: str, *, targets: list, run_id: str) -> None:
+        """Pre-sidecar direct-write path (#FALLBACK, version-skew only): the
+        old load→append→save with anti-resurrection re-check. Kept verbatim
+        so a gateway over an older abstractruntime still steers."""
+        logger.warning("#FALLBACK inject_guidance using direct run-var writes (no steer sidecar in runtime)")
         _TERMINAL = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
 
         def _is_terminal(r: Any) -> bool:
@@ -888,9 +1015,7 @@ class GatewayRunner:
                 continue
             runtime_ns = vars_obj.get("_runtime")
             if not isinstance(runtime_ns, dict):
-                # Only inject into runs that model an agent inbox (have a _runtime namespace).
                 continue
-            # Never inject into (or save over) a run that has already finished.
             if _is_terminal(run):
                 continue
             found_injectable = True
@@ -899,17 +1024,12 @@ class GatewayRunner:
                 inbox = []
                 runtime_ns["inbox"] = inbox
             inbox.append({"role": "system", "content": guidance})
-            # Re-check terminal status on the freshest persisted snapshot immediately before saving.
-            # If the run finished in the meantime, DROP the save — a stale RUNNING snapshot must never
-            # overwrite a terminal state (the resurrection bug). This does not fully close the loss
-            # window, but it makes durable-state corruption impossible.
             latest = self.run_store.load(rid)
             if latest is not None and _is_terminal(latest):
                 continue
             self.run_store.save(run)
             applied += 1
         if applied == 0 and found_injectable:
-            # Injectable runs existed but all finished before we could save — not an error.
             return
         if applied == 0:
             raise KeyError(f"No inbox-bearing run found for '{run_id}' to inject guidance into")
@@ -972,7 +1092,9 @@ class GatewayRunner:
         root.updated_at = now
         self.run_store.save(root)
 
-    def _apply_emit_event(self, payload: Dict[str, Any], *, default_session_id: str, client_id: Optional[str]) -> None:
+    def _apply_emit_event(
+        self, payload: Dict[str, Any], *, default_session_id: str, client_id: Optional[str]
+    ) -> Dict[str, int]:
         name = payload.get("name")
         name2 = str(name or "").strip()
         if not name2:
@@ -1010,8 +1132,9 @@ class GatewayRunner:
         # Find matching WAIT_EVENT runs and resume them.
         list_runs = getattr(self.run_store, "list_runs", None)
         if not callable(list_runs):
-            return
+            return {"resumed": 0, "appended": 0}
 
+        resumed = 0
         waiting_runs = list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.EVENT, limit=10_000)
         for r in waiting_runs or []:
             if getattr(r, "waiting", None) is None:
@@ -1028,6 +1151,7 @@ class GatewayRunner:
                 logger.warning("GatewayRunner: emit_event skip %s (workflow unresolvable): %s", r.run_id, e)
                 continue
             runtime.resume(workflow=wf, run_id=r.run_id, wait_key=wait_key, payload=envelope, max_steps=0)
+            resumed += 1
 
         # Durable mailbox delivery (opt-in via payload.durable, backlog: event-inbox agents).
         #
@@ -1041,16 +1165,26 @@ class GatewayRunner:
         #
         # Same concurrency posture as inject_guidance: commands apply on the runner loop
         # thread; a concurrent tick save can race the append (best-effort, re-send if needed).
+        appended = 0
         if payload.get("durable") is True or str(payload.get("durable") or "").strip().lower() in {"1", "true", "yes"}:
-            self._deliver_durable_event(name=name2, envelope=envelope)
+            appended = self._deliver_durable_event(name=name2, envelope=envelope)
+        # RECEIVER COUNTS (bridge adversary F2): a caller that must not lose
+        # messages (the agora bridge's cursor) needs to KNOW whether anything
+        # received this event — zero receivers used to look identical to
+        # success.
+        return {"resumed": resumed, "appended": appended}
 
     _EVENTS_INBOX_CAP = 500
 
-    def _deliver_durable_event(self, *, name: str, envelope: Dict[str, Any]) -> None:
-        """Append an event envelope to the `events_inbox` of mailbox-declaring runs."""
+    def _deliver_durable_event(self, *, name: str, envelope: Dict[str, Any]) -> int:
+        """Append an event envelope to the `events_inbox` of mailbox-declaring
+        runs. Returns the number of runs appended to. Idempotent per run by
+        `event_id` (bridge adversary F4): a crash-replayed emit with the same
+        event_id lands at most once per inbox — the at-least-once transport
+        composes into exactly-once delivery when the producer sets stable ids."""
         list_runs = getattr(self.run_store, "list_runs", None)
         if not callable(list_runs):
-            return
+            return 0
 
         limit = int(self._cfg.run_scan_limit)
         candidates: list[Any] = []
@@ -1073,6 +1207,8 @@ class GatewayRunner:
                 return any(isinstance(m, str) and m.strip() == name for m in declared)
             return False
 
+        appended = 0
+        event_id = str(envelope.get("event_id") or "").strip()
         seen: set[str] = set()
         for r in candidates:
             rid = str(getattr(r, "run_id", "") or "")
@@ -1094,6 +1230,14 @@ class GatewayRunner:
             if not isinstance(inbox, list):
                 inbox = []
                 vars_obj["events_inbox"] = inbox
+
+            # event_id idempotency (F4): an at-least-once producer re-sending
+            # the same event lands once. Bounded scan — the inbox is capped.
+            if event_id and any(
+                isinstance(e, dict) and str(e.get("event_id") or "") == event_id for e in inbox
+            ):
+                appended += 1  # already delivered = received, not a zero-receiver signal
+                continue
 
             try:
                 seq = int(vars_obj.get("events_inbox_seq") or 0) + 1
@@ -1123,6 +1267,8 @@ class GatewayRunner:
 
             run.updated_at = utc_now_iso()
             self.run_store.save(run)
+            appended += 1
+        return appended
 
     def _list_descendant_run_ids(self, runtime: Runtime, root_run_id: str) -> list[str]:
         """Return root + descendants (best-effort)."""

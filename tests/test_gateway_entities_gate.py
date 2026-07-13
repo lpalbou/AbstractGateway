@@ -416,6 +416,117 @@ def test_workplace_cannot_form_diary_records(rig):
     assert "DIARY_WRITE" in (out.error or "")
 
 
+# --------------------------------------------- N4: sleep deposits nothing (R5)
+
+
+def _sleep_run(rig: Any, run_id: str = "run-sleep") -> Any:
+    """A run carrying a real, signed SLEEP-phase stamp (config-object N4).
+
+    SYNTHETIC-STAMP note (adversary find + agency c771): no door mints a
+    sleep phase TODAY (every route mints visit; sleep_pass/own_time run
+    in-process). This hand-mints the sleep stamp through the SAME
+    finalize_summon_stamp(mint_summon_stamp(..., phase='sleep')) the future
+    sleep-workflow producer will use, so the door code under proof is
+    byte-identical to production. It is IN-PROCESS against the installed
+    router — never a cross-process write into a served gateway's store
+    (the harness-bug class agency flagged). The leg flips to live, replacing
+    the hand-mint with the real open surface, when the sleep producer lands.
+    """
+    stamp = finalize_summon_stamp(
+        mint_summon_stamp(
+            data_dir=rig.registry.data_dir,
+            entity_id=rig.entity_id,
+            channel=CHANNEL_WORKPLACE,
+            session_id=rig.session_id,
+            participants=[rig.entity_id],
+            phase="sleep",
+        ),
+        data_dir=rig.registry.data_dir,
+        run_id=run_id,
+    )
+    run = _Run(run_id=run_id, session_id=rig.session_id, vars={"_runtime": {"entity": stamp}})
+    rig.run_store.runs[run_id] = run
+    return run
+
+
+def test_sleep_phase_refuses_every_deposit_path_through_the_door(rig):
+    """R5 (N4, memory c673/c678): a verified sleep-phase session may not
+    deposit — FORM, ADJUST, APPRAISE, the ACCESS commit, AND DIARY_WRITE all
+    refuse loudly through the REAL installed router (resolve_run_stamp →
+    resolved_phase → the gate), and the graph is UNCHANGED after."""
+    from abstractgateway.entities import LIFE_SCOPE, SELF_SCOPE
+
+    sleep_run = _sleep_run(rig)
+    home = rig.registry.get_home("castor")
+
+    def _count() -> int:
+        return len(home.memory.self_records(scope=LIFE_SCOPE, owner_id=rig.entity_id)) + len(
+            home.memory.self_records(scope=SELF_SCOPE, owner_id=rig.entity_id)
+        )
+
+    before = _count()
+
+    form = _call(
+        rig,
+        EffectType.MEMORY_FORM,
+        {"records": [{"title": "night thought", "digest": "a sleep deposit attempt"}], "turn_id": "s1"},
+        run=sleep_run,
+    )
+    assert form.status == "failed" and "deposits nothing" in (form.error or "")
+
+    adjust = _call(
+        rig,
+        EffectType.MEMORY_ADJUST,
+        {"scope": "life", "op": "salience", "turn_id": "s2"},
+        run=sleep_run,
+    )
+    assert adjust.status == "failed" and "deposits nothing" in (adjust.error or "")
+
+    appraise = _call(
+        rig,
+        EffectType.MEMORY_APPRAISE,
+        {"scope": "self", "target": "person:x", "delta": 1, "reason": "x", "turn_id": "s3"},
+        run=sleep_run,
+    )
+    assert appraise.status == "failed" and "deposits nothing" in (appraise.error or "")
+
+    access = _call(
+        rig,
+        EffectType.MEMORY_ACCESS,
+        {"trace_id": "t-none", "used_record_ids": []},
+        run=sleep_run,
+    )
+    assert access.status == "failed" and "deposits nothing" in (access.error or "")
+
+    diary = _call(
+        rig,
+        EffectType.DIARY_WRITE,
+        {"text": "a sleep diary attempt", "turn_id": "s4"},
+        run=sleep_run,
+    )
+    assert diary.status == "failed" and "deposits nothing" in (diary.error or "")
+
+    # The graph is untouched — the invariant, not just the refusals.
+    assert _count() == before, "a refused sleep deposit must leave the graph unchanged"
+
+
+def test_pure_recall_stays_open_in_sleep(rig):
+    """The boundary: sleep bars DEPOSITS, not reads — tending/consolidation
+    legitimately read (journal=False posture is structurally inert). A pure
+    MEMORY_RECALL in sleep must NOT be refused by the phase gate."""
+    sleep_run = _sleep_run(rig, run_id="run-sleep-read")
+    out = _call(
+        rig,
+        EffectType.MEMORY_RECALL,
+        {"cue_text": "anything", "turn_id": "sr1"},
+        run=sleep_run,
+    )
+    # Recall is not a deposit — it completes (or fails for a NON-phase reason,
+    # never the sleep-deposit refusal).
+    assert "deposits nothing" not in (out.error or ""), out.error
+    assert out.status == "completed", out.error
+
+
 def test_workplace_cannot_form_into_self_scope(rig):
     out = _call(
         rig,

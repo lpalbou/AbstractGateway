@@ -368,6 +368,40 @@ def gateway_console_html() -> str:
     .actions select { width: auto; min-width: 150px; }
     .empty { color: var(--muted); padding: 12px 8px; }
     .danger-text { color: #ff9caf; }
+	    /* ---- Summoned Entities ---- */
+	    .entity-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+	    .entity-chip { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); background: rgba(255, 255, 255, .03); }
+	    .entity-chip-locked { color: var(--cyan); border-color: rgba(32, 199, 223, .3); }
+	    .entity-advanced { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: rgba(255, 255, 255, .02); }
+	    .entity-advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+	    .entity-config-block { margin: 12px 0 4px; }
+	    .entity-config-title { font-size: 13px; margin: 10px 0 6px; }
+	    .entity-config-hint { color: var(--muted); font-weight: 400; font-size: 12px; }
+	    .entity-danger-title { color: #ff9caf; }
+	    .entity-matrix { overflow-x: auto; margin: 8px 0; }
+	    .entity-matrix-table { border-collapse: collapse; min-width: 420px; }
+	    .entity-matrix-table th, .entity-matrix-table td { border: 1px solid var(--line); padding: 5px 10px; font-size: 12px; text-align: center; }
+	    .entity-matrix-table tbody th { text-align: left; font-weight: 500; color: var(--text); }
+	    .entity-matrix-table thead th { color: var(--muted); text-transform: capitalize; }
+	    .entity-subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+	    .entity-subtab { background: var(--button-2); color: var(--muted); border-radius: 8px; padding: 6px 12px; font-size: 12px; }
+	    .entity-subtab.active { color: var(--text); outline: 1px solid var(--line); }
+	    .entity-subpanel { padding: 4px 0 8px; }
+	    .entity-overview { display: grid; gap: 4px; margin-bottom: 10px; }
+	    .entity-kv { display: flex; gap: 10px; font-size: 13px; }
+	    .entity-kv-key { color: var(--muted); min-width: 110px; }
+	    .entity-kv-val { color: var(--text); word-break: break-all; }
+	    .entity-btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+	    .entity-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+	    .entity-checkbox input { width: auto; }
+	    .entity-prompt-layers { display: grid; gap: 10px; margin: 8px 0; }
+	    .entity-prompt-layer textarea { width: 100%; font-family: inherit; font-size: 12px; }
+	    .entity-prompt-preview { white-space: pre-wrap; font-size: 11px; color: var(--muted); max-height: 320px; overflow: auto; }
+	    .entity-chat-transcript { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; min-height: 120px; max-height: 380px; overflow-y: auto; display: grid; gap: 8px; background: rgba(255, 255, 255, .015); }
+	    .entity-chat-line { display: flex; gap: 10px; font-size: 13px; }
+	    .entity-chat-you .entity-kv-val { color: var(--muted); }
+	    .entity-chat-composer { align-items: flex-end; }
+	    .entity-chat-composer textarea { width: 100%; font-family: inherit; font-size: 13px; }
 	    .model-picker { display: grid; gap: 8px; }
 	    .model-picker__head {
 	      display: flex;
@@ -1175,6 +1209,7 @@ def gateway_console_html() -> str:
 	      <button id="tab-button-providers" class="tab-button" type="button"><span class="button-icon" aria-hidden="true">◇</span><span>Providers</span></button>
 	      <button id="tab-button-defaults" class="tab-button" type="button"><span class="button-icon" aria-hidden="true">◆</span><span>Multimodal Capabilities</span></button>
 	      <button id="tab-button-sandbox" class="tab-button" type="button"><span class="button-icon" aria-hidden="true">▶</span><span>Sandbox</span></button>
+	      <button id="tab-button-entities" class="tab-button" type="button"><span class="button-icon" aria-hidden="true">☾</span><span>Summoned Entities</span></button>
 	    </nav>
 	  </div>
 	  <main class="console-shell">
@@ -1250,6 +1285,25 @@ def gateway_console_html() -> str:
 	                <thead><tr><th>Tenant</th><th>Runtime</th><th>Owner</th><th>Reason</th><th>Data</th><th>Actions</th></tr></thead>
 	                <tbody id="runtime-reservations-table"></tbody>
 	              </table>
+	            </section>
+	            <section id="runs-section" class="session-only hidden">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▷</span><span>Runs</span></h2>
+	                  <p class="section-note">Live and recent runs on this runtime. Inspect state, cancel a run, or steer a running agent with a guidance note.</p>
+	                </div>
+	                <div class="inline">
+	                  <label>Status<select id="runs-status"><option value="">all</option><option value="running">running</option><option value="waiting">waiting</option><option value="completed">completed</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select></label>
+	                  <label class="entity-checkbox"><input id="runs-root-only" type="checkbox" checked> root runs only</label>
+	                  <button id="runs-refresh" class="secondary"><span class="button-icon" aria-hidden="true">↻</span><span>Refresh</span></button>
+	                </div>
+	              </div>
+	              <div id="runs-message" class="message"></div>
+	              <table>
+	                <thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Node</th><th>Updated</th><th>Actions</th></tr></thead>
+	                <tbody id="runs-table"></tbody>
+	              </table>
+	              <div id="run-inspect" class="entity-overview"></div>
 	            </section>
 	          </div>
 	        </div>
@@ -1334,6 +1388,157 @@ def gateway_console_html() -> str:
 	              <div id="sandbox-message" class="message"></div>
 	            </div>
 	          </section>
+	        </div>
+	      </div>
+	      <div id="tab-entities" class="tab-panel">
+	        <div class="tab-grid tab-grid-wide">
+	          <div class="tab-stack">
+	            <section id="entities-create-section" class="session-only">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">☾</span><span>Summon a new entity</span></h2>
+	                  <p class="section-note">Pick a spark template, name it, and configure its substrate and per-phase capabilities. The name is permanent — there is no delete (spark v1-for-life), so the name is validated (dry-run) before anything is written.</p>
+	                </div>
+	              </div>
+	              <div class="inline">
+	                <label>Template<select id="entity-template"></select></label>
+	                <label>Name<input id="entity-name" placeholder="e.g. Castor"></label>
+	              </div>
+	              <p id="entity-template-desc" class="section-note"></p>
+	              <div id="entity-template-values" class="entity-chip-row"></div>
+	              <p id="entity-create-admin-note" class="section-note hidden">Advanced configuration (substrate, per-phase capabilities) requires an admin session — entities you create carry the safe framework defaults; an admin can configure them after.</p>
+	              <details id="entity-advanced" class="entity-advanced">
+	                <summary>Advanced configuration (optional — defaults are safe)</summary>
+	                <div class="entity-config-block">
+	                  <h3 class="entity-config-title">Substrate <span class="entity-config-hint">the mind: LLM provider/model. Blank = gateway default.</span></h3>
+	                  <div class="inline">
+	                    <label>Provider<input id="entity-new-provider" placeholder="e.g. endpoint:ovh-provider (blank = gateway default)"></label>
+	                    <label>Model<input id="entity-new-model" placeholder="e.g. gpt-oss-120b (blank = gateway default)"></label>
+	                  </div>
+	                  <h3 class="entity-config-title">Embedding at birth <span class="entity-config-hint">the M1 pin — the semantic space this life is born into. Blank = pin the door's resolved embedder. Changing it later is the CRITICAL re-embed ceremony.</span></h3>
+	                  <div class="inline">
+	                    <label>Embedding model<input id="entity-new-embedding" placeholder="blank = door's resolved embedder"></label>
+	                  </div>
+	                </div>
+	                <div class="entity-config-block">
+	                  <h3 class="entity-config-title">Per-phase capabilities <span class="entity-config-hint">which tools each phase may use — visit / work / personal / sleep. Defaults shown; toggle to override.</span></h3>
+	                  <div id="entity-new-matrix" class="entity-matrix"></div>
+	                </div>
+	              </details>
+	              <button id="entity-create"><span class="button-icon" aria-hidden="true">☾</span><span>Validate &amp; create</span></button>
+	              <div id="entities-message" class="message"></div>
+	            </section>
+	            <section id="entities-list-section" class="session-only">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◎</span><span>Entities</span></h2>
+	                  <p class="section-note">Summoned entities on this gateway. Select one to manage its lifecycle, substrate, capabilities, and prompt.</p>
+	                </div>
+	                <button id="entities-refresh" class="secondary"><span class="button-icon" aria-hidden="true">↻</span><span>Refresh</span></button>
+	              </div>
+	              <table>
+	                <thead><tr><th>Name</th><th>Entity ID</th><th>Born</th><th>State</th><th>Actions</th></tr></thead>
+	                <tbody id="entities-table"></tbody>
+	              </table>
+	            </section>
+	            <section id="entity-manage-section" class="session-only hidden">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⚙</span><span>Manage <span id="entity-manage-name">entity</span></span></h2>
+	                  <p class="section-note" id="entity-manage-sub">Lifecycle, substrate, capabilities, and prompt for this summoned entity.</p>
+	                </div>
+                <button id="entity-manage-close" class="secondary"><span class="button-icon" aria-hidden="true">×</span><span>Close</span></button>
+              </div>
+              <p id="entity-admin-note" class="section-note hidden">You are viewing as a non-admin. Configuration (state, substrate, capabilities, prompt, re-embed) requires an admin session — those controls are hidden.</p>
+	              <nav class="entity-subtabs">
+	                <button id="entity-subtab-overview" class="entity-subtab active" type="button">Overview</button>
+	                <button id="entity-subtab-talk" class="entity-subtab" type="button">Talk</button>
+	                <button id="entity-subtab-lifecycle" class="entity-subtab" type="button">Lifecycle</button>
+	                <button id="entity-subtab-substrate" class="entity-subtab" type="button">Substrate</button>
+	                <button id="entity-subtab-tools" class="entity-subtab" type="button">Capabilities</button>
+	                <button id="entity-subtab-prompt" class="entity-subtab" type="button">Prompt</button>
+	              </nav>
+	              <div id="entity-subpanel-overview" class="entity-subpanel">
+	                <div id="entity-overview" class="entity-overview"></div>
+	                <button id="entity-verify" class="secondary"><span class="button-icon" aria-hidden="true">✓</span><span>Verify chain</span></button>
+	                <div id="entity-verify-out" class="section-note"></div>
+	              </div>
+	              <div id="entity-subpanel-talk" class="entity-subpanel hidden">
+	                <h3 class="entity-config-title">Visit <span class="entity-config-hint">a hosted chat session with this entity (the same driver the CLI runs). Opening yields the own-time loop; closing runs the reflection pass and wakes it.</span></h3>
+	                <div class="entity-btn-row">
+	                  <button id="entity-chat-open" class="secondary"><span class="button-icon" aria-hidden="true">☾</span><span>Open visit</span></button>
+	                  <button id="entity-chat-close" class="secondary hidden"><span class="button-icon" aria-hidden="true">×</span><span>Close visit (reflect)</span></button>
+	                </div>
+	                <div id="entity-chat-status" class="section-note"></div>
+	                <div id="entity-chat-transcript" class="entity-chat-transcript"></div>
+	                <div class="inline entity-chat-composer">
+	                  <label>Message<textarea id="entity-chat-input" rows="2" placeholder="say something…"></textarea></label>
+	                  <button id="entity-chat-send" class="secondary" disabled><span class="button-icon" aria-hidden="true">➤</span><span>Send</span></button>
+	                </div>
+	              </div>
+	              <div id="entity-subpanel-lifecycle" class="entity-subpanel hidden">
+	                <h3 class="entity-config-title">State <span class="entity-config-hint">awake serves visits/work; asleep is the consolidation window (no summons); paused is a hard freeze</span></h3>
+	                <div id="entity-state-current" class="section-note"></div>
+	                <div class="inline">
+	                  <label>Reason<input id="entity-state-reason" placeholder="optional — carried into the wake cue + host marker"></label>
+	                  <label class="entity-checkbox"><input id="entity-state-dream" type="checkbox"> run dream pass (with asleep)</label>
+	                </div>
+	                <div class="entity-btn-row">
+	                  <button id="entity-state-awake" class="secondary">Wake</button>
+	                  <button id="entity-state-asleep" class="secondary">Sleep</button>
+	                  <button id="entity-state-paused" class="danger">Pause</button>
+	                </div>
+	                <div id="entity-state-out" class="section-note"></div>
+	                <h3 class="entity-config-title">Own-time loop <span class="entity-config-hint">the personal-phase loop: the entity's own cognition on a tick. Off by default; starting it spends real tokens unattended.</span></h3>
+	                <div id="entity-loop-status" class="section-note"></div>
+	                <div class="inline">
+	                  <label>Tick seconds<input id="entity-loop-tick" type="number" min="1" max="3600" placeholder="20"></label>
+	                  <label>Ticks / day window<input id="entity-loop-ticks" type="number" min="1" max="500" placeholder="8"></label>
+	                  <label>Rest minutes<input id="entity-loop-rest" type="number" min="0" max="1440" placeholder="30"></label>
+	                </div>
+	                <div class="entity-btn-row">
+	                  <button id="entity-loop-start" class="secondary">Start loop</button>
+	                  <button id="entity-loop-stop" class="secondary">Stop loop</button>
+	                  <button id="entity-loop-freeze" class="danger">Freeze (emergency)</button>
+	                </div>
+	                <div id="entity-loop-out" class="section-note"></div>
+	                <h3 class="entity-config-title entity-danger-title">Re-embed <span class="entity-config-hint">CRITICAL repair verb: re-derives every vector with the gateway's resolved embedder (atomic swap). The model field is a verification — it must match the door's resolved embedder.</span></h3>
+	                <div id="entity-embedding-status" class="section-note"></div>
+	                <div class="inline">
+	                  <label>Embedding model (verification)<input id="entity-reembed-model" placeholder="must match the resolved embedder"></label>
+	                  <label>Reason<input id="entity-reembed-reason" placeholder="why — journaled + host-marked"></label>
+	                </div>
+	                <button id="entity-reembed" class="danger"><span class="button-icon" aria-hidden="true">⟳</span><span>Re-embed</span></button>
+	                <div id="entity-reembed-out" class="section-note"></div>
+	              </div>
+	              <div id="entity-subpanel-substrate" class="entity-subpanel hidden">
+	                <h3 class="entity-config-title">Substrate <span class="entity-config-hint">the entity's mind — provider + model. Blank source = inherits the gateway default.</span></h3>
+	                <div id="entity-substrate-current" class="section-note"></div>
+	                <div class="inline">
+	                  <label>Provider<input id="entity-substrate-provider" placeholder="abstractcore provider"></label>
+	                  <label>Model<input id="entity-substrate-model" placeholder="model id"></label>
+	                </div>
+	                <button id="entity-substrate-save" class="secondary"><span class="button-icon" aria-hidden="true">✓</span><span>Save substrate</span></button>
+	                <div id="entity-substrate-out" class="section-note"></div>
+	              </div>
+	              <div id="entity-subpanel-tools" class="entity-subpanel hidden">
+	                <h3 class="entity-config-title">Per-phase capabilities <span class="entity-config-hint">the operator's word per phase. Only changed phases are written; a phase cleared of every tool resets to the framework default (or denies all, below).</span></h3>
+	                <div id="entity-manage-matrix" class="entity-matrix"></div>
+	                <label id="entity-tools-denyall-row" class="entity-checkbox"><input id="entity-tools-denyall" type="checkbox"> treat fully-cleared phases as DENY-ALL (explicit empty grant) instead of reset-to-default</label>
+	                <div class="entity-btn-row">
+	                  <button id="entity-tools-save" class="secondary"><span class="button-icon" aria-hidden="true">✓</span><span>Save capabilities</span></button>
+	                </div>
+	                <div id="entity-tools-out" class="section-note"></div>
+	              </div>
+	              <div id="entity-subpanel-prompt" class="entity-subpanel hidden">
+	                <h3 class="entity-config-title">Prompt overlay <span class="entity-config-hint">editable layers on the system prompt. Blank = the built-in default for that layer. Identity is never editable here.</span></h3>
+	                <div id="entity-prompt-layers" class="entity-prompt-layers"></div>
+	                <button id="entity-prompt-save" class="secondary"><span class="button-icon" aria-hidden="true">✓</span><span>Save prompt</span></button>
+	                <div id="entity-prompt-out" class="section-note"></div>
+	                <details class="entity-advanced"><summary>Preview: the composed system prompt (as the next visit would see it)</summary><pre id="entity-prompt-preview" class="entity-prompt-preview"></pre></details>
+	              </div>
+	            </section>
+	          </div>
 	        </div>
 	      </div>
 	    </div>
@@ -1572,7 +1777,7 @@ def gateway_console_html() -> str:
 	    }
 	    const UI_SETTINGS_KEY = "abstractgateway_ui_settings_v1";
 	    const ACTIVE_TAB_KEY = "abstractgateway_active_tab_v1";
-	    const TABS = ["users", "providers", "defaults", "sandbox"];
+	    const TABS = ["users", "providers", "defaults", "sandbox", "entities"];
 	    const THEME_SPECS = [
 	      { id: "dark", label: "Dark (Abstract)", swatches: ["#1a1a2e", "#16213e", "#0f3460", "#e94560", "#60a5fa", "#27ae60"] },
 	      { id: "tokyo-night", label: "Tokyo Night", swatches: ["#1a1b26", "#24283b", "#414868", "#7aa2f7", "#2ac3de", "#9ece6a"] },
@@ -1672,9 +1877,795 @@ def gateway_console_html() -> str:
 	      }
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
 	    }
-    function csrf() {
-      return document.cookie.split(";").map((p) => p.trim()).find((p) => p.startsWith("abstractgateway_csrf="))?.slice("abstractgateway_csrf=".length) || "";
-    }
+	    // ---- Summoned Entities: full create + lifecycle management ----
+	    // Server-rendered console surface (NOT a React app), so it consumes the
+	    // gateway's own served payloads directly — templates, tool inventory,
+	    // per-phase capability matrix, substrate, prompt, state, loop, reembed —
+	    // the same server truth uic's React matrix renders, a different target.
+	    // Every user value goes through textContent (XSS-safe) and every write
+	    // through api() (CSRF). No client-side re-derivation of server truth.
+	    state.entityTemplates = [];
+	    state.entityMatrixSpec = null;   // /inventory/capability-matrix (defaults, for create)
+	    state.manageName = "";           // entity currently open in the manage panel
+
+	    // ONE matrix renderer: a phase×tool checkbox grid. `tools` = [{id,label,description}];
+	    // `grantByPhase` = {phaseId: Set(toolId)} initial checked state. The baseline
+	    // is stashed on the container so saves send only CHANGED phases (never
+	    // materialize the day's defaults as the operator's word — write_policy_file's
+	    // documented anti-pattern), and a phase cleared to empty reverts to the
+	    // framework default (null), not a silent deny-all (uic c727 ask 2 fold).
+	    function renderMatrix(container, phaseIds, phaseLabels, tools, grantByPhase) {
+	      const baseline = {};
+	      for (const pid of phaseIds) baseline[pid] = [...(grantByPhase[pid] || new Set())].sort();
+	      container._matrixBaseline = baseline;
+	      container.textContent = "";
+	      const table = document.createElement("table");
+	      table.className = "entity-matrix-table";
+	      const thead = document.createElement("thead");
+	      const hrow = document.createElement("tr");
+	      const corner = document.createElement("th");
+	      corner.textContent = "Tool";
+	      hrow.append(corner);
+	      for (const pid of phaseIds) {
+	        const th = document.createElement("th");
+	        th.textContent = phaseLabels[pid] || pid;
+	        hrow.append(th);
+	      }
+	      thead.append(hrow);
+	      table.append(thead);
+	      const tbody = document.createElement("tbody");
+	      for (const tool of tools) {
+	        const tr = document.createElement("tr");
+	        const th = document.createElement("th");
+	        th.textContent = tool.label || tool.id;
+	        if (tool.description) th.title = tool.description;
+	        tr.append(th);
+	        for (const pid of phaseIds) {
+	          const td = document.createElement("td");
+	          const box = document.createElement("input");
+	          box.type = "checkbox";
+	          box.dataset.phase = pid;
+	          box.dataset.tool = tool.id;
+	          box.checked = Boolean(grantByPhase[pid] && grantByPhase[pid].has(tool.id));
+	          td.append(box);
+	          tr.append(td);
+	        }
+	        tbody.append(tr);
+	      }
+	      table.append(tbody);
+	      container.append(table);
+	    }
+	    // Read the grid back into a MERGE policy {phaseId: [toolId...] | null}, sending
+	    // ONLY phases the operator actually changed from the rendered baseline. A phase
+	    // left at its baseline is omitted (untouched server-side). A phase the operator
+	    // cleared to empty is sent as null — revert to the framework default — never []
+	    // (which would be a silent deny-all). An explicit non-empty change is the word.
+	    function readMatrix(container) {
+	      const current = {};
+	      for (const box of container.querySelectorAll("input[type=checkbox]")) {
+	        const pid = box.dataset.phase;
+	        if (!current[pid]) current[pid] = [];
+	        if (box.checked) current[pid].push(box.dataset.tool);
+	      }
+	      const baseline = container._matrixBaseline || {};
+	      const policy = {};
+	      for (const pid of Object.keys(current)) {
+	        const now = current[pid].slice().sort();
+	        const was = baseline[pid] || [];
+	        if (now.length === was.length && now.every((t, i) => t === was[i])) continue; // unchanged → omit
+	        policy[pid] = now.length ? now : null; // cleared → revert to default (null), not deny-all
+	      }
+	      return policy;
+	    }
+	    // Build the render inputs from the capability-matrix payload (create lane).
+	    function matrixFromSpec(spec) {
+	      const phaseIds = (spec.phases || []).map((p) => p.id);
+	      const phaseLabels = {};
+	      for (const p of (spec.phases || [])) phaseLabels[p.id] = p.label || p.id;
+	      const section = (spec.sections || []).find((s) => s.id === "tools") || (spec.sections || [])[0] || { items: [] };
+	      const tools = (section.items || []).map((it) => ({ id: it.id, label: it.label || it.id, description: it.description || "" }));
+	      const grantByPhase = {};
+	      for (const pid of phaseIds) {
+	        grantByPhase[pid] = new Set();
+	        for (const it of (section.items || [])) {
+	          const cell = (it.cells || {})[pid] || {};
+	          if (cell.resolved_value) grantByPhase[pid].add(it.id);
+	        }
+	      }
+	      return { phaseIds, phaseLabels, tools, grantByPhase };
+	    }
+
+	    async function loadEntities() {
+	      try {
+	        if (!state.entityTemplates.length) {
+	          const g = await api("/api/gateway/entities/templates");
+	          state.entityTemplates = Array.isArray(g.templates) ? g.templates : [];
+	          const sel = $("entity-template");
+	          sel.textContent = "";
+	          for (const t of state.entityTemplates) {
+	            const opt = document.createElement("option");
+	            opt.value = t.id;
+	            opt.textContent = t.name || t.id;
+	            sel.append(opt);
+	          }
+	          renderEntityTemplateDesc();
+	        }
+	        if (!state.entityMatrixSpec) {
+	          try {
+	            state.entityMatrixSpec = await api("/api/gateway/entities/inventory/capability-matrix");
+	            const m = matrixFromSpec(state.entityMatrixSpec);
+	            renderMatrix($("entity-new-matrix"), m.phaseIds, m.phaseLabels, m.tools, m.grantByPhase);
+	          } catch (e) {
+	            $("entity-new-matrix").textContent = "capability matrix unavailable: " + (e.message || e);
+	          }
+	        }
+	        const listed = await api("/api/gateway/entities");
+	        const rows = Array.isArray(listed.entities) ? listed.entities : [];
+	        const body = $("entities-table");
+	        body.textContent = "";
+	        for (const e of rows) {
+	          const tr = document.createElement("tr");
+	          if (e.error) {
+	            // The API deliberately surfaces unreadable/collided homes so the
+	            // operator can fix them — render the error, don't fake a healthy row.
+	            const td = document.createElement("td");
+	            td.colSpan = 5;
+	            td.className = "message";
+	            td.textContent = `${e.slug || e.name || "?"}: ${e.error}`;
+	            tr.append(td);
+	            body.append(tr);
+	            continue;
+	          }
+	          const st = (e.state && typeof e.state === "object") ? (e.state.state || "awake") : (e.state || "awake");
+	          const nm = e.name || e.slug || "";
+	          for (const cell of [nm, e.entity_id || "", e.created_at || e.born_at || "", st]) {
+	            const td = document.createElement("td");
+	            td.textContent = String(cell);
+	            tr.append(td);
+	          }
+	          const actions = document.createElement("td");
+	          const manageBtn = document.createElement("button");
+	          manageBtn.className = "secondary";
+	          manageBtn.textContent = "Manage";
+	          manageBtn.onclick = () => openEntityManage(nm);
+	          actions.append(manageBtn);
+	          tr.append(actions);
+	          body.append(tr);
+	        }
+	        if (!rows.length) {
+	          const tr = document.createElement("tr");
+	          const td = document.createElement("td");
+	          td.colSpan = 5;
+	          td.className = "section-note";
+	          td.textContent = "No entities yet — summon one above.";
+	          tr.append(td);
+	          body.append(tr);
+	        }
+	      } catch (err) {
+	        $("entities-message").textContent = String(err.message || err);
+	      }
+	    }
+	    function renderEntityTemplateDesc() {
+	      const id = $("entity-template").value;
+	      const t = state.entityTemplates.find((x) => x.id === id);
+	      $("entity-template-desc").textContent = t ? (t.description || "") : "";
+	      const chips = $("entity-template-values");
+	      chips.textContent = "";
+	      const cores = (t && Array.isArray(t.core_values)) ? t.core_values : [];
+	      for (const cv of cores) {
+	        const chip = document.createElement("span");
+	        chip.className = "entity-chip entity-chip-locked";
+	        chip.textContent = "🔒 " + cv;
+	        chip.title = "core value — kept for life, cannot be removed";
+	        chips.append(chip);
+	      }
+	    }
+	    async function createEntity() {
+	      const msg = $("entities-message");
+	      const name = ($("entity-name").value || "").trim();
+	      const id = $("entity-template").value;
+	      const template = state.entityTemplates.find((x) => x.id === id);
+	      if (!name) { msg.textContent = "Name is required."; return; }
+	      if (!template) { msg.textContent = "Pick a template."; return; }
+	      const spark = { ...(template.spark || {}), name };
+	      const provider = ($("entity-new-provider").value || "").trim();
+	      const model = ($("entity-new-model").value || "").trim();
+	      const embedding = ($("entity-new-embedding").value || "").trim();
+	      const createBody = { name, spark };
+	      if (embedding) createBody.embedding_model = embedding;
+	      const enc = encodeURIComponent(name);
+	      $("entity-create").disabled = true;
+	      try {
+	        // DRY-RUN first — never burn the permanent name on a refusing spark.
+	        const check = await api(`/api/gateway/entities/${enc}/validate`, {
+	          method: "POST", body: JSON.stringify(createBody),
+	        });
+	        if (!check.ok) {
+	          msg.textContent = "Cannot create: " + ((check.errors || []).join("; ") || (check.would_conflict ? "an entity with this name already exists with a different spark" : "validation failed"));
+	          return;
+	        }
+	        // The name is PERMANENT — there is no delete (spark v1-for-life).
+	        // Confirm the one irreversible act before writing anything.
+	        const go = await confirmAction({
+	          title: `Summon ${name}?`,
+	          message: `This creates a permanent entity named "${name}". There is no delete — the name and its home are for life. Its spark's core values are locked. Substrate and per-phase capabilities can be changed later.`,
+	          confirmLabel: "Summon",
+	        });
+	        if (!go) { msg.textContent = "Cancelled."; return; }
+	        const created = await api("/api/gateway/entities", { method: "POST", body: JSON.stringify(createBody) });
+	        let note = created.created === false ? `${name} already existed (identical spark).` : `Summoned ${name}.`;
+	        const vWarn = Array.isArray(check.warnings) ? check.warnings.filter(Boolean) : [];
+	        if (vWarn.length) note += ` Warnings: ${vWarn.join(" | ")}`;
+	        // Apply optional substrate (admin) — surface its own error, don't lose the create.
+	        if (provider && model) {
+	          try {
+	            await api(`/api/gateway/entities/${enc}/substrate`, { method: "PUT", body: JSON.stringify({ provider, model }) });
+	            note += " Substrate set.";
+	          } catch (e) { note += " (substrate not set: " + (e.message || e) + ")"; }
+	        } else if (provider || model) {
+	          note += " (substrate needs BOTH provider and model — skipped)";
+	        }
+	        // Apply the capability matrix only if the operator opened Advanced AND
+	        // moved a cell off its default (readMatrix returns only changed phases).
+	        const adv = $("entity-advanced");
+	        if (adv && adv.open && state.entityMatrixSpec) {
+	          const policy = readMatrix($("entity-new-matrix"));
+	          if (Object.keys(policy).length) {
+	            try {
+	              await api(`/api/gateway/entities/${enc}/tool-policy`, { method: "PUT", body: JSON.stringify({ policy }) });
+	              note += " Capabilities set.";
+	            } catch (e) { note += " (capabilities not set: " + (e.message || e) + ")"; }
+	          }
+	        }
+	        msg.textContent = note;
+	        $("entity-name").value = "";
+	        // Reset the create matrix so one entity's toggles never bleed into the
+	        // next create (the cached spec is re-rendered, restoring defaults).
+	        if (state.entityMatrixSpec) {
+	          const m = matrixFromSpec(state.entityMatrixSpec);
+	          renderMatrix($("entity-new-matrix"), m.phaseIds, m.phaseLabels, m.tools, m.grantByPhase);
+	        }
+	        if (adv) adv.open = false;
+	        await loadEntities();
+	      } catch (err) {
+	        msg.textContent = String(err.message || err);
+	      } finally {
+	        $("entity-create").disabled = false;
+	      }
+	    }
+
+	    // ---- Manage an existing entity ----
+	    const ENTITY_SUBTABS = ["overview", "talk", "lifecycle", "substrate", "tools", "prompt"];
+	    // Entity CONFIG is admin-gated at the server (substrate/tool-policy/prompt/
+	    // state/loop/reembed). Reflect that in the UI so a non-admin sees why a
+	    // button would 403 instead of clicking into a refusal. Create + all GETs
+	    // stay user-level, so viewing an entity's config is allowed for everyone.
+	    const ENTITY_ADMIN_CONTROLS = [
+	      "entity-advanced", "entity-state-awake", "entity-state-asleep", "entity-state-paused",
+	      "entity-loop-start", "entity-loop-stop", "entity-loop-freeze", "entity-substrate-save",
+	      "entity-tools-save", "entity-tools-denyall-row", "entity-prompt-save", "entity-reembed",
+	    ];
+	    function applyEntityAdminGating() {
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      for (const id of ENTITY_ADMIN_CONTROLS) {
+	        const el = $(id);
+	        if (el) el.classList.toggle("hidden", !admin);
+	      }
+	      const banner = $("entity-admin-note");
+	      if (banner) banner.classList.toggle("hidden", admin);
+	      const createNote = $("entity-create-admin-note");
+	      if (createNote) createNote.classList.toggle("hidden", admin);
+	    }
+	    function setEntitySubtab(name) {
+	      for (const id of ENTITY_SUBTABS) {
+	        const btn = $(`entity-subtab-${id}`);
+	        const panel = $(`entity-subpanel-${id}`);
+	        if (btn) btn.classList.toggle("active", id === name);
+	        if (panel) panel.classList.toggle("hidden", id !== name);
+	      }
+	    }
+	    function closeEntityManage() {
+	      state.manageName = "";
+	      $("entity-manage-section").classList.add("hidden");
+	    }
+	    async function openEntityManage(name) {
+	      state.manageName = name;
+	      // Generation token (adversary P0): five loaders write into SHARED DOM
+	      // nodes. Opening B while A's slower fetch is in flight must not let
+	      // A's late response paint A's grants/baseline under B's header — the
+	      // next save would silently write A's word into B's permanent home.
+	      // Every loader passes the token; every DOM write checks it first.
+	      state.manageToken = (state.manageToken || 0) + 1;
+	      const token = state.manageToken;
+	      $("entity-manage-name").textContent = name;
+	      $("entity-manage-section").classList.remove("hidden");
+	      applyEntityAdminGating();
+	      setEntitySubtab("overview");
+	      try { $("entity-manage-section").scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
+	      try {
+	        await Promise.all([
+	          loadEntityOverview(name, token), loadEntitySubstrate(name, token),
+	          loadEntityToolPolicy(name, token), loadEntityPrompt(name, token), loadEntityLoop(name, token),
+	          loadEntityEmbedding(name, token), loadEntityStateLine(name, token),
+	        ]);
+	      } catch (e) {
+	        $("entities-message").textContent = String(e.message || e);
+	      }
+	    }
+	    function manageStale(token) {
+	      return token !== undefined && token !== state.manageToken;
+	    }
+	    function _entOut(id, text) { const el = $(id); if (el) el.textContent = text; }
+	    async function loadEntityOverview(name, token) {
+	      try {
+	        const card = await api(`/api/gateway/entities/${encodeURIComponent(name)}/card`);
+	        if (manageStale(token)) return;
+	        const box = $("entity-overview");
+	        box.textContent = "";
+	        const sleep = card.sleep_stats || {};
+	        const rows = [
+	          ["Entity ID", card.entity_id || (card.manifest && card.manifest.entity_id) || ""],
+	          ["Handle", card.handle || ""],
+	          ["Born", card.born || card.created_at || ""],
+	          ["Age (days)", card.age_days != null ? String(card.age_days) : ""],
+	          ["State", (card.state && (card.state.state || card.state)) || ""],
+	          ["Mind", card.mind_substrate ? `${card.mind_substrate.provider || "?"} / ${card.mind_substrate.model || "?"}` : ""],
+	          ["Sleeps", sleep.sleep_count != null ? `${sleep.sleep_count}` : ""],
+	        ];
+	        for (const [k, v] of rows) {
+	          if (!v) continue;
+	          const line = document.createElement("div");
+	          line.className = "entity-kv";
+	          const key = document.createElement("span"); key.className = "entity-kv-key"; key.textContent = k;
+	          const val = document.createElement("span"); val.className = "entity-kv-val"; val.textContent = String(v);
+	          line.append(key); line.append(val); box.append(line);
+	        }
+	        const moments = Array.isArray(card.moments) ? card.moments.slice(-6) : [];
+	        if (moments.length) {
+	          const head = document.createElement("div");
+	          head.className = "entity-kv";
+	          const key = document.createElement("span"); key.className = "entity-kv-key"; key.textContent = "Recent moments";
+	          head.append(key); box.append(head);
+	          for (const m of moments) {
+	            const line = document.createElement("div");
+	            line.className = "entity-kv";
+	            const at = document.createElement("span"); at.className = "entity-kv-key"; at.textContent = String(m.at || "").slice(0, 16);
+	            const what = document.createElement("span"); what.className = "entity-kv-val";
+	            const reason = m.details && m.details.reason ? ` — ${m.details.reason}` : "";
+	            what.textContent = `${m.kind || "?"}${reason}`;
+	            line.append(at); line.append(what); box.append(line);
+	          }
+	        }
+	      } catch (e) {
+	        if (manageStale(token)) return;
+	        $("entity-overview").textContent = "overview unavailable: " + (e.message || e);
+	      }
+	    }
+	    async function loadEntitySubstrate(name, token) {
+	      try {
+	        const s = await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`);
+	        if (manageStale(token)) return;
+	        _entOut("entity-substrate-current", `Current: ${s.provider || "(unset)"} / ${s.model || "(unset)"} — source: ${s.source || "unset"}`);
+	        $("entity-substrate-provider").value = s.provider || "";
+	        $("entity-substrate-model").value = s.model || "";
+	      } catch (e) {
+	        if (manageStale(token)) return;
+	        _entOut("entity-substrate-current", "substrate unavailable: " + (e.message || e));
+	      }
+	    }
+	    async function loadEntityToolPolicy(name, token) {
+	      try {
+	        const tp = await api(`/api/gateway/entities/${encodeURIComponent(name)}/tool-policy`);
+	        if (manageStale(token)) return;
+	        const phaseIds = Object.keys(tp.phases || {});
+	        const phaseLabels = {}; for (const p of phaseIds) phaseLabels[p] = p;
+	        const tools = (tp.all_tools || []).map((t) => ({ id: t, label: t }));
+	        const grantByPhase = {};
+	        for (const p of phaseIds) grantByPhase[p] = new Set((tp.phases[p] && tp.phases[p].tools) || []);
+	        renderMatrix($("entity-manage-matrix"), phaseIds, phaseLabels, tools, grantByPhase);
+	      } catch (e) {
+	        if (manageStale(token)) return;
+	        $("entity-manage-matrix").textContent = "capabilities unavailable: " + (e.message || e);
+	      }
+	    }
+	    async function loadEntityPrompt(name, token) {
+	      try {
+	        const p = await api(`/api/gateway/entities/${encodeURIComponent(name)}/prompt`);
+	        if (manageStale(token)) return;
+	        const box = $("entity-prompt-layers");
+	        box.textContent = "";
+	        const layers = Array.isArray(p.editable) ? p.editable : Object.keys(p.layers || {});
+	        for (const key of layers) {
+	          const wrap = document.createElement("div");
+	          wrap.className = "entity-prompt-layer";
+	          const lab = document.createElement("label");
+	          const src = p.layers && p.layers[key] && p.layers[key].source;
+	          lab.textContent = key + (src === "overlay" ? " (rewritten)" : " (default)");
+	          const ta = document.createElement("textarea");
+	          ta.dataset.layer = key;
+	          ta.rows = 6;
+	          ta.value = (p.layers && p.layers[key] && p.layers[key].text) || "";
+	          ta.placeholder = (p.defaults && p.defaults[key]) || "(built-in default)";
+	          lab.append(ta);
+	          wrap.append(lab);
+	          box.append(wrap);
+	        }
+	        if (!layers.length) box.textContent = "no editable prompt layers.";
+	        // The server's safety warnings are load-bearing (e.g. "the rewrite no
+	        // longer explains the diary election syntax") — never swallowed.
+	        const warn = Array.isArray(p.warnings) ? p.warnings.filter(Boolean) : [];
+	        if (warn.length) {
+	          const note = document.createElement("div");
+	          note.className = "section-note entity-danger-title";
+	          note.textContent = warn.join(" | ");
+	          box.append(note);
+	        }
+	        const preview = $("entity-prompt-preview");
+	        if (preview) preview.textContent = p.preview || "(preview unavailable)";
+	      } catch (e) {
+	        if (manageStale(token)) return;
+	        $("entity-prompt-layers").textContent = "prompt unavailable: " + (e.message || e);
+	      }
+	    }
+	    async function loadEntityEmbedding(name, token) {
+	      try {
+	        const e = await api(`/api/gateway/entities/${encodeURIComponent(name)}/embedding`);
+	        if (manageStale(token)) return;
+	        const pin = e.pin || {};
+	        const bits = [];
+	        bits.push(`home pin: ${pin.model_id || "(unpinned)"}${pin.dimension ? ` (dim ${pin.dimension})` : ""}`);
+	        bits.push(`door's resolved embedder: ${e.resolved_embedder || "(none)"}`);
+	        if (e.match === "mismatch") bits.push("MISMATCH — the home refuses vector opens until re-embedded or the route is restored");
+	        _entOut("entity-embedding-status", bits.join(" · "));
+	        // Pre-fill the verification field with the resolved embedder so the
+	        // ceremony's confirm value is typed knowingly, not guessed from a 400.
+	        if (e.resolved_embedder && !$("entity-reembed-model").value) {
+	          $("entity-reembed-model").value = e.resolved_embedder;
+	        }
+	      } catch (err) {
+	        if (manageStale(token)) return;
+	        _entOut("entity-embedding-status", "embedding status unavailable: " + (err.message || err));
+	      }
+	    }
+	    async function loadEntityLoop(name, token) {
+	      try {
+	        const l = await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop`);
+	        if (manageStale(token)) return;
+	        const bits = [l.running ? `loop RUNNING (phase: ${l.phase || "?"})` : "loop stopped"];
+	        if (l.stop_requested) bits.push("stop pending");
+	        if (l.stopped_by) bits.push(`stopped by: ${l.stopped_by}`);
+	        if (l.note) bits.push(String(l.note));
+	        _entOut("entity-loop-status", bits.join(" — "));
+	      } catch (e) {
+	        if (manageStale(token)) return;
+	        _entOut("entity-loop-status", "loop status unavailable: " + (e.message || e));
+	      }
+	    }
+	    async function loadEntityStateLine(name, token) {
+	      try {
+	        const s = await api(`/api/gateway/entities/${encodeURIComponent(name)}/state`);
+	        if (manageStale(token)) return;
+	        const bits = [`current: ${s.state || "awake"}`];
+	        if (s.reason) bits.push(`reason: ${s.reason}`);
+	        if (s.changed_at) bits.push(`since: ${String(s.changed_at).slice(0, 19)}`);
+	        if (s.warning) bits.push(String(s.warning));
+	        _entOut("entity-state-current", bits.join(" · "));
+	      } catch (e) {
+	        if (manageStale(token)) return;
+	        _entOut("entity-state-current", "state unavailable: " + (e.message || e));
+	      }
+	    }
+	    async function setEntityState(target) {
+	      const name = state.manageName; if (!name) return;
+	      const reason = ($("entity-state-reason").value || "").trim();
+	      const dream = target === "asleep" && $("entity-state-dream").checked;
+	      if (target === "paused") {
+	        // Pause is the hard freeze: it tears down any open visit WITHOUT
+	        // reflection. Never one silent click.
+	        const go = await confirmAction({
+	          title: `Pause ${name}?`,
+	          message: "Pause is a hard freeze: any open visit is torn down WITHOUT its reflection pass (the look-back runs at the next open), and the door refuses visits until woken. Use Sleep for a graceful close.",
+	          confirmLabel: "Pause",
+	          danger: true,
+	        });
+	        if (!go) return;
+	      }
+	      try {
+	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/state`, {
+	          method: "POST", body: JSON.stringify({ state: target, reason, dream }),
+	        });
+	        const bits = [`state → ${target}${dream ? " (+dream)" : ""}`];
+	        if (r && r.closed_visit) bits.push("open visit closed");
+	        if (r && r.teardown_failed) bits.push(`TEARDOWN FAILED: ${r.teardown_failed}`);
+	        _entOut("entity-state-out", bits.join(" — "));
+	        await Promise.all([loadEntityOverview(name), loadEntityLoop(name), loadEntityStateLine(name), loadEntities()]);
+	      } catch (e) { _entOut("entity-state-out", String(e.message || e)); }
+	    }
+	    async function entityLoopStart() {
+	      const name = state.manageName; if (!name) return;
+	      const body = {};
+	      const tick = parseFloat($("entity-loop-tick").value);
+	      const ticks = parseInt($("entity-loop-ticks").value, 10);
+	      const rest = parseFloat($("entity-loop-rest").value);
+	      if (!Number.isNaN(tick)) body.tick_seconds = tick;
+	      if (!Number.isNaN(ticks)) body.ticks_per_day = ticks;
+	      if (!Number.isNaN(rest)) body.rest_minutes = rest;
+	      const go = await confirmAction({
+	        title: `Start ${name}'s own time?`,
+	        message: `The loop runs the entity's own cognition unattended on its substrate — this spends real tokens until stopped. Tick ${body.tick_seconds ?? 20}s, ${body.ticks_per_day ?? 8} ticks per day window, rest ${body.rest_minutes ?? 30}min.`,
+	        confirmLabel: "Start loop",
+	      });
+	      if (!go) return;
+	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/start`, { method: "POST", body: JSON.stringify(body) }); _entOut("entity-loop-out", "loop start requested."); await loadEntityLoop(name); }
+	      catch (e) { _entOut("entity-loop-out", String(e.message || e)); }
+	    }
+	    async function entityLoopStop() {
+	      const name = state.manageName; if (!name) return;
+	      const reason = ($("entity-state-reason").value || "").trim();
+	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/stop`, { method: "POST", body: JSON.stringify({ mode: "graceful", reason }) }); _entOut("entity-loop-out", "graceful stop requested — honored at the loop's next boundary."); await loadEntityLoop(name); }
+	      catch (e) { _entOut("entity-loop-out", String(e.message || e)); }
+	    }
+	    async function entityLoopFreeze() {
+	      const name = state.manageName; if (!name) return;
+	      const reason = ($("entity-state-reason").value || "").trim();
+	      const go = await confirmAction({
+	        title: `FREEZE ${name}?`,
+	        message: "Emergency hibernation: the loop process is killed NOW (no ceremony, no further writes), any open visit closes without reflection, and the entity is set to paused — the door refuses visits until an admin wakes them. For hard failures and imminent threats only.",
+	        confirmLabel: "Freeze",
+	        danger: true,
+	      });
+	      if (!go) return;
+	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/stop`, { method: "POST", body: JSON.stringify({ mode: "freeze", reason: reason || "console emergency freeze" }) }); _entOut("entity-loop-out", "FROZEN — entity paused; wake requires an admin."); await Promise.all([loadEntityLoop(name), loadEntityStateLine(name), loadEntities()]); }
+	      catch (e) { _entOut("entity-loop-out", String(e.message || e)); }
+	    }
+	    async function entitySubstrateSave() {
+	      const name = state.manageName; if (!name) return;
+	      const provider = ($("entity-substrate-provider").value || "").trim();
+	      const model = ($("entity-substrate-model").value || "").trim();
+	      if (!provider || !model) { _entOut("entity-substrate-out", "provider and model are both required."); return; }
+	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`, { method: "PUT", body: JSON.stringify({ provider, model }) }); _entOut("entity-substrate-out", "saved."); await loadEntitySubstrate(name); }
+	      catch (e) { _entOut("entity-substrate-out", String(e.message || e)); }
+	    }
+	    async function entityToolsSave() {
+	      const name = state.manageName; if (!name) return;
+	      const policy = readMatrix($("entity-manage-matrix"));
+	      if (!Object.keys(policy).length) { _entOut("entity-tools-out", "no changes to save."); return; }
+	      // Clearing every box in a phase is ambiguous: reset-to-default (null →
+	      // the server deletes the phase entry, the evolving framework grant
+	      // applies) vs deny-all (explicit []). The checkbox picks; the confirm
+	      // names the consequence so the operator never watches boxes snap back
+	      // checked without having chosen that.
+	      const cleared = Object.keys(policy).filter((p) => policy[p] === null);
+	      if (cleared.length) {
+	        const denyAll = $("entity-tools-denyall").checked;
+	        if (denyAll) for (const p of cleared) policy[p] = [];
+	        const go = await confirmAction({
+	          title: denyAll ? "Deny ALL tools in cleared phases?" : "Reset cleared phases to defaults?",
+	          message: denyAll
+	            ? `Phases ${cleared.join(", ")} will carry an EXPLICIT EMPTY grant — the entity has no tools at all in ${cleared.length === 1 ? "that phase" : "those phases"} until you change it.`
+	            : `Phases with every box cleared (${cleared.join(", ")}) are RESET to the framework's evolving default grant — this does NOT deny all tools. Tick the deny-all checkbox if you meant an empty grant.`,
+	          confirmLabel: denyAll ? "Deny all" : "Reset to defaults",
+	          danger: denyAll,
+	        });
+	        if (!go) { _entOut("entity-tools-out", "not saved."); return; }
+	      }
+	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/tool-policy`, { method: "PUT", body: JSON.stringify({ policy }) }); _entOut("entity-tools-out", "capabilities saved."); await loadEntityToolPolicy(name); }
+	      catch (e) { _entOut("entity-tools-out", String(e.message || e)); }
+	    }
+	    async function entityPromptSave() {
+	      const name = state.manageName; if (!name) return;
+	      const overlay = {};
+	      for (const ta of $("entity-prompt-layers").querySelectorAll("textarea")) {
+	        overlay[ta.dataset.layer] = ta.value || "";
+	      }
+	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/prompt`, { method: "PUT", body: JSON.stringify({ overlay }) }); _entOut("entity-prompt-out", "prompt saved."); await loadEntityPrompt(name); }
+	      catch (e) { _entOut("entity-prompt-out", String(e.message || e)); }
+	    }
+	    async function entityReembed() {
+	      const name = state.manageName; if (!name) return;
+	      const embedding_model = ($("entity-reembed-model").value || "").trim();
+	      const reason = ($("entity-reembed-reason").value || "").trim();
+	      if (!embedding_model) { _entOut("entity-reembed-out", "embedding model (verification) is required — it must match the door's resolved embedder."); return; }
+	      const go = await confirmAction({ title: "Re-embed " + name + "?", message: "This re-derives every vector in the home's semantic index against the resolved embedder (atomic swap under the maintenance lease). The act is journaled and host-marked.", confirmLabel: "Re-embed", danger: true });
+	      if (!go) return;
+	      try { const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/reembed`, { method: "POST", body: JSON.stringify({ embedding_model, reason }) }); _entOut("entity-reembed-out", "re-embed done: " + JSON.stringify(r).slice(0, 200)); }
+	      catch (e) { _entOut("entity-reembed-out", String(e.message || e)); }
+	    }
+	    async function entityVerify() {
+	      const name = state.manageName; if (!name) return;
+	      try { const v = await api(`/api/gateway/entities/${encodeURIComponent(name)}/verify`); _entOut("entity-verify-out", v.ok || v.verified ? "chain verified ✓" : ("verify: " + JSON.stringify(v).slice(0, 200))); }
+	      catch (e) { _entOut("entity-verify-out", String(e.message || e)); }
+	    }
+
+	    // ---- Talk: hosted chat visit (open -> turns -> close+reflect) ----
+	    // The user-level interaction door (chat routes are deliberately NOT
+	    // admin-gated): the same hosted ChatSession the CLI drives. One live
+	    // session per home server-side; the console holds one chat_id at a time.
+	    state.chatId = "";
+	    state.chatEntity = "";
+	    function chatLine(who, text) {
+	      const box = $("entity-chat-transcript");
+	      const line = document.createElement("div");
+	      line.className = "entity-chat-line" + (who === "you" ? " entity-chat-you" : "");
+	      const tag = document.createElement("span");
+	      tag.className = "entity-kv-key";
+	      tag.textContent = who;
+	      const body = document.createElement("span");
+	      body.className = "entity-kv-val";
+	      body.textContent = text;
+	      line.append(tag); line.append(body); box.append(line);
+	      try { box.scrollTop = box.scrollHeight; } catch {}
+	    }
+	    function chatUiState() {
+	      const open = Boolean(state.chatId);
+	      $("entity-chat-open").classList.toggle("hidden", open);
+	      $("entity-chat-close").classList.toggle("hidden", !open);
+	      $("entity-chat-send").disabled = !open;
+	    }
+	    async function entityChatOpen() {
+	      const name = state.manageName; if (!name) return;
+	      $("entity-chat-open").disabled = true;
+	      _entOut("entity-chat-status", "opening the visit (prelude + memory)…");
+	      try {
+	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/open`, { method: "POST", body: "{}" });
+	        state.chatId = r.chat_id || "";
+	        state.chatEntity = name;
+	        $("entity-chat-transcript").textContent = "";
+	        const bits = [`visit open (${r.chat_id})`];
+	        if (r.yielded_loop) bits.push("own-time loop yielded for this visit");
+	        if (Array.isArray(r.warnings) && r.warnings.length) bits.push(r.warnings.join(" | "));
+	        _entOut("entity-chat-status", bits.join(" — "));
+	        if (r.salvage && r.salvage.reply) chatLine(name, `(salvaged look-back) ${r.salvage.reply}`);
+	      } catch (e) {
+	        _entOut("entity-chat-status", String(e.message || e));
+	      } finally {
+	        $("entity-chat-open").disabled = false;
+	        chatUiState();
+	      }
+	    }
+	    async function entityChatSend() {
+	      const text = ($("entity-chat-input").value || "").trim();
+	      if (!text || !state.chatId) return;
+	      const name = state.chatEntity || state.manageName;
+	      $("entity-chat-send").disabled = true;
+	      chatLine("you", text);
+	      $("entity-chat-input").value = "";
+	      _entOut("entity-chat-status", "thinking…");
+	      try {
+	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(state.chatId)}/turn`, {
+	          method: "POST", body: JSON.stringify({ text }),
+	        });
+	        chatLine(name, String(r.reply || ""));
+	        const bits = [];
+	        if (Array.isArray(r.tools_ran) && r.tools_ran.length) bits.push(`tools: ${r.tools_ran.join(", ")}`);
+	        if (typeof r.memories_in_context === "number") bits.push(`${r.memories_in_context} memories in context`);
+	        if (Array.isArray(r.diary_entries) && r.diary_entries.length) bits.push(`${r.diary_entries.length} diary entr${r.diary_entries.length === 1 ? "y" : "ies"}`);
+	        _entOut("entity-chat-status", bits.join(" · ") || "");
+	      } catch (e) {
+	        _entOut("entity-chat-status", String(e.message || e));
+	      } finally {
+	        $("entity-chat-send").disabled = !state.chatId;
+	      }
+	    }
+	    async function entityChatClose() {
+	      if (!state.chatId) return;
+	      const name = state.chatEntity || state.manageName;
+	      $("entity-chat-close").disabled = true;
+	      _entOut("entity-chat-status", "closing (reflection pass)…");
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(state.chatId)}/close`, { method: "POST", body: JSON.stringify({ reflect: true }) });
+	        _entOut("entity-chat-status", "visit closed — reflection ran, the loop (if yielded) wakes.");
+	      } catch (e) {
+	        _entOut("entity-chat-status", String(e.message || e));
+	      } finally {
+	        state.chatId = "";
+	        state.chatEntity = "";
+	        $("entity-chat-close").disabled = false;
+	        chatUiState();
+	      }
+	    }
+
+	    // ---- Runs (runtime domain: list / inspect / cancel / steer) ----
+	    // Wires the console over runtime's existing verbs (list_runs + the
+	    // /commands door: cancel, inject_guidance/steer). Admin-gated section.
+	    const _RUN_TERMINAL = new Set(["completed", "failed", "cancelled"]);
+	    async function loadRuns() {
+	      const body = $("runs-table");
+	      if (!body) return;
+	      try {
+	        const status = ($("runs-status").value || "").trim();
+	        const rootOnly = $("runs-root-only").checked;
+	        const q = new URLSearchParams({ limit: "100", include_ledger_len: "false", root_only: String(rootOnly) });
+	        if (status) q.set("status", status);
+        const data = await api("/api/gateway/runs?" + q.toString());
+        const rows = Array.isArray(data.items) ? data.items : (Array.isArray(data.runs) ? data.runs : []);
+	        body.textContent = "";
+	        for (const r of rows) {
+	          const tr = document.createElement("tr");
+	          const st = String(r.status || "");
+	          for (const cell of [r.run_id || "", r.workflow_id || "", st, r.current_node || "", String(r.updated_at || "").slice(0, 19)]) {
+	            const td = document.createElement("td");
+	            td.textContent = String(cell);
+	            tr.append(td);
+	          }
+	          const actions = document.createElement("td");
+	          actions.className = "actions";
+	          const inspect = document.createElement("button");
+	          inspect.className = "secondary"; inspect.textContent = "Inspect";
+	          inspect.onclick = () => inspectRun(r.run_id);
+	          actions.append(inspect);
+	          if (!_RUN_TERMINAL.has(st)) {
+	            const steer = document.createElement("button");
+	            steer.className = "secondary"; steer.textContent = "Steer";
+	            steer.onclick = () => steerRun(r.run_id);
+	            const cancel = document.createElement("button");
+	            cancel.className = "danger"; cancel.textContent = "Cancel";
+	            cancel.onclick = () => cancelRun(r.run_id);
+	            actions.append(steer, cancel);
+	          }
+	          tr.append(actions);
+	          body.append(tr);
+	        }
+	        if (!rows.length) {
+	          const tr = document.createElement("tr");
+	          const td = document.createElement("td");
+	          td.colSpan = 6; td.className = "section-note"; td.textContent = "No runs match.";
+	          tr.append(td); body.append(tr);
+	        }
+	        $("runs-message").textContent = "";
+	        $("runs-message").className = "message";
+	      } catch (e) {
+	        $("runs-message").textContent = String(e.message || e);
+	        $("runs-message").className = "message error";
+	      }
+	    }
+	    async function inspectRun(runId) {
+	      const box = $("run-inspect");
+	      box.textContent = "";
+	      try {
+	        const r = await api(`/api/gateway/runs/${encodeURIComponent(runId)}`);
+	        const rows = [
+	          ["Run", r.run_id || runId], ["Workflow", r.workflow_id || ""], ["Status", r.status || ""],
+	          ["Node", r.current_node || ""], ["Session", r.session_id || ""], ["Actor", r.actor_id || ""],
+	          ["Waiting", r.waiting ? JSON.stringify(r.waiting).slice(0, 160) : ""], ["Error", r.error || ""],
+	          ["Created", String(r.created_at || "").slice(0, 19)], ["Updated", String(r.updated_at || "").slice(0, 19)],
+	        ];
+	        for (const [k, v] of rows) {
+	          if (!v) continue;
+	          const line = document.createElement("div"); line.className = "entity-kv";
+	          const key = document.createElement("span"); key.className = "entity-kv-key"; key.textContent = k;
+	          const val = document.createElement("span"); val.className = "entity-kv-val"; val.textContent = String(v);
+	          line.append(key); line.append(val); box.append(line);
+	        }
+	      } catch (e) { box.textContent = "inspect failed: " + (e.message || e); }
+	    }
+	    // Client-supplied idempotency key for the /commands door (UUID preferred).
+	    function cmdId() {
+	      try { if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID(); } catch {}
+	      return "cmd-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+	    }
+	    async function cancelRun(runId) {
+	      const go = await confirmAction({ title: "Cancel run?", message: `Cancel run ${runId}? Any in-flight work stops at the next tick.`, confirmLabel: "Cancel run", danger: true });
+	      if (!go) return;
+	      try {
+	        await api("/api/gateway/commands", { method: "POST", body: JSON.stringify({ command_id: cmdId(), type: "cancel", run_id: runId }) });
+	        $("runs-message").textContent = `cancel requested for ${runId}.`;
+	        $("runs-message").className = "message";
+	        await loadRuns();
+	      } catch (e) { $("runs-message").textContent = String(e.message || e); $("runs-message").className = "message error"; }
+	    }
+	    async function steerRun(runId) {
+	      const guidance = (typeof window !== "undefined" && window.prompt) ? window.prompt("Guidance to inject into the running agent:") : "";
+	      if (!guidance || !guidance.trim()) return;
+	      try {
+	        await api("/api/gateway/commands", { method: "POST", body: JSON.stringify({ command_id: cmdId(), type: "inject_guidance", run_id: runId, payload: { guidance: guidance.trim() } }) });
+	        $("runs-message").textContent = `steer sent to ${runId}.`;
+	        $("runs-message").className = "message";
+	      } catch (e) { $("runs-message").textContent = String(e.message || e); $("runs-message").className = "message error"; }
+	    }
+	    function csrf() {
+	      return document.cookie.split(";").map((p) => p.trim()).find((p) => p.startsWith("abstractgateway_csrf="))?.slice("abstractgateway_csrf=".length) || "";
+	    }
     async function api(path, options = {}) {
       const headers = new Headers(options.headers || {});
       headers.set("Accept", "application/json");
@@ -1701,6 +2692,9 @@ def gateway_console_html() -> str:
 	      $("login-source").textContent = source;
 	    }
     function confirmAction({ title, message, confirmLabel = "Confirm", danger = false }) {
+      // A second confirm opened while one is pending must not orphan the first
+      // promise (its await would hang forever) — resolve the stale one false.
+      if (state.confirmResolve) { state.confirmResolve(false); state.confirmResolve = null; }
       $("confirm-title").textContent = title;
       $("confirm-message").textContent = message;
       $("confirm-ok").textContent = confirmLabel;
@@ -2798,6 +3792,8 @@ def gateway_console_html() -> str:
 	      `;
 	      $("users-section").classList.toggle("hidden", !p.admin);
 	      $("runtime-reservations-section").classList.toggle("hidden", !p.admin);
+	      $("runs-section").classList.toggle("hidden", !p.admin);
+	      applyEntityAdminGating();
       $("defaults-scope").textContent = p.admin
         ? "Editing as admin changes the Gateway multimodal capability defaults. Users inherit these unless they set their own runtime defaults."
         : "Editing here changes your runtime multimodal capability defaults. Unset routes inherit the Gateway defaults.";
@@ -3700,6 +4696,7 @@ def gateway_console_html() -> str:
           $("reservations-message").textContent = String(err.message || err);
           $("reservations-message").className = "message error";
         }
+        loadRuns();
       }
     }
     async function login() {
@@ -3899,6 +4896,41 @@ def gateway_console_html() -> str:
 	    $("tab-button-providers").onclick = () => setActiveTab("providers");
 	    $("tab-button-defaults").onclick = () => setActiveTab("defaults");
 	    $("tab-button-sandbox").onclick = () => setActiveTab("sandbox");
+	    $("tab-button-entities").onclick = () => { setActiveTab("entities"); loadEntities(); };
+	    $("entity-create").onclick = createEntity;
+	    $("entity-template").onchange = renderEntityTemplateDesc;
+	    $("entities-refresh").onclick = () => {
+	      // Explicit refresh honors the click fully: templates + matrix spec are
+	      // re-fetched too (a new operator template or inventory change lands
+	      // without a page reload).
+	      state.entityTemplates = [];
+	      state.entityMatrixSpec = null;
+	      return loadEntities();
+	    };
+	    $("entity-manage-close").onclick = closeEntityManage;
+	    for (const sub of ENTITY_SUBTABS) {
+	      $(`entity-subtab-${sub}`).onclick = () => setEntitySubtab(sub);
+	    }
+	    $("entity-state-awake").onclick = () => setEntityState("awake");
+	    $("entity-state-asleep").onclick = () => setEntityState("asleep");
+	    $("entity-state-paused").onclick = () => setEntityState("paused");
+	    $("entity-loop-start").onclick = entityLoopStart;
+	    $("entity-loop-stop").onclick = entityLoopStop;
+	    $("entity-loop-freeze").onclick = entityLoopFreeze;
+	    $("entity-substrate-save").onclick = entitySubstrateSave;
+	    $("entity-tools-save").onclick = entityToolsSave;
+	    $("entity-prompt-save").onclick = entityPromptSave;
+	    $("entity-reembed").onclick = entityReembed;
+	    $("entity-verify").onclick = entityVerify;
+	    $("runs-refresh").onclick = loadRuns;
+	    $("runs-status").onchange = loadRuns;
+	    $("runs-root-only").onchange = loadRuns;
+	    $("entity-chat-open").onclick = entityChatOpen;
+	    $("entity-chat-send").onclick = entityChatSend;
+	    $("entity-chat-close").onclick = entityChatClose;
+	    $("entity-chat-input").onkeydown = (ev) => {
+	      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); entityChatSend(); }
+	    };
 	    $("create-user").onclick = createUser;
 	    $("refresh-catalog").onclick = async () => {
 	      state.providerModels.clear();
@@ -3951,6 +4983,7 @@ def gateway_console_html() -> str:
 	    applyAppearanceSettings();
 	    state.activeTab = readStringSetting(ACTIVE_TAB_KEY, "providers");
 	    setActiveTab(state.activeTab);
+	    if (state.activeTab === "entities") loadEntities();
 	    initEndpointProfileFormOptions();
 	    setEndpointModelOptions([], []);
 	    refresh();

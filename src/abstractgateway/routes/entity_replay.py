@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ..entities import EntityRegistry
@@ -30,6 +30,12 @@ from ..entity_replay import merged_replay, validate_families
 from ..service import get_gateway_service
 
 router = APIRouter(prefix="/gateway/entities", tags=["entities"])
+
+# Max envelopes per off-loop collection pass on the live tail (H7b). Each
+# chunk borrows a worker thread briefly and hands control back to the event
+# loop between chunks — a whole-life backlog can never pin the loop. Module
+# constant so tests can narrow it.
+_STREAM_CHUNK = 200
 
 
 def _registry() -> EntityRegistry:
@@ -49,6 +55,15 @@ def _home_or_404(registry: EntityRegistry, name: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+async def _home_or_404_offloop(registry: EntityRegistry, name: str):
+    """First-touch home open runs OFF the event loop (adversary F5): a cold
+    open constructs three SQLite stores and resolves the registry embedder,
+    which can probe an HTTP route or load a local model — seconds of loop
+    blockage at connection setup, the same starvation class as c975. The
+    registry's _open_lock makes the threaded call safe."""
+    return await asyncio.to_thread(_home_or_404, registry, name)
+
+
 @router.get("/{name}/replay")
 async def replay_entity_stream(
     name: str,
@@ -59,7 +74,7 @@ async def replay_entity_stream(
 ) -> StreamingResponse:
     """Bounded history read, one envelope per NDJSON line, strict seq order."""
     registry = _registry()
-    home = _home_or_404(registry, name)
+    home = await _home_or_404_offloop(registry, name)
     try:
         family_list = validate_families(families)
     except ValueError as e:
@@ -100,7 +115,7 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
     - Honest absence is 404: no payload_ref, or the artifact is gone.
     """
     registry = _registry()
-    home = _home_or_404(registry, name)
+    home = await _home_or_404_offloop(registry, name)
 
     from abstractmemory.records import resolve_digest_assertion
     from abstractruntime.storage.artifacts import FileArtifactStore
@@ -237,7 +252,7 @@ async def operator_read_diary_entry(
     Reads disclose; failed lookups do not — only disclosures are marked.
     """
     registry = _registry()
-    home = _home_or_404(registry, name)
+    home = await _home_or_404_offloop(registry, name)
 
     entry = home.diary.get_entry(str(entry_id or "").strip())
     if entry is None:
@@ -266,8 +281,58 @@ async def operator_read_diary_entry(
     }
 
 
+def _collect_replay_chunk(
+    home: Any,
+    entities_dir: Any,
+    slug: str,
+    cursor: float,
+    family_list: Optional[List[str]],
+    enrich: bool,
+    limit: int,
+) -> Tuple[List[Dict[str, Any]], float, bool]:
+    """Pull up to `limit` non-host envelopes strictly after `cursor`.
+
+    H7b (starvation incident c975/c991): this runs on a WORKER THREAD via
+    asyncio.to_thread — memory's export_replay is synchronous BY CONTRACT
+    (c995: "consumers must not iterate this on an event loop"). Cross-thread
+    use of the home's stores is safe by THEIR contract (0013:
+    check_same_thread=False + one internal RLock around all cursor use).
+    Each call opens a fresh merged_replay AT THE CURSOR and reads one
+    bounded chunk, so poll re-entry is a cursored continuation, never a
+    full-journal walk on the loop. Returns (envelopes, new_cursor,
+    exhausted)."""
+    out: List[Dict[str, Any]] = []
+    pos = float(cursor)
+    exhausted = True
+    it = merged_replay(
+        home,
+        entities_dir=entities_dir,
+        slug=slug,
+        since_seq=pos,
+        until_seq=None,
+        families=family_list,
+        enrich=bool(enrich),
+    )
+    try:
+        for envelope in it:
+            if str(envelope.get("family") or "") == "host":
+                continue  # the host lane owns marker delivery
+            seq = float(envelope.get("seq") or 0.0)
+            out.append(envelope)
+            pos = max(pos, seq)
+            if len(out) >= int(limit):
+                exhausted = False
+                break
+    finally:
+        close = getattr(it, "close", None)
+        if callable(close):
+            close()
+    return out, pos, exhausted
+
+
 @router.get("/{name}/replay/stream")
 async def stream_entity_replay(
+    request: Request,
     name: str,
     since_seq: float = Query(0.0, ge=0.0, description="Exclusive resume cursor."),
     families: Optional[str] = Query(None, description="Comma-separated family filter."),
@@ -277,80 +342,122 @@ async def stream_entity_replay(
     last_event_id: Optional[str] = Header(None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     """Live tail as SSE. Replay = the same read that doesn't stop: each poll
-    continues from the cursor; `id:` carries the seq so a reconnecting
-    client's `Last-Event-ID` (which wins over `since_seq`) resumes exactly.
-    A life has no terminal state — the client closes the stream."""
+    continues from the cursor; `id:` carries the resume cursor so a
+    reconnecting client's `Last-Event-ID` (which wins over `since_seq`)
+    resumes exactly. A life has no terminal state — the client closes.
+
+    COMPOSITE CURSOR (adversary F4, shape chosen by observer c1040): the id
+    field is `<journal_seq>|<marker_line>` — journal resumes strictly after
+    seq; host markers redeliver where their append-order FILE LINE exceeds
+    the marker cursor. A low-SEQ marker written during a disconnect has a
+    HIGH line (the file is append-only), so it is never lost — the loss the
+    old `seq <= cursor` pre-marking created. Plain-float ids (old clients /
+    bounded replays) stay accepted: the marker half is optional, and absent
+    means the legacy seq-based catch-up.
+
+    H7b LOOP DISCIPLINE (the c975 starvation fix, observer's repro): the
+    journal walk happens OFF the event loop in bounded chunks
+    (`_collect_replay_chunk` via asyncio.to_thread); the loop regains
+    control between chunks; abandoned clients are detected between chunks
+    (`request.is_disconnected`) so a dead tail stops burning instead of
+    producing the whole backlog into a dead socket's buffer."""
     registry = _registry()
-    home = _home_or_404(registry, name)
+    home = await _home_or_404_offloop(registry, name)
     try:
         family_list = validate_families(families)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     cursor = float(since_seq)
+    marker_cursor: Optional[int] = None  # None = derive legacy catch-up from seq
     if last_event_id is not None and str(last_event_id).strip():
+        raw_id = str(last_event_id).strip()
+        seq_half, sep, marker_half = raw_id.partition("|")
         try:
-            cursor = float(str(last_event_id).strip())
+            cursor = float(seq_half)
+            if sep:
+                marker_cursor = int(marker_half)
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Last-Event-ID is not a seq cursor: {last_event_id!r}")
+            raise HTTPException(status_code=400, detail=f"Last-Event-ID is not a replay cursor: {last_event_id!r}")
 
     from ..entity_replay import read_host_markers
 
     async def _gen():
         pos = cursor
-        # Host markers ride a SEPARATE cursor (their own count), not the seq
-        # cursor: a marker's fractional seq anchors to a JOURNAL base that
-        # the tail may already have passed (e.g. a summon marker at its
-        # historical as_of, or a marker written just after journal events
-        # landed). Filtering those by `seq <= pos` silently dropped them
-        # from the LIVE tail while the bounded replay showed them — the
-        # maintainer's "I have to refresh to see it evolve" (adversarial
-        # realtime review, 2026-07-08). Clients order by seq; dedup is
-        # seq-keyed client-side.
+        # Host markers ride a SEPARATE cursor (append-order file line), not
+        # the seq cursor: a marker's fractional seq anchors to a JOURNAL base
+        # the tail may already have passed (summon markers at historical
+        # as_of). Filtering those by `seq <= pos` dropped them from the LIVE
+        # tail while the bounded replay showed them (2026-07-08), and
+        # pre-marking on reconnect LOST low-seq markers written during the
+        # disconnect (adversary F4). The line cursor is delivery-order truth;
+        # clients order by seq and dedup seq-keyed (redelivery is sanctioned).
         include_host = "host" in (family_list if family_list is not None else ["host"])
-        # Delivered-set by seq (unique per marker: base + n/1000 under the
-        # write lock). The list from read_host_markers is seq-SORTED, so
-        # positional cursors would shift when a late marker lands with a
-        # small seq — exactly the case this lane exists for.
-        delivered: set = set()
+        marker_floor = 0  # deliver markers with _line > marker_floor (contiguous prefix)
+        delivered_lines: set = set()
         if include_host:
-            # Catch-up semantics unchanged: markers at seq <= the resume
-            # cursor are the already-consumed past.
-            for m in read_host_markers(registry.entities_dir, home.manifest.slug):
-                if float(m.get("seq") or 0.0) <= pos:
-                    delivered.add(float(m.get("seq") or 0.0))
+            if marker_cursor is not None:
+                marker_floor = int(marker_cursor)
+            else:
+                # Legacy/fresh open: markers at seq <= the resume cursor are
+                # the already-consumed past (unchanged catch-up semantics).
+                # Pre-populate the delivered-LINES set — never jump the floor
+                # itself, or a high-seq marker sitting at a LOWER file line
+                # than some consumed marker would be skipped.
+                for m in await asyncio.to_thread(
+                    read_host_markers, registry.entities_dir, home.manifest.slug, include_lines=True
+                ):
+                    if float(m.get("seq") or 0.0) <= pos:
+                        delivered_lines.add(int(m.get("_line") or 0))
+                while (marker_floor + 1) in delivered_lines:
+                    marker_floor += 1
         last_emit = asyncio.get_event_loop().time()
         while True:
+            if await request.is_disconnected():
+                return
             emitted = False
-            for envelope in merged_replay(
-                home,
-                entities_dir=registry.entities_dir,
-                slug=home.manifest.slug,
-                since_seq=pos,
-                until_seq=None,
-                families=family_list,
-                enrich=bool(enrich),
-            ):
-                if str(envelope.get("family") or "") == "host":
-                    continue  # the host lane below owns marker delivery
-                seq = float(envelope.get("seq") or 0.0)
-                data = json.dumps(envelope, ensure_ascii=False)
-                yield f"id: {seq}\n".encode("utf-8")
-                yield b"event: replay\n"
-                yield f"data: {data}\n\n".encode("utf-8")
-                pos = max(pos, seq)
-                emitted = True
-                last_emit = asyncio.get_event_loop().time()
-            if include_host:
-                for envelope in read_host_markers(registry.entities_dir, home.manifest.slug):
-                    seq = float(envelope.get("seq") or 0.0)
-                    if seq in delivered:
-                        continue
-                    delivered.add(seq)
+            # Drain the journal backlog in bounded off-loop chunks; control
+            # returns to the event loop between chunks by construction.
+            while True:
+                envs, pos, exhausted = await asyncio.to_thread(
+                    _collect_replay_chunk,
+                    home,
+                    registry.entities_dir,
+                    home.manifest.slug,
+                    pos,
+                    family_list,
+                    bool(enrich),
+                    _STREAM_CHUNK,
+                )
+                for envelope in envs:
                     data = json.dumps(envelope, ensure_ascii=False)
-                    # id: stays monotonic (the reconnect cursor must never
-                    # move backwards past journal events already emitted).
-                    yield f"id: {max(pos, seq)}\n".encode("utf-8")
+                    yield f"id: {pos}|{marker_floor}\n".encode("utf-8")
+                    yield b"event: replay\n"
+                    yield f"data: {data}\n\n".encode("utf-8")
+                    emitted = True
+                    last_emit = asyncio.get_event_loop().time()
+                if exhausted:
+                    break
+                if await request.is_disconnected():
+                    return  # dead tail mid-backlog: stop, don't finish the walk
+            if include_host:
+                for envelope in await asyncio.to_thread(
+                    read_host_markers, registry.entities_dir, home.manifest.slug, include_lines=True
+                ):
+                    line = int(envelope.get("_line") or 0)
+                    if line <= marker_floor or line in delivered_lines:
+                        continue
+                    delivered_lines.add(line)
+                    wire = {k: v for k, v in envelope.items() if k != "_line"}
+                    seq = float(wire.get("seq") or 0.0)
+                    data = json.dumps(wire, ensure_ascii=False)
+                    # The floor only advances past CONTIGUOUS delivered lines
+                    # so a reconnect can never skip an interleaved line.
+                    while (marker_floor + 1) in delivered_lines:
+                        marker_floor += 1
+                    # id: seq half stays monotonic (never backwards past
+                    # journal events already emitted).
+                    yield f"id: {max(pos, seq)}|{marker_floor}\n".encode("utf-8")
                     yield b"event: replay\n"
                     yield f"data: {data}\n\n".encode("utf-8")
                     emitted = True

@@ -52,6 +52,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .config import entity_iterations_ceiling
+
 __all__ = ["EntityVisitHost", "VisitRefused", "DEFAULT_VISIT_IDLE_S"]
 
 DEFAULT_VISIT_IDLE_S = 15 * 60
@@ -80,6 +82,15 @@ _CLOSE_MAX_TICKS = 250
 # flag. `_visit.workflow_arm` stays recorded as PROVENANCE; it no longer
 # selects a graph.
 ARM_REACT = "react"
+
+# The close-reflection segment of build_visit_workflow (runtime's frozen
+# spec): these node ids are the ONLY window where a workplace visit run may
+# narrow-widen to entity-reflection authority for the reflection acts 0007
+# names. Door-signed into the stamp so nothing the run writes can add to the
+# set (config-object close-reflection ruling, option (a)). Kept beside the
+# workflow's own node ids; a spec rename must sync here (the node ids are a
+# cross-package contract, same class as the diary_type clamp).
+_VISIT_REFLECTION_NODES = ("REFLECT", "APPLY")
 
 
 class VisitRefused(Exception):
@@ -112,6 +123,7 @@ _ENTITY_TOOL_DECLARATIONS: Dict[str, Dict[str, Any]] = {
     "diary_list": {
         "description": "List your recent diary entries (ids, kinds, gists) from your own book.",
         "parameters": {},
+        "act_only": True,  # gists (private included) re-run fresh at send time; only the act-frame rests (e-s 233 R3)
     },
     "diary_read": {
         "description": "Read one of your own diary entries verbatim by its entry id.",
@@ -154,6 +166,26 @@ def _entity_tool_definitions(granted: Any, tool_definition_cls: Any) -> List[Any
             kwargs["act_only"] = True
         out.append(tool_definition_cls(**kwargs))
     return out
+
+
+def _seed_run_vars(er: Any) -> Dict[str, Any]:
+    """Initial vars for a visit run: full runtime-default `_limits` plus the
+    operator ITERATIONS CEILING (laurent c786; seam (b) c805/c809 — the
+    gateway serves `_limits.max_iterations_ceiling`, Runtime.start() is the
+    one enforcement site, refuse-at-start). Defaults are merged FIRST so
+    injecting the ceiling never strips the normal `_limits` seeding
+    (Runtime.start skips its default fill when `_limits` is present).
+    Ceiling disabled (env 0/off) = vars stay empty — absent field is the
+    honest no-enforcement shape; the runtime never invents a value."""
+    ceiling = entity_iterations_ceiling()
+    if ceiling is None:
+        return {}
+    try:
+        limits: Dict[str, Any] = dict(er.runtime.config.to_limits_dict())
+    except Exception:  # noqa: BLE001 - older runtimes; partial _limits is a supported shape
+        limits = {}
+    limits["max_iterations_ceiling"] = int(ceiling)
+    return {"_limits": limits}
 
 
 class EntityVisitHost:
@@ -359,6 +391,13 @@ class EntityVisitHost:
             participants=stamp_participants,
             budget_profile=budget_profile,
             visit_id=visit_id,
+            # A visit is a WORKPLACE session, but its close-reflection segment
+            # (REFLECT/APPLY in build_visit_workflow) is the entity's OWN
+            # reflection — the door signs those node ids so the gate may
+            # narrow-widen workplace->entity-reflection for the reflection
+            # acts alone (config-object close-reflection ruling, option (a)).
+            phase="visit",
+            reflection_nodes=list(_VISIT_REFLECTION_NODES),
         )
 
         try:
@@ -374,7 +413,12 @@ class EntityVisitHost:
                 visit_id=visit_id,
                 model_info={"provider": str(pre["provider"]), "model": str(pre["model"])},
             )
-            run_id = er.runtime.start(workflow=wf, vars={}, actor_id="gateway", session_id=session)
+            run_id = er.runtime.start(
+                workflow=wf,
+                vars=_seed_run_vars(er),
+                actor_id="gateway",
+                session_id=session,
+            )
             final = finalize_summon_stamp(provisional, data_dir=registry.data_dir, run_id=run_id)
             run = er.run_store.load(run_id)
             rt_ns = run.vars.get("_runtime")
@@ -547,6 +591,13 @@ class EntityVisitHost:
         return out
 
     # ---------------------------------------------------------------- status
+    def is_visit_run(self, run_id: str) -> bool:
+        """True when THIS process has served `run_id` as a durable visit (the
+        spec cache). Restarts empty the cache, so False means "not known
+        here", never "definitely not a visit" — callers must stay honest
+        about that (adversary F2: the steer door's rite refusal)."""
+        return str(run_id) in self._specs
+
     def status(self, name: str) -> Dict[str, Any]:
         registry = self._registry
         manifest = registry.manifest_for(name)
@@ -623,7 +674,7 @@ class EntityVisitHost:
                 "entity visits are react agents (maintainer ruling) but abstractagent "
                 f"is not importable: {e} — install abstractagent",
             )
-        from abstractruntime.identity.tool_policy import resolve_tool_grant
+        from abstractruntime import resolve_tool_grant
         from abstractruntime.identity.visit_workflow import HARVEST_NODE, ReactMiddle
 
         grant = resolve_tool_grant(Path(er.home.home_dir), "visit")
@@ -634,7 +685,19 @@ class EntityVisitHost:
             workflow_id="entity-visit-react",
             provider=str(info.get("provider") or "") or None,
             model=str(info.get("model") or "") or None,
-            allowed_tools=[d.name for d in tool_defs],
+            # Pass the RAW grant, not the pre-filtered declarable list (agent
+            # c800 / agency c801, works-or-loud): logic.tools is the declarable
+            # set (only tools the door can EXECUTE are declared — dead
+            # declarations bait no-op native calls), but the adapter must SEE
+            # the full grant so it intersects to the declarable set AND writes
+            # the durable `_runtime.allowlist_pruned` note naming what the door
+            # could not offer (e.g. read_memory/search_memory, absent from
+            # _ENTITY_TOOL_DECLARATIONS today). Pre-filtering here made a
+            # 9-name grant arrive as 7 with zero trace — indistinguishable from
+            # door drift when someone debugs a missing tool later. Effective
+            # offer + execution allowlist are UNCHANGED (the adapter intersects
+            # against logic.tools); only the trace is added.
+            allowed_tools=list(grant.tools),
             final_next_node=HARVEST_NODE,
         )
         return ReactMiddle(nodes=react.nodes, entry="reason", reset_turn=reset_react_turn)

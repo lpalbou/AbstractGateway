@@ -130,6 +130,73 @@ def test_non_durable_emit_does_not_queue(tmp_path: Path) -> None:
     assert run_store.load(run_b).vars.get("events_inbox") is None
 
 
+def test_emit_returns_receiver_counts_and_dedups_by_event_id(tmp_path: Path) -> None:
+    """The bridge-adversary F2/F4 contract, proven through the real runner:
+    emit_event returns {resumed, appended}; a zero-receiver emit reports 0+0
+    (the bridge's cursor-hold signal); an at-least-once replay with the same
+    event_id lands ONCE in the inbox (exactly-once mailbox delivery)."""
+    run_store, runtime, wf, runner = _make(tmp_path)
+
+    # Zero receivers: no run declares this mailbox.
+    counts = runner.emit_event(
+        name="empty-box", scope="global", payload={"body": "into the void"},
+        session_id="s", durable=True,
+    )
+    assert counts == {"resumed": 0, "appended": 0}, "zero receivers must be visible to the caller"
+
+    # One busy resident declares the mailbox.
+    run_b = runtime.start(workflow=wf, vars={"events_mailbox": MAILBOX}, actor_id="gateway")
+
+    first = runner.emit_event(
+        name=MAILBOX, scope="global", payload={"body": "hi"},
+        session_id="s", event_id="agora:resident-a:commons:7", durable=True,
+    )
+    assert first["appended"] == 1, "a declaring resident is a receiver"
+
+    # Replay the SAME event_id (crash-between-emit-and-cursor-save): dedups.
+    replay = runner.emit_event(
+        name=MAILBOX, scope="global", payload={"body": "hi"},
+        session_id="s", event_id="agora:resident-a:commons:7", durable=True,
+    )
+    assert replay["appended"] == 1, "replay still counts as received (cursor may advance)"
+    inbox = run_store.load(run_b).vars["events_inbox"]
+    assert len(inbox) == 1, f"event_id dedup must land the replay once, got {len(inbox)}"
+
+    # A DISTINCT event_id appends a second entry.
+    runner.emit_event(
+        name=MAILBOX, scope="global", payload={"body": "next"},
+        session_id="s", event_id="agora:resident-a:commons:8", durable=True,
+    )
+    assert len(run_store.load(run_b).vars["events_inbox"]) == 2
+
+
+def test_three_residents_each_receive_a_targeted_event(tmp_path: Path) -> None:
+    """Fleet shape (P2 done-bar, in-process proof): three residents on three
+    mailboxes; a per-mailbox durable emit reaches exactly its own resident —
+    the N-agents-one-runner topology the agora bridge drives."""
+    run_store, runtime, wf, runner = _make(tmp_path)
+
+    residents = {
+        "alice": runtime.start(workflow=wf, vars={"events_mailbox": "alice-box"}, actor_id="gateway"),
+        "bob": runtime.start(workflow=wf, vars={"events_mailbox": "bob-box"}, actor_id="gateway"),
+        "carol": runtime.start(workflow=wf, vars={"events_mailbox": "carol-box"}, actor_id="gateway"),
+    }
+
+    for name, run_id in residents.items():
+        counts = runner.emit_event(
+            name=f"{name}-box", scope="global",
+            payload={"kind": "agora_message", "from": "chair", "body": f"task for {name}"},
+            session_id=f"agora:{name}", event_id=f"agora:{name}:commons:1", durable=True,
+        )
+        assert counts["appended"] == 1
+
+    # Each resident got its OWN task and nothing else.
+    for name, run_id in residents.items():
+        inbox = run_store.load(run_id).vars["events_inbox"]
+        assert len(inbox) == 1, f"{name} should have exactly one message"
+        assert inbox[0]["payload"]["body"] == f"task for {name}"
+
+
 def test_durable_emit_respects_list_declarations_and_cap(tmp_path: Path) -> None:
     run_store, runtime, wf, runner = _make(tmp_path)
 

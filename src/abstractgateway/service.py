@@ -43,6 +43,7 @@ class GatewayService:
     embeddings_client: Optional[Any] = None
     telegram_bridge: Optional[Any] = None
     email_bridge: Optional[Any] = None
+    agora_bridge: Optional[Any] = None
     entity_registry: Optional[Any] = None
     entity_chat_host: Optional[Any] = None
     entity_visit_host: Optional[Any] = None
@@ -219,6 +220,15 @@ def invalidate_gateway_service_for_runtime(*, tenant_id: str, runtime_id: str) -
                 removed.append(svc)
     for svc in removed:
         _stop_gateway_service_instance(svc)
+        # F3: the steer sidecar cache outlives the service — after a root
+        # purge a stale instance would append into a table that no longer
+        # exists (dead steering until process restart). Evict with the root.
+        try:
+            from .steering import evict_steer_sidecar
+
+            evict_steer_sidecar(svc.config.data_dir)
+        except Exception:
+            pass
     return bool(removed)
 
 
@@ -344,6 +354,12 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         ecfg = EmailBridgeConfig.from_env(base_dir=cfg.data_dir)
         email_bridge = EmailBridge(config=ecfg, host=host, runner=runner, artifact_store=stores.artifact_store)
 
+    # Agora hub bridge (hooks plan P2): identity-carrying transport that wakes
+    # gateway-hosted resident runs on hub traffic. Disabled = None (normal).
+    from .integrations.agora_bridge import build_agora_bridge
+
+    agora_bridge = build_agora_bridge(base_dir=cfg.data_dir, runner=runner, host=host)
+
     # Entity lifecycle (a2a 0004): the registry hosts entity homes under this
     # service's data dir; the routing installer claims the MEMORY_* seam +
     # DIARY_* effect types on the host runtime and refuses to shadow existing
@@ -361,6 +377,11 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     entity_registry = EntityRegistry(
         data_dir=cfg.data_dir,
         users_registry_path=gateway_user_registry_path_from_env(),
+        # The gateway ROOT (config-object endpoint-profile lane, agency c753):
+        # under user auth cfg.data_dir is the per-principal runtime root, but
+        # gateway-scoped endpoint profiles live at root_data_dir. Single-user
+        # layouts set root_data_dir==data_dir (config.py:167).
+        root_data_dir=getattr(cfg, "root_data_dir", None) or cfg.data_dir,
     )
     install_entity_routing(
         host.runtime,
@@ -389,6 +410,7 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         embeddings_client=embeddings_client,
         telegram_bridge=telegram_bridge,
         email_bridge=email_bridge,
+        agora_bridge=agora_bridge,
         entity_registry=entity_registry,
         entity_chat_host=entity_chat_host,
         entity_visit_host=entity_visit_host,
@@ -450,6 +472,9 @@ def start_gateway_runner() -> None:
     email_bridge = getattr(svc, "email_bridge", None)
     if email_bridge is not None:
         email_bridge.start()
+    agora_bridge = getattr(svc, "agora_bridge", None)
+    if agora_bridge is not None:
+        agora_bridge.start()
 
 
 def stop_gateway_runner() -> None:
@@ -488,6 +513,12 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
             bridge2 = getattr(service, "email_bridge", None)
             if bridge2 is not None:
                 bridge2.stop()
+        except Exception:
+            pass
+        try:
+            bridge3 = getattr(service, "agora_bridge", None)
+            if bridge3 is not None:
+                bridge3.stop()
         except Exception:
             pass
         try:

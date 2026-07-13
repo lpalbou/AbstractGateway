@@ -86,6 +86,52 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="tab-button-defaults"' in console.text
     assert 'id="tab-button-sandbox"' in console.text
     assert 'id="console-tabs-bar"' in console.text
+    # Summoned Entities: the full create + manage surface (operator directive
+    # 2026-07-12) — template gallery with locked core values, substrate at
+    # create, per-phase capability matrix, and lifecycle management for
+    # existing entities (state, loop, substrate, capabilities, prompt,
+    # reembed, verify) — every route the JS drives is pinned here.
+    assert 'id="tab-button-entities"' in console.text
+    assert 'id="tab-entities"' in console.text
+    assert 'id="entity-template"' in console.text
+    assert 'id="entity-create"' in console.text
+    assert 'id="entities-table"' in console.text
+    assert 'id="entity-template-values"' in console.text
+    assert 'id="entity-advanced"' in console.text
+    assert 'id="entity-new-matrix"' in console.text
+    assert 'id="entity-manage-section"' in console.text
+    assert 'id="entity-subtab-overview"' in console.text
+    assert 'id="entity-subtab-lifecycle"' in console.text
+    assert 'id="entity-subtab-substrate"' in console.text
+    assert 'id="entity-subtab-tools"' in console.text
+    assert 'id="entity-subtab-prompt"' in console.text
+    assert 'id="entity-manage-matrix"' in console.text
+    assert 'id="entity-prompt-layers"' in console.text
+    assert 'id="entity-reembed"' in console.text
+    assert 'id="entity-verify"' in console.text
+    assert 'id="entity-loop-start"' in console.text
+    assert 'id="entity-state-asleep"' in console.text
+    assert "/api/gateway/entities/templates" in console.text
+    assert "/api/gateway/entities/inventory/capability-matrix" in console.text
+    assert "/api/gateway/entities/${enc}/validate" in console.text
+    assert "/api/gateway/entities/${enc}/substrate" in console.text
+    assert "/api/gateway/entities/${enc}/tool-policy" in console.text
+    assert "/api/gateway/entities/${encodeURIComponent(name)}/state" in console.text
+    assert "/api/gateway/entities/${encodeURIComponent(name)}/loop/start" in console.text
+    assert "/api/gateway/entities/${encodeURIComponent(name)}/loop/stop" in console.text
+    assert "/api/gateway/entities/${encodeURIComponent(name)}/substrate" in console.text
+    assert "/api/gateway/entities/${encodeURIComponent(name)}/tool-policy" in console.text
+    assert "/api/gateway/entities/${encodeURIComponent(name)}/prompt" in console.text
+    assert "/api/gateway/entities/${encodeURIComponent(name)}/reembed" in console.text
+    assert "/api/gateway/entities/${encodeURIComponent(name)}/verify" in console.text
+    assert "/api/gateway/entities/${encodeURIComponent(name)}/card" in console.text
+    # Runtime domain: the Runs management surface (list/inspect/cancel/steer)
+    # wired over runtime's existing verbs (operator directive, 3-domain pass).
+    assert 'id="runs-section"' in console.text
+    assert 'id="runs-table"' in console.text
+    assert 'id="runs-refresh"' in console.text
+    assert "/api/gateway/runs?" in console.text
+    assert '"/api/gateway/commands"' in console.text
     assert 'id="sandbox-capability"' in console.text
     assert 'id="sandbox-provider"' in console.text
     assert 'id="sandbox-run"' in console.text

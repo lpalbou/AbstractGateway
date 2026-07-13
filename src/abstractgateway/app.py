@@ -60,6 +60,42 @@ app.include_router(gateway_router, prefix="/api")
 app.include_router(triage_router, prefix="/api")
 
 
+# Server-side timing evidence (operator incident 2026-07-13: a client sat
+# 10-15s on "Connecting…" against a gateway answering /api/health in <1ms —
+# the investigation needs to split server time from client/stack time without
+# guessing). Every response carries X-Gateway-Duration-Ms = time spent INSIDE
+# the gateway app (through the security/CORS stack down to the handler), so
+# browser devtools show server-vs-network directly. Requests slower than
+# ABSTRACTGATEWAY_SLOW_REQUEST_MS (default 1000) log a warning; set
+# ABSTRACTGATEWAY_REQUEST_TIMING=1 to log EVERY request's duration at INFO
+# for waterfall correlation. Streams (SSE) get the header at response start —
+# it measures time-to-first-byte, not stream lifetime, which is the number
+# the connect investigation needs.
+@app.middleware("http")
+async def _request_timing(request, call_next):  # noqa: ANN001 - Starlette middleware signature
+    import logging
+    import os
+    import time
+
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    dt_ms = (time.perf_counter() - t0) * 1000.0
+    try:
+        response.headers["X-Gateway-Duration-Ms"] = f"{dt_ms:.1f}"
+    except Exception:
+        pass  # a response type without mutable headers must not break serving
+    try:
+        slow_ms = float(os.getenv("ABSTRACTGATEWAY_SLOW_REQUEST_MS") or 1000.0)
+    except ValueError:
+        slow_ms = 1000.0
+    logger = logging.getLogger("abstractgateway.timing")
+    if dt_ms >= slow_ms:
+        logger.warning("SLOW %s %s -> %s in %.1fms", request.method, request.url.path, response.status_code, dt_ms)
+    elif (os.getenv("ABSTRACTGATEWAY_REQUEST_TIMING") or "").strip().lower() in {"1", "true", "on", "yes"}:
+        logger.info("%s %s -> %s in %.1fms", request.method, request.url.path, response.status_code, dt_ms)
+    return response
+
+
 # Unhandled-exception responses must still carry CORS headers. Starlette's
 # ServerErrorMiddleware sits OUTSIDE user middleware, so a raw 500 from an
 # unhandled exception bypasses CORSMiddleware — browsers then mask the real

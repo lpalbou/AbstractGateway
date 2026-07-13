@@ -723,3 +723,67 @@ def test_unknown_run_and_foreign_entity_refuse(monkeypatch: pytest.MonkeyPatch):
         )
         assert crossed.status_code == 404
         client.post(f"/api/gateway/entities/Castor/visit/{castor_run}/close", json={})
+
+
+def test_door_composes_walled_defs_only_never_the_registry_binding():
+    """WALLED-WINS, door-side twin (agency c909/c913 ask 2 gateway half):
+    runtime pins that its entity module reserves colliding names as walled
+    and refuses registry-only names; this pins the SAME guarantee at the
+    door's composition path, so a widened grant surfacing a core-registry
+    name never dispatches the registry binding.
+
+    Three facts, at the composition function (the door's only tool-offer
+    author):
+    1. `_entity_tool_definitions` offers ONLY names it has a WALLED
+       declaration for — a registry-only name (execute_command) in the grant
+       is NOT offered (the door cannot execute it, so it declares nothing —
+       the c802 raw-grant handoff then traces it in allowlist_pruned).
+    2. A COLLIDING name (web_search exists in BOTH the core registry and the
+       entity's walled set) is offered with the ENTITY's parameter shape
+       (`query`), never the core registry's — proving the walled def wins.
+    3. The visit tool executor is runtime's `execute_tool_elections` (dispatch
+       through TOOL_DESCRIPTORS only) — the door composition module holds no
+       import of abstractcore's tool registry for dispatch. Structural: a
+       registry executor is unreachable from the entity tool path.
+    """
+    from abstractagent.logic.react import ToolDefinition
+
+    from abstractgateway import entity_visits
+
+    # A deliberately WIDENED grant: two walled names, one colliding name, one
+    # registry-only name (execute_command lives in abstractcore's shell_tools,
+    # never in the entity's walled declarations), one absent-driver name.
+    widened = ["web_search", "diary_list", "execute_command", "read_memory", "write_file"]
+    defs = entity_visits._entity_tool_definitions(widened, ToolDefinition)
+    offered = {d.name for d in defs}
+
+    # (1) registry-only + absent-driver names are NOT offered by the door.
+    assert "execute_command" not in offered, "a registry-only name must never be offered by the door"
+    assert "read_memory" not in offered, "an absent-driver name is not offered (declaring baits dead calls)"
+    # Walled names it CAN execute are offered.
+    assert {"web_search", "diary_list", "write_file"} <= offered
+
+    # (2) the colliding name carries the ENTITY (walled) parameter shape.
+    web = next(d for d in defs if d.name == "web_search")
+    params = getattr(web, "parameters", {}) or {}
+    props = params.get("properties", params)  # tolerate either schema nesting
+    assert "query" in props, f"web_search must be the WALLED def (query param), got {params}"
+
+    # (3) structural: the door's TOOL_CALLS executor is runtime's walled
+    # dispatcher (`execute_tool_elections`, which dispatches through
+    # TOOL_DESCRIPTORS only), gated by `native_tool_elections(allowed_names=)`
+    # — never a core-registry tool executor. A registry-only name that slips
+    # past the offer filter still finds no walled executor and refuses.
+    import inspect
+
+    from abstractgateway import entities as _entities
+
+    handler_src = inspect.getsource(_entities)
+    assert "execute_tool_elections" in handler_src and "native_tool_elections" in handler_src, (
+        "the entity tool path must dispatch through runtime's walled executor + allowed-name gate"
+    )
+    # The visit path forbids diary materialization with a raising stub — proof
+    # the executor has no fallthrough that could reach an unwalled binding.
+    assert "_no_materialized_read" in handler_src, (
+        "the door's executor must pass a no-fallthrough diary read (walled dispatch only)"
+    )

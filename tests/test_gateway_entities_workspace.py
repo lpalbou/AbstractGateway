@@ -105,22 +105,40 @@ def test_tool_policy_get_put_roundtrip():
 
         before = client.get("/api/gateway/entities/Castor/tool-policy").json()
         assert before["phases"]["visit"]["source"] == "default"
-        # Ruled defaults (maintainer 2026-07-11), EXACT lists against the
-        # imported constants (order included — a wrong extra tool or a
-        # reorder must fail, not pass a loose membership check).
+        # The served vocabulary is the RULED four phases (laurent c786:
+        # visit/work/personal/sleep). Ruled defaults (Q1 c684: work+personal
+        # = full set), EXACT lists against the imported constants (order
+        # included — a wrong extra tool or a reorder must fail, not pass a
+        # loose membership check).
+        assert set(before["phases"]) == {"visit", "work", "personal", "sleep"}
         assert before["phases"]["visit"]["tools"] == list(ALL_TOOL_NAMES)
-        assert before["phases"]["resident"]["tools"] == list(ALL_TOOL_NAMES)
+        assert before["phases"]["work"]["tools"] == list(ALL_TOOL_NAMES)
+        assert before["phases"]["personal"]["tools"] == list(ALL_TOOL_NAMES)
         assert before["phases"]["sleep"]["tools"] == list(SLEEP_DEFAULT_TOOL_NAMES)
         assert set(before["tiers"]) == {"tier1", "workspace"}
 
         put = client.put(
             "/api/gateway/entities/Castor/tool-policy",
-            json={"policy": {"visit": ["diary_list", "diary_read"], "resident": ["diary_list"], "sleep": []}},
+            json={"policy": {"visit": ["diary_list", "diary_read"], "personal": ["diary_list"], "sleep": []}},
         )
         assert put.status_code == 200, put.text
         after = put.json()
         assert after["phases"]["visit"] == {"tools": ["diary_list", "diary_read"], "source": "policy-file", "notes": []}
-        assert after["phases"]["resident"]["tools"] == ["diary_list"]
+        assert after["phases"]["personal"]["tools"] == ["diary_list"]
+
+        # Migration window (N7 contract, runtime c672 + c786 rename): a legacy
+        # spelling ("own_time", now aliasing personal) stays WRITE-accepted
+        # through the door and lands NORMALIZED under personal — the served
+        # object never carries a second at-rest spelling. The alias dies
+        # before release; when runtime flips it to expects-raise this leg
+        # flips with it.
+        legacy = client.put(
+            "/api/gateway/entities/Castor/tool-policy",
+            json={"policy": {"own_time": ["diary_read"]}},
+        )
+        assert legacy.status_code == 200, legacy.text
+        assert legacy.json()["phases"]["personal"]["tools"] == ["diary_read"]
+        assert "own_time" not in legacy.json()["phases"]
 
         refused = client.put(
             "/api/gateway/entities/Castor/tool-policy",

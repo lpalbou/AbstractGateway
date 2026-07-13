@@ -112,6 +112,30 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
         prefixes=("/api/gateway/prompt_cache",),
         methods=("POST", "PUT", "PATCH", "DELETE"),
     ),
+    # Entity MUTATION routes are operator surfaces (config-object plan, N1 —
+    # signed 2026-07-11). GW-H makes entities non-admin principals; without
+    # these rows any authenticated user could reembed or re-mind another
+    # entity. Interaction surfaces (chat/visit/meet/summon) and every GET
+    # stay user-level; the write-classed auth probe stays user-level by
+    # design (it answers "would the doors accept me?" for ANY principal).
+    #   - state:            sleep/wake/pause (operator lifecycle verbs)
+    #   - reembed:          vector-index rebuild (critical mind operation)
+    #   - tool-policy:      capability grants (the operator's word per phase)
+    #   - prompt:           operator overlay on the composed head
+    #   - substrate:        the mind substrate (provider/model)
+    #   - loop/start|stop:  own-time lifecycle (start = spend; stop kept in
+    #                       the same family — repeatedly stopping an entity's
+    #                       own time is meddling with its life)
+    #   - workspace/mounts: NOT in the signed N1 list, added by the same rule
+    #                       that already admin-gates /api/gateway/files — a
+    #                       mount whitelists a HOST directory into the
+    #                       workspace read path (host-filesystem exposure).
+    GatewayRoutePolicy(
+        resource="entities",
+        reason_code="admin_required",
+        pattern=r"^/api/gateway/entities/[^/]+/(state|reembed|tool-policy|prompt|substrate|loop/start|loop/stop|workspace/mounts)$",
+        methods=("POST", "PUT", "PATCH", "DELETE"),
+    ),
 )
 
 

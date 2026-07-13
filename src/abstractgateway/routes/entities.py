@@ -19,7 +19,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..entities import EntityRegistry
+from ..config import entity_iterations_ceiling
+from ..entities import EntityRegistry, entity_slug
 from ..service import get_gateway_service
 
 router = APIRouter(prefix="/gateway/entities", tags=["entities"])
@@ -87,6 +88,8 @@ async def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
     """Create an entity home: lint -> store the spark verbatim -> engram ->
     manifest. Idempotent for the same spark (`created=false`); a CHANGED
     document is refused with the engine's human-written error (409)."""
+    from ..entities import EntityQuotaExceeded
+
     try:
         result = _registry().create(
             name=req.name,
@@ -96,6 +99,10 @@ async def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
             embedding_model=req.embedding_model,
             embedding_dimension=req.embedding_dimension,
         )
+    except EntityQuotaExceeded as e:
+        # F2: entities are permanent + door-global; the per-root quota bounds
+        # user-level creation. 429 = "too many", the honest status.
+        raise HTTPException(status_code=429, detail=str(e))
     except ValueError as e:
         # Lint errors, name mismatches, and spark-drift refusals are written
         # for humans — surface them verbatim. Drift/conflict reads as 409.
@@ -103,6 +110,83 @@ async def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
         status = 409 if "DIFFERENT" in detail or "already" in detail.lower() else 400
         raise HTTPException(status_code=status, detail=detail)
     return result.to_dict()
+
+
+@router.post("/{name}/validate")
+async def validate_entity(name: str, req: CreateEntityRequest) -> Dict[str, Any]:
+    """DRY-RUN the create pre-checks — lint + name resolution + spark-drift —
+    WITHOUT creating anything (plan (b) P0-2). The console modal calls this
+    before the IRREVERSIBLE POST that burns the name for life (no DELETE,
+    spark v1-for-life): a green result means create will not refuse for lint,
+    name-mismatch, or drift reasons. `name` in the path is authoritative; a
+    body `name` mismatch is reported as a lint error, never silently
+    overridden. Read-only (reads an existing home's attested spark to report
+    the drift verdict; writes nothing)."""
+    body_name = str(getattr(req, "name", "") or "").strip()
+    if body_name and entity_slug(body_name) != entity_slug(name):
+        return {
+            "ok": False,
+            "errors": [f"path name {name!r} does not match body name {body_name!r}"],
+            "warnings": [],
+            "name": name,
+            "slug": entity_slug(name),
+            "exists": False,
+            "would_conflict": False,
+        }
+    return _registry().validate(
+        name=name,
+        spark=req.spark,
+        spark_text=req.spark_text,
+        framework=bool(req.framework),
+    )
+
+
+@router.get("/templates")
+async def entity_spark_templates() -> Dict[str, Any]:
+    """The spark/template gallery for the creation modal's template tab (plan
+    (b), gateway c872): the shipped framework default + any operator YAML
+    templates under <data_dir>/entity_templates/. Entity-independent (the
+    modal reads it before the entity exists). Read-only."""
+    templates, warnings = _registry().spark_templates()
+    return {"schema_version": 1, "templates": templates, "warnings": warnings}
+
+
+@router.get("/inventory/tools")
+async def entity_tool_inventory() -> Dict[str, Any]:
+    """The full tool inventory, ENTITY-INDEPENDENT (pre-create; the creation
+    modal renders tools BEFORE the entity exists) — descriptor contract v6,
+    plan (a) P0-1. Serve-time composition of core ∪ walled rows with the
+    gateway attaching `executes_via` and validating the static union. The
+    capabilities tab reads this to know what tools EXIST; the phase matrix
+    (rule 2b) offers only the entity_walled subset."""
+    from ..tool_inventory import compose_tool_inventory
+
+    try:
+        composed = compose_tool_inventory()
+    except RuntimeError as e:
+        # A union-validation failure is a real serving defect (an enumeration
+        # drifted from the served set) — surface it loudly, never a partial set.
+        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "schema_version": 1,
+        "tools": composed["tools"],
+        "degraded": composed["degraded"],
+        "warnings": composed["warnings"],
+    }
+
+
+@router.get("/inventory/capability-matrix")
+async def entity_capability_matrix() -> Dict[str, Any]:
+    """The MatrixPayload the creation modal's capabilities tab renders — the
+    framework DEFAULT per-phase grant over the entity_walled inventory (rule
+    2b), entity-independent (pre-create). Server truth: descriptor fields
+    ride each cell so the client never re-derives a field from a name."""
+    from ..tool_inventory import phase_capability_matrix
+
+    try:
+        return phase_capability_matrix(None)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("")
@@ -487,6 +571,65 @@ class ReembedRequest(BaseModel):
     reason: str = Field(default="", description="Why — journaled by the engine and host-marked by the door")
 
 
+@router.get("/{name}/embedding")
+async def get_entity_embedding_status(name: str) -> Dict[str, Any]:
+    """Read-only embedding status for the reembed ceremony (adversary P0:
+    the verification field demanded a value the UI never showed — the only
+    in-UI discovery was failing once to read the 400). Serves the home's M1
+    pin (pure peek, never mutates the store) + the door's currently resolved
+    embedder identity + the match verdict. N6 whitelist: model/dimension/
+    status/source only — base_url and keys never serialize."""
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+
+    pin: Optional[Dict[str, Any]] = None
+    pin_error: Optional[str] = None
+    try:
+        from abstractmemory import read_embedding_pin
+
+        raw = read_embedding_pin(registry.entities_dir / manifest.slug / "memory.sqlite3")
+        if isinstance(raw, dict):
+            pin = {k: raw.get(k) for k in ("model_id", "dimension", "source") if k in raw}
+    except ImportError:
+        pin_error = "#FALLBACK engine lacks read_embedding_pin (older abstractmemory)"
+    except Exception as e:  # noqa: BLE001 - a status read must not 500 the panel
+        pin_error = f"#FALLBACK pin unreadable: {e}"
+
+    resolved_id: Optional[str] = None
+    embedder_warning: Optional[str] = None
+    try:
+        embedder = registry._resolve_embedder()
+        if embedder is not None:
+            for attr in ("model", "model_id"):
+                value = getattr(embedder, attr, None)
+                if isinstance(value, str) and value.strip():
+                    resolved_id = value.strip()
+                    break
+        else:
+            embedder_warning = registry._embedder_warning or "no embedder resolved at this door"
+    except Exception as e:  # noqa: BLE001
+        embedder_warning = f"embedder resolution failed: {e}"
+
+    pin_model = (pin or {}).get("model_id")
+    if pin_model and resolved_id:
+        match = "match" if pin_model == resolved_id else "mismatch"
+    else:
+        match = "unknown"
+    out: Dict[str, Any] = {
+        "pin": pin,
+        "status": "pinned" if pin and pin.get("model_id") else "unpinned",
+        "resolved_embedder": resolved_id,
+        "match": match,
+    }
+    warnings = [w for w in (pin_error, embedder_warning) if w]
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
 @router.post("/{name}/reembed")
 async def reembed_entity(name: str, req: ReembedRequest) -> Dict[str, Any]:
     """The M1b repair verb (operator-gated, never routine): re-derive the
@@ -512,7 +655,7 @@ async def reembed_entity(name: str, req: ReembedRequest) -> Dict[str, Any]:
 async def get_entity_life_state(name: str) -> Dict[str, Any]:
     """The ONE composite life phase (observer ask, maintainer 2026-07-09):
     the gateway collapses chat + operator-state + loop into a single
-    mutually-exclusive `phase` (visiting > paused > asleep > own_time >
+    mutually-exclusive `phase` (visiting > paused > asleep > personal >
     resting > awake) so clients render one chip and never re-derive
     contradictory badges. `own_time_running` rides alongside for a
     loop-alive indicator that does not fight the phase."""
@@ -846,6 +989,21 @@ async def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
     caller_system = str(input_data.get("system") or "").strip()
     input_data["system"] = prelude["text"] + (("\n\n" + caller_system) if caller_system else "")
 
+    # OPERATOR ITERATIONS CEILING (laurent c786; seam (b) c805/c809): the
+    # gateway serves `_limits.max_iterations_ceiling` into entity-run vars;
+    # Runtime.start() is the ONE enforcement site (refuse-at-start when the
+    # workflow declares above it, never mid-run truncation). The ceiling is
+    # the OPERATOR'S word — it OVERWRITES any caller-passed value (a summon
+    # request must not lower/raise operator policy); the caller's other
+    # `_limits` keys pass through untouched (declared window etc.). Disabled
+    # ceiling (env 0/off) = field absent = no enforcement, honestly.
+    _ceiling = entity_iterations_ceiling()
+    if _ceiling is not None:
+        _limits_in = input_data.get("_limits")
+        _limits: Dict[str, Any] = dict(_limits_in) if isinstance(_limits_in, dict) else {}
+        _limits["max_iterations_ceiling"] = int(_ceiling)
+        input_data["_limits"] = _limits
+
     # The session's default recall budget: memory's context-scaled profile
     # with the reserved-seats posture applied; every in-session recall that
     # omits a budget runs on it (the gate injects from the stamp).
@@ -1158,14 +1316,23 @@ async def put_entity_workspace_mounts(name: str, req: PutMountsRequest) -> Dict[
 
 
 class PutToolPolicyRequest(BaseModel):
-    policy: Dict[str, List[str]] = Field(
-        ..., description='Explicit tools per phase, e.g. {"visit": ["diary_list"], "resident": [...], "sleep": []}'
+    policy: Dict[str, Optional[List[str]]] = Field(
+        ...,
+        description=(
+            "Per-phase tools, MERGED into the stored file: only NAMED phases change; "
+            "an unnamed phase is left untouched. A phase mapped to a list is the operator's "
+            'explicit word (e.g. {"visit": ["diary_list"]}); a phase mapped to null DELETES '
+            "its entry — reverting to the evolving framework default (the ruled all-cells-cleared "
+            "fold, uic c727 ask 2: never a silent tools:[] deny-all). An explicit empty list [] is "
+            "a deliberate deny-all and must be sent knowingly."
+        ),
     )
 
 
 @router.get("/{name}/tool-policy")
 async def get_entity_tool_policy(name: str) -> Dict[str, Any]:
-    from abstractruntime.identity.tool_policy import ALL_TOOL_NAMES, PHASES, TIERS, resolve_tool_grant
+    from abstractruntime import PHASES, resolve_tool_grant
+    from abstractruntime.identity.tool_policy import ALL_TOOL_NAMES, TIERS
 
     registry = _registry()
     try:
@@ -1175,9 +1342,10 @@ async def get_entity_tool_policy(name: str) -> Dict[str, Any]:
     home_dir = registry.entities_dir / manifest.slug
     phases: Dict[str, Any] = {}
     for phase in PHASES:
-        # Display resolution: the bare default posture — visit/resident show
-        # the full ruled default (tier-1 + workspace, maintainer 2026-07-11),
-        # sleep the read-only exploration set; enable_workspace is inert.
+        # Display resolution: the bare default posture — legacy visit/tasked/own_time
+        # show the full ruled default (tier-1 + workspace, maintainer
+        # 2026-07-11; Q1 c684), sleep the read-only exploration set;
+        # enable_workspace is inert.
         grant = resolve_tool_grant(home_dir, phase, enable_workspace=False)
         phases[phase] = {"tools": list(grant.tools), "source": grant.source, "notes": list(grant.notes)}
     return {
@@ -1189,7 +1357,7 @@ async def get_entity_tool_policy(name: str) -> Dict[str, Any]:
 
 @router.put("/{name}/tool-policy")
 async def put_entity_tool_policy(name: str, req: PutToolPolicyRequest) -> Dict[str, Any]:
-    from abstractruntime.identity.tool_policy import write_policy_file
+    from abstractruntime import write_policy_file
 
     registry = _registry()
     try:
@@ -1217,7 +1385,7 @@ class PutPromptOverlayRequest(BaseModel):
         ...,
         description=(
             'Editable prompt layers, e.g. {"conversation": "...", "visit": "...", '
-            '"own_time": "...", "operator": "..."}. WHOLE-DOCUMENT REPLACE: an '
+            '"personal": "...", "operator": "..."}. WHOLE-DOCUMENT REPLACE: an '
             "absent key reverts to the built-in default exactly like an empty "
             "string — send every layer you want kept."
         ),
@@ -1229,14 +1397,14 @@ async def get_entity_prompt(name: str) -> Dict[str, Any]:
     """The system prompt as its layers: rendered identity prelude
     (read-only), each editable layer with its current text + source
     (default | overlay), the built-in defaults for reference, and the
-    grant-derived tools preview (visit-phase composition — the own_time
+    grant-derived tools preview (visit-phase composition — the personal
     layer previews as its own text). Rendering identity never deposits
     usage; opening the home only touches disk to initialize empty db
     files on a never-opened home."""
+    from abstractruntime import resolve_tool_grant
     from abstractruntime.identity.chat import compose_system_base, default_prompt_texts, open_home
     from abstractruntime.identity.prelude import render_summon_prelude
     from abstractruntime.identity.prompt_overlay import OVERLAY_FILENAME, read_prompt_overlay
-    from abstractruntime.identity.tool_policy import resolve_tool_grant
 
     registry = _registry()
     try:
@@ -1248,12 +1416,24 @@ async def get_entity_prompt(name: str) -> Dict[str, Any]:
     overlay = read_prompt_overlay(home_dir)
     overlay_error = overlay.pop("#error", None)
     defaults = default_prompt_texts()
+    # default_prompt_texts serves the RULED keys plus derived legacy twins
+    # (so pre-flip serving processes keep reading). The EDITABLE listing
+    # serves ruled spellings only — the operator never reads a retired word;
+    # the filter uses runtime's own alias table (one source, never a second
+    # hand-written copy — the diary_type-clamp drift class).
+    try:
+        from abstractruntime.identity.prompt_overlay import LEGACY_OVERLAY_KEY_ALIASES
+
+        legacy_keys = set(LEGACY_OVERLAY_KEY_ALIASES.keys())
+    except Exception:  # pragma: no cover - pre-flip runtime has no alias table
+        legacy_keys = set()
     layers = {
         key: {
             "text": overlay.get(key, "" if key == "operator" else defaults[key]),
             "source": "overlay" if key in overlay else "default",
         }
         for key in defaults
+        if key not in legacy_keys
     }
 
     # The rendered head, exactly as the next visit summon would compose it
@@ -1301,11 +1481,13 @@ async def get_entity_prompt(name: str) -> Dict[str, Any]:
 
     return {
         "layers": layers,
-        "defaults": defaults,
+        "defaults": {k: v for k, v in defaults.items() if k not in legacy_keys},
         "prelude": prelude_text,
         "preview": preview,
         "warnings": warnings,
-        "editable": list(defaults.keys()),
+        # Ruled spellings only — legacy alias twins keep RESOLVING (runtime
+        # reads both) but are never offered as editable layers.
+        "editable": [k for k in defaults.keys() if k not in legacy_keys],
         "raw_file": raw_file,
     }
 
@@ -1557,7 +1739,7 @@ async def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
             entities_dir=registry.entities_dir,
             slug=manifest.slug,
             entity_id=manifest.entity_id,
-            kind="own_time_started",
+            kind="personal_started",
             journal_seq=int(home.memory.current_seq()),
             details={"channel": "operator", **{k: started[k] for k in ("pid", "provider", "model", "tick_seconds", "ticks_per_day", "rest_minutes")}},
         )
@@ -1619,7 +1801,7 @@ async def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> 
                 entities_dir=registry.entities_dir,
                 slug=manifest.slug,
                 entity_id=manifest.entity_id,
-                kind="own_time_frozen",
+                kind="personal_frozen",
                 journal_seq=int(home.memory.current_seq()),
                 details={"channel": "admin", "reason": reason, **{k: result[k] for k in ("pid", "was_running", "escalated_to_sigkill")}},
             )
@@ -1638,7 +1820,7 @@ async def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> 
             entities_dir=registry.entities_dir,
             slug=manifest.slug,
             entity_id=manifest.entity_id,
-            kind="own_time_stop_requested",
+            kind="personal_stop_requested",
             journal_seq=int(home.memory.current_seq()),
             details={"channel": "operator", "phase": status.get("phase")},
         )

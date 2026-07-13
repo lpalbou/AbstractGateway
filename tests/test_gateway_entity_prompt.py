@@ -54,7 +54,9 @@ def test_prompt_get_put_roundtrip():
         # The preview is the actual next-summon composition (prelude + layers).
         assert before["preview"].startswith(before["prelude"][:40])
         assert CONTRACT_PARAGRAPH in before["preview"]
-        assert set(before["editable"]) == {"conversation", "visit", "own_time", "operator"}
+        assert set(before["editable"]) == {"conversation", "visit", "personal", "operator"}, (
+            "ruled overlay spellings (runtime renamed the layer key same-wave)"
+        )
 
         put = client.put(
             "/api/gateway/entities/Castor/prompt",

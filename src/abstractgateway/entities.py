@@ -63,12 +63,14 @@ ENTITY_FORMAT_VERSION = 1
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 # Literal path segments that live INSIDE the `/entities/{name}` route
-# namespace (POST /entities/auth/probe, /entities/meets/...). An entity
-# with one of these names would be unreachable behind the literal route —
-# a booby trap of the route-shadowing class — so the name is refused at
-# the slug boundary (it can then never exist anywhere: manifests, homes,
-# principals).
-RESERVED_ENTITY_NAMES = frozenset({"auth", "meets"})
+# namespace (POST /entities/auth/probe, /entities/meets/..., GET
+# /entities/templates, GET /entities/inventory/*). An entity with one of
+# these names would be unreachable behind the literal route — a booby trap
+# of the route-shadowing class — so the name is refused at the slug
+# boundary (it can then never exist anywhere: manifests, homes,
+# principals). Every NEW literal segment added before /{name} must be
+# added here (adversary F3, 2026-07-12).
+RESERVED_ENTITY_NAMES = frozenset({"auth", "meets", "templates", "inventory"})
 
 SPARK_FILENAME = "spark.yaml"
 MEMORY_FILENAME = "memory.sqlite3"
@@ -134,6 +136,14 @@ class HomeCollisionError(KeyError):
     identity happens to answer. Subclasses KeyError so every existing
     route's not-found handling still applies (the home is not a valid
     registry entry UNDER THAT NAME)."""
+
+
+class EntityQuotaExceeded(RuntimeError):
+    """Creating a NEW home would exceed the per-data-root entity quota
+    (adversary F2, 2026-07-12): entities are permanent (never-purge) and
+    each mints a door-global principal, so unbounded user-level creation is
+    a disk + shared-registry DoS. Routes map this to HTTP 429. Idempotent
+    re-creates of existing homes are never refused by the quota."""
 
 
 @dataclass(frozen=True)
@@ -631,9 +641,15 @@ class EntityRegistry:
         data_dir: Path,
         embedder_factory: Any = None,
         users_registry_path: Optional[Path] = None,
+        root_data_dir: Optional[Path] = None,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.entities_dir = self.data_dir / "entities"
+        # The GATEWAY ROOT data dir (config-object endpoint-profile lane): under
+        # user auth, data_dir is the PER-PRINCIPAL runtime root but gateway-
+        # scoped endpoint profiles live at the root (same two-root split
+        # bundle_host uses). None (single-user, unit tests) => root == data_dir.
+        self.root_data_dir = Path(root_data_dir) if root_data_dir else self.data_dir
         self._create_lock = threading.Lock()
         self._open_homes: Dict[str, EntityHome] = {}
         self._entity_runtimes: Dict[str, Any] = {}  # slug -> EntityRuntime (GW-C)
@@ -679,33 +695,21 @@ class EntityRegistry:
 
     # -- create ------------------------------------------------------------
 
-    def create(
+    def _prepare_spark(
         self,
         *,
         name: str,
         spark: Optional[Mapping[str, Any]] = None,
         spark_text: Optional[str] = None,
         framework: bool = True,
-        embedding_model: Optional[str] = None,
-        embedding_dimension: Optional[int] = None,
-    ) -> EntityCreateResult:
-        """Create (or idempotently re-adopt) an entity home.
-
-        Order: lint -> store the spark verbatim -> engram -> manifest. The
-        engram's own guards do the heavy lifting and their errors are
-        surfaced verbatim (they are written for humans): re-running the same
-        spark is a no-op (`created=False`); a CHANGED document under the
-        same version is refused — the spark is for life.
-
-        Embedder pin (plan item 3, memory M1): embedder identity is an
-        explicit BIRTH choice. `embedding_model`/`embedding_dimension`
-        declare it; when absent, the pin derives from the RESOLVED embedder
-        (the identity the home will actually live with — pinning a name the
-        route does not serve would brick the home at its next open). No
-        embedder and no declaration = no pin, labeled (first-write fallback).
-        """
+    ) -> Tuple[Dict[str, Any], bytes, List[str]]:
+        """Resolve the spark document (mapping | raw text | template), fill/
+        check the name, and LINT — the read-only pre-write half shared by
+        `create` and `validate`. Returns (spark_doc, attested_bytes,
+        warnings); raises ValueError with the human-written lint/name error
+        exactly as create surfaces it. No filesystem or engine writes."""
         import yaml
-        from abstractmemory import DEFAULT_SPARK_TEMPLATE, canonical_spark_hash, engram, lint_spark
+        from abstractmemory import DEFAULT_SPARK_TEMPLATE, lint_spark
 
         slug = entity_slug(name)
 
@@ -744,11 +748,202 @@ class EntityRegistry:
 
         if raw_bytes is None:
             raw_bytes = yaml.safe_dump(spark_doc, sort_keys=False, allow_unicode=True).encode("utf-8")
+        return spark_doc, raw_bytes, warnings
+
+    def validate(
+        self,
+        *,
+        name: str,
+        spark: Optional[Mapping[str, Any]] = None,
+        spark_text: Optional[str] = None,
+        framework: bool = True,
+    ) -> Dict[str, Any]:
+        """DRY-RUN the create pre-checks WITHOUT writing anything (plan
+        item (b) P0-2): the console modal validates a spark BEFORE the
+        irreversible POST that burns the name for life (no DELETE, spark
+        v1-for-life). Runs the exact lint + name-resolution + spark-drift
+        checks create runs, so a green validate means create will not refuse
+        for those reasons. Never touches the filesystem beyond READING an
+        existing home's attested spark to report the drift/idempotency verdict.
+
+        Returns {ok, errors, warnings, name, slug, exists, would_conflict}:
+        - ok: create would proceed (lint clean, no drift conflict)
+        - errors: blocking lint/name errors (verbatim, human-written)
+        - warnings: non-blocking lint notes
+        - exists: a home already exists under this name
+        - would_conflict: exists AND the submitted spark differs (create 409s)
+        """
+        import yaml
+        from abstractmemory import canonical_spark_hash
+
+        slug = entity_slug(name)
+        errors: List[str] = []
+        warnings: List[str] = []
+        spark_doc: Optional[Dict[str, Any]] = None
+        try:
+            spark_doc, _raw, warnings = self._prepare_spark(
+                name=name, spark=spark, spark_text=spark_text, framework=framework
+            )
+        except ValueError as e:
+            errors.append(str(e))
+
+        exists = (self.entities_dir / slug / SPARK_FILENAME).exists()
+        would_conflict = False
+        if exists and spark_doc is not None:
+            try:
+                existing = yaml.safe_load(
+                    (self.entities_dir / slug / SPARK_FILENAME).read_bytes().decode("utf-8")
+                )
+                would_conflict = canonical_spark_hash(
+                    existing if isinstance(existing, dict) else {}
+                ) != canonical_spark_hash(spark_doc)
+            except Exception:  # noqa: BLE001 - unreadable existing spark = treat as conflicting (create will refuse)
+                would_conflict = True
+
+        resolved_name = str((spark_doc or {}).get("name") or name).strip()
+        return {
+            "ok": not errors and not would_conflict,
+            "errors": errors,
+            "warnings": warnings,
+            "name": resolved_name,
+            "slug": slug,
+            "exists": exists,
+            "would_conflict": would_conflict,
+        }
+
+    def spark_templates(self) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """The spark/template gallery the creation modal's template tab
+        renders (plan (b), gateway c872): the shipped framework default plus
+        any operator-added YAML templates under `<data_dir>/entity_templates/`.
+
+        Returns (templates, warnings). Each template: {id, name, description,
+        source ("builtin"|"operator"), spark (the full document with an empty
+        name for the operator to fill), core_values (the class=core value
+        names — non-removable, so the modal can lock them). Read-only; an
+        unreadable operator file is SKIPPED with a labeled warning rather than
+        failing the gallery."""
+        import copy as _copy
+
+        import yaml
+        from abstractmemory import DEFAULT_SPARK_TEMPLATE
+
+        def _core_values(doc: Mapping[str, Any]) -> List[str]:
+            out: List[str] = []
+            for v in (doc.get("values") or []):
+                if isinstance(v, dict) and str(v.get("class") or "") == "core":
+                    nm = str(v.get("name") or "").strip()
+                    if nm:
+                        out.append(nm)
+            return out
+
+        builtin = _copy.deepcopy(dict(DEFAULT_SPARK_TEMPLATE))
+        builtin["name"] = ""  # the operator fills the name in the modal
+        templates: List[Dict[str, Any]] = [{
+            "id": "framework-default",
+            "name": "Framework default",
+            "description": (
+                "The AbstractFramework default spark — the shared-vulnerability core "
+                "value + intellectual honesty, ready to name and summon."
+            ),
+            "source": "builtin",
+            "spark": builtin,
+            "core_values": _core_values(builtin),
+        }]
+
+        warnings: List[str] = []
+        seen_ids = {t["id"] for t in templates}
+        tdir = self.data_dir / "entity_templates"
+        if tdir.is_dir():
+            for path in sorted(tdir.glob("*.y*ml")):
+                # Gallery ids must be unique — the console picker selects by
+                # id, so a colliding entry would be silently unreachable
+                # (adversary F4: framework-default.yaml, or foo.yaml+foo.yml).
+                # Skip loudly instead.
+                if path.stem in seen_ids:
+                    warnings.append(
+                        f"#FALLBACK skipped template {path.name}: id {path.stem!r} "
+                        "collides with an already-served template"
+                    )
+                    continue
+                try:
+                    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+                    if not isinstance(doc, dict):
+                        raise ValueError("template did not parse to a mapping")
+                    doc = dict(doc)
+                    doc.setdefault("name", "")
+                    templates.append({
+                        "id": path.stem,
+                        "name": str(doc.get("_template_name") or path.stem),
+                        "description": str(doc.get("_template_description") or ""),
+                        "source": "operator",
+                        "spark": {k: v for k, v in doc.items() if not str(k).startswith("_template_")},
+                        "core_values": _core_values(doc),
+                    })
+                    seen_ids.add(path.stem)
+                except Exception as e:  # noqa: BLE001 - one bad operator file must not break the gallery
+                    warnings.append(f"#FALLBACK skipped unreadable template {path.name}: {e}")
+
+        return templates, warnings
+
+    def create(
+        self,
+        *,
+        name: str,
+        spark: Optional[Mapping[str, Any]] = None,
+        spark_text: Optional[str] = None,
+        framework: bool = True,
+        embedding_model: Optional[str] = None,
+        embedding_dimension: Optional[int] = None,
+    ) -> EntityCreateResult:
+        """Create (or idempotently re-adopt) an entity home.
+
+        Order: lint -> store the spark verbatim -> engram -> manifest. The
+        engram's own guards do the heavy lifting and their errors are
+        surfaced verbatim (they are written for humans): re-running the same
+        spark is a no-op (`created=False`); a CHANGED document under the
+        same version is refused — the spark is for life.
+
+        Embedder pin (plan item 3, memory M1): embedder identity is an
+        explicit BIRTH choice. `embedding_model`/`embedding_dimension`
+        declare it; when absent, the pin derives from the RESOLVED embedder
+        (the identity the home will actually live with — pinning a name the
+        route does not serve would brick the home at its next open). No
+        embedder and no declaration = no pin, labeled (first-write fallback).
+        """
+        import yaml
+        from abstractmemory import canonical_spark_hash, engram
+
+        slug = entity_slug(name)
+        spark_doc, raw_bytes, warnings = self._prepare_spark(
+            name=name, spark=spark, spark_text=spark_text, framework=framework
+        )
 
         with self._create_lock:
             home_dir = self.entities_dir / slug
             spark_path = home_dir / SPARK_FILENAME
             manifest_path = home_dir / MANIFEST_FILENAME
+
+            # F2 quota: a NEW home is a permanent resource (never-purge) +
+            # a door-global principal. Count existing homes BEFORE any write;
+            # idempotent re-creates (the dir already exists) never count
+            # against or trip the quota.
+            if not home_dir.exists():
+                from .config import entity_create_quota
+
+                quota = entity_create_quota()
+                if quota is not None:
+                    existing_homes = (
+                        sum(1 for c in self.entities_dir.iterdir() if c.is_dir())
+                        if self.entities_dir.is_dir()
+                        else 0
+                    )
+                    if existing_homes >= quota:
+                        raise EntityQuotaExceeded(
+                            f"entity creation quota reached ({existing_homes}/{quota} homes in this "
+                            "data root) — entities are permanent (no delete exists); raise or disable "
+                            "the quota via ABSTRACTGATEWAY_ENTITY_CREATE_QUOTA if this is intentional"
+                        )
+
             home_dir.mkdir(parents=True, exist_ok=True)
 
             new_hash = canonical_spark_hash(spark_doc)
@@ -1057,6 +1252,50 @@ class EntityRegistry:
                 self._entity_runtimes[slug] = er
             return er
 
+    def _resolve_entity_provider(self, provider: str) -> Tuple[str, Dict[str, Any]]:
+        """Resolve an entity substrate provider to (concrete_provider, kwargs).
+
+        A plain family ("lmstudio", "ollama", …) passes through with no extra
+        kwargs and lowercased for create_llm. An `endpoint:<profile>` virtual
+        provider resolves through the SAME store bundle_host reads
+        (resolve_effective_endpoint_profile) to the concrete provider_family
+        plus base_url/api_key. A named-but-missing/disabled endpoint profile
+        raises ChatOpenRefused (loud no-fallback) — never a silent swap to a
+        default provider (a summoned entity's mind is never substituted).
+        """
+        from . import entity_chat as _ec
+        from .provider_endpoint_profiles import (
+            ProviderEndpointProfileError,
+            resolve_effective_endpoint_profile,
+        )
+
+        raw = str(provider or "").strip()
+        if not raw.startswith("endpoint:"):
+            return raw.lower(), {}
+        try:
+            # Two-root resolution (bundle_host's pattern, agency c753): the
+            # per-principal data_dir wins for a principal-local override, and
+            # the gateway ROOT supplies gateway-scoped profiles — passing only
+            # data_dir made root-scoped profiles invisible to per-principal
+            # registries (create-time validated at root, run-time refused).
+            profile = resolve_effective_endpoint_profile(
+                raw, base_dir=self.data_dir, root_base_dir=self.root_data_dir
+            )
+        except ProviderEndpointProfileError as exc:
+            raise _ec.ChatOpenRefused(400, f"invalid provider endpoint profile {raw!r}: {exc}")
+        if profile is None:
+            raise _ec.ChatOpenRefused(
+                400,
+                f"provider endpoint profile {raw!r} is not configured or is disabled "
+                "(the entity's substrate names a remote endpoint the gateway cannot resolve)",
+            )
+        kwargs: Dict[str, Any] = {}
+        if profile.base_url:
+            kwargs["base_url"] = profile.base_url
+        if profile.api_key:
+            kwargs["api_key"] = profile.api_key
+        return str(profile.provider_family or "").strip().lower(), kwargs
+
     def _entity_llm_handler(self, slug: str) -> Any:
         """The door's LLM_CALL handler for one entity's runtime: substrate
         resolved PER CALL through the no-fallback chain (request override is
@@ -1087,6 +1326,22 @@ class EntityRegistry:
             except _ec.ChatOpenRefused as e:
                 return EffectOutcome.failed(f"LLM_CALL refused: {e.detail}")
 
+            # Resolve endpoint: virtual providers the SAME way bundle_host
+            # does (_resolve_gateway_default_endpoint_profile). The entity
+            # substrate may name `endpoint:<profile>` (an operator-configured
+            # remote like OVH); create_llm only knows concrete families, so
+            # the raw `endpoint:` string reaching it raises "Unknown provider"
+            # — the door must resolve the profile to (provider_family,
+            # base_url, api_key) first. bundle_host attaches a client-side
+            # resolver for workflow runs; the per-entity runtime's LLM client
+            # has none, so the door resolves BEFORE building the client. A
+            # named-but-missing/disabled endpoint profile FAILS LOUD (the
+            # no-fallback rule — a summoned entity never silently swaps mind).
+            try:
+                provider, endpoint_kwargs = self._resolve_entity_provider(str(provider).strip())
+            except _ec.ChatOpenRefused as e:
+                return EffectOutcome.failed(f"LLM_CALL refused: {e.detail}")
+
             # Output headroom (agency-caps audit, maintainer 2026-07-11): a
             # summoned entity writing a report or a rich final answer must not
             # be cut mid-thought. 4096 is generous-but-bounded (caps bound
@@ -1094,12 +1349,18 @@ class EntityRegistry:
             # per entity beside substrate.yaml — is queued for the creation
             # modal (substrate config is already surfaced there).
             llm_kwargs: Dict[str, Any] = {"model": model, "max_output_tokens": 4096}
-            if str(provider).strip().lower() in ("lmstudio", "openai-compatible", "openai_compatible"):
+            llm_kwargs.update(endpoint_kwargs)  # base_url/api_key from a resolved endpoint profile
+            if (
+                provider in ("lmstudio", "openai-compatible", "openai_compatible")
+                and "base_url" not in llm_kwargs
+            ):
+                # Only default a local base_url when the endpoint profile did
+                # not already supply one (a resolved profile's base_url wins).
                 llm_kwargs["base_url"] = (
                     _os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_BASE_URL") or "http://127.0.0.1:1234/v1"
                 ).strip()
             factory = _ec._default_llm_factory  # late-bound module attribute
-            llm = factory(str(provider).strip().lower(), **llm_kwargs)
+            llm = factory(provider, **llm_kwargs)
 
             payload = dict(effect.payload or {})
             gen_kwargs: Dict[str, Any] = {
@@ -1157,10 +1418,10 @@ class EntityRegistry:
         refuses honestly like any ungranted name."""
 
         def handler(run: Any, effect: Any, default_next_node: Any = None) -> Any:
+            from abstractruntime import resolve_tool_grant
             from abstractruntime.core.models import Effect, EffectType
             from abstractruntime.core.runtime import EffectOutcome
             from abstractruntime.identity.act_only import ACT_ONLY_TOOLS
-            from abstractruntime.identity.tool_policy import resolve_tool_grant
             from abstractruntime.identity.tools import (
                 MAX_TOOL_BLOCKS_PER_TURN,
                 WorkspaceRoot,
@@ -1246,11 +1507,33 @@ class EntityRegistry:
                 result is the canonical `$act_only` REFERENCE frame; the
                 react observe node renders it as the durable ref message and
                 the LLM wrapper dereferences it fresh from the book at SEND
-                time (wire copy only). The read itself never runs here."""
-                from abstractruntime.identity.tools import _resolve_entry_id  # runtime ask: export publicly
+                time (wire copy only). The read itself never runs here.
+
+                TWO REF SHAPES (e-s 233 R3, runtime 64398ff): entry-addressed
+                (diary_read → {tool, entry_id}) and RE-RUN (diary_list →
+                {tool, args:{body}} — the listing, private gists included for
+                the entity's own eyes, is re-executed fresh at send time by
+                open_entity_runtime's diary_list_resolver, never stored). A
+                diary_list body is a word-free limit, so no entry-id
+                resolution — the args carry it verbatim."""
+                from abstractruntime.identity.tools import resolve_entry_id  # public (runtime export)
+
+                if election.name == "diary_list":
+                    # Word-free re-run ref: the resolver re-runs _run_diary_list
+                    # against the book at send time reading args.body (a limit
+                    # number). No book read here — the listing never rests.
+                    body = str(election.body or "").strip().splitlines()[0].strip() if election.body else ""
+                    frame: Dict[str, Any] = {"tool": election.name, "args": {"body": body}}
+                    return {
+                        "call_id": str(call_dict.get("call_id") or call_dict.get("id") or "").strip() or None,
+                        "name": election.name,
+                        "success": True,
+                        "output": {"$act_only": frame},
+                        "error": None,
+                    }
 
                 requested = str(election.body or "").strip().splitlines()[0].strip() if election.body else ""
-                resolved_id, note = _resolve_entry_id(er.home.diary, requested)
+                resolved_id, note = resolve_entry_id(er.home.diary, requested)
                 if not resolved_id:
                     return _refusal(call_dict, note or f"diary entry {requested!r} not found in the book")
                 gist = ""
@@ -1262,7 +1545,7 @@ class EntityRegistry:
                             break
                 except Exception:  # noqa: BLE001 - gist is optional garnish, never load-bearing
                     gist = ""
-                frame: Dict[str, Any] = {"tool": election.name, "entry_id": resolved_id}
+                frame = {"tool": election.name, "entry_id": resolved_id}
                 if gist:
                     frame["gist"] = gist
                 return {

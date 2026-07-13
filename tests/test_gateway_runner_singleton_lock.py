@@ -17,6 +17,7 @@ These tests pin the layered fix:
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -230,6 +231,84 @@ def test_new_process_takes_over_from_live_holder(tmp_path: Path) -> None:
         if child.poll() is None:
             child.kill()
         child.wait(timeout=5.0)
+
+
+# ---------------------------------------------------------------------------
+# 3b. stop() drains before releasing; a stale takeover file cannot wedge acquire
+#     (adversary findings, 2026-07-11)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.basic
+def test_stop_releases_the_lock_when_no_ticks_are_inflight(tmp_path: Path) -> None:
+    runner = _make_runner(tmp_path)
+    runner.start()
+    _wait_until(lambda: runner.runner_status()["active"], timeout_s=5.0)
+    runner.stop()
+    assert runner.runner_status()["lock_held"] is False
+    # A fresh flock probe must succeed — the kernel lock is truly free.
+    fh = (tmp_path / "gateway_runner.lock").open("a")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # must not raise
+    finally:
+        fh.close()
+
+
+@pytest.mark.basic
+def test_stop_holds_the_lock_until_inflight_ticks_drain(tmp_path: Path) -> None:
+    """Finding 1 (P0): stop() must NOT release the flock while a tick is still
+    executing on an executor thread — a concurrent runner could otherwise
+    acquire and double-tick the same run. On drain-timeout stop() HOLDS the
+    lock (released only on process exit)."""
+    runner = _make_runner(tmp_path)
+    runner.start()
+    _wait_until(lambda: runner.runner_status()["active"], timeout_s=5.0)
+
+    # Simulate a tick still executing (an executor thread mid-run).
+    with runner._inflight_lock:
+        runner._inflight.add("run-still-ticking")
+
+    runner.stop(drain_timeout_s=0.3)  # short, deterministic wedge
+    # The lock is HELD (not released) because the tick never drained — the
+    # invariant that keeps a second runner from double-ticking the same run.
+    assert runner.runner_status()["lock_held"] is True
+
+    # Cleanup: the tick "finishes", then release for real.
+    with runner._inflight_lock:
+        runner._inflight.discard("run-still-ticking")
+    runner._release_singleton_lock()
+    assert runner.runner_status()["lock_held"] is False
+
+
+@pytest.mark.integration
+def test_acquire_clears_a_stale_takeover_file_from_a_reused_pid(tmp_path: Path) -> None:
+    """Finding 2 (P1): a leftover takeover file naming a REUSED-alive pid (a
+    file that survived a reboot/pid-reshuffle) must not wedge the acquirer
+    into a permanent yield-loop. The acquirer clears it UNCONDITIONALLY and
+    stays the ticker, rather than yielding forever to a pid that never asked.
+    """
+    # A real, alive pid that is NOT this process and never requested takeover.
+    ghost = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    runner = None
+    try:
+        (tmp_path / "gateway_runner.takeover").write_text(
+            json.dumps({"pid": ghost.pid, "requested_at": "2000-01-01T00:00:00+00:00"}) + "\n",
+            encoding="utf-8",
+        )
+        runner = _make_runner(tmp_path)
+        runner.start()
+        # It acquires the FREE lock and must clear the stale file, staying
+        # active — not yielding to the ghost pid every iteration.
+        _wait_until(lambda: runner.runner_status()["active"], timeout_s=5.0)
+        _wait_until(lambda: not (tmp_path / "gateway_runner.takeover").exists(), timeout_s=5.0)
+        time.sleep(0.5)  # would have re-yielded within this window if wedged
+        assert runner.runner_status()["active"] is True
+        assert runner.runner_status()["yielded_to_pid"] is None
+    finally:
+        if runner is not None:
+            runner.stop()
+        ghost.kill()
+        ghost.wait(timeout=5.0)
 
 
 # ---------------------------------------------------------------------------

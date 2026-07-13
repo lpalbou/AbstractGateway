@@ -422,6 +422,22 @@ def test_verbatim_on_click_endpoint():
         assert home.memory.current_seq() == seq_before
 
 
+class _FakeRequest:
+    """Request stub for direct-call SSE tests: `disconnect_after` = number of
+    is_disconnected() polls answered False before answering True forever
+    (None = never disconnects)."""
+
+    def __init__(self, disconnect_after=None):
+        self.polls = 0
+        self.disconnect_after = disconnect_after
+
+    async def is_disconnected(self) -> bool:
+        self.polls += 1
+        if self.disconnect_after is None:
+            return False
+        return self.polls > self.disconnect_after
+
+
 def test_sse_stream_first_event_and_cursor_resume():
     """The live tail never terminates by design (a life has no terminal
     state), so this exercises the route's async generator directly instead
@@ -435,7 +451,7 @@ def test_sse_stream_first_event_and_cursor_resume():
 
         async def _first_event(since_seq: float = 0.0) -> str:
             response = await stream_entity_replay(
-                "Castor", since_seq=since_seq, families=None, enrich=True,
+                _FakeRequest(), "Castor", since_seq=since_seq, families=None, enrich=True,
                 heartbeat_s=5.0, poll_s=0.05, last_event_id=None,
             )
             assert response.media_type == "text/event-stream"
@@ -460,3 +476,148 @@ def test_sse_stream_first_event_and_cursor_resume():
         later = asyncio.run(_first_event(since_seq=float(payload["seq"])))
         later_payload = json.loads(later.split("data: ", 1)[1])
         assert float(later_payload["seq"]) > float(payload["seq"])
+
+
+def test_sse_backlog_drains_in_bounded_offloop_chunks():
+    """H7b (starvation c975/c991): the backlog walk happens in bounded
+    chunks off the event loop — with the chunk size narrowed the full
+    backlog still arrives, in strict seq order, across multiple chunk
+    passes (the loop regains control between chunks by construction)."""
+    import asyncio
+
+    from abstractgateway.routes import entity_replay as er_routes
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+
+        old_chunk = er_routes._STREAM_CHUNK
+        er_routes._STREAM_CHUNK = 3  # force multiple passes on a small life
+        try:
+            async def _drain_backlog() -> list:
+                response = await er_routes.stream_entity_replay(
+                    _FakeRequest(), "Castor", since_seq=0.0, families=None, enrich=True,
+                    heartbeat_s=5.0, poll_s=0.05, last_event_id=None,
+                )
+                gen = response.body_iterator
+                buffer = ""
+                seqs: list = []
+                try:
+                    # Read until the first keep-alive (backlog exhausted and
+                    # nothing new arrives within a heartbeat window).
+                    while ": keep-alive" not in buffer:
+                        buffer += (await gen.__anext__()).decode("utf-8")
+                finally:
+                    await gen.aclose()
+                for block in buffer.split("\n\n"):
+                    if "data: " in block:
+                        seqs.append(float(json.loads(block.split("data: ", 1)[1])["seq"]))
+                return seqs
+
+            seqs = asyncio.run(asyncio.wait_for(_drain_backlog(), timeout=30))
+        finally:
+            er_routes._STREAM_CHUNK = old_chunk
+
+        # An engram-fresh home has well more than one 3-envelope chunk.
+        assert len(seqs) > 3, f"expected a multi-chunk backlog, got {len(seqs)} envelopes"
+        assert seqs == sorted(seqs), "chunked drain must preserve strict seq order"
+
+
+def test_f4_low_seq_marker_written_during_disconnect_redelivers_on_reconnect():
+    """Adversary F4 (pre-existing, shape chosen by observer c1040): the old
+    reconnect catch-up pre-marked every marker with seq <= Last-Event-ID as
+    consumed — a low-seq marker written DURING the disconnect was never
+    delivered to the reconnected tail. The composite cursor (<seq>|<line>)
+    keys markers by append-order file line instead, so it redelivers."""
+    import asyncio
+
+    from abstractgateway.routes import entity_replay as er_routes
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+
+        from abstractgateway.entity_replay import record_host_marker
+        from abstractgateway.service import get_gateway_service
+
+        registry = get_gateway_service().entity_registry
+        slug = "castor"
+        # Marker 1: delivered before the "disconnect" (file line 1).
+        record_host_marker(
+            entities_dir=registry.entities_dir, slug=slug, entity_id="entity:castor",
+            kind="summon", journal_seq=1, details={"n": 1},
+        )
+        # Marker 2 (file line 2): written DURING the disconnect, with a LOW
+        # anchored seq — the exact envelope the old catch-up lost.
+        record_host_marker(
+            entities_dir=registry.entities_dir, slug=slug, entity_id="entity:castor",
+            kind="diary_read", journal_seq=1, details={"n": 2},
+        )
+
+        async def _collect(last_event_id: str) -> list:
+            response = await er_routes.stream_entity_replay(
+                _FakeRequest(), "Castor", since_seq=0.0, families="host", enrich=False,
+                heartbeat_s=5.0, poll_s=0.05, last_event_id=last_event_id,
+            )
+            gen = response.body_iterator
+            buffer = ""
+            try:
+                while ": keep-alive" not in buffer:
+                    buffer += (await gen.__anext__()).decode("utf-8")
+            finally:
+                await gen.aclose()
+            kinds = []
+            for block in buffer.split("\n\n"):
+                if "data: " in block:
+                    payload = json.loads(block.split("data: ", 1)[1])
+                    kinds.append((payload.get("payload") or {}).get("kind"))
+            return kinds
+
+        # Reconnect: journal cursor far past both marker seqs, marker cursor
+        # says "I saw file line 1". The line-2 marker MUST deliver.
+        kinds = asyncio.run(asyncio.wait_for(_collect("9999.0|1"), timeout=30))
+        assert "diary_read" in kinds, f"low-seq marker written during disconnect must redeliver: {kinds}"
+        assert "summon" not in kinds, "already-consumed line stays consumed"
+
+        # Plain-float Last-Event-ID (old client): legacy seq catch-up intact —
+        # both markers are below the seq cursor, nothing redelivers.
+        legacy = asyncio.run(asyncio.wait_for(_collect("9999.0"), timeout=30))
+        assert legacy == [], f"legacy plain-float cursor keeps the old semantics: {legacy}"
+
+
+def test_sse_abandoned_client_stops_the_backlog_walk():
+    """H7b: an abandoned tail STOPS mid-backlog instead of producing the
+    whole life into a dead socket's buffer (observer's repro: client killed
+    at 1s used to pin the loop ~40s more)."""
+    import asyncio
+
+    from abstractgateway.routes import entity_replay as er_routes
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+
+        old_chunk = er_routes._STREAM_CHUNK
+        er_routes._STREAM_CHUNK = 2
+        try:
+            async def _consume_until_stop() -> int:
+                # Disconnect after the FIRST is_disconnected poll: the top-of-
+                # loop check passes once, the mid-backlog check then reports
+                # the client gone and the generator must RETURN on its own.
+                response = await er_routes.stream_entity_replay(
+                    _FakeRequest(disconnect_after=1), "Castor", since_seq=0.0,
+                    families=None, enrich=True, heartbeat_s=5.0, poll_s=0.05,
+                    last_event_id=None,
+                )
+                gen = response.body_iterator
+                events = 0
+                async for part in gen:  # ends only if the generator returns
+                    if b"data: " in part:
+                        events += 1
+                return events
+
+            delivered = asyncio.run(asyncio.wait_for(_consume_until_stop(), timeout=30))
+        finally:
+            er_routes._STREAM_CHUNK = old_chunk
+
+        # The generator terminated by itself (wait_for did not time out) and
+        # it did NOT deliver the whole backlog (2-envelope chunk, disconnect
+        # detected after the first chunk boundary).
+        assert delivered <= 4, f"abandoned tail should stop early, delivered {delivered} envelopes"
