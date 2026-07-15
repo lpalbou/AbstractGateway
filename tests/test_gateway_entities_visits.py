@@ -316,6 +316,137 @@ def test_tick_is_idempotent_on_parked_and_terminal_runs(monkeypatch: pytest.Monk
         assert "output" in done.json()
 
 
+def test_turn_serves_the_probe_payload_and_transcript_rehydrates(monkeypatch: pytest.MonkeyPatch):
+    """Cutover gaps 1+2 (entity c1318 / gateway c1320): the durable turn
+    response carries the hosted lane's transparency surfaces (tools_ran,
+    memories with born_at/origin, system_prompt — driver-authored data,
+    never prose-derived), and GET /visit/{run_id}/transcript is the pure-read
+    rehydration twin that works on live AND closed runs."""
+    _install_scripted_llm(monkeypatch, ["Hello there.", "Second reply.", "Reflection."])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+
+        turned = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "hello"}
+        )
+        assert turned.status_code == 200, turned.text
+        body = turned.json()
+        # Gap 1: the probe fields exist with the hosted lane's names/shapes.
+        assert isinstance(body["tools_ran"], list), "driver-authored tool truth, present even when empty"
+        assert isinstance(body["memories"], list)
+        assert body["memories_in_context"] == len(body["memories"])
+        for m in body["memories"]:
+            assert set(m) >= {"kind", "title", "digest", "born_at", "origin", "admission"}
+        assert body["turn_id"].startswith("t-")
+        assert "entity:castor" in body["participants"]
+        assert isinstance(body["system_prompt"], str) and body["system_prompt"], "the byte-stable head serves"
+        assert body["tool_details"] == [] and body["files"] == [], "honest absence, never fabricated"
+
+        # Gap 2: transcript rehydrates the conversation (live run).
+        t1 = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript")
+        assert t1.status_code == 200, t1.text
+        tr = t1.json()
+        assert tr["run_id"] == run_id and tr["turn_n"] == 1
+        roles = [t["role"] for t in tr["turns"]]
+        assert roles == ["user", "assistant"]
+        assert "Hello there." in tr["turns"][1]["content"]
+
+        # Second turn folds in order; then the transcript survives CLOSE.
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "again"})
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+        t2 = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript")
+        assert t2.status_code == 200, t2.text
+        tr2 = t2.json()
+        assert tr2["status"] == "completed"
+        assert len(tr2["turns"]) == 4, "closed visits stay readable (rehydration after the fact)"
+
+
+def test_visit_open_auto_wakes_an_operator_asleep_entity(monkeypatch: pytest.MonkeyPatch):
+    """B1 ruling (a), laurent 04:58: 'if i click visit, it should awake the
+    entity, period.' An operator-asleep entity (no visiting posture, no live
+    loop) is WOKEN by the visit rather than refused 'wake him first' — the
+    operator always has a path in. The wake reason records the visit did it."""
+    _install_scripted_llm(monkeypatch, ["I'm awake now.", "Reflection."])
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # Operator puts him to sleep (not a visit-yield posture, no loop).
+        write_entity_state(_home_dir(), "asleep", reason="operator rest")
+
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text  # NOT a 409 "wake him first"
+        run_id = opened.json()["run_id"]
+        # He is awake, woken BY the visit (reason names it).
+        st = read_entity_state(_home_dir())
+        assert st["state"] == "awake"
+        assert "visit" in str(st.get("reason", "")).lower()
+        # The visit is real and usable.
+        turned = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "hello"}
+        )
+        assert turned.status_code == 200, turned.text
+        closed = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+        assert closed.status_code == 200, closed.text
+        # PRIOR-STATE RESTORE (state-sources adversary): the operator's
+        # asleep survives the visit — closing must not convert it into a
+        # standing awake behind their back.
+        st2 = read_entity_state(_home_dir())
+        assert st2["state"] == "asleep"
+        assert "operator rest" in str(st2.get("reason", ""))
+
+
+def test_operator_sleep_gates_an_open_visits_turns(monkeypatch: pytest.MonkeyPatch):
+    """State-sources adversary P0-2: an operator sleep that raced/failed the
+    teardown used to leave a durable visit accepting billed turns under
+    /state=asleep. The turn gate now refuses non-awake states (the visiting
+    yield posture stays open — that sleep is the visit's own)."""
+    _install_scripted_llm(monkeypatch, ["Hello.", "Reflection."])
+    from abstractruntime.identity.life import write_entity_state
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        run_id = opened.json()["run_id"]
+
+        # Simulate the raced teardown: the operator's asleep lands while the
+        # visit is still open (direct write = the race's end state).
+        write_entity_state(_home_dir(), "asleep", reason="operator sleep raced the teardown")
+
+        turned = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "still there?"}
+        )
+        assert turned.status_code == 409, turned.text
+        assert "asleep by the operator" in turned.json()["detail"]
+        # Close stays exempt (the teardown IS a close).
+        closed = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+        assert closed.status_code == 200, closed.text
+
+
+def test_life_state_counts_durable_visits(monkeypatch: pytest.MonkeyPatch):
+    """State-sources adversary P1-1: /life_state folded `visiting` from the
+    chat host only, so a durable /visit read as awake/asleep while
+    /cognition said visiting — two composites disagreeing on the headline
+    field. The route now widens with the durable lane."""
+    _install_scripted_llm(monkeypatch, ["Hello.", "Reflection."])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        run_id = opened.json()["run_id"]
+
+        life = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert life["phase"] == "visiting"  # legacy chip keeps its historical spelling
+        assert life["visit_run_id"] == run_id
+        cog = client.get("/api/gateway/entities/Castor/cognition").json()
+        assert cog["phase"] == "visit"  # strict ruled key on the composite
+
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] != "visiting"
+
+
 def test_sleep_tears_down_an_open_durable_visit(monkeypatch: pytest.MonkeyPatch):
     """The mid-visit guard extended to durable visits (a2a 0008 + phase 3):
     POST /state asleep must STOP an open /visit, not flip a badge while the

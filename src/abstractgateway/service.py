@@ -247,12 +247,28 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     # Best-effort: apply persisted process-manager env overrides early so runtime
     # integrations (email bridge, report triage, etc.) observe the configured values
     # immediately after a gateway restart.
+    # Resolution now honors the admin runtime-config store (continuum c1550):
+    # stored > env > default — so a launcher losing the env no longer blanks
+    # the manager when the operator persisted it on (the c1526 incident).
     try:
-        enabled_raw = os.getenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER")
-        if enabled_raw is not None and str(enabled_raw).strip().lower() in {"1", "true", "yes", "on"}:
+        from .runtime_config import resolve_process_manager_enabled
+
+        if resolve_process_manager_enabled(stores.base_dir):
             from .maintenance.process_manager import get_managed_env_var_manager
 
             get_managed_env_var_manager(base_dir=stores.base_dir)
+    except Exception:
+        pass
+
+    # Data & Caches writer wave (operator priority 2026-07-13 18:19, agency
+    # c1580 ask 1a): register this data root's gateway-owned homes in the
+    # machine-level registry at BOOT — artifacts (load-bearing), logs,
+    # workspaces, every entity home (safe_to_purge=False by construction).
+    # Best-effort: a broken registry never blocks a boot.
+    try:
+        from .data_homes import register_gateway_data_homes
+
+        register_gateway_data_homes(stores.base_dir)
     except Exception:
         pass
 
@@ -440,32 +456,60 @@ def reload_gateway_workflow_bundles() -> Dict[str, Any]:
     return {"ok": all(bool(r.get("ok", True)) for r in results), "services": results}
 
 
-def start_gateway_runner() -> None:
-    if gateway_multi_user_enabled():
-        # Per-principal services are created and started lazily once auth resolves
-        # the current user. Starting a process-wide service here would recreate
-        # the singleton data-plane that hosted mode is meant to avoid.
-        return
-    svc = get_gateway_service()
-    svc.runner.start()
-    # Optional: backlog execution runner (consumes backlog_exec_queue and executes requests).
+def sync_backlog_exec_runner(*, data_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Reconcile the backlog exec runner with the RESOLVED config (stored >
+    env — runtime_config's chain). Called at boot AND after every admin
+    runtime-config write, so continuum's Settings toggle takes effect
+    LIVE instead of demanding a serve restart (the exact gap the operator's
+    'no execution agent' screenshot showed). Idempotent: enabled+running =
+    no-op; disabled+running = stop; enabled+stopped/config-changed =
+    (re)start with the fresh config."""
     global _backlog_exec_runner, _backlog_exec_runner_error
     try:
-        if _backlog_exec_runner is None:
-            from .maintenance.backlog_exec_runner import BacklogExecRunner, BacklogExecRunnerConfig
+        from .maintenance.backlog_exec_runner import BacklogExecRunner, BacklogExecRunnerConfig
 
-            cfg = BacklogExecRunnerConfig.from_env()
-            if cfg.enabled:
-                _backlog_exec_runner = BacklogExecRunner(gateway_data_dir=svc.stores.base_dir, cfg=cfg)
-                _backlog_exec_runner.start()
-                _backlog_exec_runner_error = None
+        base_dir = Path(data_dir) if data_dir is not None else Path(GatewayHostConfig.from_env().data_dir)
+        cfg = BacklogExecRunnerConfig.from_gateway(base_dir)
+        runner = _backlog_exec_runner
+        if not cfg.enabled:
+            if runner is not None:
+                runner.stop()
+                _backlog_exec_runner = None
+            _backlog_exec_runner_error = None
+            return {"enabled": False, "alive": False}
+        if runner is not None and runner.is_running() and runner.cfg == cfg:
+            return {"enabled": True, "alive": True}
+        if runner is not None:
+            runner.stop()
+        _backlog_exec_runner = BacklogExecRunner(gateway_data_dir=base_dir, cfg=cfg)
+        _backlog_exec_runner.start()
+        _backlog_exec_runner_error = None
+        return {"enabled": True, "alive": _backlog_exec_runner.is_running(), "executor": cfg.executor}
     except Exception as e:
-        # Best-effort: never break the gateway runner start if maintenance runner fails.
+        # Best-effort: never break the caller if the maintenance runner fails.
         _backlog_exec_runner = None
         try:
             _backlog_exec_runner_error = str(e)
         except Exception:
             pass
+        return {"enabled": False, "alive": False, "error": str(e)}
+
+
+def start_gateway_runner() -> None:
+    if gateway_multi_user_enabled():
+        # Per-principal services are created and started lazily once auth resolves
+        # the current user. Starting a process-wide service here would recreate
+        # the singleton data-plane that hosted mode is meant to avoid.
+        # The BACKLOG EXEC RUNNER is deliberately not per-principal: the
+        # queue lives at the base data dir and executions run on the host —
+        # under user-auth the old early return silently never started it
+        # (the operator's "no execution agent" incident, 2026-07-14 21:09).
+        sync_backlog_exec_runner()
+        return
+    svc = get_gateway_service()
+    svc.runner.start()
+    # Optional: backlog execution runner (consumes backlog_exec_queue and executes requests).
+    sync_backlog_exec_runner(data_dir=Path(svc.stores.base_dir))
     bridge = getattr(svc, "telegram_bridge", None)
     if bridge is not None:
         bridge.start()

@@ -83,6 +83,11 @@ def test_open_refuses_without_explicit_substrate(monkeypatch: pytest.MonkeyPatch
         refused = client.post("/api/gateway/entities/Castor/chat/open", json={})
         assert refused.status_code == 400, refused.text
         assert "no mind substrate chosen" in refused.json()["detail"]
+        # The grant gate + the awake gate precede the substrate resolve on
+        # the loop path (personal off-by-default c1435; newborn=sleep c1503)
+        # — arm + wake so the substrate refusal is reachable and still loud.
+        assert client.put("/api/gateway/entities/Castor/personal-grant", json={"mode": "until_revoked"}).status_code == 200
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
         loop_refused = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert loop_refused.status_code == 400, loop_refused.text
         assert "no mind substrate chosen" in loop_refused.json()["detail"]
@@ -271,6 +276,46 @@ def test_open_adopts_visiting_posture_and_wakes_on_close(monkeypatch: pytest.Mon
         assert "1 turns" in state["reason"] or "turns" in state["reason"]
 
 
+def test_operator_sleep_mid_chat_visit_survives_the_close(monkeypatch: pytest.MonkeyPatch):
+    """Conformance adversary P1: the chat lane's close used to write awake
+    unconditionally whenever the visit had yielded the loop — an operator
+    sleep (or pause: the EMERGENCY STOP) landed mid-visit was silently
+    undone at teardown, and a parked granted loop could reopen a day. The
+    close now mirrors the durable lane's visit-authored guard: only the
+    visit's own yield posture is overwritten; the operator's word stands."""
+    _install_scripted_llm(monkeypatch, ["Adopted reply.", "(reflection) quiet."])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+
+        from abstractgateway.service import get_gateway_service
+        from abstractruntime.identity.life import write_entity_state
+
+        registry = get_gateway_service().entity_registry
+        home_dir = registry.entities_dir / "castor"
+        # A yielded-loop visit (adopted stale posture — yielded_loop=True).
+        write_entity_state(
+            home_dir, "asleep",
+            reason="in conversation with person:laurent (auto-yield)", mode="visiting",
+        )
+        opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
+        assert opened.status_code == 200, opened.text
+        assert opened.json()["yielded_loop"] is True
+
+        # The operator's sleep lands mid-visit through the state route
+        # (state writes FIRST, then this same route tears the chat down).
+        r = client.post(
+            "/api/gateway/entities/Castor/state",
+            json={"state": "asleep", "reason": "host under load"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["closed_visit"] is not None  # the teardown ran
+
+        # The operator's word STANDS — the close's wake-write did not fire.
+        state = client.get("/api/gateway/entities/Castor/state").json()
+        assert state["state"] == "asleep"
+        assert "host under load" in state["reason"]
+
+
 def test_open_salvages_a_died_unreflected_session(monkeypatch: pytest.MonkeyPatch):
     """The reflection-loss guard, web half (a2a 0007/171500Z): a previous
     session's write-ahead marker (died unreflected) is salvaged as the new
@@ -342,9 +387,13 @@ def test_open_salvages_a_died_unreflected_session(monkeypatch: pytest.MonkeyPatc
         ).status_code == 200
 
 
-def test_operator_set_sleep_refuses_the_visit(monkeypatch: pytest.MonkeyPatch):
-    """Asleep WITHOUT the visiting posture is the operator's no-summon
-    window — the web chat respects it exactly like the summon endpoint."""
+def test_operator_set_sleep_is_woken_by_the_visit(monkeypatch: pytest.MonkeyPatch):
+    """B1 extended to the chat lane (newborn shape c1503: doors WAKE, they
+    don't refuse): an operator-asleep entity is woken BY the visit — the
+    operator always has a path in, and a newborn (asleep at birth) is
+    visitable from its first moment. The workplace SUMMON lane keeps its
+    no-summon window (a workflow is not a visit)."""
+    _install_scripted_llm(monkeypatch, ["I'm awake now.", "(reflection) quiet"])
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         assert client.post(
@@ -352,10 +401,12 @@ def test_operator_set_sleep_refuses_the_visit(monkeypatch: pytest.MonkeyPatch):
             json={"state": "asleep", "reason": "night consolidation"},
         ).status_code == 200
 
-        refused = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
-        assert refused.status_code == 409
-        assert "asleep" in refused.json()["detail"]
-        assert "night consolidation" in refused.json()["detail"]
+        opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
+        assert opened.status_code == 200, opened.text
+        state = client.get("/api/gateway/entities/Castor/state").json()
+        assert state["state"] == "awake"
+        assert "woken by visit" in state["reason"]
+        client.post(f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close")
 
 
 def test_life_state_is_one_mutually_exclusive_phase(monkeypatch: pytest.MonkeyPatch):
@@ -365,6 +416,8 @@ def test_life_state_is_one_mutually_exclusive_phase(monkeypatch: pytest.MonkeyPa
     _install_scripted_llm(monkeypatch, ["hi", "(reflection) quiet"])
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # Newborn = sleep (artifact initial_phase); wake for the awake leg.
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
         # Awake, no loop, no visit -> awake.
         ls = client.get("/api/gateway/entities/Castor/life_state").json()

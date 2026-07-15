@@ -51,7 +51,13 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert '<select id="modal-default-voice">' in console.text
     assert 'id="default-modal-backdrop"' in console.text
     assert 'class="modal flow-modal default-modal"' in console.text
-    assert "--bg-primary: var(--bg)" in console.text
+    # Charter refactor (operator 2026-07-15): the kit tokens are now the
+    # SOURCE (--bg-primary is the literal charter value; the console's
+    # historical names alias onto it — the reverse of the old mapping).
+    assert "--bg-primary: #1a1a2e" in console.text
+    assert "--bg: var(--bg-primary)" in console.text
+    assert "--accent: #e94560" in console.text
+    assert 'class="shell_sidebar' in console.text  # the family shell
     assert 'id="modal-default-base-url"' not in console.text
     assert 'id="refresh-default-models"' not in console.text
     assert "Available Providers" in console.text
@@ -81,18 +87,25 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="login-form"' in console.text
     assert 'id="toggle-token"' in console.text
     assert "Connect to AbstractGateway" in console.text
+    # Operator IA (2026-07-13): Users & Entities | Runtimes | Providers |
+    # Multimodal Capabilities | Sandbox. Entities are door principals and
+    # live WITH users; runtimes split into their own tab; sandbox is last.
     assert 'id="tab-button-users"' in console.text
+    assert 'id="tab-button-runtimes"' in console.text
     assert 'id="tab-button-providers"' in console.text
     assert 'id="tab-button-defaults"' in console.text
     assert 'id="tab-button-sandbox"' in console.text
-    assert 'id="console-tabs-bar"' in console.text
+    assert 'id="tab-button-entities"' not in console.text, "entities merged into Users & Entities"
+    # Family shell: navigation lives in the sidebar (ids unchanged).
+    assert 'class="shell_nav"' in console.text
+    assert 'id="tab-button-users"' in console.text
     # Summoned Entities: the full create + manage surface (operator directive
     # 2026-07-12) — template gallery with locked core values, substrate at
     # create, per-phase capability matrix, and lifecycle management for
     # existing entities (state, loop, substrate, capabilities, prompt,
     # reembed, verify) — every route the JS drives is pinned here.
-    assert 'id="tab-button-entities"' in console.text
-    assert 'id="tab-entities"' in console.text
+    assert 'id="tab-users"' in console.text
+    assert 'id="tab-runtimes"' in console.text
     assert 'id="entity-template"' in console.text
     assert 'id="entity-create"' in console.text
     assert 'id="entities-table"' in console.text
@@ -109,7 +122,8 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="entity-prompt-layers"' in console.text
     assert 'id="entity-reembed"' in console.text
     assert 'id="entity-verify"' in console.text
-    assert 'id="entity-loop-start"' in console.text
+    assert 'id="entity-owntime-toggle"' in console.text  # laurent 12:32: ONE push button, server-truth rendered
+    assert 'aria-pressed' in console.text
     assert 'id="entity-state-asleep"' in console.text
     assert "/api/gateway/entities/templates" in console.text
     assert "/api/gateway/entities/inventory/capability-matrix" in console.text

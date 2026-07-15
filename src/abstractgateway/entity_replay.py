@@ -62,6 +62,12 @@ HOST_MARKER_KINDS = (
     # The M1b repair act (plan item 3): retrieval geometry changed — the
     # door's half of the two-plane visibility (the engine journals a claim).
     "reembed",
+    # Maintenance window moments (Castor doctoring, operator GO 2026-07-13):
+    # the door closes for a doctoring/maintenance pass and reopens after
+    # verify — moments, not states (the operator state underneath is
+    # unchanged; the hold is door bookkeeping).
+    "maintenance_window_open",
+    "maintenance_window_close",
     # Personal-phase (own time) lifecycle (maintainer, 2026-07-08: starting/
     # stopping someone's own time is part of their biography). RULED SPELLING
     # (c786 phase vocabulary): NEW writes use personal_*; the own_time_*
@@ -81,6 +87,20 @@ HOST_MARKER_KINDS = (
     # marker-first like every other operator act. Details carry layer names
     # + short content hashes, never the words.
     "prompt_overlay_changed",
+    # Substrate change (laurent 12:39, hypnos incident): "which llm was
+    # behind during which time" must be answerable from the stream — every
+    # substrate write lands a principal-stamped old→new marker BEFORE the
+    # file moves (marker-then-write: a crash between leaves a recorded
+    # intent, never an unrecorded change).
+    "substrate_changed",
+    # personal IS the grant (laurent c815; semantics c1443 spelling pass):
+    # arming/revoking the personal phase are operator ACTS; expiry is the
+    # timer's act, recorded by whichever process detects it at a read
+    # boundary (payload carries the lapsed expires_at; detectors dedup on
+    # (entity, expires_at)).
+    "personal_granted",
+    "personal_grant_revoked",
+    "personal_grant_expired",
 )
 
 _marker_lock = threading.Lock()
@@ -128,51 +148,94 @@ def record_host_marker(
     run_id: Optional[str] = None,
     session_id: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
+    dedup_field: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Append one host marker and return its stream envelope. The fractional
-    seq is assigned under a process lock; markers beyond 999 on one journal
-    base raise loudly rather than colliding (unreachable at summon cadence —
-    if it ever fires, something is summoning in a loop and SHOULD fail)."""
+    """Append one host marker and return its stream envelope.
+
+    CROSS-PROCESS SAFE (whole-package adversary P2-1): the serve process,
+    the CLI, and scripts all append to one .jsonl — the in-process
+    threading lock alone let two processes count the same base and mint
+    COLLIDING fractional seqs (seq-keyed consumers silently drop one). The
+    count+append now runs under an fcntl flock on a sidecar lockfile; the
+    threading lock stays as the in-process fast path.
+
+    `dedup_field`: when set, the append is SKIPPED if an existing marker of
+    the SAME kind carries the same payload[dedup_field] — evaluated INSIDE
+    the lock (the scan-then-append TOCTOU is the reason this lives here and
+    not at call sites). Returns the existing envelope with "deduped": True.
+
+    Markers beyond 999 on one journal base raise loudly rather than
+    colliding (unreachable at summon cadence — if it ever fires, something
+    is summoning in a loop and SHOULD fail)."""
     if kind not in HOST_MARKER_KINDS:
         raise ValueError(f"unknown host marker kind {kind!r} (one of {HOST_MARKER_KINDS})")
     stream, version, _valid, _reserved = _stream_constants()
     base = int(journal_seq)
 
     path = _marker_path(entities_dir, slug)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(".jsonl.lock")
     with _marker_lock:
-        existing_at_base = 0
-        if path.exists():
-            for line in path.read_text(encoding="utf-8").splitlines():
+        with lock_path.open("a+") as lockf:
+            try:
+                import fcntl
+
+                fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+            except (ImportError, OSError):
+                pass  # non-POSIX/degraded: the in-process lock still holds
+            try:
+                existing_at_base = 0
+                dedup_value = (details or {}).get(dedup_field) if dedup_field else None
+                if path.exists():
+                    for line in path.read_text(encoding="utf-8").splitlines():
+                        try:
+                            row = json.loads(line)
+                        except (ValueError, TypeError):
+                            continue
+                        payload = row.get("payload") or {}
+                        if (
+                            dedup_field
+                            and payload.get("kind") == kind
+                            and payload.get(dedup_field) == dedup_value
+                        ):
+                            return {**row, "deduped": True}
+                        try:
+                            if int(math.floor(float(row.get("seq") or 0.0))) == base:
+                                existing_at_base += 1
+                        except (ValueError, TypeError):
+                            continue
+                if existing_at_base >= 999:
+                    raise RuntimeError(
+                        f"host marker fan-out exhausted at journal seq {base} for {slug!r} "
+                        "(999 markers on one base — is something summoning in a loop?)"
+                    )
+                envelope: Dict[str, Any] = {
+                    "stream": stream,
+                    "stream_version": version,
+                    "seq": base + (existing_at_base + 1) / 1000.0,
+                    "family": "host",
+                    "observed_at": _utc_now_iso(),
+                    "scope": "",
+                    "owner_id": entity_id,
+                    "trace_id": None,
+                    "turn_id": None,
+                    "run_id": run_id,
+                    "payload": {
+                        "kind": kind,
+                        "session_id": session_id,
+                        **(dict(details) if details else {}),
+                    },
+                }
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(envelope, ensure_ascii=False) + "\n")
+                    f.flush()
+            finally:
                 try:
-                    if int(math.floor(float(json.loads(line).get("seq") or 0.0))) == base:
-                        existing_at_base += 1
-                except (ValueError, TypeError):
-                    continue
-        if existing_at_base >= 999:
-            raise RuntimeError(
-                f"host marker fan-out exhausted at journal seq {base} for {slug!r} "
-                "(999 markers on one base — is something summoning in a loop?)"
-            )
-        envelope: Dict[str, Any] = {
-            "stream": stream,
-            "stream_version": version,
-            "seq": base + (existing_at_base + 1) / 1000.0,
-            "family": "host",
-            "observed_at": _utc_now_iso(),
-            "scope": "",
-            "owner_id": entity_id,
-            "trace_id": None,
-            "turn_id": None,
-            "run_id": run_id,
-            "payload": {
-                "kind": kind,
-                "session_id": session_id,
-                **(dict(details) if details else {}),
-            },
-        }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(envelope, ensure_ascii=False) + "\n")
+                    import fcntl
+
+                    fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+                except (ImportError, OSError):
+                    pass
     return envelope
 
 

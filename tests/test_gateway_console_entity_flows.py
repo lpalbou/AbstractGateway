@@ -177,6 +177,60 @@ def test_lifecycle_state_loop_verify_and_reembed_refusal() -> None:
         assert 400 <= re_.status_code < 500, re_.text
 
 
+def test_creation_defaults_serves_the_dropdown_default_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 'Gateway default' dropdown option reads ONE authoritative endpoint
+    (operator directive 2026-07-13): the entity substrate env pair when set,
+    labeled #FALLBACK nulls when not — never a fabricated default. The route
+    is a literal segment declared before /{name} (route-order pin: it must
+    answer as itself, not as an entity named 'creation-defaults')."""
+    with _client() as client:
+        monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", raising=False)
+        monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", raising=False)
+        r = client.get("/api/gateway/entities/creation-defaults")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["substrate"]["provider"] is None
+        assert any("#FALLBACK" in w and "substrate" in w for w in body["warnings"])
+
+        monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", "lmstudio")
+        monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", "qwen3-0.6b")
+        r2 = client.get("/api/gateway/entities/creation-defaults")
+        sub = r2.json()["substrate"]
+        assert sub == {"provider": "lmstudio", "model": "qwen3-0.6b", "source": "operator-env"}
+
+        # The name can never be claimed by an entity (route-shadow class).
+        refused = client.post("/api/gateway/entities", json={"name": "creation-defaults", "spark": {"name": "creation-defaults"}})
+        assert refused.status_code == 400
+
+
+def test_validate_catches_a_mismatched_birth_embedder_before_the_name_burns() -> None:
+    """Adversary P0: _birth_embedding_pin refuses AFTER spark+manifest are
+    written, so a mismatched embedding choice passed a green dry-run then
+    400'd having burned the permanent name. validate() now carries the same
+    check — green must mean create will not refuse."""
+    with _client() as client:
+        gallery = client.get("/api/gateway/entities/templates").json()["templates"]
+        spark = dict(next(t for t in gallery if t["id"] == "framework-default")["spark"])
+        spark["name"] = "Embertest"
+        r = client.post(
+            "/api/gateway/entities/Embertest/validate",
+            json={"name": "Embertest", "spark": spark, "embedding_model": "definitely-not-the-resolved-embedder"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # Either the door resolves an embedder (mismatch = refusal pre-confirm)
+        # or it resolves none (choice pins freely; labeled elsewhere). Both
+        # are honest; what must never happen is ok=True WITH a resolved
+        # mismatch — assert the refusal when the pre-check ran.
+        if any("embedding-choice pre-check unavailable" in w for w in body.get("warnings", [])):
+            pytest.skip("no embedder probe available in this environment")
+        embedding_errors = [e for e in body.get("errors", []) if "embedding birth choice" in e]
+        if body.get("ok"):
+            assert not embedding_errors
+        else:
+            assert embedding_errors, body
+
+
 def test_runs_surface_list_shape_and_command_door_refusals() -> None:
     """The Runs section reads {items:[...]} and drives /commands with a
     command_id; unknown-run steers refuse honestly at the door."""

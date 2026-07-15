@@ -930,6 +930,27 @@ class BacklogExecRunnerConfig:
             exec_mode_default=_default_exec_mode(),
         )
 
+    @staticmethod
+    def from_gateway(data_dir: Path) -> "BacklogExecRunnerConfig":
+        """The RESOLVED config: the admin's persisted choices (runtime_config
+        store) beat env for `enabled` and `executor`; everything else stays
+        env-tuned. This is what the boot path and the config route read — a
+        Settings toggle must be HONORED, not cosmetic (the env-only read was
+        why continuum's enable button needed a restart)."""
+        base = BacklogExecRunnerConfig.from_env()
+        try:
+            from ..runtime_config import resolve_backlog_exec_runner_enabled, resolve_executor
+
+            from dataclasses import replace as _replace
+
+            return _replace(
+                base,
+                enabled=bool(resolve_backlog_exec_runner_enabled(Path(data_dir))),
+                executor=str(resolve_executor(Path(data_dir)) or "none"),
+            )
+        except Exception:
+            return base  # store unreadable -> env posture (labeled by the config route's source field)
+
 
 def exec_queue_dir(gateway_data_dir: Path) -> Path:
     return (Path(gateway_data_dir).expanduser().resolve() / "backlog_exec_queue").resolve()
@@ -1317,10 +1338,194 @@ class CodexCliExecutor(BacklogExecutor):
         }
 
 
-def _resolve_executor(cfg: BacklogExecRunnerConfig) -> Optional[BacklogExecutor]:
-    ex = str(cfg.executor or "").strip().lower()
-    if not ex or ex == "none":
+class ClaudeCliExecutor(BacklogExecutor):
+    """Claude Code headless (`claude -p`): one-shot prompt, JSON result on
+    stdout. Permission posture mirrors codex's approvals=never: unattended
+    backlog runs execute in the UAT workspace copy by default, so
+    bypassPermissions is scoped to a disposable tree (env-overridable)."""
+
+    name = "claude"
+
+    def __init__(self, *, bin_path: str = "", permission_mode: str = ""):
+        self.bin_path = str(bin_path or "").strip() or "claude"
+        self.permission_mode = str(permission_mode or "").strip() or "bypassPermissions"
+
+    def execute(self, *, prompt: str, repo_root: Path, run_dir: Path, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        cmd = [
+            self.bin_path,
+            "-p",
+            "--output-format", "json",
+            "--permission-mode", self.permission_mode,
+            "--", str(prompt or ""),
+        ]
+
+        def last_message(stdout_text: str) -> str:
+            try:
+                doc = json.loads(stdout_text)
+                if isinstance(doc, dict):
+                    return str(doc.get("result") or doc.get("content") or "").strip()
+            except Exception:
+                pass
+            return stdout_text.strip()
+
+        return _run_subprocess_executor(
+            name=self.name, cmd=cmd, repo_root=repo_root, run_dir=run_dir, env=env,
+            last_message_fn=last_message, missing_hint=f"claude binary not found: {self.bin_path}",
+        )
+
+
+class CursorAgentExecutor(BacklogExecutor):
+    """Cursor Agent headless (`cursor-agent -p`): prompt in, text out.
+    --force = unattended (commands run unless explicitly denied) — the
+    codex approvals=never posture; UAT-mode isolation applies the same."""
+
+    name = "cursor-agent"
+
+    def __init__(self, *, bin_path: str = "", model: str = ""):
+        self.bin_path = str(bin_path or "").strip() or "cursor-agent"
+        self.model = str(model or "").strip()
+
+    def execute(self, *, prompt: str, repo_root: Path, run_dir: Path, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        cmd = [self.bin_path, "-p", "--output-format", "text", "--force"]
+        if self.model:
+            cmd.extend(["--model", self.model])
+        cmd.extend(["--", str(prompt or "")])
+        return _run_subprocess_executor(
+            name=self.name, cmd=cmd, repo_root=repo_root, run_dir=run_dir, env=env,
+            last_message_fn=lambda out: out.strip(),
+            missing_hint=f"cursor-agent binary not found: {self.bin_path}",
+        )
+
+
+class AbstractCodeExecutor(BacklogExecutor):
+    """AbstractCode headless (`python -m abstractcode exec`): the in-house
+    executor — no external install, spawned from THIS interpreter so the
+    gateway's venv is the runtime (the `abstractcode` console script may not
+    be on the service PATH). Provider/model ride env
+    (ABSTRACTGATEWAY_BACKLOG_ABSTRACTCODE_PROVIDER/_MODEL) or abstractcode's
+    own defaults."""
+
+    name = "abstractcode"
+
+    def __init__(self, *, provider: str = "", model: str = ""):
+        self.provider = str(provider or os.getenv("ABSTRACTGATEWAY_BACKLOG_ABSTRACTCODE_PROVIDER") or "").strip()
+        self.model = str(model or os.getenv("ABSTRACTGATEWAY_BACKLOG_ABSTRACTCODE_MODEL") or "").strip()
+
+    def execute(self, *, prompt: str, repo_root: Path, run_dir: Path, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        import sys
+
+        cmd = [sys.executable, "-m", "abstractcode", "exec", "--permission-mode", "full-auto", "--json"]
+        if self.provider:
+            cmd.extend(["--provider", self.provider])
+        if self.model:
+            cmd.extend(["--model", self.model])
+        cmd.append(str(prompt or ""))
+
+        def last_message(stdout_text: str) -> str:
+            # --json = JSONL event stream; the final answer is the last
+            # event carrying text/answer content. Tolerant scan, newest last.
+            final = ""
+            for line in stdout_text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    evt = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(evt, dict):
+                    txt = evt.get("answer") or evt.get("text") or evt.get("content") or ""
+                    if isinstance(txt, str) and txt.strip():
+                        final = txt.strip()
+            return final or stdout_text.strip()[-20000:]
+
+        return _run_subprocess_executor(
+            name=self.name, cmd=cmd, repo_root=repo_root, run_dir=run_dir, env=env,
+            last_message_fn=last_message, missing_hint="abstractcode package not importable in the gateway venv",
+        )
+
+
+def _run_subprocess_executor(
+    *,
+    name: str,
+    cmd: List[str],
+    repo_root: Path,
+    run_dir: Path,
+    env: Optional[Dict[str, str]],
+    last_message_fn: Any,
+    missing_hint: str,
+) -> Dict[str, Any]:
+    """Shared spawn shape for the non-codex executors: stdout/stderr to run_dir
+    files, env merge over os.environ, last message extracted per executor.
+    Mirrors CodexCliExecutor's result contract so the queue/UI read one shape."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    rel_base = Path("backlog_exec_runs") / str(run_dir.name)
+    stdout_path = (run_dir / f"{name.replace('-', '_')}_stdout.log").resolve()
+    stderr_path = (run_dir / f"{name.replace('-', '_')}_stderr.log").resolve()
+    last_msg_path = (run_dir / f"{name.replace('-', '_')}_last_message.txt").resolve()
+
+    started_at = _now_iso()
+    exit_code = -1
+    err: Optional[str] = None
+    try:
+        run_env = dict(os.environ)
+        if isinstance(env, dict):
+            for k, v in env.items():
+                ks = str(k or "").strip()
+                if ks:
+                    run_env[ks] = str(v if v is not None else "")
+        with open(stdout_path, "wb") as out, open(stderr_path, "wb") as errf:
+            proc = subprocess.run(
+                cmd, stdout=out, stderr=errf, cwd=str(repo_root), env=run_env,
+                check=False, timeout=None, stdin=subprocess.DEVNULL,
+            )
+            exit_code = int(proc.returncode)
+    except FileNotFoundError:
+        err = missing_hint
+    except Exception as e:
+        err = str(e)
+
+    finished_at = _now_iso()
+    last_msg = ""
+    try:
+        stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
+        last_msg = str(last_message_fn(stdout_text) or "")
+        if last_msg:
+            last_msg_path.write_text(last_msg, encoding="utf-8")
+    except Exception:
+        last_msg = ""
+
+    ok = err is None and exit_code == 0
+    return {
+        "ok": bool(ok),
+        "executor": name,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "exit_code": exit_code,
+        "error": err,
+        "logs": {
+            "events_relpath": str(rel_base / stdout_path.name).replace("\\", "/"),
+            "stderr_relpath": str(rel_base / stderr_path.name).replace("\\", "/"),
+            "last_message_relpath": str(rel_base / last_msg_path.name).replace("\\", "/"),
+        },
+        "last_message": last_msg[:20000] if last_msg else "",
+    }
+
+
+def _resolve_executor(cfg: BacklogExecRunnerConfig, *, requested: Optional[str] = None) -> Optional[BacklogExecutor]:
+    """Build the executor for a run. `requested` (per-request override,
+    validated at enqueue) beats the configured default. Alias folding is the
+    registry's ONE rule (runtime_config.canonical_executor_id) — codex_cli
+    and friends keep working."""
+    raw = str(requested or cfg.executor or "").strip().lower()
+    if not raw or raw == "none":
         return None
+    try:
+        from ..runtime_config import canonical_executor_id
+
+        ex = canonical_executor_id(raw) or raw
+    except Exception:
+        ex = raw
     if ex in {"codex", "codex_cli", "codex-cli"}:
         return CodexCliExecutor(
             bin_path=cfg.codex_bin,
@@ -1329,6 +1534,18 @@ def _resolve_executor(cfg: BacklogExecRunnerConfig) -> Optional[BacklogExecutor]
             sandbox=cfg.codex_sandbox,
             approvals=cfg.codex_approvals,
         )
+    if ex == "claude":
+        return ClaudeCliExecutor(
+            bin_path=str(os.getenv("ABSTRACTGATEWAY_BACKLOG_CLAUDE_BIN") or "claude"),
+            permission_mode=str(os.getenv("ABSTRACTGATEWAY_BACKLOG_CLAUDE_PERMISSION_MODE") or ""),
+        )
+    if ex == "cursor-agent":
+        return CursorAgentExecutor(
+            bin_path=str(os.getenv("ABSTRACTGATEWAY_BACKLOG_CURSOR_AGENT_BIN") or "cursor-agent"),
+            model=str(os.getenv("ABSTRACTGATEWAY_BACKLOG_CURSOR_AGENT_MODEL") or ""),
+        )
+    if ex == "abstractcode":
+        return AbstractCodeExecutor()
     # Future: execute via a bundle workflow run (durable).
     if ex in {"workflow", "workflow_bundle", "workflow-bundle"}:
         return None
@@ -1349,9 +1566,7 @@ def process_next_backlog_exec_request(
     if not queue_dir.exists():
         return False, None
 
-    executor = _resolve_executor(cfg)
-    if executor is None:
-        return False, None
+    default_executor = _resolve_executor(cfg)
 
     items = sorted([p for p in queue_dir.glob("*.json")], key=lambda p: p.name)
     for p in items:
@@ -1359,6 +1574,22 @@ def process_next_backlog_exec_request(
         request_id = str(req.get("request_id") or p.stem).strip()
         status = str(req.get("status") or "").strip().lower()
         if not request_id or status != "queued":
+            continue
+
+        # Per-request executor override (validated at enqueue against the
+        # probed registry): the queue payload's executor.requested carries
+        # the chosen id and beats the configured default for THIS request.
+        # Legacy payloads stamped requested as a BOOL — fold those onto the
+        # stamped type so old queue entries keep their meaning.
+        requested = ""
+        if isinstance(req.get("executor"), dict):
+            raw_req = req["executor"].get("requested")
+            if isinstance(raw_req, str) and raw_req.strip():
+                requested = raw_req.strip()
+            elif raw_req is True:
+                requested = str(req["executor"].get("type") or "").strip()
+        executor = _resolve_executor(cfg, requested=requested) if requested else default_executor
+        if executor is None:
             continue
 
         lock = _claim_lock(queue_dir, request_id)
@@ -1393,10 +1624,18 @@ def process_next_backlog_exec_request(
                 if candidate_relpath:
                     req["candidate_relpath"] = candidate_relpath
 
-            # Update to running.
+            # Update to running. The stamped type is the CANONICAL registry id
+            # (continuum keys track-record attribution on executor_type — the
+            # class name codex_cli would split one agent into two rows).
+            try:
+                from ..runtime_config import canonical_executor_id as _canon
+
+                stamped_type = _canon(executor.name) or executor.name
+            except Exception:
+                stamped_type = executor.name
             req["status"] = "running"
             req["started_at"] = _now_iso()
-            req.setdefault("executor", {})["type"] = executor.name
+            req.setdefault("executor", {})["type"] = stamped_type
             req.setdefault("executor", {})["version"] = "v0"
             if isinstance(executor, CodexCliExecutor):
                 try:
@@ -1413,6 +1652,14 @@ def process_next_backlog_exec_request(
                     req["target_model"] = model_id
                 if effort and "target_reasoning_effort" not in req:
                     req["target_reasoning_effort"] = effort
+            else:
+                # Non-codex executors: stamp what they know (observability
+                # parity — the exec card should name the agent's model too).
+                ex_model = str(getattr(executor, "model", "") or "").strip()
+                if ex_model:
+                    req.setdefault("executor", {})["model"] = ex_model
+                    if "target_model" not in req:
+                        req["target_model"] = ex_model
             req.setdefault("run_dir_relpath", str(Path("backlog_exec_runs") / request_id).replace("\\", "/"))
             _atomic_write_json(p, req)
 
@@ -1427,6 +1674,18 @@ def process_next_backlog_exec_request(
             exec_env: Dict[str, str] = {}
             if _is_uat_mode(exec_mode):
                 exec_env["PYTHONPATH"] = _build_pythonpath_for_repo(repo_root=candidate_root)
+
+            # Skills union HALF 2 (c1749): thread the payload's resolved
+            # shelf into the executor env so the requested teachings are
+            # REACHABLE at spawn (abstractcode's ABSTRACTCODE_SKILLS_ROOTS
+            # wiring). Held/blocked skills were excluded at resolution —
+            # the env carries only what the trust gate activated.
+            try:
+                from ..skills_union import spawn_env_for_skills
+
+                exec_env.update(spawn_env_for_skills(req.get("skills")))
+            except Exception:
+                pass
 
             result = executor.execute(prompt=prompt, repo_root=candidate_root, run_dir=run_dir, env=exec_env)
 

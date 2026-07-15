@@ -102,6 +102,66 @@ class VisitRefused(Exception):
         self.detail = detail
 
 
+def _compose_turn_probe(run_vars: Dict[str, Any]) -> Dict[str, Any]:
+    """The probe payload the hosted chat lane serves per turn, composed from
+    the DURABLE run's own vars (cutover gap 1). Field names mirror the hosted
+    `ChatSession.turn` report exactly (entity's consumer contract: the drawer
+    renders one shape from either lane):
+
+    - tools_ran: driver-authored tool truth (_turn.tools_ran, folded by the
+      workflow's HARVEST from adapter captures — never derived from prose).
+    - memories: what entered the prompt (_turn.displayed handles), each with
+      the same tag/kind/title/digest/born_at/origin/admission the hosted
+      report.memories carries (observer's prompt/probe-agreement rule).
+    - memories_in_context / turn_id / notices / diary_entries / participants.
+    - system_prompt: the byte-stable head (_visit.system_base).
+    - tool_details / files: NOT captured in the durable lane's vars yet —
+      served as empty lists (honest absence, never fabricated); the adapter's
+      turn_captures extension is the named follow-up, not a silent gap.
+    """
+    visit_vars = run_vars.get("_visit") or {}
+    turn_ns = run_vars.get("_turn") or {}
+
+    def _origin_label(h: Dict[str, Any]) -> str:
+        try:
+            from abstractruntime.identity.chat import _handle_origin_label
+
+            return str(_handle_origin_label(h))
+        except Exception:  # pragma: no cover - older runtime without the helper
+            return str(((h.get("provenance") or {}).get("origin")) or "")
+
+    memories: List[Dict[str, Any]] = []
+    for h in list(turn_ns.get("displayed") or []):
+        if not isinstance(h, dict):
+            continue
+        prov = h.get("provenance") or {}
+        memories.append({
+            "graph_id": str(prov.get("record_id") or ""),
+            "record_id": str(h.get("record_id") or ""),
+            "kind": str(h.get("kind") or "memory"),
+            "title": str(h.get("title") or "")[:120],
+            "admission": str(h.get("admission") or ""),
+            "digest": str(h.get("digest") or "")[:280],
+            "tokens": int(h.get("token_estimate") or 0),
+            "global_count": int(prov.get("global_count") or 0),
+            "born_at": str(prov.get("observed_at") or ""),
+            "origin": _origin_label(h),
+        })
+
+    return {
+        "turn_id": str(turn_ns.get("turn_id") or ""),
+        "tools_ran": [str(t) for t in (turn_ns.get("tools_ran") or []) if str(t or "").strip()],
+        "memories": memories,
+        "memories_in_context": len(memories),
+        "diary_entries": list(turn_ns.get("diary_meta") or []),
+        "notices": list(turn_ns.get("notices") or []),
+        "participants": list(visit_vars.get("participants") or []),
+        "system_prompt": str(visit_vars.get("system_base") or ""),
+        "tool_details": [],
+        "files": [],
+    }
+
+
 # Native declarations for the ENTITY toolset — argument shapes match the
 # runtime executors these calls land on (`identity.tools`: body-first
 # convention, `path` as the one named arg for write_file), NOT abstractcore's
@@ -203,6 +263,11 @@ class EntityVisitHost:
         # (one gateway process serves a door; cross-process ticking is the
         # lease's job, creation is this lock's).
         self._open_locks: Dict[str, threading.Lock] = {}
+        # In-flight run ids (state-sources adversary P1-2): ticking is
+        # request-driven, so a stored status="running" is a LAST-WRITE CLAIM,
+        # not liveness — a host crash mid-drive leaves it at rest forever.
+        # `working` truth = this set, never the stored status.
+        self._in_flight: set = set()
 
     # ------------------------------------------------------------------ open
     def open(
@@ -267,19 +332,35 @@ class EntityVisitHost:
             return lock
 
     def _refuse_if_paused(self, manifest: Any, *, verb: str) -> None:
-        """The hard freeze gates an ALREADY-OPEN visit too: if the pause
-        teardown failed (lease held, close raced), the badge alone must
-        still stop cognition — open() checks state, and so do turn/tick.
-        Close is deliberately NOT gated (the teardown IS a close)."""
+        """Non-awake states gate an ALREADY-OPEN visit too: if the teardown
+        failed (lease held, close raced) or a fresh open slipped into the
+        sleep-write window, the badge alone must still stop cognition —
+        open() checks state, and so do turn/tick. Close is deliberately NOT
+        gated (the teardown IS a close).
+
+        ASLEEP gates too (state-sources adversary P0-2): an OPERATOR sleep
+        that raced the teardown used to leave a durable visit accepting
+        billed turns under /state=asleep — the route's own promise ("asleep/
+        paused must actually STOP an open visit, not just flip a badge") was
+        pause-only in code. The visiting-yield posture (mode=visiting) is
+        the visit's OWN sleep and stays open."""
         from abstractruntime.identity.life import read_entity_state
 
         state = read_entity_state(self._registry.entities_dir / manifest.slug)
-        if str(state.get("state") or "") == "paused":
+        word = str(state.get("state") or "")
+        if word == "paused":
             reason = str(state.get("reason") or "") or "no reason recorded"
             raise VisitRefused(
                 409,
                 f"{manifest.entity_id} is paused (hard freeze): {reason} — "
                 f"this visit cannot {verb}; close it (closed_by=pause) or wake him first",
+            )
+        if word == "asleep" and str(state.get("mode") or "") != "visiting":
+            reason = str(state.get("reason") or "") or "no reason recorded"
+            raise VisitRefused(
+                409,
+                f"{manifest.entity_id} is asleep by the operator: {reason} — "
+                f"this visit cannot {verb}; close it or wake him first",
             )
 
     # ------------------------------------------------- shared leg machinery
@@ -324,6 +405,14 @@ class EntityVisitHost:
             raise VisitRefused(409, f"{manifest.entity_id} is paused (hard freeze): {reason or 'no reason recorded'}")
 
         yielded = False
+        woke_for_visit = False
+        # The operator's PRIOR intent survives the visit (state-sources
+        # adversary, P0-1 residue): a visit may overwrite the state (yield /
+        # B1 wake), but close restores what the OPERATOR had set — a visit
+        # ending must never convert an operator's asleep into a standing
+        # awake behind their back. Recorded here, threaded into run vars by
+        # the leg, restored by _finalize_terminal.
+        prior_state = {"state": str(state.get("state") or "awake"), "reason": reason}
         visitor = (participants or ["person:operator"])[0]
         if bool(read_loop_status(home_dir).get("running")):
             write_entity_state(
@@ -337,14 +426,31 @@ class EntityVisitHost:
         elif state.get("state") == "asleep":
             if mode == "visiting" or "auto-yield" in reason:
                 yielded = True
+                # A visiting-yield posture belongs to a PREVIOUS visit; the
+                # operator's own word is not recoverable from it — awake is
+                # the honest restore target.
+                prior_state = {"state": "awake", "reason": ""}
             else:
-                raise VisitRefused(
-                    409, f"{manifest.entity_id} is asleep ({reason or 'no reason recorded'}) — wake him first"
+                # B1 ruling (a), laurent 04:58: "if i click visit, it should
+                # awake the entity, period." An operator-asleep entity (not a
+                # visit-yield posture) is WOKEN by the visit itself rather than
+                # refused — the operator always has a path in. The wake reason
+                # records that the visit did it, and the loop (if any) is not
+                # running here (running-loop is the branch above), so no lease
+                # collision on this path; a mid-day loop lease is the separate
+                # runtime per-tick-release keystone (gateway c1315).
+                write_entity_state(
+                    home_dir, "awake",
+                    reason=f"woken by visit from {visitor}",
                 )
+                state = read_entity_state(home_dir)
+                woke_for_visit = True
 
         return {
             "manifest": manifest, "slug": slug, "home_dir": home_dir, "er": er,
             "provider": provider, "model": model, "yielded": yielded,
+            "woke_for_visit": woke_for_visit,
+            "prior_state": prior_state,
         }
 
     def _start_leg(
@@ -435,12 +541,25 @@ class EntityVisitHost:
             # PROVENANCE, not selection: which arm the run was born under.
             # Every rebuild serves the react graph (A1-with-companion).
             visit_ns["workflow_arm"] = ARM_REACT
+            # The operator's word before this visit touched the state —
+            # durable in the run so a fresh host restores it at terminal.
+            visit_ns["prior_state"] = dict(pre.get("prior_state") or {"state": "awake", "reason": ""})
             er.run_store.save(run)
 
             state_after = self._drive(er, wf, run_id, max_steps=_OPEN_MAX_TICKS)
         except Exception:
             if yielded:
                 write_entity_state(home_dir, "awake", reason="visit aborted (open failed)")
+            elif pre.get("woke_for_visit"):
+                # The B1 wake must not outlive a FAILED open (adversary
+                # P2-3): a refused prelude / missing adapter / lease error
+                # used to leave the entity awake with the operator's sleep
+                # silently erased — and no run existed to restore it later.
+                prior = dict(pre.get("prior_state") or {})
+                write_entity_state(
+                    home_dir, "asleep",
+                    reason=(str(prior.get("reason") or "") or "operator sleep restored") + " (visit open failed)",
+                )
             raise
 
         output = dict(getattr(state_after, "output", None) or {})
@@ -519,6 +638,15 @@ class EntityVisitHost:
             "turn_n": int(visit_vars.get("turn_n") or 0),
             "status": status,
         }
+        # PROBE PAYLOAD PARITY (cutover gap 1, entity c1318/gateway c1320):
+        # the hosted chat lane serves driver-authored transparency on every
+        # turn (tools_ran, memories with born_at/origin, system_prompt); the
+        # durable lane must not regress it or the drawer flip loses the
+        # operator's probe surfaces AND the tool-claim fabrication guard
+        # (which reads tools_ran as data, never reply prose). Composed from
+        # the run's own durable vars — the workflow's HARVEST/RENDER nodes
+        # already fold these; the door only surfaces them.
+        out.update(_compose_turn_probe(state.vars or {}))
         if status == "completed":  # timed-out close raced this turn to terminal
             out["output"] = dict(state.output or {})
             self._finalize_terminal(er, manifest, run_id, state)
@@ -616,6 +744,37 @@ class EntityVisitHost:
         view = self._run_status_view(run)
         view["open"] = str(getattr(run.status, "value", run.status)) in ("waiting", "running")
         return view
+
+    def transcript(self, name: str, run_id: str) -> Dict[str, Any]:
+        """The visit's transcript, PURE READ from the durable run's own vars
+        (cutover gap 2, entity's consumer contract item 3: reload-rejoin
+        needs a rebuild read — the drawer must rehydrate the conversation
+        after a page reload without replaying turns).
+
+        Source of truth: `_visit.history` — the workflow's ANSWER fold keeps
+        it append-once per turn (user turns store the RENDERED message whose
+        MEMORIES decoration is dated/as_of-labeled; assistant turns store the
+        MARKED reply — diary elections already captured at the handler
+        boundary, so no private words rest here or serve here). Works on
+        live AND terminal runs (a closed visit's transcript remains
+        readable, same as the hosted lane's)."""
+        er, run, _wf, _manifest = self._load_visit(name, run_id)
+        visit_vars = (run.vars or {}).get("_visit") or {}
+        stamp = ((run.vars or {}).get("_runtime") or {}).get("entity") or {}
+        turns = [
+            {"role": str(m.get("role") or ""), "content": str(m.get("content") or "")}
+            for m in list(visit_vars.get("history") or [])
+            if isinstance(m, dict)
+        ]
+        return {
+            "run_id": run.run_id,
+            "session_id": run.session_id,
+            "visit_id": stamp.get("visit_id"),
+            "status": str(getattr(run.status, "value", run.status)),
+            "turn_n": int(visit_vars.get("turn_n") or 0),
+            "participants": list(visit_vars.get("participants") or []),
+            "turns": turns,
+        }
 
     @staticmethod
     def _run_status_view(run: Any) -> Dict[str, Any]:
@@ -743,19 +902,32 @@ class EntityVisitHost:
         wf = self._spec_for(er, run)
         return er, run, wf, manifest
 
+    def is_in_flight(self, run_id: str) -> bool:
+        """True while THIS process is actually executing the run (a drive or
+        resume window). The stored run status is a durable claim; this is
+        the liveness fact `working` renders from (adversary P1-2)."""
+        with self._lock:
+            return str(run_id) in self._in_flight
+
     def _drive(self, er: Any, wf: Any, run_id: str, *, max_steps: int) -> Any:
         """One ticking window under the visit-host lease (D1: acquire at
         resume, release at park; never broken mid-turn)."""
         lease = self._acquire_lease(er)
+        with self._lock:
+            self._in_flight.add(str(run_id))
         try:
             return er.runtime.tick(workflow=wf, run_id=run_id, max_steps=max_steps)
         finally:
+            with self._lock:
+                self._in_flight.discard(str(run_id))
             if lease is not None:
                 lease.release()
 
     def _resume(self, er: Any, wf: Any, run_id: str, *, payload: Dict[str, Any], max_steps: int,
                 wait_key: str, manifest: Any) -> Any:
         lease = self._acquire_lease(er)
+        with self._lock:
+            self._in_flight.add(str(run_id))
         try:
             return er.runtime.resume(
                 workflow=wf, run_id=run_id, wait_key=wait_key, payload=payload, max_steps=max_steps
@@ -764,6 +936,8 @@ class EntityVisitHost:
             # Not waiting / paused / wait-key mismatch — client-visible truth.
             raise VisitRefused(409, f"the visit cannot take this message now: {e}")
         finally:
+            with self._lock:
+                self._in_flight.discard(str(run_id))
             if lease is not None:
                 lease.release()
 
@@ -806,11 +980,15 @@ class EntityVisitHost:
         return None
 
     def _finalize_terminal(self, er: Any, manifest: Any, run_id: str, state: Any) -> None:
-        """Wake-on-terminal (pinned at 0014/083823Z): ANY path to a terminal
-        visit converges here — wake a yielded loop, mark session_closed. A
-        failed wake is LABELED in the marker details (never fully silent —
-        the next open's yielded-posture check is the recovery, but the
-        stream should show the duty failed)."""
+        """Restore-on-terminal (pinned at 0014/083823Z; prior-state fix from
+        the state-sources adversary): ANY path to a terminal visit converges
+        here — restore the OPERATOR'S pre-visit state (recorded durably in
+        the run's `_visit.prior_state`), mark session_closed. A visit ending
+        must never convert an operator's asleep into a standing awake behind
+        their back; a yielded loop still wakes (prior=awake in that branch).
+        A failed restore is LABELED in the marker details (never fully
+        silent — the next open's yielded-posture check is the recovery, but
+        the stream should show the duty failed)."""
         from abstractruntime.identity.life import read_entity_state, write_entity_state
 
         registry = self._registry
@@ -818,15 +996,35 @@ class EntityVisitHost:
         wake_warning: Optional[str] = None
         try:
             st = read_entity_state(home_dir)
-            if str(st.get("state") or "") == "asleep" and (
-                str(st.get("mode") or "") == "visiting" or "auto-yield" in str(st.get("reason") or "")
-            ):
+            word = str(st.get("state") or "")
+            reason_now = str(st.get("reason") or "")
+            # Only VISIT-AUTHORED states are restored — an operator/admin act
+            # landed mid-visit (a pause, a fresh sleep) stands untouched.
+            yield_posture = word == "asleep" and (
+                str(st.get("mode") or "") == "visiting" or "auto-yield" in reason_now
+            )
+            b1_wake = word == "awake" and reason_now.startswith("woken by visit")
+            if yield_posture or b1_wake:
                 output = dict(getattr(state, "output", None) or {})
-                write_entity_state(
-                    home_dir, "awake",
-                    reason=f"visitor session ended ({output.get('turns', 0)} turns; "
-                           f"{output.get('close_reason', 'closed')})",
-                )
+                prior: Dict[str, Any] = {}
+                try:
+                    run = er.run_store.load(run_id)
+                    prior = dict(((run.vars or {}).get("_visit") or {}).get("prior_state") or {})
+                except Exception:
+                    prior = {}
+                target = str(prior.get("state") or "awake")
+                if target not in ("awake", "asleep"):
+                    target = "awake"  # paused is an operator/admin act, never auto-restored
+                suffix = f"(visitor session ended: {output.get('turns', 0)} turns; {output.get('close_reason', 'closed')})"
+                if target == "asleep":
+                    write_entity_state(
+                        home_dir, "asleep",
+                        reason=(str(prior.get("reason") or "") or "operator sleep restored") + f" {suffix}",
+                    )
+                elif yield_posture:
+                    write_entity_state(home_dir, "awake", reason=f"visitor session ended ({output.get('turns', 0)} turns; "
+                                       f"{output.get('close_reason', 'closed')})")
+                # b1_wake with prior=awake: already awake — no idle rewrite.
         except Exception as e:
             wake_warning = f"#FALLBACK wake-on-terminal failed ({e}); the next open treats the visiting posture as yielded"
         details: Dict[str, Any] = {

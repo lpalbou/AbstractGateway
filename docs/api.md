@@ -147,6 +147,46 @@ ACL-aware catalog endpoints:
 
 `framework_catalog` is reserved but not loadable yet; use `tenant_catalog`.
 
+### 2d) Docs Q&A (`docs-qa` catalog bundle)
+
+`docs-qa` is the shared transport for docs-grounded assistant panels (the
+unified top-bar drawers). The contract: the CALLER supplies its own corpus
+(typically its `llms.txt` text) — the bundle never guesses one, so answers are
+never silently grounded on another app's docs.
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "registry_scope": "tenant_catalog",
+  "bundle_id": "docs-qa",
+  "bundle_version": "0.1.0",
+  "flow_id": "docsqa001",
+  "input_data": {
+    "question": "How do I publish a workflow bundle?",
+    "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
+    "docs": "<your llms.txt text>",
+    "app": "MyApp"
+  }
+}' "$BASE_URL/api/gateway/runs/start"
+```
+
+Then poll `GET /runs/{run_id}` (or stream the ledger); the answer is
+`output.response`. `provider`/`model`/`temperature` may ride `input_data` to
+override gateway defaults. Answers cite section headings and say plainly when
+the docs do not answer — the bundle refuses to invent endpoints or behavior.
+Docs Q&A must never route through entity chat (a visit is billable and forms
+memories).
+
+The gateway serves its OWN corpus for the console drawer:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/docs/corpus"
+```
+
+Returns `{app, source, chars, text}`. Resolution order: the
+`ABSTRACTGATEWAY_DOCS_CORPUS` env override first (set-but-missing is an honest
+404 naming the checked candidates, never a silent fallback), then the repo
+`llms.txt` in dev checkouts, then the corpus packaged with the wheel.
+
 ### 3) Replay the ledger (cursor-based)
 
 Ledger pages are replayed using `after` as “number of items already consumed”.

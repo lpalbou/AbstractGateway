@@ -44,13 +44,43 @@ def _client() -> TestClient:
     return TestClient(app, headers={"Authorization": f"Bearer {_TOKEN}"})
 
 
+def test_state_writes_carry_server_derived_principal_provenance():
+    """The hypnos 10:20:42 lesson: a disputed wake could not be traced to a
+    principal because state_history carried only written_by="operator" +
+    client prose. The door now appends `[by person:<user_id> via POST
+    .../state]` SERVER-side — the client cannot omit or forge it (its own
+    prose is preserved but never the last word)."""
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+
+        r = client.post(
+            "/api/gateway/entities/Castor/state",
+            json={"state": "asleep", "reason": "operator started his own time (web toggle)"},
+        )
+        assert r.status_code == 200, r.text
+        reason = r.json()["state"]["reason"]
+        assert "operator started his own time (web toggle)" in reason  # client prose preserved
+        assert "[by person:local-admin via POST /entities/Castor/state]" in reason
+
+        # A reason-less write still records the acting principal.
+        r2 = client.post("/api/gateway/entities/Castor/state", json={"state": "awake"})
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["state"]["reason"] == "[by person:local-admin via POST /entities/Castor/state]"
+
+
 def test_state_verbs_door_and_markers():
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
 
-        # Fresh home: awake by construction (missing file = awake).
+        # NEWBORN = SLEEP (laurent 13:46 totality (c); artifact
+        # initial_phase; c1503 shape): create() writes the birth sleep.
         r = client.get("/api/gateway/entities/Castor/state")
-        assert r.status_code == 200 and r.json()["state"] == "awake"
+        assert r.status_code == 200 and r.json()["state"] == "asleep"
+        assert "newborn" in r.json()["reason"]
+
+        # The operator's first wake begins the life's awake stretch.
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
+        assert client.get("/api/gateway/entities/Castor/state").json()["state"] == "awake"
 
         # Sleep with a dream: the pass runs inside the window it creates.
         r2 = client.post(
@@ -63,16 +93,23 @@ def test_state_verbs_door_and_markers():
         assert body["prior"]["state"] == "awake"
         assert isinstance(body["dream"], dict)  # ran (quiet nights are valid)
 
-        # The summon door: asleep refuses, naming state and reason.
+        # THE LIVENESS GATE (laurent 16:12: reachability rides the liveness
+        # axis — the a2a 0008 no-summon window is RETIRED): a sleeping-but-
+        # ALIVE entity is reachable — the summon WAKES it. This deployment
+        # has no bundles, so the summon proceeds past the state gate and
+        # fails at workflow resolution — the pin is that the STATE never
+        # refuses it and the wake landed.
         r3 = client.post("/api/gateway/entities/Castor/summon", json={"prompt": "hi"})
-        assert r3.status_code == 409, r3.text
-        detail = r3.json()["detail"]
-        assert detail["state"]["state"] == "asleep"
-        assert "operator maintenance" in detail["reasons"][0]
+        if r3.status_code == 409:
+            assert "asleep" not in str(r3.json().get("detail")), "the retired no-summon window refused a sleeping-alive entity"
+        assert client.get("/api/gateway/entities/Castor/state").json()["state"] == "awake"
+        assert "woken by summon" in client.get("/api/gateway/entities/Castor/state").json()["reason"]
 
-        # Paused refuses too.
+        # PAUSED is the kill switch: every door refuses, this one included.
         assert client.post("/api/gateway/entities/Castor/state", json={"state": "paused"}).status_code == 200
-        assert client.post("/api/gateway/entities/Castor/summon", json={"prompt": "hi"}).status_code == 409
+        r_paused = client.post("/api/gateway/entities/Castor/summon", json={"prompt": "hi"})
+        assert r_paused.status_code == 409
+        assert "kill switch" in r_paused.json()["detail"]["reasons"][0]
 
         # A dream outside sleep is refused (dreams need the window).
         r4 = client.post("/api/gateway/entities/Castor/state", json={"state": "awake", "dream": True})
@@ -94,11 +131,15 @@ def test_state_verbs_door_and_markers():
             __import__("json").loads(line)["payload"]["kind"]
             for line in replay.text.splitlines() if line.strip()
         ]
-        assert kinds == ["sleep", "pause", "wake"]
-        # The sleep marker carries the dream result (observable story).
-        first = __import__("json").loads(replay.text.splitlines()[0])
-        assert first["payload"]["state"] == "asleep"
-        assert isinstance(first["payload"]["dream"], dict)
+        # The leading wake is the test's own first-wake after the birth
+        # sleep (create() writes the birth state directly — no marker; the
+        # door-written transitions each land one).
+        assert kinds == ["wake", "sleep", "pause", "wake"]
+        # The sleep marker carries the dream result (observable story) —
+        # second line now (the first is the first-wake marker).
+        sleep_marker = __import__("json").loads(replay.text.splitlines()[1])
+        assert sleep_marker["payload"]["state"] == "asleep"
+        assert isinstance(sleep_marker["payload"]["dream"], dict)
 
 
 def test_operator_diary_read_is_a_visible_event():

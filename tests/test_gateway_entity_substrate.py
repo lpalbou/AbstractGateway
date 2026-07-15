@@ -68,3 +68,60 @@ def test_write_requires_both_fields(tmp_path: Path) -> None:
     # A malformed file reads as unset, never a crash.
     (home / "substrate.yaml").write_text("- not-a-mapping\n", encoding="utf-8")
     assert read_entity_substrate(home) == {}
+
+
+def test_substrate_put_is_a_durable_marked_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """laurent 12:39 (hypnos incident): a mind swap must be answerable from
+    the stream — 'which llm was behind during which time'. The PUT lands a
+    principal-stamped old→new host marker BEFORE the file moves; the 12:24
+    emergency flip (direct file edit, no event) is the gap this closes."""
+    import copy
+    import json
+
+    from fastapi.testclient import TestClient
+
+    pytest.importorskip("abstractmemory")
+    from abstractmemory import DEFAULT_SPARK_TEMPLATE
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "substrate-marker-secret")
+    from abstractgateway.app import app
+
+    spark = copy.deepcopy(dict(DEFAULT_SPARK_TEMPLATE))
+    spark["name"] = "Castor"
+    spark["spark"] = 1
+    with TestClient(app, headers={"Authorization": "Bearer substrate-marker-secret"}) as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": spark}).status_code == 201
+
+        r = client.put(
+            "/api/gateway/entities/Castor/substrate",
+            json={"provider": "lmstudio", "model": "ornith-1.0-35b"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["source"] == "entity"
+
+        # The marker landed with old (unset) → new, stamped by the principal.
+        from abstractgateway.service import get_gateway_service
+
+        markers_path = (
+            Path(get_gateway_service().config.data_dir) / "entities" / ".host_stream" / "castor.jsonl"
+        )
+        rows = [json.loads(line) for line in markers_path.read_text(encoding="utf-8").splitlines()]
+        changed = [m for m in rows if m.get("payload", {}).get("kind") == "substrate_changed"]
+        assert len(changed) == 1
+        d = changed[0]["payload"]
+        assert d["new"] == {"provider": "lmstudio", "model": "ornith-1.0-35b"}
+        assert d["old"] == {"provider": None, "model": None}
+        assert d["by"] == "person:local-admin"
+
+        # A second PUT records the transition old→new (the timeline).
+        r2 = client.put(
+            "/api/gateway/entities/Castor/substrate",
+            json={"provider": "endpoint:ovh-provider", "model": "gpt-oss-120b"},
+        )
+        assert r2.status_code == 200, r2.text
+        rows = [json.loads(line) for line in markers_path.read_text(encoding="utf-8").splitlines()]
+        changed = [m for m in rows if m.get("payload", {}).get("kind") == "substrate_changed"]
+        assert len(changed) == 2
+        d2 = changed[1]["payload"]
+        assert d2["old"] == {"provider": "lmstudio", "model": "ornith-1.0-35b"}
+        assert d2["new"] == {"provider": "endpoint:ovh-provider", "model": "gpt-oss-120b"}

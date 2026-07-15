@@ -48,6 +48,7 @@ import re
 import secrets
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -70,12 +71,21 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 # boundary (it can then never exist anywhere: manifests, homes,
 # principals). Every NEW literal segment added before /{name} must be
 # added here (adversary F3, 2026-07-12).
-RESERVED_ENTITY_NAMES = frozenset({"auth", "meets", "templates", "inventory"})
+RESERVED_ENTITY_NAMES = frozenset({"auth", "meets", "templates", "inventory", "creation-defaults"})
 
 SPARK_FILENAME = "spark.yaml"
 MEMORY_FILENAME = "memory.sqlite3"
 BOOK_FILENAME = "home.sqlite3"
 MANIFEST_FILENAME = "manifest.json"
+# Maintenance window hold (Castor doctoring, operator GO 2026-07-13 21:12):
+# while this file exists in a home, THIS DOOR refuses every sqlite-opening
+# path (get_home/open/get_entity_runtime) — visits, chat, summons, cognition
+# all land on the refusal. FILE-based deliberately: it must survive a serve
+# restart (releasing an already-running process's sqlite handles requires a
+# restart; the hold must still be armed when the new process boots) and be
+# visible to any process at the same data root. The file lives IN the home
+# but is door bookkeeping — remove-on-close, never part of the life.
+MAINTENANCE_HOLD_FILENAME = ".maintenance_hold"
 
 # The identity scopes inside one home file (keystone conventions):
 # self = engram records + valence events + self bindings; diary = act-memory
@@ -83,6 +93,17 @@ MANIFEST_FILENAME = "manifest.json"
 SELF_SCOPE = "self"
 DIARY_SCOPE = "diary"
 LIFE_SCOPE = "life"
+
+
+def derived_liveness(state_word: Any) -> str:
+    """THE liveness derivation (decision:entity-liveness-axis v3, semantics
+    c1559; laurent 16:06/16:12): ONE derived field `liveness: alive|stopped`
+    on every operator-facing serve of state — derived from state == "paused"
+    at serve time (the engraved paused hard-freeze IS the kill switch,
+    promoted; never a written copy, never a third value — degradation
+    gradations are a different future axis). This function is the single
+    derivation rule; every serving boundary calls it, none re-derives."""
+    return "stopped" if str(state_word or "").strip().lower() == "paused" else "alive"
 
 
 def render_handle(slug: str) -> Optional[str]:
@@ -125,6 +146,11 @@ def _utc_now_iso() -> str:
     from abstractruntime.core.runtime import utc_now_iso
 
     return utc_now_iso()
+
+
+class MaintenanceHoldActive(RuntimeError):
+    """The home is closed for a maintenance window (doctoring) — every
+    door path refuses until the hold is released. Maps to 409 at routes."""
 
 
 class HomeCollisionError(KeyError):
@@ -932,8 +958,11 @@ class EntityRegistry:
 
                 quota = entity_create_quota()
                 if quota is not None:
+                    # Dot-dirs are gateway bookkeeping (.host_stream), not
+                    # homes — counting them made quota N admit N-1 entities
+                    # (adversary P3 off-by-one).
                     existing_homes = (
-                        sum(1 for c in self.entities_dir.iterdir() if c.is_dir())
+                        sum(1 for c in self.entities_dir.iterdir() if c.is_dir() and not c.name.startswith("."))
                         if self.entities_dir.is_dir()
                         else 0
                     )
@@ -1018,6 +1047,34 @@ class EntityRegistry:
 
             principal, principal_warnings = self._ensure_entity_principal(manifest)
             warnings.extend(principal_warnings)
+
+            # NEWBORN = SLEEP (laurent 13:46 totality (c); artifact
+            # spec/entity_phases.json initial_phase + newborn_shape c1503):
+            # the birth state is asleep — sleep is the ground the life
+            # starts from; the phase derivation folds it to sleep. The doors
+            # WAKE, they don't refuse (B1 + c1503): the first visit wakes a
+            # newborn, so this closes no path in. Only genuinely NEW homes
+            # (created=True) — an idempotent re-create never re-sleeps a
+            # living entity.
+            if bool(result.created):
+                try:
+                    from abstractruntime.identity.life import write_entity_state
+
+                    write_entity_state(
+                        home_dir, "asleep",
+                        reason="newborn — sleep is the birth phase (visit or wake to begin)",
+                    )
+                except Exception as e:  # noqa: BLE001
+                    warnings.append(f"#FALLBACK newborn birth state not written: {e}")
+                # Register-at-first-write (Data & Caches, c1580 1a): the new
+                # LIFE lands in the machine registry as safe_to_purge=False
+                # by construction. Best-effort — never blocks a birth.
+                try:
+                    from .data_homes import register_entity_home_on_create
+
+                    register_entity_home_on_create(self.data_dir, manifest.slug)
+                except Exception:
+                    pass
 
         return EntityCreateResult(
             entity_id=manifest.entity_id,
@@ -1176,11 +1233,127 @@ class EntityRegistry:
             )
         return manifest
 
+    # -- maintenance window hold (doctoring) --------------------------------
+
+    def _hold_path(self, slug: str) -> Path:
+        return self.entities_dir / slug / MAINTENANCE_HOLD_FILENAME
+
+    def maintenance_hold_status(self, name: str) -> Dict[str, Any]:
+        """Read the hold (None-safe): {held, since, reason, held_by}."""
+        slug = entity_slug(name)
+        path = self._hold_path(slug)
+        if not path.exists():
+            return {"held": False}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            out = dict(data) if isinstance(data, dict) else {}
+        except Exception:
+            out = {"note": "#FALLBACK hold file unreadable — hold still binding (existence is the signal)"}
+        out["held"] = True
+        return out
+
+    def _refuse_if_held(self, slug: str) -> None:
+        status = self.maintenance_hold_status(slug)
+        if status.get("held"):
+            raise MaintenanceHoldActive(
+                f"entity {slug!r} is closed for a maintenance window"
+                + (f" ({status.get('reason')})" if status.get("reason") else "")
+                + " — doors reopen when the operation completes (hold released after verify green)"
+            )
+
+    def open_maintenance_window(self, name: str, *, reason: str, actor: str) -> Dict[str, Any]:
+        """Arm the hold: write the hold file, EVICT this process's cached
+        handles (sqlite handles close; a serve restart releases any the
+        process still holds elsewhere), record the window-open host marker.
+        Idempotent (re-arming refreshes nothing, reports held=True)."""
+        manifest = self.manifest_for(name)
+        slug = manifest.slug
+        path = self._hold_path(slug)
+        already = path.exists()
+        if not already:
+            payload = {
+                "since": datetime.now(timezone.utc).isoformat(),
+                "reason": str(reason or "maintenance"),
+                "held_by": str(actor or "operator"),
+            }
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(path)
+        # Evict AFTER the file lands: any re-open racing the eviction hits
+        # the refusal, never a fresh handle.
+        self._evict_home_handles(slug)
+        marker = None
+        if not already:
+            from .entity_replay import record_host_marker
+
+            marker = record_host_marker(
+                entities_dir=self.entities_dir, slug=slug, entity_id=manifest.entity_id,
+                kind="maintenance_window_open", journal_seq=self._marker_seq_base(slug),
+                details={"reason": str(reason or "maintenance"), "held_by": str(actor or "operator")},
+            )
+        out = self.maintenance_hold_status(slug)
+        if marker is not None:
+            out["marker_seq"] = marker["seq"]
+        return out
+
+    def close_maintenance_window(self, name: str, *, reason: str, actor: str) -> Dict[str, Any]:
+        """Release the hold + record the window-close marker. The operator
+        state underneath (e.g. asleep) is untouched — the hold was door
+        bookkeeping, never part of the life."""
+        manifest = self.manifest_for(name)
+        slug = manifest.slug
+        path = self._hold_path(slug)
+        was_held = path.exists()
+        if was_held:
+            path.unlink(missing_ok=True)
+        marker = None
+        if was_held:
+            from .entity_replay import record_host_marker
+
+            marker = record_host_marker(
+                entities_dir=self.entities_dir, slug=slug, entity_id=manifest.entity_id,
+                kind="maintenance_window_close", journal_seq=self._marker_seq_base(slug),
+                details={"reason": str(reason or "maintenance complete"), "held_by": str(actor or "operator")},
+            )
+        out = {"held": False, "was_held": was_held}
+        if marker is not None:
+            out["marker_seq"] = marker["seq"]
+        return out
+
+    def _marker_seq_base(self, slug: str) -> int:
+        """Journal high-water for marker placement WITHOUT opening the home
+        through the door (the hold refuses door opens; a read-only sqlite
+        peek is safe beside the doctoring copy). The journal's seq axis
+        lives in memj_seq (the engine's counter table), with memj_events'
+        MAX(seq) as the fallback for older layouts. 0 when unreadable."""
+        import sqlite3
+
+        db = self.entities_dir / slug / MEMORY_FILENAME
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            try:
+                for query in (
+                    "SELECT COALESCE(MAX(value), 0) FROM memj_seq",
+                    "SELECT COALESCE(MAX(seq), 0) FROM memj_events",
+                ):
+                    try:
+                        row = con.execute(query).fetchone()
+                        if row and int(row[0] or 0) > 0:
+                            return int(row[0])
+                    except Exception:
+                        continue
+                return 0
+            finally:
+                con.close()
+        except Exception:
+            return 0
+
     def open(self, name: str, *, embedder: Any = None) -> EntityHome:
         """Open a FRESH home handle (caller owns close()). For long-lived
         shared handles (summon routing) use `get_home`. `embedder=None`
         resolves the registry default (the gateway embeddings route)."""
         manifest = self.manifest_for(name)
+        self._refuse_if_held(manifest.slug)
         return EntityHome(
             home_dir=self.entities_dir / manifest.slug,
             manifest=manifest,
@@ -1192,6 +1365,7 @@ class EntityRegistry:
         the storage layers are internally locked, so sharing is safe).
         Closed by `close_all()` on service shutdown."""
         slug = entity_slug(name)
+        self._refuse_if_held(slug)
         embedder = self._resolve_embedder()  # outside _open_lock (it locks too)
         with self._open_lock:
             home = self._open_homes.get(slug)
@@ -1220,6 +1394,7 @@ class EntityRegistry:
         because DIARY_READ is present."""
         manifest = self.manifest_for(name)
         slug = manifest.slug
+        self._refuse_if_held(slug)
         embedder = self._resolve_embedder()  # outside _open_lock (it locks too)
         with self._open_lock:
             er = self._entity_runtimes.get(slug)
@@ -1660,17 +1835,21 @@ class EntityRegistry:
                 entry["state"] = read_entity_state(child)
             except Exception as e:
                 entry["state"] = {"state": "awake", "warnings": [f"#FALLBACK state unreadable: {e}"]}
+            entry["state"]["liveness"] = derived_liveness(entry["state"].get("state"))
             out.append(entry)
         return out
 
     def state_of(self, name: str) -> Dict[str, Any]:
         """The operator state surface (awake/asleep/paused; missing file =
         awake). Reads through the runtime's single-reader — never a second
-        parser of the state file."""
+        parser of the state file. Served with the derived `liveness` field
+        (alive|stopped; paused => stopped — the kill switch, c1559)."""
         from abstractruntime.identity.life import read_entity_state
 
         manifest = self.manifest_for(name)
-        return read_entity_state(self.entities_dir / manifest.slug)
+        st = read_entity_state(self.entities_dir / manifest.slug)
+        st["liveness"] = derived_liveness(st.get("state"))
+        return st
 
     def set_state(
         self,
@@ -1750,20 +1929,32 @@ class EntityRegistry:
         from .entity_replay import record_host_marker
 
         verb = {"asleep": "sleep", "awake": "wake", "paused": "pause"}[state2]
-        marker = record_host_marker(
-            entities_dir=self.entities_dir,
-            slug=manifest.slug,
-            entity_id=manifest.entity_id,
-            kind=verb,
-            journal_seq=int(home.memory.current_seq()),
-            details={
-                "state": state2,
-                "prior_state": prior.get("state"),
-                "reason": reason or None,
-                "dream": dream_result,
-            },
-        )
-        return {"state": written, "prior": prior, "marker_seq": marker["seq"], "dream": dream_result}
+        out: Dict[str, Any] = {"state": written, "prior": prior, "marker_seq": None, "dream": dream_result}
+        try:
+            marker = record_host_marker(
+                entities_dir=self.entities_dir,
+                slug=manifest.slug,
+                entity_id=manifest.entity_id,
+                kind=verb,
+                journal_seq=int(home.memory.current_seq()),
+                details={
+                    "state": state2,
+                    "prior_state": prior.get("state"),
+                    "reason": reason or None,
+                    "dream": dream_result,
+                },
+            )
+            out["marker_seq"] = marker["seq"]
+        except Exception as e:  # noqa: BLE001
+            # The STATE CHANGE ALREADY APPLIED (write-state-first is the
+            # emergency-stop rule — the kill switch must work even when
+            # bookkeeping is broken). Raising here turned a SUCCEEDED stop
+            # into a 500 (live find 2026-07-14: a marker-lane flood exhausted
+            # the fan-out budget and every state verb "failed" while
+            # actually landing). The honest shape: the act's result plus a
+            # labeled record gap — never an error that hides an applied act.
+            out["warning"] = f"#FALLBACK state applied but the host marker failed: {e}"
+        return out
 
     def reembed(
         self,

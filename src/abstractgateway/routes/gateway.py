@@ -441,6 +441,112 @@ async def gateway_admin_delete_user(
     return {"ok": True, "deleted": True, "user_id": user_id, "tenant_id": tenant_id}
 
 
+@router.get("/admin/runtime-config")
+async def gateway_admin_read_runtime_config(request: Request) -> Dict[str, Any]:
+    """Admin-gated runtime-config posture (continuum c1550 ask 1; operator
+    directive 17:28). Each knob carries {value, source} — the source names
+    the winning rung (stored > env > default) so a launcher losing an env is
+    VISIBLE, never the silent blank the c1526 incident produced. The
+    executor registry rides along so one GET renders the whole Settings
+    pane. Readable by any authenticated principal (a console renders posture
+    for everyone); `writable` reflects admin authority and the triage path
+    is redacted for non-admins (continuum c1563 amendment, agency c1566).
+    The POST is admin-only."""
+    principal = _principal_from_request(request)
+    from ..runtime_config import read_runtime_config
+
+    return read_runtime_config(gateway_data_dir_from_env(), is_admin=principal.is_admin())
+
+
+@router.post("/admin/runtime-config")
+async def gateway_admin_write_runtime_config(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist a PARTIAL runtime-config update (admin-only). Stored choices
+    beat env beats default and survive restarts; the change is
+    principal-stamped in the response. A rejected value never lands (validate
+    before write) and refuses with an operator-readable 4xx."""
+    principal = _require_admin_principal(request)
+    from ..runtime_config import RuntimeConfigError, write_runtime_config
+
+    actor = f"person:{principal.user_id}" if getattr(principal, "user_id", None) else "person:operator"
+    try:
+        out = write_runtime_config(gateway_data_dir_from_env(), dict(payload or {}), actor=actor)
+    except RuntimeConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    # The toggle must take effect LIVE (operator 21:09: continuum's enable
+    # button previously needed env + restart): reconcile the exec runner
+    # with the freshly persisted posture and serve the outcome.
+    if "backlog_exec_runner" in (payload or {}) or "executor" in (payload or {}):
+        from ..service import sync_backlog_exec_runner
+
+        out["exec_runner"] = sync_backlog_exec_runner(data_dir=gateway_data_dir_from_env())
+    return out
+
+
+@router.get("/admin/executors")
+async def gateway_admin_list_executors(request: Request) -> Dict[str, Any]:
+    """The pluggable execution-agent registry (operator ruling 2026-07-14):
+    codex / claude / cursor-agent / abstractcode with PROBED availability
+    (binary or package actually present on the gateway host — the gateway
+    never installs them, only surfaces what is there). A REGISTRY, not an
+    enum — a new agent slots in without a route change."""
+    _require_admin_principal(request)
+    from ..runtime_config import executor_registry
+
+    return {"executors": executor_registry()}
+
+
+@router.get("/admin/data-homes")
+def gateway_admin_list_data_homes(request: Request) -> Dict[str, Any]:
+    """Data & Caches (operator priority 18:19, c1580 1b): every registered
+    data home on this machine with LIVE sizes — the one management view over
+    core's registry. Registration happens at boot/first-write (writer wave);
+    this read re-registers this data root's homes first so a console load
+    always sees current truth (idempotent). Admin-gated: the rows expose
+    host paths. Plain `def` — sizes walk trees (H7c: never on the loop)."""
+    _require_admin_principal(request)
+    from ..data_homes import list_homes_with_sizes, register_gateway_data_homes
+
+    warnings: list[str] = []
+    try:
+        register_gateway_data_homes(gateway_data_dir_from_env())
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"#FALLBACK boot-time registration retry failed: {e}")
+    rows, list_warnings = list_homes_with_sizes()
+    return {"homes": rows, "warnings": warnings + list_warnings}
+
+
+class DataHomePurgeRequest(BaseModel):
+    name: str = Field(..., description="Registered data-home row name")
+    dry_run: bool = Field(default=False, description="Account without deleting (the confirm-dialog read)")
+    confirm_name: str = Field(default="", description="Must equal `name` for a real purge (never for dry_run)")
+
+
+@router.post("/admin/data-homes/purge")
+def gateway_admin_purge_data_home(request: Request, payload: DataHomePurgeRequest) -> Dict[str, Any]:
+    """Purge ONE registered home's contents (c1580 1b). The registry's
+    refusal lattice propagates VERBATIM (unknown row / owner-declared
+    safe_to_purge=false naming the owner / symlink swap) — an unsafe row
+    answers 409 with the owner and the rule, never a grayed-out mystery.
+    Real purges require confirm_name == name; dry runs don't. Admin-gated,
+    principal-stamped in the response."""
+    principal = _require_admin_principal(request)
+    from ..data_homes import purge_home
+
+    name = str(payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if not payload.dry_run and str(payload.confirm_name or "").strip() != name:
+        raise HTTPException(status_code=400, detail="confirm_name must equal name for a real purge")
+    try:
+        accounting = purge_home(name, dry_run=bool(payload.dry_run))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:  # noqa: BLE001 - registry refusals are 409s, verbatim
+        raise HTTPException(status_code=409, detail=str(e))
+    accounting["purged_by"] = f"person:{principal.user_id}" if getattr(principal, "user_id", None) else "person:operator"
+    return accounting
+
+
 @router.get("/admin/runtime-reservations")
 async def gateway_admin_list_runtime_reservations(request: Request) -> Dict[str, Any]:
     _require_admin_principal(request)
@@ -695,6 +801,110 @@ async def get_workflow_catalog_flow_input_schema(
         "workflow_id": f"{selection.bundle_id}@{selection.bundle_version}:{selection.flow_id}",
         **schema,
     }
+
+
+@router.get("/admin/runtimes")
+def gateway_admin_list_runtimes(request: Request, include_sizes: bool = Query(default=True)) -> Dict[str, Any]:
+    """The runtimes-first inventory (operator order 2026-07-14): every data
+    plane on this gateway — default, per-user, per-entity — with owners,
+    sizes, and entity liveness. Cheap by design; runs serve on drill-in."""
+    _require_admin_principal(request)
+    svc = get_gateway_service()
+    from ..admin_runtimes import list_runtimes as _list_runtimes
+
+    try:
+        registry = _entity_registry_for_service(svc)
+    except Exception:
+        registry = None
+    return _list_runtimes(
+        data_dir=Path(svc.config.data_dir),
+        include_sizes=bool(include_sizes),
+        entity_registry=registry,
+    )
+
+
+@router.get("/admin/runtimes/{kind}/{tenant_id}/{runtime_id}/runs")
+def gateway_admin_runtime_runs(
+    request: Request,
+    kind: str,
+    tenant_id: str,
+    runtime_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> Dict[str, Any]:
+    """Drill-in run summaries for ONE runtime plane (lazy — the inventory
+    list never pays this). Entity maintenance holds propagate as 409."""
+    _require_admin_principal(request)
+    svc = get_gateway_service()
+    from ..admin_runtimes import runtime_runs as _runtime_runs
+
+    try:
+        registry = _entity_registry_for_service(svc)
+    except Exception:
+        registry = None
+    try:
+        return _runtime_runs(
+            data_dir=Path(svc.config.data_dir),
+            kind=kind,
+            tenant_id=tenant_id,
+            runtime_id=runtime_id,
+            limit=limit,
+            default_run_store=getattr(getattr(svc, "host", None), "run_store", None),
+            entity_registry=registry,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+
+
+def _entity_registry_for_service(svc: Any) -> Any:
+    """The service-scoped entity registry (same instance the entity routes
+    use — open homes + embedder wiring cached there)."""
+    from ..routes.entities import _registry
+
+    return _registry()
+
+
+@router.get("/docs/corpus")
+def gateway_docs_corpus(request: Request) -> Dict[str, Any]:
+    """Serve the gateway's OWN documentation corpus (llms.txt) for docs-grounded
+    Q&A (the console assistant drawer / docs-qa bundle, uic c1648 slice b).
+
+    The docs-qa contract forbids corpus guessing — this route is how the
+    CONSOLE (whose app is the gateway itself) supplies its corpus. Resolution:
+    operator override env ABSTRACTGATEWAY_DOCS_CORPUS first (set = authoritative,
+    missing file is an honest 404, never a silent fallback), then the repo-root
+    llms.txt beside the package (dev checkouts). Wheels without a corpus 404
+    honestly; the drawer degrades to docs-absent answers.
+    """
+    _principal_from_request(request)
+    for label, path in _docs_corpus_candidates():
+        try:
+            if path.is_file():
+                text = path.read_text(encoding="utf-8", errors="replace")
+                return {"app": "AbstractGateway", "source": label, "chars": len(text), "text": text}
+        except OSError:
+            continue
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            "No documentation corpus available: set ABSTRACTGATEWAY_DOCS_CORPUS to an llms.txt "
+            "path (checked: " + ", ".join(label for label, _ in _docs_corpus_candidates()) + ")"
+        ),
+    )
+
+
+def _docs_corpus_candidates() -> List[Tuple[str, Path]]:
+    """Corpus resolution order. An operator-set env override is AUTHORITATIVE:
+    set-but-missing must 404 (only the override is offered), never silently
+    fall back to another file. Without it: the repo-root llms.txt (dev
+    checkouts) then the wheel-packaged copy (pyproject force-include)."""
+    override = str(os.environ.get("ABSTRACTGATEWAY_DOCS_CORPUS") or "").strip()
+    if override:
+        return [("env:ABSTRACTGATEWAY_DOCS_CORPUS", Path(override))]
+    package_dir = Path(__file__).resolve().parents[1]
+    return [
+        ("repo:llms.txt", package_dir.parents[1] / "llms.txt"),
+        ("packaged:assets/llms.txt", package_dir / "assets" / "llms.txt"),
+    ]
 
 
 @router.post("/admin/workflow-catalog/upload")
@@ -17304,11 +17514,28 @@ async def backlog_exec_config() -> BacklogExecConfigResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Backlog exec runner unavailable: {e}")
 
-    cfg = BacklogExecRunnerConfig.from_env()
+    # RESOLVED truth (stored > env): the admin's Settings choice must be what
+    # this card reports — the env-only read was why an enabled toggle still
+    # rendered "no execution agent" until a restart (operator 21:09).
+    cfg = BacklogExecRunnerConfig.from_gateway(gateway_data_dir_from_env())
     runner = backlog_exec_runner_status()
     runner_alive = bool(runner.get("alive") is True)
     runner_error = str(runner.get("error") or "").strip() or None
     can_execute = bool(cfg.enabled) and runner_alive and _resolve_executor(cfg) is not None
+
+    # Availability is probed for WHATEVER agent is configured (the four ruled
+    # agents), not just codex — an absent binary flips can_execute off with
+    # the roster naming what would work.
+    try:
+        from ..runtime_config import canonical_executor_id, executor_registry
+
+        canon = canonical_executor_id(cfg.executor)
+        if canon is not None:
+            row = next((r for r in executor_registry() if r["id"] == canon), None)
+            if row is not None and row.get("available") is False:
+                can_execute = False
+    except Exception:
+        pass
 
     codex_available: Optional[bool] = None
     codex_bin: Optional[str] = None
@@ -19505,6 +19732,12 @@ async def backlog_execute(
         description="Definition-of-Ready gate (continuum c1088 ask 3): dor=check refuses 409 unless the spec passes the DoR checks.",
     ),
     override: bool = Query(default=False, description="Operator override of the DoR gate (dor=check) — records dor_overridden=true."),
+    executor: Optional[str] = Query(
+        default=None,
+        description="Per-request executor choice (continuum c1550 ask 2 / c1575 confirm): one of the "
+        "/admin/executors registry ids. Unknown ids refuse 400 verbatim; a registered-but-unavailable "
+        "executor refuses 400 naming the probe. Absent = the configured default.",
+    ),
 ) -> BacklogExecuteResponse:
     mode_override = str(execution_mode or "").strip().lower()
     # Capture the caller's override BEFORE the stamping block below rebinds
@@ -19513,6 +19746,17 @@ async def backlog_execute(
     requested_effort = target_reasoning_effort
     dor_requested = str(dor or "").strip().lower() == "check"
     dor_overridden = bool(override)
+    # Per-request executor (continuum c1575 "ship it"): validate BEFORE any
+    # queue write — unknown/unavailable refuse 400 verbatim pre-enqueue,
+    # never a queued item that dies at the worker.
+    requested_executor: Optional[str] = None
+    if executor is not None and str(executor).strip():
+        from ..runtime_config import RuntimeConfigError, validate_executor_choice
+
+        try:
+            requested_executor = validate_executor_choice(str(executor))
+        except RuntimeConfigError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     repo_root = _triage_repo_root_from_env()
     if repo_root is None:
         raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
@@ -19578,18 +19822,27 @@ async def backlog_execute(
     target_model: Optional[str] = None
     target_reasoning_effort: Optional[str] = None
     execution_mode = "uat"
+    effective_executor = requested_executor or ""
     try:
         from ..maintenance.backlog_exec_runner import BacklogExecRunnerConfig, normalize_codex_model_id  # type: ignore
+        from ..runtime_config import canonical_executor_id  # type: ignore
 
-        cfg = BacklogExecRunnerConfig.from_env()
-        ex = str(getattr(cfg, "executor", "") or "").strip().lower()
-        if ex in {"codex", "codex_cli", "codex-cli"}:
+        cfg = BacklogExecRunnerConfig.from_gateway(gateway_data_dir_from_env())
+        ex = canonical_executor_id(getattr(cfg, "executor", "")) or ""
+        if not effective_executor:
+            effective_executor = ex or "codex"
+        if effective_executor == "codex":
             target_model = normalize_codex_model_id(getattr(cfg, "codex_model", "gpt-5.2"))
             target_reasoning_effort = str(getattr(cfg, "codex_reasoning_effort", "") or "").strip() or None
             target_agent = f"codex:{target_model}"
+        else:
+            # Non-codex executors carry their id in the agent label so
+            # history attribution never fabricates a codex prefix
+            # (continuum amendment 2).
+            target_agent = f"{effective_executor}:default"
         execution_mode = str(getattr(cfg, "exec_mode_default", "") or "").strip().lower() or "uat"
     except Exception:
-        pass
+        effective_executor = effective_executor or "codex"
 
     if mode_override:
         if mode_override in {"uat", "candidate"}:
@@ -19607,6 +19860,15 @@ async def backlog_execute(
         target_reasoning_effort=target_reasoning_effort,
     )
 
+    # Skills union (operator confirmation 23:09, c1731/c1749): resolve
+    # [coredoc, backlog] ∪ member skills at PAYLOAD BUILD and record the
+    # outcome — the durable request record continuum renders. Held/blocked
+    # verdicts ride verbatim ("default-REQUESTED, never trust-bypassed");
+    # a resolution failure is a labeled verdict, never a blocked run.
+    from ..skills_union import resolve_backlog_skills
+
+    skills_field = resolve_backlog_skills(repo_root=repo_root)
+
     payload = {
         "created_at": datetime.datetime.now().astimezone().isoformat(),
         "request_id": request_id,
@@ -19616,6 +19878,18 @@ async def backlog_execute(
         "target_agent": target_agent,
         "target_model": target_model,
         "target_reasoning_effort": target_reasoning_effort,
+        # Neutral executor stamp (continuum amendment 2): list summaries
+        # read executor.type, so attribution holds the day a second
+        # executor ships. `requested` carries the per-request choice's ID
+        # (None = configured default) — the runner honors it at process
+        # time, so one queue can hold requests for different agents.
+        "executor": {
+            "type": effective_executor or "codex",
+            "model": target_model,
+            "reasoning_effort": target_reasoning_effort,
+            "requested": requested_executor or None,
+        },
+        "skills": skills_field,
         "dor_overridden": bool(dor_requested and dor_overridden),
         "prompt": prompt,
     }
@@ -19731,13 +20005,16 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
     execution_mode = "uat"
     try:
         from ..maintenance.backlog_exec_runner import BacklogExecRunnerConfig, normalize_codex_model_id  # type: ignore
+        from ..runtime_config import canonical_executor_id  # type: ignore
 
-        cfg = BacklogExecRunnerConfig.from_env()
-        ex = str(getattr(cfg, "executor", "") or "").strip().lower()
-        if ex in {"codex", "codex_cli", "codex-cli"}:
+        cfg = BacklogExecRunnerConfig.from_gateway(gateway_data_dir_from_env())
+        ex = canonical_executor_id(getattr(cfg, "executor", "")) or ""
+        if ex == "codex":
             target_model = normalize_codex_model_id(getattr(cfg, "codex_model", "gpt-5.2"))
             target_reasoning_effort = str(getattr(cfg, "codex_reasoning_effort", "") or "").strip() or None
             target_agent = f"codex:{target_model}"
+        elif ex:
+            target_agent = f"{ex}:default"
         execution_mode = str(getattr(cfg, "exec_mode_default", "") or "").strip().lower() or "uat"
     except Exception:
         pass

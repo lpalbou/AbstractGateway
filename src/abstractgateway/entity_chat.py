@@ -199,6 +199,9 @@ class _HostedChat:
     last_activity: float = 0.0
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     closed: bool = False
+    # True while a turn's LLM call executes (the chat lane bills home-direct;
+    # /cognition.working reads this — state-sources adversary P1-5).
+    turn_in_flight: bool = False
     # The shared room's common record: every voice's turns in order
     # (speaker, text, reply, tools_ran, at). Session-lived, never persisted
     # here — the entity's own memory is the durable record.
@@ -318,6 +321,11 @@ class EntityChatHost:
         slug = manifest.slug
         home_dir = self._registry.entities_dir / slug
 
+        # Maintenance window: refuse BEFORE any provider probe or state
+        # read — a held home must answer 409 first, never 502 on an
+        # unrelated substrate check (doctoring, operator GO 2026-07-13).
+        self._registry._refuse_if_held(slug)
+
         # ONE substrate per entity (maintainer ruling 2026-07-09 06:32:
         # visits and own time share the SAME mind). Request override > the
         # home's persisted substrate.yaml > operator env > loud refusal.
@@ -351,6 +359,7 @@ class EntityChatHost:
         # loop's state=awake top-gate cannot re-open a day, then wait for
         # quiescence).
         yielded = False
+        woke_for_visit = False
         visitor = (participants or ["person:operator"])[0]
         loop_alive = bool(read_loop_status(home_dir).get("running"))
         if loop_alive:
@@ -373,11 +382,19 @@ class EntityChatHost:
                 # A stale/standing visit posture is adopted WITH the duty to wake.
                 yielded = True
             else:
-                raise ChatOpenRefused(
-                    409,
-                    f"{manifest.entity_id} is asleep ({reason or 'no reason recorded'}) — "
-                    "wake him first (`entity wake`) or let his loop negotiate the visit",
+                # B1 ruling (laurent 04:58, extended to this lane by the
+                # newborn shape c1503: doors WAKE, they don't refuse): an
+                # operator-asleep entity is woken by the visit itself — the
+                # operator always has a path in, and a newborn (state=asleep
+                # at birth) is visitable from its first moment. The wake
+                # reason records the visit did it; the durable lane's
+                # _preflight has carried this branch since B1.
+                write_entity_state(
+                    home_dir, "awake",
+                    reason=f"woken by visit from {visitor}",
                 )
+                state = read_entity_state(home_dir)
+                woke_for_visit = True
 
         # One writer per home (plan item 1, GW-A): the visit IS a write
         # window. Acquired AFTER the auto-yield (the loop's day lease is
@@ -394,6 +411,8 @@ class EntityChatHost:
             except DirectoryLeaseHeld as e:
                 if yielded:
                     write_entity_state(home_dir, "awake", reason="visit open aborted (home has a writer)")
+                elif woke_for_visit:
+                    write_entity_state(home_dir, "asleep", reason=(reason or "operator sleep restored") + " (visit open failed)")
                 raise ChatOpenRefused(409, str(e))
         except ImportError:
             # Older runtime without storage.lease: no site acquires (the
@@ -430,12 +449,16 @@ class EntityChatHost:
                 lease.release()
             if yielded:
                 write_entity_state(home_dir, "awake", reason="visit aborted (prelude refused)")
+            elif woke_for_visit:
+                write_entity_state(home_dir, "asleep", reason=(reason or "operator sleep restored") + " (visit open failed)")
             raise ChatOpenRefused(409, f"summon refused: {'; '.join(quiet) or e}")
         except BaseException:
             if lease is not None:
                 lease.release()
             if yielded:
                 write_entity_state(home_dir, "awake", reason="visit aborted (open failed)")
+            elif woke_for_visit:
+                write_entity_state(home_dir, "asleep", reason=(reason or "operator sleep restored") + " (visit open failed)")
             raise
 
         # The reflection-loss guard, web half (a2a 0007/171500Z): if a
@@ -526,9 +549,16 @@ class EntityChatHost:
                 # Joining the room is visible: participants stamp + presence
                 # line carry the new voice from this turn forward.
                 hosted.session.participants.append(speaker_label)
-            reply, report = hosted.session.turn(
-                user_text, **({"speaker_label": speaker_label} if speaker_label else {})
-            )
+            # In-flight flag (state-sources adversary P1-5): the chat lane
+            # bills tokens home-direct; /cognition's `working` reads this so
+            # the "am I spending?" surface is true DURING chat turns.
+            hosted.turn_in_flight = True
+            try:
+                reply, report = hosted.session.turn(
+                    user_text, **({"speaker_label": speaker_label} if speaker_label else {})
+                )
+            finally:
+                hosted.turn_in_flight = False
             hosted.last_activity = _time.monotonic()
             hosted.transcript.append({
                 "turn_id": report.turn_id,
@@ -597,6 +627,7 @@ class EntityChatHost:
             "session_id": hosted.session.session_id,
             "opened_at": hosted.opened_at,
             "turns": len(hosted.session.reports),
+            "turn_in_flight": bool(getattr(hosted, "turn_in_flight", False)),
             "model_info": dict(hosted.model_info),
         }
 
@@ -673,13 +704,17 @@ class EntityChatHost:
 
     def close_all(self) -> None:
         """Shutdown hygiene: reflect + close every live session (the loop
-        wake duty travels with each)."""
+        wake duty travels with each). Mark-closed under each session's
+        turn_lock (adversary P1): an in-flight turn finishes whole before
+        its session closes — never a home closed under an executing turn."""
         with self._lock:
             hosted_all = [h for h in self._sessions.values() if not h.closed]
-            for h in hosted_all:
-                h.closed = True
         for h in hosted_all:
             try:
+                with h.turn_lock:
+                    if h.closed:
+                        continue
+                    h.closed = True
                 self._close_hosted(h, reflect=True)
             except Exception:
                 continue
@@ -719,19 +754,35 @@ class EntityChatHost:
                     # instead of a generic line — his next day can begin
                     # from the visit instead of the bridges default. The
                     # cue construction from this reason is runtime's half.
-                    visitors = [p for p in hosted.session.participants if not p.startswith("entity:")]
-                    reason = (
-                        f"visitor session ended ({', '.join(visitors) or 'a visitor'}; "
-                        f"{len(hosted.session.reports)} turns)"
+                    #
+                    # VISIT-AUTHORED GUARD (conformance adversary P1, the
+                    # durable lane's rule mirrored): only the visit's OWN
+                    # yield posture is overwritten. An operator sleep/pause
+                    # landed mid-visit is the coordination authority — the
+                    # old unconditional wake-write here UNDID the emergency
+                    # stop and let a parked, granted loop reopen a day.
+                    from abstractruntime.identity.life import read_entity_state
+
+                    home_dir = self._registry.entities_dir / hosted.entity_slug
+                    st = read_entity_state(home_dir)
+                    visit_authored = str(st.get("state") or "") == "asleep" and (
+                        str(st.get("mode") or "") == "visiting"
+                        or "auto-yield" in str(st.get("reason") or "")
                     )
-                    interests = [words for _rid, words in (reflection or {}).get("interests", []) if words]
-                    if interests:
-                        reason += f" — you elected to pursue: {'; '.join(str(w)[:120] for w in interests[:2])}"
-                    write_entity_state(
-                        self._registry.entities_dir / hosted.entity_slug,
-                        "awake",
-                        reason=reason,
-                    )
+                    if visit_authored:
+                        visitors = [p for p in hosted.session.participants if not p.startswith("entity:")]
+                        reason = (
+                            f"visitor session ended ({', '.join(visitors) or 'a visitor'}; "
+                            f"{len(hosted.session.reports)} turns)"
+                        )
+                        interests = [words for _rid, words in (reflection or {}).get("interests", []) if words]
+                        if interests:
+                            reason += f" — you elected to pursue: {'; '.join(str(w)[:120] for w in interests[:2])}"
+                        write_entity_state(home_dir, "awake", reason=reason)
+                    else:
+                        warnings.append(
+                            "operator state landed mid-visit — left standing (state is the authority; no wake-write)"
+                        )
                 except Exception as e:
                     warnings.append(f"#FALLBACK could not wake the loop: {e} — wake him manually")
             with self._lock:
@@ -765,19 +816,34 @@ class EntityChatHost:
         import time as _time
 
         now = _time.monotonic()
+        # Never reap a session with a turn IN FLIGHT (whole-package adversary
+        # P1): last_activity only updates at turn END, so a long turn started
+        # near the idle deadline used to be torn down mid-execution —
+        # reflect() running concurrently with turn() over one ChatSession and
+        # the home's stores closed under the turn's writes. The in-flight
+        # flag is maintained under turn_lock; a skipped session is re-checked
+        # next sweep.
         stale = [
             h for h in self._sessions.values()
-            if not h.closed and (now - h.last_activity) > self._idle_timeout_s
+            if not h.closed
+            and not getattr(h, "turn_in_flight", False)
+            and (now - h.last_activity) > self._idle_timeout_s
         ]
-        for h in stale:
-            h.closed = True
         if not stale:
             return
         # Close outside caller-visible state but inside our lock scope is
         # deadlock-prone (reflect calls the LLM); release-and-close instead.
+        # Mark-closed happens under each session's turn_lock in the closer
+        # thread (the route-path close()'s exact discipline) so a turn that
+        # slipped in between this scan and the close is serialized, never
+        # torn.
         def _close_later() -> None:
             for h in stale:
                 try:
+                    with h.turn_lock:
+                        if h.closed or getattr(h, "turn_in_flight", False):
+                            continue
+                        h.closed = True
                     self._close_hosted(h, reflect=True)
                 except Exception:
                     continue

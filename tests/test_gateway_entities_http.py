@@ -224,10 +224,15 @@ def test_identity_card_composes_a_life():
         )
 
         moments = client.get("/api/gateway/entities/Castor/card").json()["moments"]
-        state_moments = [(m["kind"], m["details"].get("reason")) for m in moments if m["kind"] in ("sleep", "wake")]
-        assert ("sleep", "host under load") in state_moments
+        state_moments = [(m["kind"], m["details"].get("reason") or "") for m in moments if m["kind"] in ("sleep", "wake")]
+        # The door-written sleep carries the client prose PLUS the server's
+        # principal stamp (hypnos 10:20 lesson); the runtime-side write has
+        # no door, so no stamp — both are honest.
+        sleep_reasons = [r for k, r in state_moments if k == "sleep"]
+        assert len(sleep_reasons) == 1  # door dedup held
+        assert "host under load" in sleep_reasons[0]
+        assert "[by person:local-admin via POST /entities/Castor/state]" in sleep_reasons[0]
         assert ("wake", "loop resumed runtime-side") in state_moments
-        assert len([k for k, _ in state_moments if k == "sleep"]) == 1  # door dedup held
 
 
 def test_auth_probe_answers_the_control_strip():

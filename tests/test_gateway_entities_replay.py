@@ -144,6 +144,9 @@ def _lines(text: str) -> list:
 def test_replay_endpoint_bounded_read_and_cursor_resume():
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # Newborn = sleep (c1503): wake so the summon reaches the prelude
+        # gate (the refusal under test) instead of the no-summon window.
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
         # A refused summon writes a host marker (journal-invisible moment).
         r = client.post(

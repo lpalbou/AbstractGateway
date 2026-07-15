@@ -124,7 +124,10 @@ def test_backlog_exec_config_and_requests_endpoints(tmp_path: Path, monkeypatch:
         body = cfg.json()
         assert body["runner_enabled"] is True
         assert body["runner_alive"] is True
-        assert body["executor"] == "codex_cli"
+        # The serve is CANONICAL (alias-folded): the env may say codex_cli
+        # (continuum's historical wire value) but the served id is the ONE
+        # spelling — same one-spelling-at-serve rule as the liveness axis.
+        assert body["executor"] == "codex"
         assert body["can_execute"] is True
         assert body.get("codex_model") == "gpt-5.2"
         assert body.get("codex_reasoning_effort") == "xhigh"
@@ -194,6 +197,46 @@ def test_backlog_exec_config_and_requests_endpoints(tmp_path: Path, monkeypatch:
         ).json()
         assert rotated["reset"] is True
         assert "fresh" in rotated["content"]
+
+
+@pytest.mark.basic
+def test_backlog_execute_per_request_executor_choice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-request executor on /backlog/execute (continuum c1550 ask 2 /
+    c1575 confirm): unknown ids refuse 400 VERBATIM pre-enqueue (nothing
+    queued); a valid available choice queues with the neutral executor
+    stamp list summaries read (amendment 2 — attribution never fabricates
+    a codex prefix)."""
+    gateway_dir = tmp_path / "gateway"
+    (gateway_dir / "backlog_exec_queue").mkdir(parents=True, exist_ok=True)
+    repo_root = tmp_path / "repo"
+    item_dir = repo_root / "docs" / "backlog" / "planned"
+    item_dir.mkdir(parents=True, exist_ok=True)
+    (item_dir / "720-framework-exec.md").write_text("# 720 — exec test\n\nBody.\n", encoding="utf-8")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER", "1")
+
+    app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
+    with TestClient(app) as client:
+        # Unknown executor refuses verbatim, and NOTHING lands in the queue.
+        r = client.post("/api/gateway/backlog/planned/720-framework-exec.md/execute?executor=not-a-thing")
+        assert r.status_code == 400, r.text
+        assert "unknown executor" in r.json()["detail"]
+        assert not list((gateway_dir / "backlog_exec_queue").glob("*.json"))
+
+        # abstractcode is probed via the importable package — present in this
+        # venv, so the choice queues and the payload carries the stamp.
+        r2 = client.post("/api/gateway/backlog/planned/720-framework-exec.md/execute?executor=abstractcode")
+        if r2.status_code == 400:
+            pytest.skip("abstractcode not importable in this environment")
+        assert r2.status_code == 200, r2.text
+        qfiles = list((gateway_dir / "backlog_exec_queue").glob("*.json"))
+        assert len(qfiles) == 1
+        payload = json.loads(qfiles[0].read_text(encoding="utf-8"))
+        assert payload["executor"]["type"] == "abstractcode"
+        # `requested` carries the chosen ID (not a bool) so the runner can
+        # honor a per-request agent even when the configured default differs.
+        assert payload["executor"]["requested"] == "abstractcode"
+        assert payload["target_agent"].startswith("abstractcode:")
 
 
 @pytest.mark.basic

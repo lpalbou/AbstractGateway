@@ -103,6 +103,22 @@ async def _request_timing(request, call_next):  # noqa: ANN001 - Starlette middl
 # verbatim clicks 500'd unhandled and the maintainer saw a network error
 # instead of the status). Handling the exception HERE keeps the response
 # inside the middleware stack, so CORS headers ride it.
+# Maintenance window hold (Castor doctoring): the registry raises on EVERY
+# door path while a home is held — one SPECIFIC handler maps it to an honest
+# 409 everywhere (visits, chat, summon, cognition, card). Deliberately not
+# folded into the generic Exception handler: Starlette's ServerErrorMiddleware
+# ALWAYS re-raises after a generic handler (so servers/tests can see it),
+# while a specific handler returns normally from ExceptionMiddleware.
+from .entities import MaintenanceHoldActive as _MaintenanceHoldActive  # noqa: E402
+
+
+@app.exception_handler(_MaintenanceHoldActive)
+async def _maintenance_hold_409(request, exc):  # noqa: ANN001 - FastAPI handler signature
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_cors_safe(request, exc):  # noqa: ANN001 - FastAPI handler signature
     import logging

@@ -81,6 +81,9 @@ packages = ["src/abstractgateway"]
 "flows/bundles/basic-agent.flow" = "abstractgateway/flows/bundles/basic-agent.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
 "flows/bundles/dp-research@0.1.0.flow" = "abstractgateway/flows/bundles/dp-research@0.1.0.flow"
+# One-source corpus packaging: the repo-root llms.txt IS the docs corpus the
+# /docs/corpus route serves — force-include avoids a checked-in copy drifting.
+"llms.txt" = "abstractgateway/assets/llms.txt"
 
 [tool.hatch.build.targets.sdist]
 exclude = [

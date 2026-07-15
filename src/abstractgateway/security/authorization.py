@@ -133,7 +133,25 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     GatewayRoutePolicy(
         resource="entities",
         reason_code="admin_required",
-        pattern=r"^/api/gateway/entities/[^/]+/(state|reembed|tool-policy|prompt|substrate|loop/start|loop/stop|workspace/mounts)$",
+        pattern=r"^/api/gateway/entities/[^/]+/(state|reembed|tool-policy|prompt|substrate|personal-grant|maintenance-window|loop/start|loop/stop|workspace/mounts)$",
+        methods=("POST", "PUT", "PATCH", "DELETE"),
+    ),
+    # Spark TEMPLATE mutations (operator directive 2026-07-13: create/edit
+    # versioned templates). A template seeds EVERY entity summoned from it,
+    # so authoring it is an admin act (same class as re-minding one). GET
+    # (view/list/versions) stays user-level. POST /entities/templates
+    # (create) + PUT /entities/templates/{id} (edit) are the mutations; the
+    # {id} form is the specific-template pattern, the bare create is exact.
+    GatewayRoutePolicy(
+        resource="entities",
+        reason_code="admin_required",
+        exact=("/api/gateway/entities/templates",),
+        methods=("POST",),
+    ),
+    GatewayRoutePolicy(
+        resource="entities",
+        reason_code="admin_required",
+        pattern=r"^/api/gateway/entities/templates/[^/]+$",
         methods=("POST", "PUT", "PATCH", "DELETE"),
     ),
 )

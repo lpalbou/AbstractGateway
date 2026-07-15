@@ -8,6 +8,8 @@ import threading
 import json
 import sys
 import copy
+from pathlib import Path
+from typing import Any
 
 
 def _stderr(line: str) -> None:
@@ -216,6 +218,51 @@ class _UvicornAccessLogFilter(logging.Filter):
         return True
 
 
+def _run_data_command(args: Any) -> None:
+    """`abstractgateway data list|purge` — CLI parity with the console's
+    Data & Caches view (c1580 1c). Same facade, same verbatim refusals."""
+    import json as _json
+
+    from .data_homes import list_homes_with_sizes, purge_home, register_gateway_data_homes
+
+    if args.data_cmd == "list":
+        data_dir = Path(args.data_dir).expanduser() if getattr(args, "data_dir", None) else _default_data_dir()
+        try:
+            register_gateway_data_homes(data_dir)
+        except Exception as e:  # noqa: BLE001
+            print(f"#FALLBACK registration pass failed: {e}")
+        rows, warnings = list_homes_with_sizes()
+        for w in warnings:
+            print(w)
+        if not rows:
+            print("no registered data homes")
+            return
+        for r in rows:
+            size = r.get("size_bytes")
+            size_h = f"{size/1e6:,.1f} MB" if isinstance(size, (int, float)) else "?"
+            safe = "purgeable" if r.get("safe_to_purge") else "PROTECTED"
+            print(f"{r.get('name')}  [{r.get('kind')}] {size_h}  {safe}  owner={r.get('owner')}  {r.get('path')}")
+        return
+
+    if args.data_cmd == "purge":
+        if not args.dry_run and not args.yes:
+            print("A real purge requires --yes (or use --dry-run to see the accounting first).")
+            raise SystemExit(2)
+        try:
+            accounting = purge_home(str(args.name), dry_run=bool(args.dry_run))
+        except Exception as e:  # noqa: BLE001 - registry refusals print verbatim
+            print(str(e))
+            raise SystemExit(1)
+        print(_json.dumps(accounting, indent=2, ensure_ascii=False))
+        return
+
+
+def _default_data_dir() -> Path:
+    import os as _os
+
+    return Path(_os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser()
+
+
 def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
@@ -303,12 +350,28 @@ def main(argv: list[str] | None = None) -> None:
 
     add_entity_subparser(sub)
 
+    # Data & Caches CLI parity (operator priority 18:19, c1580 1c): the same
+    # registry truth the console renders — list with live sizes, purge with
+    # the registry's verbatim refusals, dry-run for the cautious.
+    data_cmd = sub.add_parser("data", help="Registered data homes: list sizes, purge safe rows")
+    data_sub = data_cmd.add_subparsers(dest="data_cmd", required=True)
+    data_list = data_sub.add_parser("list", help="All registered data homes with live sizes")
+    data_list.add_argument("--data-dir", default=None, help="Gateway data dir (registers its homes before listing)")
+    data_purge = data_sub.add_parser("purge", help="Purge one registered home's CONTENTS (owner-declared safe rows only)")
+    data_purge.add_argument("name", help="Registered row name (see `data list`)")
+    data_purge.add_argument("--dry-run", action="store_true", help="Account without deleting")
+    data_purge.add_argument("--yes", action="store_true", help="Confirm the real purge (required without --dry-run)")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "entity":
         from .entity_cli import run_entity_command
 
         run_entity_command(args)
+        return
+
+    if args.cmd == "data":
+        _run_data_command(args)
         return
 
     if args.cmd == "serve":

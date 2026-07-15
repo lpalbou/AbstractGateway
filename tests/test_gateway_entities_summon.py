@@ -109,6 +109,8 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
 def test_summon_starts_a_stamped_run(client: TestClient):
     r = client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()})
     assert r.status_code == 201, r.text
+    # Newborn = sleep (c1503): wake so the summon reaches the gate under test.
+    assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
     r2 = client.post(
         "/api/gateway/entities/Castor/summon",
@@ -158,6 +160,8 @@ def test_summon_starts_a_stamped_run(client: TestClient):
 
 def test_refused_prelude_aborts_the_summon(client: TestClient):
     assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+    # Newborn = sleep (c1503): wake so the summon reaches the gate under test.
+    assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
     from abstractgateway.service import get_gateway_service
 
@@ -192,6 +196,8 @@ def test_context_floor_refuses_small_windows(client: TestClient):
     undeclared window proceeds with a labeled warning (the gateway checks
     what it can see, never guesses what it cannot)."""
     assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+    # Newborn = sleep (c1503): wake so the summon reaches the gate under test.
+    assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
     # Explicit declaration below the floor -> refused.
     r = client.post(

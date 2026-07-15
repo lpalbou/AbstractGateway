@@ -84,7 +84,7 @@ class CreateEntityRequest(BaseModel):
 
 
 @router.post("", status_code=201)
-async def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
+def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
     """Create an entity home: lint -> store the spark verbatim -> engram ->
     manifest. Idempotent for the same spark (`created=false`); a CHANGED
     document is refused with the engine's human-written error (409)."""
@@ -113,7 +113,7 @@ async def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
 
 
 @router.post("/{name}/validate")
-async def validate_entity(name: str, req: CreateEntityRequest) -> Dict[str, Any]:
+def validate_entity(name: str, req: CreateEntityRequest) -> Dict[str, Any]:
     """DRY-RUN the create pre-checks — lint + name resolution + spark-drift —
     WITHOUT creating anything (plan (b) P0-2). The console modal calls this
     before the IRREVERSIBLE POST that burns the name for life (no DELETE,
@@ -133,22 +133,292 @@ async def validate_entity(name: str, req: CreateEntityRequest) -> Dict[str, Any]
             "exists": False,
             "would_conflict": False,
         }
-    return _registry().validate(
+    result = _registry().validate(
         name=name,
         spark=req.spark,
         spark_text=req.spark_text,
         framework=bool(req.framework),
     )
+    # EMBEDDING BIRTH-CHOICE mismatch (adversary P0): _birth_embedding_pin
+    # REFUSES a birth embedder the door cannot serve — but it fires AFTER
+    # the spark + manifest are written, so a bad choice would burn the
+    # permanent name then 400. The dry-run's contract is "green = create
+    # will not refuse", so the check must live here too. A choice that
+    # equals the door's resolved embedder (or the door resolves none) is
+    # safe; a differing one is the refusal, surfaced pre-confirm.
+    choice = str(getattr(req, "embedding_model", "") or "").strip()
+    if choice and isinstance(result, dict) and result.get("ok"):
+        try:
+            resolved = None
+            reg = _registry()
+            embedder = reg._resolve_embedder()  # the door's one embedder (may be None)
+            if embedder is not None:
+                for attr in ("model", "model_id"):
+                    v = getattr(embedder, attr, None)
+                    if isinstance(v, str) and v.strip():
+                        resolved = v.strip()
+                        break
+            if resolved and choice != resolved:
+                result = dict(result)
+                result["ok"] = False
+                result["errors"] = list(result.get("errors") or []) + [
+                    f"embedding birth choice {choice!r} does not match the door's resolved embedder "
+                    f"{resolved!r} — a home pinned to a model its door cannot serve would refuse every "
+                    "vector open. Set the gateway embedding route to this model first (Multimodal "
+                    "Capabilities), or leave the embedding on 'Gateway default'."
+                ]
+        except Exception as e:  # noqa: BLE001 - the embedder probe must not break the dry-run
+            result = dict(result)
+            result.setdefault("warnings", [])
+            result["warnings"] = list(result["warnings"]) + [f"#FALLBACK embedding-choice pre-check unavailable: {e}"]
+    return result
 
 
 @router.get("/templates")
-async def entity_spark_templates() -> Dict[str, Any]:
+def entity_spark_templates() -> Dict[str, Any]:
     """The spark/template gallery for the creation modal's template tab (plan
-    (b), gateway c872): the shipped framework default + any operator YAML
-    templates under <data_dir>/entity_templates/. Entity-independent (the
-    modal reads it before the entity exists). Read-only."""
-    templates, warnings = _registry().spark_templates()
+    (b), gateway c872; VERSIONED per the operator directive 2026-07-13): the
+    builtin framework floor + operator templates at their CURRENT version.
+    Entity-independent (the modal reads it before the entity exists)."""
+    from ..template_store import list_templates
+
+    templates, warnings = list_templates(_registry().data_dir)
     return {"schema_version": 1, "templates": templates, "warnings": warnings}
+
+
+class TemplateSaveRequest(BaseModel):
+    id: str = Field(..., description="Template id (lowercase letters/digits/_/-, 1-64 chars; not 'framework-default')")
+    spark: Dict[str, Any] = Field(..., description="The blueprint spark document (linted at save; name filled at summon)")
+    name: str = Field(default="", description="Operator-facing template name (meta, not the spark's name)")
+    description: str = Field(default="", description="Operator-facing description")
+    note: str = Field(default="", description="Optional version note for the history entry")
+
+
+@router.get("/templates/{template_id}")
+def entity_get_template(template_id: str, version: Optional[int] = None) -> Dict[str, Any]:
+    """VIEW a template's FULL spark (the operator's 'I must be able to view
+    it' — the whole document, not just a description). version=None = current;
+    a specific version reads that historical blueprint verbatim."""
+    from ..template_store import TemplateError, get_template
+
+    try:
+        return get_template(_registry().data_dir, template_id, version=version)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except TemplateError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/templates/{template_id}/versions")
+def entity_template_versions(template_id: str) -> Dict[str, Any]:
+    """The append-only version history (operator: 'every template should be
+    versioned'). Each entry names the version, when, who, and the note."""
+    from ..template_store import template_versions
+
+    return {"template_id": template_id, "versions": template_versions(_registry().data_dir, template_id)}
+
+
+@router.post("/templates", status_code=201)
+def entity_create_template(req: TemplateSaveRequest) -> Dict[str, Any]:
+    """CREATE a new operator template (the operator's 'I must be able to
+    create new ones'). Linted before write; the builtin floor is untouchable
+    (seed a new id from it). Admin-gated (a template seeds everyone's
+    entities). Version 1 is written."""
+    from ..security.principal import current_gateway_principal
+    from ..template_store import TemplateError, save_template
+
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    try:
+        return save_template(
+            _registry().data_dir, template_id=req.id, spark=req.spark, name=req.name,
+            description=req.description, actor=actor, note=req.note or "created", expect_new=True,
+        )
+    except TemplateError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/templates/{template_id}")
+def entity_edit_template(template_id: str, req: TemplateSaveRequest) -> Dict[str, Any]:
+    """EDIT a template (the operator's 'modify them later on') — appends a
+    NEW version, never overwrites (versioning is append-only). Linted before
+    write, so an edit that strips a core value refuses at SAVE, never at a
+    later summon. Admin-gated."""
+    from ..security.principal import current_gateway_principal
+    from ..template_store import TemplateError, save_template
+
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    try:
+        return save_template(
+            _registry().data_dir, template_id=template_id, spark=req.spark, name=req.name,
+            description=req.description, actor=actor, note=req.note or "edited", expect_new=False,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except TemplateError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class MaintenanceWindowRequest(BaseModel):
+    action: str = Field(..., description="open | close")
+    reason: str = Field(default="", description="Why the window is open (rides the host marker)")
+
+
+@router.post("/{name}/maintenance-window")
+def entity_maintenance_window(name: str, req: MaintenanceWindowRequest) -> Dict[str, Any]:
+    """Operator maintenance window (Castor doctoring, GO 2026-07-13 21:12):
+    `open` arms a FILE-based hold in the home — every door path (visits,
+    chat, summons, cognition, runtime opens) refuses 409 while it stands,
+    across serve restarts (releasing an already-running process's sqlite
+    handles requires a restart; the hold must survive it). `close` releases
+    after verify green. Both moments land as host markers with the
+    principal. Admin-gated (route policy); the operator state underneath
+    (asleep) is untouched."""
+    from ..security.principal import current_gateway_principal
+
+    action = str(req.action or "").strip().lower()
+    if action not in ("open", "close"):
+        raise HTTPException(status_code=400, detail="action must be open|close")
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    reg = _registry()
+    try:
+        if action == "open":
+            return reg.open_maintenance_window(name, reason=req.reason, actor=actor)
+        return reg.close_maintenance_window(name, reason=req.reason, actor=actor)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+
+
+@router.get("/{name}/maintenance-window")
+def entity_maintenance_window_status(name: str) -> Dict[str, Any]:
+    """The hold status (readable while held — this route does not open the
+    home, deliberately)."""
+    try:
+        _registry().manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    return _registry().maintenance_hold_status(name)
+
+
+@router.get("/{name}/footprint")
+def entity_footprint(name: str) -> Dict[str, Any]:
+    """READ-ONLY home footprint (entity app's memory-health panel, c1779):
+    the on-disk truth the replay stream deliberately does not carry — bytes
+    per file family, journal event count, and the last maintenance act. A
+    PURE PEEK at the home files (read-only sqlite, file stats, marker read)
+    that works even while a maintenance hold is up (the panel must render
+    the before/after DURING the act). N6-whitelisted shape: sizes, counts,
+    timestamps — no paths, no base_url, no keys."""
+    import sqlite3
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+
+    def _size(fname: str) -> Optional[int]:
+        p = home_dir / fname
+        try:
+            return p.stat().st_size if p.exists() else None
+        except OSError:
+            return None
+
+    out: Dict[str, Any] = {
+        "entity_id": manifest.entity_id,
+        "memory_bytes": _size("memory.sqlite3"),
+        "book_bytes": _size("home.sqlite3"),
+        "runtime_bytes": _size(f"runtime_{manifest.slug}.sqlite3"),
+        "home_bytes": None,
+        "journal_events": None,
+        "records": None,
+        "last_maintenance_at": None,
+        "last_maintenance_kind": None,
+        "maintenance_held": bool(registry.maintenance_hold_status(manifest.slug).get("held")),
+        "warnings": [],
+    }
+    try:
+        total = 0
+        for p in home_dir.rglob("*"):
+            try:
+                if p.is_file() and not p.is_symlink():
+                    total += p.stat().st_size
+            except OSError:
+                continue
+        out["home_bytes"] = total
+    except Exception as e:  # noqa: BLE001
+        out["warnings"].append(f"#FALLBACK home size walk failed: {e}")
+    try:
+        con = sqlite3.connect(f"file:{home_dir / 'memory.sqlite3'}?mode=ro", uri=True)
+        try:
+            out["journal_events"] = int(con.execute("SELECT COUNT(*) FROM memj_events").fetchone()[0])
+            out["records"] = int(con.execute(
+                "SELECT COUNT(DISTINCT subject) FROM triples WHERE predicate LIKE '%abstract%'"
+            ).fetchone()[0])
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001 - a peek must degrade labeled, never 500
+        out["warnings"].append(f"#FALLBACK journal peek failed: {e}")
+    # Last maintenance act from the host-marker stream (reembed or a
+    # maintenance window) — the panel's "what moved this number" anchor.
+    try:
+        from ..entity_replay import read_host_markers
+
+        for m in read_host_markers(registry.entities_dir, manifest.slug):
+            p = m.get("payload") or {}
+            if p.get("kind") in ("reembed", "maintenance_window_open", "maintenance_window_close"):
+                out["last_maintenance_at"] = str(m.get("observed_at") or "")
+                out["last_maintenance_kind"] = str(p.get("kind"))
+    except Exception as e:  # noqa: BLE001
+        out["warnings"].append(f"#FALLBACK marker read failed: {e}")
+    return out
+
+
+@router.get("/creation-defaults")
+def entity_creation_defaults() -> Dict[str, Any]:
+    """The gateway's default substrate + embedding for the creation form's
+    'Gateway default' dropdown MODE (operator directive 2026-07-13: the
+    provider/model/embedding dropdowns default to the gateway default and
+    NAME it, rather than a blank the operator must know to leave empty).
+
+    ONE authoritative read shared by every frontend (console vanilla JS,
+    continuum/entity/flow React) so the default is not re-derived
+    divergently — the endpoints are the shared contract (the console cannot
+    import uic's React picker; it consumes this + /discovery/*). Each field
+    degrades to null + a labeled note when its source is unconfigured or
+    unreachable — a dropdown never fabricates a default it cannot resolve."""
+    import os as _os
+
+    out: Dict[str, Any] = {"schema_version": 1, "warnings": []}
+
+    # LLM substrate default: the operator env is the gateway-wide entity
+    # substrate choice (the 2026-07-09 resolution chain); discovery's
+    # default_provider/model is the abstractcore-wide default beneath it.
+    env_p = (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER") or "").strip()
+    env_m = (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL") or "").strip()
+    if env_p and env_m:
+        out["substrate"] = {"provider": env_p, "model": env_m, "source": "operator-env"}
+    else:
+        out["substrate"] = {"provider": None, "model": None, "source": "unset"}
+        out["warnings"].append(
+            "#FALLBACK no gateway-wide entity substrate configured (ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER/_MODEL) "
+            "— a creation without an explicit substrate will refuse at first summon; pick one in the form"
+        )
+
+    # Embedding default: the execution-host embedding.text capability route.
+    try:
+        from ..embeddings_config import resolve_embedding_config
+
+        route = resolve_embedding_config(base_dir=_registry().data_dir)
+        out["embedding"] = {"provider": route.provider, "model": route.model, "source": route.source}
+    except Exception as e:  # noqa: BLE001 - a missing route degrades to labeled null, never a 500
+        out["embedding"] = {"provider": None, "model": None, "source": "unset"}
+        out["warnings"].append(f"#FALLBACK no gateway default embedding configured: {e}")
+
+    return out
 
 
 @router.get("/inventory/tools")
@@ -190,12 +460,12 @@ async def entity_capability_matrix() -> Dict[str, Any]:
 
 
 @router.get("")
-async def list_entities() -> Dict[str, Any]:
+def list_entities() -> Dict[str, Any]:
     return {"entities": _registry().list_entities()}
 
 
 @router.get("/{name}")
-async def inspect_entity(name: str, diary_limit: int = 5, standings_top_k: int = 10) -> Dict[str, Any]:
+def inspect_entity(name: str, diary_limit: int = 5, standings_top_k: int = 10) -> Dict[str, Any]:
     """Identity summary — pure reads only (who it is, what it recently
     elected to remember, how it feels, what it still wonders). Inspecting an
     entity never deposits usage."""
@@ -208,7 +478,7 @@ async def inspect_entity(name: str, diary_limit: int = 5, standings_top_k: int =
 
 
 @router.get("/{name}/card")
-async def entity_card(
+def entity_card(
     name: str,
     top_n: int = 5,
     current_window_events: int = 200,
@@ -236,7 +506,7 @@ async def entity_card(
 
 
 @router.get("/{name}/verify")
-async def verify_entity(name: str) -> Dict[str, Any]:
+def verify_entity(name: str) -> Dict[str, Any]:
     """Verify both attestation planes (the book's hash chain; the graph
     projections against the book) plus spark-vs-marker and manifest checks."""
     try:
@@ -254,7 +524,7 @@ class SetEntityStateRequest(BaseModel):
 
 
 @router.post("/{name}/state")
-async def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
+def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     """The sleep/wake/pause door (a2a 0008, ask 2). Writes go through the
     runtime's single state writer; the moment is host-marked into the
     replay stream; `asleep --dream` runs the dream pass in the window the
@@ -268,10 +538,38 @@ async def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, A
     down any open visit (its reflection runs), THEN writes the state — so
     the emergency stop and consent revocation are effective, not cosmetic.
     Reflection is skipped for `paused` (a hard freeze is not a graceful
-    close)."""
+    close).
+
+    PROVENANCE (hypnos 10:20:42 incident): state_history said
+    written_by="operator" and a client-authored reason — enough to know the
+    CHANNEL, never WHICH principal acted, so a disputed wake could not be
+    traced to a session. The door now appends a SERVER-derived stamp
+    `[by person:<user_id> via POST .../state]` to every reason (the
+    2026-07-07 ruling's auto-reason shape: identity + act + timestamp IS
+    the audit trail; client prose alone is a claim, not a record)."""
     target = str(req.state or "").strip().lower()
+    from ..security.principal import current_gateway_principal
+
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    reason_in = str(req.reason or "").strip()
+    stamp = f"[by {actor} via POST /entities/{name}/state]"
+    stamped_reason = f"{reason_in} {stamp}".strip() if reason_in else stamp
     closed: Optional[Dict[str, Any]] = None
     closed_durable: Optional[Dict[str, Any]] = None
+    # STATE WRITES FIRST (state-sources adversary P0-2, trigger b): the state
+    # file is the coordination authority — writing it before the teardown
+    # makes the visit gates (open/turn/tick check asleep+paused) refuse any
+    # NEW work landing in the teardown window, so a raced open can no longer
+    # survive the sleep. The teardown below then closes what was already
+    # open; its terminal duty sees the operator's fresh state (not a
+    # visit-authored one) and leaves it standing.
+    try:
+        result = _registry().set_state(name=name, state=req.state, reason=stamped_reason, dream=bool(req.dream))
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if target in ("asleep", "paused"):
         # Legacy in-process chat session (until the /chat surface retires).
         # A missing chat host (503 from _chat_host on a hand-built service)
@@ -302,7 +600,7 @@ async def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, A
                     closed_durable = host.close(
                         name, live["run_id"],
                         closed_by=("pause" if target == "paused" else "sleep"),
-                        reason=req.reason or f"{target} requested by operator",
+                        reason=(reason_in or f"{target} requested by operator") + f" {stamp}",
                     )
                 except VisitRefused as e:
                     # The teardown FAILED (e.g. a concurrent turn holds the
@@ -311,16 +609,16 @@ async def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, A
                     # — never a silent None that reads as "no visit was open".
                     closed_durable = {"error": e.detail, "teardown_failed": True,
                                       "run_id": live.get("run_id")}
-        except HTTPException:
-            raise
-        except Exception:
-            closed_durable = None  # no visit host on this service shape
-    try:
-        result = _registry().set_state(name=name, state=req.state, reason=req.reason, dream=bool(req.dream))
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        except HTTPException as e:
+            if e.status_code == 503:
+                closed_durable = None  # genuinely no visit host on this service shape
+            else:
+                raise
+        except Exception as e:  # noqa: BLE001 - adversary P2-5: a REAL teardown
+            # exception (store error, runtime failure) must not read as "no
+            # visit was open" — the state flipped, the gates protect
+            # cognition, but the response says what actually happened.
+            closed_durable = {"error": f"#FALLBACK durable teardown errored: {e}", "teardown_failed": True}
     if closed is not None:
         result["closed_visit"] = {"turns": closed.get("turns"), "summary": closed.get("summary")}
     if closed_durable is not None:
@@ -340,7 +638,7 @@ async def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, A
 
 
 @router.get("/{name}/state")
-async def get_entity_state(name: str) -> Dict[str, Any]:
+def get_entity_state(name: str) -> Dict[str, Any]:
     """The operator state badge source (pure read: awake/asleep/paused + mode)."""
     try:
         return _registry().state_of(name)
@@ -393,7 +691,7 @@ class VisitCloseRequest(BaseModel):
 
 
 @router.post("/{name}/visit/open")
-async def open_visit(name: str, req: OpenVisitRequest) -> Dict[str, Any]:
+def open_visit(name: str, req: OpenVisitRequest) -> Dict[str, Any]:
     """Open a DURABLE visit: one run in the entity's own runtime, stamped at
     creation (visit_id + participants + posture ride the stamp), ticked to
     the first PARK. A gateway restart no longer kills this conversation —
@@ -419,7 +717,7 @@ async def open_visit(name: str, req: OpenVisitRequest) -> Dict[str, Any]:
 
 
 @router.post("/{name}/visit/{run_id}/turn")
-async def visit_turn(name: str, run_id: str, req: VisitTurnRequest) -> Dict[str, Any]:
+def visit_turn(name: str, run_id: str, req: VisitTurnRequest) -> Dict[str, Any]:
     from ..entity_visits import VisitRefused
 
     try:
@@ -431,7 +729,7 @@ async def visit_turn(name: str, run_id: str, req: VisitTurnRequest) -> Dict[str,
 
 
 @router.post("/{name}/visit/{run_id}/close")
-async def visit_close(name: str, run_id: str, req: VisitCloseRequest) -> Dict[str, Any]:
+def visit_close(name: str, run_id: str, req: VisitCloseRequest) -> Dict[str, Any]:
     from ..entity_visits import VisitRefused
 
     try:
@@ -443,7 +741,7 @@ async def visit_close(name: str, run_id: str, req: VisitCloseRequest) -> Dict[st
 
 
 @router.post("/{name}/visit/{run_id}/tick")
-async def visit_tick(name: str, run_id: str) -> Dict[str, Any]:
+def visit_tick(name: str, run_id: str) -> Dict[str, Any]:
     """Drive-to-park (walkthrough step 5b: after a mid-turn kill the run is
     RUNNING-not-parked; this drives it to its next park/terminal without a
     message). Idempotent on parked and terminal runs."""
@@ -458,11 +756,27 @@ async def visit_tick(name: str, run_id: str) -> Dict[str, Any]:
 
 
 @router.get("/{name}/visit")
-async def visit_status(name: str) -> Dict[str, Any]:
+def visit_status(name: str) -> Dict[str, Any]:
     from ..entity_visits import VisitRefused
 
     try:
         return _visit_host().status(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.get("/{name}/visit/{run_id}/transcript")
+def visit_transcript(name: str, run_id: str) -> Dict[str, Any]:
+    """The durable visit's transcript (cutover gap 2): a PURE READ from the
+    run's own vars so the drawer rehydrates after reload without replaying
+    turns. Works on live and terminal runs — a closed visit stays readable,
+    twin of the hosted chat transcript."""
+    from ..entity_visits import VisitRefused
+
+    try:
+        return _visit_host().transcript(name, run_id)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
@@ -510,7 +824,7 @@ class MeetCloseRequest(BaseModel):
 
 
 @router.post("/meets/open")
-async def open_meet(req: OpenMeetRequest) -> Dict[str, Any]:
+def open_meet(req: OpenMeetRequest) -> Dict[str, Any]:
     """Open a two-entity meet: both legs summoned under ONE visit_id, each
     in its own home runtime. The authenticated principal is the CONVENER —
     stamped into both legs and the author of every steering line (honest
@@ -533,7 +847,7 @@ async def open_meet(req: OpenMeetRequest) -> Dict[str, Any]:
 
 
 @router.post("/meets/{meet_id}/relay")
-async def relay_meet(meet_id: str, req: MeetRelayRequest) -> Dict[str, Any]:
+def relay_meet(meet_id: str, req: MeetRelayRequest) -> Dict[str, Any]:
     from ..entity_meets import VisitRefused
 
     try:
@@ -543,7 +857,7 @@ async def relay_meet(meet_id: str, req: MeetRelayRequest) -> Dict[str, Any]:
 
 
 @router.post("/meets/{meet_id}/close")
-async def close_meet(meet_id: str, req: MeetCloseRequest) -> Dict[str, Any]:
+def close_meet(meet_id: str, req: MeetCloseRequest) -> Dict[str, Any]:
     from ..entity_meets import VisitRefused
 
     try:
@@ -553,7 +867,7 @@ async def close_meet(meet_id: str, req: MeetCloseRequest) -> Dict[str, Any]:
 
 
 @router.get("/meets/{meet_id}")
-async def meet_status(meet_id: str) -> Dict[str, Any]:
+def meet_status(meet_id: str) -> Dict[str, Any]:
     from ..entity_meets import VisitRefused
 
     try:
@@ -572,7 +886,7 @@ class ReembedRequest(BaseModel):
 
 
 @router.get("/{name}/embedding")
-async def get_entity_embedding_status(name: str) -> Dict[str, Any]:
+def get_entity_embedding_status(name: str) -> Dict[str, Any]:
     """Read-only embedding status for the reembed ceremony (adversary P0:
     the verification field demanded a value the UI never showed — the only
     in-UI discovery was failing once to read the 400). Serves the home's M1
@@ -631,7 +945,7 @@ async def get_entity_embedding_status(name: str) -> Dict[str, Any]:
 
 
 @router.post("/{name}/reembed")
-async def reembed_entity(name: str, req: ReembedRequest) -> Dict[str, Any]:
+def reembed_entity(name: str, req: ReembedRequest) -> Dict[str, Any]:
     """The M1b repair verb (operator-gated, never routine): re-derive the
     home's vector index with the door's resolved embedder under the
     maintenance lease; atomic swap engine-side; the act lands in BOTH
@@ -651,22 +965,317 @@ async def reembed_entity(name: str, req: ReembedRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/{name}/cognition")
+def entity_cognition(name: str) -> Dict[str, Any]:
+    """The B3 spend wire (laurent 04:58 "unclear when it's working and
+    consuming credits"; dispatch c1340 2c — observer's board tile and the
+    entity app's meter both consume this): ONE read serving working-now +
+    tick phase + real token spend.
+
+    - working: loop mid-day OR a live visit run executing (never fabricated
+      — both inputs are pid-checked/store-read state).
+    - loop: the pid-cross-checked loop status verbatim (phase/running/
+      stop_requested/stopped_by ride through).
+    - visit: the durable visit status (open/run_id/status/turn_n).
+    - spend: BILLED usage folded from the per-home run ledger's completed
+      llm_call records (result.usage.total_tokens — the entity LLM handler
+      records it on every call), lifetime across the home store + the live
+      visit run tree. HONEST GAP: the own-time loop runs home-direct
+      (ChatSession, no run ledger), so loop cognition is NOT in these
+      numbers yet — labeled #FALLBACK, never estimated here (the entity
+      app's input-side estimate remains its own labeled surface until
+      runtime's loop-usage half lands)."""
+    from ..entity_loop import loop_status
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+
+    # Maintenance window: refuse UP FRONT (this endpoint folds per-source
+    # failures into labeled warnings by design — a held home would degrade
+    # into a half-truthful 200 instead of the honest 409 every other door
+    # answers; the hold outranks the degradation contract).
+    registry._refuse_if_held(manifest.slug)
+
+    loop = loop_status(home_dir)
+
+    warnings: List[str] = []
+    visit: Dict[str, Any] = {"open": False}
+    visit_in_flight = False
+    try:
+        host = _visit_host()
+        visit = host.status(name)
+        if visit.get("open") and visit.get("run_id"):
+            visit_in_flight = bool(host.is_in_flight(str(visit["run_id"])))
+    except Exception as e:  # noqa: BLE001 - adversary P2-3: a broken visit
+        # host must not silently read as "no visit" on the endpoint that
+        # promises labeled degradation.
+        warnings.append(f"#FALLBACK visit status unavailable: {e}")
+
+    # State axis + the ONE composite phase (console adversary P1-1: the
+    # life_state composite existed but consumers re-derived from four reads
+    # at four times — the "contradictory badges" anti-pattern. /cognition is
+    # the single poll now, so the axes AND their fold ride together).
+    st: Dict[str, Any] = {}
+    try:
+        st = registry.state_of(name) or {}
+    except Exception as e:  # noqa: BLE001
+        st = {"state": "awake", "warning": f"#FALLBACK state unreadable: {e}"}
+    chat_open = False
+    chat_in_flight = False
+    try:
+        chat = _chat_host().status(name)
+        chat_open = bool(chat.get("open"))
+        chat_in_flight = bool(chat.get("turn_in_flight"))
+    except Exception as e:  # noqa: BLE001 - labeled, like the visit branch (P3)
+        warnings.append(f"#FALLBACK chat status unavailable: {e}")
+    state_word = str(st.get("state") or "awake")
+    # STRICT ONE-ACTIVE-PHASE (laurent 13:28/13:34 via c1455/c1463; semantics
+    # c1466 axis-mixing finding): `phase` carries ONLY the ruled four keys —
+    # visit / work / personal / sleep — or None when no phase is active (the
+    # ruled machine has no idle state; reality does — never fake one). The
+    # old chain mixed phase words, state words and "resting" in one enum and
+    # its ordering HID the operator's pause under visiting. State (awake/
+    # asleep/paused) and rest are SEPARATE served fields now; impossible
+    # combos surface as bugs instead of being hidden by priority. The closed
+    # set IS pinned (totality ruled 13:46, contingency lifted c1472);
+    # consumers still tolerate None.
+    resting = bool(loop.get("running")) and str(loop.get("phase") or "") != "day"
+    # LIVENESS AXIS (decision:entity-liveness-axis v3, c1559): `frozen` is
+    # RETIRED from the serve; the one derived field is liveness alive|stopped
+    # (paused => stopped — the kill switch). Same derivation everywhere:
+    # entities.derived_liveness, never a second rule.
+    from ..entities import derived_liveness
+
+    stopped = state_word == "paused"
+    if stopped:
+        # The kill switch is NOT a phase — everything active was torn down;
+        # the state block carries paused and liveness says stopped plainly.
+        phase = None
+    elif bool(visit.get("open")) or chat_open:
+        phase = "visit"
+    elif state_word == "asleep":
+        phase = "sleep"
+    elif bool(loop.get("running")):
+        # The personal phase spans its own rest windows (the loop lives);
+        # `resting` carries the between-days nuance without a fifth phase.
+        phase = "personal"
+    else:
+        phase = None  # awake, idle — present, no phase active
+    # SETTLING (adversary P2-1): the state file is intent/authority; the loop
+    # honors it at tick boundaries only — a fresh state write beside an older
+    # loop heartbeat is "settling", not a contradiction. Lexicographic ISO
+    # compare (both aware-UTC by the writers).
+    settling = False
+    try:
+        changed_at = str(st.get("changed_at") or "")
+        loop_at = str(loop.get("updated_at") or "")
+        if changed_at and loop_at and bool(loop.get("running")) and changed_at > loop_at:
+            settling = True
+    except Exception:
+        pass
+
+    lifetime = {"llm_calls": 0, "tool_calls": 0, "tokens_total": 0, "runs": 0}
+    live_visit: Optional[Dict[str, Any]] = None
+    try:
+        er = registry.get_entity_runtime(manifest.slug)
+        runs = er.run_store.list_runs(limit=500) or []
+        if len(runs) >= 500:
+            warnings.append("#TRUNCATION lifetime spend folds the newest 500 runs — older runs uncounted")
+        ids = [str(getattr(r, "run_id", "") or "") for r in runs if getattr(r, "run_id", None)]
+        metrics = er.ledger_store.metrics_many(ids) if ids else {}
+        for rid in ids:
+            m = metrics.get(rid) or {}
+            lifetime["llm_calls"] += int(m.get("llm_calls") or 0)
+            lifetime["tool_calls"] += int(m.get("tool_calls") or 0)
+            lifetime["tokens_total"] += int(m.get("tokens_total") or 0)
+        lifetime["runs"] = len(ids)
+        live_run_id = str(visit.get("run_id") or "") if visit.get("open") else ""
+        if live_run_id:
+            tree = [live_run_id] + [
+                rid for rid, r in zip(ids, runs)
+                if str(getattr(r, "parent_run_id", "") or "") == live_run_id
+            ]
+            lv = {"run_id": live_run_id, "llm_calls": 0, "tool_calls": 0, "tokens_total": 0}
+            for rid in tree:
+                m = metrics.get(rid) or {}
+                lv["llm_calls"] += int(m.get("llm_calls") or 0)
+                lv["tool_calls"] += int(m.get("tool_calls") or 0)
+                lv["tokens_total"] += int(m.get("tokens_total") or 0)
+            live_visit = lv
+    except Exception as e:  # noqa: BLE001 - a spend read must not 500 the indicator
+        warnings.append(f"#FALLBACK spend fold unavailable: {e}")
+
+    # Loop spend (runtime 1154194): the loop records cumulative usage into
+    # <home>/loop_spend.json after every tick — fold it in and the honest
+    # #FALLBACK drops. Counters start at zero for pre-upgrade homes (the
+    # ledger-less past is honestly unknowable — labeled, not estimated).
+    loop_spend: Optional[Dict[str, Any]] = None
+    try:
+        from abstractruntime.identity.life import read_loop_spend
+
+        ls = read_loop_spend(home_dir) or {}
+        loop_spend = {
+            "llm_calls": int(ls.get("llm_calls") or 0),
+            "tool_calls": int(ls.get("tool_calls") or 0),
+            "tokens_total": int(ls.get("tokens_total") or 0),
+            "ticks": int(ls.get("ticks") or 0),
+            "updated_at": ls.get("updated_at"),
+        }
+        lifetime["llm_calls"] += loop_spend["llm_calls"]
+        lifetime["tool_calls"] += loop_spend["tool_calls"]
+        lifetime["tokens_total"] += loop_spend["tokens_total"]
+    except ImportError:
+        if bool(loop.get("running")):
+            warnings.append(
+                "#FALLBACK loop cognition spend not included: this runtime predates "
+                "read_loop_spend — upgrade abstractruntime to fold loop usage"
+            )
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"#FALLBACK loop spend unreadable: {e}")
+
+    # WORKING = executing right now (adversary P1-2/P1-5): loop mid-day, a
+    # visit turn IN FLIGHT (the stored run status is a last-write claim — a
+    # host crash mid-drive leaves status="running" at rest forever), or a
+    # chat turn in flight. A parked/orphaned run is present, not working.
+    working = bool(loop.get("running") and loop.get("phase") == "day") or visit_in_flight or chat_in_flight
+    if (
+        bool(visit.get("open"))
+        and str(visit.get("status") or "") == "running"
+        and not visit_in_flight
+    ):
+        warnings.append(
+            "#FALLBACK visit run rests at status=running with no drive in flight "
+            "(interrupted mid-turn?) — resume it with POST /visit/{run_id}/tick"
+        )
+    out: Dict[str, Any] = {
+        "working": working,
+        "phase": phase,
+        "resting": resting,
+        # paused => stopped; everything else => alive (documented mapping,
+        # binary by construction — c1559 spelling point 2).
+        "liveness": derived_liveness(state_word),
+        # AUTHORITY RULE (adversary P2-1, served not commented): the state
+        # file is the operator's INTENT and the coordination authority; the
+        # loop honors it at tick boundaries — `settling` marks that window.
+        "settling": settling,
+        "authority": "state=intent (authoritative); loop/visit=actuality; settling=true while actuality catches up",
+        "state": {
+            "state": state_word,
+            "liveness": derived_liveness(state_word),
+            "mode": st.get("mode"),
+            "reason": st.get("reason"),
+            "changed_at": st.get("changed_at"),
+            **({"warning": st.get("warning")} if st.get("warning") else {}),
+        },
+        "loop": loop,
+        "visit": visit,
+        "chat_open": chat_open,
+        # ARMED ≠ IN-PHASE (semantics c1436): this is the GRANT axis —
+        # phases.personal activation from <home>/phases.yaml (runtime
+        # read_personal_grant, fail-closed). The current phase is the
+        # separate fact above.
+        "personal": _personal_grant_block(home_dir, registry=registry, manifest=manifest),
+        "spend": {
+            "lifetime": lifetime,
+            "live_visit": live_visit,
+            "loop": loop_spend,
+            "source": "home-run-ledger+loop-spend" if loop_spend is not None else "home-run-ledger",
+        },
+    }
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def _personal_grant_block(home_dir: Any, *, registry: Any = None, manifest: Any = None) -> Dict[str, Any]:
+    try:
+        from abstractruntime.identity.life import personal_grant_refusal, read_personal_grant
+    except ImportError:
+        return {"mode": None, "source": "not-recorded",
+                "note": "#FALLBACK this runtime predates phases.yaml — grant axis unavailable"}
+    grant = read_personal_grant(home_dir)
+    refusal = personal_grant_refusal(grant)
+    armed = refusal is None
+    if registry is not None and manifest is not None and not armed:
+        _maybe_mark_grant_expired(registry, manifest, grant)
+    return {**grant, "armed": armed, "refusal": refusal, "source": "phases.yaml"}
+
+
+def _maybe_mark_grant_expired(registry: Any, manifest: Any, grant: Dict[str, Any]) -> None:
+    """The timer's own act, recorded (conformance adversary P2: the kind was
+    declared with no writer — a lapsing grant was biographically invisible).
+    Per semantics c1443: recorded by whichever process DETECTS expiry at a
+    read boundary, payload carrying the lapsed expires_at; detectors dedup
+    on (entity, expires_at)."""
+    if str(grant.get("mode") or "") != "timer":
+        return
+    expires_at = str(grant.get("expires_at") or "").strip()
+    if not expires_at:
+        return
+    from datetime import datetime, timezone
+
+    try:
+        deadline = datetime.fromisoformat(expires_at)
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < deadline:
+            return  # timer still live — the refusal came from something else
+    except ValueError:
+        return  # unreadable expiry is a config problem, not a timer act
+    try:
+        from ..entity_replay import record_host_marker
+
+        # Dedup on (entity, expires_at) INSIDE the marker lock (adversary
+        # P2-1: a route-side scan-then-append raced concurrent reads and
+        # cross-process writers into double markers).
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="personal_grant_expired",
+            journal_seq=int(home.memory.current_seq()),
+            details={"channel": "timer", "expires_at": expires_at, "granted_by": grant.get("granted_by")},
+            dedup_field="expires_at",
+        )
+    except Exception:
+        pass  # detection is observability — a marker failure never blocks a read
+
+
 @router.get("/{name}/life_state")
-async def get_entity_life_state(name: str) -> Dict[str, Any]:
+def get_entity_life_state(name: str) -> Dict[str, Any]:
     """The ONE composite life phase (observer ask, maintainer 2026-07-09):
     the gateway collapses chat + operator-state + loop into a single
     mutually-exclusive `phase` (visiting > paused > asleep > personal >
     resting > awake) so clients render one chip and never re-derive
     contradictory badges. `own_time_running` rides alongside for a
-    loop-alive indicator that does not fight the phase."""
+    loop-alive indicator that does not fight the phase.
+
+    DURABLE visits count (state-sources adversary P1-1): the chat host's
+    fold predates the /visit lane, so this route widens `visiting` with the
+    durable visit status — two composites disagreeing on the headline field
+    was the exact anti-pattern this endpoint exists to kill. /cognition is
+    the richer composite; this stays as the thin phase chip."""
     try:
-        return _chat_host().life_state(name)
+        out = _chat_host().life_state(name)
     except HTTPException:
         raise
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    try:
+        durable = _visit_host().status(name)
+        if durable.get("open"):
+            out["phase"] = "visiting"
+            out["visit_run_id"] = durable.get("run_id")
+    except Exception:
+        pass  # thin chip: chat-host truth stands when the visit host is absent
+    return out
 
 
 def _chat_host():
@@ -736,6 +1345,23 @@ async def open_entity_chat(name: str, req: OpenChatRequest) -> Dict[str, Any]:
     from ..entity_chat import ChatOpenRefused
     from fastapi.concurrency import run_in_threadpool
 
+    # One life, one summon — BOTH lanes (conformance adversary): a parked
+    # durable visit holds no lease between requests, so a chat open used to
+    # succeed beside it and the durable visit's turns then 409'd on the
+    # chat's held lease. The mirror of loop/start's durable check.
+    try:
+        durable = _visit_host().status(name)
+        if durable.get("open"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"a durable visit is open on this entity (run {durable.get('run_id')!r}) — "
+                "continue it with /visit/{run_id}/turn or close it first; one life, one summon",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # no visit host on this service shape
+
     try:
         return await run_in_threadpool(
             _chat_host().open,
@@ -756,6 +1382,27 @@ async def open_entity_chat(name: str, req: OpenChatRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        kind = _provider_error_name(e)
+        if kind is None:
+            raise
+        raise HTTPException(
+            status_code=502,
+            detail=f"the mind's provider refused the open ({kind}: {e}) — nothing was opened; "
+            "check the provider/model (substrate) is loaded and retry, or swap the substrate",
+        )
+
+
+def _provider_error_name(e: BaseException) -> Optional[str]:
+    """Boundary-safe provider-error detection (0059: no abstractcore import;
+    the MRO NAMES are the duck type). Production finding from the live
+    drive: a refused provider call (model unloaded, upstream 400) rendered
+    as "Internal error" 500 — dishonest for the operator; the refusal must
+    name WHICH side refused and the next act (the refusal-string rule)."""
+    for cls in type(e).__mro__:
+        if cls.__name__ in ("ProviderError", "ProviderAPIError", "InvalidRequestError", "AbstractCoreError", "ModelNotFoundError"):
+            return cls.__name__
+    return None
 
 
 @router.post("/{name}/chat/{chat_id}/turn")
@@ -777,10 +1424,19 @@ async def entity_chat_turn(name: str, chat_id: str, req: ChatTurnRequest) -> Dic
         # The driver's memory-failure posture: the failed turn formed
         # nothing; the session should close so nothing corrupts.
         raise HTTPException(status_code=500, detail=f"memory failed this turn: {e} — close the session; his memory is intact")
+    except Exception as e:  # noqa: BLE001
+        kind = _provider_error_name(e)
+        if kind is None:
+            raise
+        raise HTTPException(
+            status_code=502,
+            detail=f"the mind's provider refused this turn ({kind}: {e}) — the turn formed nothing; "
+            "check the provider/model (substrate) is loaded and retry, or swap the substrate",
+        )
 
 
 @router.get("/{name}/chat/{chat_id}/transcript")
-async def entity_chat_transcript(name: str, chat_id: str) -> Dict[str, Any]:
+def entity_chat_transcript(name: str, chat_id: str) -> Dict[str, Any]:
     """The shared room's common view: every voice's turns, in order (pure
     read; any participant or UI can poll it to render the whole room)."""
     del name
@@ -809,7 +1465,7 @@ async def close_entity_chat(name: str, chat_id: str, req: Optional[CloseChatRequ
 
 
 @router.get("/{name}/chat")
-async def entity_chat_status(name: str) -> Dict[str, Any]:
+def entity_chat_status(name: str) -> Dict[str, Any]:
     """Is a visit open on this home right now? (one life, one summon)"""
     try:
         return _chat_host().status(name)
@@ -846,7 +1502,7 @@ def _declared_context_window(req: "SummonEntityRequest", input_data: Dict[str, A
 
 
 @router.post("/{name}/summon")
-async def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
+def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
     """Summon the entity into a work session.
 
     Order matters and is non-negotiable (a2a 0004 constraints):
@@ -880,25 +1536,40 @@ async def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # The state door (a2a 0008): asleep = the no-summon window (dreams may
-    # run there); paused = hard freeze. Both refuse summons, naming the
-    # state and its reason — the coordination rule enforced by state, not
-    # etiquette.
+    # THE LIVENESS GATE (laurent 16:06/16:12, decision:entity-liveness-axis):
+    # reachability rides the liveness axis, not sleep. PAUSED = the kill
+    # switch (stop) — every door refuses, this one included. ASLEEP-but-
+    # ALIVE is REACHABLE: the summon WAKES the entity (the a2a 0008
+    # no-summon window is formally RETIRED by his ruling — superseded in
+    # the same wave that keeps the paused refusal, so there is never a gap
+    # with neither protection). Work-completion ceremony (work→sleep) is
+    # the work door's, when built.
     entity_state = registry.state_of(name)
-    if str(entity_state.get("state") or "awake") != "awake":
+    state_word = str(entity_state.get("state") or "awake")
+    if state_word == "paused":
         raise HTTPException(
             status_code=409,
             detail={
                 "refused": True,
                 "reasons": [
-                    f"#REFUSED summon: {home.entity_id} is {entity_state.get('state')}"
+                    f"#REFUSED summon: {home.entity_id} is paused — the kill switch"
                     + (f" ({entity_state.get('reason')})" if entity_state.get("reason") else "")
-                    + " — wake it first (entity wake / POST .../state)"
+                    + "; an entity can only perform while alive (wake requires the operator)"
                 ],
                 "entity_id": home.entity_id,
                 "state": entity_state,
             },
         )
+    if state_word == "asleep":
+        from abstractruntime.identity.life import write_entity_state
+
+        principal_for_wake = current_gateway_principal()
+        summoner = f"person:{principal_for_wake.user_id}" if principal_for_wake is not None else "person:operator"
+        write_entity_state(
+            registry.entities_dir / entity_slug(name), "awake",
+            reason=f"woken by summon from {summoner}",
+        )
+        entity_state = registry.state_of(name)
 
     try:
         spark = home.spark()
@@ -1130,7 +1801,7 @@ def _workspace_root(name: str):
 
 
 @router.get("/{name}/workspace")
-async def list_entity_workspace(name: str, path: str = ".") -> Dict[str, Any]:
+def list_entity_workspace(name: str, path: str = ".") -> Dict[str, Any]:
     """Structured listing of one directory level (files + dirs + mounts at
     the root). `path` is workspace-relative; `mounts/<name>/…` browses a
     whitelisted mount. Containment errors read as 400, absence as 404."""
@@ -1180,7 +1851,7 @@ async def list_entity_workspace(name: str, path: str = ".") -> Dict[str, Any]:
 
 
 @router.get("/{name}/workspace/file")
-async def read_entity_workspace_file(name: str, path: str) -> Dict[str, Any]:
+def read_entity_workspace_file(name: str, path: str) -> Dict[str, Any]:
     """One file's text (capped at the workspace read cap, truncation labeled)."""
     from abstractruntime.identity.tools import WORKSPACE_FILE_CAP_BYTES
 
@@ -1208,7 +1879,7 @@ class WorkspaceFileWriteRequest(BaseModel):
 
 
 @router.post("/{name}/workspace/file")
-async def write_entity_workspace_file(name: str, req: WorkspaceFileWriteRequest) -> Dict[str, Any]:
+def write_entity_workspace_file(name: str, req: WorkspaceFileWriteRequest) -> Dict[str, Any]:
     """Place a file into the entity's writable workspace (maintainer ask,
     2026-07-09: 'send files to the entity when we need' — the operator's
     side of the drag-and-drop). Binary-safe (base64). Containment + the
@@ -1265,7 +1936,7 @@ class PutMountsRequest(BaseModel):
 
 
 @router.get("/{name}/workspace/mounts")
-async def get_entity_workspace_mounts(name: str) -> Dict[str, Any]:
+def get_entity_workspace_mounts(name: str) -> Dict[str, Any]:
     from abstractruntime.identity.tools import read_workspace_mounts
 
     registry = _registry()
@@ -1277,7 +1948,7 @@ async def get_entity_workspace_mounts(name: str) -> Dict[str, Any]:
 
 
 @router.put("/{name}/workspace/mounts")
-async def put_entity_workspace_mounts(name: str, req: PutMountsRequest) -> Dict[str, Any]:
+def put_entity_workspace_mounts(name: str, req: PutMountsRequest) -> Dict[str, Any]:
     """Replace the whitelist (operator write). Validation is loud: names
     unique, paths existing directories, mode ro|rw. The entity's tools see
     the new walls on their next call — grants follow the file."""
@@ -1330,7 +2001,7 @@ class PutToolPolicyRequest(BaseModel):
 
 
 @router.get("/{name}/tool-policy")
-async def get_entity_tool_policy(name: str) -> Dict[str, Any]:
+def get_entity_tool_policy(name: str) -> Dict[str, Any]:
     from abstractruntime import PHASES, resolve_tool_grant
     from abstractruntime.identity.tool_policy import ALL_TOOL_NAMES, TIERS
 
@@ -1356,7 +2027,7 @@ async def get_entity_tool_policy(name: str) -> Dict[str, Any]:
 
 
 @router.put("/{name}/tool-policy")
-async def put_entity_tool_policy(name: str, req: PutToolPolicyRequest) -> Dict[str, Any]:
+def put_entity_tool_policy(name: str, req: PutToolPolicyRequest) -> Dict[str, Any]:
     from abstractruntime import write_policy_file
 
     registry = _registry()
@@ -1368,7 +2039,7 @@ async def put_entity_tool_policy(name: str, req: PutToolPolicyRequest) -> Dict[s
         write_policy_file(registry.entities_dir / manifest.slug, req.policy)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return await get_entity_tool_policy(name)
+    return get_entity_tool_policy(name)
 
 
 # ------------------------------------------------------------ system prompt
@@ -1393,7 +2064,7 @@ class PutPromptOverlayRequest(BaseModel):
 
 
 @router.get("/{name}/prompt")
-async def get_entity_prompt(name: str) -> Dict[str, Any]:
+def get_entity_prompt(name: str) -> Dict[str, Any]:
     """The system prompt as its layers: rendered identity prelude
     (read-only), each editable layer with its current text + source
     (default | overlay), the built-in defaults for reference, and the
@@ -1493,7 +2164,7 @@ async def get_entity_prompt(name: str) -> Dict[str, Any]:
 
 
 @router.put("/{name}/prompt")
-async def put_entity_prompt(name: str, req: PutPromptOverlayRequest) -> Dict[str, Any]:
+def put_entity_prompt(name: str, req: PutPromptOverlayRequest) -> Dict[str, Any]:
     from abstractruntime.identity.chat import default_prompt_texts
     from abstractruntime.identity.prompt_overlay import write_prompt_overlay
 
@@ -1547,7 +2218,7 @@ async def put_entity_prompt(name: str, req: PutPromptOverlayRequest) -> Dict[str
         )
     except Exception:
         pass  # a marker failure never blocks the operator's write
-    return await get_entity_prompt(name)
+    return get_entity_prompt(name)
 
 
 # --------------------------------------------------------------- substrate
@@ -1564,7 +2235,7 @@ class PutSubstrateRequest(BaseModel):
 
 
 @router.get("/{name}/substrate")
-async def get_entity_substrate(name: str) -> Dict[str, Any]:
+def get_entity_substrate(name: str) -> Dict[str, Any]:
     import os as _os
 
     from ..entity_chat import read_entity_substrate
@@ -1585,19 +2256,63 @@ async def get_entity_substrate(name: str) -> Dict[str, Any]:
 
 
 @router.put("/{name}/substrate")
-async def put_entity_substrate(name: str, req: PutSubstrateRequest) -> Dict[str, Any]:
-    from ..entity_chat import write_entity_substrate
+def put_entity_substrate(name: str, req: PutSubstrateRequest) -> Dict[str, Any]:
+    """The ONE sanctioned substrate write path (laurent 12:39, hypnos
+    incident): a mind swap is a DURABLE EVENT on the life — the marker
+    (old → new, principal, timestamp) lands BEFORE the file moves, so
+    "which llm was behind during which time" is answerable from the
+    stream even if the write itself crashes. Direct file edits bypass
+    this record; the 12:24 emergency flip proved the gap from inside."""
+    from ..entity_chat import read_entity_substrate, write_entity_substrate
+    from ..security.principal import current_gateway_principal
 
     registry = _registry()
     try:
         manifest = registry.manifest_for(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+    # Strip-validate BEFORE the marker (adversary P2-2: min_length=1 accepts
+    # " "; the writer strips and raises AFTER the substrate_changed marker
+    # landed — a recorded mind-swap that never happened).
+    provider_in = str(req.provider or "").strip()
+    model_in = str(req.model or "").strip()
+    if not provider_in or not model_in:
+        raise HTTPException(status_code=400, detail="provider and model must both be non-empty")
+    prior = read_entity_substrate(home_dir) or {}
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    # MARKER-FIRST: record the intent before the file changes. A marker
+    # failure blocks the write (unlike cosmetic markers) — an unrecorded
+    # substrate change is the incident class this closes.
     try:
-        write_entity_substrate(registry.entities_dir / manifest.slug, provider=req.provider, model=req.model)
+        from ..entity_replay import record_host_marker
+
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="substrate_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details={
+                "channel": "operator",
+                "by": actor,
+                "old": {"provider": prior.get("provider"), "model": prior.get("model")},
+                "new": {"provider": provider_in, "model": model_in},
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"substrate change refused: the durable marker could not be recorded ({e}) — "
+            "an unrecorded mind swap is not allowed; retry when the home is reachable",
+        )
+    try:
+        write_entity_substrate(home_dir, provider=provider_in, model=model_in)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return await get_entity_substrate(name)
+    return get_entity_substrate(name)
 
 
 # ---------------------------------------------------------------- own time
@@ -1623,7 +2338,7 @@ class StartLoopRequest(BaseModel):
 
 
 @router.get("/{name}/loop")
-async def get_entity_loop(name: str) -> Dict[str, Any]:
+def get_entity_loop(name: str) -> Dict[str, Any]:
     """The loop's honest state (its own status file, pid-checked)."""
     from ..entity_loop import loop_status
 
@@ -1636,7 +2351,7 @@ async def get_entity_loop(name: str) -> Dict[str, Any]:
 
 
 @router.post("/{name}/loop/start")
-async def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
+def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
     import os as _os
 
     from ..entity_loop import loop_status, start_loop
@@ -1649,34 +2364,93 @@ async def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     home_dir = registry.entities_dir / manifest.slug
 
+    # B2 (laurent 04:58): a /loop/start refusal must carry a machine-readable
+    # reason + the live loop status so the entity's own-time button reflects
+    # REAL state instead of a silent 409. Three refusal axes (visit-open,
+    # state, already-running) each raise with a `reason_code` and the current
+    # loop_status in the detail payload; the UI renders the button from the
+    # status and shows the reason verbatim.
+    def _loop_refuse(status_code: int, reason_code: str, message: str) -> HTTPException:
+        return HTTPException(
+            status_code=status_code,
+            detail={"reason_code": reason_code, "message": message, "loop": loop_status(home_dir)},
+        )
+
     # One life, one summon: a live visit and his own time never overlap.
     try:
         chat = _chat_host().status(name)
         if chat.get("open"):
-            raise HTTPException(
-                status_code=409,
-                detail=f"a visit is open on {manifest.entity_id} (chat {chat.get('chat_id')!r}) — "
+            raise _loop_refuse(
+                409, "visit_open",
+                f"a visit is open on {manifest.entity_id} (chat {chat.get('chat_id')!r}) — "
                 "close it first; his own time and a visit never overlap",
             )
     except HTTPException:
         raise
     except Exception:
         pass  # no chat host on this service shape: nothing to collide with
+    # The DURABLE visit lane too (mutation adversary P2: an awake open writes
+    # no state posture, so the legacy checks all pass and a loop could start
+    # under an open durable visit — one-life-one-summon violated).
+    try:
+        durable = _visit_host().status(name)
+        if durable.get("open"):
+            raise _loop_refuse(
+                409, "visit_open",
+                f"a durable visit is open on {manifest.entity_id} (run {durable.get('run_id')!r}) — "
+                "close it first; his own time and a visit never overlap",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # no visit host on this service shape
 
-    from abstractruntime.identity.life import read_entity_state
+    # PERSONAL IS THE GRANT (laurent c815; runtime gate 7aa52ad): the loop's
+    # own doors refuse an unarmed start too — checking here as well gives the
+    # button the structured refusal + arming hint instead of a spawn error.
+    from abstractruntime.identity.life import (
+        personal_grant_refusal,
+        read_entity_state,
+        read_personal_grant,
+    )
+
+    grant_refusal = personal_grant_refusal(read_personal_grant(home_dir))
+    if grant_refusal:
+        raise _loop_refuse(409, "not_granted", grant_refusal)
 
     state = read_entity_state(home_dir)
     if state.get("state") == "paused":
-        raise HTTPException(status_code=409, detail=f"{manifest.entity_id} is paused (hard freeze) — wake him first")
+        raise _loop_refuse(
+            409, "paused",
+            f"{manifest.entity_id} is paused (hard freeze){': ' + str(state.get('reason')) if state.get('reason') else ''} — wake him first",
+        )
+    # If the loop is already alive, saying so with its live status is what B2
+    # needs — the operator clicked start repeatedly because the button never
+    # told them it was ALREADY running (the silent-no-op bug class).
+    already = loop_status(home_dir)
+    if bool(already.get("running")):
+        raise _loop_refuse(
+            409, "already_running",
+            f"{manifest.entity_id}'s own time is already running (pid {already.get('pid')}, phase {already.get('phase')})",
+        )
+    # An operator-asleep entity cannot start its own day — but say so as a
+    # reason the button can render (not a bare 409), and name that waking is
+    # the operator's next act.
+    if str(state.get("state") or "") == "asleep" and str(state.get("mode") or "") != "visiting":
+        raise _loop_refuse(
+            409, "not_awake",
+            f"{manifest.entity_id} is asleep ({state.get('reason') or 'no reason recorded'}) — "
+            "wake him before starting his own time",
+        )
     # Registration-window guard (observer 2026-07-09): a visit `open()` writes
     # the visiting posture (asleep + mode=visiting) BEFORE it registers in the
     # chat host's _by_slug, so a loop/start racing an in-flight open would pass
     # the status() check above. The state marker closes that window — refuse to
     # start a day into a visit that is mid-open.
     if str(state.get("state") or "") == "asleep" and str(state.get("mode") or "") == "visiting":
-        raise HTTPException(
-            status_code=409,
-            detail=f"a visit is opening on {manifest.entity_id} (visiting posture set) — "
+        raise _loop_refuse(
+            409, "visit_opening",
+            f"a visit is opening on {manifest.entity_id} (visiting posture set) — "
             "his own time and a visit never overlap; retry after the visit ends",
         )
 
@@ -1731,9 +2505,15 @@ async def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
             context_window=int(context_window),
         )
     except RuntimeError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        # Spawn/lease failure from the loop process — surface it structured so
+        # the button shows the reason (B2), not a bare 409.
+        raise _loop_refuse(409, "start_failed", str(e))
 
     try:
+        from ..security.principal import current_gateway_principal
+
+        principal = current_gateway_principal()
+        actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
         home = registry.get_home(manifest.slug)
         record_host_marker(
             entities_dir=registry.entities_dir,
@@ -1741,7 +2521,9 @@ async def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
             entity_id=manifest.entity_id,
             kind="personal_started",
             journal_seq=int(home.memory.current_seq()),
-            details={"channel": "operator", **{k: started[k] for k in ("pid", "provider", "model", "tick_seconds", "ticks_per_day", "rest_minutes")}},
+            # `by` = the acting principal (mutation adversary P1: channel-only
+            # markers made a disputed start untraceable to a session).
+            details={"channel": "operator", "by": actor, **{k: started[k] for k in ("pid", "provider", "model", "tick_seconds", "ticks_per_day", "rest_minutes")}},
         )
     except Exception:
         pass  # a marker failure never blocks his own time
@@ -1764,7 +2546,7 @@ class StopLoopRequest(BaseModel):
 
 
 @router.post("/{name}/loop/stop")
-async def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> Dict[str, Any]:
+def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> Dict[str, Any]:
     from ..entity_loop import freeze_loop, stop_loop
     from ..entity_replay import record_host_marker
 
@@ -1775,6 +2557,10 @@ async def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> 
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     home_dir = registry.entities_dir / manifest.slug
 
+    from ..security.principal import current_gateway_principal
+
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
     mode = (req.mode if req else "graceful").strip().lower()
     reason = (req.reason if req else "") or "own time stop via gateway"
     if mode in ("freeze", "hard", "hibernate"):
@@ -1794,7 +2580,7 @@ async def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> 
         except Exception:
             pass
         result = freeze_loop(home_dir, reason=reason, requested_by="admin")
-        write_entity_state(home_dir, "paused", reason=f"FROZEN: {reason}")
+        write_entity_state(home_dir, "paused", reason=f"FROZEN: {reason} [by {actor} via POST /entities/{name}/loop/stop]")
         try:
             home = registry.get_home(manifest.slug)
             record_host_marker(
@@ -1803,7 +2589,7 @@ async def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> 
                 entity_id=manifest.entity_id,
                 kind="personal_frozen",
                 journal_seq=int(home.memory.current_seq()),
-                details={"channel": "admin", "reason": reason, **{k: result[k] for k in ("pid", "was_running", "escalated_to_sigkill")}},
+                details={"channel": "admin", "by": actor, "reason": reason, **{k: result[k] for k in ("pid", "was_running", "escalated_to_sigkill")}},
             )
         except Exception:
             pass
@@ -1822,8 +2608,139 @@ async def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> 
             entity_id=manifest.entity_id,
             kind="personal_stop_requested",
             journal_seq=int(home.memory.current_seq()),
-            details={"channel": "operator", "phase": status.get("phase")},
+            details={"channel": "operator", "by": actor, "phase": status.get("phase")},
         )
     except Exception:
         pass
     return {"stop_requested": True, "status": status}
+
+
+# ----------------------------------------------------------- personal grant
+# PERSONAL IS THE GRANT (laurent c815, re-derived + corrected c1435): the
+# activation bucket phases.personal.{mode, expires_at, granted_by,
+# granted_at} in <home>/phases.yaml (runtime owns the format module —
+# read/write_personal_grant, 7aa52ad; this door is the ONE sanctioned write
+# surface). Arming is ONLY an explicit operator act — no visit, wake, or
+# harness path may flip mode (agency's rider, c1427). Marker-first ENFORCED
+# like substrate: an unrecorded grant change is the 10:20 incident class.
+
+
+class PutPersonalGrantRequest(BaseModel):
+    mode: str = Field(..., description="disabled | timer | until_revoked (the ruled modes; disabled = revoke)")
+    expires_at: Optional[str] = Field(default=None, description="ISO-8601 expiry (required for mode=timer; normalized to aware UTC)")
+
+
+@router.get("/{name}/personal-grant")
+def get_personal_grant(name: str) -> Dict[str, Any]:
+    """The grant axis, readable on its own (the /cognition composite carries
+    the same block): armed = the phase MAY run right now (semantics c1436:
+    ARMED ≠ IN-PHASE — the current phase is a separate fact)."""
+    from abstractruntime.identity.life import personal_grant_refusal, read_personal_grant
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    grant = read_personal_grant(registry.entities_dir / manifest.slug)
+    refusal = personal_grant_refusal(grant)
+    armed = refusal is None
+    if not armed:
+        _maybe_mark_grant_expired(registry, manifest, grant)
+    return {**grant, "armed": armed, "refusal": refusal, "source": "phases.yaml"}
+
+
+@router.put("/{name}/personal-grant")
+def put_personal_grant(name: str, req: PutPersonalGrantRequest) -> Dict[str, Any]:
+    from abstractruntime.identity.life import read_personal_grant, write_personal_grant
+
+    from ..entity_replay import record_host_marker
+    from ..security.principal import current_gateway_principal
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    mode = str(req.mode or "").strip().lower()
+    prior = read_personal_grant(home_dir)
+
+    # Validate BEFORE the marker: marker-first must never record an act the
+    # write would refuse (a personal_granted marker over a 400 is a lie).
+    from abstractruntime.identity.life import PERSONAL_GRANT_MODES, PHASES_FILENAME, PHASES_SCHEMA_VERSION
+
+    if mode not in PERSONAL_GRANT_MODES:
+        raise HTTPException(status_code=400, detail=f"unknown personal mode {req.mode!r}: modes are {'/'.join(PERSONAL_GRANT_MODES)}")
+    normalized_expiry: Optional[str] = None
+    if mode == "timer":
+        from abstractruntime.core.runtime import normalize_utc_iso
+
+        if not str(req.expires_at or "").strip():
+            raise HTTPException(status_code=400, detail="mode=timer requires expires_at — a timer without an expiry is no grant")
+        normalized_expiry = normalize_utc_iso(str(req.expires_at).strip())
+        if normalized_expiry is None:
+            raise HTTPException(status_code=400, detail=f"expires_at is not an ISO-8601 timestamp: {req.expires_at!r}")
+    # The writer's OWN refusal conditions, dry-run (adversary P2-2: corrupt
+    # phases.yaml and newer schema_version raise AFTER the marker landed —
+    # recording a grant that never happened, the exact class marker-first
+    # exists to close). Constants imported, never respelled.
+    phases_path = home_dir / PHASES_FILENAME
+    if phases_path.exists():
+        try:
+            import yaml as _yaml
+
+            loaded = _yaml.safe_load(phases_path.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(
+                status_code=400,
+                detail=f"{PHASES_FILENAME} is unreadable ({e}) — repair or remove it before arming",
+            )
+        if loaded is not None and not isinstance(loaded, dict):
+            raise HTTPException(status_code=400, detail=f"{PHASES_FILENAME} is not a mapping — repair it before arming")
+        try:
+            found_version = int((loaded or {}).get("schema_version") or PHASES_SCHEMA_VERSION)
+        except (TypeError, ValueError):
+            found_version = PHASES_SCHEMA_VERSION
+        if found_version > PHASES_SCHEMA_VERSION:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{PHASES_FILENAME} carries schema_version {found_version} but this gateway knows "
+                f"{PHASES_SCHEMA_VERSION} — upgrade before writing",
+            )
+
+    # MARKER-FIRST, blocking (the substrate precedent): the act lands on the
+    # stream BEFORE the file moves. personal_granted names the phase being
+    # armed; personal_grant_revoked names the grant being taken back
+    # (semantics c1443: the subject asymmetry is deliberate honesty).
+    kind = "personal_grant_revoked" if mode == "disabled" else "personal_granted"
+    try:
+        home = registry.get_home(manifest.slug)
+        details: Dict[str, Any] = {"channel": "operator", "by": actor, "mode": mode}
+        if mode == "timer" and normalized_expiry:
+            # NORMALIZED form (P3): the marker and the file must agree on
+            # the one at-rest spelling, or the expiry dedup key splits.
+            details["expires_at"] = normalized_expiry
+        if mode == "disabled":
+            details["prior_mode"] = prior.get("mode")
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind=kind,
+            journal_seq=int(home.memory.current_seq()),
+            details=details,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"personal-grant change refused: the durable marker could not be recorded ({e}) — "
+            "an unrecorded grant change is not allowed; retry when the home is reachable",
+        )
+    try:
+        write_personal_grant(home_dir, mode=mode, granted_by=actor, expires_at=req.expires_at)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return get_personal_grant(name)

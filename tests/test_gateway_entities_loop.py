@@ -173,6 +173,10 @@ def test_loop_start_resolves_attention_defaults_from_env(monkeypatch: pytest.Mon
 
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # personal IS the grant (c1435): arm it first — off-by-default refuses starts.
+        assert client.put("/api/gateway/entities/Castor/personal-grant", json={"mode": "until_revoked"}).status_code == 200
+        # Newborn = sleep (c1503): wake before starting his own time.
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
         # No env, no request values: the wide defaults.
         r = client.post("/api/gateway/entities/Castor/loop/start", json={})
@@ -198,3 +202,64 @@ def test_loop_start_resolves_attention_defaults_from_env(monkeypatch: pytest.Mon
         assert r3.status_code == 200, r3.text
         assert calls["shelf_size"] == 12
         assert calls["context_window"] == 20000
+
+
+def test_loop_start_refusals_carry_reason_code_and_live_status(monkeypatch: pytest.MonkeyPatch):
+    """B2 (laurent 04:58): a /loop/start refusal must carry a machine-readable
+    reason_code + the live loop status so the entity button reflects REAL
+    state instead of a silent 409. The operator clicked start repeatedly
+    because the button never said it was ALREADY running (or why it refused)."""
+    import abstractruntime.identity.life as life_mod
+    from abstractgateway.service import get_gateway_service
+
+    def _fake_spawn(home_dir, **kwargs):
+        return {"pid": 4242, "log": str(home_dir / "own_time.log"), **kwargs}
+
+    monkeypatch.setattr(life_mod, "spawn_loop_process", _fake_spawn)
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        registry = get_gateway_service().entity_registry
+        home_dir = registry.entities_dir / "castor"
+
+        # UNARMED: the grant gate refuses FIRST (personal is off by default —
+        # the 10:20 class: a start with no recorded grant).
+        r0 = client.post("/api/gateway/entities/Castor/loop/start", json={})
+        assert r0.status_code == 409, r0.text
+        assert r0.json()["detail"]["reason_code"] == "not_granted"
+        assert "not armed" in r0.json()["detail"]["message"]
+        # Arm it for the rest of the matrix.
+        assert client.put("/api/gateway/entities/Castor/personal-grant", json={"mode": "until_revoked"}).status_code == 200
+
+        # ASLEEP entity: refusal names reason_code=not_awake + the live loop status,
+        # not a bare 409 string (the silent-button bug class).
+        from abstractruntime.identity.life import write_entity_state
+
+        write_entity_state(home_dir, "asleep", reason="operator rest")
+        r = client.post("/api/gateway/entities/Castor/loop/start", json={})
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert isinstance(detail, dict), "refusal must be structured, not a bare string"
+        assert detail["reason_code"] == "not_awake"
+        assert "loop" in detail and detail["loop"]["running"] is False
+        assert "asleep" in detail["message"]
+
+        # PAUSED entity: distinct reason_code.
+        write_entity_state(home_dir, "paused", reason="freeze drill")
+        r2 = client.post("/api/gateway/entities/Castor/loop/start", json={})
+        assert r2.status_code == 409, r2.text
+        assert r2.json()["detail"]["reason_code"] == "paused"
+
+        # ALREADY RUNNING: the exact repeated-click case — reason_code=already_running
+        # + the live pid/phase, so the button can render "running" instead of nothing.
+        # write_loop_status stamps pid=getpid() (this live test process), so the
+        # status alive-check passes and the loop reads as running.
+        write_entity_state(home_dir, "awake", reason="ready")
+        from abstractruntime.identity.life import write_loop_status
+        import os as _os
+
+        write_loop_status(home_dir, "day")
+        r3 = client.post("/api/gateway/entities/Castor/loop/start", json={})
+        assert r3.status_code == 409, r3.text
+        assert r3.json()["detail"]["reason_code"] == "already_running"
+        assert str(_os.getpid()) in r3.json()["detail"]["message"]

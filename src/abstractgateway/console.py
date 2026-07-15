@@ -9,65 +9,89 @@ def gateway_console_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AbstractGateway Console</title>
   <style>
+	    /* DESIGN CHARTER (operator order 2026-07-15 00:31: "make it look like
+	       a true abstract app"): the token values below are the abstractuic
+	       ui-kit's :root VERBATIM (theme.css — the palette flow/observer/
+	       continuum share). The console's historical var names (--panel,
+	       --line, --button, ...) become ALIASES onto the charter tokens so
+	       every existing rule inherits the family look without a rewrite. */
 	    :root {
 	      color-scheme: dark;
-	      --bg: #080b12;
-	      --panel: #111827;
-	      --panel-2: #0c1220;
-      --panel-3: #172033;
-      --line: #2b3a55;
-      --line-soft: rgba(148, 163, 184, .16);
-      --text: #f3f6fc;
-      --muted: #aab6ca;
-      --subtle: #77849a;
-      --accent: #2dd4bf;
-      --accent-2: #38bdf8;
-      --danger: #f43f5e;
-      --danger-2: #a92645;
-      --ok: #34d399;
-      --warn: #f59e0b;
-	      --button: #2563eb;
-	      --button-2: #25324a;
-	      --shadow: 0 18px 48px rgba(0, 0, 0, .26);
+	      /* Charter tokens (ui-kit theme.css values, verbatim) */
+	      --bg-primary: #1a1a2e;
+	      --bg-secondary: #16213e;
+	      --bg-tertiary: #0f3460;
+	      --text-primary: #eee;
+	      --text-secondary: #aaa;
+	      --text-muted: #666;
+	      --accent: #e94560;
+	      --success: #27ae60;
+	      --warning: #f39c12;
+	      --error: #e74c3c;
+	      --info: #60a5fa;
+	      --accent-subtle: rgba(233, 69, 96, 0.12);
+	      --info-subtle: rgba(96, 165, 250, 0.12);
+	      --ui-surface-1: rgba(0, 0, 0, 0.16);
+	      --ui-surface-2: rgba(255, 255, 255, 0.06);
+	      --ui-surface-3: rgba(0, 0, 0, 0.25);
+	      --ui-border-1: rgba(255, 255, 255, 0.10);
+	      --ui-border-2: rgba(255, 255, 255, 0.14);
+	      --ui-shadow-1: 0 10px 30px rgba(0, 0, 0, 0.35);
+	      /* Console aliases (historical names -> charter tokens) */
+	      --bg: var(--bg-primary);
+	      --panel: var(--bg-secondary);
+	      --panel-2: #131c33;
+	      --panel-3: var(--bg-tertiary);
+	      --line: var(--bg-tertiary);
+	      --line-soft: var(--ui-border-1);
+	      --text: var(--text-primary);
+	      --muted: var(--text-secondary);
+	      --subtle: #8891a8;
+	      --accent-2: var(--info);
+	      --danger: var(--error);
+	      --danger-2: #b03a2e;
+	      --ok: var(--success);
+	      --warn: var(--warning);
+	      --cyan: var(--info);
+	      /* Primary actions wear the family accent (continuum button.primary);
+	         secondary actions sit on the tertiary surface. */
+	      --button: var(--accent);
+	      --button-2: var(--bg-tertiary);
+	      --shadow: var(--ui-shadow-1);
 	      --font-scale: 1;
 	      --header-density: 1;
 	      --font-base: calc(14px * var(--font-scale));
 	      --font-sm: calc(12px * var(--font-scale));
 	      --font-xs: calc(11px * var(--font-scale));
-	      --bg-primary: var(--bg);
-	      --bg-secondary: var(--panel);
-	      --bg-tertiary: var(--line);
-	      --text-primary: var(--text);
-	      --text-secondary: var(--muted);
-	      --text-muted: var(--subtle);
 	      --accent-primary: var(--accent);
-	      --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 	      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 	      --font-size-xs: var(--font-xs);
 	      --font-size-sm: var(--font-sm);
 	      --font-size-md: calc(13px * var(--font-scale));
 	      --font-size-base: var(--font-base);
 	      --font-size-lg: calc(16px * var(--font-scale));
+	      --font-size-xl: calc(18px * var(--font-scale));
 	      --radius-sm: 4px;
 	      --radius-md: 8px;
+	      --radius-lg: 10px;
 	    }
 	    :root.theme-light {
 	      color-scheme: light;
-	      --bg: #f5f7fb;
-	      --panel: #ffffff;
-	      --panel-2: #f0f4fa;
-	      --panel-3: #e6edf7;
-	      --line: #cbd5e1;
-	      --line-soft: rgba(15, 23, 42, .14);
-	      --text: #0f172a;
-	      --muted: #475569;
+	      --bg-primary: #f4f6fb;
+	      --bg-secondary: #ffffff;
+	      --bg-tertiary: #dbe3f0;
+	      --text-primary: #16213e;
+	      --text-secondary: #4a5670;
+	      --text-muted: #7c88a1;
+	      --ui-surface-3: rgba(15, 23, 42, 0.04);
+	      --ui-border-1: rgba(15, 23, 42, 0.12);
+	      --ui-border-2: rgba(15, 23, 42, 0.18);
+	      --ui-shadow-1: 0 10px 30px rgba(15, 23, 42, 0.12);
+	      --panel-2: #eef2f9;
 	      --subtle: #64748b;
-	      --accent: #e94560;
-	      --accent-2: #2563eb;
-	      --button: #2563eb;
 	      --button-2: #dbe5f4;
 	      --danger-2: #be123c;
-	      --shadow: 0 16px 40px rgba(15, 23, 42, .12);
 	    }
 	    :root.theme-tokyo-night {
 	      --bg: #1a1b26;
@@ -138,49 +162,66 @@ def gateway_console_html() -> str:
 	      --warn: #f6c177;
 	    }
 	    * { box-sizing: border-box; }
+	    html, body { height: 100%; }
 	    body {
 	      margin: 0;
-	      min-height: 100vh;
 	      background: var(--bg);
 	      color: var(--text);
-	      font: var(--font-base)/1.45 var(--font-sans);
+	      font: var(--font-base)/1.5 var(--font-sans);
+	      -webkit-font-smoothing: antialiased;
+	      overflow: hidden;
 	    }
 	    body.font-sm { --font-scale: .92; }
 	    body.font-lg { --font-scale: 1.08; }
 	    body.header-compact { --header-density: .84; }
 	    body.header-large { --header-density: 1.18; }
-	    header {
-	      min-height: calc(62px * var(--header-density));
+	    /* ---- FAMILY SHELL (.shell_* — continuum/observer's redesigned layout
+	       vocabulary, styles.css shell block): left sidebar + slim header,
+	       content scrolls internally. ---- */
+	    .shell { display: flex; flex-direction: row; height: 100vh; min-width: 0; }
+	    .shell_sidebar {
+	      flex: 0 0 196px;
+	      display: flex;
+	      flex-direction: column;
+	      background: var(--bg-secondary);
+	      border-right: 1px solid var(--bg-tertiary);
+	      min-height: 0;
+	    }
+	    body:not(.signed-in) .shell_sidebar { display: none; }
+	    .shell_brand { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px; min-width: 0; }
+	    .shell_brand_mark { font-size: var(--font-size-xl); line-height: 1; color: var(--accent); font-weight: 700; }
+	    .shell_brand_name { font-weight: 700; letter-spacing: .3px; white-space: nowrap; font-size: var(--font-size-md); }
+	    .shell_nav { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+	    .shell_nav_icon { display: inline-flex; flex: 0 0 auto; width: 16px; justify-content: center; font-size: 13px; opacity: .8; }
+	    .shell_nav_label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	    .shell_main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+	    .shell_header {
+	      flex: 0 0 auto;
 	      display: flex;
 	      align-items: center;
 	      justify-content: space-between;
-	      gap: 18px;
-	      padding: 0 22px;
-	      border-bottom: 1px solid var(--line-soft);
-	      background: var(--bg);
-	      background: color-mix(in srgb, var(--bg) 92%, transparent);
-	      backdrop-filter: blur(14px);
-	      position: sticky;
-	      top: 0;
-      z-index: 4;
-    }
-    h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; }
-    h2 { font-size: 15px; margin: 0; letter-spacing: -.01em; }
-    h3 { font-size: 14px; margin: 0; letter-spacing: -.01em; }
+	      gap: 12px;
+	      min-height: calc(52px * var(--header-density));
+	      padding: 8px 16px;
+	      border-bottom: 1px solid var(--bg-tertiary);
+	      background: var(--bg-secondary);
+	    }
+	    .shell_header_titles { min-width: 0; }
+	    .shell_content { flex: 1 1 auto; min-height: 0; min-width: 0; overflow-y: auto; }
+	    @media (max-width: 900px) {
+	      .shell_sidebar { flex-basis: 56px; }
+	      .shell_brand_name, .shell_nav_label { display: none; }
+	      .tab-button.shell_nav_item { justify-content: center; }
+	    }
+    /* Headings scale with the Appearance font-size control (aesthetics
+       adversary P1-1: hardcoded px never scaled) and cap at weight 650 —
+       when everything is 800, nothing leads. */
+    h1 { font-size: calc(17px * var(--font-scale)); margin: 0; letter-spacing: -.01em; font-weight: 650; }
+    h2 { font-size: calc(15px * var(--font-scale)); margin: 0; letter-spacing: -.01em; font-weight: 600; }
+    h3 { font-size: calc(13px * var(--font-scale)); margin: 0; letter-spacing: -.01em; font-weight: 600; }
     p { margin: 0; }
-	    main { max-width: 1560px; margin: 0 auto; padding: 22px; }
-	    .brand { display: flex; align-items: center; gap: 12px; }
-    .brand-mark {
-      width: 32px;
-      height: 32px;
-      display: grid;
-      place-items: center;
-      border: 1px solid rgba(45, 212, 191, .34);
-      border-radius: 8px;
-      color: var(--accent);
-      background: rgba(45, 212, 191, .08);
-      font-weight: 900;
-    }
+	    main { width: 100%; max-width: 1560px; margin: 0 auto; padding: 20px 22px 28px; }
+	    #page-title { font-size: var(--font-size-lg); font-weight: 700; }
     .brand-subtitle { color: var(--subtle); font-size: 12px; margin-top: 1px; }
     .status {
       display: flex;
@@ -192,46 +233,97 @@ def gateway_console_html() -> str:
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); display: inline-block; }
     .dot.ok { background: var(--ok); }
     .dot.bad { background: var(--danger); }
-		    .console-shell { min-height: calc(100vh - 62px); }
+    body.signed-in #status-dot { display: none; } /* the account pill carries the green dot; two dots read wrong */
+    /* --- .af-topbar / .af-drawer: abstractuic ui-kit CSS PUBLIC API, vendored
+       for this server-rendered page (ui-kit/src/theme.css is the source of
+       truth; class names + markup shape are the contract, visual tokens are
+       mapped onto the console's own variables). --- */
+    .af-topbar { display: flex; align-items: center; gap: 8px; }
+    .af-topbar__btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px; padding: 0;
+      border: 1px solid var(--line); border-radius: var(--radius-md);
+      background: var(--panel-2); color: var(--muted); cursor: pointer; font-size: 14px;
+    }
+    .af-topbar__btn:hover { color: var(--text); border-color: var(--border, var(--line)); }
+    .af-topbar__btn.is-active {
+      color: var(--text);
+      background: color-mix(in srgb, var(--accent) 22%, var(--panel-2));
+      border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    }
+    .af-topbar__pill {
+      display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 12px;
+      border: 1px solid var(--line); border-radius: 999px;
+      background: var(--panel-2); color: var(--text);
+      font: inherit; font-size: var(--font-sm); font-weight: 600; cursor: pointer; white-space: nowrap;
+    }
+    .af-topbar__pill:hover:not(:disabled) { border-color: var(--border, var(--line)); filter: brightness(1.08); }
+    .af-topbar__pill:disabled { opacity: .6; cursor: progress; }
+    .af-topbar__dot { width: 8px; height: 8px; border-radius: 999px; flex: 0 0 auto; }
+    .af-topbar__dot--connected { background: var(--ok); }
+    .af-topbar__dot--disconnected { background: var(--danger); }
+    .af-topbar__dot--loading { background: var(--warn); }
+    .af-drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; z-index: 900;
+      display: flex; flex-direction: column; max-width: 100vw;
+      border-left: 1px solid var(--line); background: var(--panel);
+      box-shadow: var(--shadow); color: var(--text); font-family: var(--font-sans);
+    }
+    @media (max-width: 680px) { .af-drawer { width: 100vw !important; } }
+    .af-drawer__header {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 12px 14px; border-bottom: 1px solid var(--line);
+    }
+    .af-drawer__title { font-size: var(--font-base); font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .af-drawer__header-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+    .af-drawer__close {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--radius-sm);
+      background: transparent; color: var(--subtle); font-size: 18px; line-height: 1; cursor: pointer;
+    }
+    .af-drawer__close:hover { color: var(--text); background: var(--panel-2); }
+    .af-drawer__body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
+    /* Console assistant drawer internals (console-owned, not kit API) */
+    .assistant-messages { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+    .assistant-msg { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 9px 11px; font-size: var(--font-sm); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .assistant-msg.user { background: var(--info-subtle); align-self: flex-end; max-width: 88%; }
+    .assistant-msg.assistant { background: var(--panel-2); align-self: flex-start; max-width: 94%; }
+    .assistant-msg.error { background: color-mix(in srgb, var(--danger) 14%, var(--panel-2)); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+    .assistant-msg.pending { color: var(--subtle); font-style: italic; }
+    .assistant-note { color: var(--subtle); font-size: var(--font-xs); padding: 0 14px 6px; }
+    .assistant-composer { display: flex; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--line); }
+    .assistant-composer textarea { flex: 1; resize: vertical; min-height: 44px; max-height: 160px; }
 		    .workspace-shell { display: grid; gap: 16px; }
-		    .console-tabs-bar {
-		      position: sticky;
-		      top: calc(62px * var(--header-density));
-		      z-index: 3;
+		    /* Sidebar nav rows (the continuum .shell_nav_item recipe) — the
+		       tab-button class + ids survive so the wiring and tests hold. */
+		    .tab-button.shell_nav_item {
 		      display: flex;
 		      align-items: center;
-		      min-height: 48px;
-		      padding: 6px 22px;
-		      border-bottom: 1px solid var(--line-soft);
-		      background: var(--bg);
-		      background: color-mix(in srgb, var(--bg) 94%, transparent);
-		      backdrop-filter: blur(14px);
-		    }
-		    .console-tabs {
-		      display: flex;
-		      width: 100%;
-		      max-width: 100%;
-		      gap: 4px;
-		      padding: 4px;
-		      border: 0;
-		      border-radius: 0;
+		      gap: 10px;
+		      padding: 8px 10px;
+		      min-height: 0;
+		      border: none;
+		      border-radius: 8px;
 		      background: transparent;
-		      overflow-x: auto;
+		      color: var(--text-secondary);
+		      cursor: pointer;
+		      text-align: left;
+		      font-size: var(--font-size-md);
+		      font-weight: 500;
+		      min-width: 0;
+		      justify-content: flex-start;
 		    }
-		    .tab-button {
-		      min-height: 38px;
-		      padding: 8px 14px;
-		      background: transparent;
-		      color: var(--muted);
-		      border: 1px solid transparent;
-		      border-radius: 6px;
-		      font-size: 13px;
-		    }
-	    .tab-button:hover,
-	    .tab-button.active {
+	    .tab-button.shell_nav_item:hover {
+	      background: rgba(148, 163, 184, 0.1);
 	      color: var(--text);
-	      border-color: var(--line-soft);
-	      background: var(--panel-3);
+	      filter: none;
+	    }
+	    /* The active row must survive a mouse pass: hover is wash-only,
+	       active carries weight + the stronger wash (IA adversary #2). */
+	    .tab-button.shell_nav_item.active {
+	      background: rgba(148, 163, 184, 0.16);
+	      color: var(--text);
+	      font-weight: 600;
 	    }
 	    .tab-panel { display: none; }
 	    .tab-panel.active { display: block; }
@@ -253,16 +345,17 @@ def gateway_console_html() -> str:
 	      margin-bottom: 14px;
 	      border: 1px solid var(--line-soft);
 	      border-radius: 8px;
-	      background: rgba(255, 255, 255, .025);
+	      background: color-mix(in srgb, var(--text) 3%, transparent);
 	      color: var(--muted);
 	    }
+	    /* Cards are flat; depth belongs to overlays (aesthetics adversary P1-4:
+	       every section wore a modal's 48px shadow — a page of floating slabs). */
 	    section {
 	      border: 1px solid var(--line-soft);
 	      background: var(--panel);
-	      background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 96%, white 4%), color-mix(in srgb, var(--panel) 92%, var(--bg) 8%));
 	      border-radius: 8px;
 	      padding: 16px;
-	      box-shadow: var(--shadow);
+	      box-shadow: var(--shadow-card, 0 1px 2px rgba(0, 0, 0, .10));
     }
     .section-head { display: flex; align-items: start; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
     .section-title { display: flex; align-items: center; gap: 9px; }
@@ -274,7 +367,7 @@ def gateway_console_html() -> str:
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       color: var(--accent);
-      background: rgba(45, 212, 191, .08);
+      background: var(--accent-subtle);
       font-size: 14px;
       flex: 0 0 auto;
     }
@@ -284,20 +377,24 @@ def gateway_console_html() -> str:
       gap: 6px;
       margin-bottom: 12px;
       color: var(--muted);
-      font-weight: 800;
+      /* 600, not 800 — labels must not compete (the kit's own reverted lesson). */
+      font-weight: 600;
       text-transform: uppercase;
       font-size: 11px;
       letter-spacing: .04em;
     }
+    /* Inputs: the family recipe (continuum styles.css) — surface-3 body,
+       radius 10, accent focus ring with the subtle glow. */
     input, select, textarea {
       width: 100%;
       min-height: 34px;
-      border: 1px solid var(--bg-tertiary);
-      border-radius: var(--radius-sm);
-      background: var(--bg-primary);
+      border: 1px solid var(--ui-border-1);
+      border-radius: var(--radius-lg);
+      background: var(--ui-surface-3);
       color: var(--text-primary);
-      padding: 7px 9px;
+      padding: 8px 10px;
       font: inherit;
+      transition: border-color .15s, box-shadow .15s, background .15s;
     }
     select {
       min-height: 34px;
@@ -317,39 +414,66 @@ def gateway_console_html() -> str:
     }
     textarea { min-height: 76px; resize: vertical; }
     input[type="checkbox"] { width: auto; min-height: auto; }
-    input:focus, select:focus, textarea:focus { outline: 2px solid rgba(32, 199, 223, .65); outline-offset: 0; }
+    /* Theme-aware focus ring (aesthetics adversary P0-2: the old ring was
+       hardcoded cyan and stayed cyan in every theme). */
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--info);
+      box-shadow: 0 0 0 3px var(--info-subtle);
+    }
+    button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); outline-offset: 1px; }
     .field-help { color: var(--subtle); font-size: 12px; line-height: 1.35; text-transform: none; letter-spacing: 0; font-weight: 600; }
     .inline { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
     .inline > label { flex: 1 1 150px; }
     button {
       border: 0;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       min-height: 36px;
       padding: 8px 12px;
       background: var(--button);
       color: white;
-      font-weight: 800;
+      font-weight: 600;
       cursor: pointer;
       white-space: nowrap;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 7px;
+      transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, filter 120ms ease;
     }
+    /* Interaction states existed NOWHERE on the page's own buttons (aesthetics
+       adversary P0-2: "every click feels dead") — the ui-kit's measured 120ms
+       polish block, applied. */
+    button:hover:not(:disabled) { filter: brightness(1.08); }
+    button:active:not(:disabled) { filter: brightness(0.94); }
+    @media (prefers-reduced-motion: reduce) { button { transition: none; } }
 	    button.secondary { background: var(--button-2); color: var(--text); }
-    button.danger { background: var(--danger-2); }
+    /* Tinted danger, not solid maroon (aesthetics adversary P0-1: a table of
+       filled red pills = alarm fatigue; red weight belongs to confirm-gated
+       acts, carried by the inset ring + tint, readable in both themes). */
+    button.danger {
+      background: color-mix(in srgb, var(--danger) 14%, var(--panel-2));
+      color: var(--text);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent);
+    }
     button:disabled { opacity: .55; cursor: not-allowed; }
     .button-icon { font-size: 14px; line-height: 1; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: left; vertical-align: top; }
+    th { border-bottom: 1px solid var(--ui-border-2); }
+    td { border-bottom: 1px solid var(--line-soft); }
+    th, td { padding: 9px 10px; text-align: left; vertical-align: top; }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-    tbody tr:hover { background: rgba(255, 255, 255, .025); }
-    code { background: #101629; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
+    /* Polarity-safe hover wash (aesthetics adversary P0-3: the white literal
+       was invisible on the light theme). */
+    tbody tr:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+    code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
     .muted { color: var(--muted); }
     .message { margin-top: 12px; color: var(--muted); overflow-wrap: anywhere; }
-    .message.error { color: #ff9caf; }
+    /* Error text derives from the danger token (the old #ff9caf pale pink was
+       unreadable on white). */
+    .message.error { color: color-mix(in srgb, var(--danger) 72%, var(--text)); }
     .message.ok { color: var(--ok); }
-    .issued { margin: 12px 0; border: 1px solid rgba(32, 199, 223, .45); background: rgba(32, 199, 223, .08); border-radius: 8px; padding: 10px; overflow-wrap: anywhere; }
+    .issued { margin: 12px 0; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 8px; padding: 10px; overflow-wrap: anywhere; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 	    .hidden { display: none !important; }
 	    body:not(.signed-in) .console-shell {
 	      display: grid;
@@ -359,47 +483,100 @@ def gateway_console_html() -> str:
 	    body:not(.signed-in) .session-only { display: none !important; }
 	    body.signed-in #login-section { display: none !important; }
 	    .pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; color: var(--muted); margin: 0 6px 6px 0; }
-	    .badge, .state-pill { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--muted); font-size: 12px; }
-	    .state-pill.ok { color: var(--ok); border-color: rgba(52, 211, 153, .34); background: rgba(52, 211, 153, .08); }
-	    .state-pill.off { color: var(--warn); border-color: rgba(245, 158, 11, .35); background: rgba(245, 158, 11, .08); }
-	    .state-pill.covered { color: var(--cyan); border-color: rgba(32, 199, 223, .36); background: rgba(32, 199, 223, .08); }
+	    .badge, .state-pill { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+	    .state-pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--success) 34%, transparent); background: color-mix(in srgb, var(--success) 8%, transparent); }
+	    .state-pill.off { color: var(--warn); border-color: color-mix(in srgb, var(--warning) 35%, transparent); background: color-mix(in srgb, var(--warning) 8%, transparent); }
+	    .state-pill.covered { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 36%, transparent); background: color-mix(in srgb, var(--info) 8%, transparent); }
 	    .capability-derived td { color: var(--muted); }
-	    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+	    .actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; }
+    th:last-child, td:last-child { width: 1%; white-space: nowrap; }
+    /* In-table actions are GHOSTS (charter adversary P1-2: filled tertiary
+       pills at table density turned every table into a wall of blue —
+       continuum's in-table .btn recipe). Standalone secondaries keep the
+       filled look. */
+    .actions button.secondary { background: var(--ui-surface-2); border: 1px solid var(--ui-border-1); color: var(--text-primary); }
+    .actions button.secondary:hover:not(:disabled) { background: rgba(255, 255, 255, .08); border-color: var(--ui-border-2); filter: none; }
+    .actions button.danger { color: var(--error); }
     .actions select { width: auto; min-width: 150px; }
     .empty { color: var(--muted); padding: 12px 8px; }
-    .danger-text { color: #ff9caf; }
+    .danger-text { color: color-mix(in srgb, var(--danger) 72%, var(--text)); }
 	    /* ---- Summoned Entities ---- */
 	    .entity-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
-	    .entity-chip { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); background: rgba(255, 255, 255, .03); }
-	    .entity-chip-locked { color: var(--cyan); border-color: rgba(32, 199, 223, .3); }
-	    .entity-advanced { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: rgba(255, 255, 255, .02); }
+	    .entity-chip { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--text) 3%, transparent); }
+	    .entity-chip-locked { color: var(--text-secondary); border-color: color-mix(in srgb, var(--accent) 30%, transparent); background: var(--accent-subtle); }
+	    .entity-advanced { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: color-mix(in srgb, var(--text) 2%, transparent); }
 	    .entity-advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 	    .entity-config-block { margin: 12px 0 4px; }
+	    .entity-config-group {
+	      border: 1px solid var(--line-soft);
+	      border-radius: var(--radius-md);
+	      padding: 12px 14px;
+	      margin: 12px 0;
+	      background: var(--ui-surface-1);
+	    }
+	    .entity-config-group-danger { border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+	    .entity-config-group .entity-config-title { margin-top: 0; }
 	    .entity-config-title { font-size: 13px; margin: 10px 0 6px; }
 	    .entity-config-hint { color: var(--muted); font-weight: 400; font-size: 12px; }
-	    .entity-danger-title { color: #ff9caf; }
+	    .entity-danger-title { color: color-mix(in srgb, var(--danger) 72%, var(--text)); }
 	    .entity-matrix { overflow-x: auto; margin: 8px 0; }
 	    .entity-matrix-table { border-collapse: collapse; min-width: 420px; }
 	    .entity-matrix-table th, .entity-matrix-table td { border: 1px solid var(--line); padding: 5px 10px; font-size: 12px; text-align: center; }
 	    .entity-matrix-table tbody th { text-align: left; font-weight: 500; color: var(--text); }
 	    .entity-matrix-table thead th { color: var(--muted); text-transform: capitalize; }
-	    .entity-subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
-	    .entity-subtab { background: var(--button-2); color: var(--muted); border-radius: 8px; padding: 6px 12px; font-size: 12px; }
-	    .entity-subtab.active { color: var(--text); outline: 1px solid var(--line); }
+	    .entity-subtabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--line-soft); }
+	    .entity-subtab { background: transparent; color: var(--text-secondary); border-radius: 8px; padding: 6px 12px; font-size: 12px; }
+	    .entity-subtab:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); filter: none; }
+	    .entity-subtab.active { color: var(--text); background: rgba(148, 163, 184, 0.16); font-weight: 600; outline: none; }
 	    .entity-subpanel { padding: 4px 0 8px; }
 	    .entity-overview { display: grid; gap: 4px; margin-bottom: 10px; }
 	    .entity-kv { display: flex; gap: 10px; font-size: 13px; }
-	    .entity-kv-key { color: var(--muted); min-width: 110px; }
+	    .entity-kv-key { color: var(--muted); min-width: 110px; flex: 0 0 auto; white-space: nowrap; }
 	    .entity-kv-val { color: var(--text); word-break: break-all; }
 	    .entity-btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
-	    .entity-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+	    .entity-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 500; margin-bottom: 0; }
+	    /* State truth surface (laurent 12:32: "crystal clear visually,
+	       reflects the REAL state"): pills + a push button whose color, text
+	       AND border all derive from server truth — text always carries the
+	       state word so color is never the sole channel. */
+	    .entity-live-line { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 10px; font-size: 13px; }
+	    .entity-live-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 12px; font-size: 12px; font-weight: 600; border: 1.5px solid var(--line); color: var(--muted); }
+	    .entity-live-badge.phase-none { color: var(--ok); border-color: color-mix(in srgb, var(--success) 50%, transparent); background: color-mix(in srgb, var(--success) 8%, transparent); }
+	    .entity-live-badge.phase-visit { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 50%, transparent); background: color-mix(in srgb, var(--info) 10%, transparent); }
+	    .entity-live-badge.phase-work { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 60%, transparent); background: color-mix(in srgb, var(--info) 12%, transparent); }
+	    .entity-live-badge.phase-personal { color: var(--ok); border-color: color-mix(in srgb, var(--success) 60%, transparent); background: rgba(52, 211, 153, .14); }
+	    .entity-live-badge.phase-sleep { color: var(--muted); border-color: var(--line); background: rgba(255, 255, 255, .03); }
+	    .entity-live-badge.phase-stopped { color: var(--danger); border-color: color-mix(in srgb, var(--error) 55%, transparent); background: color-mix(in srgb, var(--error) 12%, transparent); }
+	    .entity-stop-banner {
+	      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+	      padding: 10px 14px; margin-bottom: 12px;
+	      border: 1px solid color-mix(in srgb, var(--error) 55%, transparent); border-radius: var(--radius-md);
+	      background: color-mix(in srgb, var(--error) 14%, transparent); color: var(--text); font-weight: 700;
+	    }
+	    .entity-state-btn { background: transparent; border: 1px solid var(--ui-border-1); color: var(--muted); }
+	    .entity-state-btn.pressed {
+	      color: var(--text);
+	      background: color-mix(in srgb, var(--success) 22%, var(--panel-2));
+	      border-color: color-mix(in srgb, var(--success) 55%, transparent);
+	      font-weight: 700;
+	    }
+	    .entity-state-btn.pressed:disabled { opacity: 1; cursor: default; }
+	    .owntime-btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 10px 16px; font-size: 13px; font-weight: 600; border: 2px solid var(--line); background: rgba(255, 255, 255, .03); color: var(--muted); margin: 6px 0; }
+	    .owntime-btn.on-ticking { color: var(--ok); border-color: rgba(52, 211, 153, .7); background: rgba(52, 211, 153, .14); }
+	    .owntime-btn.on-parked { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 60%, transparent); background: color-mix(in srgb, var(--info) 10%, transparent); }
+	    .owntime-btn.stopping { color: var(--warn); border-color: rgba(245, 158, 11, .6); background: color-mix(in srgb, var(--warning) 10%, transparent); }
+	    .entity-warn-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 11px; color: var(--warn); border: 1px solid rgba(245, 158, 11, .4); background: rgba(245, 158, 11, .07); margin-left: 6px; }
+	    .tpl-spark { width: 100%; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; line-height: 1.5; }
 	    .entity-checkbox input { width: auto; }
 	    .entity-prompt-layers { display: grid; gap: 10px; margin: 8px 0; }
 	    .entity-prompt-layer textarea { width: 100%; font-family: inherit; font-size: 12px; }
 	    .entity-prompt-preview { white-space: pre-wrap; font-size: 11px; color: var(--muted); max-height: 320px; overflow: auto; }
 	    .entity-chat-transcript { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; min-height: 120px; max-height: 380px; overflow-y: auto; display: grid; gap: 8px; background: rgba(255, 255, 255, .015); }
 	    .entity-chat-line { display: flex; gap: 10px; font-size: 13px; }
-	    .entity-chat-you .entity-kv-val { color: var(--muted); }
+	    .entity-chat-you { justify-content: flex-end; }
+	    .entity-chat-bubble { max-width: min(86%, 72ch); }
+	    .entity-chat-bubble .entity-kv-key { display: block; margin-bottom: 3px; }
+	    .section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 	    .entity-chat-composer { align-items: flex-end; }
 	    .entity-chat-composer textarea { width: 100%; font-family: inherit; font-size: 13px; }
 	    .model-picker { display: grid; gap: 8px; }
@@ -444,7 +621,7 @@ def gateway_console_html() -> str:
 	    .step-kicker {
 	      color: var(--accent);
 	      font-size: 11px;
-	      font-weight: 900;
+	      font-weight: 700;
 	      letter-spacing: .08em;
 	      text-transform: uppercase;
 	      margin-bottom: 4px;
@@ -462,44 +639,43 @@ def gateway_console_html() -> str:
 	      justify-content: stretch;
 	      align-items: start;
 		      text-align: left;
-		      background: var(--panel-3);
-		      background: color-mix(in srgb, var(--panel-3) 82%, transparent);
+		      background: color-mix(in srgb, var(--text) 2%, transparent);
 		      border: 1px solid var(--line-soft);
 		      padding: 10px;
 		      white-space: normal;
 		    }
 	    .provider-preset:hover, .provider-preset.active {
-	      border-color: rgba(45, 212, 191, .55);
-	      background: rgba(45, 212, 191, .1);
+	      border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+	      background: var(--accent-subtle);
 	    }
 	    .provider-preset strong { display: block; color: var(--text); line-height: 1.25; }
-	    .provider-preset span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; line-height: 1.3; margin-top: 3px; }
+	    .provider-preset span { display: block; color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.3; margin-top: 3px; }
 	    .setup-summary {
-	      border: 1px solid rgba(45, 212, 191, .22);
+	      border: 1px solid color-mix(in srgb, var(--info) 22%, transparent);
 	      border-radius: 8px;
 	      padding: 10px 12px;
-	      background: rgba(45, 212, 191, .06);
+	      background: color-mix(in srgb, var(--info) 6%, transparent);
 	      color: var(--muted);
 	      margin-bottom: 12px;
 	    }
 	    .af-gateway-signin {
-	      width: min(900px, 100%);
-	      border: 1px solid rgba(32, 199, 223, .24);
+	      width: min(760px, 100%);
+	      border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
 	      border-radius: 8px;
 	      padding: 24px;
-	      background:
-	        linear-gradient(135deg, rgba(18, 31, 61, .98), rgba(22, 20, 42, .98)),
-	        var(--panel);
-	      box-shadow: 0 28px 90px rgba(0, 0, 0, .45);
+	      /* Theme-var surface: the old hardcoded dark gradient stayed dark in
+	         the light theme while --text went near-black (unreadable login). */
+	      background: linear-gradient(135deg, var(--panel-2, var(--panel)), var(--panel)) , var(--panel);
+	      box-shadow: var(--shadow);
 	    }
-	    .af-gateway-signin h2 { margin: 0; font-size: 24px; line-height: 1.25; }
-	    .af-gateway-signin p { margin: 14px 0 0; color: var(--muted); font-size: 18px; line-height: 1.45; }
+	    .af-gateway-signin h2 { margin: 0; font-size: var(--font-size-xl); line-height: 1.25; }
+	    .af-gateway-signin p { margin: 12px 0 0; color: var(--muted); font-size: var(--font-size-base); line-height: 1.45; }
 	    .af-gateway-signin__hero { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
 	    .af-gateway-signin__kicker {
 	      margin-bottom: 8px;
-	      color: rgba(32, 199, 223, .9);
+	      color: var(--accent);
 	      font-size: 13px;
-	      font-weight: 800;
+	      font-weight: 700;
 	      letter-spacing: .14em;
 	      text-transform: uppercase;
 	    }
@@ -510,11 +686,11 @@ def gateway_console_html() -> str:
 	      place-items: center;
 	      flex: 0 0 auto;
 	      border-radius: 24px;
-	      border: 1px solid rgba(32, 199, 223, .28);
-	      background: linear-gradient(135deg, rgba(32, 199, 223, .18), rgba(238, 65, 104, .22));
+	      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+	      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--error) 20%, transparent));
 	      color: rgba(255, 255, 255, .86);
 	      font-size: 32px;
-	      font-weight: 900;
+	      font-weight: 700;
 	    }
 	    .af-gateway-signin__status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
 	    .af-gateway-signin__status {
@@ -528,9 +704,9 @@ def gateway_console_html() -> str:
 	      border: 1px solid rgba(255, 255, 255, .12);
 	      background: rgba(255, 255, 255, .06);
 	    }
-	    .af-gateway-signin__status--ok { color: rgba(120, 255, 190, .95); border-color: rgba(59, 217, 154, .38); }
-	    .af-gateway-signin__status--warn { color: rgba(255, 210, 120, .95); border-color: rgba(255, 183, 86, .42); }
-	    .af-gateway-signin__status--err { color: rgba(255, 115, 135, .95); border-color: rgba(238, 65, 104, .45); }
+	    .af-gateway-signin__status--ok { color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+	    .af-gateway-signin__status--warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
+	    .af-gateway-signin__status--err { color: var(--error); border-color: color-mix(in srgb, var(--error) 35%, transparent); }
 	    .af-gateway-signin__source { color: var(--muted); font-size: 13px; }
 	    .af-gateway-signin__form { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px; align-items: center; }
 	    .af-gateway-signin__label { margin: 0; }
@@ -548,8 +724,10 @@ def gateway_console_html() -> str:
 	      letter-spacing: 0;
 	    }
 	    .af-gateway-signin__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
-	    .af-gateway-signin__primary { background: var(--danger); }
-	    .af-gateway-signin__secondary { background: var(--button); }
+	    /* Sign-in is the page's one non-destructive primary action — it must
+	       not wear the destructive color (aesthetics adversary #11). */
+	    .af-gateway-signin__primary { background: color-mix(in srgb, var(--accent) 22%, var(--panel-2)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); color: var(--text); }
+	    .af-gateway-signin__secondary { background: var(--button-2); }
 	    .modal-backdrop {
 	      position: fixed;
 	      inset: 0;
@@ -557,7 +735,9 @@ def gateway_console_html() -> str:
       display: grid;
       place-items: center;
       padding: 22px;
-      background: rgba(2, 7, 18, .72);
+      background: rgba(0, 0, 0, 0.45);
+      -webkit-backdrop-filter: blur(6px);
+      backdrop-filter: blur(6px);
     }
 	    .modal {
 	      width: min(520px, 100%);
@@ -631,7 +811,9 @@ def gateway_console_html() -> str:
 	      gap: 10px;
 	      margin: 10px -18px -18px;
 	      padding: 12px 18px 18px;
-	      background: linear-gradient(180deg, rgba(22, 27, 44, .78), var(--panel) 34%);
+	      /* Theme-safe footer (the dark gradient smeared under light modals). */
+	      border-top: 1px solid var(--line-soft);
+	      background: color-mix(in srgb, var(--panel) 92%, transparent);
 	    }
 	    .capability-table td { vertical-align: middle; }
 	    .capability-route { display: grid; gap: 3px; }
@@ -751,13 +933,13 @@ def gateway_console_html() -> str:
 	      text-align: center;
 	    }
 	    .sandbox-mode:hover:not(:disabled) {
-	      border-color: rgba(47, 229, 218, .45);
-	      background: rgba(47, 229, 218, .08);
+	      border-color: color-mix(in srgb, var(--info) 45%, transparent);
+	      background: color-mix(in srgb, var(--info) 8%, transparent);
 	      color: var(--text-primary);
 	    }
 	    .sandbox-mode.active {
-	      border-color: rgba(47, 229, 218, .75);
-	      background: rgba(47, 229, 218, .10);
+	      border-color: color-mix(in srgb, var(--info) 75%, transparent);
+	      background: color-mix(in srgb, var(--info) 10%, transparent);
 	      color: var(--text-primary);
 	    }
 	    .sandbox-mode:disabled {
@@ -770,9 +952,9 @@ def gateway_console_html() -> str:
 	      width: 30px;
 	      height: 30px;
 	      border-radius: 11px;
-	      background: rgba(47, 229, 218, .10);
+	      background: var(--accent-subtle);
 	      color: var(--accent);
-	      font-weight: 900;
+	      font-weight: 700;
 	    }
 	    .sandbox-mode-icon svg {
 	      width: 18px;
@@ -800,7 +982,7 @@ def gateway_console_html() -> str:
 	      overflow: hidden;
 	      text-overflow: ellipsis;
 	      white-space: nowrap;
-	      font-weight: 900;
+	      font-weight: 700;
 	    }
 	    .sandbox-mode-sub {
 	      display: none;
@@ -845,21 +1027,32 @@ def gateway_console_html() -> str:
 	    .sandbox-message.error {
 	      justify-content: flex-start;
 	    }
-	    .sandbox-bubble {
-	      width: min(760px, 88%);
-	      border: 1px solid var(--line-soft);
+	    /* Dialogue bubbles: the abstractuic panel-chat component's .pc-chat-item
+	       recipe (operator 12:24: "reuse the shared component for dialogue of
+	       abstractuic"). panel_chat.css is the source of truth; tokens map onto
+	       the console's own variables. sandbox-bubble keeps only the layout. */
+	    .sandbox-bubble { width: min(760px, 88%); box-shadow: 0 10px 28px rgba(0, 0, 0, .12); }
+	    .pc-chat-item {
+	      position: relative;
+	      border: 1px solid var(--line);
 	      border-radius: 12px;
 	      padding: 10px 12px;
-	      background: rgba(255, 255, 255, .035);
-	      box-shadow: 0 10px 28px rgba(0, 0, 0, .12);
+	      background: var(--panel-2);
 	    }
-	    .sandbox-message.user .sandbox-bubble {
-	      border-color: rgba(58, 108, 255, .38);
-	      background: rgba(58, 108, 255, .13);
+	    .pc-chat-item--user {
+	      background: var(--info-subtle);
+	      border-color: color-mix(in srgb, var(--info) 36%, transparent);
+	      border-bottom-right-radius: var(--radius-sm);
 	    }
-	    .sandbox-message.error .sandbox-bubble {
-	      border-color: rgba(255, 80, 124, .48);
-	      background: rgba(255, 80, 124, .08);
+	    .pc-chat-item--assistant {
+	      background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+	      border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+	      border-bottom-left-radius: var(--radius-sm);
+	    }
+	    .pc-chat-item--status { background: var(--panel-2); }
+	    .pc-chat-item--error {
+	      background: color-mix(in srgb, var(--danger) 12%, var(--panel));
+	      border-color: color-mix(in srgb, var(--danger) 32%, transparent);
 	    }
 	    .sandbox-message-meta {
 	      display: flex;
@@ -873,7 +1066,7 @@ def gateway_console_html() -> str:
 	    .sandbox-message-role {
 	      color: var(--accent);
 	      font-size: var(--font-size-sm);
-	      font-weight: 900;
+	      font-weight: 700;
 	    }
 	    .sandbox-message-spacer {
 	      flex: 1;
@@ -900,7 +1093,7 @@ def gateway_console_html() -> str:
 	    .sandbox-message-body.markdown h3 {
 	      margin: 12px 0 8px;
 	      color: var(--text-primary);
-	      font-weight: 900;
+	      font-weight: 700;
 	      letter-spacing: 0;
 	      line-height: 1.2;
 	    }
@@ -917,7 +1110,7 @@ def gateway_console_html() -> str:
 	    }
 	    .sandbox-message-body.markdown blockquote {
 	      margin: 10px 0;
-	      border-left: 3px solid rgba(47, 229, 218, .45);
+	      border-left: 3px solid color-mix(in srgb, var(--info) 45%, transparent);
 	      padding: 4px 0 4px 12px;
 	      color: var(--text-secondary);
 	    }
@@ -954,7 +1147,7 @@ def gateway_console_html() -> str:
 	      padding: 0;
 	    }
 	    .sandbox-speak.speaking {
-	      border-color: rgba(47, 229, 218, .70);
+	      border-color: color-mix(in srgb, var(--info) 70%, transparent);
 	      color: var(--accent);
 	    }
 	    .sandbox-progress {
@@ -1001,13 +1194,13 @@ def gateway_console_html() -> str:
 	      min-width: 260px;
 	    }
 	    .sandbox-media-error {
-	      border: 1px solid rgba(255, 80, 124, .35);
+	      border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
 	      border-radius: 8px;
 	      padding: 8px 10px;
-	      color: #ff9db2;
-	      background: rgba(255, 80, 124, .08);
+	      color: color-mix(in srgb, var(--danger) 72%, var(--text));
+	      background: color-mix(in srgb, var(--danger) 8%, transparent);
 	      font-size: var(--font-size-sm);
-	      font-weight: 800;
+	      font-weight: 600;
 	    }
 	    .sandbox-artifact-link {
 	      display: inline-flex;
@@ -1015,12 +1208,12 @@ def gateway_console_html() -> str:
 	      gap: 6px;
 	      width: fit-content;
 	      color: var(--accent-2);
-	      font-weight: 900;
+	      font-weight: 700;
 	    }
 	    .sandbox-composer {
 	      border-top: 1px solid var(--line-soft);
 	      padding: 14px 16px 16px;
-	      background: rgba(0, 0, 0, .16);
+	      background: color-mix(in srgb, var(--panel-2) 55%, transparent);
 	    }
 	    .sandbox-composer-toolbar {
 	      display: grid;
@@ -1045,18 +1238,17 @@ def gateway_console_html() -> str:
 	      border: 1px solid var(--line-soft);
 	      border-radius: 26px;
 	      padding: 10px 12px;
-	      background:
-	        linear-gradient(180deg, rgba(255, 255, 255, .035), rgba(255, 255, 255, .015)),
-	        rgba(2, 8, 24, .78);
-	      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+	      /* Theme-safe composer pill (was a near-black literal — a dark slab
+	         inside the light theme's white page). */
+	      background: var(--panel-2);
 	    }
 	    .sandbox-dropzone:focus-within {
-	      border-color: rgba(47, 229, 218, .62);
-	      box-shadow: 0 0 0 3px rgba(47, 229, 218, .10), inset 0 1px 0 rgba(255, 255, 255, .05);
+	      border-color: color-mix(in srgb, var(--info) 62%, transparent);
+	      box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 10%, transparent), inset 0 1px 0 rgba(255, 255, 255, .05);
 	    }
 	    .sandbox-dropzone.dragover {
-	      border-color: rgba(47, 229, 218, .75);
-	      box-shadow: 0 0 0 3px rgba(47, 229, 218, .12);
+	      border-color: color-mix(in srgb, var(--info) 75%, transparent);
+	      box-shadow: 0 0 0 3px var(--info-subtle);
 	    }
 	    .sandbox-input-area {
 	      display: grid;
@@ -1101,7 +1293,7 @@ def gateway_console_html() -> str:
 	      padding: 0;
 	    }
 	    .sandbox-send {
-	      background: linear-gradient(135deg, #2563eb, #3a6cff);
+	      background: var(--accent);
 	      border-color: rgba(96, 165, 250, .36);
 	    }
 	    .sandbox-send .button-icon,
@@ -1188,31 +1380,45 @@ def gateway_console_html() -> str:
 	  </style>
 </head>
 <body>
-	  <header>
-	    <div class="brand">
-	      <div class="brand-mark" aria-hidden="true">↔</div>
-	      <div>
-	        <h1>AbstractGateway Console</h1>
-	        <div class="brand-subtitle">Users, runtimes, provider connections, and multimodal capabilities</div>
-	      </div>
+	  <!-- FAMILY SHELL (charter refactor 2026-07-15): left sidebar + slim
+	       header — the layout vocabulary continuum and observer share
+	       (.shell_* family). Nav button ids are unchanged so the tab wiring
+	       and its tests survive the restyle. -->
+	  <div class="shell">
+	  <aside class="shell_sidebar session-only" aria-label="Gateway console sections">
+	    <div class="shell_brand">
+	      <span class="shell_brand_mark" aria-hidden="true">↔</span>
+	      <span class="shell_brand_name">AbstractGateway</span>
 	    </div>
-	    <div class="status">
+	    <nav class="shell_nav">
+	      <button id="tab-button-users" class="tab-button shell_nav_item" type="button" title="People, tokens, and summoned entities"><span class="shell_nav_icon" aria-hidden="true">☾</span><span class="shell_nav_label">Users &amp; Entities</span></button>
+	      <button id="tab-button-runtimes" class="tab-button shell_nav_item" type="button" title="Execution planes: runs, sessions, data and caches"><span class="shell_nav_icon" aria-hidden="true">◎</span><span class="shell_nav_label">Runtimes</span></button>
+	      <button id="tab-button-providers" class="tab-button shell_nav_item" type="button" title="LLM provider connections and endpoint profiles"><span class="shell_nav_icon" aria-hidden="true">◇</span><span class="shell_nav_label">Providers</span></button>
+	      <button id="tab-button-defaults" class="tab-button shell_nav_item" type="button" title="Which provider/model serves each capability (vision, audio, image...)"><span class="shell_nav_icon" aria-hidden="true">◆</span><span class="shell_nav_label">Multimodal</span></button>
+	      <button id="tab-button-sandbox" class="tab-button shell_nav_item" type="button" title="Try any provider/model directly — text, image, audio, video"><span class="shell_nav_icon" aria-hidden="true">▶</span><span class="shell_nav_label">Sandbox</span></button>
+	    </nav>
+	  </aside>
+	  <div class="shell_main">
+	  <header class="shell_header">
+	    <div class="shell_header_titles">
+	      <h1 id="page-title">AbstractGateway Console</h1>
+	      <div id="page-subtitle" class="brand-subtitle">Users &amp; summoned entities, runtimes, providers, and multimodal capabilities</div>
+	    </div>
+	    <!-- Unified top-right cluster: .af-topbar / .af-drawer are abstractuic's
+	         documented CSS public API for non-React consumers (ui-kit README).
+	         Enforced order: assistant, appearance, [extras], connection pill. -->
+	    <div class="status af-topbar" role="group" aria-label="Console actions">
+	      <button id="open-assistant" class="af-topbar__btn session-only" title="Docs assistant" aria-label="Open docs assistant" aria-pressed="false">✦</button>
+	      <button id="open-appearance" class="af-topbar__btn" title="Appearance" aria-label="Appearance">◐</button>
 	      <span id="status-dot" class="dot"></span>
 	      <span id="status-text">Signed out</span>
-	      <button id="open-appearance" class="secondary icon-only" title="Appearance" aria-label="Appearance">◐</button>
-	      <button id="sign-out" class="secondary hidden"><span class="button-icon" aria-hidden="true">×</span><span>Sign out</span></button>
+	      <button id="sign-out" class="af-topbar__pill af-topbar__pill--connected hidden" title="Sign out of the gateway session" aria-label="Sign out">
+	        <span class="af-topbar__dot af-topbar__dot--connected" aria-hidden="true"></span>
+	        <span class="af-topbar__pill-label">Sign out</span>
+	      </button>
 	    </div>
 	  </header>
-	  <div id="console-tabs-bar" class="console-tabs-bar session-only">
-	    <nav class="console-tabs" aria-label="Gateway console sections">
-	      <button id="tab-button-users" class="tab-button" type="button"><span class="button-icon" aria-hidden="true">◎</span><span>Users &amp; Runtimes</span></button>
-	      <button id="tab-button-providers" class="tab-button" type="button"><span class="button-icon" aria-hidden="true">◇</span><span>Providers</span></button>
-	      <button id="tab-button-defaults" class="tab-button" type="button"><span class="button-icon" aria-hidden="true">◆</span><span>Multimodal Capabilities</span></button>
-	      <button id="tab-button-sandbox" class="tab-button" type="button"><span class="button-icon" aria-hidden="true">▶</span><span>Sandbox</span></button>
-	      <button id="tab-button-entities" class="tab-button" type="button"><span class="button-icon" aria-hidden="true">☾</span><span>Summoned Entities</span></button>
-	    </nav>
-	  </div>
-	  <main class="console-shell">
+	  <main class="console-shell shell_content">
 	    <section id="login-section" class="af-gateway-signin">
 	      <div class="af-gateway-signin__hero">
 	        <div>
@@ -1233,7 +1439,7 @@ def gateway_console_html() -> str:
 	          <label class="af-gateway-signin__label" for="login-token">Gateway token</label>
 	          <div class="af-gateway-signin__token-input">
 	            <input id="login-token" autocomplete="current-password" type="password" placeholder="Paste Gateway user token">
-	            <button id="toggle-token" class="af-gateway-signin__secondary" type="button">Show</button>
+	            <button id="toggle-token" class="af-gateway-signin__secondary" type="button" title="Show or hide the token characters">Show</button>
 	          </div>
 	          <label class="af-gateway-signin__label">Browser session</label>
 	          <label class="af-gateway-signin__checkbox"><input id="login-remember" type="checkbox"> Remember this browser</label>
@@ -1246,56 +1452,51 @@ def gateway_console_html() -> str:
 	    </section>
 
 	    <div id="workspace-shell" class="workspace-shell session-only">
-	      <div id="tab-users" class="tab-panel">
-	        <div id="account" class="session-summary">No active session.</div>
+	      <div id="tab-runtimes" class="tab-panel">
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
-	            <section id="users-section" class="session-only hidden">
+	            <!-- RUNTIMES FIRST (operator order 12:24: "runtime tab = I SEE THE
+	                 RUNTIMES FIRST"). Master list -> drill-in: click a runtime to
+	                 see its sessions/runs; machine-wide Data & Caches after;
+	                 Retained reservations demoted to an advanced disclosure. -->
+	            <section id="runtimes-section" class="session-only hidden">
 	              <div class="section-head">
 	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">+</span><span>Users</span></h2>
-	                  <p class="section-note">Admins create user tokens and bind each user to one runtime data plane.</p>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◎</span><span>Runtimes</span></h2>
+	                  <p class="section-note">Every execution plane on this gateway: the default runtime, each user's own runtime, and each entity's own runtime. Click one to inspect its runs and sessions.</p>
 	                </div>
+	                <button id="runtimes-refresh" class="secondary icon-only" title="Reload the runtime inventory" aria-label="Refresh runtimes"><span class="button-icon" aria-hidden="true">↻</span></button>
 	              </div>
-	              <div class="inline">
-	                <label>Tenant<input id="new-tenant" value="default"></label>
-	                <label>User<input id="new-user" placeholder="user id"></label>
-	                <label>Email<input id="new-email" type="email" placeholder="optional"></label>
-	                <label>Runtime<input id="new-runtime" placeholder="defaults to user id"></label>
-	                <label>Roles<input id="new-roles" value="user"></label>
-	              </div>
-	              <button id="create-user"><span class="button-icon" aria-hidden="true">+</span><span>Create user</span></button>
-	              <div id="issued-token" class="issued hidden"></div>
-	              <div id="users-message" class="message"></div>
+	              <div id="runtimes-message" class="message"></div>
 	              <table>
-	                <thead><tr><th>Tenant</th><th>User</th><th>Email</th><th>Runtime</th><th>Roles</th><th>State</th><th>Actions</th></tr></thead>
-	                <tbody id="users-table"></tbody>
+	                <thead><tr><th>Runtime</th><th>Kind</th><th>Owner</th><th>State</th><th>Size</th><th>Actions</th></tr></thead>
+	                <tbody id="runtimes-table"></tbody>
 	              </table>
 	            </section>
-
-	            <section id="runtime-reservations-section" class="session-only hidden">
+	            <section id="runtime-detail-section" class="session-only hidden">
 	              <div class="section-head">
 	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◌</span><span>Retained Runtimes</span></h2>
-	                  <p class="section-note">Deleted or reassigned users leave retained runtime reservations. Transfer only when the new owner should inherit the data; purge permanently deletes the retained runtime directory.</p>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▷</span><span>Runtime <span id="runtime-detail-name"></span></span></h2>
+	                  <p id="runtime-detail-sub" class="section-note">Runs and sessions on this plane.</p>
 	                </div>
+	                <button id="runtime-detail-close" class="secondary icon-only" title="Back to the runtime list" aria-label="Close runtime detail"><span class="button-icon" aria-hidden="true">×</span></button>
 	              </div>
-	              <div id="reservations-message" class="message"></div>
+	              <div id="runtime-detail-message" class="message"></div>
 	              <table>
-	                <thead><tr><th>Tenant</th><th>Runtime</th><th>Owner</th><th>Reason</th><th>Data</th><th>Actions</th></tr></thead>
-	                <tbody id="runtime-reservations-table"></tbody>
+	                <thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Session</th><th>Updated</th></tr></thead>
+	                <tbody id="runtime-detail-runs"></tbody>
 	              </table>
 	            </section>
 	            <section id="runs-section" class="session-only hidden">
 	              <div class="section-head">
 	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▷</span><span>Runs</span></h2>
-	                  <p class="section-note">Live and recent runs on this runtime. Inspect state, cancel a run, or steer a running agent with a guidance note.</p>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▷</span><span>Runs — default runtime</span></h2>
+	                  <p class="section-note">Live and recent runs on the default runtime. Inspect state, cancel a run, or steer a running agent with a guidance note.</p>
 	                </div>
 	                <div class="inline">
-	                  <label>Status<select id="runs-status"><option value="">all</option><option value="running">running</option><option value="waiting">waiting</option><option value="completed">completed</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select></label>
-	                  <label class="entity-checkbox"><input id="runs-root-only" type="checkbox" checked> root runs only</label>
-	                  <button id="runs-refresh" class="secondary"><span class="button-icon" aria-hidden="true">↻</span><span>Refresh</span></button>
+	                  <label>Status<select id="runs-status" title="Filter runs by their durable status"><option value="">all</option><option value="running">running</option><option value="waiting">waiting</option><option value="completed">completed</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select></label>
+	                  <label class="entity-checkbox" title="Hide child runs — one row per top-level run"><input id="runs-root-only" type="checkbox" checked> root runs only</label>
+	                  <button id="runs-refresh" class="secondary icon-only" title="Reload the run list" aria-label="Refresh runs"><span class="button-icon" aria-hidden="true">↻</span></button>
 	                </div>
 	              </div>
 	              <div id="runs-message" class="message"></div>
@@ -1305,6 +1506,30 @@ def gateway_console_html() -> str:
 	              </table>
 	              <div id="run-inspect" class="entity-overview"></div>
 	            </section>
+	            <section id="data-homes-section" class="session-only hidden">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◈</span><span>Data &amp; Caches</span></h2>
+	                  <p class="section-note">Every data home registered on this machine (model caches, artifact stores, entity homes, logs) with live sizes. Protected rows refuse purging by their owner's rule — entity homes are never purgeable here.</p>
+	                </div>
+	                <button id="data-homes-refresh" class="secondary icon-only" title="Reload data homes with live sizes" aria-label="Refresh data homes"><span class="button-icon" aria-hidden="true">↻</span></button>
+	              </div>
+	              <div id="data-homes-message" class="message"></div>
+	              <table>
+	                <thead><tr><th>Name</th><th>Kind</th><th>Size</th><th>Owner</th><th>Policy</th><th>Actions</th></tr></thead>
+	                <tbody id="data-homes-table"></tbody>
+	              </table>
+	            </section>
+	            <details id="runtime-reservations-section" class="entity-advanced session-only hidden">
+	              <summary>Retained runtimes (advanced) <span class="entity-config-hint">deleted or reassigned users leave their runtime data retained here — transfer it to a new owner or purge it permanently. Rarely needed.</span></summary>
+	              <div class="entity-config-block">
+	                <div id="reservations-message" class="message"></div>
+	                <table>
+	                  <thead><tr><th>Tenant</th><th>Runtime</th><th>Owner</th><th>Reason</th><th>Data</th><th>Actions</th></tr></thead>
+	                  <tbody id="runtime-reservations-table"></tbody>
+	                </table>
+	              </div>
+	            </details>
 	          </div>
 	        </div>
 	      </div>
@@ -1343,7 +1568,7 @@ def gateway_console_html() -> str:
 	              <h2 class="section-title"><span class="section-icon" aria-hidden="true">◆</span><span>Multimodal Capabilities</span></h2>
 	              <p id="defaults-scope" class="section-note">Sign in to edit provider/model defaults for this Gateway runtime.</p>
 	            </div>
-	            <button id="refresh-catalog" class="secondary"><span class="button-icon" aria-hidden="true">↻</span><span>Refresh</span></button>
+	            <button id="refresh-catalog" class="secondary" title="Reload providers and capability defaults" aria-label="Refresh catalog"><span class="button-icon" aria-hidden="true">↻</span><span>Refresh</span></button>
 	          </div>
 		          <table class="capability-table">
 		            <thead><tr><th>Route</th><th>Capability</th><th>Provider</th><th>Model</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
@@ -1362,7 +1587,7 @@ def gateway_console_html() -> str:
 	                <p id="sandbox-context" class="section-note">Select a provider/model and run a smoke test.</p>
 	              </div>
 	            </div>
-	            <div id="sandbox-transcript" class="sandbox-transcript"></div>
+	            <div id="sandbox-transcript" class="sandbox-transcript pc-chat-thread"><div class="empty" id="sandbox-empty-hint">No messages yet — pick an output mode below and ask anything.</div></div>
 	            <div class="sandbox-composer">
 	              <label class="hidden">Capability<select id="sandbox-capability"></select></label>
 	              <label id="sandbox-provider-label" class="hidden">Provider<select id="sandbox-provider"></select></label>
@@ -1390,56 +1615,43 @@ def gateway_console_html() -> str:
 	          </section>
 	        </div>
 	      </div>
-	      <div id="tab-entities" class="tab-panel">
+	      <div id="tab-users" class="tab-panel">
+	        <div id="account" class="session-summary">No active session.</div>
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
-	            <section id="entities-create-section" class="session-only">
+	            <section id="users-section" class="session-only hidden">
 	              <div class="section-head">
 	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">☾</span><span>Summon a new entity</span></h2>
-	                  <p class="section-note">Pick a spark template, name it, and configure its substrate and per-phase capabilities. The name is permanent — there is no delete (spark v1-for-life), so the name is validated (dry-run) before anything is written.</p>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⧉</span><span>Users</span></h2>
+	                  <p class="section-note">Human and service principals of this gateway. Each binds to one runtime data plane. Summoned entities are principals too, but they live in their own panel below — never in this table.</p>
 	                </div>
+	                <button id="open-create-user" title="Create a gateway user and issue its bearer token (shown once)" aria-label="Create user"><span class="button-icon" aria-hidden="true">＋</span><span>Create user</span></button>
 	              </div>
-	              <div class="inline">
-	                <label>Template<select id="entity-template"></select></label>
-	                <label>Name<input id="entity-name" placeholder="e.g. Castor"></label>
-	              </div>
-	              <p id="entity-template-desc" class="section-note"></p>
-	              <div id="entity-template-values" class="entity-chip-row"></div>
-	              <p id="entity-create-admin-note" class="section-note hidden">Advanced configuration (substrate, per-phase capabilities) requires an admin session — entities you create carry the safe framework defaults; an admin can configure them after.</p>
-	              <details id="entity-advanced" class="entity-advanced">
-	                <summary>Advanced configuration (optional — defaults are safe)</summary>
-	                <div class="entity-config-block">
-	                  <h3 class="entity-config-title">Substrate <span class="entity-config-hint">the mind: LLM provider/model. Blank = gateway default.</span></h3>
-	                  <div class="inline">
-	                    <label>Provider<input id="entity-new-provider" placeholder="e.g. endpoint:ovh-provider (blank = gateway default)"></label>
-	                    <label>Model<input id="entity-new-model" placeholder="e.g. gpt-oss-120b (blank = gateway default)"></label>
-	                  </div>
-	                  <h3 class="entity-config-title">Embedding at birth <span class="entity-config-hint">the M1 pin — the semantic space this life is born into. Blank = pin the door's resolved embedder. Changing it later is the CRITICAL re-embed ceremony.</span></h3>
-	                  <div class="inline">
-	                    <label>Embedding model<input id="entity-new-embedding" placeholder="blank = door's resolved embedder"></label>
-	                  </div>
-	                </div>
-	                <div class="entity-config-block">
-	                  <h3 class="entity-config-title">Per-phase capabilities <span class="entity-config-hint">which tools each phase may use — visit / work / personal / sleep. Defaults shown; toggle to override.</span></h3>
-	                  <div id="entity-new-matrix" class="entity-matrix"></div>
-	                </div>
-	              </details>
-	              <button id="entity-create"><span class="button-icon" aria-hidden="true">☾</span><span>Validate &amp; create</span></button>
-	              <div id="entities-message" class="message"></div>
+	              <div id="issued-token" class="issued hidden"></div>
+	              <div id="users-message" class="message"></div>
+	              <table>
+	                <thead><tr><th>User</th><th>Email</th><th>Runtime</th><th>Roles</th><th>State</th><th>Actions</th></tr></thead>
+	                <tbody id="users-table"></tbody>
+	              </table>
+	              <div id="users-entity-note" class="section-note hidden"></div>
 	            </section>
 	            <section id="entities-list-section" class="session-only">
 	              <div class="section-head">
 	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◎</span><span>Entities</span></h2>
-	                  <p class="section-note">Summoned entities on this gateway. Select one to manage its lifecycle, substrate, capabilities, and prompt.</p>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">☾</span><span>Summoned entities</span></h2>
+	                  <p class="section-note">Persistent identities living on this gateway, each with its own memory and runtime. Talk to one, or manage its lifecycle, substrate, capabilities, and prompt.</p>
 	                </div>
-	                <button id="entities-refresh" class="secondary"><span class="button-icon" aria-hidden="true">↻</span><span>Refresh</span></button>
+	                <div class="section-actions">
+	                  <button id="open-create-entity" title="Summon a new entity from a spark template (the name is permanent — validated before anything is written)" aria-label="Summon entity"><span class="button-icon" aria-hidden="true">☾</span><span>Summon entity</span></button>
+	                  <button id="open-templates" class="secondary" title="View, edit, and version the spark templates entities are born from" aria-label="Manage templates"><span class="button-icon" aria-hidden="true">✎</span><span>Templates</span></button>
+	                  <button id="entities-refresh" class="secondary icon-only" title="Reload the entity roster" aria-label="Refresh entities"><span class="button-icon" aria-hidden="true">↻</span></button>
+	                </div>
 	              </div>
 	              <table>
 	                <thead><tr><th>Name</th><th>Entity ID</th><th>Born</th><th>State</th><th>Actions</th></tr></thead>
 	                <tbody id="entities-table"></tbody>
 	              </table>
+	              <div id="entities-message" class="message"></div>
 	            </section>
 	            <section id="entity-manage-section" class="session-only hidden">
 	              <div class="section-head">
@@ -1447,7 +1659,7 @@ def gateway_console_html() -> str:
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⚙</span><span>Manage <span id="entity-manage-name">entity</span></span></h2>
 	                  <p class="section-note" id="entity-manage-sub">Lifecycle, substrate, capabilities, and prompt for this summoned entity.</p>
 	                </div>
-                <button id="entity-manage-close" class="secondary"><span class="button-icon" aria-hidden="true">×</span><span>Close</span></button>
+                <button id="entity-manage-close" class="secondary" title="Back to the entities list"><span class="button-icon" aria-hidden="true">←</span><span>Entities</span></button>
               </div>
               <p id="entity-admin-note" class="section-note hidden">You are viewing as a non-admin. Configuration (state, substrate, capabilities, prompt, re-embed) requires an admin session — those controls are hidden.</p>
 	              <nav class="entity-subtabs">
@@ -1459,57 +1671,80 @@ def gateway_console_html() -> str:
 	                <button id="entity-subtab-prompt" class="entity-subtab" type="button">Prompt</button>
 	              </nav>
 	              <div id="entity-subpanel-overview" class="entity-subpanel">
+	                <div id="entity-cognition-line" class="section-note"></div>
 	                <div id="entity-overview" class="entity-overview"></div>
-	                <button id="entity-verify" class="secondary"><span class="button-icon" aria-hidden="true">✓</span><span>Verify chain</span></button>
+	                <button id="entity-verify" class="secondary" title="Verify the memory hash chain and spark attestation — pure read, never deposits usage"><span class="button-icon" aria-hidden="true">✓</span><span>Verify chain</span></button>
 	                <div id="entity-verify-out" class="section-note"></div>
 	              </div>
 	              <div id="entity-subpanel-talk" class="entity-subpanel hidden">
-	                <h3 class="entity-config-title">Visit <span class="entity-config-hint">a hosted chat session with this entity (the same driver the CLI runs). Opening yields the own-time loop; closing runs the reflection pass and wakes it.</span></h3>
+	                <h3 class="entity-config-title">Visit <span class="entity-config-hint">a hosted chat session with this entity (the same driver the CLI runs). Opening ENDS the personal phase (mutually exclusive); closing runs the reflection pass and the standing grant re-enters personal.</span></h3>
 	                <div class="entity-btn-row">
-	                  <button id="entity-chat-open" class="secondary"><span class="button-icon" aria-hidden="true">☾</span><span>Open visit</span></button>
-	                  <button id="entity-chat-close" class="secondary hidden"><span class="button-icon" aria-hidden="true">×</span><span>Close visit (reflect)</span></button>
+	                  <button id="entity-chat-open" class="secondary" title="Open a hosted visit: prelude + memory recall run, and the conversation forms memories (billable)"><span class="button-icon" aria-hidden="true">☾</span><span>Open visit</span></button>
+	                  <button id="entity-chat-close" class="secondary hidden" title="Close the visit gracefully — the entity's reflection pass runs"><span class="button-icon" aria-hidden="true">×</span><span>Close visit (reflect)</span></button>
 	                </div>
 	                <div id="entity-chat-status" class="section-note"></div>
 	                <div id="entity-chat-transcript" class="entity-chat-transcript"></div>
 	                <div class="inline entity-chat-composer">
 	                  <label>Message<textarea id="entity-chat-input" rows="2" placeholder="say something…"></textarea></label>
-	                  <button id="entity-chat-send" class="secondary" disabled><span class="button-icon" aria-hidden="true">➤</span><span>Send</span></button>
+	                  <button id="entity-chat-send" class="secondary" disabled title="Send (Enter)"><span class="button-icon" aria-hidden="true">➤</span><span>Send</span></button>
 	                </div>
 	              </div>
 	              <div id="entity-subpanel-lifecycle" class="entity-subpanel hidden">
-	                <h3 class="entity-config-title">State <span class="entity-config-hint">awake serves visits/work; asleep is the consolidation window (no summons); paused is a hard freeze</span></h3>
-	                <div id="entity-state-current" class="section-note"></div>
-	                <div class="inline">
+	                <!-- LIVENESS AXIS (c1559): the STOPPED banner outranks every chip;
+	                     Stop is a distinct emergency affordance, never a radio position.
+	                     GROUPING (usability adversary P0-3): each hazard domain is its
+	                     own bordered card — five domains flowing as one flat column
+	                     did not read. -->
+	                <div id="entity-stop-banner" class="entity-stop-banner hidden">
+	                  <span id="entity-stop-banner-text">STOPPED — the kill switch is engaged: every door refuses and every process gate blocks.</span>
+	                  <button id="entity-restore" class="secondary" title="Release the kill switch — the existing wake verb; lands awake unconditionally">Restore</button>
+	                </div>
+	                <div id="entity-live-line" class="entity-live-line"></div>
+	                <div class="entity-config-group">
+	                  <h3 class="entity-config-title">State <span class="entity-config-hint">awake serves visits/work; asleep is the consolidation window (memory processes run — the entity stays alive and reachable; visits auto-wake).</span></h3>
+	                  <div id="entity-state-current" class="section-note"></div>
+	                  <div class="entity-btn-row" role="radiogroup" aria-label="entity state">
+	                    <button id="entity-state-awake" class="secondary entity-state-btn" role="radio" aria-checked="false" title="Awake: serves visits and work">Wake</button>
+	                    <button id="entity-state-asleep" class="secondary entity-state-btn" role="radio" aria-checked="false" title="Sleep: consolidation window — memory processes run; still alive and reachable (visits auto-wake)">Sleep</button>
+	                    <label class="entity-checkbox" title="With Sleep: run the dream pass inside the consolidation window"><input id="entity-state-dream" type="checkbox"> dream pass (with sleep)</label>
+	                  </div>
 	                  <label>Reason<input id="entity-state-reason" placeholder="optional — carried into the wake cue + host marker"></label>
-	                  <label class="entity-checkbox"><input id="entity-state-dream" type="checkbox"> run dream pass (with asleep)</label>
+	                  <div id="entity-state-out" class="section-note"></div>
 	                </div>
-	                <div class="entity-btn-row">
-	                  <button id="entity-state-awake" class="secondary">Wake</button>
-	                  <button id="entity-state-asleep" class="secondary">Sleep</button>
-	                  <button id="entity-state-paused" class="danger">Pause</button>
+	                <div class="entity-config-group entity-config-group-danger">
+	                  <h3 class="entity-config-title">Stop <span class="entity-config-hint">the liveness axis — a kill switch above the state machine, not a state. In-flight work halts without reflection; every door refuses until Restore.</span></h3>
+	                  <div class="entity-btn-row">
+	                    <button id="entity-stop" class="danger" title="STOP — the kill switch: in-flight work halts without reflection; every door refuses until Restore. For graceful rest, use Sleep.">Stop (kill switch)</button>
+	                  </div>
 	                </div>
-	                <div id="entity-state-out" class="section-note"></div>
-	                <h3 class="entity-config-title">Own-time loop <span class="entity-config-hint">the personal-phase loop: the entity's own cognition on a tick. Off by default; starting it spends real tokens unattended.</span></h3>
-	                <div id="entity-loop-status" class="section-note"></div>
-	                <div class="inline">
-	                  <label>Tick seconds<input id="entity-loop-tick" type="number" min="1" max="3600" placeholder="20"></label>
-	                  <label>Ticks / day window<input id="entity-loop-ticks" type="number" min="1" max="500" placeholder="8"></label>
-	                  <label>Rest minutes<input id="entity-loop-rest" type="number" min="0" max="1440" placeholder="30"></label>
+	                <div class="entity-config-group">
+	                  <h3 class="entity-config-title">Personal time <span class="entity-config-hint">the entity's own time — free exploration on its own tick. Starting arms the standing grant AND starts the loop; stopping revokes both. Spends real tokens unattended.</span></h3>
+	                  <div class="entity-btn-row">
+	                    <button id="entity-owntime-toggle" class="owntime-btn" aria-pressed="false" title="Personal time: arm the standing grant and start the autonomous loop; press again to stop and revoke. Spends real tokens while running.">PERSONAL — checking…</button>
+	                    <button id="entity-loop-freeze" class="danger" title="Emergency: kill the personal-time loop process NOW and stop the entity — for hard failures and imminent threats only">Freeze (emergency)</button>
+	                  </div>
+	                  <div id="entity-loop-status" class="section-note"></div>
+	                  <details class="entity-advanced">
+	                    <summary>Schedule (defaults: tick 20s · 8 ticks/day · rest 30min · grant until revoked)</summary>
+	                    <div class="inline">
+	                      <label>Grant duration hours<input id="entity-grant-hours" type="number" min="0" max="720" placeholder="blank = until revoked" title="How long the standing personal grant stays armed"></label>
+	                      <label>Tick seconds<input id="entity-loop-tick" type="number" min="1" max="3600" placeholder="20" title="Seconds between autonomous ticks"></label>
+	                      <label>Ticks / day window<input id="entity-loop-ticks" type="number" min="1" max="500" placeholder="8" title="Ticks per day window before the rest period"></label>
+	                      <label>Rest minutes<input id="entity-loop-rest" type="number" min="0" max="1440" placeholder="30" title="Rest between day windows"></label>
+	                    </div>
+	                  </details>
+	                  <div id="entity-loop-out" class="section-note"></div>
 	                </div>
-	                <div class="entity-btn-row">
-	                  <button id="entity-loop-start" class="secondary">Start loop</button>
-	                  <button id="entity-loop-stop" class="secondary">Stop loop</button>
-	                  <button id="entity-loop-freeze" class="danger">Freeze (emergency)</button>
+	                <div class="entity-config-group entity-config-group-danger">
+	                  <h3 class="entity-config-title entity-danger-title">Re-embed (repair) <span class="entity-config-hint">CRITICAL repair verb: re-derives every vector with the gateway's resolved embedder (atomic swap). The model field is a verification — type the resolved embedder shown below.</span></h3>
+	                  <div id="entity-embedding-status" class="section-note"></div>
+	                  <div class="inline">
+	                    <label>Embedding model (verification)<input id="entity-reembed-model" placeholder="must match the resolved embedder"></label>
+	                    <label>Reason<input id="entity-reembed-reason" placeholder="why — journaled + host-marked"></label>
+	                  </div>
+	                  <button id="entity-reembed" class="danger" title="CRITICAL repair: re-derive every memory vector with the gateway's resolved embedder (atomic swap; journaled + host-marked)"><span class="button-icon" aria-hidden="true">⟳</span><span>Re-embed</span></button>
+	                  <div id="entity-reembed-out" class="section-note"></div>
 	                </div>
-	                <div id="entity-loop-out" class="section-note"></div>
-	                <h3 class="entity-config-title entity-danger-title">Re-embed <span class="entity-config-hint">CRITICAL repair verb: re-derives every vector with the gateway's resolved embedder (atomic swap). The model field is a verification — it must match the door's resolved embedder.</span></h3>
-	                <div id="entity-embedding-status" class="section-note"></div>
-	                <div class="inline">
-	                  <label>Embedding model (verification)<input id="entity-reembed-model" placeholder="must match the resolved embedder"></label>
-	                  <label>Reason<input id="entity-reembed-reason" placeholder="why — journaled + host-marked"></label>
-	                </div>
-	                <button id="entity-reembed" class="danger"><span class="button-icon" aria-hidden="true">⟳</span><span>Re-embed</span></button>
-	                <div id="entity-reembed-out" class="section-note"></div>
 	              </div>
 	              <div id="entity-subpanel-substrate" class="entity-subpanel hidden">
 	                <h3 class="entity-config-title">Substrate <span class="entity-config-hint">the entity's mind — provider + model. Blank source = inherits the gateway default.</span></h3>
@@ -1518,7 +1753,7 @@ def gateway_console_html() -> str:
 	                  <label>Provider<input id="entity-substrate-provider" placeholder="abstractcore provider"></label>
 	                  <label>Model<input id="entity-substrate-model" placeholder="model id"></label>
 	                </div>
-	                <button id="entity-substrate-save" class="secondary"><span class="button-icon" aria-hidden="true">✓</span><span>Save substrate</span></button>
+	                <button id="entity-substrate-save" class="secondary" title="Persist this provider/model pair as the entity's mind substrate (host-marked)"><span class="button-icon" aria-hidden="true">✓</span><span>Save substrate</span></button>
 	                <div id="entity-substrate-out" class="section-note"></div>
 	              </div>
 	              <div id="entity-subpanel-tools" class="entity-subpanel hidden">
@@ -1526,14 +1761,14 @@ def gateway_console_html() -> str:
 	                <div id="entity-manage-matrix" class="entity-matrix"></div>
 	                <label id="entity-tools-denyall-row" class="entity-checkbox"><input id="entity-tools-denyall" type="checkbox"> treat fully-cleared phases as DENY-ALL (explicit empty grant) instead of reset-to-default</label>
 	                <div class="entity-btn-row">
-	                  <button id="entity-tools-save" class="secondary"><span class="button-icon" aria-hidden="true">✓</span><span>Save capabilities</span></button>
+	                  <button id="entity-tools-save" class="secondary" title="Persist the per-phase tool grants (only changed phases are written)"><span class="button-icon" aria-hidden="true">✓</span><span>Save capabilities</span></button>
 	                </div>
 	                <div id="entity-tools-out" class="section-note"></div>
 	              </div>
 	              <div id="entity-subpanel-prompt" class="entity-subpanel hidden">
 	                <h3 class="entity-config-title">Prompt overlay <span class="entity-config-hint">editable layers on the system prompt. Blank = the built-in default for that layer. Identity is never editable here.</span></h3>
 	                <div id="entity-prompt-layers" class="entity-prompt-layers"></div>
-	                <button id="entity-prompt-save" class="secondary"><span class="button-icon" aria-hidden="true">✓</span><span>Save prompt</span></button>
+	                <button id="entity-prompt-save" class="secondary" title="Persist the operator prompt layer (defaults stay live underneath)"><span class="button-icon" aria-hidden="true">✓</span><span>Save prompt</span></button>
 	                <div id="entity-prompt-out" class="section-note"></div>
 	                <details class="entity-advanced"><summary>Preview: the composed system prompt (as the next visit would see it)</summary><pre id="entity-prompt-preview" class="entity-prompt-preview"></pre></details>
 	              </div>
@@ -1543,6 +1778,8 @@ def gateway_console_html() -> str:
 	      </div>
 	    </div>
 	  </main>
+	  </div><!-- /shell_main -->
+	  </div><!-- /shell -->
 	  <div id="default-modal-backdrop" class="modal-backdrop hidden" role="presentation">
 	    <div class="modal flow-modal default-modal" role="dialog" aria-modal="true" aria-labelledby="default-modal-title">
 	      <div class="modal-header">
@@ -1560,8 +1797,8 @@ def gateway_console_html() -> str:
 	      </div>
 	      <div class="modal-actions">
 	        <button id="close-default-modal" class="secondary">Cancel</button>
-	        <button id="clear-default" class="secondary"><span class="button-icon" aria-hidden="true">×</span><span>Clear</span></button>
-	        <button id="save-default"><span class="button-icon" aria-hidden="true">✓</span><span>Save</span></button>
+	        <button id="clear-default" class="secondary" title="Remove this override — the route falls back to what it inherits"><span class="button-icon" aria-hidden="true">×</span><span>Clear</span></button>
+	        <button id="save-default" title="Persist this provider/model as the capability default"><span class="button-icon" aria-hidden="true">✓</span><span>Save</span></button>
 	      </div>
 	    </div>
 	  </div>
@@ -1595,7 +1832,7 @@ def gateway_console_html() -> str:
 	              <p class="field-help">Optional. Use Test to preview discovery, then select models only when this provider should expose a fixed allowlist.</p>
 	              <div id="endpoint-model-summary" class="model-summary">Not tested yet.</div>
 	              <select id="endpoint-models" class="model-picker__select" multiple size="7"></select>
-	              <button id="clear-endpoint-models" type="button" class="secondary"><span class="button-icon" aria-hidden="true">×</span><span>Clear restriction</span></button>
+	              <button id="clear-endpoint-models" type="button" class="secondary" title="Serve every model this endpoint exposes (no allowlist)"><span class="button-icon" aria-hidden="true">×</span><span>Clear restriction</span></button>
 	            </div>
 	          </details>
 	        </div>
@@ -1603,8 +1840,8 @@ def gateway_console_html() -> str:
 	      </div>
 	      <div class="modal-actions">
 	        <button id="cancel-endpoint-profile" class="secondary">Cancel</button>
-	        <button id="discover-endpoint-models" type="button" class="secondary"><span class="button-icon" aria-hidden="true">↻</span><span>Test</span></button>
-	        <button id="save-endpoint-profile"><span class="button-icon" aria-hidden="true">✓</span><span>Confirm</span></button>
+	        <button id="discover-endpoint-models" type="button" class="secondary" title="Probe the endpoint and list the models it actually serves"><span class="button-icon" aria-hidden="true">↻</span><span>Test</span></button>
+	        <button id="save-endpoint-profile" title="Store this connection server-side and expose it as a provider"><span class="button-icon" aria-hidden="true">✓</span><span>Confirm</span></button>
 	      </div>
 	    </div>
 	  </div>
@@ -1644,6 +1881,126 @@ def gateway_console_html() -> str:
         <button id="confirm-cancel" class="secondary">Cancel</button>
         <button id="confirm-ok">Confirm</button>
       </div>
+    </div>
+  </div>
+  <!-- Create user modal: progressive disclosure — required first, rare knobs
+       behind Advanced. The issued token replaces the form on success (it is
+       shown ONCE; closing early must not eat it). -->
+  <div id="user-create-backdrop" class="modal-backdrop hidden" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-create-title">
+      <h2 id="user-create-title">Create user</h2>
+      <div id="user-create-form">
+        <label>User id<input id="new-user" placeholder="e.g. alice" title="The principal id this person signs in as"></label>
+        <label>Role<select id="new-roles" title="What this user may do: user = run workflows on their own runtime; admin = full console + operator verbs; readonly = inspect only">
+          <option value="user" selected>user — run workflows on their own runtime</option>
+          <option value="admin">admin — full console and operator verbs</option>
+          <option value="readonly">readonly — inspect only</option>
+        </select></label>
+        <details class="entity-advanced"><summary>Advanced (defaults are right for almost everyone)</summary>
+          <label>Email<input id="new-email" type="email" placeholder="optional" title="Contact only — never used for auth"></label>
+          <label>Runtime binding<input id="new-runtime" placeholder="defaults to the user id" title="The data plane this user's runs and flows live in. Leave blank: each user gets their own, named after them. Entities are NOT bound here — they always carry their own runtime."></label>
+          <label>Tenant<input id="new-tenant" value="default" title="Multi-tenant isolation namespace. Single-tenant installs keep 'default'."></label>
+        </details>
+        <div class="modal-actions">
+          <button id="create-user-cancel" class="secondary">Cancel</button>
+          <button id="create-user" title="Create the user and issue its bearer token (shown once)"><span class="button-icon" aria-hidden="true">＋</span><span>Create user</span></button>
+        </div>
+      </div>
+      <div id="user-create-done" class="hidden">
+        <div id="user-create-token" class="issued"></div>
+        <div class="modal-actions"><button id="user-create-close">Done</button></div>
+      </div>
+      <div id="user-create-message" class="message"></div>
+    </div>
+  </div>
+  <!-- Summon entity modal: only the creation questions (operator order:
+       "a clean and proper 'create entity' that opens a modal where you ask
+       only the relevant questions"). Template CRUD lives in its own modal. -->
+  <div id="entity-create-backdrop" class="modal-backdrop hidden" role="presentation">
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="entity-create-title">
+      <h2 id="entity-create-title">Summon a new entity</h2>
+      <p class="section-note">Pick a spark template and name it. The name is permanent — there is no delete (spark v1-for-life), so it is validated (dry-run) before anything is written.</p>
+      <div class="inline">
+        <label>Template<select id="entity-template" title="The spark blueprint this identity is born from — copied at creation, never linked"></select></label>
+        <label>Name<input id="entity-name" placeholder="e.g. Castor" title="Permanent identity name — validated before anything is written"></label>
+      </div>
+      <p id="entity-template-desc" class="section-note"></p>
+      <div id="entity-template-values" class="entity-chip-row"></div>
+      <p id="entity-create-admin-note" class="section-note hidden">Advanced configuration (substrate, per-phase capabilities) requires an admin session — entities you create carry the safe framework defaults; an admin can configure them after.</p>
+      <details id="entity-advanced" class="entity-advanced">
+        <summary>Advanced configuration (optional — defaults are safe)</summary>
+        <div class="entity-config-block">
+          <h3 class="entity-config-title">Substrate <span class="entity-config-hint">the mind: LLM provider &amp; model. Providers &amp; models autopopulate from this gateway; leave on "Gateway default" to inherit.</span></h3>
+          <div class="inline">
+            <label>Provider<select id="entity-new-provider" title="LLM provider for this entity's mind — Gateway default inherits the door's substrate"><option value="">Gateway default</option></select></label>
+            <label>Model<select id="entity-new-model" disabled title="Model within the chosen provider"><option value="">Gateway default</option></select></label>
+          </div>
+          <h3 class="entity-config-title">Embedding at birth <span class="entity-config-hint">the M1 pin — the semantic space this life is born into. "Gateway default" pins the door's resolved embedder. Changing it later is the CRITICAL re-embed ceremony.</span></h3>
+          <div class="inline">
+            <label>Embedding model<select id="entity-new-embedding" title="Pinned at birth (M1); changing later requires the re-embed repair ceremony"><option value="">Gateway default</option></select></label>
+          </div>
+          <div id="entity-new-substrate-note" class="section-note"></div>
+        </div>
+        <div class="entity-config-block">
+          <h3 class="entity-config-title">Per-phase capabilities <span class="entity-config-hint">which tools each phase may use — visit / work / personal / sleep. Defaults shown; toggle to override.</span></h3>
+          <div id="entity-new-matrix" class="entity-matrix"></div>
+        </div>
+      </details>
+      <div class="modal-actions">
+        <button id="entity-create-cancel" class="secondary">Cancel</button>
+        <button id="entity-create" title="Dry-run validate the name and configuration, then create"><span class="button-icon" aria-hidden="true">☾</span><span>Validate &amp; create</span></button>
+      </div>
+      <div id="entity-create-message" class="message"></div>
+    </div>
+  </div>
+  <!-- Templates modal: blueprint management (view / edit / version), out of
+       the creation flow — a template is management, a summon is a birth. -->
+  <div id="templates-backdrop" class="modal-backdrop hidden" role="presentation">
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="templates-title">
+      <h2 id="templates-title">Spark templates</h2>
+      <p class="section-note">A template is a reusable blueprint — every save is a new version; the framework default is the floor and can be seeded but not edited. Editing a template never touches a living entity.</p>
+      <div class="inline">
+        <label>Template<select id="tpl-select" title="Templates on this gateway (builtin + operator-authored)"></select></label>
+      </div>
+      <div class="entity-btn-row">
+        <button id="tpl-view" class="secondary" type="button" title="Show this template's spark document"><span class="button-icon" aria-hidden="true">◉</span><span>View</span></button>
+        <button id="tpl-edit" class="secondary hidden" type="button" title="Edit this template (saves as a new version)"><span class="button-icon" aria-hidden="true">✎</span><span>Edit</span></button>
+        <button id="tpl-new" class="secondary" type="button" title="Create a new template seeded from the selected one"><span class="button-icon" aria-hidden="true">＋</span><span>New from selected</span></button>
+      </div>
+      <div id="tpl-editor" class="hidden">
+        <div class="inline">
+          <label id="tpl-id-row" class="hidden">New template id<input id="tpl-id" placeholder="lowercase-letters-digits-_- (e.g. researcher)" title="Permanent template id (directory name)"></label>
+          <label>Display name<input id="tpl-name" placeholder="e.g. Researcher"></label>
+        </div>
+        <label>Description<input id="tpl-desc" placeholder="what this blueprint is for"></label>
+        <label>Spark (JSON — core values are enforced at save)<textarea id="tpl-spark" rows="14" spellcheck="false" class="tpl-spark"></textarea></label>
+        <div class="entity-btn-row">
+          <button id="tpl-save" class="secondary" type="button" title="Lint and save as a new version"><span class="button-icon" aria-hidden="true">✓</span><span>Save</span></button>
+          <button id="tpl-cancel" class="secondary" type="button">Cancel</button>
+        </div>
+        <div id="tpl-out" class="section-note"></div>
+        <div id="tpl-versions" class="section-note"></div>
+      </div>
+      <div class="modal-actions"><button id="templates-close" class="secondary">Close</button></div>
+    </div>
+  </div>
+  <!-- Docs assistant drawer (.af-drawer public markup). Keep-alive: closed =
+       display:none, never destroyed — an in-flight answer survives close/open. -->
+  <div id="assistant-drawer" class="af-drawer" style="width: 420px; display: none;" role="complementary" aria-label="Docs assistant">
+    <div class="af-drawer__header">
+      <div class="af-drawer__title">Docs assistant</div>
+      <div class="af-drawer__header-actions">
+        <button id="assistant-clear" class="secondary" type="button" title="Clear conversation">Clear</button>
+        <button id="assistant-close" class="af-drawer__close" type="button" aria-label="Close assistant">×</button>
+      </div>
+    </div>
+    <div class="af-drawer__body">
+      <div id="assistant-messages" class="assistant-messages"></div>
+      <div id="assistant-note" class="assistant-note">Answers are grounded on the gateway's own documentation (llms.txt) via the docs-qa workflow.</div>
+      <form id="assistant-form" class="assistant-composer">
+        <textarea id="assistant-input" rows="2" placeholder="Ask about the gateway…" aria-label="Question for the docs assistant"></textarea>
+        <button id="assistant-send" type="submit" title="Ask the docs assistant (Enter)">Ask</button>
+      </form>
     </div>
   </div>
   <script>
@@ -1777,7 +2134,11 @@ def gateway_console_html() -> str:
 	    }
 	    const UI_SETTINGS_KEY = "abstractgateway_ui_settings_v1";
 	    const ACTIVE_TAB_KEY = "abstractgateway_active_tab_v1";
-	    const TABS = ["users", "providers", "defaults", "sandbox", "entities"];
+	    // Operator IA (2026-07-13): daily path first — who lives behind this
+	    // door (users & entities), where they run, then setup (providers,
+	    // capability defaults), then validation (sandbox). A stale persisted
+	    // "entities" value folds into "users" below.
+	    const TABS = ["users", "runtimes", "providers", "defaults", "sandbox"];
 	    const THEME_SPECS = [
 	      { id: "dark", label: "Dark (Abstract)", swatches: ["#1a1a2e", "#16213e", "#0f3460", "#e94560", "#60a5fa", "#27ae60"] },
 	      { id: "tokyo-night", label: "Tokyo Night", swatches: ["#1a1b26", "#24283b", "#414868", "#7aa2f7", "#2ac3de", "#9ece6a"] },
@@ -1866,14 +2227,130 @@ def gateway_console_html() -> str:
 	    function closeAppearance() {
 	      $("appearance-backdrop").classList.add("hidden");
 	    }
+	    // ---- Docs assistant drawer (docs-qa bundle transport) ----
+	    // ask() = start a catalog run of docs-qa with the gateway's OWN corpus
+	    // (GET /docs/corpus) and poll the run to completion. Never routes through
+	    // entity chat (a visit is billable and forms memories — kit contract).
+	    const ASSISTANT_BUNDLE = { registry_scope: "tenant_catalog", bundle_id: "docs-qa", bundle_version: "0.1.0", flow_id: "docsqa001" };
+	    const assistantState = { open: false, busy: false, corpus: null, corpusWarned: false, history: [] };
+	    function assistantAppend(role, text, extraClass) {
+	      const div = document.createElement("div");
+	      div.className = `assistant-msg ${role}${extraClass ? ` ${extraClass}` : ""}`;
+	      div.textContent = text;
+	      $("assistant-messages").append(div);
+	      $("assistant-messages").scrollTop = $("assistant-messages").scrollHeight;
+	      return div;
+	    }
+	    function toggleAssistant(force) {
+	      const next = typeof force === "boolean" ? force : !assistantState.open;
+	      assistantState.open = next;
+	      $("assistant-drawer").style.display = next ? "flex" : "none";
+	      $("open-assistant").classList.toggle("is-active", next);
+	      $("open-assistant").setAttribute("aria-pressed", next ? "true" : "false");
+	      if (next) $("assistant-input").focus();
+	    }
+	    async function assistantEnsureCorpus() {
+	      if (assistantState.corpus !== null) return assistantState.corpus;
+	      try {
+	        const data = await api("/api/gateway/docs/corpus");
+	        assistantState.corpus = { app: data.app || "AbstractGateway", text: data.text || "" };
+	      } catch (err) {
+	        // Honest degradation: the bundle itself answers "no docs were
+	        // supplied" — but the operator should see WHY, once.
+	        assistantState.corpus = { app: "AbstractGateway", text: "" };
+	        if (!assistantState.corpusWarned) {
+	          assistantState.corpusWarned = true;
+	          $("assistant-note").textContent = `#FALLBACK no documentation corpus available (${err.message}) — answers are ungrounded.`;
+	        }
+	      }
+	      return assistantState.corpus;
+	    }
+	    async function assistantAsk(question) {
+	      const corpus = await assistantEnsureCorpus();
+	      const started = await api("/api/gateway/runs/start", {
+	        method: "POST",
+	        body: JSON.stringify({
+	          ...ASSISTANT_BUNDLE,
+	          actor_id: "gateway",
+	          input_data: {
+	            question,
+	            history: assistantState.history.slice(-12),
+	            docs: corpus.text,
+	            app: corpus.app,
+	          },
+	        }),
+	      });
+	      const runId = started.run_id;
+	      // Poll to terminal state; a docs answer is one LLM call (bounded), but
+	      // slow local models happen — cap at ~3 minutes then report honestly.
+	      for (let i = 0; i < 90; i += 1) {
+	        await new Promise((resolve) => setTimeout(resolve, 2000));
+	        const run = await api(`/api/gateway/runs/${encodeURIComponent(runId)}`);
+	        const status = String(run.status || "");
+	        if (status === "completed") {
+	          const out = run.output || {};
+	          const text = typeof out.response === "string" && out.response.trim() ? out.response : JSON.stringify(out);
+	          return text;
+	        }
+	        if (status === "failed" || status === "cancelled") {
+	          throw new Error(`docs-qa run ${status}: ${JSON.stringify(run.error || run.output || {}).slice(0, 300)}`);
+	        }
+	      }
+	      throw new Error(`docs-qa run ${runId} still running after 3 minutes — check the Runtimes tab`);
+	    }
+	    async function assistantSubmit(event) {
+	      if (event) event.preventDefault();
+	      if (assistantState.busy) return;
+	      const question = $("assistant-input").value.trim();
+	      if (!question) return;
+	      assistantState.busy = true;
+	      $("assistant-send").disabled = true;
+	      $("assistant-input").value = "";
+	      assistantAppend("user", question);
+	      const pending = assistantAppend("assistant", "Thinking…", "pending");
+	      try {
+	        const answer = await assistantAsk(question);
+	        pending.classList.remove("pending");
+	        pending.textContent = answer;
+	        assistantState.history.push({ role: "user", content: question }, { role: "assistant", content: answer });
+	      } catch (err) {
+	        pending.classList.remove("pending");
+	        pending.classList.add("error");
+	        pending.textContent = `Failed: ${err.message}`;
+	      } finally {
+	        assistantState.busy = false;
+	        $("assistant-send").disabled = false;
+	      }
+	    }
+	    function assistantClear() {
+	      assistantState.history = [];
+	      $("assistant-messages").textContent = "";
+	    }
+	    const TAB_TITLES = {
+	      users: ["Users & Entities", "People, tokens, and the summoned entities living on this gateway"],
+	      runtimes: ["Runtimes", "Execution planes: runs, sessions, data and caches"],
+	      providers: ["Providers", "LLM provider connections and endpoint profiles"],
+	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
+	      sandbox: ["Sandbox", "Try any provider/model directly — text, image, audio, video"],
+	    };
 	    function setActiveTab(tab) {
-	      const next = TABS.includes(tab) ? tab : "providers";
+	      // Legacy persisted tab ids fold into their new homes (entities
+	      // merged into users); unknown ids land on the FIRST tab — the
+	      // landing must agree with the nav order, not point mid-bar.
+	      const fold = tab === "entities" ? "users" : tab;
+	      const next = TABS.includes(fold) ? fold : TABS[0];
 	      state.activeTab = next;
 	      for (const id of TABS) {
 	        const panel = $(`tab-${id}`);
 	        const button = $(`tab-button-${id}`);
 	        if (panel) panel.classList.toggle("active", id === next);
 	        if (button) button.classList.toggle("active", id === next);
+	      }
+	      // The slim header names the page (family shell: sidebar navigates,
+	      // header titles) — signed out it stays the app name.
+	      if (state.principal && TAB_TITLES[next]) {
+	        $("page-title").textContent = TAB_TITLES[next][0];
+	        $("page-subtitle").textContent = TAB_TITLES[next][1];
 	      }
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
 	    }
@@ -1975,21 +2452,128 @@ def gateway_console_html() -> str:
 	      return { phaseIds, phaseLabels, tools, grantByPhase };
 	    }
 
+	    // ---- Shared provider/model/embedding dropdown data (operator directive
+	    // 2026-07-13): the console consumes the SAME gateway endpoints the
+	    // React kit picker does (/discovery/providers, /discovery/providers/
+	    // {p}/models, /entities/creation-defaults) — the endpoints ARE the
+	    // shared contract; a vanilla-JS console cannot import a React component.
+	    // "Gateway default" is an explicit OPTION (value ""), never a blank the
+	    // operator must guess to leave empty. Degraded discovery labels itself.
+	    function _fillSelect(sel, options, { keep = "" } = {}) {
+	      if (!sel) return;
+	      const prev = keep || sel.value || "";
+	      sel.textContent = "";
+	      for (const o of options) {
+	        const opt = document.createElement("option");
+	        opt.value = o.value;
+	        opt.textContent = o.label;
+	        sel.append(opt);
+	      }
+	      // Restore the prior selection if it survived the refresh.
+	      if (prev && options.some((o) => o.value === prev)) sel.value = prev;
+	    }
+	    async function loadSubstrateDropdowns() {
+	      const provSel = $("entity-new-provider");
+	      const embSel = $("entity-new-embedding");
+	      const note = $("entity-new-substrate-note");
+	      let defaults = { substrate: {}, embedding: {}, warnings: [] };
+	      try { defaults = await api("/api/gateway/entities/creation-defaults"); } catch (e) { /* labeled below */ }
+	      state.creationDefaults = defaults;
+	      const sd = defaults.substrate || {};
+	      const ed = defaults.embedding || {};
+	      const defProvLabel = (sd.provider && sd.model) ? `Gateway default (${sd.provider} / ${sd.model})` : "Gateway default";
+	      const defEmbLabel = (ed.provider && ed.model) ? `Gateway default (${ed.model})` : "Gateway default";
+	      // Providers dropdown from discovery; "Gateway default" names the resolved default.
+	      let provOpts = [{ value: "", label: defProvLabel }];
+	      let degraded = "";
+	      try {
+	        const disc = await api("/api/gateway/discovery/providers");
+	        const items = Array.isArray(disc.items) ? disc.items : [];
+	        for (const p of items) {
+	          const nm = String(p.name || "").trim();
+	          if (nm) provOpts.push({ value: nm, label: nm });
+	        }
+	        if (!items.length) degraded = "provider discovery returned no providers";
+	      } catch (e) { degraded = "provider discovery unavailable: " + (e.message || e); }
+	      _fillSelect(provSel, provOpts);
+	      // Embedding dropdown: gateway default + discovered embedding models
+	      // for the default embedding provider (output_type=embeddings filter).
+	      let embOpts = [{ value: "", label: defEmbLabel }];
+	      if (ed.provider) {
+	        try {
+	          const em = await api(`/api/gateway/discovery/providers/${encodeURIComponent(ed.provider)}/models?output_type=embeddings`);
+	          for (const m of (Array.isArray(em.models) ? em.models : [])) {
+	            const mid = String(m).trim();
+	            if (mid) embOpts.push({ value: mid, label: mid });
+	          }
+	        } catch (e) { /* the default option still works; free choice degrades quietly */ }
+	      }
+      _fillSelect(embSel, embOpts);
+      // The birth pin must be a model the door can SERVE (no silent mixing);
+      // a non-default choice refuses unless the gateway route is changed
+      // first, and validate() catches it pre-confirm. Warn on selection.
+      state.defaultEmbedding = (ed.model || "");
+      if (embSel) embSel.onchange = () => {
+        const v = (embSel.value || "").trim();
+        if (v && v !== state.defaultEmbedding) {
+          _entOut("entity-new-substrate-note", "#FALLBACK embedding " + v + " differs from the gateway's resolved embedder (" + (state.defaultEmbedding || "none") + ") — set it as the gateway embedding route (Multimodal Capabilities) first, or the home refuses vector ops. Validate will catch this before the name is burned.");
+        } else if (note) { note.textContent = ""; }
+      };
+      // Model dropdown follows the provider selection (cascade); until a
+      // provider is picked it stays on Gateway default, disabled.
+      await loadModelsForProvider(provSel ? provSel.value : "");
+      const bits = [];
+      if (degraded) bits.push("#FALLBACK " + degraded + " — leave on Gateway default, or configure a provider in the Providers tab");
+      for (const w of (defaults.warnings || [])) bits.push(String(w));
+      if (note && bits.length) note.textContent = bits.join(" · ");
+    }
+	    async function loadModelsForProvider(provider) {
+	      const modelSel = $("entity-new-model");
+	      if (!modelSel) return;
+	      const p = String(provider || "").trim();
+	      if (!p) {
+	        // No provider chosen = Gateway default; the model rides the default too.
+	        _fillSelect(modelSel, [{ value: "", label: "Gateway default" }]);
+	        modelSel.disabled = true;
+	        return;
+	      }
+	      modelSel.disabled = false;
+	      let opts = [{ value: "", label: "Provider default" }];
+	      try {
+	        const m = await api(`/api/gateway/discovery/providers/${encodeURIComponent(p)}/models?output_type=text`);
+	        for (const mid of (Array.isArray(m.models) ? m.models : [])) {
+	          const s = String(mid).trim();
+	          if (s) opts.push({ value: s, label: s });
+	        }
+	      } catch (e) { opts.push({ value: "", label: "(models unavailable — set on manage)" }); }
+	      _fillSelect(modelSel, opts);
+	    }
+
+	    function _fillTemplateSelect(sel) {
+	      if (!sel) return;
+	      const prior = sel.value;
+	      sel.textContent = "";
+	      for (const t of state.entityTemplates) {
+	        const opt = document.createElement("option");
+	        opt.value = t.id;
+	        opt.textContent = t.name || t.id;
+	        sel.append(opt);
+	      }
+	      if (prior && state.entityTemplates.some((t) => t.id === prior)) sel.value = prior;
+	    }
 	    async function loadEntities() {
 	      try {
 	        if (!state.entityTemplates.length) {
 	          const g = await api("/api/gateway/entities/templates");
 	          state.entityTemplates = Array.isArray(g.templates) ? g.templates : [];
-	          const sel = $("entity-template");
-	          sel.textContent = "";
-	          for (const t of state.entityTemplates) {
-	            const opt = document.createElement("option");
-	            opt.value = t.id;
-	            opt.textContent = t.name || t.id;
-	            sel.append(opt);
-	          }
+	          _fillTemplateSelect($("entity-template"));
+	          _fillTemplateSelect($("tpl-select"));
 	          renderEntityTemplateDesc();
+	          renderTplSelectState();
 	        }
+	        // Populate the substrate/embedding dropdowns from the gateway (once
+	        // per session; a provider cascade refreshes models on change).
+	        if (!state.creationDefaults) { try { await loadSubstrateDropdowns(); } catch (e) { /* additive */ } }
 	        if (!state.entityMatrixSpec) {
 	          try {
 	            state.entityMatrixSpec = await api("/api/gateway/entities/inventory/capability-matrix");
@@ -2003,6 +2587,11 @@ def gateway_console_html() -> str:
 	        const rows = Array.isArray(listed.entities) ? listed.entities : [];
 	        const body = $("entities-table");
 	        body.textContent = "";
+	        // Success clears prior error debris (usability adversary P0-1: a
+	        // pre-login 401 note sat under 4 healthy rows — data and an error
+	        // claim coexisting is the worst kind of stale pixel).
+	        $("entities-message").textContent = "";
+	        $("entities-message").className = "message";
 	        for (const e of rows) {
 	          const tr = document.createElement("tr");
 	          if (e.error) {
@@ -2017,13 +2606,42 @@ def gateway_console_html() -> str:
 	            continue;
 	          }
 	          const st = (e.state && typeof e.state === "object") ? (e.state.state || "awake") : (e.state || "awake");
+	          const stWarnings = (e.state && typeof e.state === "object" && Array.isArray(e.state.warnings)) ? e.state.warnings : [];
 	          const nm = e.name || e.slug || "";
-	          for (const cell of [nm, e.entity_id || "", e.created_at || e.born_at || "", st]) {
+	          for (const cell of [nm, e.entity_id || "", String(e.created_at || e.born_at || "").slice(0, 16).replace("T", " ")]) {
 	            const td = document.createElement("td");
 	            td.textContent = String(cell);
 	            tr.append(td);
 	          }
+	          // State cell: id'd so the live poll repaints the managed row from
+	          // the same /cognition read; an unreadable state renders its
+	          // warning instead of faking a clean "awake" (adversary P2-1).
+	          // Badge classes give the list the color-coded read without
+	          // opening Manage (IA adversary #8): asleep=sleep tone,
+	          // stopped=danger tone (the served liveness axis), awake=neutral.
+	          const stopped = (e.state && typeof e.state === "object" && e.state.liveness === "stopped");
+	          const stTd = document.createElement("td");
+	          stTd.id = `entity-state-cell-${nm}`;
+	          const stBadge = document.createElement("span");
+	          const stTone = stopped ? "phase-stopped" : (st === "asleep" ? "phase-sleep" : "phase-none");
+	          stBadge.className = "entity-live-badge " + stTone;
+	          stBadge.textContent = stopped ? "STOPPED" : String(st);
+	          stTd.append(stBadge);
+	          if (stWarnings.length) {
+	            const warn = document.createElement("span");
+	            warn.className = "entity-warn-pill";
+	            warn.textContent = "⚠ state unreadable — treated as awake";
+	            stTd.append(warn);
+	          }
+	          tr.append(stTd);
 	          const actions = document.createElement("td");
+	          // Talk first (IA adversary #1): talking to an entity is the
+	          // most-used humane action and was four interactions deep.
+	          const talkBtn = document.createElement("button");
+	          talkBtn.className = "secondary";
+	          talkBtn.textContent = "Talk";
+	          talkBtn.onclick = async () => { await openEntityManage(nm); setEntitySubtab("talk"); };
+	          actions.append(talkBtn);
 	          const manageBtn = document.createElement("button");
 	          manageBtn.className = "secondary";
 	          manageBtn.textContent = "Manage";
@@ -2037,19 +2655,44 @@ def gateway_console_html() -> str:
 	          const td = document.createElement("td");
 	          td.colSpan = 5;
 	          td.className = "section-note";
-	          td.textContent = "No entities yet — summon one above.";
+	          td.textContent = "No entities yet — use Summon entity to create the first one.";
 	          tr.append(td);
 	          body.append(tr);
 	        }
 	      } catch (err) {
-	        $("entities-message").textContent = String(err.message || err);
+	        // Stale rows under a detached error read as health — replace them
+	        // with ONE labeled failure row (adversary P2-1; the duplicate
+	        // entities-message write doubled the error on screen — P0-1).
+	        const body = $("entities-table");
+	        if (body) {
+	          body.textContent = "";
+	          const tr = document.createElement("tr");
+	          const td = document.createElement("td");
+	          td.colSpan = 5;
+	          td.className = "message error";
+	          td.textContent = "entity list unavailable: " + String(err.message || err);
+	          tr.append(td);
+	          body.append(tr);
+	        }
 	      }
 	    }
-	    function renderEntityTemplateDesc() {
-	      const id = $("entity-template").value;
-	      const t = state.entityTemplates.find((x) => x.id === id);
-	      $("entity-template-desc").textContent = t ? (t.description || "") : "";
-	      const chips = $("entity-template-values");
+    function renderTplSelectState() {
+      // Edit is offered only for editable (operator) templates; the
+      // builtin floor + frozen legacy files show View + New only.
+      const id = $("tpl-select") ? $("tpl-select").value : "";
+      const t = state.entityTemplates.find((x) => x.id === id);
+      const editBtn = $("tpl-edit");
+      if (editBtn) editBtn.classList.toggle("hidden", !(t && t.editable));
+      // A template switch closes a stale editor (it belonged to another id).
+      const ed = $("tpl-editor"); if (ed) ed.classList.add("hidden");
+      state.tplMode = "";
+    }
+    function renderEntityTemplateDesc() {
+      const id = $("entity-template").value;
+      const t = state.entityTemplates.find((x) => x.id === id);
+      const ver = (t && t.version) ? ` (v${t.version})` : "";
+      $("entity-template-desc").textContent = t ? ((t.description || "") + ver) : "";
+      const chips = $("entity-template-values");
 	      chips.textContent = "";
 	      const cores = (t && Array.isArray(t.core_values)) ? t.core_values : [];
 	      for (const cv of cores) {
@@ -2060,8 +2703,85 @@ def gateway_console_html() -> str:
 	        chips.append(chip);
 	      }
 	    }
+	    // ---- Template management: view / edit / create, versioned (operator
+	    // directive 2026-07-13). A template is a JSON spark blueprint; the
+	    // server lints it + writes a new version per save. The builtin floor
+	    // is view-only (seed a new id from it). tplMode ∈ view|edit|new.
+	    // Lives in its OWN modal (templates-backdrop) with its own select —
+	    // blueprint management is not a creation question (operator 12:24).
+	    function _selectedTemplate() {
+	      const id = $("tpl-select").value;
+	      return state.entityTemplates.find((x) => x.id === id) || null;
+	    }
+	    function tplShowEditor(mode) {
+	      state.tplMode = mode;
+	      const t = _selectedTemplate();
+	      const editor = $("tpl-editor");
+	      const idRow = $("tpl-id-row");
+	      $("tpl-out").textContent = "";
+	      $("tpl-versions").textContent = "";
+	      if (!t) { $("tpl-out").textContent = "Pick a template first."; return; }
+	      editor.classList.remove("hidden");
+	      idRow.classList.toggle("hidden", mode !== "new");
+	      const editable = mode === "edit";
+	      $("tpl-spark").disabled = false; // JSON is always editable in new/edit; view = readonly
+	      if (mode === "view") $("tpl-spark").disabled = true;
+	      $("tpl-save").classList.toggle("hidden", mode === "view");
+	      $("tpl-name").value = mode === "new" ? "" : (t.name || "");
+	      $("tpl-desc").value = mode === "new" ? "" : (t.description || "");
+	      $("tpl-id").value = "";
+	      try { $("tpl-spark").value = JSON.stringify(t.spark || {}, null, 2); }
+	      catch (e) { $("tpl-spark").value = "{}"; }
+	      // Version history (operator: every template versioned).
+	      if (t.source === "operator" && mode !== "new") {
+	        api(`/api/gateway/entities/templates/${encodeURIComponent(t.id)}/versions`).then((v) => {
+	          const vs = Array.isArray(v.versions) ? v.versions : [];
+	          $("tpl-versions").textContent = vs.length
+	            ? "versions: " + vs.map((x) => `v${x.version}${x.note ? " (" + x.note + ")" : ""}`).join(" · ")
+	            : "";
+	        }).catch(() => {});
+	      }
+	      void editable;
+	    }
+	    async function tplSave() {
+	      const mode = state.tplMode;
+	      const t = _selectedTemplate();
+	      let spark;
+	      try { spark = JSON.parse($("tpl-spark").value || "{}"); }
+	      catch (e) { $("tpl-out").textContent = "Spark is not valid JSON: " + (e.message || e); return; }
+	      const name = ($("tpl-name").value || "").trim();
+	      const description = ($("tpl-desc").value || "").trim();
+	      $("tpl-save").disabled = true;
+	      try {
+	        let saved;
+	        if (mode === "new") {
+	          const id = ($("tpl-id").value || "").trim();
+	          if (!id) { $("tpl-out").textContent = "A new template needs an id."; return; }
+	          saved = await api("/api/gateway/entities/templates", {
+	            method: "POST", body: JSON.stringify({ id, spark, name, description, note: "created via console" }),
+	          });
+	        } else {
+	          if (!t || t.source !== "operator") { $("tpl-out").textContent = "Only operator templates can be edited (the builtin is the floor — use New to seed one)."; return; }
+	          saved = await api(`/api/gateway/entities/templates/${encodeURIComponent(t.id)}`, {
+	            method: "PUT", body: JSON.stringify({ id: t.id, spark, name, description, note: "edited via console" }),
+	          });
+	        }
+	        let out = `Saved ${saved.id} v${saved.version}.`;
+	        if (Array.isArray(saved.lint_warnings) && saved.lint_warnings.length) out += " Warnings: " + saved.lint_warnings.join(" | ");
+	        $("tpl-out").textContent = out;
+	        // Refresh the gallery so BOTH pickers reflect the new version.
+	        state.entityTemplates = [];
+	        await loadEntities();
+	        $("tpl-select").value = saved.id;
+	        renderTplSelectState();
+	        renderEntityTemplateDesc();
+	      } catch (e) {
+	        $("tpl-out").textContent = "Save failed: " + ((e.detail && e.detail.message) || e.message || e);
+	      } finally { $("tpl-save").disabled = false; }
+	    }
+
 	    async function createEntity() {
-	      const msg = $("entities-message");
+	      const msg = $("entity-create-message");
 	      const name = ($("entity-name").value || "").trim();
 	      const id = $("entity-template").value;
 	      const template = state.entityTemplates.find((x) => x.id === id);
@@ -2127,11 +2847,44 @@ def gateway_console_html() -> str:
 	        }
 	        if (adv) adv.open = false;
 	        await loadEntities();
+	        // The birth succeeded: close the modal and land the note where the
+	        // roster is (the modal is gone — a message inside it would vanish).
+	        closeEntityCreate();
+	        $("entities-message").textContent = note;
+	        $("entities-message").className = "message ok";  // a birth is good news, not debris
 	      } catch (err) {
 	        msg.textContent = String(err.message || err);
 	      } finally {
 	        $("entity-create").disabled = false;
 	      }
+	    }
+	    // ---- Creation + template modals (progressive disclosure: the page
+	    // shows LISTS; questions appear when the operator asks to create) ----
+	    function openEntityCreate() {
+	      $("entity-create-message").textContent = "";
+	      $("entity-create-backdrop").classList.remove("hidden");
+	      $("entity-name").focus();
+	    }
+	    function closeEntityCreate() {
+	      $("entity-create-backdrop").classList.add("hidden");
+	    }
+	    function openTemplates() {
+	      _fillTemplateSelect($("tpl-select"));
+	      renderTplSelectState();
+	      $("templates-backdrop").classList.remove("hidden");
+	    }
+	    function closeTemplates() {
+	      $("templates-backdrop").classList.add("hidden");
+	    }
+	    function openUserCreate() {
+	      $("user-create-message").textContent = "";
+	      $("user-create-form").classList.remove("hidden");
+	      $("user-create-done").classList.add("hidden");
+	      $("user-create-backdrop").classList.remove("hidden");
+	      $("new-user").focus();
+	    }
+	    function closeUserCreate() {
+	      $("user-create-backdrop").classList.add("hidden");
 	    }
 
 	    // ---- Manage an existing entity ----
@@ -2141,8 +2894,8 @@ def gateway_console_html() -> str:
 	    // button would 403 instead of clicking into a refusal. Create + all GETs
 	    // stay user-level, so viewing an entity's config is allowed for everyone.
 	    const ENTITY_ADMIN_CONTROLS = [
-	      "entity-advanced", "entity-state-awake", "entity-state-asleep", "entity-state-paused",
-	      "entity-loop-start", "entity-loop-stop", "entity-loop-freeze", "entity-substrate-save",
+	      "entity-advanced", "entity-state-awake", "entity-state-asleep", "entity-stop", "entity-restore",
+	      "entity-owntime-toggle", "entity-loop-freeze", "entity-substrate-save",
 	      "entity-tools-save", "entity-tools-denyall-row", "entity-prompt-save", "entity-reembed",
 	    ];
 	    function applyEntityAdminGating() {
@@ -2164,9 +2917,24 @@ def gateway_console_html() -> str:
 	        if (panel) panel.classList.toggle("hidden", id !== name);
 	      }
 	    }
+	    function _resetChatUi() {
+	      // Chat state is per-entity: leaving it across manage opens routed
+	      // words to the WRONG entity under the right header (adversary P1-4).
+	      state.chatId = "";
+	      state.chatEntity = "";
+	      const t = $("entity-chat-transcript"); if (t) t.textContent = "";
+	      _entOut("entity-chat-status", "");
+	      chatUiState();
+	    }
 	    function closeEntityManage() {
 	      state.manageName = "";
-	      $("entity-manage-section").classList.add("hidden");
+	      state.manageToken = (state.manageToken || 0) + 1; // stops the live poll
+	      _resetChatUi();
+      $("entity-manage-section").classList.add("hidden");
+      // Drill-out: restore the sections the drill-in hid (users stays
+      // admin-gated — renderAccount owns its visibility, re-applied here).
+      $("entities-list-section").classList.remove("hidden");
+      if (state.principal && state.principal.admin) $("users-section").classList.remove("hidden");
 	    }
 	    async function openEntityManage(name) {
 	      state.manageName = name;
@@ -2177,20 +2945,39 @@ def gateway_console_html() -> str:
 	      // Every loader passes the token; every DOM write checks it first.
 	      state.manageToken = (state.manageToken || 0) + 1;
 	      const token = state.manageToken;
+	      _resetChatUi();
 	      $("entity-manage-name").textContent = name;
-	      $("entity-manage-section").classList.remove("hidden");
+      $("entity-manage-section").classList.remove("hidden");
+      // Drill-in (IA adversary #2): the manage panel replaces the tab's
+      // list/users sections instead of appending below them — the scroll
+      // hunt was the complaint the old scrollIntoView bandaged.
+      $("entities-list-section").classList.add("hidden");
+      $("users-section").classList.add("hidden");
 	      applyEntityAdminGating();
 	      setEntitySubtab("overview");
 	      try { $("entity-manage-section").scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
 	      try {
 	        await Promise.all([
 	          loadEntityOverview(name, token), loadEntitySubstrate(name, token),
-	          loadEntityToolPolicy(name, token), loadEntityPrompt(name, token), loadEntityLoop(name, token),
-	          loadEntityEmbedding(name, token), loadEntityStateLine(name, token),
+	          loadEntityToolPolicy(name, token), loadEntityPrompt(name, token),
+	          loadEntityEmbedding(name, token), refreshEntityLive(name, token),
 	        ]);
 	      } catch (e) {
 	        $("entities-message").textContent = String(e.message || e);
 	      }
+	      _scheduleLivePoll(name, token);
+	    }
+	    function _scheduleLivePoll(name, token) {
+	      // Live truth poll (adversary P0-2: zero polling = the incident's
+	      // mechanism — own-time shown OFF while the process was alive). Scoped
+	      // to an OPEN manage panel: the token bump on close/switch stops the
+	      // chain, so no timer outlives its panel.
+	      if (typeof setTimeout === "undefined") return;
+	      setTimeout(async () => {
+	        if (manageStale(token) || state.manageName !== name) return;
+	        try { await refreshEntityLive(name, token); } catch {}
+	        _scheduleLivePoll(name, token);
+	      }, 5000);
 	    }
 	    function manageStale(token) {
 	      return token !== undefined && token !== state.manageToken;
@@ -2208,19 +2995,22 @@ def gateway_console_html() -> str:
 	          ["Handle", card.handle || ""],
 	          ["Born", card.born || card.created_at || ""],
 	          ["Age (days)", card.age_days != null ? String(card.age_days) : ""],
-	          ["State", (card.state && (card.state.state || card.state)) || ""],
-	          ["Mind", card.mind_substrate ? `${card.mind_substrate.provider || "?"} / ${card.mind_substrate.model || "?"}` : ""],
-	          ["Sleeps", sleep.sleep_count != null ? `${sleep.sleep_count}` : ""],
+          ["State", card.state ? `${card.state.state || card.state}${card.state.mode ? ` (${card.state.mode})` : ""}` : ""],
+          ["Mind", card.mind_substrate ? `${card.mind_substrate.provider || "?"} / ${card.mind_substrate.model || "?"}` : ""],
+          ["Sleeps", sleep.sleeps != null ? `${sleep.sleeps}` : (sleep.sleep_count != null ? `${sleep.sleep_count}` : "")],
 	        ];
-	        for (const [k, v] of rows) {
-	          if (!v) continue;
-	          const line = document.createElement("div");
-	          line.className = "entity-kv";
-	          const key = document.createElement("span"); key.className = "entity-kv-key"; key.textContent = k;
-	          const val = document.createElement("span"); val.className = "entity-kv-val"; val.textContent = String(v);
-	          line.append(key); line.append(val); box.append(line);
-	        }
-	        const moments = Array.isArray(card.moments) ? card.moments.slice(-6) : [];
+        for (const [k, v] of rows) {
+          if (!v) continue;
+          const line = document.createElement("div");
+          line.className = "entity-kv";
+          const key = document.createElement("span"); key.className = "entity-kv-key"; key.textContent = k;
+          const val = document.createElement("span"); val.className = "entity-kv-val"; val.textContent = String(v);
+          line.append(key); line.append(val); box.append(line);
+        }
+        // Cognition/working/spend render in the static live line above the
+        // card, painted by refreshEntityLive (one source, one painter — the
+        // card never re-derives state).
+        const moments = Array.isArray(card.moments) ? card.moments.slice(-6) : [];
 	        if (moments.length) {
 	          const head = document.createElement("div");
 	          head.className = "entity-kv";
@@ -2229,7 +3019,7 @@ def gateway_console_html() -> str:
 	          for (const m of moments) {
 	            const line = document.createElement("div");
 	            line.className = "entity-kv";
-	            const at = document.createElement("span"); at.className = "entity-kv-key"; at.textContent = String(m.at || "").slice(0, 16);
+	            const at = document.createElement("span"); at.className = "entity-kv-key"; at.textContent = String(m.at || "").slice(0, 16).replace("T", " ");
 	            const what = document.createElement("span"); what.className = "entity-kv-val";
 	            const reason = m.details && m.details.reason ? ` — ${m.details.reason}` : "";
 	            what.textContent = `${m.kind || "?"}${reason}`;
@@ -2316,57 +3106,213 @@ def gateway_console_html() -> str:
 	        bits.push(`home pin: ${pin.model_id || "(unpinned)"}${pin.dimension ? ` (dim ${pin.dimension})` : ""}`);
 	        bits.push(`door's resolved embedder: ${e.resolved_embedder || "(none)"}`);
 	        if (e.match === "mismatch") bits.push("MISMATCH — the home refuses vector opens until re-embedded or the route is restored");
-	        _entOut("entity-embedding-status", bits.join(" · "));
-	        // Pre-fill the verification field with the resolved embedder so the
-	        // ceremony's confirm value is typed knowingly, not guessed from a 400.
-	        if (e.resolved_embedder && !$("entity-reembed-model").value) {
-	          $("entity-reembed-model").value = e.resolved_embedder;
-	        }
-	      } catch (err) {
+        _entOut("entity-embedding-status", bits.join(" · "));
+        // NO PREFILL (disclosure adversary P0: pre-filling the verification
+        // field converts the typed ceremony into a click-through — the exact
+        // inversion of its purpose). The resolved embedder is DISPLAYED in
+        // the status line above; the operator types it knowingly.
+      } catch (err) {
 	        if (manageStale(token)) return;
 	        _entOut("entity-embedding-status", "embedding status unavailable: " + (err.message || err));
 	      }
 	    }
-	    async function loadEntityLoop(name, token) {
-	      try {
-	        const l = await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop`);
-	        if (manageStale(token)) return;
-	        const bits = [l.running ? `loop RUNNING (phase: ${l.phase || "?"})` : "loop stopped"];
-	        if (l.stop_requested) bits.push("stop pending");
-	        if (l.stopped_by) bits.push(`stopped by: ${l.stopped_by}`);
-	        if (l.note) bits.push(String(l.note));
-	        _entOut("entity-loop-status", bits.join(" — "));
-	      } catch (e) {
-	        if (manageStale(token)) return;
-	        _entOut("entity-loop-status", "loop status unavailable: " + (e.message || e));
-	      }
+	    // ---- ONE live truth painter (laurent 12:32 + adversary P0-1/P0-2/P1-1) ----
+	    // Every state-shaped pixel renders from ONE /cognition read: the phase
+	    // badge, the state buttons' pressed states, the own-time push button,
+	    // the loop line, the Overview cognition line, the Talk availability, and
+	    // the table row. No element derives state from click assumptions.
+	    function _loopWords(loop) {
+	      if (!loop || !loop.running) return "own-time loop: not running";
+	      const phase = String(loop.phase || "");
+	      if (loop.stop_requested) return "own-time loop: stopping at the next tick boundary…";
+	      if (phase === "day") return "own-time loop: TICKING (spending tokens)";
+	      return "own-time loop: alive, parked between days (quiet — not spending)";
 	    }
-	    async function loadEntityStateLine(name, token) {
+	    function _paintOwntimeButton(cog) {
+	      // ARMED ≠ IN-PHASE (semantics c1436): the button renders the GRANT;
+	      // the loop's live posture rides as secondary text; when the two axes
+	      // DISAGREE the honest render is the disagreement itself (uic's rule
+	      // — a surface that can only draw coherent states draws a lie during
+	      // exactly the incident windows).
+	      const btn = $("entity-owntime-toggle");
+	      if (!btn) return;
+	      const loop = cog.loop || {};
+	      const grant = cog.personal || {};
+	      const armed = Boolean(grant.armed);
+	      const running = Boolean(loop.running);
+	      btn.classList.remove("on-ticking", "on-parked", "stopping");
+      if (armed && running && loop.stop_requested) {
+        btn.classList.add("stopping");
+        btn.setAttribute("aria-pressed", "true");
+        btn.textContent = "Stop personal time — stopping at next boundary…";
+      } else if (armed && running && String(loop.phase || "") === "day") {
+        btn.classList.add("on-ticking");
+        btn.setAttribute("aria-pressed", "true");
+        btn.textContent = "Stop personal time (ON — ticking, spending)";
+      } else if (armed && running) {
+        btn.classList.add("on-parked");
+        btn.setAttribute("aria-pressed", "true");
+        btn.textContent = "Stop personal time (ON — parked, quiet)";
+      } else if (armed && !running) {
+        btn.classList.add("stopping");
+        btn.setAttribute("aria-pressed", "true");
+        btn.textContent = "Revoke grant (armed, loop not running)";
+      } else if (!armed && running) {
+        btn.classList.add("stopping");
+        btn.setAttribute("aria-pressed", "false");
+        btn.textContent = "loop alive, GRANT ABSENT — click Stop/Freeze to reconcile";
+      } else {
+        btn.setAttribute("aria-pressed", "false");
+        btn.textContent = "Start personal time";
+      }
+    }
+	    async function refreshEntityLive(name, token) {
+	      let cog;
 	      try {
-	        const s = await api(`/api/gateway/entities/${encodeURIComponent(name)}/state`);
-	        if (manageStale(token)) return;
-	        const bits = [`current: ${s.state || "awake"}`];
-	        if (s.reason) bits.push(`reason: ${s.reason}`);
-	        if (s.changed_at) bits.push(`since: ${String(s.changed_at).slice(0, 19)}`);
-	        if (s.warning) bits.push(String(s.warning));
-	        _entOut("entity-state-current", bits.join(" · "));
+	        cog = await api(`/api/gateway/entities/${encodeURIComponent(name)}/cognition`);
 	      } catch (e) {
 	        if (manageStale(token)) return;
-	        _entOut("entity-state-current", "state unavailable: " + (e.message || e));
+	        // Labeled failure replaces content — a silently stale rendering IS
+	        // the incident class (never keep old pixels on a failed read).
+	        _entOut("entity-cognition-line", "live state unavailable: " + (e.message || e));
+	        _entOut("entity-state-current", "live state unavailable: " + (e.message || e));
+	        _entOut("entity-loop-status", "live state unavailable: " + (e.message || e));
+	        return;
 	      }
+      if (manageStale(token)) return;
+      state._cog = cog;
+      const st = cog.state || {};
+      const loop = cog.loop || {};
+      // LIVENESS AXIS (c1559): the served derived field, binary by
+      // construction — stopped = the kill switch (state paused, promoted).
+      // `frozen` is retired from the serve; nothing here reads it.
+      const stopped = cog.liveness === "stopped";
+      // STRICT four-key phase (laurent 13:28/13:34): null = no phase active
+      // (awake, idle — the ruled machine has no idle state; the badge says
+      // the honest word instead of faking one). Stopped is an AXIS above the
+      // phase machine, deliberately NOT a phase.
+      const phase = cog.phase || null;
+      const badgeKey = stopped ? "stopped" : (phase || "none");
+      const badgeText = stopped ? "STOPPED (kill switch)" : (phase ? `phase: ${String(phase).toUpperCase()}${cog.resting ? " (resting)" : ""}` : "no phase active (idle)");
+      // The banner outranks every chip (ruled UI shape); Restore is the exit.
+      const banner = $("entity-stop-banner");
+      if (banner) banner.classList.toggle("hidden", !stopped);
+      const stopBtn = $("entity-stop");
+      if (stopBtn) stopBtn.disabled = stopped || !(state.principal && state.principal.admin);
+      // Live line: phase badge + state detail + read time.
+      const line = $("entity-live-line");
+      if (line) {
+        line.textContent = "";
+        const badge = document.createElement("span");
+        badge.className = `entity-live-badge phase-${badgeKey}`;
+        badge.textContent = badgeText;
+        line.append(badge);
+	        const stateWord = document.createElement("span");
+	        // The ruled detail line names both spellings when stopped: the
+	        // engraved key and the served axis (c1559 spelling point 3).
+	        stateWord.textContent = stopped
+	          ? "state: paused — served as liveness: stopped (the kill switch)"
+	          : `state: ${st.state || "awake"}${st.mode ? ` (${st.mode})` : ""}`;
+	        line.append(stateWord);
+	        if (st.warning) {
+	          const warn = document.createElement("span");
+	          warn.className = "entity-warn-pill";
+	          warn.textContent = String(st.warning);
+	          line.append(warn);
+	        }
+	        const at = document.createElement("span");
+	        at.className = "entity-config-hint";
+	        at.textContent = `checked ${new Date().toISOString().slice(11, 19)}Z`;
+	        line.append(at);
+	      }
+	      // State buttons: the current state renders pressed + disabled (an
+	      // idle re-click rewrites the state file + lands a marker for nothing).
+	      // While STOPPED the whole radio disables — Restore is the one exit
+	      // (the existing wake verb, lands awake unconditionally).
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      const stateBtns = { awake: ["entity-state-awake", "Wake"], asleep: ["entity-state-asleep", "Sleep"] };
+      for (const key of Object.keys(stateBtns)) {
+        const b = $(stateBtns[key][0]);
+        if (!b) continue;
+        const current = String(st.state || "awake") === key;
+        b.classList.toggle("pressed", current);
+        b.setAttribute("aria-checked", current ? "true" : "false"); // radio semantics: assistive tech reads the current state
+        // The words say it too (P1-5: fill alone was read inverted once).
+        b.textContent = stateBtns[key][1] + (current ? " · current" : "");
+        b.disabled = current || !admin || stopped;
+      }
+	      const stBits = [`current: ${st.state || "awake"}`];
+	      if (st.reason) stBits.push(`reason: ${st.reason}`);
+	      if (st.changed_at) stBits.push(`since: ${String(st.changed_at).slice(0, 19)}`);
+	      _entOut("entity-state-current", stBits.join(" · "));
+	      // Own-time push button + honest loop words + the grant axis.
+	      _paintOwntimeButton(cog);
+	      const grant = cog.personal || {};
+	      const loopBits = [_loopWords(loop)];
+	      if (loop.pid) loopBits.push(`pid ${loop.pid}`);
+	      if (loop.stopped_by) loopBits.push(`stopped by: ${loop.stopped_by}`);
+	      if (loop.note) loopBits.push(String(loop.note));
+	      if (grant.armed) {
+	        const g = [`grant: ARMED (${grant.mode || "?"}`];
+	        if (grant.expires_at) g.push(`until ${String(grant.expires_at).slice(0, 16)}Z`);
+	        if (grant.granted_by) g.push(`by ${grant.granted_by}`);
+	        loopBits.push(g.join(", ") + ")");
+	      } else if (grant.mode === undefined && grant.source === "not-recorded") {
+	        loopBits.push(String(grant.note || "grant axis unavailable"));
+	      } else {
+	        loopBits.push("grant: not armed (personal is off by default)");
+	      }
+	      _entOut("entity-loop-status", loopBits.join(" — "));
+      // Overview cognition line (working + billed spend + labeled gaps).
+      const spend = (cog.spend && cog.spend.lifetime) || {};
+      const cogBits = [cog.working ? "WORKING" : "idle", phase ? `phase: ${phase}` : "no phase"];
+      if (cog.settling) cogBits.push("settling (state written, loop catching up)");
+      if (cog.visit && cog.visit.open) cogBits.push(`visit: turn ${cog.visit.turn_n || 0} (${cog.visit.status || "?"})`);
+      cogBits.push(`spend: ${spend.tokens_total || 0} tk / ${spend.llm_calls || 0} calls`);
+      const lv = cog.spend && cog.spend.live_visit;
+      if (lv) cogBits.push(`this visit: ${lv.tokens_total || 0} tk`);
+      for (const w of (cog.warnings || [])) cogBits.push(String(w));
+      _entOut("entity-cognition-line", cogBits.join(" · "));
+      // Talk availability: surface the door's refusal BEFORE the click.
+      const chatOpenBtn = $("entity-chat-open");
+      if (chatOpenBtn && !state.chatId) {
+        chatOpenBtn.disabled = stopped;
+        if (stopped) _entOut("entity-chat-status", "stopped (the kill switch) — every door refuses until an admin restores.");
+      }
+      // Table row State cell for this entity repaints from the same read —
+      // as a badge (same tone map as the list render, phase appended).
+      const cell = $(`entity-state-cell-${name}`);
+      if (cell) {
+        cell.textContent = "";
+        const b = document.createElement("span");
+        const cs = st.state || "awake";
+        b.className = "entity-live-badge " + (stopped ? "phase-stopped" : (phase ? `phase-${phase}` : (cs === "asleep" ? "phase-sleep" : "phase-none")));
+        b.textContent = stopped ? "STOPPED" : `${cs}${phase ? ` · ${phase}` : ""}`;
+        cell.append(b);
+      }
 	    }
 	    async function setEntityState(target) {
 	      const name = state.manageName; if (!name) return;
 	      const reason = ($("entity-state-reason").value || "").trim();
 	      const dream = target === "asleep" && $("entity-state-dream").checked;
 	      if (target === "paused") {
-	        // Pause is the hard freeze: it tears down any open visit WITHOUT
-	        // reflection. Never one silent click.
+	        // The STOP act (liveness axis, c1559): the ruled confirm discloses
+	        // the hard freeze in the ruled words. Never one silent click.
 	        const go = await confirmAction({
-	          title: `Pause ${name}?`,
-	          message: "Pause is a hard freeze: any open visit is torn down WITHOUT its reflection pass (the look-back runs at the next open), and the door refuses visits until woken. Use Sleep for a graceful close.",
-	          confirmLabel: "Pause",
+	          title: `Stop ${name}? (kill switch)`,
+	          message: "Stop is the kill switch — a hard freeze: in-flight work halts without reflection; every door refuses and every process gate blocks until an admin restores. For graceful rest, use sleep.",
+	          confirmLabel: "Stop",
 	          danger: true,
+	        });
+	        if (!go) return;
+	      }
+	      if (target === "asleep") {
+	        // Sleep states its side effect too (adversary P2-3): an open visit
+	        // is closed (with reflection) by this act.
+	        const go = await confirmAction({
+	          title: `Put ${name} to sleep?`,
+	          message: "Sleep closes any open visit gracefully (its reflection runs), then opens the consolidation window — the door refuses summons until woken." + (dream ? " The dream pass runs inside the window." : ""),
+	          confirmLabel: "Sleep",
 	        });
 	        if (!go) return;
 	      }
@@ -2375,35 +3321,79 @@ def gateway_console_html() -> str:
 	          method: "POST", body: JSON.stringify({ state: target, reason, dream }),
 	        });
 	        const bits = [`state → ${target}${dream ? " (+dream)" : ""}`];
-	        if (r && r.closed_visit) bits.push("open visit closed");
-	        if (r && r.teardown_failed) bits.push(`TEARDOWN FAILED: ${r.teardown_failed}`);
+	        if (r && (r.closed_visit || r.closed_visit_run)) {
+	          bits.push("open visit closed");
+	          _resetChatUi(); // the server tore the session down; stale Send would 4xx
+	        }
+	        if (r && r.closed_visit_run && r.closed_visit_run.teardown_failed) {
+	          bits.push(`TEARDOWN FAILED: ${r.closed_visit_run.error || "?"}`);
+	        }
 	        _entOut("entity-state-out", bits.join(" — "));
-	        await Promise.all([loadEntityOverview(name), loadEntityLoop(name), loadEntityStateLine(name), loadEntities()]);
+	        await Promise.all([loadEntityOverview(name), refreshEntityLive(name), loadEntities()]);
 	      } catch (e) { _entOut("entity-state-out", String(e.message || e)); }
 	    }
-	    async function entityLoopStart() {
+	    async function entityOwntimeToggle() {
+	      // ONE push button over TWO explicit acts, both named in the confirm
+	      // (never a side effect): released → ARM the grant + start the loop;
+	      // pressed → stop the loop + REVOKE the grant. Semantics from the
+	      // RENDERED server truth; the response never paints the button — only
+	      // the next live read does.
 	      const name = state.manageName; if (!name) return;
-	      const body = {};
-	      const tick = parseFloat($("entity-loop-tick").value);
-	      const ticks = parseInt($("entity-loop-ticks").value, 10);
-	      const rest = parseFloat($("entity-loop-rest").value);
-	      if (!Number.isNaN(tick)) body.tick_seconds = tick;
-	      if (!Number.isNaN(ticks)) body.ticks_per_day = ticks;
-	      if (!Number.isNaN(rest)) body.rest_minutes = rest;
-	      const go = await confirmAction({
-	        title: `Start ${name}'s own time?`,
-	        message: `The loop runs the entity's own cognition unattended on its substrate — this spends real tokens until stopped. Tick ${body.tick_seconds ?? 20}s, ${body.ticks_per_day ?? 8} ticks per day window, rest ${body.rest_minutes ?? 30}min.`,
-	        confirmLabel: "Start loop",
+	      const cog = state._cog || {};
+	      const running = Boolean(cog.loop && cog.loop.running);
+	      const armed = Boolean(cog.personal && cog.personal.armed);
+	      const btn = $("entity-owntime-toggle");
+	      if (btn) btn.disabled = true;
+	      const put = (mode, expires) => api(`/api/gateway/entities/${encodeURIComponent(name)}/personal-grant`, {
+	        method: "PUT", body: JSON.stringify(expires ? { mode, expires_at: expires } : { mode }),
 	      });
-	      if (!go) return;
-	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/start`, { method: "POST", body: JSON.stringify(body) }); _entOut("entity-loop-out", "loop start requested."); await loadEntityLoop(name); }
-	      catch (e) { _entOut("entity-loop-out", String(e.message || e)); }
-	    }
-	    async function entityLoopStop() {
-	      const name = state.manageName; if (!name) return;
-	      const reason = ($("entity-state-reason").value || "").trim();
-	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/stop`, { method: "POST", body: JSON.stringify({ mode: "graceful", reason }) }); _entOut("entity-loop-out", "graceful stop requested — honored at the loop's next boundary."); await loadEntityLoop(name); }
-	      catch (e) { _entOut("entity-loop-out", String(e.message || e)); }
+	      try {
+	        if (armed || running) {
+	          const acts = [];
+	          if (running) acts.push("the loop stops gracefully at its next tick boundary (the running thought completes whole)");
+	          if (armed) acts.push("the personal grant is REVOKED (mode: disabled — re-arming is a new operator act)");
+	          const go = await confirmAction({
+	            title: `Turn ${name}'s own time OFF?`,
+	            message: "Two acts, both recorded: " + acts.join("; ") + ". Use Freeze only for emergencies.",
+	            confirmLabel: "Turn own time off",
+	          });
+	          if (!go) return;
+	          const reason = ($("entity-state-reason").value || "").trim();
+	          if (running) {
+	            await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/stop`, { method: "POST", body: JSON.stringify({ mode: "graceful", reason }) });
+	          }
+	          if (armed) await put("disabled");
+	          _entOut("entity-loop-out", "own time turned off — stop honored at the next boundary; grant revoked.");
+	        } else {
+	          const body = {};
+	          const tick = parseFloat($("entity-loop-tick").value);
+	          const ticks = parseInt($("entity-loop-ticks").value, 10);
+	          const rest = parseFloat($("entity-loop-rest").value);
+	          if (!Number.isNaN(tick)) body.tick_seconds = tick;
+	          if (!Number.isNaN(ticks)) body.ticks_per_day = ticks;
+	          if (!Number.isNaN(rest)) body.rest_minutes = rest;
+	          const hours = parseFloat($("entity-grant-hours").value);
+	          const timed = !Number.isNaN(hours) && hours > 0;
+	          const expires = timed ? new Date(Date.now() + hours * 3600 * 1000).toISOString() : null;
+	          const go = await confirmAction({
+	            title: `Turn ${name}'s own time ON?`,
+	            message: `Two acts, both recorded: the personal grant is ARMED (${timed ? `timer, expires in ${hours}h` : "until revoked"}, granted by you), then the loop starts — the entity's own cognition runs unattended on its substrate and spends real tokens until stopped. Tick ${body.tick_seconds ?? 20}s, ${body.ticks_per_day ?? 8} ticks/day, rest ${body.rest_minutes ?? 30}min. Wake and grant stay separate acts — this button never wakes an asleep entity.`,
+	            confirmLabel: "Arm + start own time",
+	          });
+	          if (!go) return;
+	          await put(timed ? "timer" : "until_revoked", expires);
+	          await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/start`, { method: "POST", body: JSON.stringify(body) });
+	          _entOut("entity-loop-out", "own time armed + started.");
+	        }
+	      } catch (e) {
+	        // The B2 refusal contract: {reason_code, message, loop} — speak the
+	        // message verbatim; the live repaint below adopts the real status,
+	        // so the click that revealed staleness paints the truth.
+	        _entOut("entity-loop-out", "Own time: " + String((e.detail && e.detail.message) || e.message || e));
+	      } finally {
+	        if (btn) btn.disabled = false;
+	        try { await refreshEntityLive(name); } catch {}
+	      }
 	    }
 	    async function entityLoopFreeze() {
 	      const name = state.manageName; if (!name) return;
@@ -2415,7 +3405,12 @@ def gateway_console_html() -> str:
 	        danger: true,
 	      });
 	      if (!go) return;
-	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/stop`, { method: "POST", body: JSON.stringify({ mode: "freeze", reason: reason || "console emergency freeze" }) }); _entOut("entity-loop-out", "FROZEN — entity paused; wake requires an admin."); await Promise.all([loadEntityLoop(name), loadEntityStateLine(name), loadEntities()]); }
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/stop`, { method: "POST", body: JSON.stringify({ mode: "freeze", reason: reason || "console emergency freeze" }) });
+	        _entOut("entity-loop-out", "loop killed — entity STOPPED (liveness axis); Restore requires an admin.");
+	        _resetChatUi(); // freeze tears down any open visit without reflection
+	        await Promise.all([loadEntityOverview(name), refreshEntityLive(name), loadEntities()]);
+	      }
 	      catch (e) { _entOut("entity-loop-out", String(e.message || e)); }
 	    }
 	    async function entitySubstrateSave() {
@@ -2483,19 +3478,24 @@ def gateway_console_html() -> str:
 	    // session per home server-side; the console holds one chat_id at a time.
 	    state.chatId = "";
 	    state.chatEntity = "";
-	    function chatLine(who, text) {
-	      const box = $("entity-chat-transcript");
-	      const line = document.createElement("div");
-	      line.className = "entity-chat-line" + (who === "you" ? " entity-chat-you" : "");
-	      const tag = document.createElement("span");
-	      tag.className = "entity-kv-key";
-	      tag.textContent = who;
-	      const body = document.createElement("span");
-	      body.className = "entity-kv-val";
-	      body.textContent = text;
-	      line.append(tag); line.append(body); box.append(line);
-	      try { box.scrollTop = box.scrollHeight; } catch {}
-	    }
+    function chatLine(who, text) {
+      // The shared abstractuic dialogue look (pc-chat-item) — same classes
+      // the sandbox speaks, so every conversation on the console matches.
+      const box = $("entity-chat-transcript");
+      const line = document.createElement("div");
+      const you = who === "you";
+      line.className = "entity-chat-line" + (you ? " entity-chat-you" : "");
+      const bubble = document.createElement("div");
+      bubble.className = `pc-chat-item pc-chat-item--${you ? "user" : "assistant"} entity-chat-bubble`;
+      const tag = document.createElement("div");
+      tag.className = "entity-kv-key";
+      tag.textContent = who;
+      const body = document.createElement("div");
+      body.className = "entity-kv-val";
+      body.textContent = text;
+      bubble.append(tag); bubble.append(body); line.append(bubble); box.append(line);
+      try { box.scrollTop = box.scrollHeight; } catch {}
+    }
 	    function chatUiState() {
 	      const open = Boolean(state.chatId);
 	      $("entity-chat-open").classList.toggle("hidden", open);
@@ -2516,6 +3516,7 @@ def gateway_console_html() -> str:
 	        if (Array.isArray(r.warnings) && r.warnings.length) bits.push(r.warnings.join(" | "));
 	        _entOut("entity-chat-status", bits.join(" — "));
 	        if (r.salvage && r.salvage.reply) chatLine(name, `(salvaged look-back) ${r.salvage.reply}`);
+	        try { await refreshEntityLive(name); } catch {} // yield state changed
 	      } catch (e) {
 	        _entOut("entity-chat-status", String(e.message || e));
 	      } finally {
@@ -2555,13 +3556,26 @@ def gateway_console_html() -> str:
 	      try {
 	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(state.chatId)}/close`, { method: "POST", body: JSON.stringify({ reflect: true }) });
 	        _entOut("entity-chat-status", "visit closed — reflection ran, the loop (if yielded) wakes.");
-	      } catch (e) {
-	        _entOut("entity-chat-status", String(e.message || e));
-	      } finally {
 	        state.chatId = "";
 	        state.chatEntity = "";
+	      } catch (e) {
+	        // Clear only when the server says the session is already gone (a
+	        // 4xx not-open) — a FAILED close must keep the session marked open
+	        // with the retry affordance (adversary P2-2: a silent clear renders
+	        // "Open visit" over a live server session, and the next loop start
+	        // 409s against the invisible visit).
+	        if (e.status && e.status >= 400 && e.status < 500) {
+	          state.chatId = "";
+	          state.chatEntity = "";
+	          _entOut("entity-chat-status", "session already closed server-side: " + String(e.message || e));
+	        } else {
+	          _entOut("entity-chat-status", "close FAILED — the visit is still open; retry: " + String(e.message || e));
+	        }
+	      } finally {
 	        $("entity-chat-close").disabled = false;
 	        chatUiState();
+	        const nm = state.manageName;
+	        if (nm) { try { await refreshEntityLive(nm); } catch {} }
 	      }
 	    }
 
@@ -2569,6 +3583,245 @@ def gateway_console_html() -> str:
 	    // Wires the console over runtime's existing verbs (list_runs + the
 	    // /commands door: cancel, inject_guidance/steer). Admin-gated section.
 	    const _RUN_TERMINAL = new Set(["completed", "failed", "cancelled"]);
+	    // ---- Data & Caches (operator priority 18:19, c1580 1b): the ONE
+	    // management view over the machine data-home registry. Sizes are live;
+	    // purge shows a dry-run accounting first; protected rows render the
+	    // owner's refusal VERBATIM instead of a grayed mystery button.
+	    function _fmtBytes(n) {
+	      if (n === null || n === undefined) return "?";
+	      if (n >= 1e9) return (n / 1e9).toFixed(2) + " GB";
+	      if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB";
+	      if (n >= 1e3) return (n / 1e3).toFixed(1) + " KB";
+	      return String(n) + " B";
+	    }
+	    // ---- Runtimes-first inventory (operator order 12:24): master list of
+	    // every execution plane, lazy drill-in for its runs/sessions. ----
+	    async function loadRuntimes() {
+	      const body = $("runtimes-table");
+	      if (!body) return;
+	      // Loading row (usability adversary P0-2: a header-only table reads as
+	      // BROKEN while the size walk runs — say what is happening).
+	      body.textContent = "";
+	      const loadingTr = document.createElement("tr");
+	      const loadingTd = document.createElement("td");
+	      loadingTd.colSpan = 6;
+	      loadingTd.className = "empty";
+	      loadingTd.textContent = "Scanning execution planes…";
+	      loadingTr.append(loadingTd);
+	      body.append(loadingTr);
+	      try {
+	        const data = await api("/api/gateway/admin/runtimes");
+	        const rows = Array.isArray(data.runtimes) ? data.runtimes : [];
+	        $("runtimes-message").textContent = (data.warnings || []).join(" · ");
+	        body.textContent = "";
+	        for (const r of rows) {
+	          const tr = document.createElement("tr");
+	          if (r.error) {
+	            const td = document.createElement("td");
+	            td.colSpan = 6;
+	            td.className = "message";
+	            td.textContent = `${r.runtime_id || "?"}: ${r.error}`;
+	            tr.append(td);
+	            body.append(tr);
+	            continue;
+	          }
+	          const owners = (r.owners || []).map((o) => o.user_id + ((o.enabled === false) ? " (disabled)" : "")).join(", ");
+	          const name = document.createElement("td");
+	          name.innerHTML = `<code>${esc(r.runtime_id || "")}</code>`;
+	          tr.append(name);
+	          const kind = document.createElement("td");
+	          kind.textContent = r.kind || "";
+	          tr.append(kind);
+	          const owner = document.createElement("td");
+	          owner.textContent = owners || (r.materialized === false ? "(not materialized yet)" : "");
+	          tr.append(owner);
+	          // State: entities carry state+liveness; user/default planes don't.
+	          const stTd = document.createElement("td");
+	          if (r.kind === "entity") {
+	            const b = document.createElement("span");
+	            const stopped = r.liveness === "stopped";
+	            b.className = "entity-live-badge " + (stopped ? "phase-stopped" : (r.state === "asleep" ? "phase-sleep" : "phase-none"));
+	            b.textContent = stopped ? "STOPPED" : (r.state || "awake");
+	            stTd.append(b);
+	          } else {
+	            stTd.textContent = "—";
+	          }
+	          tr.append(stTd);
+	          const size = document.createElement("td");
+	          size.textContent = (typeof r.size_bytes === "number") ? _fmtBytes(r.size_bytes) : "";
+	          if (r.size_note) size.title = r.size_note;
+	          tr.append(size);
+	          const actions = document.createElement("td");
+	          const inspect = document.createElement("button");
+	          inspect.className = "secondary";
+	          inspect.innerHTML = `<span class="button-icon" aria-hidden="true">▷</span><span>Runs</span>`;
+	          inspect.title = "Show the most recent runs and sessions on this runtime";
+	          inspect.setAttribute("aria-label", `Inspect runs on ${r.runtime_id}`);
+	          inspect.onclick = () => inspectRuntime(r);
+	          actions.append(inspect);
+	          if (r.note) {
+	            const note = document.createElement("span");
+	            note.className = "muted";
+	            note.textContent = " " + r.note;
+	            actions.append(note);
+	          }
+	          tr.append(actions);
+	          body.append(tr);
+	        }
+	        if (!rows.length) {
+	          const tr = document.createElement("tr");
+	          const td = document.createElement("td");
+	          td.colSpan = 6;
+	          td.className = "empty";
+	          td.textContent = "No runtimes found.";
+	          tr.append(td);
+	          body.append(tr);
+	        }
+	      } catch (e) {
+	        // The failure lands IN the table (one error surface, entities-row
+	        // pattern) — a header-only table must never be the failure render.
+	        body.textContent = "";
+	        const tr = document.createElement("tr");
+	        const td = document.createElement("td");
+	        td.colSpan = 6;
+	        td.className = "message error";
+	        td.textContent = "Runtime inventory unavailable: " + (e.message || e);
+	        tr.append(td);
+	        body.append(tr);
+	        $("runtimes-message").textContent = "";
+	      }
+	    }
+	    async function inspectRuntime(r) {
+	      const section = $("runtime-detail-section");
+	      const body = $("runtime-detail-runs");
+	      $("runtime-detail-name").textContent = r.runtime_id || "";
+	      $("runtime-detail-sub").textContent =
+	        r.kind === "entity"
+	          ? `${r.label || r.entity} — the entity's own plane (visits, workflows, reflections run here).`
+	          : r.kind === "user"
+	            ? `${r.label} — this user's plane (their runs and flows live here).`
+	            : "The gateway default runtime (admin plane).";
+	      $("runtime-detail-message").textContent = "";
+	      body.textContent = "";
+	      section.classList.remove("hidden");
+	      try {
+	        const q = `/api/gateway/admin/runtimes/${encodeURIComponent(r.kind)}/${encodeURIComponent(r.tenant_id || "default")}/${encodeURIComponent(r.runtime_id)}/runs?limit=50`;
+	        const data = await api(q);
+	        const items = Array.isArray(data.items) ? data.items : [];
+	        const seen = new Set();
+	        for (const it of items) {
+	          const tr = document.createElement("tr");
+	          const cells = [
+	            String(it.run_id || "").slice(0, 8),
+	            it.workflow_id || "",
+	            it.status || "",
+	            it.session_id || "",
+	            String(it.updated_at || it.created_at || "").slice(0, 19),
+	          ];
+	          for (const c of cells) {
+	            const td = document.createElement("td");
+	            td.textContent = String(c);
+	            tr.append(td);
+	          }
+	          if (it.session_id) seen.add(it.session_id);
+	          body.append(tr);
+	        }
+	        if (!items.length) {
+	          const tr = document.createElement("tr");
+	          const td = document.createElement("td");
+	          td.colSpan = 5;
+	          td.className = "empty";
+	          td.textContent = "No runs on this runtime yet.";
+	          tr.append(td);
+	          body.append(tr);
+	        } else {
+	          $("runtime-detail-message").textContent = `${items.length} recent run${items.length === 1 ? "" : "s"} · ${seen.size} session${seen.size === 1 ? "" : "s"}`;
+	        }
+	      } catch (e) {
+	        $("runtime-detail-message").textContent = String((e && e.message) || e);
+	      }
+	    }
+	    async function loadDataHomes() {
+	      const body = $("data-homes-table");
+	      if (!body) return;
+	      try {
+	        const data = await api("/api/gateway/admin/data-homes");
+	        const rows = Array.isArray(data.homes) ? data.homes : [];
+	        $("data-homes-message").textContent = (data.warnings || []).join(" · ");
+	        body.textContent = "";
+	        for (const h of rows) {
+	          const tr = document.createElement("tr");
+	          for (const cell of [h.name || "", h.kind || "", _fmtBytes(h.size_bytes), h.owner || ""]) {
+	            const td = document.createElement("td");
+	            td.textContent = String(cell);
+	            tr.append(td);
+	          }
+	          const pol = document.createElement("td");
+	          const pill = document.createElement("span");
+	          pill.className = h.safe_to_purge ? "entity-live-badge phase-none" : "entity-warn-pill";
+	          pill.textContent = h.safe_to_purge ? "purgeable" : "protected";
+	          pill.title = h.description || "";
+	          pol.append(pill);
+	          tr.append(pol);
+	          const actions = document.createElement("td");
+	          if (h.safe_to_purge) {
+	            // Danger class, not secondary (usability adversary P1-5): this
+	            // permanently deletes files — same visual weight as every other
+	            // destructive act.
+	            const btn = document.createElement("button");
+	            btn.className = "danger";
+	            btn.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Purge…</span>`;
+	            btn.title = "Delete the CONTENTS of this data home — a dry-run accounting is shown first";
+	            btn.setAttribute("aria-label", `Purge ${h.name}`);
+	            btn.onclick = () => purgeDataHome(h.name);
+	            actions.append(btn);
+	          } else {
+	            const note = document.createElement("span");
+	            note.className = "muted";
+	            note.textContent = "owner-protected";
+	            note.title = h.description || "the owner declared safe_to_purge=false";
+	            actions.append(note);
+	          }
+	          tr.append(actions);
+	          body.append(tr);
+	        }
+	        if (!rows.length) {
+	          const tr = document.createElement("tr");
+	          const td = document.createElement("td");
+	          td.colSpan = 6;
+	          td.className = "empty";
+	          td.textContent = "No registered data homes yet.";
+	          tr.append(td);
+	          body.append(tr);
+	        }
+	      } catch (e) {
+	        $("data-homes-message").textContent = "Data homes unavailable: " + (e.message || e);
+	      }
+	    }
+	    async function purgeDataHome(name) {
+	      const msg = $("data-homes-message");
+	      try {
+	        // Dry-run first: the confirm dialog shows the REAL accounting.
+	        const dry = await api("/api/gateway/admin/data-homes/purge", {
+	          method: "POST", body: JSON.stringify({ name, dry_run: true }),
+	        });
+	        const go = await confirmAction({
+	          title: `Purge ${name}?`,
+	          message: `This deletes the CONTENTS of ${name}: ${dry.files_deleted} files, ${_fmtBytes(dry.bytes_freed)} freed. The directory itself and its registration survive. This cannot be undone.`,
+	          confirmLabel: "Purge",
+	        });
+	        if (!go) { msg.textContent = "Cancelled."; return; }
+	        const done = await api("/api/gateway/admin/data-homes/purge", {
+	          method: "POST", body: JSON.stringify({ name, confirm_name: name }),
+	        });
+	        msg.textContent = `Purged ${name}: ${done.files_deleted} files, ${_fmtBytes(done.bytes_freed)} freed` + ((done.errors || []).length ? ` — errors: ${done.errors.join("; ")}` : "");
+	        await loadDataHomes();
+	      } catch (e) {
+	        // Registry refusals arrive verbatim (409 detail) — render them.
+	        msg.textContent = String((e && e.message) || e);
+	      }
+	    }
+
 	    async function loadRuns() {
 	      const body = $("runs-table");
 	      if (!body) return;
@@ -2678,13 +3931,28 @@ def gateway_console_html() -> str:
       const text = await res.text();
       let data = {};
       try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
-      if (!res.ok) throw new Error(data.detail || data.reason_code || `HTTP ${res.status}`);
+      if (!res.ok) {
+        // Object details (the B2 refusal contract: {reason_code, message,
+        // loop}) must never stringify to [object Object] — the one moment
+        // the operator needs the truth is the refusal (adversary P0-3).
+        const detail = data.detail;
+        let msg;
+        if (detail && typeof detail === "object") msg = detail.message || detail.reason_code || JSON.stringify(detail);
+        else msg = detail || data.reason_code || `HTTP ${res.status}`;
+        const err = new Error(String(msg));
+        if (detail && typeof detail === "object") err.detail = detail;
+        err.status = res.status;
+        throw err;
+      }
       return data;
     }
 	    function setStatus(ok, text) {
 	      $("status-dot").className = `dot ${ok ? "ok" : ""}`;
 	      $("status-text").textContent = text;
 	      $("sign-out").classList.toggle("hidden", !ok);
+	      // Signed out = the assistant has no session to run with; close the
+	      // drawer so a stale conversation doesn't sit over the login screen.
+	      if (!ok && typeof toggleAssistant === "function" && assistantState.open) toggleAssistant(false);
 	    }
 	    function setLoginStatus(label, tone = "warn", source = "token: missing") {
 	      $("login-status").textContent = label;
@@ -2700,10 +3968,21 @@ def gateway_console_html() -> str:
       $("confirm-ok").textContent = confirmLabel;
       $("confirm-ok").className = danger ? "danger" : "";
       $("confirm-backdrop").classList.remove("hidden");
+      // Keyboard path (usability adversary P1-3): Escape cancels; Enter
+      // confirms ONLY non-danger acts — destructive confirmation stays a
+      // deliberate click. Focus lands on Cancel (the safe default).
+      state.confirmDanger = Boolean(danger);
+      document.onkeydown = (event) => {
+        if (!state.confirmResolve) return;
+        if (event.key === "Escape") { event.preventDefault(); finishConfirm(false); }
+        else if (event.key === "Enter" && !state.confirmDanger) { event.preventDefault(); finishConfirm(true); }
+      };
+      try { $("confirm-cancel").focus(); } catch {}
       return new Promise((resolve) => { state.confirmResolve = resolve; });
     }
     function finishConfirm(value) {
       $("confirm-backdrop").classList.add("hidden");
+      document.onkeydown = null;
       if (state.confirmResolve) state.confirmResolve(Boolean(value));
       state.confirmResolve = null;
     }
@@ -3777,6 +5056,8 @@ def gateway_console_html() -> str:
 	      state.principal = p || null;
 		      if (!p) {
 		        document.body.classList.remove("signed-in");
+		        $("page-title").textContent = "AbstractGateway Console";
+		        $("page-subtitle").textContent = "Users & summoned entities, runtimes, providers, and multimodal capabilities";
 		        $("account").textContent = "No active session.";
 	        $("users-section").classList.add("hidden");
 	        $("runtime-reservations-section").classList.add("hidden");
@@ -3790,10 +5071,20 @@ def gateway_console_html() -> str:
 	        <span><span class="muted">Runtime</span> <code>${esc(p.tenant_id)}/${esc(p.runtime_id || p.user_id)}</code></span>
 	        <span><span class="muted">Roles</span> ${(p.roles || []).map((role) => `<span class="badge">${esc(role)}</span>`).join(" ") || '<span class="badge">none</span>'}</span>
 	      `;
-	      $("users-section").classList.toggle("hidden", !p.admin);
-	      $("runtime-reservations-section").classList.toggle("hidden", !p.admin);
-	      $("runs-section").classList.toggle("hidden", !p.admin);
-	      applyEntityAdminGating();
+      // The drill-in (open manage panel) supersedes the admin toggle for
+      // users-section — a background refresh must not re-show it under
+      // the manage view.
+      $("users-section").classList.toggle("hidden", !p.admin || Boolean(state.manageName));
+      $("runtimes-section").classList.toggle("hidden", !p.admin);
+      $("runtime-reservations-section").classList.toggle("hidden", !p.admin);
+      $("runs-section").classList.toggle("hidden", !p.admin);
+      $("data-homes-section").classList.toggle("hidden", !p.admin);
+      // Both Runtimes sections are admin-gated, so for a non-admin the tab
+      // would render EMPTY (IA adversary) — hide the tab itself and fold a
+      // restored runtimes selection back to the first tab.
+      $("tab-button-runtimes").classList.toggle("hidden", !p.admin);
+      if (!p.admin && state.activeTab === "runtimes") setActiveTab("users");
+      applyEntityAdminGating();
       $("defaults-scope").textContent = p.admin
         ? "Editing as admin changes the Gateway multimodal capability defaults. Users inherit these unless they set their own runtime defaults."
         : "Editing here changes your runtime multimodal capability defaults. Unset routes inherit the Gateway defaults.";
@@ -3804,28 +5095,52 @@ def gateway_console_html() -> str:
     function renderUsers(users) {
       const tbody = $("users-table");
       tbody.textContent = "";
-      if (!users || !users.length) {
+      // Entity principals are NOT users (operator 12:24: "you list both
+      // users and entities in users... terrible design") — they live in the
+      // entities roster; here they only get an honest one-line count.
+      const all = users || [];
+      const humans = all.filter((u) => !((u.roles || []).includes("entity")));
+      const entityCount = all.length - humans.length;
+      const note = $("users-entity-note");
+      if (note) {
+        note.classList.toggle("hidden", entityCount === 0);
+        note.textContent = entityCount
+          ? `${entityCount} entity principal${entityCount === 1 ? "" : "s"} also hold${entityCount === 1 ? "s" : ""} a door credential — managed in Summoned entities below, never here.`
+          : "";
+      }
+      if (!humans.length) {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td colspan="7" class="empty">No users registered.</td>`;
+        tr.innerHTML = `<td colspan="6" class="empty">No users registered.</td>`;
         tbody.append(tr);
         return;
       }
-      for (const u of users || []) {
+      for (const u of humans) {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${esc(u.tenant_id)}</td><td>${esc(u.user_id)}</td><td>${esc(u.email || "")}</td><td>${esc(u.runtime_id || u.user_id)}</td><td>${esc((u.roles || []).join(", "))}</td><td>${u.enabled ? "enabled" : "disabled"}</td>`;
+        // Tenant is demoted (single-tenant installs only ever have
+        // "default"): it renders as a prefix ONLY when it says something.
+        const shownUser = (u.tenant_id && u.tenant_id !== "default") ? `${u.tenant_id}/${u.user_id}` : u.user_id;
+        tr.innerHTML = `<td>${esc(shownUser)}</td><td>${esc(u.email || "—")}</td><td>${esc(u.runtime_id || u.user_id)}</td><td>${esc((u.roles || []).join(", "))}</td><td><span class="state-pill ${u.enabled ? "ok" : "off"}">${u.enabled ? "enabled" : "disabled"}</span></td>`;
         const actions = document.createElement("td");
         actions.className = "actions";
         const rotate = document.createElement("button");
         rotate.innerHTML = `<span class="button-icon" aria-hidden="true">↻</span><span>Rotate</span>`;
         rotate.className = "secondary";
+        rotate.title = "Rotate this user's bearer token — the old token stops working immediately; the new one is shown once";
+        rotate.setAttribute("aria-label", `Rotate token for ${u.user_id}`);
         rotate.onclick = () => rotateUser(u);
         const toggle = document.createElement("button");
-        toggle.innerHTML = `<span class="button-icon" aria-hidden="true">${u.enabled ? "×" : "✓"}</span><span>${u.enabled ? "Disable" : "Enable"}</span>`;
+        toggle.innerHTML = `<span class="button-icon" aria-hidden="true">${u.enabled ? "⏸" : "✓"}</span><span>${u.enabled ? "Disable" : "Enable"}</span>`;
         toggle.className = "secondary";
+        toggle.title = u.enabled
+          ? "Disable sign-in for this user (reversible — the account and its data stay)"
+          : "Re-enable sign-in for this user";
+        toggle.setAttribute("aria-label", `${u.enabled ? "Disable" : "Enable"} ${u.user_id}`);
         toggle.onclick = () => updateUser(u, { enabled: !u.enabled });
         const del = document.createElement("button");
         del.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Delete</span>`;
         del.className = "danger";
+        del.title = "Delete this account and its token — the runtime data is retained and stays reserved (see Retained runtimes)";
+        del.setAttribute("aria-label", `Delete ${u.user_id}`);
         del.onclick = () => deleteUser(u);
         actions.append(rotate, toggle, del);
         tr.append(actions);
@@ -3899,14 +5214,21 @@ def gateway_console_html() -> str:
 	        `;
 	        const actions = document.createElement("td");
 	        actions.className = "actions";
-	        const configure = document.createElement("button");
-	        configure.className = "secondary";
-	        configure.disabled = defaultRowReadOnly(row);
-	        configure.innerHTML = `<span class="button-icon" aria-hidden="true">${configured && !defaultRowReadOnly(row) ? "✎" : "+"}</span><span>${esc(defaultRowActionLabel(row))}</span>`;
-	        configure.onclick = () => {
-	          if (!defaultRowReadOnly(row)) openDefaultModal(row);
-	        };
-	        actions.append(configure);
+	        if (defaultRowReadOnly(row)) {
+	          // Status is not a verb (usability adversary P1-9): a disabled
+	          // button dressed as an action duplicated the STATUS pill; a
+	          // covered/linked route gets muted words, not fake affordance.
+	          const note = document.createElement("span");
+	          note.className = "muted";
+	          note.textContent = defaultRowActionLabel(row);
+	          actions.append(note);
+	        } else {
+	          const configure = document.createElement("button");
+	          configure.className = "secondary";
+	          configure.innerHTML = `<span class="button-icon" aria-hidden="true">${configured ? "✎" : "+"}</span><span>${esc(defaultRowActionLabel(row))}</span>`;
+	          configure.onclick = () => openDefaultModal(row);
+	          actions.append(configure);
+	        }
 	        if (configured && !defaultRowReadOnly(row)) {
 	          const clear = document.createElement("button");
 	          clear.className = "secondary";
@@ -4241,11 +5563,16 @@ def gateway_console_html() -> str:
 	    }
 	    function appendSandboxMessage(role, content, options = {}) {
 	      const target = $("sandbox-transcript");
+	      const hint = $("sandbox-empty-hint");
+	      if (hint) { try { hint.remove(); } catch { hint.className = "hidden"; } }
 	      const div = document.createElement("div");
 	      const kind = String(options.kind || role || "").toLowerCase();
-	      div.className = `sandbox-message ${kind.includes("you") || kind === "user" ? "user" : kind.includes("error") ? "error" : kind.includes("system") ? "system" : "assistant"}`;
+	      const kindClass = kind.includes("you") || kind === "user" ? "user" : kind.includes("error") ? "error" : kind.includes("system") ? "system" : "assistant";
+	      div.className = `sandbox-message ${kindClass}`;
 	      const bubble = document.createElement("div");
-	      bubble.className = "sandbox-bubble";
+	      // Dual-class: sandbox-bubble = layout; pc-chat-item = the shared
+	      // abstractuic dialogue look (system renders as the kit's status item).
+	      bubble.className = `sandbox-bubble pc-chat-item pc-chat-item--${kindClass === "system" ? "status" : kindClass}`;
 	      const meta = document.createElement("div");
 	      meta.className = "sandbox-message-meta";
 	      const roleEl = document.createElement("span");
@@ -4369,6 +5696,7 @@ def gateway_console_html() -> str:
 	      if (progress) progress.className = "hidden";
 	      hideAllSandboxProgress();
 	      if (targetMessage.el) targetMessage.el.className = "sandbox-message error";
+	      if (targetMessage.bubble) targetMessage.bubble.className = "sandbox-bubble pc-chat-item pc-chat-item--error";
 	      if (targetMessage.body) setSandboxMessageBody(targetMessage.body, text, { markdown: false });
 	      if (targetMessage.meta?.children?.[0]) targetMessage.meta.children[0].textContent = "Error";
 	      if (targetMessage.meta?.children?.[1]) targetMessage.meta.children[1].textContent = sandboxNow();
@@ -4658,6 +5986,11 @@ def gateway_console_html() -> str:
       }
       renderAccount(me);
       $("login-section").classList.add("hidden");
+      // The LANDING tab's lists load FIRST and in parallel (final-render
+      // catch: they sat at the end of a six-round-trip sequential chain, so
+      // the first painted screen still showed the pre-login error row).
+      if (state.activeTab === "users") loadEntities();
+      if (state.activeTab === "runtimes") { loadRuntimes(); loadDataHomes(); }
       try {
         await loadEndpointProfiles();
       } catch (err) {
@@ -4727,48 +6060,78 @@ def gateway_console_html() -> str:
       location.reload();
     }
     async function createUser() {
-      $("users-message").textContent = "";
-      $("issued-token").classList.add("hidden");
+      // Runs inside the create-user modal. The role is a SELECT over the
+      // accepted vocabulary (admin/user/readonly — entity is door-assigned,
+      // never pickable); the issued token REPLACES the form on success so
+      // its one showing cannot be lost behind a closed dialog.
+      $("user-create-message").textContent = "";
       const payload = {
         tenant_id: $("new-tenant").value.trim() || "default",
         user_id: $("new-user").value.trim(),
         email: $("new-email").value.trim() || null,
         runtime_id: $("new-runtime").value.trim() || null,
-        roles: $("new-roles").value.split(",").map((x) => x.trim()).filter(Boolean)
+        roles: [$("new-roles").value || "user"],
       };
       if (!payload.user_id) {
-        $("users-message").textContent = "User id is required.";
-        $("users-message").className = "message error";
+        $("user-create-message").textContent = "User id is required.";
+        $("user-create-message").className = "message error";
         return;
       }
-      const runtime = payload.runtime_id || payload.user_id;
-      const ok = await confirmAction({
-        title: "Create Gateway user",
-        message: `Create ${payload.tenant_id}/${payload.user_id} with runtime ${runtime}? The token is shown once after creation.`,
-        confirmLabel: "Create user",
-      });
-      if (!ok) return;
       try {
         const res = await api("/api/gateway/admin/users", { method: "POST", body: JSON.stringify(payload) });
-        $("issued-token").textContent = `Issued token for ${res.user.tenant_id}/${res.user.user_id}: ${res.token}`;
-        $("issued-token").classList.remove("hidden");
+        renderIssuedToken($("user-create-token"), `${res.user.tenant_id}/${res.user.user_id}`, res.token);
+        $("user-create-form").classList.add("hidden");
+        $("user-create-done").classList.remove("hidden");
         $("new-user").value = "";
         $("new-email").value = "";
         $("new-runtime").value = "";
         await refresh();
       } catch (err) {
-        $("users-message").textContent = String(err.message || err);
-        $("users-message").className = "message error";
+        $("user-create-message").textContent = String(err.message || err);
+        $("user-create-message").className = "message error";
       }
     }
     async function updateUser(u, payload) {
       await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}?tenant_id=${encodeURIComponent(u.tenant_id)}`, { method: "PATCH", body: JSON.stringify(payload) });
       await refresh();
     }
+    function renderIssuedToken(el, who, token) {
+      // Structured one-time token render with a copy affordance (usability
+      // adversary P1-4: flat text forced manual selection of a 40-char token).
+      el.textContent = "";
+      const text = document.createElement("span");
+      text.textContent = `Issued token for ${who}: `;
+      const code = document.createElement("code");
+      code.textContent = token;
+      const copy = document.createElement("button");
+      copy.className = "secondary";
+      copy.innerHTML = `<span class="button-icon" aria-hidden="true">⧉</span><span>Copy</span>`;
+      copy.title = "Copy the token to the clipboard — it is shown once";
+      copy.setAttribute("aria-label", "Copy token");
+      copy.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(token);
+          copy.innerHTML = `<span class="button-icon" aria-hidden="true">✓</span><span>Copied</span>`;
+        } catch (e) {
+          copy.innerHTML = `<span class="button-icon" aria-hidden="true">!</span><span>#FALLBACK select + copy manually</span>`;
+        }
+      };
+      const note = document.createElement("span");
+      note.className = "muted";
+      note.textContent = " shown once — store it now.";
+      el.append(text, code, copy, note);
+      el.classList.remove("hidden");
+    }
     async function rotateUser(u) {
+      // Rotation invalidates the live token — never one silent click.
+      const ok = await confirmAction({
+        title: `Rotate token for ${u.user_id}?`,
+        message: "The current bearer token stops working immediately; anything signed in with it is disconnected. The new token is shown once.",
+        confirmLabel: "Rotate token",
+      });
+      if (!ok) return;
       const res = await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}?tenant_id=${encodeURIComponent(u.tenant_id)}`, { method: "PATCH", body: JSON.stringify({ rotate_token: true }) });
-      $("issued-token").textContent = `Issued token for ${res.user.tenant_id}/${res.user.user_id}: ${res.token}`;
-      $("issued-token").classList.remove("hidden");
+      renderIssuedToken($("issued-token"), `${res.user.tenant_id}/${res.user.user_id}`, res.token);
       await refresh();
     }
     async function deleteUser(u) {
@@ -4888,17 +6251,31 @@ def gateway_console_html() -> str:
 	    $("confirm-backdrop").onclick = (event) => { if (event.target === $("confirm-backdrop")) finishConfirm(false); };
 	    $("open-appearance").onclick = openAppearance;
 	    $("appearance-close").onclick = closeAppearance;
+	    $("open-assistant").onclick = () => toggleAssistant();
+	    $("assistant-close").onclick = () => toggleAssistant(false);
+	    $("assistant-clear").onclick = assistantClear;
+	    $("assistant-form").onsubmit = assistantSubmit;
+	    $("assistant-input").onkeydown = (event) => {
+	      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); assistantSubmit(); }
+	    };
 	    $("appearance-backdrop").onclick = (event) => { if (event.target === $("appearance-backdrop")) closeAppearance(); };
 	    $("appearance-theme").onchange = updateAppearanceFromForm;
 	    $("appearance-font-size").onchange = updateAppearanceFromForm;
 	    $("appearance-header-size").onchange = updateAppearanceFromForm;
-	    $("tab-button-users").onclick = () => setActiveTab("users");
+	    $("tab-button-users").onclick = () => { setActiveTab("users"); loadEntities(); };
+	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); loadRuns(); loadDataHomes(); };
+	    $("data-homes-refresh").onclick = loadDataHomes;
 	    $("tab-button-providers").onclick = () => setActiveTab("providers");
 	    $("tab-button-defaults").onclick = () => setActiveTab("defaults");
 	    $("tab-button-sandbox").onclick = () => setActiveTab("sandbox");
-	    $("tab-button-entities").onclick = () => { setActiveTab("entities"); loadEntities(); };
 	    $("entity-create").onclick = createEntity;
 	    $("entity-template").onchange = renderEntityTemplateDesc;
+	    $("entity-new-provider").onchange = () => loadModelsForProvider($("entity-new-provider").value);
+	    $("tpl-view").onclick = () => tplShowEditor("view");
+	    $("tpl-edit").onclick = () => tplShowEditor("edit");
+	    $("tpl-new").onclick = () => tplShowEditor("new");
+	    $("tpl-save").onclick = tplSave;
+	    $("tpl-cancel").onclick = () => { $("tpl-editor").classList.add("hidden"); state.tplMode = ""; };
 	    $("entities-refresh").onclick = () => {
 	      // Explicit refresh honors the click fully: templates + matrix spec are
 	      // re-fetched too (a new operator template or inventory change lands
@@ -4913,9 +6290,11 @@ def gateway_console_html() -> str:
 	    }
 	    $("entity-state-awake").onclick = () => setEntityState("awake");
 	    $("entity-state-asleep").onclick = () => setEntityState("asleep");
-	    $("entity-state-paused").onclick = () => setEntityState("paused");
-	    $("entity-loop-start").onclick = entityLoopStart;
-	    $("entity-loop-stop").onclick = entityLoopStop;
+	    // The STOP act rides the engraved paused verb (at-rest unchanged, c1559);
+	    // Restore = the existing wake verb, lands awake unconditionally.
+	    $("entity-stop").onclick = () => setEntityState("paused");
+	    $("entity-restore").onclick = () => setEntityState("awake");
+	    $("entity-owntime-toggle").onclick = entityOwntimeToggle;
 	    $("entity-loop-freeze").onclick = entityLoopFreeze;
 	    $("entity-substrate-save").onclick = entitySubstrateSave;
 	    $("entity-tools-save").onclick = entityToolsSave;
@@ -4932,6 +6311,19 @@ def gateway_console_html() -> str:
 	      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); entityChatSend(); }
 	    };
 	    $("create-user").onclick = createUser;
+	    $("open-create-user").onclick = openUserCreate;
+	    $("create-user-cancel").onclick = closeUserCreate;
+	    $("user-create-close").onclick = closeUserCreate;
+	    $("user-create-backdrop").onclick = (event) => { if (event.target === $("user-create-backdrop")) closeUserCreate(); };
+	    $("open-create-entity").onclick = openEntityCreate;
+	    $("entity-create-cancel").onclick = closeEntityCreate;
+	    $("entity-create-backdrop").onclick = (event) => { if (event.target === $("entity-create-backdrop")) closeEntityCreate(); };
+	    $("open-templates").onclick = openTemplates;
+	    $("templates-close").onclick = closeTemplates;
+	    $("templates-backdrop").onclick = (event) => { if (event.target === $("templates-backdrop")) closeTemplates(); };
+	    $("tpl-select").onchange = renderTplSelectState;
+	    $("runtimes-refresh").onclick = loadRuntimes;
+	    $("runtime-detail-close").onclick = () => $("runtime-detail-section").classList.add("hidden");
 	    $("refresh-catalog").onclick = async () => {
 	      state.providerModels.clear();
 	      await loadProviders();
@@ -4981,9 +6373,11 @@ def gateway_console_html() -> str:
 	    state.appearance = loadAppearanceSettings();
 	    initAppearanceControls();
 	    applyAppearanceSettings();
-	    state.activeTab = readStringSetting(ACTIVE_TAB_KEY, "providers");
+	    state.activeTab = readStringSetting(ACTIVE_TAB_KEY, "users");
 	    setActiveTab(state.activeTab);
-	    if (state.activeTab === "entities") loadEntities();
+	    // The users tab hosts the entities surface — restoring onto it (or
+	    // folding a legacy "entities" value onto it) must populate the list.
+	    if (state.activeTab === "users") loadEntities();
 	    initEndpointProfileFormOptions();
 	    setEndpointModelOptions([], []);
 	    refresh();

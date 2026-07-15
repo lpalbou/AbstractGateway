@@ -28,6 +28,13 @@ def _isolate_gateway_runtime_env(monkeypatch: pytest.MonkeyPatch, tmp_path_facto
     (base / "flows").mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(base / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(base / "flows"))
+    # Isolate the MACHINE-LEVEL data registry (~/.abstractframework/
+    # data_registry.json): service boot registers data homes
+    # (register_gateway_data_homes), so an unisolated suite run pollutes the
+    # operator's REAL registry with hundreds of phantom tmp-dir rows (live
+    # incident 2026-07-14: 1000+ rows from one evening's suites). Every test
+    # writes its own throwaway registry file instead.
+    monkeypatch.setenv("ABSTRACTFRAMEWORK_DATA_REGISTRY", str(base / "data_registry.json"))
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
 
 

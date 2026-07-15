@@ -81,7 +81,12 @@ async def triage_action_apply(token: str, request: Request):
     defer_days = int(days) if isinstance(days, int) and days > 0 else None
 
     data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser().resolve()
-    repo_root_raw = _env("ABSTRACT_TRIAGE_REPO_ROOT", "ABSTRACTGATEWAY_TRIAGE_REPO_ROOT")
+    # Honor the admin runtime-config store (continuum c1550): stored triage
+    # root beats env beats none — a launcher losing the env no longer blanks
+    # the backlog surface when the operator persisted it (c1526).
+    from ..runtime_config import resolve_triage_repo_root
+
+    repo_root_raw = resolve_triage_repo_root(data_dir) or _env("ABSTRACT_TRIAGE_REPO_ROOT", "ABSTRACTGATEWAY_TRIAGE_REPO_ROOT")
     repo_root = Path(repo_root_raw).expanduser().resolve() if repo_root_raw else None
 
     decision, err2 = apply_decision_action(
