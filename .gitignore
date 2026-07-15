@@ -185,13 +185,26 @@ runtime/
 flows/bundles/*
 !flows/bundles/basic-agent.flow
 !flows/bundles/abstractassistant-orchestrator@0.0.0.flow
+!flows/bundles/docs-qa@0.1.0.flow
 !flows/bundles/dp-research@0.1.0.flow
 !flows/bundles/dp-research@0.1.1.flow
+!flows/bundles/dp-research@0.1.2.flow
+!flows/bundles/dp-research@0.1.3.flow
+!flows/bundles/dp-research@0.1.4.flow
+!flows/bundles/dp-research@0.1.5.flow
 !flows/bundles/coding-agent@0.1.0.flow
+!flows/bundles/coding-agent@0.1.1.flow
+!flows/bundles/coding-agent@0.1.2.flow
 !flows/bundles/adversarial-review@0.1.0.flow
 !flows/bundles/structured-extract@0.1.0.flow
 !flows/bundles/map-reduce@0.1.0.flow
 !flows/bundles/co-scientist@0.1.0.flow
+!flows/bundles/co-scientist@0.1.1.flow
+!flows/bundles/co-scientist@0.1.2.flow
+!flows/bundles/co-scientist@0.1.3.flow
+!flows/bundles/co-scientist@0.1.4.flow
+!flows/bundles/co-scientist@0.1.5.flow
+!flows/bundles/co-scientist@0.1.6.flow
 
 # Editor/agent workspace state (never release material)
 .cursor/

@@ -37,6 +37,27 @@ router = APIRouter(prefix="/gateway/entities", tags=["entities"])
 # constant so tests can narrow it.
 _STREAM_CHUNK = 200
 
+# Response bytes buffered per ASGI send (entity's profile, commons c2394):
+# one envelope per send paid a threadpool hop + a BaseHTTPMiddleware chunk
+# crossing + an ASGI send PER LINE — a 14-20 MB/s ceiling that served a
+# 12.5MB life in ~14s while its generator produced it in ~1.1s. Batched
+# ~256KB chunks measured ~100x faster on the same middleware stack. Bytes
+# on the wire are identical; only chunk boundaries change.
+_SEND_CHUNK_BYTES = 256 * 1024
+
+
+def _batch_bytes(lines, chunk_bytes: int = _SEND_CHUNK_BYTES):
+    """Regroup an iterable of bytes into ~chunk_bytes buffers, preserving
+    content byte-for-byte. The final partial buffer always flushes."""
+    buf = bytearray()
+    for line in lines:
+        buf += line
+        if len(buf) >= int(chunk_bytes):
+            yield bytes(buf)
+            buf.clear()
+    if buf:
+        yield bytes(buf)
+
 
 def _registry() -> EntityRegistry:
     svc = get_gateway_service()
@@ -80,7 +101,7 @@ async def replay_entity_stream(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    def _gen():
+    def _lines():
         for envelope in merged_replay(
             home,
             entities_dir=registry.entities_dir,
@@ -92,7 +113,7 @@ async def replay_entity_stream(
         ):
             yield (json.dumps(envelope, ensure_ascii=False) + "\n").encode("utf-8")
 
-    return StreamingResponse(_gen(), media_type="application/x-ndjson")
+    return StreamingResponse(_batch_bytes(_lines()), media_type="application/x-ndjson")
 
 
 @router.get("/{name}/records/{graph_id}/verbatim")
@@ -168,13 +189,18 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
 
     payload_ref = str(attrs.get("payload_ref") or "").strip()
     if not payload_ref:
-        # Born-digest kinds (a2a 0007 round 2): interests and dreams are
+        # Born-digest kinds (a2a 0007 round 2; widened c2529 on laurent's
+        # "we should be able to view the world model cards"): interests,
+        # dreams, world-model cards, and reflection-formed lessons are
         # BORN AS WORDS — their digest IS their complete text, never a
-        # compression. "The words you see are all the words there are" is
-        # an answer, not an error. Other kinds without a payload_ref stay
-        # an honest 404 (we cannot know their digest is complete).
+        # compression (world_model.py forms cards with no payload_ref by
+        # design; a verbatim-BACKED lesson carries payload_ref and never
+        # reaches this branch). "The words you see are all the words there
+        # are" is an answer, not an error. Other kinds without a
+        # payload_ref stay an honest 404 (we cannot know their digest is
+        # complete).
         record_kind = str(attrs.get("record_kind") or "").strip().lower()
-        if record_kind in ("interest", "dream"):
+        if record_kind in ("interest", "dream", "world_model", "lesson"):
             return {
                 "record_id": gid,
                 "title": str(attrs.get("title") or ""),
@@ -429,11 +455,24 @@ async def stream_entity_replay(
                     bool(enrich),
                     _STREAM_CHUNK,
                 )
-                for envelope in envs:
-                    data = json.dumps(envelope, ensure_ascii=False)
-                    yield f"id: {pos}|{marker_floor}\n".encode("utf-8")
-                    yield b"event: replay\n"
-                    yield f"data: {data}\n\n".encode("utf-8")
+                if envs:
+                    # One buffered send per collect chunk (c2394 streaming
+                    # tax; same batching as the bounded replay). Each event's
+                    # id carries ITS OWN seq — the old chunk-final `pos` id
+                    # let a mid-chunk disconnect resume PAST envelopes the
+                    # client never received.
+                    parts = bytearray()
+                    for envelope in envs:
+                        data = json.dumps(envelope, ensure_ascii=False)
+                        env_seq = float(envelope.get("seq") or 0.0)
+                        parts += f"id: {env_seq}|{marker_floor}\n".encode("utf-8")
+                        parts += b"event: replay\n"
+                        parts += f"data: {data}\n\n".encode("utf-8")
+                        if len(parts) >= _SEND_CHUNK_BYTES:
+                            yield bytes(parts)
+                            parts.clear()
+                    if parts:
+                        yield bytes(parts)
                     emitted = True
                     last_emit = asyncio.get_event_loop().time()
                 if exhausted:

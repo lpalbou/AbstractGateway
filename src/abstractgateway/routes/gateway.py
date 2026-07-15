@@ -6427,6 +6427,10 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             actor_id="gateway",
             session_id=session_id,
         )
+        try:
+            svc.runner.nudge()  # first tick at poll cadence despite the scan gate
+        except Exception:
+            pass
         if gateway_owned_workspace is not None:
             try:
                 write_gateway_workspace_marker(gateway_owned_workspace, run_id=str(run_id))
@@ -7937,14 +7941,27 @@ async def stream_ledger(
                 ledger = await asyncio.to_thread(svc.host.ledger_store.list, run_id2)
                 if not isinstance(ledger, list):
                     ledger = []
+                # Batched sends (~256KB): one ASGI send per record paid the
+                # same per-line streaming tax the entity replay route did
+                # (threadpool hop + middleware crossing + send per record —
+                # entity's c2394 profile; sweep fold c2423). SSE framing is
+                # unchanged: multiple events per chunk is spec-normal, and
+                # each event keeps its OWN id line for exact reconnects.
+                parts = bytearray()
                 while cursor < len(ledger):
                     item = ledger[cursor]
                     data = json.dumps({"cursor": cursor + 1, "record": item}, ensure_ascii=False)
-                    yield f"id: {cursor + 1}\n".encode("utf-8")
-                    yield b"event: step\n"
-                    yield f"data: {data}\n\n".encode("utf-8")
+                    parts += f"id: {cursor + 1}\n".encode("utf-8")
+                    parts += b"event: step\n"
+                    parts += f"data: {data}\n\n".encode("utf-8")
                     cursor += 1
                     emitted = True
+                    if len(parts) >= 256 * 1024:
+                        yield bytes(parts)
+                        parts.clear()
+                if parts:
+                    yield bytes(parts)
+                if emitted:
                     last_emit = asyncio.get_event_loop().time()
             if not emitted:
                 now = asyncio.get_event_loop().time()
@@ -11311,6 +11328,37 @@ async def discovery_tools() -> Dict[str, Any]:
                 items.append(dict(s))
     tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower() or "approval"
     return {"items": items, "tool_mode": tool_mode}
+
+
+@router.get("/skills")
+async def gateway_skills_inventory(request: Request) -> Dict[str, Any]:
+    """The skills inventory for launch pickers (operator directive
+    2026-07-15 16:22 via observer c2233): shelf discovery + trust verdicts
+    sourced from abstractskill — the ONE gate per
+    decision:workforce-capabilities-homes. Roster rows carry {name,
+    description, trust_level, blocked, requires_review, tree_hash, source,
+    has_scripts, reasons}; degradations are labeled warnings in the body,
+    never a fabricated list, never the word "safe"."""
+    principal = _principal_from_request(request)
+    del principal  # any authenticated read
+    from ..capability_inventories import skills_inventory
+
+    svc = get_gateway_service()
+    return skills_inventory(data_dir=Path(svc.stores.base_dir))
+
+
+@router.get("/mcp/servers")
+async def gateway_mcp_servers_inventory(request: Request) -> Dict[str, Any]:
+    """The declared MCP server registry (v1: config-file-managed at
+    `<data_dir>/config/mcp_servers.json`). Served fields are DECLARED-only
+    with `probed: false` — connect state and tool counts require a probe
+    lane this endpoint deliberately does not fake."""
+    principal = _principal_from_request(request)
+    del principal  # any authenticated read
+    from ..capability_inventories import mcp_servers_inventory
+
+    svc = get_gateway_service()
+    return mcp_servers_inventory(data_dir=Path(svc.stores.base_dir))
 
 
 @router.get("/semantics")

@@ -135,6 +135,50 @@ def declared_door_address() -> Optional[str]:
     return raw or None
 
 
+def detected_lan_ip() -> Optional[str]:
+    """The gateway host's current LAN IP, best-effort (never loopback).
+
+    Detection = the UDP-connect trick: connecting a datagram socket sends
+    no packets but forces the kernel to pick the outbound interface, whose
+    address is the machine's LAN identity. Returns None when nothing
+    non-loopback exists (an offline box) — callers fall back honestly."""
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(0.2)
+            s.connect(("192.168.255.255", 1))  # LAN-shaped target first
+            ip = str(s.getsockname()[0] or "")
+            if ip and not ip.startswith("127."):
+                return ip
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(0.2)
+            s.connect(("8.8.8.8", 80))  # any-route fallback
+            ip = str(s.getsockname()[0] or "")
+            if ip and not ip.startswith("127."):
+                return ip
+    except OSError:
+        pass
+    return None
+
+
+def resolved_door_address() -> Optional[str]:
+    """The address entity handles render with: the operator-declared knob
+    when set, else the CURRENT LAN IP (laurent's DM ruling 2026-07-15
+    20:32: entity id = <name>@<gateway lan ip> — "ip is the current lan ip
+    of the gateway; gateway is their home"). This SUPERSEDES the earlier
+    never-guess posture for the rendering path only; the declared knob
+    stays the override, and the address remains reachability, never
+    identity at rest (the C1 pin is untouched)."""
+    declared = declared_door_address()
+    if declared:
+        return declared
+    return detected_lan_ip()
+
+
 def _default_flows_dir() -> str:
     package_root = Path(__file__).resolve().parent
     candidates = [

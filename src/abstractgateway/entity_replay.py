@@ -13,9 +13,15 @@ gateway-authored transport markers). This module owns the gateway half:
   `entities/.host_stream/<slug>.jsonl` and do not travel when a home is
   copied — the journal remains the life's only system of record.
 - SEQ POSITIONS (runtime's delta 2): markers take fractional positions
-  `base + n/1000` where base is the journal high-water seq at the moment
-  the marker was written — they sort after journal item `base` and before
-  `base + 1`, and can never collide with a journal seq.
+  strictly between `base` and `base + 1`, where base is the journal
+  high-water seq at the moment the marker was written — they sort after
+  journal item `base` and before `base + 1`, and can never collide with a
+  journal seq. Historical markers were minted at `base + n/1000` (999
+  slots); new writes use finer ticks of `1/10000` (card 014, after the
+  2026-07-14 marker-flood incident wedged a base at 999) — the next slot
+  is derived from the MAX existing fraction at the base, so old and new
+  granularities coexist in one file in strict ascending order and no
+  engraved float is ever rewritten.
 - MERGING: `merged_replay` interleaves memory envelopes (int seqs) with
   host markers (fractional seqs) in strict ascending order; cursors are
   floats so a consumer can resume exactly after a marker.
@@ -30,8 +36,10 @@ un-redacted surface would be a new, explicitly-authenticated channel.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
@@ -39,13 +47,34 @@ from .entities import EntityHome
 
 __all__ = [
     "HOST_MARKER_KINDS",
+    "marker_window_end",
     "merged_replay",
     "read_host_markers",
     "record_host_marker",
     "validate_families",
 ]
 
+logger = logging.getLogger(__name__)
+
 HOST_STREAM_DIRNAME = ".host_stream"
+
+# Marker fan-out granularity (card 014). Historical files carry 1/1000
+# fractions engraved; NEW writes mint 1/10000 ticks — 9999 slots per journal
+# base instead of 999. The slot ladder below derives the next tick from the
+# max EXISTING seq at the base, so both granularities order correctly in one
+# file and a legacy `.999` marker is simply followed by `.9991`.
+MARKER_TICKS_PER_BASE = 10_000
+
+# Flood DETECTION (card 014 — detection only, never coalescing: marker
+# granularity is read-visibility and stays maintainer-gated). A signature is
+# (kind, details.reason); when the same signature lands more than
+# MARKER_FLOOD_THRESHOLD times inside MARKER_FLOOD_WINDOW_S the append is
+# still performed but a LOUD warning names the signature — re-warned every
+# MARKER_FLOOD_REWARN_EVERY markers so a sustained flood stays visible
+# without turning the log into its own flood.
+MARKER_FLOOD_WINDOW_S = 60.0
+MARKER_FLOOD_THRESHOLD = 20
+MARKER_FLOOD_REWARN_EVERY = 100
 # Marker kinds are MOMENTS (verbs), not states: sleep/wake/pause are the
 # operator state transitions (a2a 0008); summon/prelude_refused/
 # session_closed are the session moments (a2a 0005); diary_read is the
@@ -138,6 +167,17 @@ def _marker_path(entities_dir: Path, slug: str) -> Path:
     return Path(entities_dir) / HOST_STREAM_DIRNAME / f"{slug}.jsonl"
 
 
+def marker_window_end(base: int) -> float:
+    """The largest float strictly below ``base + 1`` — the exact inclusive
+    read bound for "every marker anchored at journal bases <= base".
+
+    Markers sit strictly between their base and base+1 BY CONSTRUCTION, at
+    any granularity, so this bound is correct forever; the previous
+    hand-tuned epsilons (`+ 0.9995`, `+ 0.9999`) silently excluded
+    high-tick markers once the granularity got finer than they assumed."""
+    return math.nextafter(float(int(base)) + 1.0, float("-inf"))
+
+
 def record_host_marker(
     *,
     entities_dir: Path,
@@ -164,9 +204,17 @@ def record_host_marker(
     the lock (the scan-then-append TOCTOU is the reason this lives here and
     not at call sites). Returns the existing envelope with "deduped": True.
 
-    Markers beyond 999 on one journal base raise loudly rather than
-    colliding (unreachable at summon cadence — if it ever fires, something
-    is summoning in a loop and SHOULD fail)."""
+    CAPACITY (card 014): new writes mint 1/MARKER_TICKS_PER_BASE ticks —
+    the next slot is the first tick strictly above the max existing seq at
+    the base, so legacy 1/1000 markers and new fine-grained ones order
+    correctly in one file. True exhaustion (the tick would reach base+1)
+    still raises loudly rather than colliding.
+
+    FLOOD DETECTION (card 014): a same-(kind, reason) burst above
+    MARKER_FLOOD_THRESHOLD inside MARKER_FLOOD_WINDOW_S logs a loud warning
+    naming the signature — detection only, the append always proceeds
+    (coalescing would change read-visibility granularity, which is the
+    maintainer's call, per the 2026-07-14 incident close)."""
     if kind not in HOST_MARKER_KINDS:
         raise ValueError(f"unknown host marker kind {kind!r} (one of {HOST_MARKER_KINDS})")
     stream, version, _valid, _reserved = _stream_constants()
@@ -184,8 +232,11 @@ def record_host_marker(
             except (ImportError, OSError):
                 pass  # non-POSIX/degraded: the in-process lock still holds
             try:
-                existing_at_base = 0
+                max_seq_at_base = float(base)  # markers sort strictly above this
                 dedup_value = (details or {}).get(dedup_field) if dedup_field else None
+                signature_reason = (details or {}).get("reason")
+                flood_cutoff = datetime.now(timezone.utc) - timedelta(seconds=MARKER_FLOOD_WINDOW_S)
+                recent_same_signature = 0
                 if path.exists():
                     for line in path.read_text(encoding="utf-8").splitlines():
                         try:
@@ -200,19 +251,59 @@ def record_host_marker(
                         ):
                             return {**row, "deduped": True}
                         try:
-                            if int(math.floor(float(row.get("seq") or 0.0))) == base:
-                                existing_at_base += 1
+                            row_seq = float(row.get("seq") or 0.0)
+                            if int(math.floor(row_seq)) == base and row_seq > max_seq_at_base:
+                                max_seq_at_base = row_seq
                         except (ValueError, TypeError):
                             continue
-                if existing_at_base >= 999:
+                        # Flood signature scan (same kind + same reason, any
+                        # base — the journal advancing mid-flood must not
+                        # reset detection).
+                        if payload.get("kind") == kind and payload.get("reason") == signature_reason:
+                            try:
+                                ts = datetime.fromisoformat(str(row.get("observed_at") or ""))
+                                if ts.tzinfo is None:
+                                    ts = ts.replace(tzinfo=timezone.utc)
+                                if ts >= flood_cutoff:
+                                    recent_same_signature += 1
+                            except (ValueError, TypeError):
+                                pass  # unparseable stamp: skip for detection only
+
+                # Slot ladder: first 1/TICKS tick whose ABSOLUTE seq lands
+                # strictly above every existing marker at this base. The
+                # comparison runs in final float space (base + tick/TICKS)
+                # because deriving the fraction by subtraction loses the
+                # equality against engraved floats like 13.001.
+                next_tick = max(1, int(math.floor((max_seq_at_base - base) * MARKER_TICKS_PER_BASE)) + 1)
+                candidate = base + next_tick / MARKER_TICKS_PER_BASE
+                while next_tick < MARKER_TICKS_PER_BASE and candidate <= max_seq_at_base:
+                    next_tick += 1
+                    candidate = base + next_tick / MARKER_TICKS_PER_BASE
+                if next_tick >= MARKER_TICKS_PER_BASE:
                     raise RuntimeError(
                         f"host marker fan-out exhausted at journal seq {base} for {slug!r} "
-                        "(999 markers on one base — is something summoning in a loop?)"
+                        f"({MARKER_TICKS_PER_BASE - 1} slots on one base — is something looping?)"
                     )
+
+                flood_count = recent_same_signature + 1  # incl. this marker
+                if flood_count >= MARKER_FLOOD_THRESHOLD and (
+                    (flood_count - MARKER_FLOOD_THRESHOLD) % MARKER_FLOOD_REWARN_EVERY == 0
+                ):
+                    logger.warning(
+                        "host-marker flood: %d %r markers (reason=%r) for %r within %.0fs "
+                        "— appending anyway (detection only, card 014); current journal base %d",
+                        flood_count,
+                        kind,
+                        signature_reason,
+                        slug,
+                        MARKER_FLOOD_WINDOW_S,
+                        base,
+                    )
+
                 envelope: Dict[str, Any] = {
                     "stream": stream,
                     "stream_version": version,
-                    "seq": base + (existing_at_base + 1) / 1000.0,
+                    "seq": candidate,
                     "family": "host",
                     "observed_at": _utc_now_iso(),
                     "scope": "",
@@ -396,7 +487,7 @@ def merged_replay(
         enrich=enrich,
     )
 
-    markers = read_host_markers(entities_dir, slug, since_seq=float(since_seq), until_seq=None if until_seq is None else float(until_seq) + 0.9999) if include_host else []
+    markers = read_host_markers(entities_dir, slug, since_seq=float(since_seq), until_seq=None if until_seq is None else marker_window_end(int(until_seq))) if include_host else []
     m_idx = 0
 
     for envelope in envelopes:

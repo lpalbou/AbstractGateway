@@ -285,6 +285,28 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
 
         root_data_dir = Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir).expanduser().resolve()
         tenant_id = safe_principal_component(getattr(cfg, "tenant_id", "default"), default="default")
+
+        # Fresh-install UX (card 013): ensure the shipped catalog bundles
+        # (docs-qa — the console drawer's transport) are published into THIS
+        # tenant's catalog before the host scans the catalog dir, so a fresh
+        # data root answers docs questions without an admin curl. Publish-if-
+        # absent semantics: restarts never churn records, admin default
+        # pointers/tombstones/attribution are never touched, conflicts warn
+        # loudly and never block boot. Per-tenant services created lazily
+        # run the same hook for their own tenant.
+        try:
+            from .shipped_catalog import ensure_shipped_catalog_bundles
+
+            ensure_shipped_catalog_bundles(
+                root_data_dir=root_data_dir, tenant_id=tenant_id, flows_dir=Path(cfg.flows_dir)
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger("abstractgateway.service").warning(
+                "shipped-catalog boot publish failed (continuing)", exc_info=True
+            )
+
         catalog_bundles_dir = workflow_catalog_bundles_root_from_env(root_data_dir) / "tenant_catalog" / tenant_id
         framework_bundles_dir = getattr(cfg, "framework_flows_dir", None)
         if framework_bundles_dir is not None:
@@ -410,7 +432,10 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     # dataclass lesson): a per-request host would drop the in-process
     # open-locks and the meet index. The meet host shares the visit host so
     # a meet leg and a solo open on one home take the same per-slug lock.
-    entity_visit_host = EntityVisitHost(entity_registry)
+    # chat_probe wires the hosted lane into the visit reaper's stale-yield
+    # repair (c2465: an orphaned auto-yield posture must never be repaired
+    # out from under a LIVE drawer session — and never left forever either).
+    entity_visit_host = EntityVisitHost(entity_registry, chat_probe=entity_chat_host.has_open)
     entity_meet_host = EntityMeetHost(entity_visit_host)
 
     return GatewayService(

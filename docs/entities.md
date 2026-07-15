@@ -25,9 +25,19 @@ A summoned entity lives in two files at its **home**:
 
 Next to those live the **attested seed** (`spark.yaml`, stored byte-verbatim
 at creation — the spark is engrammed once and kept for life) and the
-gateway's identity card (`manifest.json`: the entity id
-`entity:<name>@<home-id>`, creation time, the spark hash, and reserved fields
-for the future key/signature work).
+gateway's `manifest.json` (an internal record: the engraved owner key —
+`entity:<name>` on new homes; legacy homes keep their birth-era
+`entity:<name>@<home-id>` engraving for life because journals are
+append-only — plus creation time, the spark hash, and reserved fields for
+the future key/signature work).
+
+**The entity's ID — the handle — is `<name>@<gateway ip>`** (operator
+ruling 2026-07-15), e.g. `castor@192.168.1.146`: the name at its home
+gateway's current LAN address (or the operator-declared
+`ABSTRACTGATEWAY_DECLARED_ADDRESS`). That is what every operator surface
+shows as "Entity ID". The manifest string above is a birth marker, never
+the id; the address is never written at rest, so moving the gateway never
+touches a record.
 
 **Copying the home directory moves the entity.** The `home_id` in the
 manifest names the birth home and is kept on copy; re-homing is deferred to

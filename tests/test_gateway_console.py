@@ -84,6 +84,10 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="new-email"' in console.text
     assert 'id="runtime-reservations-section"' in console.text
     assert 'id="confirm-backdrop"' in console.text
+    # Wave 3: the confirm modal's INPUT variant (steer guidance) — the last
+    # window.prompt in the console is gone; steering uses the themed modal.
+    assert 'id="confirm-input"' in console.text
+    assert "window.prompt(" not in console.text
     assert 'id="login-form"' in console.text
     assert 'id="toggle-token"' in console.text
     assert "Connect to AbstractGateway" in console.text

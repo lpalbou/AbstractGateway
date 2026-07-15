@@ -56,11 +56,12 @@ def test_marker_fractional_seqs_and_read_window(tmp_path: Path):
         entities_dir=registry.entities_dir, slug="castor", entity_id=created.entity_id,
         kind="prelude_refused", journal_seq=13, details={"reasons": ["#REFUSED ..."]},
     )
-    assert m1["seq"] == 13.001 and m2["seq"] == 13.002  # same base increments
+    # Same base increments at the card-014 tick granularity (1/10000).
+    assert m1["seq"] == 13.0001 and m2["seq"] == 13.0002
     assert m1["family"] == "host" and m1["payload"]["kind"] == "summon"
 
     # since_seq is exclusive and fractional-aware.
-    assert [m["seq"] for m in read_host_markers(registry.entities_dir, "castor", since_seq=13.001)] == [13.002]
+    assert [m["seq"] for m in read_host_markers(registry.entities_dir, "castor", since_seq=13.0001)] == [13.0002]
 
     with pytest.raises(ValueError, match="unknown host marker kind"):
         record_host_marker(
@@ -365,6 +366,24 @@ def test_verbatim_on_click_endpoint():
     assert interest.status == "completed", interest.error
     (interest_id,) = interest.result["record_ids"]
 
+    # World-model cards + lessons are the same born-as-words class (c2529,
+    # laurent: "we should be able to view the world model cards, fix it").
+    born_words = handlers[EffectType.MEMORY_FORM](
+        _ReflRun(),
+        Effect(type=EffectType.MEMORY_FORM, payload={
+            "records": [
+                {"kind": "world_model", "title": "World model: admin",
+                 "digest": "Refined understanding of admin, distilled from lived records."},
+                {"kind": "lesson", "title": "repair over perfection",
+                 "digest": "Not perfection, but repair - own the mistake, then fix the path."},
+            ],
+            "scope": "self", "owner_id": entity_id, "turn_id": "refl-v2",
+        }),
+        None,
+    )
+    assert born_words.status == "completed", born_words.error
+    world_model_id, lesson_id = born_words.result["record_ids"]
+
     with _client() as client:
         # The app context owns the registry; measure purity inside it (the
         # cached home closes with the app on context exit).
@@ -420,6 +439,18 @@ def test_verbatim_on_click_endpoint():
         born = r7.json()
         assert born["born_digest"] is True
         assert "mortal twin" in born["text"]
+
+        # World-model cards + lessons joined the class (c2529): the sleep
+        # pass births cards as words; the operator must be able to VIEW
+        # them (the live 404 repro on ephemeral's two world cards).
+        r8 = client.get(f"/api/gateway/entities/Castor/records/{world_model_id}/verbatim")
+        assert r8.status_code == 200, r8.text
+        assert r8.json()["born_digest"] is True
+        assert "Refined understanding of admin" in r8.json()["text"]
+        r9 = client.get(f"/api/gateway/entities/Castor/records/{lesson_id}/verbatim")
+        assert r9.status_code == 200, r9.text
+        assert r9.json()["born_digest"] is True
+        assert "repair" in r9.json()["text"]
 
         # Pure read: nothing deposited by any of the reads above.
         assert home.memory.current_seq() == seq_before

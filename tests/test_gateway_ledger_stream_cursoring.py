@@ -106,8 +106,9 @@ def test_idle_stream_never_materializes_the_list_and_stops_on_disconnect() -> No
             response = await gw.stream_ledger(_FakeRequest(disconnect_after=4), "r", after=0, heartbeat_s=5.0)
             events = 0
             async for part in response.body_iterator:
-                if b"event: step" in part:
-                    events += 1
+                # Catch-up sends are BATCHED (c2394 per-line tax fix): one
+                # part may carry several events — count occurrences.
+                events += part.count(b"event: step")
             return events
         finally:
             gw.get_gateway_service = original  # type: ignore[assignment]
@@ -175,8 +176,8 @@ def test_divergent_count_never_busy_loops_and_terminal_done_still_sends() -> Non
             steps = 0
             done = False
             async for part in response.body_iterator:  # terminates on `done`
-                if b"event: step" in part:
-                    steps += 1
+                # Batched catch-up: one part may carry several step events.
+                steps += part.count(b"event: step")
                 if b"event: done" in part:
                     done = True
             return steps, done

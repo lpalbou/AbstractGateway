@@ -107,14 +107,19 @@ def derived_liveness(state_word: Any) -> str:
 
 
 def render_handle(slug: str) -> Optional[str]:
-    """`<name>@<declared address>` when the door declares one, else None.
+    """`<name>@<address>` — THE entity id the operator reads (laurent's DM
+    ruling 2026-07-15 20:32: entity id = <entity_name>@<gateway lan ip>,
+    e.g. ephemeral@192.168.1.146 — "ip is the current lan ip of the
+    gateway. gateway is their home").
 
-    The address itself is door-wide serving config and lives in
-    `config.declared_door_address` (renaming.md, approved c398); the
-    HANDLE rendering is entity vocabulary and correctly stays here."""
-    from .config import declared_door_address
+    Address resolution: the operator-declared knob wins, else the current
+    LAN IP is DETECTED (`config.resolved_door_address`). None only when
+    neither exists (offline box, nothing declared). The address stays
+    reachability, never identity at rest — the manifest's internal id is
+    a birth marker the operator should not be shown as "the id"."""
+    from .config import resolved_door_address
 
-    address = declared_door_address()
+    address = resolved_door_address()
     return f"{slug}@{address}" if address else None
 
 
@@ -1912,6 +1917,12 @@ class EntityRegistry:
 
             if dream_result is None:
                 try:
+                    # PRESENT-TENSE mode (entity forensics c2465 ask 3): the
+                    # dreaming badge is true only WHILE the pass runs — it
+                    # finishes in seconds, and a badge claiming consolidation
+                    # for a whole sleep conflates dreaming with napping. Set
+                    # before, clear after (state stays asleep either way).
+                    write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming")
                     result = dream_pass(
                         home.memory,
                         scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
@@ -1921,6 +1932,7 @@ class EntityRegistry:
                     if lease_warning:
                         dream_result["warning"] = lease_warning
                 finally:
+                    written = write_entity_state(home_dir, "asleep", reason=reason)
                     if lease is not None:
                         lease.release()
 
@@ -2133,7 +2145,7 @@ class EntityRegistry:
         host markers filter by their journal-seq base; state-history lines
         are omitted (they carry timestamps, not seqs — a timestamp cannot
         honestly claim a position on the journal axis) with a label."""
-        from .entity_replay import read_host_markers
+        from .entity_replay import marker_window_end, read_host_markers
 
         home = self.open(name)
         try:
@@ -2148,7 +2160,7 @@ class EntityRegistry:
 
         moments: List[Dict[str, Any]] = []
         marker_state_times: List[tuple] = []
-        for m in read_host_markers(self.entities_dir, slug, until_seq=float(as_of) + 0.9995 if as_of is not None else None):
+        for m in read_host_markers(self.entities_dir, slug, until_seq=marker_window_end(int(as_of)) if as_of is not None else None):
             p = m.get("payload") or {}
             kind = p.get("kind")
             at = str(m.get("observed_at") or "")

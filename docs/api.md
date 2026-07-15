@@ -154,6 +154,15 @@ unified top-bar drawers). The contract: the CALLER supplies its own corpus
 (typically its `llms.txt` text) — the bundle never guesses one, so answers are
 never silently grounded on another app's docs.
 
+Fresh installs need no manual publish: the gateway ships `docs-qa` in the
+wheel and boot idempotently publishes it into the tenant catalog
+(publish-if-absent by exact version; an admin's default pointer, tombstones,
+and publisher attribution are never touched; publisher `system:gateway-boot`).
+The publish is skipped on custom-bundle deployments whose private registry
+carries no LLM-bearing flow (it would add a boot requirement they never had)
+and can be disabled with `ABSTRACTGATEWAY_AUTO_PUBLISH_SHIPPED=0` — the
+manual upload below then remains the path.
+
 ```bash
 curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
   "registry_scope": "tenant_catalog",
@@ -175,6 +184,30 @@ override gateway defaults. Answers cite section headings and say plainly when
 the docs do not answer — the bundle refuses to invent endpoints or behavior.
 Docs Q&A must never route through entity chat (a visit is billable and forms
 memories).
+
+### Run-level skills selection
+
+`input_data.skills` (a list of skill NAMES) attaches curated skills to any
+run started through `/runs/start`:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "bundle_id": "basic-agent",
+  "input_data": {"prompt": "…", "skills": ["agora-collaboration"]}
+}' "$BASE_URL/api/gateway/runs/start"
+```
+
+Trust semantics (the same abstractskill gate as `GET /skills` and the
+workforce spawn lane — one gate, never a second resolver): VALIDATED skills
+activate and their index lands in the run's `_runtime.skills_block`
+(byte-stable for the whole run) with the `read_skill` tool made reachable;
+UNVERIFIED skills are held; advisory-BLOCKED skills never ride. Every
+outcome is recorded as a labeled verdict in `_runtime.skills_resolution`
+(`requested`/`active`/`verdicts`/`resolved_tree_hashes`) — nothing is
+silently dropped. Agent-node subruns inherit the block verbatim with
+`read_skill` appended to explicit child allowlists (empty allowlists keep
+registry defaults). A caller-supplied `_runtime.skills_block` is never
+overwritten; the selection is then ignored with a labeled verdict.
 
 The gateway serves its OWN corpus for the console drawer:
 
@@ -442,6 +475,19 @@ These exist to help thin clients adapt to the deployed gateway.
 
 - Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
 - Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
+- Tools (thin-client allowlist help): `GET /api/gateway/discovery/tools`
+- Skills inventory: `GET /api/gateway/skills` — the abstractskill shelf with
+  trust verdicts (roster rows `{name, description, trust_level, blocked,
+  requires_review, tree_hash, source, has_scripts, reasons}`); degradations
+  are labeled `warnings`, never a fabricated list. Shelf resolution:
+  `ABSTRACTGATEWAY_SKILLS_SHELF`, else the triage repo's
+  `abstractskill/registry`.
+- MCP server inventory: `GET /api/gateway/mcp/servers` — the declared
+  registry at `<data_dir>/config/mcp_servers.json`
+  (`{"version": 1, "servers": [{"name", "url"?, "description"?,
+  "auth_required"?, "tags"?}]}`), served with declared fields only and
+  `probed: false` (connect state/tool counts require a probe lane and are
+  never faked).
 - Dynamic capability catalogs: `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, `GET /api/gateway/audio/transcriptions/models`, `GET /api/gateway/audio/music/providers`, `GET /api/gateway/audio/music/models`, `GET /api/gateway/vision/provider_models`
 
 The capabilities payload includes package presence (`abstractruntime`,

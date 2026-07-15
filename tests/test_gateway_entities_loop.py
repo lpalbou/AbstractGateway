@@ -178,10 +178,11 @@ def test_loop_start_resolves_attention_defaults_from_env(monkeypatch: pytest.Mon
         # Newborn = sleep (c1503): wake before starting his own time.
         assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
-        # No env, no request values: the wide defaults.
+        # No env, no request values: the wide defaults (shelf 50 per
+        # laurent c2468 "increase the max memories from 30 to 50").
         r = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert r.status_code == 200, r.text
-        assert calls["shelf_size"] == 36
+        assert calls["shelf_size"] == 50
         assert calls["context_window"] == 65536
 
         # Env overrides the defaults (the operator's knob).
@@ -222,27 +223,17 @@ def test_loop_start_refusals_carry_reason_code_and_live_status(monkeypatch: pyte
         registry = get_gateway_service().entity_registry
         home_dir = registry.entities_dir / "castor"
 
-        # UNARMED: the grant gate refuses FIRST (personal is off by default —
-        # the 10:20 class: a start with no recorded grant).
-        r0 = client.post("/api/gateway/entities/Castor/loop/start", json={})
-        assert r0.status_code == 409, r0.text
-        assert r0.json()["detail"]["reason_code"] == "not_granted"
-        assert "not armed" in r0.json()["detail"]["message"]
-        # Arm it for the rest of the matrix.
-        assert client.put("/api/gateway/entities/Castor/personal-grant", json={"mode": "until_revoked"}).status_code == 200
-
-        # ASLEEP entity: refusal names reason_code=not_awake + the live loop status,
-        # not a bare 409 string (the silent-button bug class).
-        from abstractruntime.identity.life import write_entity_state
+        # UNARMED + ASLEEP (a newborn): the click IS the grant AND the wake
+        # (laurent 2026-07-15 21:38 "i click on 'personal', and the entity is
+        # then authorize to tick itself — SIMPLIFY"): no not_granted, no
+        # not_awake — the start arms, wakes, and spawns in one act.
+        from abstractruntime.identity.life import read_entity_state, read_personal_grant, write_entity_state
 
         write_entity_state(home_dir, "asleep", reason="operator rest")
-        r = client.post("/api/gateway/entities/Castor/loop/start", json={})
-        assert r.status_code == 409, r.text
-        detail = r.json()["detail"]
-        assert isinstance(detail, dict), "refusal must be structured, not a bare string"
-        assert detail["reason_code"] == "not_awake"
-        assert "loop" in detail and detail["loop"]["running"] is False
-        assert "asleep" in detail["message"]
+        r0 = client.post("/api/gateway/entities/Castor/loop/start", json={})
+        assert r0.status_code == 200, r0.text
+        assert read_personal_grant(home_dir).get("mode") == "until_revoked"
+        assert read_entity_state(home_dir).get("state") == "awake"
 
         # PAUSED entity: distinct reason_code.
         write_entity_state(home_dir, "paused", reason="freeze drill")

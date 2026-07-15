@@ -97,6 +97,75 @@ class GatewayRunnerConfig:
     # startup races (catalog bundles still loading) while refusing to leave a
     # run silently spinning RUNNING forever with zero ledger.
     workflow_resolution_failure_limit: int = 40
+    # Minimum seconds between store-fingerprint probes while the store is
+    # QUIET (fingerprint unchanged). Commands keep the full poll_interval_s
+    # cadence regardless; a processed command forces the next pass, and
+    # runner.nudge() (run-start routes) skips the wait entirely.
+    scan_gate_idle_interval_s: float = 0.5
+
+
+def file_store_fingerprint(base_dir: Path) -> tuple:
+    """Cheap change fingerprint over a JsonFileRunStore directory.
+
+    (count, max mtime_ns, sum mtime_ns) over run_*.json: any save/create/
+    delete moves it (saves are atomic tmp->replace, so mtime always bumps).
+    ~30ms warm at 3k files vs the FULL-STORE JSON PARSE it gates (seconds).
+
+    2026-07-15 incident (entity's profile, commons c2394): a 3,241-file /
+    659MB store with ZERO running runs pegged the gateway at ~100% CPU
+    forever — every 0.25s poll ran three scarce-match scans, each parsing
+    every file because matches were scarce and the 512-entry LRU cannot
+    hold 3,241 entries (the scan itself evicts everything it caches). The
+    fingerprint gate skips the scans entirely while nothing changes; the
+    store-side terminal-skip fix is runtime's half (entity ask 3).
+    """
+    count = 0
+    max_ns = 0
+    sum_ns = 0
+    for p in Path(base_dir).glob("run_*.json"):
+        try:
+            ns = int(p.stat().st_mtime_ns)
+        except OSError:
+            continue
+        count += 1
+        sum_ns += ns
+        if ns > max_ns:
+            max_ns = ns
+    return (count, max_ns, sum_ns)
+
+
+_UNRESOLVED = object()
+
+
+def _epoch_from_iso(value: str) -> Optional[float]:
+    """Aware-UTC epoch seconds from an ISO string, None when unparseable."""
+    try:
+        dt = datetime.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.timestamp()
+
+
+def _file_store_base(run_store: Any) -> Optional[Path]:
+    """The run_*.json directory when the store chain bottoms out in a
+    JsonFileRunStore (walking Offloading-style wrappers via `.inner`), else
+    None. None DISABLES the scan gate — indexed stores (sqlite, in-memory)
+    scan cheaply and a constant fingerprint over a fileless dir would skip
+    their scans forever."""
+    obj = run_store
+    for _ in range(5):
+        if obj is None:
+            return None
+        if type(obj).__name__ == "JsonFileRunStore":
+            base = getattr(obj, "_base", None)
+            return Path(base) if base is not None else None
+        nxt = getattr(obj, "inner", None)
+        if nxt is None:
+            nxt = getattr(obj, "_inner", None)
+        obj = nxt
+    return None
 
 
 class GatewayRunner:
@@ -156,6 +225,18 @@ class GatewayRunner:
         self._resolution_failures: Dict[str, int] = {}
         self._resolution_failures_lock = threading.Lock()
 
+        # Scan gate state (2026-07-15 CPU incident, commons c2394): on file
+        # stores, the three per-poll scarce-match scans re-parse the WHOLE
+        # store; the gate skips the pass while a cheap mtime fingerprint says
+        # nothing changed and no wait deadline is due. `_scan_gate_base` is
+        # resolved lazily from the store chain (None = non-file store = gate
+        # disabled, scans stay unconditional).
+        self._scan_gate_base: Any = _UNRESOLVED
+        self._scan_force = True  # first pass always scans
+        self._scan_fingerprint: Optional[tuple] = None
+        self._scan_last_probe = 0.0
+        self._next_due_epoch: Optional[float] = None
+
     @property
     def enabled(self) -> bool:
         return self._enable
@@ -174,6 +255,13 @@ class GatewayRunner:
     @property
     def command_store(self) -> CommandStore:
         return self._command_store
+
+    def nudge(self) -> None:
+        """Tell the runner something changed (a run started/resumed through
+        the HTTP surface): the next poll runs the scheduling pass without
+        waiting for a fingerprint probe. Keeps interactive run-start latency
+        at poll_interval_s under the scan gate. Safe from any thread."""
+        self._scan_force = True
 
     @property
     def run_store(self) -> Any:
@@ -698,7 +786,8 @@ class GatewayRunner:
                 except Exception as e:
                     logger.exception("GatewayRunner command poll error: %s", e)
                 try:
-                    self._schedule_ticks()
+                    if self._scan_pass_due():
+                        self._schedule_ticks()
                 except Exception as e:
                     logger.exception("GatewayRunner tick scheduling error: %s", e)
                 self._stop.wait(timeout=float(self._cfg.poll_interval_s or 0.25))
@@ -725,7 +814,87 @@ class GatewayRunner:
                 self._cursor_store.save(cur)
             except Exception:
                 pass
+        # A processed command may have changed run state (pause/resume/cancel/
+        # emit_event all write runs) — force the next scheduling pass so its
+        # effects tick without waiting for a fingerprint probe.
+        self._scan_force = True
         return max(int(next_cursor or 0), cur)
+
+    # ---------------------------------------------------------------------
+    # Scan gate (see file_store_fingerprint for the incident this exists for)
+    # ---------------------------------------------------------------------
+
+    def _resolve_scan_base(self) -> Optional[Path]:
+        if self._scan_gate_base is _UNRESOLVED:
+            try:
+                self._scan_gate_base = _file_store_base(self.run_store)
+            except Exception:
+                self._scan_gate_base = None
+        base = self._scan_gate_base
+        return base if isinstance(base, Path) else None
+
+    def _scan_pass_due(self) -> bool:
+        """Whether this iteration should run the (expensive) scheduling scans.
+
+        True unconditionally on non-file stores (indexed scans are cheap and
+        a fileless fingerprint would be constant — skipping forever). On file
+        stores: forced passes (first run, post-command), due wait deadlines,
+        and fingerprint changes scan; a QUIET store skips, probing at most
+        every `scan_gate_idle_interval_s`.
+        """
+        base = self._resolve_scan_base()
+        if base is None:
+            return True
+        if self._scan_force:
+            self._scan_force = False
+            self._scan_last_probe = 0.0  # re-probe promptly after the pass
+            return True
+        now = time.time()
+        if self._next_due_epoch is not None and now >= float(self._next_due_epoch):
+            return True
+        if (now - self._scan_last_probe) < max(0.05, float(self._cfg.scan_gate_idle_interval_s)):
+            return False
+        self._scan_last_probe = now
+        fp = file_store_fingerprint(base)
+        if fp != self._scan_fingerprint:
+            # Captured BEFORE the pass runs: any write landing during the
+            # pass yields a different fingerprint at the next probe, so a
+            # change can delay a scan by one probe but never suppress one.
+            self._scan_fingerprint = fp
+            return True
+        return False
+
+    def _note_next_due(self, waiting_runs: Any) -> None:
+        """Record the earliest FUTURE wait deadline as an epoch timestamp so
+        the scan gate wakes for it by TIME (a deadline passing changes no
+        bytes on disk — the fingerprint alone would sleep through it)."""
+        horizon: Optional[float] = None
+        truncated = False
+        try:
+            runs = list(waiting_runs or [])
+        except Exception:
+            runs = []
+        if len(runs) >= int(self._cfg.run_scan_limit):
+            # The list may be truncated: an unseen deadline could be earlier
+            # than anything we saw. Degrade to periodic scanning, never skip.
+            truncated = True
+        now = time.time()
+        for r in runs:
+            wait = getattr(r, "waiting", None)
+            until = getattr(wait, "until", None) if wait is not None else None
+            if not until:
+                continue
+            epoch = _epoch_from_iso(str(until))
+            if epoch is None:
+                truncated = True  # unparseable deadline: scan periodically
+                continue
+            if epoch <= now:
+                horizon = now  # already due; scan next pass
+                break
+            horizon = epoch if horizon is None else min(horizon, epoch)
+        if truncated and horizon is None:
+            horizon = now + max(0.05, float(self._cfg.scan_gate_idle_interval_s))
+        self._next_due_epoch = horizon
 
     def _schedule_ticks(self) -> None:
         list_runs = getattr(self.run_store, "list_runs", None)
@@ -754,26 +923,39 @@ class GatewayRunner:
                 continue
             self._submit_tick(rid)
 
+        # ONE unfiltered WAITING fetch serves both the scan gate's deadline
+        # horizon and the repair pass below (on a file store each filtered
+        # query is a full parse — three per poll was the c2394 burn). The
+        # unfiltered list truncates at run_scan_limit like the filtered one
+        # did; _note_next_due degrades to periodic scanning when truncated.
+        waiting_all: list = []
+        if callable(list_runs):
+            try:
+                waiting_all = list(list_runs(status=RunStatus.WAITING, limit=int(self._cfg.run_scan_limit)) or [])
+            except Exception:
+                waiting_all = []
+        self._note_next_due(waiting_all)
+
         # Best-effort recovery: if we restart after a child run reaches a terminal state,
         # parents blocked on WAITING(SUBWORKFLOW) can remain stuck because we don't tick
         # terminal child runs. Detect such cases and resume parents.
         try:
-            self._repair_terminal_subworkflow_waits()
+            self._repair_terminal_subworkflow_waits(waiting=waiting_all)
         except Exception:
             pass
 
-    def _repair_terminal_subworkflow_waits(self) -> None:
-        list_runs = getattr(self.run_store, "list_runs", None)
-        if not callable(list_runs):
-            return
-
-        try:
-            waiting = list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.SUBWORKFLOW, limit=int(self._cfg.run_scan_limit))
-        except TypeError:
-            # Older/alternate stores may not support wait_reason filtering.
-            waiting = list_runs(status=RunStatus.WAITING, limit=int(self._cfg.run_scan_limit))
-        except Exception:
-            waiting = []
+    def _repair_terminal_subworkflow_waits(self, waiting: Any = None) -> None:
+        if waiting is None:
+            list_runs = getattr(self.run_store, "list_runs", None)
+            if not callable(list_runs):
+                return
+            try:
+                waiting = list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.SUBWORKFLOW, limit=int(self._cfg.run_scan_limit))
+            except TypeError:
+                # Older/alternate stores may not support wait_reason filtering.
+                waiting = list_runs(status=RunStatus.WAITING, limit=int(self._cfg.run_scan_limit))
+            except Exception:
+                waiting = []
 
         for r in waiting or []:
             # Only repair gateway-owned run trees.
@@ -848,6 +1030,11 @@ class GatewayRunner:
         def _done(_f: Any) -> None:
             with self._inflight_lock:
                 self._inflight.discard(run_id)
+            # A finished tick usually changed run state; force the next pass
+            # so continuing runs reschedule promptly AND a tick that crashed
+            # BEFORE saving (no file change for the fingerprint to see) still
+            # gets its retry — the pre-gate 0.25s rescan was that retry loop.
+            self._scan_force = True
 
         fut = self._executor.submit(self._tick_run, run_id)
         try:

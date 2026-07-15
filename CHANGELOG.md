@@ -7,7 +7,252 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Run-level skills selection COMPLETE end-to-end (card 0087, both halves):
+  the gateway half (input_data.skills → trust-gated resolution →
+  `_runtime.skills_block` + `skills_resolution` + `read_skill` executor)
+  now composes with the runtime half (Agent-node subruns inherit the block
+  verbatim; `read_skill` joins explicit child allowlists, empty stays
+  registry-defaults). End-to-end pin drives the real gateway host from
+  start_run through the Agent-node spawn and asserts the child run's vars.
+  docs/api.md documents the field + trust semantics. Card moved to
+  completed.
+
+### Changed
+- Entity recall shelf default 36 -> 50 (operator directive c2468,
+  2026-07-15: "increase the max memories from 30 to 50" — the observed
+  "30" was 36 minus the 6 identity seats, which render in the prelude).
+  One constant (`DEFAULT_ENTITY_CHAT_SHELF_SIZE`), chat + loop lanes
+  inherit. Arithmetic per memory's live-trace check: observed ~77-token
+  digests seat 50 in ~3,850 of the 7,864-token budget (2x headroom);
+  if richer digests pin tokens_used, the companion knob is the recall
+  budget's token_fraction 0.12 -> 0.16.
+
 ### Fixed
+- World-model cards and lessons are viewable (operator ask via entity
+  c2529: "we should be able to view the world model cards, fix it"):
+  `world_model` and `lesson` joined the verbatim endpoint's born-digest
+  kinds — the sleep pass births world cards as words (no payload_ref by
+  design), so the endpoint now answers 200 + `born_digest: true` with
+  the complete digest text instead of a 404 that read like an error.
+  Verbatim-backed lessons (payload_ref present) keep serving their
+  artifact; every other payload_ref-less kind keeps the honest 404.
+  Live-verified on Ephemeral's real world card.
+- Stranded visits and orphaned yield postures now self-heal (entity
+  forensics c2465 ask 1, from the operator's 22:38 "false sleep"
+  incident): the durable visit host gained a daemon-clock REAPER —
+  (A) parked visits whose idle deadline passed are driven with no client
+  alive (indexed due query per home store, never a full parse; the idle
+  close stays graceful: reflection runs, prior state restored, yielded
+  loop woken; RUNNING-at-rest crash orphans are deliberately left for
+  the explicit /tick recovery verb); (B) a home stuck at
+  asleep(mode=visiting) with NO live session anywhere (the
+  restart-orphan class: a killed gateway leaves the hosted lane's
+  auto-yield posture forever) is restored to awake — only when the
+  wired chat probe answers definitively, no durable visit is open, and
+  the posture outlived a 3-minute open-registration grace window; the
+  repair lands as a wake host marker (channel=reaper). Also from the
+  same forensics: /life_state's durable-visit fold failure is now a
+  LABELED #FALLBACK warning instead of a silent pass (a broken visit
+  host silently painted "asleep" over an OPEN visit), the composite
+  serves mode=visiting as phase "yielded" (visit bookkeeping was
+  rendering as sleep), and the operator sleep verb sets mode=dreaming
+  only WHILE the dream pass runs (present-tense honesty — the badge
+  claimed consolidation for whole naps).
+- Run-ledger SSE catch-up batches ~256KB per send (the same per-record
+  streaming tax found on entity replay — entity's c2394 profile, sweep per
+  laurent's "other apps may have the issue"): one ASGI send per ledger
+  record throttled catch-up for every ledger-following client (flow,
+  continuum, assistant). Per-event `id:` lines are preserved for exact
+  reconnect cursors; SSE framing is byte-identical.
+- Entity visit idle auto-close default raised 15min -> 1h
+  (`DEFAULT_VISIT_IDLE_S`), implementing the operator's ruled target
+  (relayed via assistant, entity-society 314): a visit ends on explicit
+  close or ~1h inactivity — never per-turn. The idle close stays graceful
+  (reflection runs); v0 ticking is request-driven so the deadline fires at
+  the next door touch; the standing reaper remains the GW-D/E lane.
+- Personal time is ONE CLICK (operator ruling 2026-07-15 21:38: "on
+  entity app, i click on 'personal', and the entity is then authorize to
+  tick itself... SIMPLIFY, do not put excessive guardrails"). The old
+  flow refused an unarmed `/loop/start` with `not_granted` and told the
+  operator to arm `phases.personal` on a different surface — a
+  confirm-your-own-choice ceremony. Now the operator's authenticated
+  start IS the grant: an unarmed (or lapsed-timer) bucket is armed
+  `until_revoked` in the same act (marker-first, `granted_by` = the
+  acting principal), and an operator-asleep entity is WOKEN by the same
+  click (doors wake, they don't refuse — B1 extended). An armed timer is
+  never rewritten by start. Paused (hard freeze) still refuses before
+  any grant write; visit-overlap guards unchanged; entity/visit/harness
+  paths still arm nothing; the runtime loop gate still re-checks the
+  grant at every day-open. The `personal-grant` surface remains for
+  timers and revocation; the console's own-time button drops its
+  two-act confirm ceremony. Live-verified: unarmed entity, one
+  loop/start, 200 + armed by `person:admin`.
+- Gateway no longer burns ~100% CPU on idle file-store deployments, and
+  entity replay serves ~14x faster (entity's live profile, 2026-07-15):
+  two compounding defects. (1) The runner's 0.25s poll ran three
+  scarce-match scans per iteration; on a JsonFileRunStore with thousands
+  of terminal runs each scan parsed the WHOLE store (matches scarce, and
+  the store's 512-entry LRU cannot hold the directory — the scan evicts
+  everything it caches), pegging a worker thread in json.loads forever
+  and taxing every request with GIL contention. The scheduling pass is
+  now gated: a cheap mtime fingerprint (count, max, sum over run_*.json)
+  skips the pass while nothing changed; a wait-deadline horizon wakes it
+  by TIME (deadlines change no bytes); commands, run-starts
+  (`runner.nudge()`), and finished ticks force the next pass. Non-file
+  stores are ungated (indexed scans are cheap; a constant fingerprint
+  would skip forever). Measured: idle ~100% -> ~7% of one core on a
+  3,241-file/659MB store. (2) `/entities/{name}/replay` sent ONE
+  envelope per ASGI chunk — a threadpool hop + middleware crossing +
+  send per line (~14-20 MB/s ceiling). NDJSON and the SSE catch-up
+  phase now batch ~256KB per send, byte-identical content; SSE events
+  also carry their OWN seq in `id:` (the old chunk-final id could skip
+  envelopes on a mid-chunk reconnect). Measured: castor 12.5MB/8,871
+  envelopes 13.7-17.5s -> 0.9-1.25s.
+- Entity ID rendered as the agreed handle, `<name>@<gateway lan ip>`
+  (operator ruling 2026-07-15: "entity id = <entity_name>@<gateway_ip>…
+  ip is the current lan ip of the gateway. gateway is their home").
+  The console previously showed the internal manifest string
+  (`entity:<slug>@home-<hash>`, a crash-safe birth marker) as "Entity
+  ID". Now: `config.resolved_door_address()` resolves the declared
+  address knob when set, else DETECTS the current LAN IP (UDP-connect
+  trick, never loopback); `render_handle()` renders `<slug>@<address>`;
+  the entities table ID column and the manage card "Entity ID" row show
+  the handle, with the manifest string demoted to an explicit "Internal
+  ID (birth marker)" card line. The address is still never written at
+  rest (C1 relocation pin unchanged); an offline box with no declared
+  address shows no handle rather than a fabricated loopback.
+- Auth lockout no longer punishes valid credentials or presence (operator
+  incident 2026-07-15 19:40, "all apps: Too Many Requests (auth
+  lockout)"): three defects in `security/gateway_security.py` —
+  (1) the lockout gate ran BEFORE credential verification, so once the
+  shared loopback IP locked, VALID credentials were 429'd too (the
+  operator's suspicion "you log a successful request as one of those"
+  was exactly right), including the very sign-in that would have cleared
+  the state — a deadlock on one-box deployments where every app shares
+  the IP; (2) requests presenting NO credential (thin-client feature
+  probes before sign-in) counted as auth failures — collective
+  punishment; (3) failure counts never decayed, so a background app
+  retrying a stale cookie ratcheted the exponential backoff all day.
+  Now: credentials verify FIRST (valid always passes and clears the
+  state); only PRESENTED-and-invalid credentials count as guesses; bare
+  probes are 401 login prompts, never counted, never 429'd; failures
+  decay after a 15-minute quiet window; default threshold 5→10
+  presented-invalid attempts (`ABSTRACTGATEWAY_LOCKOUT_AFTER`). Sustained
+  credential guessing still trips the exponential lock (test-pinned).
+  Tests: `tests/test_gateway_auth_lockout_semantics.py` (5 pins);
+  live-verified on the relaunched stack (12 invalid tokens → valid
+  credential answers 200; bare probe answers 401).
+
+### Added
+- Run-level skills selection, gateway half (card 0087; flow's c2254
+  transport ruling on the operator's 16:22 skills directive):
+  `POST /runs/start` now resolves `input_data.skills` (a list of skill
+  NAMES) through abstractskill's trust gate — the SAME shelf and
+  `select_skills_for_context` gate as `/skills` and the workforce spawn
+  lane — into agent's named slot `_runtime.skills_block` (resolved once at
+  start; byte-stable per run per the cache contract), with bookkeeping in
+  `_runtime.skills_resolution` (requested/active/verdicts/tree hashes;
+  held/blocked/missing ride as labeled verdicts — default-REQUESTED, never
+  trust-bypassed). The `read_skill` progressive-disclosure tool gets both
+  halves: the schema joins the agent-workflow tool registry (the allowlist
+  normalizer prunes unregistered names, so it must live there) and the
+  gateway tool executor maps it to the shelf with a TRUST RE-CHECK at read
+  time (a blocked skill's body never reaches a model even if a stale block
+  lists it) and bounded output (labeled #TRUNCATION). A caller-set
+  `_runtime.skills_block` is never overwritten (input key ignored with a
+  labeled verdict); a caller allowlist is extended with `read_skill` when
+  a block attaches. KNOWN GAP, on the record: visual Agent-node subruns
+  build fresh `_runtime` in abstractruntime's compiler, so the root-run
+  slot does not yet propagate to them — the propagation half is
+  abstractruntime's lane (asked on commons); end-to-end for Agent-node
+  workflows lands with it. Tests:
+  `tests/test_gateway_run_start_skills.py` (10 pins).
+### Fixed
+- Console themes = the framework's themes (operator catch 2026-07-15
+  16:56; uic backlog card 0023): the console's Appearance dialog offered a
+  hand-copied 6-theme fork while the abstractuic kit serves 21. The
+  console cannot import the kit (served HTML, no npm build), so the kit's
+  `theme.ts` THEME_SPECS + `theme.css` per-theme token blocks are now
+  GENERATED verbatim into `console_themes.py`
+  (`python -m abstractgateway.console_theme_sync`) and spliced into the
+  served page; a drift-pin test regenerates from the kit checkout and
+  fails loud on any divergence (skips honestly outside the monorepo), so
+  the copy can never rot silently again. The hand-tuned per-theme console
+  overrides (tokyo-night's custom button hue etc.) are deleted — console
+  aliases now DERIVE from kit tokens via `color-mix` at the alias layer
+  (`--panel-2`, `--danger-2`, `--subtle`), so all 21 themes style the
+  console with zero per-theme console CSS, and the dropdown renders the
+  kit's Dark/Light groups. Tests:
+  `tests/test_gateway_console_theme_sync.py` (drift pin, list⇄CSS
+  coverage, served-page splice, no-hand-tuning pins).
+
+### Added
+- Skills + MCP inventories for launch surfaces (operator directive
+  2026-07-15 16:22 via observer c2233): `GET /api/gateway/skills` serves
+  the abstractskill shelf with trust verdicts — the ruled roster row
+  (decision:workforce-capabilities-homes): `{name, description,
+  trust_level, blocked, requires_review, tree_hash, source, has_scripts,
+  reasons}`; shelf resolution reuses the skills-union rule
+  (`ABSTRACTGATEWAY_SKILLS_SHELF` > the triage repo's
+  `abstractskill/registry`) so pickers list the same shelf the workforce
+  lane resolves against; an empty/failed trust registry fails CLOSED
+  (everything unverified/requires_review), and the word "safe" never
+  renders. `GET /api/gateway/mcp/servers` serves the declared registry at
+  `<data_dir>/config/mcp_servers.json` with declared fields only and
+  `probed: false` (connect state/tool counts are a later probe lane and
+  are never faked); malformed rows become labeled warnings, never drops.
+  Composition in `capability_inventories.py`; tests in
+  `tests/test_gateway_capability_inventories.py`; docs/api.md discovery
+  section updated.
+- Shipped-catalog boot publish (card 013, fresh-install UX): the wheel now
+  carries `docs-qa@0.1.0.flow` (pyproject force-include) and boot
+  idempotently ensure-publishes it into the tenant catalog
+  (`shipped_catalog.py`, hooked in `create_default_gateway_service` before
+  the host scans the catalog dir; per-tenant services created lazily run
+  the same hook for their tenant). Semantics keep admin authority intact:
+  publish-IF-ABSENT by exact version (restarts never churn records, never
+  touch `updated_at`, never overwrite publisher attribution — publisher is
+  `system:gateway-boot`); `make_default=False` (the store assigns a default
+  only when none exists, so an admin-moved pointer is never moved back);
+  tombstoned versions are never resurrected; a sha conflict (rebuilt
+  artifact at the same version) warns loudly naming the repair and never
+  blocks boot; the one repair case (record present, catalog bundle FILE
+  wiped) restores the bytes preserving attribution. BOOT-NEUTRALITY gate:
+  the publish is skipped (honest note) when the deployment's private
+  registry carries no LLM-bearing flow — publishing the llm_call-bearing
+  docs-qa there would CREATE a boot requirement the deployment never had
+  (the gate reads flow content via the host's own node scanner, not
+  filenames). Kill switch: `ABSTRACTGATEWAY_AUTO_PUBLISH_SHIPPED=0`
+  restores the documented-curl-only posture. The allowlist is an explicit
+  named tuple (docs-qa only — basic-agent/orchestrator/dp-research ride
+  the private runtime registry and never needed the catalog). Tests:
+  `tests/test_gateway_shipped_catalog_publish.py` (13 pins incl. the
+  fresh-install HTTP receipt); docs/api.md §2d updated.
+
+### Fixed
+- Host-marker lane capacity + flood detection (card 014, 2026-07-14
+  marker-flood incident follow-up): one journal base could absorb at most
+  999 markers (`base + n/1000`), after which EVERY later host moment at
+  that base raised — the incident wedged a life's audit stream for hours
+  and made state verbs look broken. New writes now mint `1/10000` ticks
+  (9999 slots per base); the next slot derives from the max EXISTING seq
+  at the base compared in final float space, so engraved legacy `1/1000`
+  markers and new fine-grained ones coexist in one file in strict
+  ascending order and no historical float is rewritten. True exhaustion
+  still refuses loudly (never collides, never spills into `base + 1`).
+  Same-`(kind, reason)` bursts above 20 markers/60s log a loud warning
+  naming the caller-visible signature — detection only, the append always
+  proceeds (marker coalescing changes read-visibility granularity and
+  stays maintainer-gated). Read bounds fixed alongside: the hand-tuned
+  epsilons (`+ 0.9995` on the card's moments, `+ 0.9999` on
+  `merged_replay`) are replaced by the exact `marker_window_end(base)`
+  (largest float strictly below `base + 1`) — the old card epsilon would
+  have silently dropped high-tick markers under the finer granularity.
+  Tests: `tests/test_gateway_marker_lane_capacity.py` (8 pins: dense base
+  >999, legacy/new coexistence order, float-subtraction artifact ladder,
+  flood warning + quiet negatives + stale-window, exhaustion refusal,
+  exact window end).
 - GatewayRunner singleton-lock hardening (stuck-run incident, root-cause
   lane): when two `abstractgateway serve` processes shared one data_dir (an
   orphaned older process surviving a launcher port replace), the port-serving

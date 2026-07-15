@@ -1,17 +1,18 @@
-"""PERSONAL IS THE GRANT (laurent c815; incident wave c1435): the arming
-surface over phases.personal.
+"""PERSONAL IS THE CLICK (laurent 2026-07-15 21:38, superseding the c815
+separate-arming ceremony for the operator door): the grant surface over
+phases.personal plus the arm-on-start door.
 
-- GET/PUT /entities/{name}/personal-grant is the ONE sanctioned write path
+- The operator's authenticated /loop/start IS the grant: an unarmed (or
+  lapsed) bucket is armed until_revoked in the same act, marker-first,
+  granted_by = the acting principal — no confirm-your-own-choice ceremony.
+- PUT /entities/{name}/personal-grant remains for timers and revocation
   (runtime owns the format module — write_personal_grant; the door supplies
   the SERVER-derived principal as granted_by).
 - Marker-first ENFORCED: personal_granted / personal_grant_revoked land on
   the stream before the file moves; validation runs BEFORE the marker so a
   refused write never leaves a granted marker behind.
-- /loop/start refuses an unarmed start with the structured B2 shape
-  (reason_code=not_granted) — "the process exists" may never again stand in
-  for "the operator allowed it".
-- Arming is ONLY this explicit operator act: visit open and state writes
-  never touch the bucket.
+- Arming stays an OPERATOR act: visit open and state writes never touch
+  the bucket; entity/harness paths have no arming door.
 """
 
 from __future__ import annotations
@@ -110,16 +111,72 @@ def test_grant_roundtrip_markers_and_principal():
         assert len(granted_after) == 1  # unchanged
 
 
-def test_loop_start_refuses_unarmed_with_structured_reason():
+def test_loop_start_arms_the_grant_itself(monkeypatch: pytest.MonkeyPatch):
+    """The click IS the grant (laurent 21:38): starting personal time on an
+    unarmed NEWBORN (asleep at birth) arms the grant, wakes the entity, and
+    starts — one act, no cross-surface arming ceremony. The acts still land
+    on the record (personal_granted marker-first, wake reason, started
+    marker): simplification removed the ceremony, never the biography."""
+    import abstractruntime.identity.life as life_mod
+
+    def _fake_spawn(home_dir, **kwargs):
+        return {"pid": 4242, "log": str(home_dir / "own_time.log"), **kwargs}
+
+    monkeypatch.setattr(life_mod, "spawn_loop_process", _fake_spawn)
+
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Pollux", "spark": _spark("Pollux")}).status_code == 201
 
         r = client.post("/api/gateway/entities/Pollux/loop/start", json={})
-        assert r.status_code == 409, r.text
-        detail = r.json()["detail"]
-        assert detail["reason_code"] == "not_granted"
-        assert "not armed" in detail["message"]
-        assert detail["loop"]["running"] is False
+        assert r.status_code == 200, r.text
+        assert r.json()["started"] is True
+
+        # The grant was armed BY the start, attributed to the principal.
+        g = client.get("/api/gateway/entities/Pollux/personal-grant").json()
+        assert g["armed"] is True
+        assert g["mode"] == "until_revoked"
+        assert g["granted_by"] == "person:local-admin"
+
+        # The asleep newborn was woken by the same click (doors WAKE).
+        from abstractgateway.service import get_gateway_service
+        from abstractruntime.identity.life import read_entity_state
+
+        home_dir = Path(get_gateway_service().config.data_dir) / "entities" / "pollux"
+        st = read_entity_state(home_dir)
+        assert st.get("state") == "awake"
+        assert "personal time" in str(st.get("reason") or "")
+
+        # Both acts are on the stream: granted (marker-first) then started.
+        kinds = [m["payload"].get("kind") for m in _markers("pollux")]
+        assert "personal_granted" in kinds
+        assert "personal_started" in kinds
+        granted = [m for m in _markers("pollux") if m["payload"].get("kind") == "personal_granted"]
+        assert granted[0]["payload"]["by"] == "person:local-admin"
+
+
+def test_loop_start_leaves_an_armed_grant_untouched(monkeypatch: pytest.MonkeyPatch):
+    """An armed timer is NOT rewritten by start — arm-on-start fires only
+    when the grant refuses (unarmed/lapsed); an operator-set window stands."""
+    import abstractruntime.identity.life as life_mod
+
+    def _fake_spawn(home_dir, **kwargs):
+        return {"pid": 4242, "log": str(home_dir / "own_time.log"), **kwargs}
+
+    monkeypatch.setattr(life_mod, "spawn_loop_process", _fake_spawn)
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Rhea", "spark": _spark("Rhea")}).status_code == 201
+        assert client.put(
+            "/api/gateway/entities/Rhea/personal-grant",
+            json={"mode": "timer", "expires_at": "2100-01-01T00:00:00Z"},
+        ).status_code == 200
+
+        r = client.post("/api/gateway/entities/Rhea/loop/start", json={})
+        assert r.status_code == 200, r.text
+        g = client.get("/api/gateway/entities/Rhea/personal-grant").json()
+        assert g["mode"] == "timer"  # untouched
+        granted = [m for m in _markers("rhea") if m["payload"].get("kind") == "personal_granted"]
+        assert len(granted) == 1  # only the explicit PUT; start re-armed nothing
 
 
 def test_timer_mode_normalizes_expiry_and_expires():

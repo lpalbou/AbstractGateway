@@ -81,6 +81,10 @@ packages = ["src/abstractgateway"]
 "flows/bundles/basic-agent.flow" = "abstractgateway/flows/bundles/basic-agent.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
 "flows/bundles/dp-research@0.1.0.flow" = "abstractgateway/flows/bundles/dp-research@0.1.0.flow"
+# The console assistant drawer's transport bundle: boot ensure-publishes it
+# into the tenant catalog (shipped_catalog.py, card 013) — the wheel must
+# actually carry it or a fresh pip install has nothing to publish.
+"flows/bundles/docs-qa@0.1.0.flow" = "abstractgateway/flows/bundles/docs-qa@0.1.0.flow"
 # One-source corpus packaging: the repo-root llms.txt IS the docs corpus the
 # /docs/corpus route serves — force-include avoids a checked-in copy drifting.
 "llms.txt" = "abstractgateway/assets/llms.txt"
@@ -96,6 +100,7 @@ exclude = [
 "flows/bundles/basic-agent.flow" = "flows/bundles/basic-agent.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
 "flows/bundles/dp-research@0.1.0.flow" = "flows/bundles/dp-research@0.1.0.flow"
+"flows/bundles/docs-qa@0.1.0.flow" = "flows/bundles/docs-qa@0.1.0.flow"
 
 [tool.pytest.ini_options]
 minversion = "7.0"

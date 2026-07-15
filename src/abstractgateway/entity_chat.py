@@ -53,9 +53,15 @@ DEFAULT_YIELD_WAIT_S = 55.0
 # ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE / _CONTEXT_WINDOW and the request
 # body override; these constants are the floor experience every entity gets.
 # Shelf widened 24 -> 36 (maintainer, 2026-07-09: "it needs to retrieve more
-# memories to function"). Arithmetic honest at 65536: token budget 12% = 7864;
-# 36 seats x ~200-token rich digests = 7200 <= 7864 — seats still fill.
-DEFAULT_ENTITY_CHAT_SHELF_SIZE = 36
+# memories to function") -> 50 (maintainer c2468, 2026-07-15: "increase the
+# max memories from 30 to 50" — his "30" was 36 minus the 6 identity seats,
+# which render in the prelude, not the MEMORIES list). Arithmetic (memory's
+# c2471 check on Ephemeral's live trace): observed digests ~77 tokens, so
+# 50 seats ≈ 3,850 of the 7,864 budget (12% of 65536) — 2x headroom today.
+# Caveat on record: at the ~200-token RICH-digest planning figure tokens
+# bind first (~39 seats fill); the companion knob is the recall budget's
+# token_fraction 0.12 -> 0.16 if live traces show tokens_used pinning.
+DEFAULT_ENTITY_CHAT_SHELF_SIZE = 50
 DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW = 65536
 # Mind substrate has NO code default (maintainer ruling 2026-07-09 04:26:
 # "I decide which provider and model is used ... NO FALLBACK" — a code
@@ -668,7 +674,12 @@ class EntityChatHost:
         elif str(state.get("state") or "awake") == "paused":
             phase = "paused"
         elif str(state.get("state") or "awake") == "asleep":
-            phase = "asleep"
+            # mode=visiting is VISIT BOOKKEEPING (auto-yield / mid-open
+            # posture), not sleep — rendering it "asleep" fabricated the
+            # "went to sleep during personal" read of the 22:38 incident
+            # (entity forensics c2465 finding 3). Serve the yield
+            # distinctly; clients render it as bookkeeping, never sleep.
+            phase = "yielded" if str(state.get("mode") or "") == "visiting" else "asleep"
         elif loop_running and loop_phase == "day":
             phase = "personal"
         elif loop_running:
@@ -687,6 +698,12 @@ class EntityChatHost:
             "own_time_running": loop_running,
             "own_time_phase": loop_phase or None,
         }
+
+    def has_open(self, slug: str) -> bool:
+        """Live hosted session on this home? (The visit reaper's chat probe:
+        a stale-yield repair must never fire under a LIVE drawer session.)"""
+        with self._lock:
+            return bool(self._by_slug.get(str(slug or "").strip().lower()))
 
     def close_open_visit(self, name: str, *, reflect: bool = True) -> Optional[Dict[str, Any]]:
         """Close the home's open visit if one exists (revocation + the

@@ -143,6 +143,147 @@ def test_visit_open_turn_close_full_cycle(monkeypatch: pytest.MonkeyPatch):
         assert "summon" in kinds and "session_closed" in kinds
 
 
+def test_reaper_closes_an_abandoned_visit_and_unstrands_the_home(monkeypatch: pytest.MonkeyPatch):
+    """The stranded auto-yield (entity forensics c2465 ask 1): an abandoned
+    browser visit used to hold state=asleep(auto-yield) FOREVER — the D3
+    idle deadline only fired at the next door touch, new opens 409'd, and
+    the entity was locked out of personal time. The reaper's sweep fires a
+    DUE deadline with no client alive: graceful close (reflection runs),
+    state restored, and the home opens again."""
+    _install_scripted_llm(monkeypatch, [
+        "Hello.",
+        "Reflection: a short visit, honestly closed.",  # the ruled idle-close reflection
+    ])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        assert client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "Hi."}
+        ).status_code == 200
+
+        from abstractgateway.service import get_gateway_service
+        from abstractgateway.routes.entities import _visit_host
+
+        host = _visit_host()
+        registry = get_gateway_service().entity_registry
+
+        # Abandonment: nothing touches the door. Move the parked run's idle
+        # deadline into the past (the door seeded ~1h; the test cannot wait).
+        er = registry.get_entity_runtime("castor")
+        run = er.run_store.load(run_id)
+        assert run is not None and run.waiting is not None and run.waiting.until
+        run.waiting.until = "2020-01-01T00:00:00+00:00"
+        er.run_store.save(run)
+
+        driven = host.reap_now()
+        assert driven >= 1, "the due visit must be driven without any client"
+
+        # The visit closed gracefully: terminal run, idle close reason, no
+        # open visit on the home, and a session_closed marker on the stream.
+        assert client.get("/api/gateway/entities/Castor/visit").json()["open"] is False
+        final = er.run_store.load(run_id)
+        assert str(getattr(final.status, "value", final.status)) == "completed"
+        assert str((final.output or {}).get("close_reason") or "") == "idle_timeout"
+        stream = (_home_dir().parent / ".host_stream" / "castor.jsonl").read_text(encoding="utf-8")
+        kinds = [json.loads(line).get("payload", {}).get("kind") for line in stream.splitlines()]
+        assert "session_closed" in kinds
+
+        # Un-stranded: a NEW visit opens (one-life-one-visit no longer held
+        # by the abandoned run).
+        _install_scripted_llm(monkeypatch, ["Again.", "Reflection two."])
+        reopened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert reopened.status_code == 200, reopened.text
+        client.post(f"/api/gateway/entities/Castor/visit/{reopened.json()['run_id']}/close", json={})
+
+
+def test_reaper_repairs_a_stale_orphaned_yield_posture(monkeypatch: pytest.MonkeyPatch):
+    """The 20:39 incident (c2465): a hosted-chat auto-yield posture
+    (asleep + mode=visiting) orphaned by a gateway restart stood for hours
+    rendering as SLEEP and locking the entity out of personal time. The
+    reaper restores awake — but ONLY when the posture is old, no hosted
+    session is live, and no durable visit is open."""
+    import time as _time
+
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+
+        from abstractgateway.routes.entities import _visit_host
+
+        host = _visit_host()
+        home_dir = _home_dir()
+
+        # The orphaned posture (what a killed gateway leaves behind).
+        write_entity_state(home_dir, "asleep", reason="in conversation with person:admin (auto-yield)", mode="visiting")
+
+        # No chat probe wired => never guess, never repair.
+        host._chat_probe = None
+        monkeypatch.setattr(type(host), "STALE_YIELD_GRACE_S", 0.0, raising=True)
+        assert host.reap_now() == 0
+        assert read_entity_state(home_dir).get("state") == "asleep"
+
+        # Probe says a session is LIVE => posture stands (it is owned).
+        host._chat_probe = lambda slug: True
+        assert host.reap_now() == 0
+        assert read_entity_state(home_dir).get("state") == "asleep"
+
+        # Probe says nothing is live + posture beyond grace => repaired.
+        host._chat_probe = lambda slug: False
+        assert host.reap_now() == 1
+        repaired = read_entity_state(home_dir)
+        assert repaired.get("state") == "awake"
+        assert "stale visit yield repaired" in str(repaired.get("reason") or "")
+
+        # The repair is on the observable record (wake marker, reaper channel).
+        stream = (_home_dir().parent / ".host_stream" / "castor.jsonl").read_text(encoding="utf-8")
+        marks = [json.loads(line)["payload"] for line in stream.splitlines()]
+        wakes = [m for m in marks if m.get("kind") == "wake" and (m.get("channel") == "reaper" or (m.get("details") or {}).get("channel") == "reaper")]
+        assert wakes, "the reaper's wake must land as a host marker"
+
+        # Fresh posture (inside the grace window) is never touched.
+        monkeypatch.setattr(type(host), "STALE_YIELD_GRACE_S", 3600.0, raising=True)
+        write_entity_state(home_dir, "asleep", reason="auto-yield", mode="visiting")
+        assert host.reap_now() == 0
+        assert read_entity_state(home_dir).get("state") == "asleep"
+        _time.sleep(0)  # readability: grace is time-based, nothing to wait for here
+
+
+def test_reaper_leaves_unexpired_parks_and_running_runs_alone(monkeypatch: pytest.MonkeyPatch):
+    """Narrowness pins: an unexpired park is untouched (no drive, no close),
+    and a crash-orphaned RUNNING run is NOT resumed by the reaper — the
+    explicit /tick recovery verb owns that (the reaper never resumes
+    half-driven cognition on its own clock)."""
+    from abstractruntime.core.models import RunStatus
+
+    _install_scripted_llm(monkeypatch, ["Hello."])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        assert client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "Hi."}
+        ).status_code == 200
+
+        from abstractgateway.service import get_gateway_service
+        from abstractgateway.routes.entities import _visit_host
+
+        host = _visit_host()
+        registry = get_gateway_service().entity_registry
+        er = registry.get_entity_runtime("castor")
+
+        # Unexpired park (deadline ~1h out): sweep drives nothing.
+        assert host.reap_now() == 0
+        assert client.get("/api/gateway/entities/Castor/visit").json()["open"] is True
+
+        # Crash-orphan the run (RUNNING at rest): still not the reaper's.
+        run = er.run_store.load(run_id)
+        run.status = RunStatus.RUNNING
+        run.waiting = None
+        er.run_store.save(run)
+        assert host.reap_now() == 0
+        assert str(er.run_store.load(run_id).status.value) == "running"
+
+
 def test_visit_survives_host_amnesia(monkeypatch: pytest.MonkeyPatch):
     """The restart story at the door layer: the in-memory spec cache dies
     (fresh host), the durable run does not — turn continues the same visit

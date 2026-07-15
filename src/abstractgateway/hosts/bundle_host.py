@@ -978,7 +978,21 @@ class WorkflowBundleGatewayHost:
             tool_mode = str(_env("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower()
             # Always build a concrete in-process executor so thin-client approvals can execute tools
             # inside the runtime (no bridge-owned tool execution).
-            base_executor: Any = MappingToolExecutor(build_default_tool_map())
+            gateway_tool_map = build_default_tool_map()
+
+            # read_skill execution half (card 0087; agent's progressive-
+            # disclosure contract needs BOTH halves — the skills_block index
+            # AND an executor behind read_skill). Bound to this host's data
+            # root so the body comes from the same shelf /skills serves;
+            # trust is RE-CHECKED at read time (a blocked skill's body never
+            # reaches a model even if a stale block still lists it).
+            def _gateway_read_skill(name: str = "", max_chars: int = 16000, **_ignored: Any) -> Dict[str, Any]:
+                from ..capability_inventories import read_skill_body
+
+                return read_skill_body(str(name or ""), data_dir=Path(data_root), max_chars=int(max_chars or 16000))
+
+            gateway_tool_map.setdefault("read_skill", _gateway_read_skill)
+            base_executor: Any = MappingToolExecutor(gateway_tool_map)
             if tool_mode in {"local", "local_all"}:
                 tool_executor = base_executor
             elif tool_mode in {"approval", "local_approval", "local-approval"}:
@@ -1196,6 +1210,7 @@ class WorkflowBundleGatewayHost:
                     COMPACT_MEMORY_TOOL,
                     DELEGATE_AGENT_TOOL,
                     INSPECT_VARS_TOOL,
+                    READ_SKILL_TOOL,
                     RECALL_MEMORY_TOOL,
                     REMEMBER_TOOL,
                 )
@@ -1207,6 +1222,13 @@ class WorkflowBundleGatewayHost:
                     REMEMBER_TOOL,
                     COMPACT_MEMORY_TOOL,
                     DELEGATE_AGENT_TOOL,
+                    # read_skill (card 0087): the agent contract keeps this out
+                    # of DEFAULT tool lists, but the allowlist normalizer
+                    # prunes names absent from the logic's registry — so the
+                    # schema must live here for a skills-carrying run's
+                    # allowlist to keep it. Runs without a skills_block that
+                    # call it anyway get the executor's honest refusal.
+                    READ_SKILL_TOOL,
                 ]
                 seen_names = {t.name for t in all_tool_defs if getattr(t, "name", None)}
                 for t in builtin_defs:
@@ -1524,6 +1546,46 @@ class WorkflowBundleGatewayHost:
 
         if "workflow_bundles_dir" not in rt_ns:
             rt_ns["workflow_bundles_dir"] = str(self.bundles_dir)
+
+        # Run-level skills selection (card 0087; flow's c2254 transport
+        # ruling): `input_data.skills` = list of skill NAMES, resolved ONCE
+        # at start through abstractskill's trust gate (same shelf and gate
+        # as /skills and the workforce spawn lane) into agent's named slot
+        # `_runtime.skills_block` (byte-stable per run — the cache
+        # contract). Held/blocked ride as labeled verdicts in
+        # `_runtime.skills_resolution`, never silently absent, never
+        # trust-bypassed. read_skill joins a caller-supplied allowlist so
+        # the progressive-disclosure tool is reachable; default-allowlist
+        # runs already see it via the logic registry.
+        raw_skills = vars0.get("skills")
+        if isinstance(raw_skills, list) and any(isinstance(s, str) and s.strip() for s in raw_skills):
+            if "skills_block" in rt_ns:
+                rt_ns.setdefault("skills_resolution", {})
+                rt_ns["skills_resolution"]["verdicts"] = list(
+                    rt_ns["skills_resolution"].get("verdicts") or []
+                ) + ["#FALLBACK input_data.skills ignored: the caller already set _runtime.skills_block"]
+            else:
+                try:
+                    from ..capability_inventories import resolve_run_skills
+
+                    resolution = resolve_run_skills(
+                        [str(s) for s in raw_skills if isinstance(s, str)], data_dir=Path(self.data_dir)
+                    )
+                except Exception as e:  # noqa: BLE001 - a broken shelf must not block the run
+                    resolution = {
+                        "requested": [str(s) for s in raw_skills if isinstance(s, str)],
+                        "active": [],
+                        "verdicts": [f"#FALLBACK skills resolution failed: {e}"],
+                        "skills_block": None,
+                        "resolved_tree_hashes": {},
+                    }
+                block = resolution.pop("skills_block", None)
+                if isinstance(block, str) and block.strip():
+                    rt_ns["skills_block"] = block
+                    allowed = rt_ns.get("allowed_tools")
+                    if isinstance(allowed, list) and "read_skill" not in allowed:
+                        allowed.append("read_skill")
+                rt_ns["skills_resolution"] = resolution
 
         # Best-effort: seed durable run vars with the gateway runtime defaults so VisualFlow
         # nodes (notably Agent nodes) can inherit provider/model without per-node wiring.

@@ -1273,8 +1273,15 @@ def get_entity_life_state(name: str) -> Dict[str, Any]:
         if durable.get("open"):
             out["phase"] = "visiting"
             out["visit_run_id"] = durable.get("run_id")
-    except Exception:
-        pass  # thin chip: chat-host truth stands when the visit host is absent
+    except Exception as e:  # noqa: BLE001
+        # LABELED downgrade (entity forensics c2465 finding 1): a broken
+        # visit host silently painting the chat-host phase over an OPEN
+        # durable visit was the two-composites-two-honesty-standards hole
+        # (/cognition labels the same failure). The chip stays served —
+        # but the reader can now SEE the fold failed.
+        out["warnings"] = list(out.get("warnings") or []) + [
+            f"#FALLBACK durable-visit fold unavailable ({e}) — phase reflects chat host + operator state only"
+        ]
     return out
 
 
@@ -1310,7 +1317,7 @@ class OpenChatRequest(BaseModel):
     )
     shelf_size: Optional[int] = Field(
         default=None,
-        description="Recall shelf seats (None = env override or the wide default 36 — "
+        description="Recall shelf seats (None = env override or the wide default 50 — "
         "maintainer 2026-07-09: widened so the entity retrieves enough memories to function)",
     )
     max_output_tokens: int = Field(default=2048)
@@ -2332,7 +2339,7 @@ class StartLoopRequest(BaseModel):
         description="24/7 mode: elected rest becomes a nap of this length (0 = rest ends the loop)",
     )
     # None = resolve like the chat surface: env override, then the wide
-    # defaults (shelf 36, context 65536 — maintainer rulings 2026-07-08/09).
+    # defaults (shelf 50, context 65536 — maintainer rulings 2026-07-08/09 + c2468).
     shelf_size: Optional[int] = Field(default=None, ge=1, le=64)
     context_window: Optional[int] = Field(default=None, ge=20000)
 
@@ -2405,25 +2412,39 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
     except Exception:
         pass  # no visit host on this service shape
 
-    # PERSONAL IS THE GRANT (laurent c815; runtime gate 7aa52ad): the loop's
-    # own doors refuse an unarmed start too — checking here as well gives the
-    # button the structured refusal + arming hint instead of a spawn error.
+    # PERSONAL IS THE CLICK (laurent 2026-07-15 21:38, superseding the c815
+    # separate-arming ceremony for this door: "on entity app, i click on
+    # 'personal', and the entity is then authorize to tick itself...
+    # SIMPLIFY, do not put excessive guardrails"): this authenticated start
+    # IS the operator's grant — an unarmed (or lapsed-timer) bucket is armed
+    # here, until_revoked, marker-first, granted_by = the acting principal.
+    # The personal-grant surface remains for timers and revocation; entity/
+    # visit/harness paths still arm nothing, and the runtime loop gate still
+    # re-checks the grant at every day-open.
     from abstractruntime.identity.life import (
         personal_grant_refusal,
         read_entity_state,
         read_personal_grant,
+        write_entity_state,
     )
 
-    grant_refusal = personal_grant_refusal(read_personal_grant(home_dir))
-    if grant_refusal:
-        raise _loop_refuse(409, "not_granted", grant_refusal)
+    from ..security.principal import current_gateway_principal
 
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+
+    # Paused refuses BEFORE the grant writes: a freeze is an emergency stop
+    # and its Restore is the deliberate release — no act lands on a frozen
+    # home as a side effect of a refused start.
     state = read_entity_state(home_dir)
     if state.get("state") == "paused":
         raise _loop_refuse(
             409, "paused",
             f"{manifest.entity_id} is paused (hard freeze){': ' + str(state.get('reason')) if state.get('reason') else ''} — wake him first",
         )
+
+    if personal_grant_refusal(read_personal_grant(home_dir)) is not None:
+        _apply_personal_grant(registry, manifest, mode="until_revoked", expires_at=None)
     # If the loop is already alive, saying so with its live status is what B2
     # needs — the operator clicked start repeatedly because the button never
     # told them it was ALREADY running (the silent-no-op bug class).
@@ -2433,15 +2454,15 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
             409, "already_running",
             f"{manifest.entity_id}'s own time is already running (pid {already.get('pid')}, phase {already.get('phase')})",
         )
-    # An operator-asleep entity cannot start its own day — but say so as a
-    # reason the button can render (not a bare 409), and name that waking is
-    # the operator's next act.
+    # Doors WAKE, they don't refuse (B1 + c1503, extended here by the same
+    # 21:38 ruling): an operator-asleep entity is woken by the operator's
+    # own personal-time click — the old not_awake refusal was the same
+    # confirm-your-own-choice ceremony as the arming hint. Paused stays a
+    # refusal above: Restore is the deliberate release of an emergency
+    # stop, not ceremony. The visiting posture keeps its race guard below.
     if str(state.get("state") or "") == "asleep" and str(state.get("mode") or "") != "visiting":
-        raise _loop_refuse(
-            409, "not_awake",
-            f"{manifest.entity_id} is asleep ({state.get('reason') or 'no reason recorded'}) — "
-            "wake him before starting his own time",
-        )
+        write_entity_state(home_dir, "awake", reason=f"woken for personal time by {actor}")
+        state = read_entity_state(home_dir)
     # Registration-window guard (observer 2026-07-09): a visit `open()` writes
     # the visiting posture (asleep + mode=visiting) BEFORE it registers in the
     # chat host's _by_slug, so a loop/start racing an in-flight open would pass
@@ -2510,10 +2531,6 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
         raise _loop_refuse(409, "start_failed", str(e))
 
     try:
-        from ..security.principal import current_gateway_principal
-
-        principal = current_gateway_principal()
-        actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
         home = registry.get_home(manifest.slug)
         record_host_marker(
             entities_dir=registry.entities_dir,
@@ -2616,13 +2633,19 @@ def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> Dict[s
 
 
 # ----------------------------------------------------------- personal grant
-# PERSONAL IS THE GRANT (laurent c815, re-derived + corrected c1435): the
+# PERSONAL IS THE CLICK (laurent 2026-07-15 21:38: "on entity app, i click
+# on 'personal', and the entity is then authorize to tick itself...
+# SIMPLIFY, do not put excessive guardrails" — superseding the SEPARATE
+# arming ceremony of c815/c1427 for the operator door): the operator's
+# authenticated personal-time start IS the grant; /loop/start arms an
+# unarmed bucket itself. This surface remains for timers and revocation.
+# What survives of the old rider: no ENTITY, visit, or harness path arms
+# anything — arming happens only on operator-authenticated doors, and the
+# runtime loop gate still re-checks the grant at every day-open. The
 # activation bucket phases.personal.{mode, expires_at, granted_by,
 # granted_at} in <home>/phases.yaml (runtime owns the format module —
-# read/write_personal_grant, 7aa52ad; this door is the ONE sanctioned write
-# surface). Arming is ONLY an explicit operator act — no visit, wake, or
-# harness path may flip mode (agency's rider, c1427). Marker-first ENFORCED
-# like substrate: an unrecorded grant change is the 10:20 incident class.
+# read/write_personal_grant). Marker-first ENFORCED like substrate: an
+# unrecorded grant change is the 10:20 incident class.
 
 
 class PutPersonalGrantRequest(BaseModel):
@@ -2630,59 +2653,44 @@ class PutPersonalGrantRequest(BaseModel):
     expires_at: Optional[str] = Field(default=None, description="ISO-8601 expiry (required for mode=timer; normalized to aware UTC)")
 
 
-@router.get("/{name}/personal-grant")
-def get_personal_grant(name: str) -> Dict[str, Any]:
-    """The grant axis, readable on its own (the /cognition composite carries
-    the same block): armed = the phase MAY run right now (semantics c1436:
-    ARMED ≠ IN-PHASE — the current phase is a separate fact)."""
-    from abstractruntime.identity.life import personal_grant_refusal, read_personal_grant
+def _apply_personal_grant(registry: EntityRegistry, manifest: Any, *, mode: str, expires_at: Optional[str]) -> None:
+    """The ONE grant-change implementation: validate, marker-first, write.
 
-    registry = _registry()
-    try:
-        manifest = registry.manifest_for(name)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
-    grant = read_personal_grant(registry.entities_dir / manifest.slug)
-    refusal = personal_grant_refusal(grant)
-    armed = refusal is None
-    if not armed:
-        _maybe_mark_grant_expired(registry, manifest, grant)
-    return {**grant, "armed": armed, "refusal": refusal, "source": "phases.yaml"}
-
-
-@router.put("/{name}/personal-grant")
-def put_personal_grant(name: str, req: PutPersonalGrantRequest) -> Dict[str, Any]:
-    from abstractruntime.identity.life import read_personal_grant, write_personal_grant
+    Both writers land here — the PUT surface (timers/revocation) and the
+    /loop/start arm-on-start (the operator's click). Raises HTTPException
+    on refusal; the personal_granted / personal_grant_revoked marker lands
+    BEFORE the file moves, and validation runs BEFORE the marker so a
+    refused write never leaves a granted marker behind."""
+    from abstractruntime.identity.life import (
+        PERSONAL_GRANT_MODES,
+        PHASES_FILENAME,
+        PHASES_SCHEMA_VERSION,
+        read_personal_grant,
+        write_personal_grant,
+    )
 
     from ..entity_replay import record_host_marker
     from ..security.principal import current_gateway_principal
 
-    registry = _registry()
-    try:
-        manifest = registry.manifest_for(name)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     home_dir = registry.entities_dir / manifest.slug
     principal = current_gateway_principal()
     actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
-    mode = str(req.mode or "").strip().lower()
+    mode = str(mode or "").strip().lower()
     prior = read_personal_grant(home_dir)
 
     # Validate BEFORE the marker: marker-first must never record an act the
     # write would refuse (a personal_granted marker over a 400 is a lie).
-    from abstractruntime.identity.life import PERSONAL_GRANT_MODES, PHASES_FILENAME, PHASES_SCHEMA_VERSION
-
     if mode not in PERSONAL_GRANT_MODES:
-        raise HTTPException(status_code=400, detail=f"unknown personal mode {req.mode!r}: modes are {'/'.join(PERSONAL_GRANT_MODES)}")
+        raise HTTPException(status_code=400, detail=f"unknown personal mode {mode!r}: modes are {'/'.join(PERSONAL_GRANT_MODES)}")
     normalized_expiry: Optional[str] = None
     if mode == "timer":
         from abstractruntime.core.runtime import normalize_utc_iso
 
-        if not str(req.expires_at or "").strip():
+        if not str(expires_at or "").strip():
             raise HTTPException(status_code=400, detail="mode=timer requires expires_at — a timer without an expiry is no grant")
-        normalized_expiry = normalize_utc_iso(str(req.expires_at).strip())
+        normalized_expiry = normalize_utc_iso(str(expires_at).strip())
         if normalized_expiry is None:
-            raise HTTPException(status_code=400, detail=f"expires_at is not an ISO-8601 timestamp: {req.expires_at!r}")
+            raise HTTPException(status_code=400, detail=f"expires_at is not an ISO-8601 timestamp: {expires_at!r}")
     # The writer's OWN refusal conditions, dry-run (adversary P2-2: corrupt
     # phases.yaml and newer schema_version raise AFTER the marker landed —
     # recording a grant that never happened, the exact class marker-first
@@ -2740,7 +2748,37 @@ def put_personal_grant(name: str, req: PutPersonalGrantRequest) -> Dict[str, Any
             "an unrecorded grant change is not allowed; retry when the home is reachable",
         )
     try:
-        write_personal_grant(home_dir, mode=mode, granted_by=actor, expires_at=req.expires_at)
+        write_personal_grant(home_dir, mode=mode, granted_by=actor, expires_at=expires_at)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{name}/personal-grant")
+def get_personal_grant(name: str) -> Dict[str, Any]:
+    """The grant axis, readable on its own (the /cognition composite carries
+    the same block): armed = the phase MAY run right now (semantics c1436:
+    ARMED ≠ IN-PHASE — the current phase is a separate fact)."""
+    from abstractruntime.identity.life import personal_grant_refusal, read_personal_grant
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    grant = read_personal_grant(registry.entities_dir / manifest.slug)
+    refusal = personal_grant_refusal(grant)
+    armed = refusal is None
+    if not armed:
+        _maybe_mark_grant_expired(registry, manifest, grant)
+    return {**grant, "armed": armed, "refusal": refusal, "source": "phases.yaml"}
+
+
+@router.put("/{name}/personal-grant")
+def put_personal_grant(name: str, req: PutPersonalGrantRequest) -> Dict[str, Any]:
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    _apply_personal_grant(registry, manifest, mode=req.mode, expires_at=req.expires_at)
     return get_personal_grant(name)

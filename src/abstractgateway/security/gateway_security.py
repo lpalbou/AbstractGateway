@@ -218,8 +218,11 @@ class GatewayAuthPolicy:
     max_concurrency: int = 64
     max_sse_connections: int = 32
 
-    # Auth failure lockout
-    lockout_after_failures: int = 5
+    # Auth failure lockout. Threshold is per-IP and one box runs MANY apps
+    # (c2341): 10 presented-invalid credentials within the decay window is
+    # still instant refusal for a brute-forcer (exponential backoff from
+    # there), while a stale cookie in one app no longer locks the machine.
+    lockout_after_failures: int = 10
     lockout_base_s: float = 1.0
     lockout_max_s: float = 60.0
 
@@ -308,7 +311,7 @@ def load_gateway_auth_policy_from_env() -> GatewayAuthPolicy:
     )
     max_conc = _as_int("ABSTRACTGATEWAY_MAX_CONCURRENCY", "ABSTRACTFLOW_GATEWAY_MAX_CONCURRENCY", 64)
     max_sse = _as_int("ABSTRACTGATEWAY_MAX_SSE", "ABSTRACTFLOW_GATEWAY_MAX_SSE", 32)
-    lockout_after = _as_int("ABSTRACTGATEWAY_LOCKOUT_AFTER", "ABSTRACTFLOW_GATEWAY_LOCKOUT_AFTER", 5)
+    lockout_after = _as_int("ABSTRACTGATEWAY_LOCKOUT_AFTER", "ABSTRACTFLOW_GATEWAY_LOCKOUT_AFTER", 10)
     lockout_base = _as_float("ABSTRACTGATEWAY_LOCKOUT_BASE_S", "ABSTRACTFLOW_GATEWAY_LOCKOUT_BASE_S", 1.0)
     lockout_max = _as_float("ABSTRACTGATEWAY_LOCKOUT_MAX_S", "ABSTRACTFLOW_GATEWAY_LOCKOUT_MAX_S", 60.0)
     trust_proxy = _as_bool(_env("ABSTRACTGATEWAY_TRUST_PROXY", "ABSTRACTFLOW_GATEWAY_TRUST_PROXY") or "0", False)
@@ -340,6 +343,18 @@ class _AuthLockoutTracker:
 
     This is intentionally process-local. In production, prefer infra-level rate limiting
     at the reverse proxy + WAF, and treat this as a safety net.
+
+    SEMANTICS (operator incident 2026-07-15, c2341 — every app on the box
+    answered 429): the tracker throttles CREDENTIAL GUESSING, never
+    presence. Only PRESENTED-and-invalid credentials count as failures;
+    a request with no credential is a login prompt (401), not a guess —
+    on a single machine every thin client feature-probes before sign-in,
+    and counting those locked the shared loopback IP for everyone.
+    Failures DECAY (a stale-cookie app retrying in the background must
+    not ratchet the counter all day), and a VALID credential always
+    passes and clears the state — enforced by the middleware ordering
+    (verify first), which kills the deadlock where a locked IP rejected
+    the very credentials that would have cleared it.
     """
 
     def __init__(
@@ -349,19 +364,30 @@ class _AuthLockoutTracker:
         base_s: float,
         max_s: float,
         max_entries: int = 10_000,
+        decay_s: float = 900.0,
     ) -> None:
         self._after = max(1, int(after_failures))
         self._base = max(0.0, float(base_s))
         self._max = max(0.0, float(max_s))
         self._max_entries = max(100, int(max_entries))
+        self._decay_s = max(0.0, float(decay_s))
         self._lock = threading.Lock()
-        # ip -> (fail_count, locked_until_epoch_s)
-        self._state: Dict[str, Tuple[int, float]] = {}
+        # ip -> (fail_count, locked_until_epoch_s, last_failure_epoch_s)
+        self._state: Dict[str, Tuple[int, float, float]] = {}
+
+    def _decayed(self, ip: str, now: float) -> Tuple[int, float, float]:
+        fc, until, last = self._state.get(ip, (0, 0.0, 0.0))
+        # A quiet window resets the ratchet: old failures stop counting
+        # toward the exponential backoff (all-day ratchet defect, c2341).
+        if self._decay_s > 0 and last > 0 and (now - last) > self._decay_s and until <= now:
+            self._state.pop(ip, None)
+            return (0, 0.0, 0.0)
+        return (fc, until, last)
 
     def check_locked(self, ip: str) -> Optional[int]:
         now = time.time()
         with self._lock:
-            fc, until = self._state.get(ip, (0, 0.0))
+            _fc, until, _last = self._decayed(ip, now)
             if until > now:
                 return int(max(0.0, until - now))
             return None
@@ -373,11 +399,11 @@ class _AuthLockoutTracker:
                 # best-effort pruning: drop arbitrary entries
                 for k in list(self._state.keys())[:1000]:
                     self._state.pop(k, None)
-            fc, until = self._state.get(ip, (0, 0.0))
+            fc, until, _last = self._decayed(ip, now)
             fc += 1
 
             if fc < self._after:
-                self._state[ip] = (fc, 0.0)
+                self._state[ip] = (fc, 0.0, now)
                 return None
 
             # Exponential backoff from the threshold.
@@ -386,7 +412,7 @@ class _AuthLockoutTracker:
             if self._max > 0:
                 lock_s = min(lock_s, self._max)
             until2 = now + lock_s
-            self._state[ip] = (fc, until2)
+            self._state[ip] = (fc, until2, now)
             return int(lock_s)
 
     def record_success(self, ip: str) -> None:
@@ -747,16 +773,15 @@ class GatewaySecurityMiddleware:
                 await self._reject(_send_wrapped, status=403, detail="Forbidden (origin not allowed)")
                 return
 
-            # Lockout handling (only meaningful when auth is enabled).
-            locked = self._lockouts.check_locked(ip)
-            if locked is not None and locked > 0:
-                await self._reject(
-                    _send_wrapped,
-                    status=429,
-                    detail="Too Many Requests (auth lockout)",
-                    headers=[(b"retry-after", str(int(locked)).encode("utf-8"))],
-                )
-                return
+            # NOTE (operator incident 2026-07-15, c2341): the lockout gate
+            # deliberately runs AFTER credential verification now, inside
+            # the invalid-credential branch below. The old pre-auth 429
+            # rejected VALID credentials from a locked IP — on a one-box
+            # deployment every app shares the loopback IP, so one app's
+            # stale cookie locked out every other app AND the very sign-in
+            # that would have cleared the state (a deadlock the operator
+            # saw as "all apps: Too Many Requests"). Lockout throttles
+            # credential GUESSING, never presence.
 
             # Auth decision.
             auth_required = False
@@ -808,15 +833,30 @@ class GatewaySecurityMiddleware:
                         principal, session_id = session_auth
                         session_authenticated = True
                 if principal is None:
-                    lock = self._lockouts.record_failure(ip)
-                    if lock is not None and lock > 0:
-                        await self._reject(
-                            _send_wrapped,
-                            status=429,
-                            detail="Too Many Requests (auth lockout)",
-                            headers=[(b"retry-after", str(int(lock)).encode("utf-8"))],
-                        )
-                        return
+                    presented_credential = bool(token) or bool(
+                        self._header(scope, gateway_session_header_name())
+                        or gateway_session_id_from_cookie_header(self._header(scope, "cookie"))
+                    )
+                    if presented_credential:
+                        # A presented-and-INVALID credential is a guess:
+                        # count it, and refuse 429 only when this IP is in
+                        # a lockout window (checked here, post-verification
+                        # — valid credentials never see the lock).
+                        locked_now = self._lockouts.check_locked(ip)
+                        lock = self._lockouts.record_failure(ip)
+                        wait = max(int(locked_now or 0), int(lock or 0))
+                        if wait > 0:
+                            await self._reject(
+                                _send_wrapped,
+                                status=429,
+                                detail="Too Many Requests (auth lockout)",
+                                headers=[(b"retry-after", str(int(wait)).encode("utf-8"))],
+                            )
+                            return
+                    # No credential presented = a login prompt, not a
+                    # guess (feature probes from every app on the box
+                    # counted as failures before c2341 — collective
+                    # punishment on the shared loopback IP).
                     await self._reject(
                         _send_wrapped,
                         status=401,

@@ -56,7 +56,13 @@ from .config import entity_iterations_ceiling
 
 __all__ = ["EntityVisitHost", "VisitRefused", "DEFAULT_VISIT_IDLE_S"]
 
-DEFAULT_VISIT_IDLE_S = 15 * 60
+# ~1h inactivity auto-close (laurent's ruling, relayed by assistant e-s 314:
+# a visit ends on the user explicitly ending it OR ~1h idle — never
+# per-turn, never silently on app hide/quit). The idle close is graceful:
+# reflection runs when the deadline fires (visit_workflow REFLECT on
+# close_reason=idle_timeout). v0 ticking is request-driven, so the deadline
+# fires lazily at the next door touch; a standing reaper is the GW-D/E lane.
+DEFAULT_VISIT_IDLE_S = 60 * 60
 _OPEN_MAX_TICKS = 60
 # A turn's tick ceiling must comfortably exceed a MAXIMAL react turn so a
 # legitimate iterate-until-satisfied turn never hits it (caps bound runaway,
@@ -251,8 +257,19 @@ def _seed_run_vars(er: Any) -> Dict[str, Any]:
 class EntityVisitHost:
     """open/turn/close over durable visit runs, one per home at a time."""
 
-    def __init__(self, registry: Any, *, idle_timeout_s: float = DEFAULT_VISIT_IDLE_S) -> None:
+    def __init__(
+        self,
+        registry: Any,
+        *,
+        idle_timeout_s: float = DEFAULT_VISIT_IDLE_S,
+        chat_probe: Any = None,
+    ) -> None:
         self._registry = registry
+        # `chat_probe(slug) -> bool` = "does the HOSTED chat lane have a live
+        # session on this home?" (service-wired). The stale-yield repair must
+        # never wake a home whose visiting posture belongs to a LIVE drawer
+        # session; absent probe = assume none (standalone/test hosts).
+        self._chat_probe = chat_probe
         self._idle_timeout_s = float(idle_timeout_s)
         self._specs: Dict[str, Any] = {}  # run_id -> WorkflowSpec (rebuilt on miss)
         self._lock = threading.RLock()
@@ -268,6 +285,164 @@ class EntityVisitHost:
         # not liveness — a host crash mid-drive leaves it at rest forever.
         # `working` truth = this set, never the stored status.
         self._in_flight: set = set()
+        # THE PARKED-VISIT REAPER (entity forensics c2465 ask 1 — the
+        # "stranded auto-yield": an abandoned browser visit left
+        # state=asleep(auto-yield) FOREVER because the D3 idle deadline only
+        # fired at the next door touch — new opens 409'd, /loop/start
+        # refused visit_opening, and the entity was locked out of personal
+        # time until someone happened to knock. Same daemon-clock pattern
+        # as the chat host's idle reaper: a due deadline fires WITHOUT any
+        # client alive; the idle close stays graceful (reflection runs,
+        # prior state restored, yielded loop woken).
+        self._reaper = threading.Thread(
+            target=self._reap_forever, name="entity-visit-reaper", daemon=True
+        )
+        self._reaper.start()
+
+    # ---------------------------------------------------------------- reaper
+    def _reap_forever(self) -> None:
+        import time as _time
+
+        # Cadence = a fraction of the idle timeout, bounded [30s, 300s]:
+        # precise enough for the ruled ~1h idle close (worst overshoot 5min).
+        interval = max(30.0, min(self._idle_timeout_s / 5.0, 300.0))
+        while True:
+            _time.sleep(interval)
+            try:
+                self.reap_now()
+            except Exception:
+                continue  # the reaper survives anything; next sweep retries
+
+    def reap_now(self) -> int:
+        """One sweep, two repairs. Returns the number of acts performed.
+
+        (A) DUE PARKED VISITS: drive every parked visit whose idle deadline
+        has PASSED (the per-home run store's indexed due query — never a
+        full-store parse). Deliberately narrow: only DUE deadline waits are
+        touched. A RUNNING-at-rest run (host crash mid-turn) stays for the
+        explicit /tick recovery verb — the reaper never resumes half-driven
+        cognition on its own clock; the one LLM call it can trigger is the
+        idle close's ruled reflection pass.
+
+        (B) STALE YIELD POSTURES: a home stuck at asleep(mode=visiting)
+        with NO live session anywhere (the 20:39 incident: a hosted chat
+        yielded the loop, then a gateway restart killed the in-memory
+        session — nothing ever restored the state, and the entity rendered
+        as sleeping for hours while locked out of personal time). Repaired
+        only when the wired chat probe answers definitively and the posture
+        has outlived the open-registration grace window."""
+        from abstractruntime.scheduler.scheduler import utc_now_iso
+
+        entities_dir = getattr(self._registry, "entities_dir", None)
+        if entities_dir is None or not entities_dir.exists():
+            return 0
+        acts = 0
+        for child in sorted(entities_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            slug = child.name
+            # (A) — filesystem pre-check: a home that never had a durable
+            # visit carries no per-home run store; never open its stores.
+            if any(child.glob("runtime_*.sqlite3")):
+                try:
+                    er = self._registry.get_entity_runtime(slug)
+                    due = er.run_store.list_due_wait_until(now_iso=utc_now_iso(), limit=5)
+                except Exception:
+                    due = []
+                for run in due or []:
+                    run_id = str(getattr(run, "run_id", "") or "")
+                    if not run_id:
+                        continue
+                    with self._lock:
+                        if run_id in self._in_flight:
+                            continue  # a live request is already driving it
+                    try:
+                        self.tick(slug, run_id)
+                        acts += 1
+                    except Exception:
+                        # Paused entity / non-visit run / transient store
+                        # error: skip; a due visit retries next sweep.
+                        continue
+            # (B) — chat-lane orphans have no run store, so this runs for
+            # EVERY home.
+            try:
+                if self._repair_stale_yield(child, slug):
+                    acts += 1
+            except Exception:
+                continue
+        return acts
+
+    # Posture must outlive this window before repair: a visit open writes
+    # the visiting posture BEFORE the session registers (the c-registration
+    # race the loop/start guard also respects) — never repair a birth-moment
+    # posture out from under a session that is mid-open.
+    STALE_YIELD_GRACE_S = 180.0
+
+    def _repair_stale_yield(self, home_dir: Any, slug: str) -> bool:
+        """Restore awake over an ORPHANED visiting posture. True = repaired.
+
+        Refuses to act on ANY uncertainty: no chat probe wired (standalone
+        hosts cannot see the hosted lane), a live hosted session, an open
+        durable visit, a fresh posture, or an unreadable state all leave the
+        posture standing. Awake is the honest restore target (the visit
+        lane's own rule: a visiting-yield posture belongs to a PREVIOUS
+        visit; the operator's word is not recoverable from it)."""
+        if self._chat_probe is None:
+            return False  # cannot see the hosted lane: never guess
+        from datetime import datetime, timezone
+
+        from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+        state = read_entity_state(home_dir)
+        if str(state.get("state") or "") != "asleep" or str(state.get("mode") or "") != "visiting":
+            return False
+        changed_raw = str(state.get("changed_at") or "").strip()
+        try:
+            changed = datetime.fromisoformat(changed_raw.replace("Z", "+00:00"))
+            if changed.tzinfo is None:
+                changed = changed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return False  # unreadable timestamp: leave it for a human
+        age_s = (datetime.now(timezone.utc) - changed).total_seconds()
+        if age_s < float(self.STALE_YIELD_GRACE_S):
+            return False
+        try:
+            if bool(self._chat_probe(slug)):
+                return False  # a live drawer session owns this posture
+        except Exception:
+            return False
+        if any(home_dir.glob("runtime_*.sqlite3")):
+            try:
+                if bool(self.status(slug).get("open")):
+                    return False  # an open durable visit owns it
+            except Exception:
+                return False
+        write_entity_state(
+            home_dir,
+            "awake",
+            reason="stale visit yield repaired — no live session held this home (gateway reaper)",
+        )
+        try:
+            from .entity_replay import record_host_marker
+
+            home = self._registry.get_home(slug)
+            record_host_marker(
+                entities_dir=self._registry.entities_dir,
+                slug=slug,
+                entity_id=home.entity_id,
+                kind="wake",
+                journal_seq=int(home.memory.current_seq()),
+                details={
+                    "channel": "reaper",
+                    "prior_state": "asleep",
+                    "prior_mode": "visiting",
+                    "reason": "stale visit yield repaired (orphaned auto-yield; no live session)",
+                    "posture_age_s": round(age_s, 1),
+                },
+            )
+        except Exception:
+            pass  # the repair stands; the marker is best-effort observability
+        return True
 
     # ------------------------------------------------------------------ open
     def open(
