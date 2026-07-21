@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import uuid
@@ -502,6 +503,12 @@ class TelegramBridge:
             self._stop.clear()
             self._thread = threading.Thread(target=self._bot_loop, name="telegram-bot-bridge", daemon=True)
             self._thread.start()
+            try:
+                from ..worker_registry import register_worker
+
+                register_worker("telegram-bot-bridge", self._thread)
+            except Exception:
+                pass
             return
 
         # TDLib: reuse the global TDLib receive loop and install an update handler.
@@ -525,6 +532,12 @@ class TelegramBridge:
             except Exception:
                 pass
         self._thread = None
+        try:
+            from ..worker_registry import unregister_worker
+
+            unregister_worker("telegram-bot-bridge")
+        except Exception:
+            pass
         if self._cfg.transport == "tdlib" and self._tdlib_handler_installed:
             # Best-effort cleanup; TDLib is single-instance per database dir.
             try:
@@ -2061,7 +2074,19 @@ class TelegramBridge:
                 upd_id = upd.get("update_id")
                 if isinstance(upd_id, int):
                     self._bot_offset = max(self._bot_offset, upd_id + 1)
-                self._handle_bot_update(upd)
+                try:
+                    self._handle_bot_update(upd)
+                except Exception:
+                    # Per-update isolation (resilience wave 2026-07-21): one
+                    # malformed update / store error used to propagate out of
+                    # the while loop and kill this bridge thread PERMANENTLY
+                    # and invisibly (the email and agora bridges already
+                    # isolate per-item; telegram was the outlier). The offset
+                    # already advanced, so a poison update is dropped, never
+                    # re-polled into a crash loop.
+                    logging.getLogger(__name__).exception(
+                        "Telegram bridge: failed handling update %s (dropped)", upd_id
+                    )
 
             time.sleep(max(0.0, float(self._cfg.poll_sleep_s)))
 

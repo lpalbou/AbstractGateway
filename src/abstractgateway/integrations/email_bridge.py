@@ -296,6 +296,12 @@ class EmailBridge:
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="email-bridge", daemon=True)
         self._thread.start()
+        try:
+            from ..worker_registry import register_worker
+
+            register_worker("email-bridge", self._thread)
+        except Exception:
+            pass
 
     def stop(self) -> None:
         self._stop.set()
@@ -305,6 +311,12 @@ class EmailBridge:
             except Exception:
                 pass
         self._thread = None
+        try:
+            from ..worker_registry import unregister_worker
+
+            unregister_worker("email-bridge")
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------------
     # State (cursor + optional bindings)

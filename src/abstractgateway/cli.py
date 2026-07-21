@@ -477,6 +477,18 @@ def main(argv: list[str] | None = None) -> None:
             }
             run_kwargs["log_level"] = _uvicorn_log_level(int(console_level))
 
+            # Bounded graceful shutdown (resilience wave 2026-07-21, adversary
+            # P1-4): without this, a wedged in-flight request or a hung
+            # lifespan-shutdown step holds SIGTERM forever and the supervisor
+            # must SIGKILL. 120s covers the runner drain (30s) + bounded
+            # entity close_all (60s) with margin.
+            try:
+                shutdown_s = int(str(os.getenv("ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S") or "120").strip())
+            except ValueError:
+                shutdown_s = 120
+            if shutdown_s > 0:
+                run_kwargs["timeout_graceful_shutdown"] = shutdown_s
+
             log_config = _build_uvicorn_log_config(
                 uvicorn=uvicorn,
                 silence_gpu_metrics_access_log=bool(silence_gpu_metrics_access_log),

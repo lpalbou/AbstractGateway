@@ -70,6 +70,8 @@ def test_idle_stream_never_materializes_the_list_and_stops_on_disconnect() -> No
     from abstractgateway.routes import gateway as gw
 
     class _FakeRequest:
+        headers: Dict[str, str] = {}
+
         def __init__(self, disconnect_after: int) -> None:
             self.polls = 0
             self.disconnect_after = disconnect_after
@@ -148,6 +150,8 @@ def test_divergent_count_never_busy_loops_and_terminal_done_still_sends() -> Non
     from abstractgateway.routes import gateway as gw
 
     class _NeverDisconnects:
+        headers: Dict[str, str] = {}
+
         async def is_disconnected(self) -> bool:
             return False
 

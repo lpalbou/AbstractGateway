@@ -17,14 +17,21 @@ from .security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_e
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    # Start the background worker that polls the durable command inbox and ticks runs.
-    from .service import start_gateway_runner, stop_gateway_runner
+    # Boot the service on a BACKGROUND thread and yield immediately
+    # (resilience wave 2026-07-21, supervisor seam c4063): uvicorn accepts no
+    # connections until lifespan yields, so a synchronous heavy boot
+    # (entity-home load) left /api/health connection-refused — the
+    # supervisor counted misses against a healthy-but-loading gateway and a
+    # >60s boot meant a false recycle. Health answers status="starting"
+    # while boot runs; API routes gate on boot completion off the loop.
+    from .service import begin_gateway_boot, reset_gateway_boot_state, stop_gateway_runner
 
-    start_gateway_runner()
+    begin_gateway_boot()
     try:
         yield
     finally:
         stop_gateway_runner()
+        reset_gateway_boot_state()
 
 
 app = FastAPI(
@@ -35,6 +42,14 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+# Per-principal service pre-warm: added BEFORE the security middleware so it
+# runs INSIDE it (principal contextvar set) — a multi-user first-touch boots
+# the heavy service on a worker thread instead of stalling the event loop
+# (resilience wave 2026-07-21).
+from .service import ServicePrewarmMiddleware  # noqa: E402
+
+app.add_middleware(ServicePrewarmMiddleware)
 
 # Gateway security (backlog 309).
 app.add_middleware(GatewaySecurityMiddleware, policy=load_gateway_auth_policy_from_env())
@@ -356,11 +371,53 @@ async def health_check():
     from .service import gateway_runner_health_snapshot
 
     body = {"status": "healthy", "service": "abstractgateway"}
+    # Boot honesty (supervisor seam, c4063): while the background boot runs,
+    # answer status="starting" — a supervisor must never count a loading
+    # gateway as unresponsive (false recycle) NOR as fully healthy. A failed
+    # boot is loudly "degraded" with the error.
+    try:
+        from .service import gateway_boot_state
+
+        boot = gateway_boot_state()
+        if boot.get("state") == "starting":
+            body["status"] = "starting"
+            body["boot"] = boot
+            return body
+        if boot.get("state") == "failed":
+            body["status"] = "degraded"
+            body["boot"] = boot
+    except Exception:
+        pass
     try:
         runner_snapshot = gateway_runner_health_snapshot()
     except Exception as e:
         runner_snapshot = {"initialized": False, "degraded": False, "error": f"{type(e).__name__}: {e}"}
     body["runner"] = runner_snapshot
+    # Long-lived worker liveness (resilience wave 2026-07-21): reapers,
+    # sweepers, bridges. A dead worker degrades honesty-first — the operator's
+    # supervisor can key on it, and the label names WHICH worker died.
+    try:
+        from .worker_registry import workers_snapshot
+
+        workers = workers_snapshot()
+        if workers:
+            body["workers"] = workers
+            dead = sorted(name for name, st in workers.items() if not st.get("alive"))
+            if dead:
+                body["dead_workers"] = dead
+                body["status"] = "degraded"
+    except Exception:
+        pass
+    # Backlog exec runner (opt-in subsystem): status existed but health never
+    # asked (adversary B P0-3). Only rendered when the feature is on.
+    try:
+        from .service import backlog_exec_runner_status
+
+        st = backlog_exec_runner_status()
+        if st.get("alive") or st.get("error"):
+            body["backlog_exec_runner"] = st
+    except Exception:
+        pass
     if runner_snapshot.get("degraded"):
         body["status"] = "degraded"
     return body

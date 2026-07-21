@@ -67,6 +67,22 @@ class GatewayHost(Protocol):
     def runtime_and_workflow_for_run(self, run_id: str) -> tuple[Runtime, Any]: ...
 
 
+def _tick_wedge_after_s() -> float:
+    """Seconds after which an in-flight tick counts as WEDGED on the status
+    surface (report-only — threads cannot be killed). Default is generous
+    (600s) because a tick legitimately holds a worker across a long provider
+    call; the signal this exists for is the pool-starvation shape (all
+    workers held for many minutes), not one slow LLM call."""
+    raw = os.getenv("ABSTRACTGATEWAY_TICK_WEDGE_AFTER_S")
+    try:
+        if raw is not None and str(raw).strip():
+            val = float(str(raw).strip())
+            return val if val > 0 else 600.0
+    except Exception:
+        pass
+    return 600.0
+
+
 def _default_lock_stale_after_s() -> float:
     """Heartbeat staleness threshold for the singleton lock (seconds).
 
@@ -194,7 +210,12 @@ class GatewayRunner:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(self._cfg.tick_workers or 1)))
-        self._inflight: set[str] = set()
+        # run_id -> tick start epoch (resilience wave 2026-07-21, adversary B
+        # P1-1): timestamps make WEDGED ticks countable — with tick_workers=4,
+        # four no-timeout provider calls used to freeze all run progression
+        # with zero signal; runner_status now reports wedged_ticks so the
+        # health surface sees the pool starving before it is fully dead.
+        self._inflight: Dict[str, float] = {}
         self._inflight_lock = threading.Lock()
 
         self._singleton_lock_path = self._base_dir / "gateway_runner.lock"
@@ -218,6 +239,14 @@ class GatewayRunner:
         self._yielded_to_pid: Optional[int] = None
         self._last_lock_error: Optional[str] = None
         self._loop_running = False
+        # Self-healing state (resilience wave 2026-07-21): the worker thread
+        # must never die permanently on an unhandled exception — it recovers
+        # with backoff and the recovery is VISIBLE (restart counter + last
+        # error on runner_status). `_stopped_deliberately` distinguishes an
+        # operator stop() from a dead thread so health never cries wolf.
+        self._loop_restarts = 0
+        self._last_loop_error: Optional[str] = None
+        self._stopped_deliberately = False
 
         # run_id -> consecutive runtime_and_workflow_for_run failures.
         # Entries exist only while a run keeps failing resolution; cleared on
@@ -292,11 +321,23 @@ class GatewayRunner:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
+        with self._state_lock:
+            self._stopped_deliberately = False
+        # NOTE: the runner deliberately does NOT register in worker_registry —
+        # it has its own richer status surface (runner_status(): dead_worker
+        # vs deliberate-stop vs standby), and registry entries cannot
+        # distinguish a stop() from a crash (false degraded after deliberate
+        # stops, e.g. invalidate_gateway_service_for_runtime).
         self._thread = threading.Thread(target=self._run, name="abstractgateway-runner", daemon=True)
         self._thread.start()
         logger.info("GatewayRunner worker started (base_dir=%s)", self._base_dir)
 
     def stop(self, timeout_s: float = 5.0, *, drain_timeout_s: float = 30.0) -> None:
+        with self._state_lock:
+            # Deliberate stop: runner_status must report "inactive", never
+            # "dead_worker" (health honesty distinguishes operator intent
+            # from a crashed thread).
+            self._stopped_deliberately = True
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout_s)
@@ -618,6 +659,11 @@ class GatewayRunner:
         - degraded_no_ticker: enabled but locked out with no fresh peer
           heartbeat — runs accepted by this process may hang; loud state
         - starting: worker thread not (yet) in a settled state
+        - dead_worker: enabled but the worker thread is GONE without a
+          deliberate stop() — ticking is dead while the process serves; loud
+          degraded state (resilience wave 2026-07-21: a dead thread used to
+          fall through to "inactive" and /api/health reported healthy forever)
+        - inactive: enabled but deliberately stopped (stop() was called)
         """
         with self._state_lock:
             lock_held = bool(self._lock_held)
@@ -628,6 +674,9 @@ class GatewayRunner:
             yielded_to = self._yielded_to_pid
             last_error = self._last_lock_error
             loop_running = bool(self._loop_running)
+            loop_restarts = int(self._loop_restarts)
+            last_loop_error = self._last_loop_error
+            stopped_deliberately = bool(self._stopped_deliberately)
 
         thread_alive = bool(self._thread is not None and self._thread.is_alive())
         heartbeat_age = self._lock_heartbeat_age_s()
@@ -647,8 +696,19 @@ class GatewayRunner:
             status = "standby_peer_active"
         elif refused:
             status = "degraded_no_ticker"
+        elif thread_alive:
+            status = "starting"
+        elif self._thread is not None and not stopped_deliberately:
+            # Enabled, a worker WAS started (the dead Thread object is still
+            # referenced — stop() nulls it), and stop() was never called: the
+            # worker died. With the self-healing _run guard this should be
+            # unreachable (only a BaseException or a bug in the guard itself),
+            # but health must stay honest independently of the guard.
+            status = "dead_worker"
         else:
-            status = "starting" if thread_alive else "inactive"
+            # Never started (start() not yet called / split mode) or
+            # deliberately stopped by an operator — not a failure state.
+            status = "inactive"
 
         out: Dict[str, Any] = {
             "enabled": bool(self._enable),
@@ -666,8 +726,31 @@ class GatewayRunner:
             "yielded_to_pid": yielded_to,
             "pid": os.getpid(),
         }
+        if loop_restarts:
+            # Self-heal visibility: recoveries are normal operation ONLY when
+            # rare; a climbing counter on /api/health is the operator's cue.
+            out["loop_restarts"] = loop_restarts
+        if last_loop_error:
+            out["last_loop_error"] = last_loop_error
         if last_error:
             out["lock_error"] = last_error
+
+        # Wedged-tick visibility (adversary B P1-1): a no-timeout provider
+        # call holds a tick worker forever; tick_workers of them freeze ALL
+        # run progression with zero signal. Report-only (threads cannot be
+        # interrupted), but all-workers-wedged degrades the health status so
+        # the supervisor sees the freeze.
+        now = time.time()
+        with self._inflight_lock:
+            inflight = dict(self._inflight)
+        out["inflight_ticks"] = len(inflight)
+        wedge_after = _tick_wedge_after_s()
+        wedged = {rid: round(now - t0, 1) for rid, t0 in inflight.items() if (now - t0) > wedge_after}
+        if wedged:
+            out["wedged_ticks"] = wedged
+            workers = max(1, int(self._cfg.tick_workers or 1))
+            if len(wedged) >= workers:
+                out["all_tick_workers_wedged"] = True
         return out
 
     def inactive_warning(self) -> Optional[str]:
@@ -708,62 +791,97 @@ class GatewayRunner:
         retry_interval = min(1.0, max(0.1, float(self._cfg.poll_interval_s or 0.25)))
         dead_holder_logged: Optional[int] = None
         while not self._stop.is_set():
-            if not self._acquire_singleton_lock():
-                holder = self._read_lock_holder_pid()
-                with self._state_lock:
-                    ever_held = self._lock_acquired_at is not None
-                if holder is not None and holder != os.getpid() and self._pid_alive(holder) and not ever_held:
-                    # Takeover is exclusively a FRESH process's right ("newest
-                    # wins"). A runner that ever held the lock and later lost
-                    # it (it yielded) must stand by passively, otherwise the
-                    # yielded holder immediately steals the lock back and the
-                    # two processes ping-pong ownership forever.
-                    self._request_takeover_once()
-                elif holder is not None and not self._pid_alive(holder) and holder != dead_holder_logged:
-                    # Dead holder: flock auto-frees on process death, so the
-                    # next retry normally wins. Reaching this branch while the
-                    # lock stays refused means the lock CONTENT is stale/lying
-                    # (e.g. inherited fd) — log once per holder, keep retrying.
-                    dead_holder_logged = holder
-                    logger.warning(
-                        "GatewayRunner: lock %s refused but recorded holder pid %s is dead; retrying acquisition",
-                        self._singleton_lock_path,
-                        holder,
-                    )
-                self._stop.wait(timeout=retry_interval)
-                continue
+            # Self-healing guard (resilience wave 2026-07-21, adversary P0-1):
+            # an unhandled exception anywhere in the acquire/loop/yield
+            # scaffolding used to kill this thread PERMANENTLY while the HTTP
+            # process kept serving and /api/health kept saying healthy — runs
+            # accepted, ticked by nobody, invisibly. The guard logs, releases
+            # the lock (also closing the fd — a same-process retry on a new fd
+            # would otherwise be refused by our own leaked flock, P0-1b),
+            # backs off (bounded exponential), and retries. Recovery is
+            # visible: loop_restarts + last_loop_error ride runner_status().
+            try:
+                if not self._acquire_singleton_lock():
+                    holder = self._read_lock_holder_pid()
+                    with self._state_lock:
+                        ever_held = self._lock_acquired_at is not None
+                    if holder is not None and holder != os.getpid() and self._pid_alive(holder) and not ever_held:
+                        # Takeover is exclusively a FRESH process's right ("newest
+                        # wins"). A runner that ever held the lock and later lost
+                        # it (it yielded) must stand by passively, otherwise the
+                        # yielded holder immediately steals the lock back and the
+                        # two processes ping-pong ownership forever.
+                        self._request_takeover_once()
+                    elif holder is not None and not self._pid_alive(holder) and holder != dead_holder_logged:
+                        # Dead holder: flock auto-frees on process death, so the
+                        # next retry normally wins. Reaching this branch while the
+                        # lock stays refused means the lock CONTENT is stale/lying
+                        # (e.g. inherited fd) — log once per holder, keep retrying.
+                        dead_holder_logged = holder
+                        logger.warning(
+                            "GatewayRunner: lock %s refused but recorded holder pid %s is dead; retrying acquisition",
+                            self._singleton_lock_path,
+                            holder,
+                        )
+                    self._stop.wait(timeout=retry_interval)
+                    continue
 
-            # Acquired: we own ticking until we stop or yield. Clear the
-            # takeover file UNCONDITIONALLY (adversary find, 2026-07-11): a
-            # stale request naming a REUSED-alive pid (a leftover file plus a
-            # reboot/pid-reshuffle) would otherwise make every loop iteration
-            # yield to a process that never actually requested — drain,
-            # release, re-acquire the freed lock, yield again: a silent
-            # permanent yield-loop (the original incident, invisibly). The
-            # acquirer has won the kernel lock; any pending request is moot
-            # (a peer that still wants takeover is refused and re-observes a
-            # live ticker, reporting standby_peer_active, never degraded). No
-            # legitimate handshake is harmed: a live holder never re-acquires
-            # between a requester's write and its own yield, so nothing clears
-            # a fresh request out from under the handshake.
-            self._clear_takeover_request(only_pid=None)
-            logger.info("GatewayRunner started (base_dir=%s)", self._base_dir)
-            yielded = self._loop()
-            if not yielded:
-                return
-            # Yield path: hand the lock to the requesting process and drop to
-            # passive standby. Grace-sleep so the requester (retrying at
-            # <=1s cadence) acquires before we re-attempt.
-            self._drain_inflight()
-            self._release_singleton_lock()
-            with self._state_lock:
-                target = self._yielded_to_pid
-            logger.warning(
-                "GatewayRunner: yielded singleton lock %s to requesting pid %s; standing by",
-                self._singleton_lock_path,
-                target,
-            )
-            self._stop.wait(timeout=max(2.0 * retry_interval, 1.0))
+                # Acquired: we own ticking until we stop or yield. Clear the
+                # takeover file UNCONDITIONALLY (adversary find, 2026-07-11): a
+                # stale request naming a REUSED-alive pid (a leftover file plus a
+                # reboot/pid-reshuffle) would otherwise make every loop iteration
+                # yield to a process that never actually requested — drain,
+                # release, re-acquire the freed lock, yield again: a silent
+                # permanent yield-loop (the original incident, invisibly). The
+                # acquirer has won the kernel lock; any pending request is moot
+                # (a peer that still wants takeover is refused and re-observes a
+                # live ticker, reporting standby_peer_active, never degraded). No
+                # legitimate handshake is harmed: a live holder never re-acquires
+                # between a requester's write and its own yield, so nothing clears
+                # a fresh request out from under the handshake.
+                self._clear_takeover_request(only_pid=None)
+                logger.info("GatewayRunner started (base_dir=%s)", self._base_dir)
+                yielded = self._loop()
+                if not yielded:
+                    return
+                # Yield path: hand the lock to the requesting process and drop to
+                # passive standby. Grace-sleep so the requester (retrying at
+                # <=1s cadence) acquires before we re-attempt.
+                self._drain_inflight()
+                self._release_singleton_lock()
+                with self._state_lock:
+                    target = self._yielded_to_pid
+                logger.warning(
+                    "GatewayRunner: yielded singleton lock %s to requesting pid %s; standing by",
+                    self._singleton_lock_path,
+                    target,
+                )
+                self._stop.wait(timeout=max(2.0 * retry_interval, 1.0))
+            except Exception as e:
+                with self._state_lock:
+                    self._loop_restarts += 1
+                    self._last_loop_error = f"{type(e).__name__}: {e}"
+                    restarts = self._loop_restarts
+                logger.exception(
+                    "GatewayRunner worker crashed (recovery %s); releasing lock and retrying after backoff: %s",
+                    restarts,
+                    e,
+                )
+                # Drain any in-flight ticks bounded, then release so a healthy
+                # peer can take over while we back off. Both are best-effort:
+                # the guard must never die in its own handler.
+                try:
+                    self._drain_inflight(timeout_s=10.0, ignore_stop=True)
+                except Exception:
+                    pass
+                try:
+                    self._release_singleton_lock()
+                except Exception:
+                    pass
+                # Bounded exponential backoff: 1s, 2s, 4s ... capped at 30s so
+                # a persistent fault logs at a readable cadence instead of
+                # spinning, while a transient fault recovers fast.
+                self._stop.wait(timeout=min(30.0, float(2 ** min(restarts - 1, 5))))
 
     def _loop(self) -> bool:
         """Tick loop while holding the lock. Returns True when yielding to a takeover."""
@@ -1038,11 +1156,11 @@ class GatewayRunner:
         with self._inflight_lock:
             if run_id in self._inflight:
                 return
-            self._inflight.add(run_id)
+            self._inflight[run_id] = time.time()
 
         def _done(_f: Any) -> None:
             with self._inflight_lock:
-                self._inflight.discard(run_id)
+                self._inflight.pop(run_id, None)
             # A finished tick usually changed run state; force the next pass
             # so continuing runs reschedule promptly AND a tick that crashed
             # BEFORE saving (no file change for the fingerprint to see) still

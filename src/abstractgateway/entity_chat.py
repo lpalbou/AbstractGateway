@@ -35,11 +35,15 @@ The next `open` on the same home reaps sessions idle beyond the timeout
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["EntityChatHost", "ChatOpenRefused"]
 
@@ -260,6 +264,12 @@ class EntityChatHost:
             target=self._reap_forever, name="entity-chat-idle-reaper", daemon=True
         )
         self._reaper.start()
+        try:
+            from .worker_registry import register_worker
+
+            register_worker("entity-chat-idle-reaper", self._reaper)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ open
     def open(
@@ -820,20 +830,45 @@ class EntityChatHost:
         except ChatOpenRefused:
             return None  # already closing/closed — the race resolved itself
 
-    def close_all(self) -> None:
+    def close_all(self, *, budget_s: float = 60.0) -> None:
         """Shutdown hygiene: reflect + close every live session (the loop
         wake duty travels with each). Mark-closed under each session's
         turn_lock (adversary P1): an in-flight turn finishes whole before
-        its session closes — never a home closed under an executing turn."""
+        its session closes — never a home closed under an executing turn.
+
+        BOUNDED (resilience wave 2026-07-21, adversary P1-4): this runs on
+        the SIGTERM/lifespan-shutdown path. An unbounded turn_lock acquire
+        (wedged in-flight turn) or an unbounded reflection LLM call used to
+        hang process shutdown until an external SIGKILL. Each session gets a
+        bounded lock acquire; reflection is skipped (loudly) once the total
+        budget is spent — an unreflected close loses a look-back the next
+        open's pending-lookback salvage recovers, never memories.
+        """
+        deadline = time.monotonic() + max(0.0, float(budget_s))
         with self._lock:
             hosted_all = [h for h in self._sessions.values() if not h.closed]
         for h in hosted_all:
+            remaining = deadline - time.monotonic()
             try:
-                with h.turn_lock:
+                # Bounded acquire: a wedged in-flight turn must not hang
+                # shutdown; skip the session (process exit abandons it and
+                # the next open's pending-lookback salvage owns the debt).
+                acquired = h.turn_lock.acquire(timeout=max(1.0, min(10.0, remaining)))
+                if not acquired:
+                    logger.warning(
+                        "close_all: session %s turn_lock busy past deadline; skipping close (salvage at next open)",
+                        getattr(h, "chat_id", "?"),
+                    )
+                    continue
+                try:
                     if h.closed:
                         continue
                     h.closed = True
-                self._close_hosted(h, reflect=True)
+                finally:
+                    h.turn_lock.release()
+                # Reflection only while budget remains: it is an LLM call
+                # with no deadline of its own.
+                self._close_hosted(h, reflect=(deadline - time.monotonic()) > 0)
             except Exception:
                 continue
 

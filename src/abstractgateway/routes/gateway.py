@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import weakref
 import time
 import uuid
 import zipfile
@@ -7891,18 +7892,34 @@ async def stream_ledger(
     after: int = Query(0, ge=0, description="Cursor: number of records already consumed."),
     heartbeat_s: float = Query(5.0, gt=0.1, le=60.0),
 ) -> StreamingResponse:
-    """Run-ledger live tail (SSE).
+    """Run-ledger live tail (SSE) — event-driven since backlog 0075.
 
-    H7b loop discipline (hooks plan; the c975 starvation class): every store
-    read runs OFF the event loop via asyncio.to_thread; idle polls check the
-    cheap record COUNT and only materialize the full list when there is news
-    (the previous body re-read the ENTIRE ledger every 0.25s per client —
-    O(N) work per idle poll at resident scale); abandoned clients are
-    detected and stop the generator. Poll-shaped by DESIGN: under the
-    split-runner deployment the API and runner are separate processes, so
-    the in-process ObservableLedgerStore.subscribe can never see the
-    runner's appends — the durable store is the only cross-process truth.
+    Cost model (the operator top-priority ruling, c4089 — the c2394
+    100%-CPU class was THIS route's poll shape): each client holds an
+    incremental tail reader (`ledger_tail.resolve_ledger_tail`) — JSONL:
+    byte-offset reads (an idle poll is ONE stat(); news costs O(new
+    bytes)); SQLite: indexed `seq > cursor` reads. The previous body
+    re-counted the whole file every 0.25s and re-parsed the ENTIRE ledger
+    on every news event, per client.
+
+    Wakeups: the dormant ObservableLedgerStore.subscribe is wired as a
+    COALESCING dirty flag (signal, not records — correctness stays
+    cursor-gated reads; the append callback fires on arbitrary runner
+    threads). In the single-process default an append wakes the stream
+    immediately; under the split-runner deployment the API process never
+    sees appends, so the 0.25s fallback poll (now a stat(), not a parse)
+    remains the cross-process truth.
+
+    Reconnects: `Last-Event-ID` is honored (SSE-native resume) when the
+    `after` query param is absent/0 — the emitted `id:` lines carry the
+    same records-consumed cursor the param uses.
+
+    H7b loop discipline stands: every store read runs OFF the event loop;
+    abandoned clients are detected and stop the generator; terminal runs
+    get one final drain then an explicit `done` frame (never a hang).
     """
+    from ..ledger_tail import find_observable, resolve_ledger_tail
+
     svc = get_gateway_service()
     run_id2 = str(run_id)
     rs = svc.host.run_store
@@ -7915,85 +7932,122 @@ async def stream_ledger(
     if run0 is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id2}' not found")
 
+    # SSE-native resume: the browser re-sends the last `id:` it saw. The
+    # explicit query param wins when set (existing clients).
+    start_index = int(after or 0)
+    if start_index <= 0:
+        raw_leid = str(request.headers.get("last-event-id") or "").strip()
+        if raw_leid:
+            try:
+                start_index = max(0, int(raw_leid))
+            except ValueError:
+                start_index = 0
+
     def _is_terminal(status_any: Any) -> bool:
         s = getattr(status_any, "value", None) or str(status_any or "")
         s = str(s).strip().lower()
         return s in {"completed", "failed", "cancelled"}
 
     async def _gen():
-        cursor = int(after or 0)
-        last_emit = asyncio.get_event_loop().time()
-        last_status_check = last_emit
-        terminal = _is_terminal(getattr(run0, "status", None))
-        while True:
-            if await request.is_disconnected():
-                return
-            if cursor < 0:
-                cursor = 0
-            # Cheap news check first; materialize the list only when the
-            # count moved past the cursor. The count probe and list() can
-            # DISAGREE persistently (adversary F1, live-verified: a corrupt
-            # JSONL line counts in count() but is dropped by list(); same
-            # class on SQLite via ledger_heads) — so emission truth comes
-            # from the MATERIALIZED list, and a news-signal that produces
-            # nothing falls through to the idle branch (sleep + heartbeat +
-            # terminal), never a hot re-loop.
-            emitted = False
-            known = await asyncio.to_thread(_ledger_news_count, svc.host.ledger_store, run_id2)
-            if cursor < known:
-                ledger = await asyncio.to_thread(svc.host.ledger_store.list, run_id2)
-                if not isinstance(ledger, list):
-                    ledger = []
-                # Batched sends (~256KB): one ASGI send per record paid the
-                # same per-line streaming tax the entity replay route did
-                # (threadpool hop + middleware crossing + send per record —
-                # entity's c2394 profile; sweep fold c2423). SSE framing is
-                # unchanged: multiple events per chunk is spec-normal, and
-                # each event keeps its OWN id line for exact reconnects.
-                parts = bytearray()
-                while cursor < len(ledger):
-                    item = ledger[cursor]
-                    data = json.dumps({"cursor": cursor + 1, "record": item}, ensure_ascii=False)
-                    parts += f"id: {cursor + 1}\n".encode("utf-8")
-                    parts += b"event: step\n"
-                    parts += f"data: {data}\n\n".encode("utf-8")
-                    cursor += 1
-                    emitted = True
-                    if len(parts) >= 256 * 1024:
-                        yield bytes(parts)
-                        parts.clear()
-                if parts:
-                    yield bytes(parts)
-                if emitted:
-                    last_emit = asyncio.get_event_loop().time()
-            if not emitted:
-                now = asyncio.get_event_loop().time()
+        tail = resolve_ledger_tail(svc.host.ledger_store, run_id2, start_index=start_index)
+        loop = asyncio.get_event_loop()
+        dirty = asyncio.Event()
+        dirty.set()  # first pass always drains (catch-up)
+        unsubscribe = None
+        observable = find_observable(svc.host.ledger_store)
+        if observable is not None:
+            def _on_append(_record: Dict[str, Any]) -> None:
+                # Runner-thread callback: coalesce into one dirty flag on the
+                # loop. Never touch the tail/cursor here — reads stay
+                # cursor-gated on the generator side.
+                try:
+                    loop.call_soon_threadsafe(dirty.set)
+                except RuntimeError:
+                    pass  # loop closed mid-append; the stream is ending
+            try:
+                unsubscribe = observable.subscribe(_on_append, run_id=run_id2)
+            except Exception:
+                unsubscribe = None
+        try:
+            last_emit = loop.time()
+            last_status_check = last_emit
+            terminal = _is_terminal(getattr(run0, "status", None))
+            while True:
+                if await request.is_disconnected():
+                    return
+                emitted = False
+                if dirty.is_set():
+                    dirty.clear()
+                    new_records = await asyncio.to_thread(tail.read_new)
+                    if new_records:
+                        # Batched sends (~256KB): one ASGI send per record paid
+                        # the per-line streaming tax (threadpool hop +
+                        # middleware crossing per record — the c2394 profile;
+                        # sweep fold c2423). SSE framing unchanged: each event
+                        # keeps its OWN id line for exact reconnects.
+                        parts = bytearray()
+                        for cursor, item in new_records:
+                            data = json.dumps({"cursor": cursor, "record": item}, ensure_ascii=False)
+                            parts += f"id: {cursor}\n".encode("utf-8")
+                            parts += b"event: step\n"
+                            parts += f"data: {data}\n\n".encode("utf-8")
+                            emitted = True
+                            if len(parts) >= 256 * 1024:
+                                yield bytes(parts)
+                                parts.clear()
+                        if parts:
+                            yield bytes(parts)
+                        last_emit = loop.time()
+                        # More may already be pending past max_records: re-drain
+                        # immediately rather than waiting for the next signal.
+                        dirty.set()
+                if not emitted:
+                    now = loop.time()
 
-                # When the run is terminal and we've streamed all known records, close the stream
-                # so clients can finalize their UI state (don't hang forever on keep-alives).
-                # One FINAL drain happened above (count+list this iteration), so a status
-                # event appended just after the terminal save (F6 window) is
-                # caught by the next loop pass before `terminal` is re-read.
-                if terminal:
-                    payload = json.dumps({"run_id": run_id2, "cursor": cursor, "status": "terminal"}, ensure_ascii=False)
-                    yield b"event: done\n"
-                    yield f"data: {payload}\n\n".encode("utf-8")
-                    break
+                    # Terminal close AFTER one final drain (this iteration read
+                    # the tail and found nothing new), so a status event
+                    # appended just after the terminal save (F6 window) is
+                    # caught before `terminal` is re-read.
+                    if terminal:
+                        payload = json.dumps(
+                            {"run_id": run_id2, "cursor": int(tail.index), "status": "terminal"},
+                            ensure_ascii=False,
+                        )
+                        yield b"event: done\n"
+                        yield f"data: {payload}\n\n".encode("utf-8")
+                        break
 
-                # Poll run status while idle (best-effort, bounded).
-                if (now - last_status_check) >= 0.75:
-                    last_status_check = now
+                    # Poll run status while idle (best-effort, bounded).
+                    if (now - last_status_check) >= 0.75:
+                        last_status_check = now
+                        try:
+                            cur_run = await asyncio.to_thread(rs.load, run_id2)
+                            terminal = _is_terminal(getattr(cur_run, "status", None))
+                        except Exception:
+                            # If status lookup fails, keep streaming keep-alives.
+                            terminal = False
+                        if terminal:
+                            # Final-drain discipline: force one more tail read
+                            # before the done frame.
+                            dirty.set()
+                            continue
+
+                    if (now - last_emit) >= float(heartbeat_s):
+                        yield b": keep-alive\n\n"
+                        last_emit = now
+                    # Fallback poll: wakeup-driven in-process; cross-process
+                    # (split runner) news is caught by the periodic tail read
+                    # (a stat() for JSONL / indexed SELECT for SQLite — cheap).
                     try:
-                        cur_run = await asyncio.to_thread(rs.load, run_id2)
-                        terminal = _is_terminal(getattr(cur_run, "status", None))
-                    except Exception:
-                        # If status lookup fails, keep streaming keep-alives.
-                        terminal = False
-
-                if (now - last_emit) >= float(heartbeat_s):
-                    yield b": keep-alive\n\n"
-                    last_emit = now
-                await asyncio.sleep(0.25)
+                        await asyncio.wait_for(dirty.wait(), timeout=0.25)
+                    except asyncio.TimeoutError:
+                        dirty.set()  # timed poll: run one tail read
+        finally:
+            if callable(unsubscribe):
+                try:
+                    unsubscribe()
+                except Exception:
+                    pass
 
     return StreamingResponse(_gen(), media_type="text/event-stream")
 
@@ -8646,6 +8700,58 @@ def _voice_tts_timeout_s() -> float:
     return 300.0
 
 
+def _voice_synth_max_concurrency() -> int:
+    """Concurrent synthesis ceiling (resilience wave 2026-07-21, adversary B
+    P0-2). asyncio.to_thread rides the loop's DEFAULT executor
+    (min(32, cpu+4) threads) — the same pool serving SSE ledger reads, run
+    loads, and every other to_thread call site. The watchdog (above) unblocks
+    the CALLER on a wedge but cannot kill the synthesis thread, so each
+    retry against a wedged backend parked another shared-pool thread; ~22
+    wedged syntheses starved the WHOLE process's thread pool (the July
+    incident's cascade half). This semaphore bounds synthesis admission well
+    below the pool size; callers past the bound get an honest 503 instead of
+    silently joining the pile-up."""
+    raw = os.getenv("ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY")
+    try:
+        if raw is not None and str(raw).strip():
+            return max(1, int(str(raw).strip()))
+    except Exception:
+        pass
+    return 4
+
+
+_voice_synth_semaphores: "weakref.WeakKeyDictionary[Any, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+_voice_synth_semaphore_lock = threading.Lock()
+
+
+def _get_voice_synth_semaphore() -> asyncio.Semaphore:
+    # Per-event-loop: an asyncio primitive must not straddle loops (test
+    # clients churn loops; production has one). WeakKey on the loop so a dead
+    # loop's semaphore is collected.
+    loop = asyncio.get_running_loop()
+    with _voice_synth_semaphore_lock:
+        sem = _voice_synth_semaphores.get(loop)
+        if sem is None:
+            sem = asyncio.Semaphore(_voice_synth_max_concurrency())
+            _voice_synth_semaphores[loop] = sem
+        return sem
+
+
+def _release_permit_when_done(task: "asyncio.Task", sem: asyncio.Semaphore) -> None:
+    """Done-callback for a permit that rides a wedged synthesis thread:
+    consume the task's exception (an abandoned raise would log 'exception was
+    never retrieved') then free the admission permit."""
+    try:
+        if not task.cancelled():
+            task.exception()
+    except Exception:
+        pass
+    try:
+        sem.release()
+    except Exception:
+        pass
+
+
 def _voice_tts_timeout_fail_loud(*, svc: Any, parent_run_id: str, request_id: str, timeout_s: float) -> str:
     """Best-effort: name and durably cancel the stuck TTS child, return the 504 detail.
 
@@ -8814,25 +8920,60 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     req_timeout = getattr(req, "timeout_s", None)
     if req_timeout is not None and float(req_timeout) > 0:
         timeout_s = min(float(req_timeout), timeout_s) if timeout_s > 0 else float(req_timeout)
+    # Bounded admission (adversary B P0-2): during a backend wedge each call
+    # parks a shared-pool thread the watchdog cannot reclaim — refuse loudly
+    # past the ceiling instead of starving SSE/run-reads with the pile-up.
+    sem = _get_voice_synth_semaphore()
     try:
-        synth = asyncio.to_thread(
-            run_facade.generate_voice,
-            str(getattr(run, "run_id", rid)),
-            text=text,
-            output=output_spec,
-            params=params,
-        )
-        child = await (asyncio.wait_for(synth, timeout=timeout_s) if timeout_s > 0 else synth)
+        await asyncio.wait_for(sem.acquire(), timeout=1.0)
     except asyncio.TimeoutError:
-        detail = _voice_tts_timeout_fail_loud(
-            svc=svc,
-            parent_run_id=str(getattr(run, "run_id", rid)),
-            request_id=request_id,
-            timeout_s=timeout_s,
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"TTS synthesis at concurrency ceiling ({_voice_synth_max_concurrency()}); "
+                "backend may be wedged — retry shortly (ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY tunes the bound)"
+            ),
         )
-        raise HTTPException(status_code=504, detail=detail)
+    permit_transferred = False
+    try:
+        synth_task = asyncio.ensure_future(
+            asyncio.to_thread(
+                run_facade.generate_voice,
+                str(getattr(run, "run_id", rid)),
+                text=text,
+                output=output_spec,
+                params=params,
+            )
+        )
+        try:
+            # shield: on timeout the WRAPPER is cancelled but the synthesis
+            # task stays live, so the done-callback below fires at TRUE
+            # completion — never early on the cancellation.
+            child = await (
+                asyncio.wait_for(asyncio.shield(synth_task), timeout=timeout_s) if timeout_s > 0 else synth_task
+            )
+        except asyncio.TimeoutError:
+            # The synthesis thread is STILL parked on the shared pool (no
+            # interrupt exists). The permit must ride the thread, not the
+            # request: releasing here would re-admit callers while wedged
+            # threads accumulate past the pool size (the cascade this bound
+            # exists to stop). Transfer the permit to the task's completion.
+            permit_transferred = True
+            synth_task.add_done_callback(lambda t: _release_permit_when_done(t, sem))
+            detail = _voice_tts_timeout_fail_loud(
+                svc=svc,
+                parent_run_id=str(getattr(run, "run_id", rid)),
+                request_id=request_id,
+                timeout_s=timeout_s,
+            )
+            raise HTTPException(status_code=504, detail=detail)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
+    finally:
+        if not permit_transferred:
+            sem.release()
 
     result = _gateway_completed_child_result(child, operation="TTS")
     voice_outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}

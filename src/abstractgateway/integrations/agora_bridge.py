@@ -235,12 +235,25 @@ class AgoraBridge:
             t = threading.Thread(target=self._resident_loop, args=(res,), name=f"agora-bridge-{res.alias}", daemon=True)
             t.start()
             self._threads.append(t)
+            try:
+                from ..worker_registry import register_worker
+
+                register_worker(f"agora-bridge-{res.alias}", t)
+            except Exception:
+                pass
         logger.info("agora bridge started: %d resident(s)", len(self._threads))
 
     def stop(self, timeout_s: float = 5.0) -> None:
         self._stop.set()
         for t in self._threads:
             t.join(timeout=timeout_s)
+        try:
+            from ..worker_registry import unregister_worker
+
+            for t in self._threads:
+                unregister_worker(str(t.name or ""))
+        except Exception:
+            pass
         self._threads.clear()
 
     # -- resident starter -------------------------------------------------------

@@ -8,6 +8,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Gateway-internal resilience wave** (2026-07-21, operator order dm#150 via
+  framework c4036 — "the gateway must be extremely resilient to failure";
+  two adversarial reviews, process-lifecycle + subsystem-cascade angles):
+  (P0-1) the GatewayRunner worker thread is now SELF-HEALING — an unhandled
+  exception in the acquire/loop/yield scaffolding used to kill the thread
+  permanently while the HTTP process kept serving and `/api/health` said
+  healthy forever (runs accepted, ticked by nobody, invisibly; adversary
+  executed the proof); the guard logs, drains bounded, releases the flock
+  (also closing the fd — P0-1b: the leaked flock refused even the SAME
+  process's retry), backs off exponentially (1s→30s cap) and re-enters,
+  with recovery visible as `loop_restarts` + `last_loop_error` on
+  `runner_status()`. Health-honesty belt: an enabled runner whose thread
+  died without a deliberate `stop()` now reports `status="dead_worker"` and
+  the health snapshot flips degraded (deliberate stops stay `inactive` — no
+  supervisor restart storms). (P1-2) per-principal service creation is
+  pre-warmed OFF the event loop (`ServicePrewarmMiddleware`, inside the
+  security middleware): a new user's first touch used to run the whole
+  heavy boot (stores, bundle compilation, entity routing) ON the ASGI event
+  loop, stalling every other user's requests and `/api/health` behind it.
+  (P1-3) the Telegram bridge isolates per-update — one malformed update /
+  store error used to kill the `telegram-bot-bridge` thread permanently and
+  invisibly (email/agora bridges already isolated; telegram was the
+  outlier). (P1-4) shutdown is bounded end-to-end: `EntityChatHost.
+  close_all(budget_s=60)` acquires each session's turn_lock with a timeout
+  (a wedged in-flight turn is skipped — the next open's pending-lookback
+  salvage owns the debt) and skips reflection past the budget; uvicorn
+  `timeout_graceful_shutdown` defaults to 120s
+  (`ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S`) so SIGTERM can never hang forever
+  on a wedged provider call. (P2-5) long-lived worker threads (entity chat/
+  visit reapers, self-repair sweeper, telegram bridge) register in a
+  process-wide `worker_registry`; `/api/health` renders `workers` +
+  `dead_workers` and degrades when one dies (deliberate stops unregister).
+  (P2-6) partial-boot honesty: best-effort factory steps that fail-and-
+  continue (process-manager env, data-homes registry, shipped-catalog
+  publish, self-repair sweeper) record labeled `#FALLBACK` lines surfaced
+  as `boot_warnings` on the health snapshot, embeddings errors included —
+  a boot that silently lost a subsystem is now visible on the probe.
+  (P2-7) exceptions raised INSIDE the security middleware now return a
+  JSON 500 through the middleware stack (CORS headers ride it) instead of
+  re-raising past CORSMiddleware into a raw 500 browsers mask as "Failed
+  to fetch". Second adversary (subsystem cascade) folds: (B-P0-1) the
+  entity subsystem was the ONE unguarded boot dependency — an entity
+  import/collision failure aborted lifespan startup and NOTHING served,
+  plain workflow runs included; the block now degrades to labeled-disabled
+  (entity routes 503, runs keep serving, `#FALLBACK` on health). Principle
+  stated in code: only the store layer and the runner are load-bearing for
+  "serve runs"; everything else degrades loudly. (B-P1-2) same treatment
+  for bridges: an enabled-but-misconfigured telegram/email/agora bridge
+  used to raise out of the composition root and kill all serving — now
+  disabled + labeled. (B-P0-2) voice synthesis admission is bounded
+  (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`, default 4): `asyncio.to_thread`
+  rides the loop's default executor (~22 threads shared with SSE ledger
+  reads and every other to_thread site), and during a backend wedge each
+  retry parked another shared-pool thread — the July watchdog unblocked the
+  CALLER but not the cascade; callers past the ceiling now get an honest
+  503, and on watchdog timeout the admission permit rides the wedged
+  THREAD (released at true completion), never the request. (B-P1-1)
+  wedged-tick visibility: `_inflight` carries tick start times;
+  `runner_status()` reports `inflight_ticks` + `wedged_ticks` (>600s,
+  `ABSTRACTGATEWAY_TICK_WEDGE_AFTER_S`) and `all_tick_workers_wedged`
+  degrades health — four no-timeout provider calls used to freeze ALL run
+  progression with zero signal.   (B-P0-3) `/api/health` is now
+  subsystem-aware end-to-end: runner (incl. wedge state), worker registry
+  (reapers, sweeper, telegram/email/agora bridges), boot warnings incl.
+  embeddings, and the backlog exec runner when enabled. Supervisor-seam
+  follow-up (framework's live kill-proof, c4063): lifespan now yields
+  IMMEDIATELY and the heavy boot (entity-home load included) runs on a
+  background thread — uvicorn accepts no connections until lifespan
+  yields, so a long boot left `/api/health` connection-refused and the
+  supervisor counted probe misses against a healthy-but-loading gateway
+  (>60s boot = false recycle); health answers `status="starting"` during
+  boot, a failed boot degrades loudly with the error, and `/api/gateway/*`
+  requests gate on boot completion OFF the event loop (probes never queue
+  behind them). 16 tests in `test_gateway_resilience_wave.py`; full suite
+  912 green.
 - **Mutual-exclusivity write-side wave** (2026-07-21, laurent dm#94 via
   entity's four-adversary write audit — "the 4 states are mutually
   exclusive; an entity being visit can NOT be on personal time"): (a) BOTH

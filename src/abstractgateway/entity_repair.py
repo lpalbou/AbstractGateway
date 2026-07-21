@@ -436,4 +436,10 @@ def start_repair_sweeper(registry: Any, *, interval_s: Optional[float] = None) -
 
     thread = threading.Thread(target=_run, name="entity-self-repair", daemon=True)
     thread.start()
+    try:
+        from .worker_registry import register_worker
+
+        register_worker("entity-self-repair", thread)
+    except Exception:
+        pass
     return thread

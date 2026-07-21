@@ -48,6 +48,11 @@ class GatewayService:
     entity_chat_host: Optional[Any] = None
     entity_visit_host: Optional[Any] = None
     entity_meet_host: Optional[Any] = None
+    # Partial-boot honesty (resilience wave 2026-07-21, adversary P2-6): each
+    # best-effort factory step that failed-and-continued records one labeled
+    # line here; /api/health surfaces them so a boot that quietly runs
+    # without embeddings/shipped-catalog/self-repair is VISIBLE, not silent.
+    boot_warnings: tuple = ()
 
 
 _service: Optional[GatewayService] = None
@@ -100,6 +105,63 @@ def get_gateway_service() -> GatewayService:
         return _service
 
 
+def principal_service_cached(principal: GatewayPrincipal) -> bool:
+    """True when this principal's GatewayService already exists (cheap peek —
+    the pre-warm middleware's gate; never constructs anything)."""
+    with _service_lock:
+        return _principal_service_key(principal) in _services_by_principal
+
+
+class ServicePrewarmMiddleware:
+    """Pure-ASGI middleware: build a principal's GatewayService OFF the event
+    loop before the route runs (resilience wave 2026-07-21, adversary P1-2).
+
+    Under multi-user auth, per-principal services are created lazily on first
+    touch — a heavy synchronous boot (stores, bundle compilation, entity
+    routing, embeddings). Route handlers call get_gateway_service() inline
+    from async contexts, so that first touch used to run the whole boot ON
+    the ASGI event loop: every other user's requests AND /api/health queued
+    behind it. This middleware sits INSIDE GatewaySecurityMiddleware (the
+    principal contextvar is set), detects the cache miss, and runs the
+    creation in a worker thread; the route's inline call then hits the cache.
+
+    Failure honesty: a pre-warm failure logs and falls through — the route's
+    own inline call retries and surfaces the real error to the caller.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope, receive, send):  # noqa: ANN001 - ASGI signature
+        if scope.get("type") != "http":
+            return await self._app(scope, receive, send)
+        if not str(scope.get("path") or "").startswith("/api/gateway"):
+            return await self._app(scope, receive, send)
+        try:
+            # Boot gate (c4063 follow-up): while the background boot runs,
+            # API requests wait for it OFF the event loop — their inline
+            # get_gateway_service() then hits the cache instead of racing a
+            # second synchronous boot on the loop. /api/health is not under
+            # /api/gateway, so probes answer instantly throughout.
+            if _boot_state == "starting":
+                import asyncio
+
+                await asyncio.to_thread(wait_for_gateway_boot)
+            if gateway_multi_user_enabled():
+                principal = current_gateway_principal()
+                if principal is not None and not principal_service_cached(principal):
+                    import asyncio
+
+                    await asyncio.to_thread(get_gateway_service_for_principal, principal)
+        except Exception:
+            import logging
+
+            logging.getLogger("abstractgateway.service").exception(
+                "Service pre-warm failed; the route path will retry inline"
+            )
+        return await self._app(scope, receive, send)
+
+
 def gateway_runner_health_snapshot() -> Dict[str, Any]:
     """Peek-only runner liveness for the public health surface.
 
@@ -130,7 +192,21 @@ def gateway_runner_health_snapshot() -> Dict[str, Any]:
         cfg = getattr(svc, "config", None)
         st["tenant_id"] = str(getattr(cfg, "tenant_id", "") or "") or None
         st["runtime_id"] = str(getattr(cfg, "runtime_id", "") or "") or None
-        if st.get("status") == "degraded_no_ticker":
+        # Partial-boot honesty (P2-6): labeled degradations ride the probe so
+        # a boot that silently lost embeddings/catalog/sweeper is visible.
+        warnings = list(getattr(svc, "boot_warnings", ()) or ())
+        emb_err = getattr(svc, "embedding_error", None)
+        if emb_err:
+            warnings.append(f"#FALLBACK embeddings unavailable: {emb_err}")
+        if warnings:
+            st["boot_warnings"] = warnings
+        # Degraded states: locked out with no live ticker, worker thread dead
+        # without a deliberate stop (resilience wave 2026-07-21), the status
+        # probe itself erroring, or every tick worker wedged past the wedge
+        # threshold (adversary B P1-1: run progression frozen while the loop
+        # polls happily). All mean "runs accepted here may be ticked by
+        # nobody" — the exact class this surface exists for.
+        if st.get("status") in {"degraded_no_ticker", "dead_worker", "error"} or st.get("all_tick_workers_wedged"):
             degraded = True
         runners.append(st)
     return {"initialized": bool(runners), "degraded": degraded, "runners": runners}
@@ -244,6 +320,11 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     else:
         raise RuntimeError(f"Unsupported store backend: {backend}. Supported: file|sqlite")
 
+    # Partial-boot honesty ledger (adversary P2-6): every best-effort step
+    # that fails-and-continues records one line; the service carries them to
+    # /api/health. Append-only within this factory run.
+    boot_warnings: list[str] = []
+
     # Best-effort: apply persisted process-manager env overrides early so runtime
     # integrations (email bridge, report triage, etc.) observe the configured values
     # immediately after a gateway restart.
@@ -257,8 +338,8 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
             from .maintenance.process_manager import get_managed_env_var_manager
 
             get_managed_env_var_manager(base_dir=stores.base_dir)
-    except Exception:
-        pass
+    except Exception as e:
+        boot_warnings.append(f"#FALLBACK process-manager env overrides not applied: {type(e).__name__}: {e}")
 
     # Data & Caches writer wave (operator priority 2026-07-13 18:19, agency
     # c1580 ask 1a): register this data root's gateway-owned homes in the
@@ -269,8 +350,8 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         from .data_homes import register_gateway_data_homes
 
         register_gateway_data_homes(stores.base_dir)
-    except Exception:
-        pass
+    except Exception as e:
+        boot_warnings.append(f"#FALLBACK data-homes registry registration failed: {type(e).__name__}: {e}")
 
     # Workflow source:
     # - bundle (default): `.flow` bundles with VisualFlow JSON (compiled via AbstractRuntime; no AbstractFlow import)
@@ -300,12 +381,13 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
             ensure_shipped_catalog_bundles(
                 root_data_dir=root_data_dir, tenant_id=tenant_id, flows_dir=Path(cfg.flows_dir)
             )
-        except Exception:
+        except Exception as e:
             import logging
 
             logging.getLogger("abstractgateway.service").warning(
                 "shipped-catalog boot publish failed (continuing)", exc_info=True
             )
+            boot_warnings.append(f"#FALLBACK shipped-catalog boot publish failed: {type(e).__name__}: {e}")
 
         catalog_bundles_dir = workflow_catalog_bundles_root_from_env(root_data_dir) / "tenant_catalog" / tenant_id
         framework_bundles_dir = getattr(cfg, "framework_flows_dir", None)
@@ -368,88 +450,137 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         embedding_error = str(e)
         embeddings_client = None
 
+    # Bridges are NON-FATAL boot dependencies (resilience wave 2026-07-21,
+    # adversary B P1-2): an enabled-but-misconfigured chat bridge used to
+    # raise out of the composition root and abort ALL serving (plain runs,
+    # entities, health) — disproportionate to a bridge's blast radius. Each
+    # bridge failure degrades to disabled with a labeled boot warning that
+    # rides /api/health; the process serves.
     telegram_bridge = None
     enabled_raw = os.getenv("ABSTRACT_TELEGRAM_BRIDGE")
     if enabled_raw is not None and str(enabled_raw).strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from .integrations.telegram_bridge import TelegramBridge, TelegramBridgeConfig
-        except Exception as e:
-            raise RuntimeError(
-                "Telegram bridge is enabled (ABSTRACT_TELEGRAM_BRIDGE=1) but Gateway's Telegram integration could not be imported. "
-                "Install/repair the base Gateway environment with: `pip install abstractgateway`"
-            ) from e
 
-        tcfg = TelegramBridgeConfig.from_env(base_dir=cfg.data_dir)
-        if not tcfg.flow_id:
-            raise RuntimeError("ABSTRACT_TELEGRAM_FLOW_ID is required when ABSTRACT_TELEGRAM_BRIDGE=1")
-        telegram_bridge = TelegramBridge(config=tcfg, host=host, runner=runner, artifact_store=stores.artifact_store)
+            tcfg = TelegramBridgeConfig.from_env(base_dir=cfg.data_dir)
+            if not tcfg.flow_id:
+                raise RuntimeError("ABSTRACT_TELEGRAM_FLOW_ID is required when ABSTRACT_TELEGRAM_BRIDGE=1")
+            telegram_bridge = TelegramBridge(config=tcfg, host=host, runner=runner, artifact_store=stores.artifact_store)
+        except Exception as e:
+            import logging
+
+            logging.getLogger("abstractgateway.service").exception("Telegram bridge failed to boot; disabled")
+            boot_warnings.append(f"#FALLBACK telegram bridge disabled: {type(e).__name__}: {e}")
+            telegram_bridge = None
 
     email_bridge = None
     email_enabled_raw = os.getenv("ABSTRACT_EMAIL_BRIDGE")
     if email_enabled_raw is not None and str(email_enabled_raw).strip().lower() in {"1", "true", "yes", "on"}:
-        from .integrations.email_bridge import EmailBridge, EmailBridgeConfig
+        try:
+            from .integrations.email_bridge import EmailBridge, EmailBridgeConfig
 
-        ecfg = EmailBridgeConfig.from_env(base_dir=cfg.data_dir)
-        email_bridge = EmailBridge(config=ecfg, host=host, runner=runner, artifact_store=stores.artifact_store)
+            ecfg = EmailBridgeConfig.from_env(base_dir=cfg.data_dir)
+            email_bridge = EmailBridge(config=ecfg, host=host, runner=runner, artifact_store=stores.artifact_store)
+        except Exception as e:
+            import logging
+
+            logging.getLogger("abstractgateway.service").exception("Email bridge failed to boot; disabled")
+            boot_warnings.append(f"#FALLBACK email bridge disabled: {type(e).__name__}: {e}")
+            email_bridge = None
 
     # Agora hub bridge (hooks plan P2): identity-carrying transport that wakes
     # gateway-hosted resident runs on hub traffic. Disabled = None (normal).
-    from .integrations.agora_bridge import build_agora_bridge
+    agora_bridge = None
+    try:
+        from .integrations.agora_bridge import build_agora_bridge
 
-    agora_bridge = build_agora_bridge(base_dir=cfg.data_dir, runner=runner, host=host)
+        agora_bridge = build_agora_bridge(base_dir=cfg.data_dir, runner=runner, host=host)
+    except Exception as e:
+        import logging
+
+        logging.getLogger("abstractgateway.service").exception("Agora bridge failed to boot; disabled")
+        boot_warnings.append(f"#FALLBACK agora bridge disabled: {type(e).__name__}: {e}")
+        agora_bridge = None
 
     # Entity lifecycle (a2a 0004): the registry hosts entity homes under this
     # service's data dir; the routing installer claims the MEMORY_* seam +
     # DIARY_* effect types on the host runtime and refuses to shadow existing
     # claimants (a collision means the wiring drifted — loud by design).
-    from .entities import EntityRegistry
-    from .entity_chat import EntityChatHost
-    from .entity_gate import install_entity_routing
-    from .entity_meets import EntityMeetHost
-    from .entity_visits import EntityVisitHost
-    from .users import gateway_user_registry_path_from_env
+    #
+    # GUARDED boot dependency (resilience wave 2026-07-21, adversary B P0-1):
+    # this block was the ONE unguarded subsystem in the factory — an entity
+    # import/collision failure aborted lifespan startup and NOTHING served
+    # (plain workflow runs included). Only the store layer and the runner are
+    # load-bearing for "serve runs"; the entity lane degrades to
+    # labeled-disabled (entity routes 503 via their registry==None handling)
+    # while everything else keeps working. The failure stays LOUD: log +
+    # boot_warnings on /api/health.
+    entity_registry = None
+    entity_chat_host = None
+    entity_visit_host = None
+    entity_meet_host = None
+    try:
+        from .entities import EntityRegistry
+        from .entity_chat import EntityChatHost
+        from .entity_gate import install_entity_routing
+        from .entity_meets import EntityMeetHost
+        from .entity_visits import EntityVisitHost
+        from .users import gateway_user_registry_path_from_env
 
-    # Entity principals (GW-H) must land in the file the AUTH layer reads —
-    # resolve it from the SAME resolver auth uses, so a per-principal data
-    # root never grows a private users file authentication ignores.
-    entity_registry = EntityRegistry(
-        data_dir=cfg.data_dir,
-        users_registry_path=gateway_user_registry_path_from_env(),
-        # The gateway ROOT (config-object endpoint-profile lane, agency c753):
-        # under user auth cfg.data_dir is the per-principal runtime root, but
-        # gateway-scoped endpoint profiles live at root_data_dir. Single-user
-        # layouts set root_data_dir==data_dir (config.py:167).
-        root_data_dir=getattr(cfg, "root_data_dir", None) or cfg.data_dir,
-    )
-    install_entity_routing(
-        host.runtime,
-        registry=entity_registry,
-        run_store=stores.run_store,
-        artifact_store=stores.artifact_store,
-    )
-    entity_chat_host = EntityChatHost(entity_registry)
-    # Durable-visit + meet hosts constructed ONCE at the factory (frozen
-    # dataclass lesson): a per-request host would drop the in-process
-    # open-locks and the meet index. The meet host shares the visit host so
-    # a meet leg and a solo open on one home take the same per-slug lock.
-    # chat_probe wires the hosted lane into the visit reaper's stale-yield
-    # repair (c2465: an orphaned auto-yield posture must never be repaired
-    # out from under a LIVE drawer session — and never left forever either).
-    entity_visit_host = EntityVisitHost(entity_registry, chat_probe=entity_chat_host.has_open)
-    entity_meet_host = EntityMeetHost(entity_visit_host)
+        # Entity principals (GW-H) must land in the file the AUTH layer reads —
+        # resolve it from the SAME resolver auth uses, so a per-principal data
+        # root never grows a private users file authentication ignores.
+        entity_registry = EntityRegistry(
+            data_dir=cfg.data_dir,
+            users_registry_path=gateway_user_registry_path_from_env(),
+            # The gateway ROOT (config-object endpoint-profile lane, agency c753):
+            # under user auth cfg.data_dir is the per-principal runtime root, but
+            # gateway-scoped endpoint profiles live at root_data_dir. Single-user
+            # layouts set root_data_dir==data_dir (config.py:167).
+            root_data_dir=getattr(cfg, "root_data_dir", None) or cfg.data_dir,
+        )
+        install_entity_routing(
+            host.runtime,
+            registry=entity_registry,
+            run_store=stores.run_store,
+            artifact_store=stores.artifact_store,
+        )
+        entity_chat_host = EntityChatHost(entity_registry)
+        # Durable-visit + meet hosts constructed ONCE at the factory (frozen
+        # dataclass lesson): a per-request host would drop the in-process
+        # open-locks and the meet index. The meet host shares the visit host so
+        # a meet leg and a solo open on one home take the same per-slug lock.
+        # chat_probe wires the hosted lane into the visit reaper's stale-yield
+        # repair (c2465: an orphaned auto-yield posture must never be repaired
+        # out from under a LIVE drawer session — and never left forever either).
+        entity_visit_host = EntityVisitHost(entity_registry, chat_probe=entity_chat_host.has_open)
+        entity_meet_host = EntityMeetHost(entity_visit_host)
+    except Exception as e:
+        import logging
+
+        logging.getLogger("abstractgateway.service").exception(
+            "Entity subsystem failed to boot; entity routes degrade while runs keep serving"
+        )
+        boot_warnings.append(f"#FALLBACK entity subsystem not available: {type(e).__name__}: {e}")
+        entity_registry = None
+        entity_chat_host = None
+        entity_visit_host = None
+        entity_meet_host = None
 
     # Self-repair sweeper (laurent 2026-07-21: "you should self-repair the
     # entity"): respawns loops that died WITHOUT the operator's word
     # (failure cull / crash), guarded + circuit-broken. In-process daemon
     # thread — dies with the serve process, never machine persistence.
-    try:
-        from .entity_repair import start_repair_sweeper
+    if entity_registry is not None:
+        try:
+            from .entity_repair import start_repair_sweeper
 
-        start_repair_sweeper(entity_registry)
-    except Exception:  # noqa: BLE001 - a broken sweeper must not block serving
-        import logging
+            start_repair_sweeper(entity_registry)
+        except Exception as e:  # noqa: BLE001 - a broken sweeper must not block serving
+            import logging
 
-        logging.getLogger(__name__).exception("entity self-repair sweeper failed to start")
+            logging.getLogger(__name__).exception("entity self-repair sweeper failed to start")
+            boot_warnings.append(f"#FALLBACK entity self-repair sweeper not running: {type(e).__name__}: {e}")
 
     return GatewayService(
         config=cfg,
@@ -469,6 +600,7 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         entity_chat_host=entity_chat_host,
         entity_visit_host=entity_visit_host,
         entity_meet_host=entity_meet_host,
+        boot_warnings=tuple(boot_warnings),
     )
 
 
@@ -531,6 +663,72 @@ def sync_backlog_exec_runner(*, data_dir: Optional[Path] = None) -> Dict[str, An
         except Exception:
             pass
         return {"enabled": False, "alive": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Boot state (resilience wave 2026-07-21, framework's live kill-proof
+# follow-up c4063): uvicorn accepts NO connections until lifespan startup
+# yields, and start_gateway_runner() used to run the whole heavy boot
+# (entity-home load included) synchronously inside lifespan — so during a
+# long boot /api/health was connection-refused and the supervisor counted
+# probe misses against a healthy-but-loading gateway (>60s boot = false
+# recycle). The boot now runs on a background thread; lifespan yields
+# immediately; /api/health answers status="starting"; API requests wait
+# for boot OFF the event loop (health never queues behind them).
+# ---------------------------------------------------------------------------
+
+_boot_state: str = "idle"
+_boot_error: Optional[str] = None
+_boot_done = threading.Event()
+
+
+def gateway_boot_state() -> Dict[str, Any]:
+    """{"state": idle|starting|ready|failed, "error": str|None} — pure read."""
+    return {"state": _boot_state, "error": _boot_error}
+
+
+def begin_gateway_boot() -> None:
+    """Start the heavy service boot on a background thread (idempotent while
+    starting; a failed/idle state boots fresh). Lifespan calls this and
+    yields immediately so the listener opens and health probes answer."""
+    global _boot_state, _boot_error
+    if _boot_state == "starting":
+        return
+    _boot_state = "starting"
+    _boot_error = None
+    _boot_done.clear()
+
+    def _boot() -> None:
+        global _boot_state, _boot_error
+        try:
+            start_gateway_runner()
+            _boot_state = "ready"
+        except Exception as e:
+            _boot_state = "failed"
+            _boot_error = f"{type(e).__name__}: {e}"
+            import logging
+
+            logging.getLogger("abstractgateway.service").exception("gateway boot failed")
+        finally:
+            _boot_done.set()
+
+    threading.Thread(target=_boot, name="gateway-boot", daemon=True).start()
+
+
+def wait_for_gateway_boot(timeout_s: float = 300.0) -> str:
+    """Block until boot settles (or timeout); returns the boot state. Callers
+    on the event loop must wrap in asyncio.to_thread."""
+    _boot_done.wait(timeout=max(0.0, float(timeout_s)))
+    return _boot_state
+
+
+def reset_gateway_boot_state() -> None:
+    """Lifespan shutdown hygiene: the next startup boots fresh (TestClient
+    reuses module state across contexts; a stale 'ready' would skip boot)."""
+    global _boot_state, _boot_error
+    _boot_state = "idle"
+    _boot_error = None
+    _boot_done.clear()
 
 
 def start_gateway_runner() -> None:

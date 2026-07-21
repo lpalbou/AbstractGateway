@@ -497,6 +497,12 @@ class EntityVisitHost:
             target=self._reap_forever, name="entity-visit-reaper", daemon=True
         )
         self._reaper.start()
+        try:
+            from .worker_registry import register_worker
+
+            register_worker("entity-visit-reaper", self._reaper)
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------- reaper
     def _reap_forever(self) -> None:

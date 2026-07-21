@@ -265,8 +265,10 @@ def test_stop_holds_the_lock_until_inflight_ticks_drain(tmp_path: Path) -> None:
     _wait_until(lambda: runner.runner_status()["active"], timeout_s=5.0)
 
     # Simulate a tick still executing (an executor thread mid-run).
+    # (_inflight is a dict since the wedged-tick visibility wave: run_id ->
+    # tick start epoch.)
     with runner._inflight_lock:
-        runner._inflight.add("run-still-ticking")
+        runner._inflight["run-still-ticking"] = time.time()
 
     runner.stop(drain_timeout_s=0.3)  # short, deterministic wedge
     # The lock is HELD (not released) because the tick never drained — the
@@ -275,7 +277,7 @@ def test_stop_holds_the_lock_until_inflight_ticks_drain(tmp_path: Path) -> None:
 
     # Cleanup: the tick "finishes", then release for real.
     with runner._inflight_lock:
-        runner._inflight.discard("run-still-ticking")
+        runner._inflight.pop("run-still-ticking", None)
     runner._release_singleton_lock()
     assert runner.runner_status()["lock_held"] is False
 
@@ -441,7 +443,14 @@ def test_health_reports_disabled_runner_as_healthy(tmp_path: Path, monkeypatch: 
     from abstractgateway.app import app
 
     with TestClient(app) as client:
+        # Boot runs on a background thread since the resilience wave
+        # (2026-07-21): health may answer status="starting" briefly — wait
+        # for boot to settle, exactly as a supervisor would.
         body = client.get("/api/health").json()
+        deadline = time.time() + 10.0
+        while body.get("status") == "starting" and time.time() < deadline:
+            time.sleep(0.05)
+            body = client.get("/api/health").json()
         assert body["status"] == "healthy"
         blk = _runner_block(body)
         assert blk["status"] == "disabled"

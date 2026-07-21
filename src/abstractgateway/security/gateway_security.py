@@ -685,9 +685,12 @@ class GatewaySecurityMiddleware:
         session_id: str = ""
         session_authenticated: bool = False
 
+        response_started: bool = False
+
         async def _send_wrapped(message: dict) -> None:
-            nonlocal status_code
+            nonlocal status_code, response_started
             if message.get("type") == "http.response.start":
+                response_started = True
                 try:
                     status_code = int(message.get("status") or 0)
                 except Exception:
@@ -1010,11 +1013,33 @@ class GatewaySecurityMiddleware:
                         pass
             finally:
                 reset_current_gateway_principal(principal_token)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             try:
                 error = str(e)
             except Exception:
                 error = "error"
-            raise
+            # CORS-safe failure (resilience wave 2026-07-21, adversary P2-7):
+            # an exception raised INSIDE this middleware (auth/session/CSRF
+            # store faults) used to re-raise past the outer CORSMiddleware —
+            # Starlette's ServerErrorMiddleware then returned a raw 500
+            # WITHOUT CORS headers, which browsers mask as a generic
+            # "Failed to fetch" (the exact incident class the app-level
+            # handler was added for, reborn one layer out). Send a JSON 500
+            # through _send_wrapped so it exits through CORSMiddleware; only
+            # re-raise when the response already started (nothing sane can
+            # be sent mid-stream).
+            logging.getLogger("abstractgateway.security").exception(
+                "GatewaySecurityMiddleware failed handling %s %s", method, path
+            )
+            if response_started:
+                raise
+            try:
+                await self._send_json(
+                    _send_wrapped,
+                    status=500,
+                    payload={"detail": f"Internal error: {type(e).__name__}: {e}"},
+                )
+            except Exception:
+                raise e
         finally:
             _finalize_audit()

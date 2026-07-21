@@ -1,7 +1,7 @@
 {
  "$comment": "THE canonical entity phase graph (laurent 2026-07-13 13:54: 'abstractentity should own that graph'). One source; every seat verifies its lane against THIS file, never against re-derived prose. Human-readable twin: docs/entity-phases.md. Changes require an operator ruling reference in ruled_by.",
  "artifact": "entity-phase-graph",
- "version": 15,
+ "version": 16,
  "ruled_by": [
   "decision:phase-vocabulary v3 (semantics store; own-time = spoken synonym of personal)",
   "decision:entity-phase-state-machine v3 (laurent 13:28 four phases + 13:46 totality: restore-previous, absolute exclusivity, newborn=sleep)",
@@ -20,7 +20,8 @@
   "decision:v12-adversary-fold (2026-07-21, laurent dm#106 'work on this with 2 adversarial sub agents' — fable5 design audit, 4 P0 / 10 P1 / 8 P2, all folded): the v11 cycle text was faithful to dm#104 on the happy path and contradicted an older ruling at every corner. v12 closes: cycle TRIGGER preconditions (a standing work order and an open visit could both be slept over — the v10 unguarded-writer class reborn); the wake lands THROUGH THE DAY GATE (the 'never into the settled-desk default' promise contradicted DRIVES-ARE-DRIVERS and v9b — the gate-mediated reading honors laurent's 'wake up in personal' in every practical case; the settled-desk-at-wake corner is FLAGGED to laurent, not silently picked); the editable lane splits into TWO PENS (structural law = seat pen + byte-sha handshake untouched; dials = operator overlay with its own edit_seq — two writers never share one counter); DEAD DIALS marked wired:false until their consumers land (a dial that presents as configuration and is not = the fabricated-selection class as law); cycle sleeps EXEMPT from the grant-unused floor; three sleep-bound classes named with wake_at as the carrier; the cycle edges gain a named writer/stamp/ordering; the clock is defined (lived personal-day time, persisted, day-boundary checks, any completed window resets — cadence not quota); pass composition constrained (maintenance passes cycle-cadenced, DREAM FORMATION keeps its nightly-class budget — a short cycle never multiplies dream rate); the missing personal→work edge added; four stale phase-card lists fixed.",
   "decision:wake-conditions v13 (gateway c-t-i #355, laurent's routing: 'discuss it with @entity... we want a unique state graph source of truth: the blueprint hold by @entity'): the 6h unattended-sleep check joins the gateway's self-repair sweeper the day the WAKE-CONDITION semantics are settled ON THE GRAPH — so they are settled here, machine-readable, one law for the loop's need-check (loop alive) and the gateway sweeper (loop-less homes). Every timed wake is a ZERO-TOKEN need-check that lands THROUGH the day gate; a need-check with nothing sanctioned re-sleeps without summoning and without marker churn (the same sleep continuing, never a new phase_changed pair — dm#89: 'the goal is never for the entity to sleep long' balanced against 'an unattended loop spends real tokens').",
   "decision:v14-wiring-truth (2026-07-21, runtime c-t-i #359 + gateway #360, same-hour ships): the honesty ledger did its job both directions — runtime threaded unattended_wake_cadence_h + grant_unused_floor_h + personal_cycle.enabled through the day gate (pinned: edited dials reach the gate's decision), so their meta rows flip wired:true (the consumption contract's flip condition met by the named consumer landing). sleep_bound_h stays HONESTLY unwired: its twin SLEEP_BOUND_SECONDS feeds sleep_bound_deadline(), which the gateway sweeper imports — threading it is a coordinated signature change (the predicate gains a blueprint read), the routed follow-up. cadence_need_check joins the closed cause set: the gateway's loop-less need-check host is LIVE and a SANCTIONED timed wake stamps it (one marker, channel=need-check) on the existing sleep→work / sleep→personal edges — an out-of-set cause on a live marker would violate the MARKER CONTRACT the moment the first unattended wake fires.",
-  "decision:v15-last-dial (2026-07-21, runtime c-t-i #363): sleep_bound_h threaded through sleep_bound_deadline(state, *, home_dir=None) — the last dead dial dies; wired:true with the honest consumer note (the gateway sweeper adopts the home_dir kwarg at its own pace; explicit wake_at stamps still win over any bound, pinned runtime-side). All five dials + the enabled switch now govern."
+  "decision:v15-last-dial (2026-07-21, runtime c-t-i #363): sleep_bound_h threaded through sleep_bound_deadline(state, *, home_dir=None) — the last dead dial dies; wired:true with the honest consumer note (the gateway sweeper adopts the home_dir kwarg at its own pace; explicit wake_at stamps still win over any bound, pinned runtime-side). All five dials + the enabled switch now govern.",
+  "decision:identity-evolution-sleep-regulated v16 (laurent dm:entity--laurent#117 2026-07-21 ~16:50, verbatim: 'it's personal. i believe it's something that should happen only during sleep and under a proper regulated processes. identity memories must be the most protected and stable; they should only be updated upon important realization, understanding, proof of new capabilities, relationships or upon new events that change the history of the entity (reading a diary entry or talking to a user or agent doesn't justify, unless the content is important enough to warrant it)' — core values: 'yes under that regulated processes'; adding values: 'same answer. everything must however be dated + proper provenance, so that the entity itself could consciously know/answer: on day x, i decided y because z'): identity revision (values/purposes/traits — supersession AND addition, core included) happens ONLY in the sleep window under a REGULATED PROCESS. The reconciliation with the engine's sleep-proposes law is SCOPED INVERSION for the identity lane: WAKING life accumulates the evidence and flags the importance (dated, provenance-edged); the SLEEP pass runs the regulated bars (importance threshold, mandatory evidence edges, the realization predates the sleep) and ENACTS with full provenance — no mid-conversation impulse ever touches a value. Design round with memory+runtime open (c-t-i #396); the blueprint gains the lane as DECLARED edges when their design lands. ALSO RULED same message: dials stay GLOBAL for now (per-entity overrides deferred — M2's window rows cut global-only); and the settled-desk wake question was ALREADY LAW (the gate ruling decided it; recorded here as a re-ask to not repeat)."
  ],
  "liveness_axis": {
   "values": [
@@ -331,8 +332,24 @@
     "max": 24.0,
     "consumer": "runtime day gate: sleep-leg refusal (threaded, c-t-i #359)",
     "wired": true
+   },
+   "window_limit": {
+    "unit": "journal events",
+    "min": 256,
+    "max": 65536,
+    "consumer": "BOTH HOSTS at home-open (runtime loop sites + gateway chat/visit lanes) — AttentionConfig.window_limit; one home one horizon (memory #383: a property of the LIFE, never the door; 512 = session-scale, 8192 = resident recommendation)",
+    "wired": false
+   },
+   "drive_window_limit": {
+    "unit": "distinct records",
+    "min": 32,
+    "max": 4096,
+    "consumer": "BOTH HOSTS at home-open — AttentionConfig.drive_window_limit",
+    "wired": false
    }
-  }
+  },
+  "window_limit": 8192,
+  "drive_window_limit": 256
  },
  "invariants": [
   "ONE-ACTIVE-PHASE: exactly one phase is current at any instant; exclusivity is absolute (mutually exclusive, radio semantics). An ALIVE entity is ALWAYS in a phase — there is NO awake-idle node (v4, laurent 17:28). Unphased-alive is a transition to resolve, not a state to dwell in: tasks pending -> work; ANY standing drive + an armed personal grant -> personal (DRIVES-ARE-DRIVERS, v7); a settled desk -> sleep.",
