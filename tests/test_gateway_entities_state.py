@@ -60,12 +60,12 @@ def test_state_writes_carry_server_derived_principal_provenance():
         assert r.status_code == 200, r.text
         reason = r.json()["state"]["reason"]
         assert "operator started his own time (web toggle)" in reason  # client prose preserved
-        assert "[by person:local-admin via POST /entities/Castor/state]" in reason
+        assert "[by person:admin via POST /entities/Castor/state]" in reason
 
         # A reason-less write still records the acting principal.
         r2 = client.post("/api/gateway/entities/Castor/state", json={"state": "awake"})
         assert r2.status_code == 200, r2.text
-        assert r2.json()["state"]["reason"] == "[by person:local-admin via POST /entities/Castor/state]"
+        assert r2.json()["state"]["reason"] == "[by person:admin via POST /entities/Castor/state]"
 
 
 def test_state_verbs_door_and_markers():
@@ -133,11 +133,18 @@ def test_state_verbs_door_and_markers():
         ]
         # The leading wake is the test's own first-wake after the birth
         # sleep (create() writes the birth state directly — no marker; the
-        # door-written transitions each land one).
-        assert kinds == ["wake", "sleep", "pause", "wake"]
+        # door-written transitions each land one). Birth-teaching markers
+        # (skills_selection_changed — laurent seq 156) precede the state
+        # verbs; filter to the state-verb vocabulary this test owns.
+        state_kinds = [k for k in kinds if k in ("wake", "sleep", "pause")]
+        assert state_kinds == ["wake", "sleep", "pause", "wake"]
         # The sleep marker carries the dream result (observable story) —
-        # second line now (the first is the first-wake marker).
-        sleep_marker = __import__("json").loads(replay.text.splitlines()[1])
+        # find it by kind (birth markers shift fixed line numbers).
+        sleep_line = next(
+            line for line in replay.text.splitlines()
+            if line.strip() and __import__("json").loads(line)["payload"]["kind"] == "sleep"
+        )
+        sleep_marker = __import__("json").loads(sleep_line)
         assert sleep_marker["payload"]["state"] == "asleep"
         assert isinstance(sleep_marker["payload"]["dream"], dict)
 
@@ -215,3 +222,43 @@ def test_operator_diary_read_is_a_visible_event():
             if line.strip() and _json.loads(line)["payload"]["kind"] == "diary_read"
         ]
         assert len(reads2) == 2
+
+
+def test_sleep_verb_runs_the_full_canonical_night(monkeypatch) -> None:
+    """W3 (wave-4 dispatch c3291): the operator sleep verb runs the FULL
+    sleep_pass — resolve -> tend -> dream, the same night the loop's
+    on_sleep runs — never the bare dream_pass (adversary A's
+    two-different-nights divergence: the operator's night silently skipped
+    tending). Pinned by asserting the verb calls the engine's sleep_pass."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "night-secret")
+    from abstractgateway.app import app
+
+    import abstractmemory
+
+    calls: list = []
+    real_sleep_pass = abstractmemory.sleep_pass
+
+    def _spy(system, **kwargs):
+        calls.append(sorted(kwargs.get("scopes") or []))
+        return real_sleep_pass(system, **kwargs)
+
+    monkeypatch.setattr(abstractmemory, "sleep_pass", _spy)
+
+    with TestClient(app, headers={"Authorization": "Bearer night-secret"}) as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        r = client.post(
+            "/api/gateway/entities/Castor/state",
+            json={"state": "asleep", "reason": "canonical night", "dream": True},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert isinstance(body["dream"], dict)
+        # The FULL night ran (sleep_pass, not bare dream_pass) over the
+        # ladder scopes.
+        assert len(calls) == 1, "the sleep verb must run the engine's sleep_pass"
+        assert [s[0] for s in calls[0]] == sorted(["self", "diary", "life"])
+        # A full-night result self-describes its phases (engine contract);
+        # no fallback warning rides a full night.
+        assert "#FALLBACK engine has no sleep_pass" not in str(body["dream"].get("warning") or "")

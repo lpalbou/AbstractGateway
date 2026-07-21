@@ -101,6 +101,13 @@ async def replay_entity_stream(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Sweep runtime's night narrations into the host stream before the read
+    # (the seam runtime ruled at c3750: record-when-present, idempotent).
+    if family_list is None or "host" in family_list:
+        from ..entity_replay import sweep_night_narrations
+
+        await asyncio.to_thread(sweep_night_narrations, registry.entities_dir, home.manifest.slug, home)
+
     def _lines():
         for envelope in merged_replay(
             home,
@@ -300,10 +307,78 @@ async def operator_read_diary_entry(
             "channel": "operator",
         },
     )
-    return {
+    out = {
         "entry": entry,
         "read_recorded_at_seq": marker["seq"],
         "reason": str(reason),
+    }
+    # THE TRAIL (diary---verbatims room, lane C — laurent: "the diary entry
+    # MUST contain those references to enable to trace back to the
+    # verbatims"): the entry's graph projection + its edges, so the entity
+    # app renders entry -> verbatim click-through with the EXISTING
+    # /records/{graph_id}/verbatim endpoint. Pure reads over edges that
+    # already stand (written_amid at write time; reflected_in at
+    # formation). RENDER-WHEN-PRESENT: a graph hiccup degrades to a
+    # labeled warning — the book read must never fail because the trail
+    # fold did.
+    try:
+        trail = _diary_entry_trail(home, str(entry_id or "").strip())
+        if trail is not None:
+            out["trail"] = trail
+    except Exception as e:  # noqa: BLE001 - the trail is garnish on the book read
+        out["warnings"] = [f"#FALLBACK trail unavailable: {e}"]
+    return out
+
+
+def _diary_entry_trail(home: Any, entry_id: str) -> Optional[Dict[str, Any]]:
+    """entry_id -> projection -> written_amid / reflected_in episodes, each
+    with verbatim availability. None when the entry has no projection (a
+    projection-less book entry is possible on old vintages — honest
+    absence, never an invented trail). Episode titles/dates are workplace
+    content, not diary words; private entries keep their edge trail per
+    the 2026-07-07 ruling (the edge is act-frame)."""
+    from abstractmemory import TripleQuery
+
+    eid = home.entity_id
+    projection_id = None
+    for a in home.store.query(TripleQuery(predicate="dcterms:abstract", scope="diary", owner_id=eid, limit=0)):
+        attrs = a.attributes if isinstance(a.attributes, dict) else {}
+        if str(attrs.get("entry_id") or "") == entry_id:
+            projection_id = str(a.subject)
+            break
+    if projection_id is None:
+        return None
+
+    def _episode_brief(graph_id: str) -> Dict[str, Any]:
+        brief: Dict[str, Any] = {"graph_id": graph_id}
+        rows = home.store.query(TripleQuery(subject=graph_id, predicate="dcterms:abstract", limit=1))
+        if rows:
+            a = rows[0]
+            attrs = a.attributes if isinstance(a.attributes, dict) else {}
+            brief["kind"] = str(attrs.get("record_kind") or "memory")
+            brief["title"] = str(attrs.get("title") or "")[:160]
+            brief["observed_at"] = str(a.observed_at or "")
+            # Click-through readiness: the verbatim endpoint serves when a
+            # payload_ref stands (born-digest kinds serve their digest).
+            brief["verbatim_available"] = bool(attrs.get("payload_ref"))
+        return brief
+
+    written_amid = [
+        _episode_brief(str(a.object))
+        for a in home.store.query(TripleQuery(subject=projection_id, predicate="written_amid", limit=0))
+        if a.object
+    ]
+    # The birth conversation: formation authors episode -> entry projection.
+    reflected_in = [
+        _episode_brief(str(a.subject))
+        for a in home.store.query(TripleQuery(predicate="reflected_in", object=projection_id, limit=0))
+        if a.subject
+    ]
+    return {
+        "projection_id": projection_id,
+        "written_amid": written_amid,
+        "reflected_in": reflected_in,
+        "verbatim_endpoint": "/records/{graph_id}/verbatim",
     }
 
 
@@ -406,7 +481,15 @@ async def stream_entity_replay(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Last-Event-ID is not a replay cursor: {last_event_id!r}")
 
-    from ..entity_replay import read_host_markers
+    from ..entity_replay import read_host_markers, sweep_night_narrations
+
+    # Sweep runtime's night narrations into the host stream once at open
+    # (record-when-present; the live loop below re-reads markers each tick,
+    # so a narration written mid-stream is picked up by the next open —
+    # night cadence makes a per-tick sweep unnecessary).
+    include_host_pre = "host" in (family_list if family_list is not None else ["host"])
+    if include_host_pre:
+        await asyncio.to_thread(sweep_night_narrations, registry.entities_dir, home.manifest.slug, home)
 
     async def _gen():
         pos = cursor

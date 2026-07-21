@@ -438,6 +438,19 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     entity_visit_host = EntityVisitHost(entity_registry, chat_probe=entity_chat_host.has_open)
     entity_meet_host = EntityMeetHost(entity_visit_host)
 
+    # Self-repair sweeper (laurent 2026-07-21: "you should self-repair the
+    # entity"): respawns loops that died WITHOUT the operator's word
+    # (failure cull / crash), guarded + circuit-broken. In-process daemon
+    # thread — dies with the serve process, never machine persistence.
+    try:
+        from .entity_repair import start_repair_sweeper
+
+        start_repair_sweeper(entity_registry)
+    except Exception:  # noqa: BLE001 - a broken sweeper must not block serving
+        import logging
+
+        logging.getLogger(__name__).exception("entity self-repair sweeper failed to start")
+
     return GatewayService(
         config=cfg,
         stores=stores,

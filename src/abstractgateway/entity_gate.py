@@ -539,12 +539,21 @@ def in_reflection_segment(stamp: Dict[str, Any], run: Any) -> bool:
 
 def _is_reflection_form_act(payload: Dict[str, Any]) -> Optional[str]:
     """The NARROW act set the reflection segment may run as entity-reflection
-    (memory c714, a CLOSED set): interest FORM into ('self', entity), OR
-    summary FORM carrying `summarizes` edges. Returns the reason it is NOT a
-    reflection act (so the caller refuses in-segment non-listed kinds — spoof
-    pin 3: an identity kind beyond interest, e.g. value into self, stays
-    untouchable through every channel a visit carries), or None when it IS a
-    reflection act."""
+    (memory c714, a CLOSED set): interest FORM into ('self', entity), lesson
+    FORM into ('life', entity), OR summary FORM carrying `summarizes` edges.
+    Returns the reason it is NOT a reflection act (so the caller refuses
+    in-segment non-listed kinds — spoof pin 3: an identity kind beyond
+    interest, e.g. value into self, stays untouchable through every channel
+    a visit carries), or None when it IS a reflection act.
+
+    LESSON added 2026-07-18 (the "unacceptable error" forensics): runtime's
+    lesson election (the cognition directive's lessons-gap fix) forms
+    kind=lesson into LIFE scope at the visit close's APPLY stage — the set
+    predated lessons, so every durable-visit close silently LOST the
+    entity's elected lessons (refused + absorbed; ledger seqs 119/121 of
+    Ephemeral's 4037aa9e visit are the smoking gun). Life-scope lesson is
+    knowledge, not identity core — same trust class as summary; identity
+    kinds (value/purpose/trait) stay refused."""
     scope = str(payload.get("scope") or "").strip().lower()
     records = payload.get("records")
     if not isinstance(records, list) or not records:
@@ -552,6 +561,8 @@ def _is_reflection_form_act(payload: Dict[str, Any]) -> Optional[str]:
     for rec in records:
         kind = str((rec or {}).get("kind") or "memory").strip().lower() if isinstance(rec, dict) else "memory"
         if kind == "interest" and scope == SELF_SCOPE:
+            continue
+        if kind == "lesson" and scope == LIFE_SCOPE:
             continue
         if kind == "summary":
             edges = (rec or {}).get("edges") if isinstance(rec, dict) else None
@@ -567,8 +578,8 @@ def _is_reflection_form_act(payload: Dict[str, Any]) -> Optional[str]:
             )
         return (
             f"record kind={kind!r} into scope={scope!r} is not a reflection act — the close-"
-            "reflection segment may only form interest→self or summary-with-summarizes-edges; "
-            "identity kinds beyond interest stay the entity's own deliberate act"
+            "reflection segment may only form interest→self, lesson→life, or summary-with-"
+            "summarizes-edges; identity kinds beyond interest stay the entity's own deliberate act"
         )
     return None
 

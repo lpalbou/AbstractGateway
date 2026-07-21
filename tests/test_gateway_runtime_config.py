@@ -52,7 +52,7 @@ def test_source_chain_stored_beats_env_beats_default(monkeypatch: pytest.MonkeyP
         w = client.post("/api/gateway/admin/runtime-config", json={"process_manager": False})
         assert w.status_code == 200, w.text
         assert w.json()["applied"]["process_manager"] is False
-        assert w.json()["changed_by"] == "person:local-admin"
+        assert w.json()["changed_by"] == "person:admin"
         cfg3 = client.get("/api/gateway/admin/runtime-config").json()
         assert cfg3["process_manager"] == {"value": False, "source": "stored"}  # beats the env=1
 

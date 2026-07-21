@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
 import secrets
 import threading
@@ -51,6 +52,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "EntityHome",
@@ -71,7 +74,14 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 # boundary (it can then never exist anywhere: manifests, homes,
 # principals). Every NEW literal segment added before /{name} must be
 # added here (adversary F3, 2026-07-12).
-RESERVED_ENTITY_NAMES = frozenset({"auth", "meets", "templates", "inventory", "creation-defaults"})
+RESERVED_ENTITY_NAMES = frozenset({"auth", "meets", "templates", "inventory", "creation-defaults", "spec"})
+
+# The B1 doors-wake reason PREFIX — ONE spelling shared by both wake writers
+# (chat drawer + durable visit lane) and both close-restore matchers
+# (sharedgraph adversary P1-3: a reworded wake reason silently killed the
+# sleep-restore; the 'auto-yield' reason-string class). Writers compose
+# f"{WOKEN_BY_VISIT_REASON} from {visitor}"; matchers test startswith().
+WOKEN_BY_VISIT_REASON = "woken by visit"
 
 SPARK_FILENAME = "spark.yaml"
 MEMORY_FILENAME = "memory.sqlite3"
@@ -406,6 +416,71 @@ class EntityHome:
             out["warnings"] = warnings
         return out
 
+    def cognition_drives(self) -> Optional[Dict[str, Any]]:
+        """The drive ratios (cognition-health directive 2026-07-18): open vs
+        resolved questions, open vs repaired problems, open vs explored
+        interests — memory's `cognition_health` fold over the home's FULL
+        ladder (the same scope pairs, diary convention, AND ref-attr set
+        the card compositor reads — the answers/resolves cross-key
+        divergence found by the G1 adversary was fixed engine-side the
+        same day (_REF_ATTRS union), so the bar and the card agree by
+        construction; the diary pair is load-bearing — explores-by-diary
+        is invisible without it, runtime's fold note). Pure read. Returns
+        None when the engine predates the read (version skew) — callers
+        render-when-present, never derive."""
+        try:
+            from abstractmemory import cognition_health
+        except ImportError:
+            return None
+        eid = self.entity_id
+        return cognition_health(
+            self.store,
+            self.journal,
+            scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
+        )
+
+    def list_maintenance_candidates(self, *, limit: int = 100) -> List[Dict[str, Any]]:
+        """The sleep passes' INACTIVE review-gated candidates (W3 console
+        surface; engine contract: attributes.maintenance_candidate=True,
+        review_required, excluded from recall + their own next inputs until
+        an explicit promote/reject). PUBLIC query surface only (TripleQuery
+        — never the store's SQL; the diary_type-drift lesson), bounded.
+        Lifecycle state (promoted/rejected) rides the engine's bindings —
+        the verbs answer their own transitions; this list serves what
+        stands for review."""
+        try:
+            from abstractmemory import TripleQuery
+        except ImportError:
+            return []
+        out: List[Dict[str, Any]] = []
+        rows = self.store.query(TripleQuery(predicate="dcterms:abstract", limit=5000))
+        for r in rows:
+            attrs = getattr(r, "attributes", None) or {}
+            if not attrs.get("maintenance_candidate"):
+                continue
+            row = {
+                "record_id": str(getattr(r, "subject", "")),
+                "title": str(attrs.get("title") or ""),
+                "digest": str(getattr(r, "object", "") or "")[:400],
+                "kind": str(attrs.get("record_kind") or "summary"),
+                "review_required": bool(attrs.get("review_required")),
+                # TripleAssertion carries scope as a STRING with owner_id
+                # beside it — serve the pair the engine verbs take.
+                "scope": str(getattr(r, "scope", "") or ""),
+                "owner_id": str(getattr(r, "owner_id", "") or ""),
+                "observed_at": str(getattr(r, "observed_at", "") or ""),
+            }
+            # W2 miner offers stamp proposed_kind (lesson|interest; absent =
+            # consolidation — memory c3670) so the operator tells offer
+            # types apart at a glance. Render-when-present.
+            if attrs.get("proposed_kind"):
+                row["proposed_kind"] = str(attrs["proposed_kind"])
+            out.append(row)
+            if len(out) >= limit:
+                break
+        out.sort(key=lambda c: c.get("observed_at") or "", reverse=True)
+        return out
+
     def inspect(self, *, diary_limit: int = 5, standings_top_k: int = 10) -> Dict[str, Any]:
         """The identity summary: who it is, what it recently elected to
         remember, how it feels, what it still wonders. All existing reads,
@@ -624,6 +699,53 @@ class EntityHome:
                     close()
                 except Exception:
                     continue
+
+
+class _ContainedDiaryView:
+    """The durable-lane diary view for HomeMemoryReader (c69 fix, the
+    privacy coordination point runtime named): tool results on the visit
+    lane REST (run ledger + react cycle vars), so PRIVATE entries'
+    gists must never enter them — "diary words never rest outside the
+    book". `list_entries()` keeps private TEXT for search MATCHING (a
+    private entry is still FOUND — hiding it would make search lie about
+    absence against its own append-only warrant) but replaces the GIST the
+    reader renders with a word-free marker + the reread key; the words
+    arrive only through the act-only diary_read hop, fresh at send time.
+    Everything else delegates to the real book."""
+
+    def __init__(self, diary: Any) -> None:
+        self._diary = diary
+
+    def list_entries(self) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for e in self._diary.list_entries():
+            if isinstance(e, dict) and str(e.get("visibility") or "") == "private":
+                e = {**e, "gist": "(private entry - the words stay in your book)"}
+            out.append(e)
+        return out
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._diary, name)
+
+
+class _ContainedReaderHome:
+    """The home surface HomeMemoryReader reads (.store/.diary/.entity_id/
+    .journal + .ms/.artifacts for the verbatim tier), with the diary behind
+    the contained view. `.ms`/`.artifacts` were MISSING in the first cut
+    (adversary finding 1, 2026-07-18): read_memory swallowed the
+    AttributeError and told the entity "there is no longer verbatim behind
+    it" for every record that HAD one — a false wall on exactly the lane
+    the c69 audit set out to repair. Privacy holds with them present:
+    private projections carry no payload_ref, and formation strips diary
+    words before artifacts rest."""
+
+    def __init__(self, home: Any) -> None:
+        self.store = home.store
+        self.journal = home.journal
+        self.entity_id = home.entity_id
+        self.diary = _ContainedDiaryView(home.diary)
+        self.ms = getattr(home, "ms", None) or getattr(home, "memory", None)
+        self.artifacts = getattr(home, "artifacts", None)
 
 
 @dataclass
@@ -1375,6 +1497,11 @@ class EntityRegistry:
         with self._open_lock:
             home = self._open_homes.get(slug)
             if home is None:
+                # Re-check INSIDE the lock (adversary 2026-07-18): a hold
+                # armed between the check above and this insert would cache
+                # a warm handle across the maintenance window — exactly what
+                # the window's eviction exists to prevent.
+                self._refuse_if_held(slug)
                 manifest = self.manifest_for(slug)
                 home = EntityHome(
                     home_dir=self.entities_dir / manifest.slug, manifest=manifest, embedder=embedder
@@ -1404,6 +1531,10 @@ class EntityRegistry:
         with self._open_lock:
             er = self._entity_runtimes.get(slug)
             if er is None:
+                # Re-check INSIDE the lock — same check-then-insert race as
+                # get_home (a hold armed mid-call must not be cached across
+                # the maintenance window).
+                self._refuse_if_held(slug)
                 from abstractruntime.core.models import EffectType
                 from abstractruntime.identity.entity_runtime import open_entity_runtime
 
@@ -1589,19 +1720,29 @@ class EntityRegistry:
         refused with runtime's own refusal text (the grant stays the only
         authority; the BUNDLE never decides the entity's hands).
 
-        DIARY READS join the verified path: the resolver invokes the
-        runtime's REGISTERED DIARY_READ handler (routing-wrapped — stamp
-        checks + act-only apply) with the visit's own run. read/search
-        memory are not yet executable here (the driver's resolvers are
-        ChatSession methods — runtime's inventory-expansion lane); they are
-        neither declared to the model nor silently dropped: a call for them
-        refuses honestly like any ungranted name."""
+        DIARY READS materialize normally now (act-only ref layer DELETED,
+        runtime c273 / laurent's A ruling): diary_read runs through the
+        executor and serves the entry words as-served — the HOME is the
+        privacy boundary (the run store rests beside the book), so a read
+        result resting there is inside the boundary, not a leak.
+
+        MEMORY EXPLORATION (c69 audit fix, 2026-07-18): search_memory /
+        read_memory / recent_memories execute through runtime's session-free
+        `HomeMemoryReader` (the blessed door recipe — the old "resolvers are
+        ChatSession methods" blocker went stale 2026-07-10 and left the
+        entity blind to his own graph in visits). Driver-parity honored:
+        ONE tag_map per visit (persisted in `_visit.memory_tag_map`, so a
+        #tag from turn 2's search resolves under read_memory in turn 5).
+        The contained diary VIEW still keeps private gists out of SEARCH
+        results (search matching sees the text but returns a word-free
+        marker for private entries) — a deliberate reader-side containment
+        that survives the ref-layer deletion; the SERVED replay/verbatim
+        surfaces remain the audience boundary."""
 
         def handler(run: Any, effect: Any, default_next_node: Any = None) -> Any:
             from abstractruntime import resolve_tool_grant
             from abstractruntime.core.models import Effect, EffectType
             from abstractruntime.core.runtime import EffectOutcome
-            from abstractruntime.identity.act_only import ACT_ONLY_TOOLS
             from abstractruntime.identity.tools import (
                 MAX_TOOL_BLOCKS_PER_TURN,
                 WorkspaceRoot,
@@ -1679,64 +1820,46 @@ class EntityRegistry:
                 budget = {"turn_id": turn_id, "executed": 0}
                 visit_ns["tool_budget"] = budget
 
-            def _act_only_result(call_dict: Dict[str, Any], election: Any) -> Dict[str, Any]:
-                """G1 for tool results (adversary find — the frozen spec's
-                'the effect handler IS the privacy mechanism'): an act-only
-                tool's WORDS must never enter the effect result, which the
-                runtime rests in the per-home run ledger + node traces. The
-                result is the canonical `$act_only` REFERENCE frame; the
-                react observe node renders it as the durable ref message and
-                the LLM wrapper dereferences it fresh from the book at SEND
-                time (wire copy only). The read itself never runs here.
-
-                TWO REF SHAPES (e-s 233 R3, runtime 64398ff): entry-addressed
-                (diary_read → {tool, entry_id}) and RE-RUN (diary_list →
-                {tool, args:{body}} — the listing, private gists included for
-                the entity's own eyes, is re-executed fresh at send time by
-                open_entity_runtime's diary_list_resolver, never stored). A
-                diary_list body is a word-free limit, so no entry-id
-                resolution — the args carry it verbatim."""
-                from abstractruntime.identity.tools import resolve_entry_id  # public (runtime export)
-
-                if election.name == "diary_list":
-                    # Word-free re-run ref: the resolver re-runs _run_diary_list
-                    # against the book at send time reading args.body (a limit
-                    # number). No book read here — the listing never rests.
-                    body = str(election.body or "").strip().splitlines()[0].strip() if election.body else ""
-                    frame: Dict[str, Any] = {"tool": election.name, "args": {"body": body}}
-                    return {
-                        "call_id": str(call_dict.get("call_id") or call_dict.get("id") or "").strip() or None,
-                        "name": election.name,
-                        "success": True,
-                        "output": {"$act_only": frame},
-                        "error": None,
-                    }
-
-                requested = str(election.body or "").strip().splitlines()[0].strip() if election.body else ""
-                resolved_id, note = resolve_entry_id(er.home.diary, requested)
-                if not resolved_id:
-                    return _refusal(call_dict, note or f"diary entry {requested!r} not found in the book")
-                gist = ""
+            # DIARY_READ materializes from the book (act-only ref layer
+            # DELETED — runtime c273): the read runs in the executor and
+            # serves the entry words as-served. The HOME is the privacy
+            # boundary, so the result resting in the run store is inside it.
+            def _diary_read_effect(entry_id: str) -> Dict[str, Any]:
                 try:
-                    for entry in er.home.diary.list_entries():
-                        if str(entry.get("entry_id") or "") == resolved_id:
-                            if str(entry.get("visibility") or "") != "private":
-                                gist = str(entry.get("gist") or "").strip()
-                            break
-                except Exception:  # noqa: BLE001 - gist is optional garnish, never load-bearing
-                    gist = ""
-                frame = {"tool": election.name, "entry_id": resolved_id}
-                if gist:
-                    frame["gist"] = gist
-                return {
-                    "call_id": str(call_dict.get("call_id") or call_dict.get("id") or "").strip() or None,
-                    "name": election.name,
-                    "success": True,
-                    "output": {"$act_only": frame},
-                    "error": None,
-                }
+                    return dict(er.home.diary.get_entry(entry_id) or {})
+                except Exception:  # noqa: BLE001 - a bad id serves the miss, never crashes the turn
+                    return {}
 
             workspace = WorkspaceRoot(home_dir) if grant.workspace_enabled else None
+
+            # Memory-exploration resolvers (the c69 fix): one reader per
+            # call, sharing the VISIT-scoped tag_map from run vars (the
+            # handler runs inside the owning tick — single-writer, persists
+            # with the run like tool_budget). The contained diary view keeps
+            # private words out of everything that rests.
+            memory_fns: Dict[str, Any] = {}
+            try:
+                from abstractruntime.identity.memory_reader import HomeMemoryReader
+
+                tag_map = visit_ns.get("memory_tag_map")
+                if not isinstance(tag_map, dict):
+                    tag_map = {}
+                    visit_ns["memory_tag_map"] = tag_map
+                reader = HomeMemoryReader(
+                    _ContainedReaderHome(er.home), tag_map=tag_map
+                )
+                memory_fns = {
+                    "search_memory_fn": reader.search_memory,
+                    "read_memory_fn": reader.read_memory,
+                    "recent_memories_fn": reader.recent_memories,
+                }
+            except ImportError:
+                # Older runtime without the reader: the tools refuse
+                # honestly at the executor (fn=None), labeled below.
+                notices.append(
+                    "#FALLBACK memory exploration unavailable: this runtime predates "
+                    "HomeMemoryReader — upgrade abstractruntime"
+                )
 
             results: List[Dict[str, Any]] = []
             for call in calls:
@@ -1760,23 +1883,13 @@ class EntityRegistry:
                     continue
                 budget["executed"] = int(budget.get("executed") or 0) + 1
                 election = elections[0]
-                if election.name in ACT_ONLY_TOOLS:
-                    results.append(_act_only_result(call_dict, election))
-                    continue
-
-                def _no_materialized_read(entry_id: str) -> Dict[str, Any]:
-                    # Unreachable: act-only names are intercepted above. A
-                    # loud raise beats a silent leak if the set ever drifts.
-                    raise RuntimeError(
-                        "diary_read materialization is forbidden on the visit tool path "
-                        "(act-only routes return references)"
-                    )
 
                 _msg, exec_notices = execute_tool_elections(
                     elections,
                     diary_store=er.home.diary,
-                    diary_read_effect=_no_materialized_read,
+                    diary_read_effect=_diary_read_effect,
                     workspace=workspace,
+                    **memory_fns,
                 )
                 notices.extend(exec_notices)
                 results.append(
@@ -1841,6 +1954,38 @@ class EntityRegistry:
             except Exception as e:
                 entry["state"] = {"state": "awake", "warnings": [f"#FALLBACK state unreadable: {e}"]}
             entry["state"]["liveness"] = derived_liveness(entry["state"].get("state"))
+            # pending_tasks (G3, the c2665/c2801 three-consumer contract):
+            # RENDER-WHEN-PRESENT — the field exists only when the home
+            # carries a task inbox; an entity never handed a task shows NO
+            # field, not a zero. `phase` deliberately absent until the phase
+            # machine surfaces it (the summary renders truth, never derives).
+            try:
+                from .entity_tasks import count_pending
+
+                pending = count_pending(child)
+                if pending is not None:
+                    entry["pending_tasks"] = int(pending)
+            except Exception:
+                pass
+            # drives (G1, cognition-health directive): RENDER-WHEN-PRESENT,
+            # WARM HOMES ONLY — the roster is deliberately file-cheap (it
+            # never opens a store), so the fold runs only for homes already
+            # opened through get_home in this process. (A visit-lane-only
+            # entity warms _entity_runtimes, not this cache — its drives
+            # stay absent here until something reads /cognition, which
+            # always serves them and warms the home.) Absent ≠ zero — same
+            # contract as pending_tasks.
+            try:
+                with self._open_lock:
+                    warm = self._open_homes.get(child.name)
+                if warm is not None:
+                    drives = warm.cognition_drives()
+                    if drives is not None:
+                        entry["drives"] = drives
+            except Exception as e:
+                # A broken warm store must not break the roster; /cognition
+                # labels the same failure loudly — here it just logs.
+                logger.debug("roster drives fold failed for %s: %s", child.name, e)
             out.append(entry)
         return out
 
@@ -1890,7 +2035,21 @@ class EntityRegistry:
         dream_result: Optional[Dict[str, Any]] = None
         home = self.get_home(manifest.slug)
         if dream:
-            from abstractmemory import dream_pass
+            # W3 canonical night (wave-4 dispatch c3291; adversary A's
+            # two-different-nights divergence): the operator sleep verb runs
+            # the FULL sleep_pass (resolve -> tend -> dream, the engine's
+            # canonical order) — the same night the loop's on_sleep runs —
+            # never the bare dream_pass that skipped tending. Older engines
+            # without sleep_pass degrade to dream-only with a labeled
+            # #FALLBACK (build_consolidator's exact posture).
+            try:
+                from abstractmemory import sleep_pass as _night_pass
+
+                _night_is_full = True
+            except ImportError:
+                from abstractmemory import dream_pass as _night_pass
+
+                _night_is_full = False
 
             eid = manifest.entity_id
 
@@ -1923,12 +2082,17 @@ class EntityRegistry:
                     # for a whole sleep conflates dreaming with napping. Set
                     # before, clear after (state stays asleep either way).
                     write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming")
-                    result = dream_pass(
+                    result = _night_pass(
                         home.memory,
                         scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
                         owner_id=eid,
                     )
                     dream_result = dict(result) if isinstance(result, dict) else {"result": result}
+                    if not _night_is_full:
+                        dream_result["warning"] = (
+                            "#FALLBACK engine has no sleep_pass (older abstractmemory); dream-only night "
+                            "— tending/resolution skipped"
+                        )
                     if lease_warning:
                         dream_result["warning"] = lease_warning
                 finally:

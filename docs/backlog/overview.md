@@ -64,8 +64,8 @@ Recommended sequencing:
 - Phase 2 (velocity + trust surface): `0066` decompose the router, `0067` ops
   suite boundary + durable execution (layer C with `0083`), `0068` externalize
   console, `0069` unified settings + generated config docs, `0070` authorization
-  contract test + exception audit, `0081` failure-mode test suite, `0083`
-  agentic orchestration parity to retire codex.
+  contract test + exception audit (COMPLETED 2026-07-21), `0081` failure-mode
+  test suite, `0083` agentic orchestration parity to retire codex.
 - Phase 3 (adoptability): `0071` client SDKs, `0072` conformance kit + frozen
   event vocabulary, `0073` webhooks/event egress, `0074` OpenAI-compatible
   facade, `0082` ledger replay integrity + durable cursor (prerequisite spike),
@@ -104,7 +104,6 @@ relevant.
 | [0067_self_hosting_ops_suite_boundary.md](proposed/0067_self_hosting_ops_suite_boundary.md) | Phase 2. Promote layer A (trust-domain) now; B with 0066; C with 0083 when durable self-evolution is prioritized. |
 | [0068_externalize_console_static_assets.md](proposed/0068_externalize_console_static_assets.md) | Phase 2. Promote with/after 0066. |
 | [0069_unified_gateway_settings_and_generated_config_docs.md](proposed/0069_unified_gateway_settings_and_generated_config_docs.md) | Phase 2. Promote after 0066 or independently. |
-| [0070_route_authorization_contract_test_and_exception_audit.md](proposed/0070_route_authorization_contract_test_and_exception_audit.md) | Phase 2. Promote the auth contract test with 0066. |
 | [0071_official_client_sdks_render_kit.md](proposed/0071_official_client_sdks_render_kit.md) | Phase 3. Promote after/with 0072. |
 | [0072_client_conformance_kit_and_frozen_event_vocabulary.md](proposed/0072_client_conformance_kit_and_frozen_event_vocabulary.md) | Phase 3. Promote with or just before 0071. |
 | [0073_run_lifecycle_webhooks_event_egress.md](proposed/0073_run_lifecycle_webhooks_event_egress.md) | Phase 3. Promote after 0075 (efficient triggering) or with a poll-based trigger. |
@@ -124,6 +123,7 @@ relevant.
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Route authorization contract test + exception-swallowing audit | `proposed/0070_route_authorization_contract_test_and_exception_audit.md` | [completed/0070_route_authorization_contract_test_and_exception_audit.md](completed/0070_route_authorization_contract_test_and_exception_audit.md) | Whole-app authorization invariant pinned in three layers (boundary, per-write decision, served-surface proof); 13 durability-relevant silent exception swallows now log with context and consequence. Accepted by laurent 2026-07-21 ("a route can never ship unprotected"). | `pytest -q tests/test_gateway_route_authorization_contract.py tests/test_gateway_runner_swallow_audit.py`; full suite 857 passed. |
 | Swagger UI bearer auth docs | N/A | [completed/001_openapi_swagger_auth.md](completed/001_openapi_swagger_auth.md) | OpenAPI advertises bearer auth for `/api/gateway/*`. | `PYTHONPATH=src pytest` passed at completion time. |
 | Versioned Gateway client capability contract | `planned/010_versioned_client_capability_contract.md` | [completed/010_versioned_client_capability_contract.md](completed/010_versioned_client_capability_contract.md) | Discovery now exposes `capabilities.contracts.version=1` with common, Flow editor, Assistant, and AbstractCode feature gates. | `PYTHONPATH=src pytest -q tests/test_capabilities_endpoint_contract.py tests/test_abstractflow_editor_gateway_contract.py tests/test_gateway_bundle_llm_tools_agents.py::test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs`; `PYTHONPATH=src pytest -q -m basic`. |
 | AbstractFlow gateway-first editor contract | `planned/020_abstractflow_gateway_first_editor_contract.md` | [completed/020_abstractflow_gateway_first_editor_contract.md](completed/020_abstractflow_gateway_first_editor_contract.md) | Gateway now documents and tests the draft VisualFlow -> publish -> start -> observe editor path and exposes a first-class bundle flow input-schema route. | `PYTHONPATH=src pytest -q tests/test_capabilities_endpoint_contract.py tests/test_abstractflow_editor_gateway_contract.py tests/test_gateway_bundle_llm_tools_agents.py::test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs`; `PYTHONPATH=src pytest -q -m basic`. |

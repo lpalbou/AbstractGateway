@@ -244,7 +244,7 @@ def test_meet_survives_host_amnesia(monkeypatch: pytest.MonkeyPatch):
 
 def test_relay_attributes_the_convener_never_the_other_entity(monkeypatch: pytest.MonkeyPatch):
     """A2 (provenance): the convener's steering line enters the speaker's
-    leg authored by the CONVENER (person:local-admin), never by the other
+    leg authored by the CONVENER (person:admin), never by the other
     entity. The speaker's REPLY reaches the listener authored by the speaker
     entity. No home ever engraves the operator's words as an entity's."""
     from abstractmemory import TripleQuery
@@ -257,7 +257,7 @@ def test_relay_attributes_the_convener_never_the_other_entity(monkeypatch: pytes
         _create(client, "Pollux")
         meet = client.post("/api/gateway/entities/meets/open",
                           json={"entity_a": "Castor", "entity_b": "Pollux"}).json()
-        assert meet["convener"] == "person:local-admin"
+        assert meet["convener"] == "person:admin"
         client.post(f"/api/gateway/entities/meets/{meet['meet_id']}/relay",
                    json={"opener": "a", "text": "Please open the discussion."})
         client.post(f"/api/gateway/entities/meets/{meet['meet_id']}/close", json={})
@@ -275,7 +275,7 @@ def test_relay_attributes_the_convener_never_the_other_entity(monkeypatch: pytes
         # The convener is a stamped participant of Castor's episodes; Pollux
         # is NOT the author of the opener line (attribution honesty).
         assert castor_verbatims, "Castor formed no episode of the meet"
-        assert all("person:local-admin" in (e.get("participants") or []) for e in castor_verbatims)
+        assert all("person:admin" in (e.get("participants") or []) for e in castor_verbatims)
 
 
 def test_entity_cannot_meet_itself(monkeypatch: pytest.MonkeyPatch):

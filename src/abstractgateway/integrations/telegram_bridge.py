@@ -1399,55 +1399,16 @@ class TelegramBridge:
             return val.strip().lower()
         return str(status or "").strip().lower()
 
-    def _append_binding_history(self, *, binding: Dict[str, Any], role: str, content: str) -> None:
-        r = str(role or "").strip().lower()
-        if r not in {"user", "assistant", "system"}:
-            return
-        text = str(content or "").strip()
-        if not text:
-            return
-        keep = int(self._cfg.max_history_messages or 0) if isinstance(self._cfg.max_history_messages, int) else 30
-        if keep < 0:
-            keep = 0
-
-        with self._lock:
-            raw = binding.get("history")
-            hist: list[Dict[str, str]] = []
-            if isinstance(raw, list):
-                for item in raw:
-                    if not isinstance(item, dict):
-                        continue
-                    rr = str(item.get("role") or "").strip().lower()
-                    cc = str(item.get("content") or "")
-                    if rr in {"user", "assistant", "system"} and str(cc or "").strip():
-                        hist.append({"role": rr, "content": str(cc)})
-
-            hist.append({"role": r, "content": text})
-            if keep > 0 and len(hist) > keep:
-                hist = hist[-keep:]
-            if keep == 0:
-                hist = []
-
-            binding["history"] = hist
-            binding["updated_at"] = _utc_now_iso()
-            self._save_state()
-
-    def _context_messages_from_binding(self, *, binding: Dict[str, Any]) -> list[Dict[str, str]]:
-        raw = binding.get("history")
-        if not isinstance(raw, list):
-            return []
-        out: list[Dict[str, str]] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            role = str(item.get("role") or "").strip().lower()
-            content = str(item.get("content") or "")
-            if role not in {"user", "assistant", "system"}:
-                continue
-            if not content.strip():
-                continue
-            out.append({"role": role, "content": content})
-        return out
+    # NOTE (2026-07-17, durable-sessions migration): the bridge's private
+    # transcript (`binding["history"]` in telegram_bridge_state.json, written
+    # by _append_binding_history and shipped into runs via
+    # _context_messages_from_binding) is RETIRED. Conversation history is now
+    # server-seeded at start_run from the session's durable prior runs
+    # (`use_session_history` — the run store is the one transcript; the
+    # private file was the second-source-of-truth risk named in the
+    # durable-sessions review). Stale `history` keys in old state files are
+    # ignored; /reset already rotates the session_id, which is what clears
+    # replayed history.
 
     def _extract_run_output_text(self, *, run: Any) -> str:
         if run is None:
@@ -1644,10 +1605,6 @@ class TelegramBridge:
                 binding["updated_at"] = _utc_now_iso()
                 self._save_state()
 
-        binding2 = self._binding_for_chat(int(chat_id))
-        if isinstance(binding2, dict):
-            self._append_binding_history(binding=binding2, role="assistant", content=prompt_text)
-
         self._send_text(chat_id=int(chat_id), text=prompt_text)
         return True
 
@@ -1687,10 +1644,9 @@ class TelegramBridge:
                 self._send_text(chat_id=int(chat_id), text=self._format_user_prompt(pending=dict(pending)))
                 return True
 
-        if isinstance(binding, dict):
-            self._append_binding_history(binding=binding, role="user", content=response)
-
-        # Resume with the same payload shape as AbstractCode/Web.
+        # Resume with the same payload shape as AbstractCode/Web. (The
+        # mid-run exchange lives inside the run; the durable replay carries
+        # the run's prompt + final answer, per the divergence contract.)
         ok = self._resume_wait(run_id=str(run_id), wait_key=str(wait_key), payload={"response": response})
         if not ok:
             self._send_text(chat_id=int(chat_id), text="Sorry — failed to resume.")
@@ -1738,9 +1694,6 @@ class TelegramBridge:
                 text = "Sorry, I couldn't generate a reply."
 
         self._send_text(chat_id=int(chat_id), text=text)
-
-        # Append assistant message to local transcript (used as context for the next run).
-        self._append_binding_history(binding=binding, role="assistant", content=text)
 
         with self._lock:
             binding["active_run_id"] = None
@@ -2405,9 +2358,16 @@ class TelegramBridge:
         input_data["prompt"] = prompt
         input_data["use_context"] = True
 
-        # Maintain a local transcript (like AbstractCode/Web) so each run can include the recent chat context.
-        self._append_binding_history(binding=binding, role="user", content=prompt)
-        ctx: Dict[str, Any] = {"task": prompt, "messages": self._context_messages_from_binding(binding=binding)}
+        # Durable session replay (agora `durable-sessions` v1): the gateway
+        # seeds context.messages from the session's prior COMPLETED runs at
+        # start_run — the run store is the one transcript; the bridge's
+        # private history file is retired. /reset rotates the session_id,
+        # which is what clears replayed history.
+        input_data["use_session_history"] = True
+        input_data["session_history_max_messages"] = (
+            int(self._cfg.max_history_messages) if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages >= 0 else 30
+        )
+        ctx: Dict[str, Any] = {"task": prompt}
         if media_refs:
             ctx["attachments"] = list(media_refs)
             ctx["media"] = list(media_refs)
@@ -2781,9 +2741,16 @@ class TelegramBridge:
         input_data["prompt"] = prompt
         input_data["use_context"] = True
 
-        # Maintain a local transcript (like AbstractCode/Web) so each run can include the recent chat context.
-        self._append_binding_history(binding=binding, role="user", content=prompt)
-        ctx: Dict[str, Any] = {"task": prompt, "messages": self._context_messages_from_binding(binding=binding)}
+        # Durable session replay (agora `durable-sessions` v1): the gateway
+        # seeds context.messages from the session's prior COMPLETED runs at
+        # start_run — the run store is the one transcript; the bridge's
+        # private history file is retired. /reset rotates the session_id,
+        # which is what clears replayed history.
+        input_data["use_session_history"] = True
+        input_data["session_history_max_messages"] = (
+            int(self._cfg.max_history_messages) if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages >= 0 else 30
+        )
+        ctx: Dict[str, Any] = {"task": prompt}
         if media:
             ctx["attachments"] = list(media)
             ctx["media"] = list(media)

@@ -148,23 +148,25 @@ def test_execute_target_override_is_operator_gated(tmp_path: Path, monkeypatch: 
     app = _exec_app(tmp_path, monkeypatch)
 
     with TestClient(app) as client:
-        url = "/api/gateway/backlog/planned/011_abstractgateway_exec.md/execute"
+        # dor=skip: DoR default-ON since c3546 (2026-07-20); this test owns the
+        # target-override gate, not readiness — bypass explicitly.
+        url = "/api/gateway/backlog/planned/011_abstractgateway_exec.md/execute?dor=skip"
 
         # No allowed set declared: override refused loudly, naming the knob.
-        r = client.post(url + "?target_model=gpt-5.2-pro")
+        r = client.post(url + "&target_model=gpt-5.2-pro")
         assert r.status_code == 403, r.text
         assert "ABSTRACTGATEWAY_BACKLOG_EXEC_ALLOWED_MODELS" in r.json()["detail"]
 
         # Declared set: an off-list model still refuses; an on-list one lands.
         monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_EXEC_ALLOWED_MODELS", "gpt-5.2, gpt-5.2-pro")
-        r2 = client.post(url + "?target_model=some-other-model")
+        r2 = client.post(url + "&target_model=some-other-model")
         assert r2.status_code == 403, r2.text
 
         # Invalid effort: 400 naming the enum (checked before anything queues).
-        r4 = client.post(url + "?target_reasoning_effort=ultra")
+        r4 = client.post(url + "&target_reasoning_effort=ultra")
         assert r4.status_code == 400, r4.text
 
-        r3 = client.post(url + "?target_model=gpt-5.2-pro&target_reasoning_effort=high")
+        r3 = client.post(url + "&target_model=gpt-5.2-pro&target_reasoning_effort=high")
         assert r3.status_code == 200, r3.text
         rid = r3.json()["request_id"]
         import json as _json

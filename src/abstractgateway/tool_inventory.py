@@ -136,6 +136,29 @@ def entity_walled_inventory() -> List[Dict[str, Any]]:
     return sorted(_walled_rows(), key=_order_key)
 
 
+# Per-phase EXECUTION-LANE truth (c69 audit: `executable: True` was
+# hardcoded for every cell including sleep, so the kit's executable:false
+# cue could never fire — the dashboard showed grants no lane consumes).
+# executable(tool, phase) = does a live execution lane run tools in this
+# phase? Post the 2026-07-18 memory-tools fix, BOTH live lanes (visit door
+# executor, personal ChatSession driver) execute the FULL walled set, so
+# the per-cell truth is currently phase-uniform — kept as a function so a
+# tool-level nuance lands here, never as a hand-set boolean again.
+_PHASE_LANE_EXECUTION: Dict[str, tuple] = {
+    "visit": (True, None),
+    "personal": (True, None),
+    "sleep": (False, "no execution lane runs tools in this phase — sleep is the consolidation window (grants here are stored, nothing consumes them yet)"),
+    "work": (False, "no work lane exists yet — grants here are stored for the day the work phase ships"),
+}
+
+
+def phase_executability(tool_name: str, phase: str) -> tuple:
+    """(ok, reason) for one (tool, phase) cell — the served truth behind
+    the kit's executable cell axis and the /tool-policy executable map."""
+    ok, reason = _PHASE_LANE_EXECUTION.get(str(phase), (False, f"unknown phase {phase!r}"))
+    return bool(ok), reason
+
+
 def default_phase_grants() -> Dict[str, List[str]]:
     """The framework DEFAULT grant per phase (no home yet — the creation
     modal's starting matrix). Sourced from runtime's `_default_tools`, the
@@ -164,8 +187,8 @@ def phase_capability_matrix(policy: Optional[Dict[str, List[str]]] = None) -> Di
 
     MatrixCell per (tool, phase): {assigned, resolved_value, provenance,
     availability, executable, reason?} + the descriptor riders (grant_lane,
-    capability_class, mutating, remote_write_capable, act_only) as legal
-    additive server-truth fields. Semantics (uic c929, load-bearing):
+    capability_class, mutating, remote_write_capable) as legal additive
+    server-truth fields. (act_only died with the ref layer, runtime c273.) Semantics (uic c929, load-bearing):
     - assigned = the OPERATOR HAS A STORED WORD on this cell (the policy
       explicitly grants this tool in this phase). A birth default is
       assigned=false with resolved_value=granted-by-default — restating a
@@ -202,18 +225,24 @@ def phase_capability_matrix(policy: Optional[Dict[str, List[str]]] = None) -> Di
             # stored grant (uic c929: assigned:true only for cells the policy
             # names). A birth default is assigned=false, resolved=true.
             assigned = bool(operator_worded and resolved)
+            # Executability is SERVED TRUTH per (tool, phase) — the c69
+            # audit found this hardcoded True for every cell (sleep/work
+            # included), leaving the kit's executable:false cue dormant
+            # while the dashboard showed grants nothing consumes.
+            exec_ok, exec_reason = phase_executability(name, phase)
             cells[phase] = {
                 "assigned": assigned,
                 "resolved_value": resolved,
                 "provenance": "operator" if operator_worded else "default",
                 "availability": "granted" if resolved else "denied",
-                "executable": True,  # every walled row has a door executor
+                "executable": exec_ok,
                 "grant_lane": row.get("grant_lane"),
                 "capability_class": row.get("capability_class"),
                 "mutating": bool(row.get("mutating")),
                 "remote_write_capable": bool(row.get("remote_write_capable")),
-                "act_only": bool(row.get("act_only")),
-                "reason": None,
+                # act_only died with the ref layer (runtime c273) — walled
+                # rows no longer carry it; no tool is act-only anymore.
+                "reason": exec_reason,
             }
         items.append({
             "id": name,

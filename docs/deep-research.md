@@ -1,16 +1,19 @@
-# `dp-research` Shipped Workflow
+# `deep-research` Shipped Workflow
 
-Gateway packages `dp-research@0.1.0.flow` as a supported shipped bundle. It is
-available from the normal bundle registry alongside `basic-agent` when the
-packaged bundle directory is used.
+Gateway packages `deep-research@0.1.6.flow` as a supported shipped bundle. It
+is available from the normal bundle registry alongside `basic-agent` when the
+packaged bundle directory is used. (Formerly `dp-research` — the `dp-*` names
+were retired by operator ruling 2026-07-16; version lineage continues from
+`dp-research@0.1.5`, and old `dp-research@0.1.x` artifacts live under
+`flows/bundles/archive/` for completed-run history only, no longer served.)
 
 ## Contract
 
-- Bundle id: `dp-research`
-- Version: `0.1.0`
-- Entrypoint flow id: `dp-research`
-- Interfaces: `abstractcode.agent.v1`, `abstractresearch.dp.v1`
-- Editable source flows: `abstractflow/examples/flows/dp-*.json`
+- Bundle id: `deep-research`
+- Version: `0.1.6`
+- Entrypoint flow id: `deep-research`
+- Interfaces: `abstractcode.agent.v1`, `abstractresearch.deep.v1`
+- Editable source flows: `abstractflow/examples/flows/deep-*.json`
 
 The workflow exposes a small product-facing input contract:
 
@@ -41,9 +44,9 @@ tools. Export uses deterministic Runtime nodes: `write_file`, `write_pdf`, and
 `write_docx`.
 
 Export paths append a sanitized run timestamp to the effort-derived output
-prefix to avoid overwrites. The final manifest is built after file writes and
-includes actual Markdown/PDF/DOCX paths, byte counts, PDF/DOCX hashes, and
-content types.
+prefix (`reports/deep-*-research`) to avoid overwrites. The final manifest is
+built after file writes and includes actual Markdown/PDF/DOCX paths, byte
+counts, PDF/DOCX hashes, and content types.
 
 ## Validation
 
@@ -51,7 +54,7 @@ From the monorepo root:
 
 ```bash
 PYTHONPATH=abstractgateway/src:abstractruntime/src:abstractcore \
-  pytest -q abstractgateway/tests/test_dp_research_bundle_contract.py
+  pytest -q abstractgateway/tests/test_deep_research_bundle_contract.py
 ```
 
 That test opens the bundle, checks the public input/output contract, verifies

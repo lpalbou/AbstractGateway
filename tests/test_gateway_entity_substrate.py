@@ -111,7 +111,7 @@ def test_substrate_put_is_a_durable_marked_event(monkeypatch: pytest.MonkeyPatch
         d = changed[0]["payload"]
         assert d["new"] == {"provider": "lmstudio", "model": "ornith-1.0-35b"}
         assert d["old"] == {"provider": None, "model": None}
-        assert d["by"] == "person:local-admin"
+        assert d["by"] == "person:admin"
 
         # A second PUT records the transition old→new (the timeline).
         r2 = client.put(

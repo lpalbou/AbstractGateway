@@ -21,6 +21,10 @@ def _isolate_gateway_runtime_env(monkeypatch: pytest.MonkeyPatch, tmp_path_facto
     monkeypatch.delenv("ABSTRACTGATEWAY_DB_PATH", raising=False)
     monkeypatch.delenv("ABSTRACTGATEWAY_STORE_BACKEND", raising=False)
     monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_TOKEN", raising=False)
+    # USER_AUTH=1 flips entity homes to per-principal roots — 6 replay tests
+    # fail under a launcher shell that exported it (env-poisoning class;
+    # adversary finding, 2026-07-17).
+    monkeypatch.delenv("ABSTRACTGATEWAY_USER_AUTH", raising=False)
 
     # Provide safe defaults so tests that forget to set these still write only under tmp.
     base = Path(str(tmp_path_factory.mktemp("abstractgateway-test-env")))

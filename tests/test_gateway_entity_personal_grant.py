@@ -80,13 +80,13 @@ def test_grant_roundtrip_markers_and_principal():
         assert armed.status_code == 200, armed.text
         body = armed.json()
         assert body["armed"] is True
-        assert body["granted_by"] == "person:local-admin"
+        assert body["granted_by"] == "person:admin"
         assert body["granted_at"]
 
         # The act landed marker-first with the acting principal.
         granted = [m for m in _markers("castor") if m["payload"].get("kind") == "personal_granted"]
         assert len(granted) == 1
-        assert granted[0]["payload"]["by"] == "person:local-admin"
+        assert granted[0]["payload"]["by"] == "person:admin"
         assert granted[0]["payload"]["mode"] == "until_revoked"
 
         # Revoke: distinct marker kind (the act names the grant, not the phase).
@@ -135,7 +135,7 @@ def test_loop_start_arms_the_grant_itself(monkeypatch: pytest.MonkeyPatch):
         g = client.get("/api/gateway/entities/Pollux/personal-grant").json()
         assert g["armed"] is True
         assert g["mode"] == "until_revoked"
-        assert g["granted_by"] == "person:local-admin"
+        assert g["granted_by"] == "person:admin"
 
         # The asleep newborn was woken by the same click (doors WAKE).
         from abstractgateway.service import get_gateway_service
@@ -151,7 +151,7 @@ def test_loop_start_arms_the_grant_itself(monkeypatch: pytest.MonkeyPatch):
         assert "personal_granted" in kinds
         assert "personal_started" in kinds
         granted = [m for m in _markers("pollux") if m["payload"].get("kind") == "personal_granted"]
-        assert granted[0]["payload"]["by"] == "person:local-admin"
+        assert granted[0]["payload"]["by"] == "person:admin"
 
 
 def test_loop_start_leaves_an_armed_grant_untouched(monkeypatch: pytest.MonkeyPatch):

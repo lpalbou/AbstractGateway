@@ -46,6 +46,21 @@ def _client() -> TestClient:
     return TestClient(app, headers={"Authorization": f"Bearer {_TOKEN}"})
 
 
+def _backdate_state(home_dir, *, seconds: float = 300.0) -> None:
+    """Age a seeded visiting posture past the open lanes' freshness gate
+    (mutual-exclusivity wave adversary P1-1): a posture younger than the
+    grace window reads as a MID-OPEN visit and refuses adoption — tests
+    simulating a genuinely STALE (crashed) posture must age it."""
+    import json as _json
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+
+    path = Path(home_dir) / "state"
+    data = _json.loads(path.read_text(encoding="utf-8"))
+    data["changed_at"] = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    path.write_text(_json.dumps(data), encoding="utf-8")
+
+
 class _ScriptedLLM:
     """Duck-typed like the driver expects: .generate(...) -> .content."""
 
@@ -245,23 +260,38 @@ def test_visiting_mode_passes_through_state_and_card(monkeypatch: pytest.MonkeyP
 def test_open_adopts_visiting_posture_and_wakes_on_close(monkeypatch: pytest.MonkeyPatch):
     """A stale auto-yield (crashed visit) is adopted WITH the duty to wake:
     the open succeeds against asleep+visiting, and the close hands his own
-    time back (state returns to awake)."""
+    time back (state returns to awake).
+
+    RE-BASED by the mutual-exclusivity wave (laurent dm#94): the open now
+    OVERWRITES the stale posture with its own identity token (ownership,
+    never words), and `yielded_loop` means exactly what it says — a RUNNING
+    loop was yielded (no loop here, so False; the old True overloaded the
+    flag with 'adopted a stale posture'). The wake duty rides prior_state
+    now: a stale posture's operator word is unrecoverable, so prior=awake
+    and close wakes with the visit facts — the same end state."""
     _install_scripted_llm(monkeypatch, ["Adopted-session reply."])
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
 
         from abstractgateway.service import get_gateway_service
-        from abstractruntime.identity.life import write_entity_state
+        from abstractruntime.identity.life import read_entity_state, write_entity_state
 
         registry = get_gateway_service().entity_registry
         write_entity_state(
             registry.entities_dir / "castor", "asleep",
             reason="in conversation with person:laurent (auto-yield)", mode="visiting",
         )
+        # A CRASHED visit's posture is old; a fresh one refuses (P1-1 gate).
+        _backdate_state(registry.entities_dir / "castor")
 
         opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
         assert opened.status_code == 200, opened.text
-        assert opened.json()["yielded_loop"] is True
+        assert opened.json()["yielded_loop"] is False  # no live loop was yielded
+
+        # The stale posture was re-stamped with THIS visit's identity.
+        st = read_entity_state(registry.entities_dir / "castor")
+        assert st["state"] == "asleep" and st.get("mode") == "visiting"
+        assert f"[visit {opened.json()['chat_id']}]" in str(st.get("reason", ""))
 
         closed = client.post(f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close")
         assert closed.status_code == 200, closed.text
@@ -292,14 +322,16 @@ def test_operator_sleep_mid_chat_visit_survives_the_close(monkeypatch: pytest.Mo
 
         registry = get_gateway_service().entity_registry
         home_dir = registry.entities_dir / "castor"
-        # A yielded-loop visit (adopted stale posture — yielded_loop=True).
+        # A standing stale posture (crashed visit); the open re-stamps it
+        # with its own identity (mutual-exclusivity wave: ownership tokens;
+        # yielded_loop stays False — no RUNNING loop was yielded).
         write_entity_state(
             home_dir, "asleep",
             reason="in conversation with person:laurent (auto-yield)", mode="visiting",
         )
+        _backdate_state(home_dir)  # stale, not mid-open (P1-1 gate)
         opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
         assert opened.status_code == 200, opened.text
-        assert opened.json()["yielded_loop"] is True
 
         # The operator's sleep lands mid-visit through the state route
         # (state writes FIRST, then this same route tears the chat down).
@@ -389,10 +421,14 @@ def test_open_salvages_a_died_unreflected_session(monkeypatch: pytest.MonkeyPatc
 
 def test_operator_set_sleep_is_woken_by_the_visit(monkeypatch: pytest.MonkeyPatch):
     """B1 extended to the chat lane (newborn shape c1503: doors WAKE, they
-    don't refuse): an operator-asleep entity is woken BY the visit — the
+    don't refuse): an operator-asleep entity is admitted BY the visit — the
     operator always has a path in, and a newborn (asleep at birth) is
-    visitable from its first moment. The workplace SUMMON lane keeps its
-    no-summon window (a workflow is not a visit)."""
+    visitable from its first moment.
+
+    MECHANISM RE-BASED (mutual-exclusivity wave, laurent dm#94): the open
+    writes the visiting posture (the durable visit marker) instead of a
+    state-file awake; the folds read it as phase=visit, and close restores
+    the operator's sleep from the recorded prior state."""
     _install_scripted_llm(monkeypatch, ["I'm awake now.", "(reflection) quiet"])
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
@@ -403,10 +439,18 @@ def test_operator_set_sleep_is_woken_by_the_visit(monkeypatch: pytest.MonkeyPatc
 
         opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
         assert opened.status_code == 200, opened.text
+        # The visit marker stands (ownership-stamped), and the fold serves
+        # the visit phase — never sleep/personal beside a live drawer.
         state = client.get("/api/gateway/entities/Castor/state").json()
-        assert state["state"] == "awake"
-        assert "woken by visit" in state["reason"]
+        assert state["state"] == "asleep" and state.get("mode") == "visiting"
+        assert f"[visit {opened.json()['chat_id']}]" in state["reason"]
+        life = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert life["phase"] == "visit"
+        # Close restores the OPERATOR's sleep (prior-state, not hardcoded).
         client.post(f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close")
+        after = client.get("/api/gateway/entities/Castor/state").json()
+        assert after["state"] == "asleep"
+        assert "night consolidation" in after["reason"]
 
 
 def test_life_state_is_one_mutually_exclusive_phase(monkeypatch: pytest.MonkeyPatch):
@@ -416,18 +460,21 @@ def test_life_state_is_one_mutually_exclusive_phase(monkeypatch: pytest.MonkeyPa
     _install_scripted_llm(monkeypatch, ["hi", "(reflection) quiet"])
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        # Newborn = sleep (artifact initial_phase); wake for the awake leg.
+        # Newborn = sleep (artifact initial_phase); wake for the idle leg.
         assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
-        # Awake, no loop, no visit -> awake.
+        # state=awake, no loop, no visit -> SLEEP, the resting default
+        # (laurent c203: awake never renders as a dwelling phase).
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
-        assert ls["phase"] == "awake" and ls["own_time_running"] is False
+        assert ls["phase"] == "sleep" and ls["own_time_running"] is False
 
         # A visit outranks everything and reads as exactly one phase.
         opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
         assert opened.status_code == 200, opened.text
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
-        assert ls["phase"] == "visiting"
+        # GRAPH WORDS ONLY since dm#79 (one vocabulary): the phase is
+        # "visit"; the old word survives as posture.
+        assert ls["phase"] == "visit" and ls["posture"] == "visiting"
         assert ls["chat_open"] is True
         # Never two-of-three active: the phase is a single string, and the
         # only "running" flag is the loop indicator, which is off here.
@@ -435,7 +482,7 @@ def test_life_state_is_one_mutually_exclusive_phase(monkeypatch: pytest.MonkeyPa
 
         client.post(f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close")
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
-        assert ls["phase"] in ("awake", "resting", "personal")
+        assert ls["phase"] in ("sleep", "personal")  # graph words only
 
 
 def test_set_sleep_closes_an_open_visit(monkeypatch: pytest.MonkeyPatch):

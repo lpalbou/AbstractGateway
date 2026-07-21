@@ -133,7 +133,7 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     GatewayRoutePolicy(
         resource="entities",
         reason_code="admin_required",
-        pattern=r"^/api/gateway/entities/[^/]+/(state|reembed|tool-policy|prompt|substrate|personal-grant|maintenance-window|loop/start|loop/stop|workspace/mounts)$",
+        pattern=r"^/api/gateway/entities/[^/]+/(state|reembed|tool-policy|prompt|substrate|capability-map|skills|voice|tasks|tasks/[^/]+/status|work-order|candidates/[^/]+/(promote|reject)|personal-grant|maintenance-window|loop/start|loop/stop|workspace/mounts)$",
         methods=("POST", "PUT", "PATCH", "DELETE"),
     ),
     # Spark TEMPLATE mutations (operator directive 2026-07-13: create/edit
@@ -147,6 +147,15 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
         reason_code="admin_required",
         exact=("/api/gateway/entities/templates",),
         methods=("POST",),
+    ),
+    # The editable blueprint (laurent dm#104): editing the SHARED state
+    # graph modulates every entity's cognition rules — the operator's act
+    # alone. GET stays user-level (every client reads the one graph).
+    GatewayRoutePolicy(
+        resource="entities",
+        reason_code="admin_required",
+        exact=("/api/gateway/entities/spec/phases",),
+        methods=("PUT",),
     ),
     GatewayRoutePolicy(
         resource="entities",

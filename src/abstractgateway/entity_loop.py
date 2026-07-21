@@ -59,6 +59,18 @@ def start_loop(
     if context_window is None:
         context_window = DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
 
+    # Faithful-respawn record (self-repair, laurent 2026-07-21): the repair
+    # sweeper replays THESE parameters — a repaired loop must run the same
+    # schedule the operator started, never a default guess.
+    from .entity_repair import record_spawn_params
+
+    record_spawn_params(Path(home_dir), {
+        "provider": provider, "model": model, "base_url": base_url,
+        "tick_seconds": tick_seconds, "ticks_per_day": ticks_per_day,
+        "rest_minutes": rest_minutes, "shelf_size": shelf_size,
+        "context_window": context_window,
+    })
+
     return spawn_loop_process(
         Path(home_dir),
         provider=provider,

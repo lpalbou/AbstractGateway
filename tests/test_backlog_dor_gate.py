@@ -228,8 +228,21 @@ def test_dor_gate_through_the_execute_route(tmp_path: Path, monkeypatch: pytest.
         queued3 = _json.loads((gw / "backlog_exec_queue" / f"{rid3}.json").read_text(encoding="utf-8"))
         assert queued3["dor_overridden"] is False
 
-        # No dor param → gate is not evaluated (byte-unchanged default path).
-        r4 = client.post(f"{base}/002_abstractgateway_fresh.md/execute")
-        assert r4.status_code in (200, 409)  # 409 only if already queued; not a DoR refusal
-        if r4.status_code == 409:
-            assert "definition_of_ready" not in str(r4.json().get("detail", ""))
+        # DEFAULT-ON (skill c3546, 2026-07-20): no dor param now EVALUATES
+        # the gate — both co-signed sources (conventions.md + the c3514
+        # co-sign) teach a wall, and a raw curl silently bypassing it
+        # contradicted them. A THIRD unready file (002 is already queued by
+        # the override leg above — its 409 would be "already queued", not
+        # the gate) refuses 409 with the per-check evidence.
+        (planned / "003_abstractgateway_bare.md").write_text(_TEMPLATE_FRESH, encoding="utf-8")
+        r4 = client.post(f"{base}/003_abstractgateway_bare.md/execute")
+        assert r4.status_code == 409, r4.text
+        detail4 = r4.json()["detail"]
+        assert detail4["error"] == "definition_of_ready_failed"
+
+        # dor=skip is the EXPLICIT bypass — executes AND records the choice.
+        r5 = client.post(f"{base}/003_abstractgateway_bare.md/execute?dor=skip")
+        assert r5.status_code == 200, r5.text
+        rid5 = r5.json()["request_id"]
+        queued5 = _json.loads((gw / "backlog_exec_queue" / f"{rid5}.json").read_text(encoding="utf-8"))
+        assert queued5["dor_overridden"] is True, "a bypass is a recorded choice, never silent"

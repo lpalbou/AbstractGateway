@@ -191,6 +191,13 @@ def _default_llm_factory(provider: str, **kwargs: Any) -> Any:
     return _RuntimeLLMAdapter(provider, model=model, **kwargs)
 
 
+def _woken_reason() -> str:
+    """The shared B1 wake-reason prefix (one spelling, entities.py owns it)."""
+    from .entities import WOKEN_BY_VISIT_REASON
+
+    return WOKEN_BY_VISIT_REASON
+
+
 @dataclass
 class _HostedChat:
     chat_id: str
@@ -202,6 +209,14 @@ class _HostedChat:
     opened_at: str
     model_info: Dict[str, str]
     lease: Any = None       # the visit's home-lease window (GW-A); released at close
+    # True when THIS visit woke an operator-asleep entity (B1 doors-wake).
+    # Close restores the sleep (skill's c219 audit: the drawer left awake
+    # standing after waking a sleeper — the resting default must return).
+    woke_for_visit: bool = False
+    # The operator's word BEFORE this visit touched the state (mutual-
+    # exclusivity wave, laurent dm#94): open writes the visiting posture
+    # unconditionally; close restores THIS, never a hardcoded word.
+    prior_state: Dict[str, str] = field(default_factory=lambda: {"state": "awake", "reason": ""})
     last_activity: float = 0.0
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     closed: bool = False
@@ -353,54 +368,80 @@ class EntityChatHost:
         if state.get("state") == "paused":
             raise ChatOpenRefused(409, f"{manifest.entity_id} is paused (hard freeze): {reason or 'no reason recorded'}")
 
-        # Auto-yield (--pause-loop parity, HTTP-bounded).
+        # THE VISITING POSTURE IS UNCONDITIONAL (mutual-exclusivity wave,
+        # laurent dm#94 via entity's write audit finding 1): a visit opened
+        # on an awake, loop-less entity used to write NOTHING durable — the
+        # state file, other processes, and post-restart folds could not know
+        # a visit existed, and the composite folds rendered "personal ·
+        # resting" beside a live chat. ONE write at every open makes the
+        # state file the restart-surviving visit truth every consumer
+        # already understands (asleep+mode=visiting = the visit marker; the
+        # folds render it as phase=visit). The posture carries the visit's
+        # OWN identity ("[visit <chat_id>]") so closes/restores match by
+        # OWNERSHIP, never by words (audit finding 4). The operator's prior
+        # word is recorded and restored at close.
         #
-        # The loop is a live process whenever phase is "day" OR "between" (it
-        # re-opens a day on state=awake at its next top-gate). Yielding ONLY
-        # on phase=="day" left a reachable race (observer, maintainer
-        # 2026-07-09 02:02): a visit opened while the loop rested "between"
-        # got yielded_loop=false, then the loop re-entered a day mid-visit —
-        # a genuine visit+own-time overlap, not a display artifact. Fix: yield
-        # whenever the loop is ALIVE (write the visiting state FIRST so the
-        # loop's state=awake top-gate cannot re-open a day, then wait for
-        # quiescence).
+        # Loop-alive nuance kept: the loop is a live process whenever phase
+        # is "day" OR "between" (it re-opens a day on state=awake at its
+        # next top-gate), so the posture is written FIRST (the loop's
+        # top-gate cannot re-open a day) and quiescence is awaited.
         yielded = False
         woke_for_visit = False
         visitor = (participants or ["person:operator"])[0]
+        chat_id = f"chat-{uuid.uuid4().hex[:12]}"
+        visit_token = f"[visit {chat_id}]"
+        # The operator's word before THIS visit touched the state. A stale
+        # visiting posture belongs to a PREVIOUS visit — the operator's own
+        # word is not recoverable from it; awake is the honest restore.
+        # wake_at rides along so a BOUNDED sleep keeps its deadline through
+        # the visit (runtime c343 seam).
+        prior_state = {
+            "state": str(state.get("state") or "awake"),
+            "reason": reason,
+            "wake_at": str(state.get("wake_at") or ""),
+        }
+        if state.get("state") == "asleep" and (mode == "visiting" or "auto-yield" in reason):
+            # FRESHNESS GATE (wave adversary P1-1): a young posture may
+            # belong to a visit MID-OPEN on the durable lane (its run is not
+            # in status() until the leg stamps it) — adopting it destroyed
+            # the live visit's ownership token. Mirrors the durable lane and
+            # the /loop/start registration-window guard.
+            from .entity_visits import EntityVisitHost, visiting_posture_age_s
+
+            age = visiting_posture_age_s(state)
+            if age is not None and age < float(EntityVisitHost.STALE_YIELD_GRACE_S):
+                raise ChatOpenRefused(
+                    409,
+                    f"a visit is opening on {manifest.entity_id} (visiting posture {age:.0f}s old) — "
+                    "one life, one summon; retry shortly "
+                    "(a genuinely stale posture is adoptable after the grace window)",
+                )
+            prior_state = {"state": "awake", "reason": ""}
+        elif state.get("state") == "asleep":
+            # B1 ruling (laurent 04:58; newborn shape c1503: doors WAKE, they
+            # don't refuse): an operator-asleep entity is visitable — the
+            # posture write below supersedes the old explicit awake write;
+            # close restores the operator's sleep from prior_state.
+            woke_for_visit = True
         loop_alive = bool(read_loop_status(home_dir).get("running"))
+        write_entity_state(
+            home_dir, "asleep",
+            reason=f"in conversation with {visitor} {visit_token}"
+            + (" (auto-yield)" if loop_alive else ""),
+            mode="visiting",
+            written_by="visit-door",
+        )
         if loop_alive:
-            write_entity_state(
-                home_dir, "asleep",
-                reason=f"in conversation with {visitor} (auto-yield)",
-                mode="visiting",
-            )
             if not await_loop_quiescent(home_dir, timeout_seconds=self._yield_wait_s):
-                # Restore awake so a failed open never strands the loop asleep.
-                write_entity_state(home_dir, "awake", reason="visit open aborted (loop did not yield in time)")
+                # Restore the prior word so a failed open never strands the
+                # loop asleep (nor erases an operator's sleep).
+                self._restore_prior_state(home_dir, prior_state, suffix="(visit open aborted: loop did not yield in time)", token=visit_token)
                 raise ChatOpenRefused(
                     409,
                     "the entity's own-time loop has not reached a tick boundary yet — "
                     f"waited {self._yield_wait_s:.0f}s; retry shortly (the yield request stands)",
                 )
             yielded = True
-        elif state.get("state") == "asleep":
-            if mode == "visiting" or "auto-yield" in reason:
-                # A stale/standing visit posture is adopted WITH the duty to wake.
-                yielded = True
-            else:
-                # B1 ruling (laurent 04:58, extended to this lane by the
-                # newborn shape c1503: doors WAKE, they don't refuse): an
-                # operator-asleep entity is woken by the visit itself — the
-                # operator always has a path in, and a newborn (state=asleep
-                # at birth) is visitable from its first moment. The wake
-                # reason records the visit did it; the durable lane's
-                # _preflight has carried this branch since B1.
-                write_entity_state(
-                    home_dir, "awake",
-                    reason=f"woken by visit from {visitor}",
-                )
-                state = read_entity_state(home_dir)
-                woke_for_visit = True
 
         # One writer per home (plan item 1, GW-A): the visit IS a write
         # window. Acquired AFTER the auto-yield (the loop's day lease is
@@ -415,10 +456,7 @@ class EntityChatHost:
             try:
                 lease = acquire_directory_lease(home_dir, holder="visit-host")
             except DirectoryLeaseHeld as e:
-                if yielded:
-                    write_entity_state(home_dir, "awake", reason="visit open aborted (home has a writer)")
-                elif woke_for_visit:
-                    write_entity_state(home_dir, "asleep", reason=(reason or "operator sleep restored") + " (visit open failed)")
+                self._restore_prior_state(home_dir, prior_state, suffix="(visit open aborted: home has a writer)", token=visit_token)
                 raise ChatOpenRefused(409, str(e))
         except ImportError:
             # Older runtime without storage.lease: no site acquires (the
@@ -453,18 +491,12 @@ class EntityChatHost:
             # A refused prelude aborts the summon — the reasons travel verbatim.
             if lease is not None:
                 lease.release()
-            if yielded:
-                write_entity_state(home_dir, "awake", reason="visit aborted (prelude refused)")
-            elif woke_for_visit:
-                write_entity_state(home_dir, "asleep", reason=(reason or "operator sleep restored") + " (visit open failed)")
+            self._restore_prior_state(home_dir, prior_state, suffix="(visit aborted: prelude refused)", token=visit_token)
             raise ChatOpenRefused(409, f"summon refused: {'; '.join(quiet) or e}")
         except BaseException:
             if lease is not None:
                 lease.release()
-            if yielded:
-                write_entity_state(home_dir, "awake", reason="visit aborted (open failed)")
-            elif woke_for_visit:
-                write_entity_state(home_dir, "asleep", reason=(reason or "operator sleep restored") + " (visit open failed)")
+            self._restore_prior_state(home_dir, prior_state, suffix="(visit aborted: open failed)", token=visit_token)
             raise
 
         # The reflection-loss guard, web half (a2a 0007/171500Z): if a
@@ -482,7 +514,6 @@ class EntityChatHost:
         else:
             quiet.append("#FALLBACK driver predates the reflection-loss guard; no salvage check ran")
 
-        chat_id = f"chat-{uuid.uuid4().hex[:12]}"
         hosted = _HostedChat(
             chat_id=chat_id,
             entity_slug=slug,
@@ -490,10 +521,12 @@ class EntityChatHost:
             session=session,
             home=home,
             yielded_loop=yielded,
+            woke_for_visit=woke_for_visit,
             opened_at=datetime.now(timezone.utc).isoformat(),
             model_info={"provider": str(provider), "model": str(model)},
             lease=lease,
             last_activity=_time.monotonic(),
+            prior_state=dict(prior_state),
         )
         with self._lock:
             self._sessions[chat_id] = hosted
@@ -647,17 +680,26 @@ class EntityChatHost:
     # a retired word; the own_time_running/own_time_phase FIELD NAMES stay —
     # they are a served API contract consumers already read, and renaming
     # fields breaks clients for zero semantic gain (flagged to observer).
-    _LIFE_PHASES = ("visiting", "paused", "asleep", "personal", "resting", "awake")
+    # ONE VOCABULARY (laurent dm#79 "one state graph, shared"; sharedgraph
+    # adversary P1-2: this composite served FIVE non-graph words in a field
+    # named `phase` and disagreed with /cognition on the same instant). The
+    # `phase` field now carries GRAPH WORDS ONLY (visit/work/personal/sleep;
+    # None = kill switch); the old nuances survive verbatim in `posture`
+    # (visiting/paused/asleep/yielded/resting/sleep) so no renderer loses
+    # information — a consumer that read the old words reads posture now.
+    _LIFE_PHASES = ("visit", "work", "personal", "sleep")
 
     def life_state(self, name: str) -> Dict[str, Any]:
         """The gateway-computed life phase — one mutually-exclusive answer the
-        observer consumes directly. Precedence (visiting wins, matching the
-        client contract it replaces): a visit outranks everything (the loop is
-        auto-yielded under it); operator paused/asleep outrank the personal
-        phase; a running loop is personal (mid-day, phase=day) or resting
-        (between days); awake is the floor. `own_time_running` is reported
-        alongside so a viewer can show the loop is alive WITHOUT contradicting
-        the phase."""
+        observer consumes directly, in GRAPH WORDS (the /entities/spec/phases
+        vocabulary): a visit outranks everything (the loop is auto-yielded
+        under it — the yield posture IS a visit in progress); paused blocks
+        the phase axis (None + posture=paused); a running loop day is work
+        when a work order stands, else personal; a loop between days is
+        personal (the phase spans its rest windows) with posture=resting;
+        the floor is sleep (resting default — never an awake-idle dwelling,
+        laurent c203). `posture` carries the bookkeeping nuance the old
+        vocabulary served as phase words."""
         from .entity_loop import loop_status
 
         manifest = self._registry.manifest_for(name)
@@ -669,27 +711,47 @@ class EntityChatHost:
         loop_running = bool(loop.get("running"))
         loop_phase = str(loop.get("phase") or "")
 
+        posture: str
+        phase: Optional[str]
         if chat.get("open"):
-            phase = "visiting"
+            phase, posture = "visit", "visiting"
         elif str(state.get("state") or "awake") == "paused":
-            phase = "paused"
+            phase, posture = None, "paused"
         elif str(state.get("state") or "awake") == "asleep":
             # mode=visiting is VISIT BOOKKEEPING (auto-yield / mid-open
-            # posture), not sleep — rendering it "asleep" fabricated the
+            # posture) — a visit is in progress on the durable lane, so the
+            # GRAPH word is visit; rendering it "asleep" fabricated the
             # "went to sleep during personal" read of the 22:38 incident
-            # (entity forensics c2465 finding 3). Serve the yield
-            # distinctly; clients render it as bookkeeping, never sleep.
-            phase = "yielded" if str(state.get("mode") or "") == "visiting" else "asleep"
+            # (entity forensics c2465 finding 3).
+            if str(state.get("mode") or "") == "visiting":
+                phase, posture = "visit", "yielded"
+            else:
+                phase, posture = "sleep", "asleep"
         elif loop_running and loop_phase == "day":
-            phase = "personal"
+            # Work day when a standing order exists (the loop's own day gate
+            # reads the same file) — the /cognition fold's rule, mirrored so
+            # the two composites can never disagree on the same instant.
+            try:
+                from abstractruntime.identity.life import read_work_order
+
+                phase = "work" if read_work_order(home_dir) else "personal"
+            except Exception:  # noqa: BLE001
+                phase = "personal"
+            posture = "day"
         elif loop_running:
-            phase = "resting"
+            phase, posture = "personal", "resting"
         else:
-            phase = "awake"
+            # No process, no visit, not paused: sleep is the resting
+            # default. sleep_detail on /cognition carries the honesty
+            # nuance; here the word alone retires the awake floor.
+            phase, posture = "sleep", "resting"
 
         return {
             "entity_id": manifest.entity_id,
             "phase": phase,
+            # The old vocabulary's nuance, verbatim — renderers that read
+            # visiting/yielded/resting/paused as words read posture now.
+            "posture": posture,
             "chat_open": bool(chat.get("open")),
             "chat_id": chat.get("chat_id"),
             "state": state.get("state"),
@@ -698,6 +760,45 @@ class EntityChatHost:
             "own_time_running": loop_running,
             "own_time_phase": loop_phase or None,
         }
+
+    @staticmethod
+    def _restore_prior_state(home_dir: Any, prior_state: Dict[str, str], *, suffix: str, token: str = "") -> None:
+        """Failed-open restore: put the OPERATOR's pre-visit word back
+        (mutual-exclusivity wave — the aborts used to hardcode awake/asleep,
+        erasing the operator's word on half the paths).
+
+        OWNERSHIP-CHECKED (wave adversary P1-2): the abort writes ONLY while
+        the standing state is still THIS visit's posture (token match) — an
+        operator pause/sleep landed mid-window is the coordination authority
+        and stands (the close paths' exact predicate; without it a quiescence
+        timeout could erase the kill switch). Best-effort: an abort surfaces
+        its own error, never a restore failure."""
+        from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+        try:
+            if token:
+                st = read_entity_state(home_dir)
+                still_ours = (
+                    str(st.get("state") or "") == "asleep"
+                    and str(st.get("mode") or "") == "visiting"
+                    and token in str(st.get("reason") or "")
+                )
+                if not still_ours:
+                    return  # the state changed hands mid-window; it stands
+            target = str((prior_state or {}).get("state") or "awake")
+            if target not in ("awake", "asleep"):
+                target = "awake"  # paused is the operator's act alone, never auto-restored
+            reason = str((prior_state or {}).get("reason") or "")
+            # A BOUNDED sleep keeps its deadline (runtime c343: wake_at is
+            # first-class on the writer; dropping it slept past need-checks).
+            wake_at = str((prior_state or {}).get("wake_at") or "") if target == "asleep" else ""
+            write_entity_state(
+                home_dir, target,
+                reason=(f"{reason} {suffix}".strip() if reason else suffix),
+                wake_at=wake_at,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def has_open(self, slug: str) -> bool:
         """Live hosted session on this home? (The visit reaper's chat probe:
@@ -761,32 +862,43 @@ class EntityChatHost:
                 hosted.home.close()
             except Exception:
                 pass
-            if hosted.yielded_loop:
-                try:
-                    # Wake-cue seeding, gateway half (maintainer escalation
-                    # 2026-07-09, R3 — "agency blindness"): the auto-yield
-                    # return reason is what the loop's honest-waking rule
-                    # reads back to him, so it should carry the VISIT's
-                    # facts (who came, how long, what he elected to pursue)
-                    # instead of a generic line — his next day can begin
-                    # from the visit instead of the bridges default. The
-                    # cue construction from this reason is runtime's half.
-                    #
-                    # VISIT-AUTHORED GUARD (conformance adversary P1, the
-                    # durable lane's rule mirrored): only the visit's OWN
-                    # yield posture is overwritten. An operator sleep/pause
-                    # landed mid-visit is the coordination authority — the
-                    # old unconditional wake-write here UNDID the emergency
-                    # stop and let a parked, granted loop reopen a day.
-                    from abstractruntime.identity.life import read_entity_state
+            try:
+                # RESTORE BY OWNERSHIP (mutual-exclusivity wave, laurent
+                # dm#94, audit finding 4): every open writes the visiting
+                # posture stamped with THIS visit's chat_id, so close matches
+                # the posture's identity token — never vocabulary. An
+                # operator sleep/pause landed mid-visit REWROTE the state
+                # (token gone) and is the coordination authority: it stands
+                # untouched (the old words-match let any lane's close adopt
+                # any lane's posture — the cross-lane clobber class).
+                from abstractruntime.identity.life import read_entity_state
 
-                    home_dir = self._registry.entities_dir / hosted.entity_slug
-                    st = read_entity_state(home_dir)
-                    visit_authored = str(st.get("state") or "") == "asleep" and (
-                        str(st.get("mode") or "") == "visiting"
-                        or "auto-yield" in str(st.get("reason") or "")
-                    )
-                    if visit_authored:
+                home_dir = self._registry.entities_dir / hosted.entity_slug
+                st = read_entity_state(home_dir)
+                owned = (
+                    str(st.get("state") or "") == "asleep"
+                    and str(st.get("mode") or "") == "visiting"
+                    and f"[visit {hosted.chat_id}]" in str(st.get("reason") or "")
+                )
+                if owned:
+                    prior = dict(hosted.prior_state or {})
+                    if str(prior.get("state") or "awake") == "asleep":
+                        # THE SLEEP RETURNS (skill c219 audit): this visit
+                        # woke an operator-asleep entity (B1 doors-wake);
+                        # the rest resumes when the visitor leaves — with
+                        # its wake deadline intact (runtime c343 seam).
+                        write_entity_state(
+                            home_dir, "asleep",
+                            reason=(str(prior.get("reason") or "") or "operator sleep restored")
+                            + f" (visit ended: {len(hosted.session.reports)} turns)",
+                            wake_at=str(prior.get("wake_at") or ""),
+                        )
+                    else:
+                        # Wake-cue seeding (maintainer escalation 2026-07-09,
+                        # R3 — "agency blindness"): the return reason carries
+                        # the VISIT's facts (who came, how long, what he
+                        # elected to pursue) so his next day can begin from
+                        # the visit instead of the bridges default.
                         visitors = [p for p in hosted.session.participants if not p.startswith("entity:")]
                         reason = (
                             f"visitor session ended ({', '.join(visitors) or 'a visitor'}; "
@@ -796,12 +908,13 @@ class EntityChatHost:
                         if interests:
                             reason += f" — you elected to pursue: {'; '.join(str(w)[:120] for w in interests[:2])}"
                         write_entity_state(home_dir, "awake", reason=reason)
-                    else:
-                        warnings.append(
-                            "operator state landed mid-visit — left standing (state is the authority; no wake-write)"
-                        )
-                except Exception as e:
-                    warnings.append(f"#FALLBACK could not wake the loop: {e} — wake him manually")
+                else:
+                    warnings.append(
+                        "state changed hands mid-visit — left standing (the posture no longer "
+                        "carries this visit's token; state is the authority, no restore-write)"
+                    )
+            except Exception as e:  # noqa: BLE001 - close must finish; the state write is best-effort
+                warnings.append(f"#FALLBACK could not restore the pre-visit state: {e}")
             with self._lock:
                 self._sessions.pop(hosted.chat_id, None)
                 if self._by_slug.get(hosted.entity_slug) == hosted.chat_id:

@@ -224,6 +224,28 @@ def resolve_run_skills(names: List[str], *, data_dir: Path) -> Dict[str, Any]:
         return out
 
     active = list(getattr(selection, "active", ()) or ())
+    # REQUIRES CHECK (abstractskill-0008 consumer half; laurent ruled it
+    # active 2026-07-21): a skill declaring metadata.requires_mcp /
+    # requires_tools activates ONLY when this gateway can serve them —
+    # otherwise it DROPS from active with a labeled verdict naming the
+    # missing dependency ("teach-what-is-wired applied to skills"). Never a
+    # silent activation, never a run block. An unreadable registry or tool
+    # universe SKIPS the check with a #FALLBACK verdict — a broken registry
+    # must not silently drop skills.
+    requires_map = dict(getattr(selection, "requires", {}) or {})
+    if requires_map and active:
+        active, unmet = _apply_requires_check(
+            active, requires_map, data_dir=data_dir, verdicts=out["verdicts"]
+        )
+        if unmet:
+            out["requires_unmet"] = unmet
+        out["requires"] = {
+            str(name): {
+                "mcp_servers": [str(s) for s in (getattr(req, "mcp_servers", ()) or ())],
+                "tools": [str(t) for t in (getattr(req, "tools", ()) or ())],
+            }
+            for name, req in requires_map.items()
+        }
     out["active"] = [str(getattr(m, "name", m)) for m in active]
     out["resolved_tree_hashes"] = {
         str(k): str(v) for k, v in (getattr(selection, "resolved_tree_hashes", {}) or {}).items()
@@ -246,6 +268,74 @@ def resolve_run_skills(names: List[str], *, data_dir: Path) -> Dict[str, Any]:
             active, descriptions=dict(getattr(selection, "activation_descriptions", {}) or {})
         )
     return out
+
+
+def _apply_requires_check(
+    active: List[Any],
+    requires_map: Dict[str, Any],
+    *,
+    data_dir: Path,
+    verdicts: List[str],
+) -> tuple:
+    """Split `active` into (still_active, unmet) against this gateway's
+    declared MCP registry and run-lane tool universe (0008 consumer half).
+
+    Returns (kept_active_metadata, unmet_map) where unmet_map is
+    {skill_name: {"mcp_servers": [missing...], "tools": [missing...]}}.
+    Check-substrate failures SKIP the corresponding check with a #FALLBACK
+    verdict — degraded knowledge must never read as a missing dependency."""
+    declared_mcp: Optional[set] = None
+    try:
+        inv = mcp_servers_inventory(data_dir=data_dir)
+        declared_mcp = {str(r.get("name") or "").strip() for r in inv.get("servers") or []}
+    except Exception as e:  # noqa: BLE001
+        verdicts.append(f"#FALLBACK requires_mcp check skipped (MCP registry unreadable: {e})")
+
+    tool_universe: Optional[set] = None
+    if any((getattr(req, "tools", ()) or ()) for req in requires_map.values()):
+        try:
+            from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
+
+            tool_universe = {
+                str(s.get("name") or "").strip()
+                for s in list_default_tool_specs()
+                if isinstance(s, dict)
+            }
+        except Exception as e:  # noqa: BLE001
+            verdicts.append(f"#FALLBACK requires_tools check skipped (tool universe unavailable: {e})")
+
+    kept: List[Any] = []
+    unmet: Dict[str, Dict[str, List[str]]] = {}
+    for meta in active:
+        name = str(getattr(meta, "name", meta))
+        req = requires_map.get(name)
+        missing_mcp: List[str] = []
+        missing_tools: List[str] = []
+        if req is not None:
+            if declared_mcp is not None:
+                missing_mcp = [
+                    s for s in (str(x) for x in (getattr(req, "mcp_servers", ()) or ())) if s and s not in declared_mcp
+                ]
+            if tool_universe is not None:
+                missing_tools = [
+                    t for t in (str(x) for x in (getattr(req, "tools", ()) or ())) if t and t not in tool_universe
+                ]
+        if missing_mcp or missing_tools:
+            parts = []
+            if missing_mcp:
+                # Declared-only registry (no probe lane yet): the honest
+                # wording is "not declared", never a fabricated "not
+                # reachable" the gateway cannot know.
+                parts.append(
+                    "MCP server(s) not declared on this gateway: " + ", ".join(sorted(missing_mcp))
+                )
+            if missing_tools:
+                parts.append("tool(s) not in the run-lane universe: " + ", ".join(sorted(missing_tools)))
+            verdicts.append(f"requires_unmet: {name} — " + "; ".join(parts))
+            unmet[name] = {"mcp_servers": sorted(missing_mcp), "tools": sorted(missing_tools)}
+        else:
+            kept.append(meta)
+    return kept, unmet
 
 
 def read_skill_body(name: str, *, data_dir: Path, max_chars: int = 16000) -> Dict[str, Any]:

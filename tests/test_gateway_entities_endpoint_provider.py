@@ -84,7 +84,7 @@ def test_root_scoped_profile_visible_to_per_principal_registry(tmp_path: Path) -
     ROOT. A registry whose data_dir != root_data_dir must still resolve a
     root-scoped profile (create validates at root; run must agree)."""
     root = tmp_path / "runtime"
-    principal_root = tmp_path / "users" / "local" / "local-admin" / "runtime"
+    principal_root = tmp_path / "users" / "default" / "user" / "runtime"
     # The gateway-scoped profile lives at the ROOT store only.
     ProviderEndpointProfileStore(base_dir=root).upsert_profile(
         profile_id="ovh-provider",

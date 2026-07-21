@@ -65,13 +65,24 @@ def safe_principal_component(value: Any, *, default: str = "default") -> str:
 
 
 def local_admin_principal(*, token_fingerprint: str = "") -> GatewayPrincipal:
+    """Principal for the static operator token (ABSTRACTGATEWAY_AUTH_TOKEN).
+
+    Identity fields deliberately MATCH the user-registry admin
+    (tenant=default, user=admin, runtime=default): the static token and the
+    browser admin session are the same human operator, so they must resolve
+    to the SAME per-principal service and data root. The old identity
+    (tenant=local, user=local-admin) routed static-token clients into an
+    empty per-principal world — zero entities, a stale run store — while the
+    browser session saw the real root (principal-split incident, commons
+    c2690, 2026-07-17). One operator, one identity, one world.
+    """
     return GatewayPrincipal(
-        user_id="local-admin",
-        tenant_id="local",
+        user_id="admin",
+        tenant_id="default",
         roles=("admin", "user"),
         scopes=("*",),
         token_fingerprint=token_fingerprint,
-        runtime_id="local-admin",
+        runtime_id="default",
         source="legacy-token",
     )
 

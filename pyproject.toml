@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
-  "AbstractRuntime>=0.4.29",
+  "AbstractRuntime>=0.4.30",
   "abstractagent>=0.3.12",
   "AbstractMemory[lancedb]>=0.2.6",
   "requests<3.0.0,>=2.32.5",
@@ -43,7 +43,7 @@ embeddings = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.4.29",
+  "AbstractRuntime[apple]>=0.4.30",
   "abstractagent[apple]>=0.3.12",
   "AbstractMemory[all-apple]>=0.2.6",
 ]
@@ -51,7 +51,7 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.4.29",
+  "AbstractRuntime[gpu]>=0.4.30",
   "abstractagent[gpu]>=0.3.12",
   "AbstractMemory[all-gpu]>=0.2.6",
 ]
@@ -80,7 +80,7 @@ packages = ["src/abstractgateway"]
 [tool.hatch.build.targets.wheel.force-include]
 "flows/bundles/basic-agent.flow" = "abstractgateway/flows/bundles/basic-agent.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
-"flows/bundles/dp-research@0.1.0.flow" = "abstractgateway/flows/bundles/dp-research@0.1.0.flow"
+"flows/bundles/deep-research@0.1.7.flow" = "abstractgateway/flows/bundles/deep-research@0.1.7.flow"
 # The console assistant drawer's transport bundle: boot ensure-publishes it
 # into the tenant catalog (shipped_catalog.py, card 013) — the wheel must
 # actually carry it or a fresh pip install has nothing to publish.
@@ -99,7 +99,7 @@ exclude = [
 [tool.hatch.build.targets.sdist.force-include]
 "flows/bundles/basic-agent.flow" = "flows/bundles/basic-agent.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
-"flows/bundles/dp-research@0.1.0.flow" = "flows/bundles/dp-research@0.1.0.flow"
+"flows/bundles/deep-research@0.1.7.flow" = "flows/bundles/deep-research@0.1.7.flow"
 "flows/bundles/docs-qa@0.1.0.flow" = "flows/bundles/docs-qa@0.1.0.flow"
 
 [tool.pytest.ini_options]

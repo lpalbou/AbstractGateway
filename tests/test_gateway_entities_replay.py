@@ -606,8 +606,14 @@ def test_f4_low_seq_marker_written_during_disconnect_redelivers_on_reconnect():
             return kinds
 
         # Reconnect: journal cursor far past both marker seqs, marker cursor
-        # says "I saw file line 1". The line-2 marker MUST deliver.
-        kinds = asyncio.run(asyncio.wait_for(_collect("9999.0|1"), timeout=30))
+        # says "I saw up to the summon's file line" (derived, not hardcoded —
+        # birth now writes teaching markers first, laurent seq 156, so the
+        # summon's line number floats). The NEXT line (diary_read) MUST
+        # deliver.
+        marker_file = registry.entities_dir / ".host_stream" / f"{slug}.jsonl"
+        lines = marker_file.read_text(encoding="utf-8").splitlines()
+        summon_line = next(i + 1 for i, l in enumerate(lines) if '"summon"' in l)
+        kinds = asyncio.run(asyncio.wait_for(_collect(f"9999.0|{summon_line}"), timeout=30))
         assert "diary_read" in kinds, f"low-seq marker written during disconnect must redeliver: {kinds}"
         assert "summon" not in kinds, "already-consumed line stays consumed"
 
@@ -655,3 +661,205 @@ def test_sse_abandoned_client_stops_the_backlog_walk():
         # it did NOT deliver the whole backlog (2-envelope chunk, disconnect
         # detected after the first chunk boundary).
         assert delivered <= 4, f"abandoned tail should stop early, delivered {delivered} envelopes"
+
+
+def test_boilerplate_exchange_title_rewritten_from_digest(tmp_path: Path):
+    """Operator 2026-07-17: node labels must be 1-sentence summaries.
+    Pre-fix episodes engraved 'exchange: your own time continues' as their
+    title; the serving end rewrites it from the digest's reply side (the
+    same audience seam as the diary gist). Engraved records untouched."""
+    registry = EntityRegistry(data_dir=tmp_path / "runtime")
+    registry.create(name="Castor", spark=_spark())
+    home = registry.get_home("castor")
+    try:
+        from abstractmemory.records import MemoryRecordInput
+
+        home.memory.remember_many(
+            records=[
+                MemoryRecordInput(
+                    kind="episode",
+                    title="exchange: your own time continues",
+                    digest=(
+                        "User: your own time continues Castor: I keep returning to what "
+                        "persists when no one is reading. More thoughts followed."
+                    ),
+                ),
+                MemoryRecordInput(
+                    kind="episode",
+                    title="exchange: a real substantive visitor question here",
+                    digest="User: a real substantive visitor question here Castor: An answer.",
+                ),
+            ],
+            scope="life",
+            owner_id=home.entity_id,
+            turn_id="t-title-test",
+            idempotency_key="t-title-test-1",
+        )
+        envelopes = list(merged_replay(home, entities_dir=registry.entities_dir, slug="castor"))
+        titles = [
+            str((e.get("display") or {}).get("title") or "")
+            for e in envelopes
+            if e.get("family") == "binding" and (e.get("display") or {}).get("title")
+        ]
+        boiler = [t for t in titles if "own time continues" in t.lower()]
+        assert not boiler, f"boilerplate titles must be rewritten: {boiler}"
+        assert any("persists when no one is reading" in t for t in titles), titles
+        # Substantive engraved titles pass through untouched.
+        assert any("a real substantive visitor question here" in t for t in titles)
+    finally:
+        registry.close_all()
+
+
+def test_marker_only_and_consolidated_boilerplate_titles(tmp_path: Path):
+    """The two resistant classes from the live sweep: a tick whose only act
+    was a diary write (reply side is marker-only) summarizes as the ACT
+    words; consolidation candidates ('Consolidated: exchange: …')
+    summarize from their maintenance digest's first sentence. Speaker-tag
+    case never blocks the reply-side match (older records engraved
+    lowercase names)."""
+    registry = EntityRegistry(data_dir=tmp_path / "runtime")
+    registry.create(name="Castor", spark=_spark())
+    home = registry.get_home("castor")
+    try:
+        from abstractmemory.records import MemoryRecordInput
+
+        formed = home.memory.remember_many(
+            records=[
+                MemoryRecordInput(
+                    kind="episode",
+                    title="exchange: your own time continues",
+                    digest="entity:castor: your own time continues castor: [kept in diary]",
+                ),
+            ],
+            scope="life",
+            owner_id=home.entity_id,
+            turn_id="t-title-resistant",
+            idempotency_key="t-title-resistant-1",
+        )
+        episode_id = str(formed.get("record_ids", [""])[0] if isinstance(formed, dict) else formed[0])
+        home.memory.remember_many(
+            records=[
+                MemoryRecordInput(
+                    kind="summary",
+                    title="Consolidated: exchange: your own time continues",
+                    digest="Maintenance found 7 records carrying the same title (episode). Sources intact.",
+                    edges=(("summarizes", episode_id),),
+                ),
+            ],
+            scope="life",
+            owner_id=home.entity_id,
+            turn_id="t-title-resistant-2",
+            idempotency_key="t-title-resistant-2",
+        )
+        envelopes = list(merged_replay(home, entities_dir=registry.entities_dir, slug="castor"))
+        titles = [
+            str((e.get("display") or {}).get("title") or "")
+            for e in envelopes
+            if e.get("family") == "binding" and (e.get("display") or {}).get("title")
+        ]
+        assert not [t for t in titles if "own time continues" in t.lower()], titles
+        assert any("kept in diary" in t for t in titles), titles
+        assert any("Maintenance found 7 records" in t for t in titles), titles
+    finally:
+        registry.close_all()
+
+
+def test_pair_members_get_title_rewrite_and_sibling_cues_match(tmp_path: Path):
+    """Adversary findings 1+2: co_selected pair members must get the same
+    boilerplate-title rewrite as top-level blocks, and the sibling
+    mechanical cues ("your own time begins", "you were asleep since …")
+    must match the boilerplate pattern too."""
+    import re as _re
+
+    from abstractgateway.entity_replay import _BOILERPLATE_EXCHANGE_TITLE
+
+    for t in (
+        "exchange: your own time continues",
+        "exchange: your own time begins - where do you…",
+        "exchange: you were asleep since 2026-07-13T10:52:37+00:00 (operator-initiated) and are awake…",
+        "Consolidated: exchange: your own time continues",
+    ):
+        assert _BOILERPLATE_EXCHANGE_TITLE.match(t), t
+    assert not _BOILERPLATE_EXCHANGE_TITLE.match("exchange: you were right about the dam"), "real prose must not match"
+    assert not _BOILERPLATE_EXCHANGE_TITLE.match("exchange: talking about your own time begins a habit")
+
+    registry = EntityRegistry(data_dir=tmp_path / "runtime")
+    registry.create(name="Castor", spark=_spark())
+    home = registry.get_home("castor")
+    try:
+        from abstractmemory.records import MemoryRecordInput
+
+        formed = home.memory.remember_many(
+            records=[
+                MemoryRecordInput(
+                    kind="episode",
+                    title="exchange: your own time continues",
+                    digest="entity:castor: your own time continues Castor: The dam question kept me thinking all night.",
+                ),
+            ],
+            scope="life",
+            owner_id=home.entity_id,
+            turn_id="t-pair",
+            idempotency_key="t-pair-1",
+        )
+        # Simulate a co_selected envelope whose pair member carries the
+        # boilerplate title (the shape the live stream serves).
+        gid = None
+        for e in merged_replay(home, entities_dir=registry.entities_dir, slug="castor"):
+            d = e.get("display") or {}
+            if e.get("family") == "binding" and "dam question" in str(d.get("title") or ""):
+                gid = d.get("graph_id")
+        assert gid, "rewritten binding must exist"
+        from abstractgateway.entity_replay import _enrich_operator_displays
+
+        env = {
+            "family": "event",
+            "display": {
+                "pair": [
+                    {"graph_id": gid, "title": "exchange: your own time continues"},
+                    {"graph_id": "ex:other", "title": "interest: something real"},
+                ]
+            },
+        }
+        out = _enrich_operator_displays(home, env, {})
+        titles = [m.get("title") for m in out["display"]["pair"]]
+        assert not any("own time continues" in str(t).lower() for t in titles), titles
+        assert any("dam question" in str(t) for t in titles), titles
+        assert "interest: something real" in titles  # untouched member passes by identity
+    finally:
+        registry.close_all()
+
+
+def test_entity_communities_route(tmp_path: Path):
+    """The topic-communities serving end (operator 2026-07-17): thin route
+    over abstractruntime.identity.memory_communities, cached per journal
+    high-water; 404 on unknown entities."""
+    registry = EntityRegistry(data_dir=tmp_path / "runtime")
+    registry.create(name="Castor", spark=_spark())
+    home = registry.get_home("castor")
+    try:
+        from abstractmemory.records import MemoryRecordInput
+
+        home.memory.remember_many(
+            records=[
+                MemoryRecordInput(kind="episode", title="a", digest="d1", keywords=("dam", "verification", "x1")),
+                MemoryRecordInput(kind="episode", title="b", digest="d2", keywords=("dam", "verification", "x2")),
+                MemoryRecordInput(kind="episode", title="c", digest="d3", keywords=("voyager", "coherence", "y1")),
+                MemoryRecordInput(kind="episode", title="d", digest="d4", keywords=("voyager", "coherence", "y2")),
+            ],
+            scope="life",
+            owner_id=home.entity_id,
+            turn_id="t-comm",
+            idempotency_key="t-comm-1",
+        )
+        from abstractruntime.identity.communities import memory_communities
+
+        out = memory_communities(home.store)
+        assert out["node_count"] >= 4
+        assert isinstance(out["communities"], list)
+        covered = set(out["unclustered"])
+        for c in out["communities"]:
+            covered.update(c["member_ids"])
+        assert len(covered) == out["node_count"]
+    finally:
+        registry.close_all()

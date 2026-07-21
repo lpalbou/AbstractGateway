@@ -1385,6 +1385,109 @@ class WorkflowBundleGatewayHost:
         bundle_ids = sorted([str(k) for k in (self.bundles or {}).keys() if isinstance(k, str)])
         return {"ok": True, "bundle_ids": bundle_ids, "count": len(bundle_ids)}
 
+    def _seed_session_history(
+        self,
+        *,
+        vars0: Dict[str, Any],
+        rt_ns: Dict[str, Any],
+        session_id: str,
+    ) -> None:
+        """Seed `vars0.context.messages` from the session's durable prior turns.
+
+        Server-side half of the durable session replay contract (agora
+        `durable-sessions` v1). Explicit client-provided messages always win;
+        any failure records a labeled `_runtime.session_history` note and the
+        run starts unseeded — replay is a quality-of-answer feature, never a
+        start blocker.
+        """
+        try:
+            ctx0 = vars0.get("context")
+            if ctx0 is not None and not isinstance(ctx0, dict):
+                # A client sent a non-dict context: replacing it with a seeded
+                # dict would stomp whatever the client meant (audit #10).
+                rt_ns["session_history"] = {
+                    "seeded": 0,
+                    "skipped": "client context is not an object",
+                }
+                return
+            existing = ctx0.get("messages") if isinstance(ctx0, dict) else None
+            if isinstance(existing, list) and existing:
+                rt_ns["session_history"] = {
+                    "seeded": 0,
+                    "skipped": "client context.messages present",
+                }
+                return
+
+            limit = _int_text(vars0.get("session_history_max_messages"))
+            if limit == 0:
+                # Explicit 0 = replay disabled for this run (audit #9); the
+                # empty-list normalization below still runs via the shared
+                # tail so turn classification stays stable.
+                self._normalize_seeded_context(vars0, ctx0, messages=[])
+                rt_ns["session_history"] = {
+                    "seeded": 0,
+                    "skipped": "disabled by session_history_max_messages=0",
+                }
+                return
+            if limit is None:
+                limit = _int_text(_env("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES"))
+            if limit is None or limit <= 0:
+                limit = 40
+            limit = max(1, min(200, int(limit)))
+
+            max_chars = _int_text(vars0.get("session_history_max_chars"))
+            if max_chars is None or max_chars <= 0:
+                max_chars = _int_text(_env("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS"))
+            if max_chars is None or max_chars <= 0:
+                max_chars = 24000
+            max_chars = max(1000, min(200000, int(max_chars)))
+
+            from abstractruntime.session_history import session_chat_messages
+
+            # artifact_store deliberately omitted (runtime review A1): the
+            # seed read pays run loads + at most a ledger fallback per
+            # answerless run — never artifact listings.
+            messages = session_chat_messages(
+                run_store=self.runtime.run_store,
+                ledger_store=self.runtime.ledger_store,
+                session_id=session_id,
+                max_messages=limit,
+                max_total_chars=max_chars,
+            )
+            # Normalize context.messages to a list even when the seed is
+            # empty: turn classification treats a messages LIST as "chat",
+            # and without it the session's first turn would classify "run"
+            # and be hidden by the chat-preference filter on later reads
+            # (audit #5).
+            self._normalize_seeded_context(vars0, ctx0, messages=messages)
+            rt_ns["session_history"] = {
+                "seeded": len(messages),
+                "max_messages": limit,
+                "max_total_chars": max_chars,
+            }
+        except Exception as e:  # noqa: BLE001 - degrade, never block the start
+            logger.warning(
+                "#FALLBACK: session history seed failed for session %s: %s",
+                session_id,
+                e,
+            )
+            rt_ns["session_history"] = {
+                "seeded": 0,
+                "error": f"#FALLBACK: session history seed failed: {e}",
+            }
+
+    @staticmethod
+    def _normalize_seeded_context(
+        vars0: Dict[str, Any],
+        ctx0: Optional[Dict[str, Any]],
+        *,
+        messages: list,
+    ) -> None:
+        if not isinstance(ctx0, dict):
+            ctx0 = {}
+            vars0["context"] = ctx0
+        ctx0["messages"] = list(messages)
+
     def start_run(
         self,
         *,
@@ -1601,6 +1704,17 @@ class WorkflowBundleGatewayHost:
                 rt_ns["provider"] = default_provider.strip().lower()
             if isinstance(default_model, str) and default_model.strip() and not str(rt_ns.get("model") or "").strip():
                 rt_ns["model"] = default_model.strip()
+
+        # Durable session conversation replay (agora `durable-sessions` contract v1):
+        # when the caller opts in (`input_data.use_session_history`) and the run
+        # belongs to a session, seed the run's `context.messages` from the
+        # session's prior COMPLETED root runs. The run store is the durable
+        # transcript — history is server-owned and matches what thin clients
+        # already display from history bundles. Client-provided context.messages
+        # always win (never overwritten); read failures degrade to no-seed with
+        # a labeled record, never a blocked start.
+        if sid and _bool_text(vars0.get("use_session_history")) is True:
+            self._seed_session_history(vars0=vars0, rt_ns=rt_ns, session_id=sid)
 
         run_id = str(self.runtime.start(workflow=spec, vars=vars0, actor_id=actor_id, session_id=sid))
 

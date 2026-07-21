@@ -732,3 +732,24 @@ def test_routing_refuses_to_shadow_existing_handlers(tmp_path: Path):
     runtime._handlers[EffectType.MEMORY_RECALL] = lambda *a: None
     with pytest.raises(RuntimeError, match="refuses to shadow"):
         install_entity_routing(runtime, registry=registry, run_store=_RunStore(), artifact_store=None)
+
+
+def test_reflection_segment_admits_lesson_into_life_scope():
+    """2026-07-18 forensics (laurent's 'unacceptable error' thread): runtime's
+    lesson election forms kind=lesson into LIFE scope at the visit close —
+    the closed act set predated lessons, so every durable-visit close
+    silently REFUSED the entity's elected lessons (Ephemeral ledger seqs
+    119/121). lesson→life joins interest→self in the set; identity kinds
+    stay refused through every visit channel."""
+    from abstractgateway.entity_gate import _is_reflection_form_act
+
+    lesson = {"records": [{"kind": "lesson", "digest": "A stronger model can improve reasoning."}],
+              "scope": "life"}
+    assert _is_reflection_form_act(lesson) is None
+
+    # Identity kinds beyond interest stay untouchable (spoof pin 3).
+    value = {"records": [{"kind": "value", "digest": "x"}], "scope": "self"}
+    assert _is_reflection_form_act(value) is not None
+    # A lesson into SELF scope is NOT the shipped shape — refused.
+    lesson_self = {"records": [{"kind": "lesson", "digest": "x"}], "scope": "self"}
+    assert _is_reflection_form_act(lesson_self) is not None

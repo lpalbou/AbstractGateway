@@ -101,9 +101,13 @@ def test_cognition_folds_billed_spend_from_the_home_run_ledger(monkeypatch: pyte
         # The composite axes ride the same read (console adversary P1-1):
         # state + the ONE mutually-exclusive phase + the grant axis (fail-
         # closed: no phases.yaml = disabled, never a fabricated armed).
-        # STRICT one-active-phase (laurent 13:28): awake-idle = NO phase
-        # active (the ruled machine has no idle state; None is honest).
-        assert body["phase"] is None
+        # PHASE IS TOTAL WHILE ALIVE (laurent c203, 2026-07-20: "awake is
+        # NOT a state" — the old None here rendered the awake-idle hanging
+        # state he rejects). Idle folds to sleep, the resting default;
+        # sleep_detail says it honestly runs no consolidation.
+        assert body["phase"] == "sleep"
+        assert body["sleep_detail"] == "resting"
+        assert body["phase_source"] == "actual"
         assert body["liveness"] == "alive"
         assert "frozen" not in body  # retired from the serve (c1559)
         assert body["state"]["state"] == "awake"
@@ -192,11 +196,13 @@ def test_cognition_unknown_entity_is_404():
 
 def test_phase_enum_is_the_ruled_closed_set_with_the_liveness_axis():
     """The closed set IS pinnable now (totality ruled 13:46; semantics lifted
-    the contingency at c1472): phase ∈ {visit, work, personal, sleep, None};
-    asleep folds to sleep. LIVENESS AXIS (c1559): `frozen` is RETIRED; the
-    one derived field is liveness alive|stopped (paused => stopped — the
-    kill switch, never a phase and never a third value)."""
-    RULED = {"visit", "work", "personal", "sleep", None}
+    the contingency at c1472): phase ∈ {visit, work, personal, sleep};
+    TOTAL WHILE ALIVE since laurent c203 (2026-07-20: "awake is NOT a
+    state") — None survives only under the kill switch (liveness=stopped).
+    asleep folds to sleep; idle folds to sleep (resting default). LIVENESS
+    AXIS (c1559): `frozen` is RETIRED; the one derived field is liveness
+    alive|stopped (paused => stopped — the kill switch, never a phase)."""
+    RULED = {"visit", "work", "personal", "sleep"}
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Norns", "spark": _spark("Norns")}).status_code == 201
 
@@ -206,9 +212,12 @@ def test_phase_enum_is_the_ruled_closed_set_with_the_liveness_axis():
         assert born["phase"] == "sleep" and born["phase"] in RULED
         assert born["liveness"] == "alive"
 
+        # state=awake with nothing running: the resting default — sleep,
+        # honestly detailed (never the awake-idle dwelling c203 rejects).
         assert client.post("/api/gateway/entities/Norns/state", json={"state": "awake"}).status_code == 200
         idle = client.get("/api/gateway/entities/Norns/cognition").json()
-        assert idle["phase"] in RULED and idle["phase"] is None
+        assert idle["phase"] == "sleep" and idle["phase"] in RULED
+        assert idle["sleep_detail"] == "resting"
         assert idle["liveness"] == "alive"
 
         assert client.post("/api/gateway/entities/Norns/state", json={"state": "asleep"}).status_code == 200

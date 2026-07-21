@@ -231,7 +231,7 @@ def test_identity_card_composes_a_life():
         sleep_reasons = [r for k, r in state_moments if k == "sleep"]
         assert len(sleep_reasons) == 1  # door dedup held
         assert "host under load" in sleep_reasons[0]
-        assert "[by person:local-admin via POST /entities/Castor/state]" in sleep_reasons[0]
+        assert "[by person:admin via POST /entities/Castor/state]" in sleep_reasons[0]
         assert ("wake", "loop resumed runtime-side") in state_moments
 
 

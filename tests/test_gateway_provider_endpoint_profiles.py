@@ -656,7 +656,7 @@ def test_gateway_sandbox_text_generation_uses_server_side_endpoint_credentials(t
     ]
     trace_metadata = calls[1]["generate"]["params"]["trace_metadata"]
     assert trace_metadata["source"] == "gateway_console_sandbox"
-    assert trace_metadata["user_id"] == "local-admin"
+    assert trace_metadata["user_id"] == "admin"
     assert trace_metadata["client_context"] == {
         "source": "browser_untrusted",
         "local_datetime": "2026-06-01T11:22:33-04:00",

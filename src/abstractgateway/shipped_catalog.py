@@ -7,7 +7,7 @@ an admin ran the documented curl. This module closes the out-of-box gap with
 the narrowest correct shape (card 013 decision, shape (a)):
 
 - WHICH BUNDLES: an explicit list — docs-qa only. The other force-included
-  bundles (basic-agent, abstractassistant-orchestrator, dp-research) load
+  bundles (basic-agent, abstractassistant-orchestrator, deep-research) load
   through the PRIVATE runtime registry at boot and never needed the catalog;
   auto-publishing them would mint parallel ACL'd copies of bundles that
   already work.

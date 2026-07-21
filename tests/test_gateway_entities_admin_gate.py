@@ -155,7 +155,7 @@ def test_user_level_entity_surfaces_stay_authorized(tmp_path: Path, monkeypatch:
 
 
 def test_admin_principal_passes_the_gate_to_the_route_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The static admin token (local-admin, is_admin) reaches the route
+    """The static admin token (default/admin identity, is_admin) reaches the route
     table on every gated path — refusals from here down are the ROUTE's
     (404 unknown entity), never the authorization layer's 403."""
     with _client(tmp_path, monkeypatch) as client:
@@ -190,6 +190,11 @@ def test_policy_rows_cover_the_live_mutation_route_table() -> None:
         ("POST", "/api/gateway/entities/meets/{meet_id}/relay"),
         ("POST", "/api/gateway/entities/meets/{meet_id}/close"),
         ("POST", "/api/gateway/entities/{name}/workspace/file"),  # contained drop-a-file collaboration surface
+        # Audition/speech lane (laurent dm#10): speaking AS the entity is an
+        # interaction surface like chat/visit — user-level; the voice CHOICE
+        # (PUT /{name}/voice) stays admin-gated in the policy table.
+        ("POST", "/api/gateway/entities/{name}/voice/tts"),
+        ("POST", "/api/gateway/entities/{name}/voice/tts/stream"),
     }
 
     for method, path in sorted(_routes_declared_in_source()):

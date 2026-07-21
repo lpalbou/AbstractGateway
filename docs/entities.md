@@ -76,6 +76,74 @@ Progressive disclosure: `inspect` shows diary **gists** only. The verbatim
 prose stays in the book and is fetched by the entity itself during a session
 (`DIARY_READ`), never bulk-exported by inspection.
 
+### The task inbox (tasks left with an entity)
+
+Tasks are durable facts in the home — append-only events in
+`<home>/task_inbox.jsonl`, folded at read (state is never rewritten in
+place; two writer processes exist — the door and the own-time loop — so
+every write is one flock-guarded appended line):
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| GET | `/api/gateway/entities/{name}/tasks` | The folded inbox: tasks with current status (`pending\|taken\|done\|parked`), chronological. `exists: false` when no inbox was ever created. |
+| POST | `/api/gateway/entities/{name}/tasks` | Leave a task (admin): `{title, brief?, workflow?, backlog_ref?}`. `origin`/`by` are STAMPED from the authenticated principal — the body carries no origin field to forge. Marker-first (`task_inbox_changed`); a marker failure refuses the write. |
+| POST | `/api/gateway/entities/{name}/tasks/{task_id}/status` | Advance a task (admin): `{status, note?}`. Validated before the marker; unknown tasks 404. |
+
+A visit can leave tasks at close: `POST .../visit/{run_id}/close` accepts
+`tasks: [{title, brief?, …}]`, recorded with origin `visit:<run_id>` only
+after the close COMPLETED (recording failures surface as a labeled warning
+in the response — the finished close is never misreported as a 5xx).
+
+### Skills (what an entity is taught)
+
+Beyond the always-verbatim capability map, an entity's skills are an
+operator SELECTION in the home (`<home>/skills.yaml`: `[{name, phases?}]`,
+phases from the ruled four, absent = selected everywhere), resolved
+server-side against the abstractskill shelf through the same trust gate as
+every other lane — default-requested, never trust-bypassed:
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| GET | `/api/gateway/entities/{name}/skills` | One resolved truth for every UI: the stored selection, roster rows (name, description, trust_level, requires_review, tree_hash, source) with labeled verdicts for anything unresolvable, and the capability-matrix payload (a global selection renders all four phases with identical cells). |
+| PUT | `/api/gateway/entities/{name}/skills` | Replace the selection (admin). Marker-first (`skills_selection_changed`, old/new names+phases — never skill bodies); the response is the resolved view so a typo or blocked skill is visible the moment it is written. |
+
+`POST /api/gateway/entities` accepts the same selection at **birth**
+(`skills: [{name, phases?}]`) so a new entity carries teaching from day
+one. Selections pin by NAME and resolve to the current shelf state at
+read/summon time — a shelf re-pin reaches homes on their next resolution,
+never by bulk push. Delivery into entity prompts (progressive disclosure:
+names ride the base, bodies activate on demand) waits on the runtime's
+composition-slot election; the selection file rests in the home until then.
+
+The entity roster (`GET /entities`) carries `pending_tasks`
+render-when-present: the field exists only for homes that have an inbox —
+an entity never handed a task shows no field, not a zero. The file schema
+is the cross-package contract for the runtime's day-open reader (the R-C
+loop half): event lines `{"event": "added"|"status", "task_id", …}` — see
+`abstractgateway/entity_tasks.py` for the authoritative shapes. Whether an
+operator-left task auto-opens the work phase or the entity elects the
+shift is the operator's ruling (plan D1); the inbox records facts either
+way.
+
+## Drive ratios (cognition health)
+
+`GET /entities/{name}/cognition` carries a `drives` block — memory's
+`cognition_health()` fold over the home's full ladder: questions
+open/resolved, problems open/repaired, interests open/explored, each with
+a `ratio` that is `null` when the category is empty (a life with no
+questions has *no* ratio, never a fabricated 100%). Ratios are data —
+never-100% is the design (an entity with nothing open has no pull
+forward), so consoles render an amber cue at saturation, not a success
+state. Render-when-present: the key is absent (with a labeled `#FALLBACK`
+warning) when the engine predates the read or the read fails.
+
+The roster (`GET /entities`) carries the same `drives` block for **warm
+homes only** — homes already open in this gateway process. The roster is
+deliberately file-cheap and never opens a store; a cold home shows no
+field (absent ≠ zero), and `/cognition` always serves the block (and
+warms the home). The gateway console renders the two ratio bars in the
+entity Overview panel from the same `/cognition` read.
+
 ## Summoning
 
 Summoning opens a work session *as* the entity:

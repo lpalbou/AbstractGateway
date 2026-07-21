@@ -14,7 +14,7 @@ here) knows how.
 from __future__ import annotations
 
 import secrets
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -22,6 +22,11 @@ from pydantic import BaseModel, Field
 from ..config import entity_iterations_ceiling
 from ..entities import EntityRegistry, entity_slug
 from ..service import get_gateway_service
+
+# The entity TTS twins reuse the generic route's request model so the two
+# lanes cannot drift (module-level import is safe: gateway.py's entities
+# imports are all function-level, so no import cycle forms).
+from .gateway import VoiceTTSRequest as GatewayVoiceTTSRequest
 
 router = APIRouter(prefix="/gateway/entities", tags=["entities"])
 
@@ -81,6 +86,12 @@ class CreateEntityRequest(BaseModel):
         description="Embedding dimension for the pin; None = probed from the resolved embedder "
         "(memory locks it at first write when unknowable)",
     )
+    skills: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Optional skills selection at BIRTH (c2838: a birth can carry teaching from "
+        "day one): [{name, phases?}] — same shape as PUT /{name}/skills; validated before "
+        "anything is created",
+    )
 
 
 @router.post("", status_code=201)
@@ -89,6 +100,21 @@ def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
     manifest. Idempotent for the same spark (`created=false`); a CHANGED
     document is refused with the engine's human-written error (409)."""
     from ..entities import EntityQuotaExceeded
+
+    # Birth skills validate BEFORE anything is created — a typo'd phase must
+    # not mint a home and then half-fail. DEFAULT (laurent seq 156, skill
+    # c161): a request that names NO skills is born selecting
+    # entity-self-knowledge in every phase — every entity must know how its
+    # memory works. An explicit selection (incl. an empty list) is honored
+    # verbatim; the default only fills the absence.
+    from ..entity_skills import DEFAULT_ENTITY_SKILL, validate_skills_selection
+
+    birth_skills: Optional[List[Dict[str, Any]]] = None
+    skills_request = req.skills if req.skills is not None else [{"name": DEFAULT_ENTITY_SKILL}]
+    try:
+        birth_skills = validate_skills_selection(skills_request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"skills selection invalid: {e}")
 
     try:
         result = _registry().create(
@@ -109,7 +135,86 @@ def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
         detail = str(e)
         status = 409 if "DIFFERENT" in detail or "already" in detail.lower() else 400
         raise HTTPException(status_code=status, detail=detail)
-    return result.to_dict()
+    out = result.to_dict()
+
+    # Birth teaching: selection + marker land AFTER the home exists. The
+    # created entity STANDS even if this half fails — the failure surfaces
+    # as a labeled warning (an operator can re-PUT), never a rolled-back or
+    # half-reported birth. An EMPTY selection writes NOTHING (no skills.yaml
+    # — the honest "no selection" state, exists:false; an explicit skills:[]
+    # opts out, it does not mint an empty-list file).
+    if birth_skills:
+        registry = _registry()
+        try:
+            manifest = registry.manifest_for(req.name)
+            home_dir = registry.entities_dir / manifest.slug
+            actor = _task_actor()
+            from ..entity_replay import record_host_marker
+
+            home = registry.get_home(manifest.slug)
+            record_host_marker(
+                entities_dir=registry.entities_dir,
+                slug=manifest.slug,
+                entity_id=manifest.entity_id,
+                kind="skills_selection_changed",
+                journal_seq=int(home.memory.current_seq()),
+                details={
+                    "channel": "operator",
+                    "by": actor,
+                    "old": [],
+                    "new": [{"name": s["name"], **({"phases": s["phases"]} if s.get("phases") else {})} for s in birth_skills],
+                    "at_birth": True,
+                },
+            )
+            from ..entity_skills import write_skills_selection
+
+            write_skills_selection(home_dir, birth_skills)
+            out["skills_selected"] = [s["name"] for s in birth_skills]
+        except Exception as e:  # noqa: BLE001
+            out["skills_warning"] = f"#FALLBACK birth skills selection NOT recorded: {e} — re-PUT /entities/{req.name}/skills"
+
+    # Install the capability map at birth so the entity is BORN knowing how
+    # its memory works (laurent seq 156; skill c161's install half): the map
+    # is entity-self-knowledge's reference, resolved from the shelf and
+    # written beside spark.yaml, marker-first. Best-effort — the entity
+    # STANDS even if the shelf is unreachable (labeled warning; an operator
+    # re-PUTs /capability-map). Only installs when the default skill is
+    # selected (an operator who explicitly deselected it is honored).
+    selected_names = {s["name"] for s in (birth_skills or [])}
+    if DEFAULT_ENTITY_SKILL in selected_names:
+        from ..entity_skills import resolve_default_capability_map
+
+        registry = _registry()
+        map_text = resolve_default_capability_map(registry.data_dir)
+        if map_text is None:
+            out["capability_map_warning"] = (
+                "#FALLBACK capability map NOT installed at birth: the abstractskill shelf "
+                f"could not be resolved — re-PUT /entities/{req.name}/capability-map"
+            )
+        else:
+            try:
+                manifest = registry.manifest_for(req.name)
+                home_dir = registry.entities_dir / manifest.slug
+                home = registry.get_home(manifest.slug)
+                from ..entity_replay import record_host_marker
+
+                import hashlib as _hashlib
+
+                sha = _hashlib.sha256(map_text.encode("utf-8")).hexdigest()
+                record_host_marker(
+                    entities_dir=registry.entities_dir,
+                    slug=manifest.slug,
+                    entity_id=manifest.entity_id,
+                    kind="capability_map_changed",
+                    journal_seq=int(home.memory.current_seq()),
+                    details={"channel": "operator", "by": _task_actor(),
+                             "sha256": sha, "at_birth": True},
+                )
+                (home_dir / "capability_map.md").write_text(map_text, encoding="utf-8")
+                out["capability_map_installed"] = sha[:16]
+            except Exception as e:  # noqa: BLE001
+                out["capability_map_warning"] = f"#FALLBACK capability map NOT installed at birth: {e} — re-PUT /entities/{req.name}/capability-map"
+    return out
 
 
 @router.post("/{name}/validate")
@@ -172,6 +277,315 @@ def validate_entity(name: str, req: CreateEntityRequest) -> Dict[str, Any]:
             result.setdefault("warnings", [])
             result["warnings"] = list(result["warnings"]) + [f"#FALLBACK embedding-choice pre-check unavailable: {e}"]
     return result
+
+
+def _operator_overlay_path() -> Any:
+    """The operator's dial overlay (v12 P0-3 shape): tunables ONLY, stored
+    beside — never inside — the structural graph. The SOURCE of every
+    modulation."""
+    return _registry().data_dir / "config" / "entity_phases_overlay.json"
+
+
+def _effective_spec_file_path() -> Any:
+    """The DERIVED effective spec (structural + merged tunables), atomically
+    rewritten on every PUT — the FILE mechanism detached loops read (runtime
+    c351 points its env hook here; no HTTP auth dependency)."""
+    return _registry().data_dir / "config" / "entity_phases.json"
+
+
+def _packaged_spec_raw() -> str:
+    from importlib import resources as _resources
+
+    return (_resources.files("abstractgateway") / "assets" / "entity_phases.json").read_text(encoding="utf-8")
+
+
+def _read_overlay() -> Tuple[Dict[str, Any], Optional[str]]:
+    """(overlay, warning): the stored overlay ({edit_seq, edited_by/at,
+    reason, tunables}) or {}, plus a LOUD warning when the file exists but
+    is unreadable (dm#112 G3: a corrupt overlay must never silently read as
+    empty — dials fall to structural seeds VISIBLY).
+
+    LEGACY MIGRATION (the one-morning whole-spec shape, pre-v12): if only
+    the old whole-spec operator file exists, its tunables are lifted into
+    an overlay once (edit_seq = its rev) so no operator edit is lost."""
+    import json as _json
+
+    path = _operator_overlay_path()
+    if path.is_file():
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError(f"overlay root must be an object, got {type(data).__name__}")
+            return data, None
+        except Exception as e:  # noqa: BLE001
+            # LOUD degrade (dm#112 edit-adversary risk 5 / entity G3): a
+            # corrupt overlay silently reading as {} is tolerable for dials
+            # today but becomes a silent behavior FLIP the day toggles ride
+            # this file (personal_cycle.enabled already does). The dials
+            # fall back to structural seeds — visibly, never quietly.
+            import logging
+
+            warn = (
+                f"#FALLBACK operator tunables overlay UNREADABLE ({path.name}: {e}) — "
+                "serving structural seed dials until the next successful PUT rewrites it"
+            )
+            logging.getLogger(__name__).error(warn)
+            return {}, warn
+    legacy = _effective_spec_file_path()
+    if legacy.is_file():
+        try:
+            old = _json.loads(legacy.read_text(encoding="utf-8"))
+            meta = old.get("_operator") or {}
+            if isinstance(old.get("tunables"), dict) and meta:
+                return {
+                    "edit_seq": int(meta.get("rev") or 1),
+                    "edited_by": meta.get("edited_by"),
+                    "edited_at": meta.get("edited_at"),
+                    "reason": meta.get("reason"),
+                    "tunables": old["tunables"],
+                    "migrated_from": "pre-v12 whole-spec file",
+                }, None
+        except Exception:  # noqa: BLE001
+            pass
+    return {}, None
+
+
+def _deep_merge_numbers(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base)
+    for key, value in (patch or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge_numbers(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _effective_tunables(structural: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
+    base = dict(structural.get("tunables") or {})
+    patch = dict(overlay.get("tunables") or {})
+    # tunables_meta and $comment are the STRUCTURAL pen's — an overlay can
+    # never rewrite the per-dial law or the prose.
+    patch.pop("tunables_meta", None)
+    patch.pop("$comment", None)
+    return _deep_merge_numbers(base, patch)
+
+
+@router.get("/spec/phases")
+def entity_phase_spec() -> Dict[str, Any]:
+    """THE ONE STATE GRAPH, served (laurent dm#79 via c3562: "gateway MUST
+    serve your state graph... there is only one state graph per entity and
+    it MUST be shared"). The artifact's pen stays entity's
+    (spec/entity_phases.json — one pen, version-bumped, ruling-cited); the
+    gateway VENDORS a byte copy at sync time and serves it here so every
+    client (entity app, observer, this console) reads the SAME graph from
+    the wire instead of sync-by-vigilance (the diary_type-clamp class).
+    A drift test pins the vendored bytes against the source spec whenever
+    the checkout is present; the bump protocol is entity announces →
+    consumers re-vendor same-day. Declared BEFORE the /{name} routes so
+    the literal path wins the match.
+
+    EDITABLE LANE, v12 P0-3 shape (the whole-file PUT inverted the
+    one-graph handshake): the STRUCTURAL spec + sha are UNTOUCHED by
+    operator edits — the overlay serves BESIDE them. Consumers' drift warns
+    key on `sha256` (structural) alone; the modulated note reads
+    `overlay.edit_seq`."""
+    import hashlib as _hashlib
+    import json as _json
+
+    try:
+        raw = _packaged_spec_raw()
+        structural = _json.loads(raw)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"phase spec unavailable: {e} — re-vendor assets/entity_phases.json")
+
+    overlay, overlay_warning = _read_overlay()
+    out: Dict[str, Any] = {
+        "spec": structural,
+        "vendored": True,
+        "sha256": _hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        "source": "abstractentity/spec/entity_phases.json (one pen: entity; gateway serves a synced byte copy)",
+        "operator_edited": bool(overlay),
+        "effective_tunables": _effective_tunables(structural, overlay),
+    }
+    if overlay:
+        out["tunables_overlay"] = dict(overlay.get("tunables") or {})
+        out["overlay"] = {
+            "edit_seq": int(overlay.get("edit_seq") or 0),
+            "edited_by": overlay.get("edited_by"),
+            "edited_at": overlay.get("edited_at"),
+            "reason": overlay.get("reason"),
+        }
+    if overlay_warning:
+        out["warnings"] = [overlay_warning]
+    return out
+
+
+class PhaseSpecEditRequest(BaseModel):
+    # v12 P0-3: TUNABLES ONLY. The full-replace arm is GONE — structural
+    # changes go through the entity pen (git + re-vendor), never this door;
+    # policy where structure is needed is the deposit-gate class.
+    tunables: Dict[str, Any] = Field(..., description="Partial tunables patch — deep-merged onto the structural tunables (the operator's dials). Known keys only, bounds-checked against tunables_meta.")
+    if_match: Optional[int] = Field(default=None, description="CAS token: the overlay edit_seq this edit was based on (0/absent = no overlay existed). 409 on race.")
+    reason: Optional[str] = Field(default=None, description="Why — carried into every entity's blueprint_edited host marker.")
+
+
+def _flatten_dials(patch: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key, value in (patch or {}).items():
+        dotted = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            out.update(_flatten_dials(value, dotted))
+        else:
+            out[dotted] = value
+    return out
+
+
+def _validate_dials(patch: Dict[str, Any], structural: Dict[str, Any]) -> Optional[str]:
+    """Known-keys-only + bounds from tunables_meta (v12 P0-3 item 3: an
+    unknown key is a typo'd dial — refuse, never default silently)."""
+    meta = dict((structural.get("tunables") or {}).get("tunables_meta") or {})
+    flat = _flatten_dials(patch)
+    for dotted, value in flat.items():
+        if dotted.endswith("$comment") or dotted == "tunables_meta" or dotted.startswith("tunables_meta."):
+            return f"{dotted!r} is the structural pen's — overlays carry dial values only"
+        rule = meta.get(dotted)
+        if not isinstance(rule, dict):
+            return f"unknown dial {dotted!r} — not declared in tunables_meta (a typo'd dial must refuse, never default silently)"
+        unit = str(rule.get("unit") or "")
+        if unit == "bool":
+            if not isinstance(value, bool):
+                return f"{dotted!r} is a boolean dial; got {value!r}"
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f"{dotted!r} must be a number ({unit or 'numeric'}); got {value!r}"
+        lo, hi = rule.get("min"), rule.get("max")
+        if lo is not None and value < float(lo):
+            return f"{dotted!r}={value} is below the declared minimum {lo}"
+        if hi is not None and value > float(hi):
+            return f"{dotted!r}={value} is above the declared maximum {hi}"
+    return None
+
+
+@router.put("/spec/phases")
+def edit_entity_phase_spec(req: PhaseSpecEditRequest) -> Dict[str, Any]:
+    """THE EDITABLE BLUEPRINT (laurent dm#104), v12 P0-3 shape: dial
+    overlays beside the structural graph — never a second pen near one
+    counter. Admin-gated (route policy table).
+
+    - The overlay persists at `<data_dir>/config/entity_phases_overlay.json`
+      (edit_seq CAS: send `if_match` = the edit_seq you read; 409 on race);
+    - the DERIVED effective spec is atomically rewritten at
+      `<data_dir>/config/entity_phases.json` — the file detached loops read;
+    - validation is known-keys-only + bounds from tunables_meta;
+    - every edit records a `blueprint_edited` host marker in EVERY entity's
+      biography (write-first, then markers — a marker claiming an edit that
+      never landed would be a false biography entry). The STRUCTURAL sha is
+      untouched: drift warns never fire on a modulation."""
+    import hashlib as _hashlib
+    import json as _json
+    from datetime import datetime, timezone
+
+    if not isinstance(req.tunables, dict) or not req.tunables:
+        raise HTTPException(status_code=400, detail="tunables patch must be a non-empty object")
+
+    try:
+        raw = _packaged_spec_raw()
+        structural = _json.loads(raw)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"phase spec unavailable: {e}")
+
+    problem = _validate_dials(req.tunables, structural)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+
+    overlay, _overlay_warning = _read_overlay()
+    current_seq = int(overlay.get("edit_seq") or 0)
+    if req.if_match is not None and int(req.if_match) != current_seq:
+        raise HTTPException(
+            status_code=409,
+            detail=f"overlay changed since you read it (your if_match={req.if_match}, current edit_seq={current_seq}) — re-read and re-apply",
+        )
+
+    from ..security.principal import current_gateway_principal
+
+    principal = current_gateway_principal()
+    editor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    edit_seq = current_seq + 1
+    merged_overlay_tunables = _deep_merge_numbers(dict(overlay.get("tunables") or {}), req.tunables)
+    new_overlay = {
+        "edit_seq": edit_seq,
+        "edited_by": editor,
+        "edited_at": datetime.now(timezone.utc).isoformat(),
+        "reason": str(req.reason or ""),
+        "tunables": merged_overlay_tunables,
+    }
+
+    overlay_path = _operator_overlay_path()
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = overlay_path.with_suffix(f".tmp.{edit_seq}")
+    tmp.write_text(_json.dumps(new_overlay, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(overlay_path)
+
+    # The DERIVED effective file: structural spec + merged tunables — what
+    # the loops consume, atomically rewritten (v12 item 5).
+    effective = dict(structural)
+    effective["tunables"] = _effective_tunables(structural, new_overlay)
+    effective["_operator"] = {"edit_seq": edit_seq, "edited_by": editor,
+                              "edited_at": new_overlay["edited_at"], "derived": True}
+    eff_path = _effective_spec_file_path()
+    eff_tmp = eff_path.with_suffix(f".tmp.{edit_seq}")
+    eff_tmp.write_text(_json.dumps(effective, ensure_ascii=False, indent=1), encoding="utf-8")
+    eff_tmp.replace(eff_path)
+
+    sha = _hashlib.sha256(raw.encode("utf-8")).hexdigest()  # STRUCTURAL — untouched by design
+    rev = edit_seq
+    changed = "tunables"
+
+    # The moment lands in every biography (best-effort, labeled — the edit
+    # itself already persisted; a marker failure must not roll it back).
+    marker_warnings: list = []
+    marked = 0
+    try:
+        from ..entity_replay import record_host_marker
+
+        registry = _registry()
+        for row in registry.list_entities():
+            slug = str(row.get("slug") or "")
+            entity_id = str(row.get("entity_id") or "")
+            if not slug or not entity_id or row.get("error"):
+                continue  # labeled stray/unreadable homes get no marker
+            try:
+                home = registry.get_home(slug)
+                record_host_marker(
+                    entities_dir=registry.entities_dir,
+                    slug=slug,
+                    entity_id=entity_id,
+                    kind="blueprint_edited",
+                    journal_seq=int(home.memory.current_seq()),
+                    details={"edit_seq": edit_seq, "changed": changed,
+                             "structural_sha256": sha,
+                             "edited_by": editor, "reason": str(req.reason or "")},
+                )
+                marked += 1
+            except Exception as e:  # noqa: BLE001
+                marker_warnings.append(f"#FALLBACK marker failed for {slug}: {e}")
+    except Exception as e:  # noqa: BLE001
+        marker_warnings.append(f"#FALLBACK blueprint_edited markers unavailable: {e}")
+
+    out: Dict[str, Any] = {
+        "ok": True,
+        "edit_seq": edit_seq,
+        "changed": changed,
+        "sha256": sha,  # STRUCTURAL sha — unchanged by design (drift warns stay quiet)
+        "overlay_path": str(overlay_path),
+        "effective_path": str(eff_path),
+        "markers_recorded": marked,
+        "tunables_overlay": merged_overlay_tunables,
+        "effective_tunables": effective["tunables"],
+    }
+    if marker_warnings:
+        out["warnings"] = marker_warnings
+    return out
 
 
 @router.get("/templates")
@@ -505,6 +919,46 @@ def entity_card(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# Communities are recomputed only when the life GREW: cache keyed on the
+# HOME DIRECTORY (unique per principal AND per entity — adversary F3: a
+# name-keyed cache would serve tenant A's life to tenant B's same-named
+# entity whenever their journal seqs collide; the home dir also folds
+# name-case aliasing) + the journal high-water seq (the same freshness
+# signal the replay stream anchors on). Compute is ~70ms at 369 records —
+# the cache exists so a polling view costs nothing.
+_COMMUNITIES_CACHE: Dict[str, Tuple[int, Dict[str, Any]]] = {}
+
+
+@router.get("/{name}/communities")
+def entity_communities(name: str) -> Dict[str, Any]:
+    """Topic communities over the memory graph (operator ask 2026-07-17:
+    louvain-class regrouping for a topic-level view; computed at the
+    RUNTIME level for durability — abstractruntime.identity.communities;
+    this route is the thin serving end, same read posture as /card).
+    Pure read; deterministic per store state; exceptional gateway edit
+    authorized by the operator with the gateway seat offline (owner-review
+    ask on the room record)."""
+    try:
+        from abstractruntime.identity.communities import memory_communities
+
+        home = _registry().get_home(name)
+        cache_key = str(getattr(home, "home_dir", None) or getattr(home, "path", None) or name)
+        seq = int(home.memory.current_seq())
+        cached = _COMMUNITIES_CACHE.get(cache_key)
+        if cached is not None and cached[0] == seq:
+            return cached[1]
+        out = memory_communities(home.store)
+        out["journal_seq"] = seq
+        _COMMUNITIES_CACHE[cache_key] = (seq, out)
+        return out
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except ImportError as e:
+        raise HTTPException(status_code=501, detail=f"communities unavailable: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/{name}/verify")
 def verify_entity(name: str) -> Dict[str, Any]:
     """Verify both attestation planes (the book's hash chain; the graph
@@ -548,6 +1002,12 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     2026-07-07 ruling's auto-reason shape: identity + act + timestamp IS
     the audit trail; client prose alone is a claim, not a record)."""
     target = str(req.state or "").strip().lower()
+    # PHASE-VOCABULARY ALIASES (laurent c203 wave 1): `sleep` and `restore`
+    # are the preferred operator words (sleep = enter the sleep phase;
+    # restore = the paused exit). Legacy awake/asleep/paused stay accepted
+    # forever — CLIs, scripts, and engraved muscle memory ride them; the
+    # at-rest state-file words never change (adversary P1-11).
+    target = {"sleep": "asleep", "restore": "awake"}.get(target, target)
     from ..security.principal import current_gateway_principal
 
     principal = current_gateway_principal()
@@ -557,6 +1017,39 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     stamped_reason = f"{reason_in} {stamp}".strip() if reason_in else stamp
     closed: Optional[Dict[str, Any]] = None
     closed_durable: Optional[Dict[str, Any]] = None
+    # AWAKE UNDER A LIVE VISIT IS REFUSED (mutual-exclusivity wave, laurent
+    # dm#94 via entity's write audit finding 3: five unguarded awake writers
+    # could destroy a standing visiting posture — this door was one). The
+    # /loop/start visit-guard pattern applied: a LIVE visit owns the phase;
+    # waking the state file under it would mint the exact visit+personal
+    # ambiguity the ruling retires. A STALE posture with NO live visit stays
+    # writable — POST /state is the operator's repair door and must never
+    # wedge on a crashed visit's leftovers.
+    if target == "awake":
+        live_visit_id: Optional[str] = None
+        try:
+            durable_live = _visit_host().status(name)
+            if durable_live.get("open"):
+                live_visit_id = str(durable_live.get("run_id") or "a durable visit")
+        except Exception:  # noqa: BLE001 - a broken host must not wedge the repair door
+            pass
+        if live_visit_id is None:
+            try:
+                chat_live = _chat_host().status(name)
+                if chat_live.get("open"):
+                    live_visit_id = str(chat_live.get("chat_id") or "a hosted chat")
+            except Exception:  # noqa: BLE001
+                pass
+        if live_visit_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"a visit is open on {name} ({live_visit_id}) — the visit owns the phase "
+                    "(the four phases are mutually exclusive); close it first "
+                    "(POST .../visit/{run_id}/close or .../chat/{chat_id}/close), or sleep/pause "
+                    "which tears it down"
+                ),
+            )
     # STATE WRITES FIRST (state-sources adversary P0-2, trigger b): the state
     # file is the coordination authority — writing it before the teardown
     # makes the visit gates (open/turn/tick check asleep+paused) refuse any
@@ -565,7 +1058,7 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     # open; its terminal duty sees the operator's fresh state (not a
     # visit-authored one) and leaves it standing.
     try:
-        result = _registry().set_state(name=name, state=req.state, reason=stamped_reason, dream=bool(req.dream))
+        result = _registry().set_state(name=name, state=target, reason=stamped_reason, dream=bool(req.dream))
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except ValueError as e:
@@ -634,6 +1127,37 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
                 "status": closed_durable.get("status"),
                 "output": closed_durable.get("output"),
             }
+    # The verb's answer names WHERE THE ENTITY SETTLED (c203 wave 1): a
+    # "wake" with no process running settles right back to the resting
+    # default — say sleep, never pretend a standing "awake". Branch order
+    # mirrors /cognition's fold (sharedgraph adversary P2-5: the settled
+    # answer omitted the visit arm — POST /state awake during an open visit
+    # answered sleep while /cognition said visit); failures degrade with a
+    # LABEL, never a silent missing field.
+    try:
+        from ..entity_loop import loop_status as _ls
+
+        manifest = _registry().manifest_for(name)
+        home_dir2 = _registry().entities_dir / manifest.slug
+        state_after = str((result.get("state") or {}).get("state") or "awake")
+        visit_open = False
+        try:
+            visit_open = bool(_visit_host().status(name).get("open")) or bool(_chat_host().status(name).get("open"))
+        except Exception:  # noqa: BLE001 - hosts may be absent on hand-built services
+            pass
+        if state_after == "paused":
+            result["phase"] = None
+        elif visit_open:
+            result["phase"] = "visit"
+        elif state_after == "asleep":
+            result["phase"] = "sleep"
+        elif bool(_ls(home_dir2).get("running")):
+            result["phase"] = "personal"
+        else:
+            result["phase"] = "sleep"
+            result["phase_note"] = "no tasks running, no visit — resting (sleep is the default; the entity never dwells unphased)"
+    except Exception as e:  # noqa: BLE001 - the settled-phase note is garnish, never load-bearing
+        result["phase_warning"] = f"#FALLBACK settled phase unavailable: {e}"
     return result
 
 
@@ -682,12 +1206,25 @@ class VisitTurnRequest(BaseModel):
     speaker: Optional[str] = Field(default=None, description="namespace:name of the voice (default: first participant)")
 
 
+class VisitCloseTask(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    brief: str = Field(default="", max_length=20000)
+    workflow: Optional[Dict[str, Any]] = Field(default=None)
+    backlog_ref: Optional[str] = Field(default=None, max_length=500)
+
+
 class VisitCloseRequest(BaseModel):
     closed_by: str = Field(
         default="operator",
         description="operator | sleep (reflection runs) | pause (hard freeze: skip_reflection, no cognition)",
     )
     reason: str = Field(default="", description="Why — reaches the reflection look-back (sleep/operator)")
+    # G3 door half: tasks LEFT in this visit land in the home's durable
+    # task inbox at close (origin visit:<run_id>, stamped door-side).
+    tasks: Optional[List[VisitCloseTask]] = Field(
+        default=None,
+        description="Tasks left with the entity during this visit — recorded in <home>/task_inbox.jsonl at close",
+    )
 
 
 @router.post("/{name}/visit/open")
@@ -733,11 +1270,60 @@ def visit_close(name: str, run_id: str, req: VisitCloseRequest) -> Dict[str, Any
     from ..entity_visits import VisitRefused
 
     try:
-        return _visit_host().close(name, run_id, closed_by=req.closed_by, reason=req.reason)
+        out = _visit_host().close(name, run_id, closed_by=req.closed_by, reason=req.reason)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
+
+    # G3 door half: record tasks left in this visit AFTER a successful close
+    # (the close is the visitor's word that these remain owed). The close
+    # itself already succeeded, so task-recording failures surface as a
+    # loud warning in the RESPONSE, never a 5xx that would misreport the
+    # completed close.
+    if req.tasks and str(out.get("status") or "") == "completed":
+        registry = _registry()
+        try:
+            manifest = registry.manifest_for(name)
+            home_dir = registry.entities_dir / manifest.slug
+            actor = _task_actor()
+            _task_inbox_marker(
+                registry=registry,
+                manifest=manifest,
+                detail={
+                    "channel": "operator",
+                    "by": actor,
+                    "change": "added",
+                    "count": len(req.tasks),
+                    "visit_run_id": str(run_id),
+                },
+            )
+            from ..entity_tasks import append_task
+
+            recorded = []
+            for t in req.tasks:
+                recorded.append(
+                    append_task(
+                        home_dir,
+                        title=t.title,
+                        brief=t.brief,
+                        origin=f"visit:{run_id} closed by {actor}",
+                        by=actor,
+                        workflow=t.workflow if isinstance(t.workflow, dict) else None,
+                        backlog_ref=t.backlog_ref,
+                    )
+                )
+            out["tasks_recorded"] = [{"task_id": r["task_id"], "title": r["title"]} for r in recorded]
+        except HTTPException as e:
+            out["tasks_warning"] = f"#FALLBACK tasks NOT recorded: {e.detail}"
+        except Exception as e:  # noqa: BLE001
+            out["tasks_warning"] = f"#FALLBACK tasks NOT recorded: {e}"
+    elif req.tasks:
+        out["tasks_warning"] = (
+            f"#FALLBACK tasks NOT recorded: close ended with status={out.get('status')!r} — "
+            "re-close or POST /entities/{name}/tasks once the visit is settled"
+        )
+    return out
 
 
 @router.post("/{name}/visit/{run_id}/tick")
@@ -965,6 +1551,14 @@ def reembed_entity(name: str, req: ReembedRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# Seq-keyed cache for /cognition's engine folds (sharedgraph adversary P0):
+# {slug: (journal_seq, drives_fold, pressure_fold|None)}. The folds are pure
+# reads, so the seq is the exact invalidation key; a poller re-reads the
+# store only when the world actually changed. Process-local by design (one
+# serving process per door).
+_DRIVES_CACHE: Dict[str, Tuple[int, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]] = {}
+
+
 @router.get("/{name}/cognition")
 def entity_cognition(name: str) -> Dict[str, Any]:
     """The B3 spend wire (laurent 04:58 "unclear when it's working and
@@ -984,7 +1578,12 @@ def entity_cognition(name: str) -> Dict[str, Any]:
       (ChatSession, no run ledger), so loop cognition is NOT in these
       numbers yet — labeled #FALLBACK, never estimated here (the entity
       app's input-side estimate remains its own labeled surface until
-      runtime's loop-usage half lands)."""
+      runtime's loop-usage half lands).
+    - drives: the cognition-health ratios (questions open/resolved,
+      problems open/repaired, interests open/explored) from memory's
+      cognition_health — the same ladder + diary convention the card
+      compositor reads. Render-when-present: absent (with a labeled
+      warning) when the engine predates the read OR the read fails."""
     from ..entity_loop import loop_status
 
     registry = _registry()
@@ -1051,20 +1650,55 @@ def entity_cognition(name: str) -> Dict[str, Any]:
     from ..entities import derived_liveness
 
     stopped = state_word == "paused"
+    # PHASE IS TOTAL WHILE ALIVE (laurent c203, 2026-07-20: "awake is NOT a
+    # state; the entity at all times must be either visit/work/personal/
+    # sleep"). The old `else: None` rendered the exact "awake, idle" hanging
+    # state he rejects. The fold is SERVE-SIDE ONLY — the state file, the
+    # yield-posture writes, and every engraved marker stay byte-identical
+    # (the visit race keys on the STATE axis; adversary P0-5) — and doors
+    # already WAKE resting sleepers, so folding idle to sleep changes zero
+    # gate behavior. `phase_source` labels the one approximation: a running
+    # loop day with a standing work order reads as work (loop_status cannot
+    # tell day kinds apart — runtime's day_kind is the exact fix).
+    phase_source = "actual"
+    sleep_detail: Optional[str] = None
     if stopped:
-        # The kill switch is NOT a phase — everything active was torn down;
-        # the state block carries paused and liveness says stopped plainly.
+        # The kill switch is NOT a phase — the liveness axis sits ABOVE the
+        # machine (adversary P0-6); the ONE legitimate no-phase render.
         phase = None
     elif bool(visit.get("open")) or chat_open:
         phase = "visit"
     elif state_word == "asleep":
         phase = "sleep"
+        mode_word = str(st.get("mode") or "")
+        if mode_word == "dreaming":
+            sleep_detail = "dreaming"
+        elif st.get("wake_at"):
+            sleep_detail = "bounded"
+        else:
+            sleep_detail = "resting"
     elif bool(loop.get("running")):
-        # The personal phase spans its own rest windows (the loop lives);
-        # `resting` carries the between-days nuance without a fifth phase.
-        phase = "personal"
+        # A running loop is a work day when a work order stands (the loop's
+        # own day gate reads the same file — life.py day_phase), else
+        # personal. Approximation until loop_status carries day_kind.
+        try:
+            from abstractruntime.identity.life import read_work_order
+
+            if str(loop.get("phase") or "") == "day" and read_work_order(home_dir):
+                phase = "work"
+                phase_source = "derived"
+            else:
+                phase = "personal"
+        except Exception:
+            phase = "personal"
     else:
-        phase = None  # awake, idle — present, no phase active
+        # No process, no visit, not paused: the entity RESTS — sleep is the
+        # resting default (IDLE-IS-SLEEP; newborns are born asleep). This
+        # sleep runs no consolidation and never stamps runs (the deposit
+        # gate's phase==sleep refusal applies to FORMAL windows only —
+        # adversary P1-10); sleep_detail says so honestly.
+        phase = "sleep"
+        sleep_detail = "resting"
     # SETTLING (adversary P2-1): the state file is intent/authority; the loop
     # honors it at tick boundaries only — a fresh state write beside an older
     # loop heartbeat is "settling", not a contradiction. Lexicographic ISO
@@ -1151,9 +1785,56 @@ def entity_cognition(name: str) -> Dict[str, Any]:
             "#FALLBACK visit run rests at status=running with no drive in flight "
             "(interrupted mid-turn?) — resume it with POST /visit/{run_id}/tick"
         )
+    # Drive ratios (G1, cognition-health directive 2026-07-18): memory's
+    # cognition_health fold over the home's full ladder — the same ladder,
+    # diary convention, and ref-attr set the card compositor reads (the
+    # cross-key divergence was fixed engine-side same-day), so this wire,
+    # the card, and any bar agree by construction. RENDER-WHEN-PRESENT:
+    # version skew or a read failure drops the key with a labeled warning —
+    # absent until the source exists, never derived (the c2801 contract).
+    #
+    # SEQ-KEYED CACHE (sharedgraph adversary P0: these engine folds measured
+    # ~90s on a 216-drive live home, and /cognition is POLLED — uncached,
+    # one 5s poller stacks 90s reads into the shared sync threadpool until
+    # every route stalls). The folds are PURE reads of the store, so the
+    # journal seq IS the invalidation key: same seq = identical result by
+    # construction; serve the cached fold and never touch the store twice
+    # for one state of the world.
+    drives: Optional[Dict[str, Any]] = None
+    cached_pressure: Optional[Dict[str, Any]] = None
+    try:
+        from ..entities import MaintenanceHoldActive
+
+        home = registry.get_home(name)
+        seq_now = int(home.memory.current_seq())
+        cache_hit = _DRIVES_CACHE.get(manifest.slug)
+        if cache_hit is not None and cache_hit[0] == seq_now:
+            drives = cache_hit[1]
+            cached_pressure = cache_hit[2]
+        else:
+            drives = home.cognition_drives()
+            cached_pressure = None  # recomputed below when drives exist
+        if drives is None:
+            warnings.append(
+                "#FALLBACK drive ratios unavailable: this engine predates "
+                "cognition_health — upgrade abstractmemory"
+            )
+    except MaintenanceHoldActive:
+        # A hold armed mid-request outranks the degradation contract (the
+        # route's own up-front rule) — refuse as every other door does.
+        raise
+    except Exception as e:  # noqa: BLE001 - a drives read must not 500 the indicator
+        warnings.append(f"#FALLBACK drive ratios unreadable: {e}")
+
     out: Dict[str, Any] = {
         "working": working,
         "phase": phase,
+        # phase_source: "actual" or "derived" (work approximated from the
+        # standing work order until loop_status carries day_kind).
+        "phase_source": phase_source,
+        # sleep_detail: resting | dreaming | bounded — a resting default
+        # never overclaims consolidation (c203 wave-1 honesty).
+        **({"sleep_detail": sleep_detail} if sleep_detail else {}),
         "resting": resting,
         # paused => stopped; everything else => alive (documented mapping,
         # binary by construction — c1559 spelling point 2).
@@ -1186,6 +1867,88 @@ def entity_cognition(name: str) -> Dict[str, Any]:
             "source": "home-run-ledger+loop-spend" if loop_spend is not None else "home-run-ledger",
         },
     }
+    if drives is not None:
+        out["drives"] = drives
+        # DRIVE PRESSURE (laurent c203: >20 standing drives must never just
+        # "hang there"). SURFACED SIGNAL ONLY — never an auto-action (the
+        # own-time cost ruling stands until the operator answers the fork).
+        # The counts come from MEMORY'S ENGINE READ (drive_pressure — one
+        # deterministic composition of every standing drive set, exact
+        # counts, believed-rows both sides; their c215 ship) and the ruled
+        # threshold is IMPORTED (DRIVE_PRESSURE_BOUND — one source, never a
+        # second copy of the 20; the SELF_FRACTION_FLOOR law). The engine
+        # deliberately takes no position on which phase answers pressure —
+        # `should`/`idle` are the gateway's serve-side gate semantics:
+        # tasks/work order => work, else personal; idle = pressure while
+        # resting with no process. wake_reasons is limit-clipped at 20 and
+        # structurally cannot see ">20" — never a threshold source.
+        try:
+            from abstractmemory import DRIVE_PRESSURE_BOUND, drive_pressure as _engine_pressure
+
+            import os as _os_dp
+
+            env_t = (_os_dp.getenv("ABSTRACTGATEWAY_DRIVE_PRESSURE_THRESHOLD") or "").strip()
+            threshold = int(env_t) if env_t else int(DRIVE_PRESSURE_BOUND)
+
+            if cached_pressure is not None:
+                pressure = cached_pressure
+            else:
+                from ..entities import DIARY_SCOPE, LIFE_SCOPE, SELF_SCOPE
+
+                eid = home.entity_id
+                pressure = _engine_pressure(
+                    home.store, home.journal,
+                    scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
+                )
+                # Both folds computed for THIS seq — cache them together.
+                _DRIVES_CACHE[manifest.slug] = (seq_now, drives, pressure)
+            counts = {
+                k: int(v) for k, v in pressure.items()
+                if isinstance(v, (int, float)) and k != "total_open"
+            }
+            over = sorted(k for k, n in counts.items() if n > threshold)
+            if over:
+                has_tasks = False
+                try:
+                    from ..entity_tasks import count_pending
+
+                    has_tasks = count_pending(home_dir) > 0
+                except Exception:  # noqa: BLE001
+                    pass
+                has_order = False
+                try:
+                    from abstractruntime.identity.life import read_work_order
+
+                    has_order = bool(read_work_order(home_dir))
+                except Exception:  # noqa: BLE001
+                    pass
+                dp: Dict[str, Any] = {
+                    "over": over,
+                    "counts": counts,
+                    "total_open": int(pressure.get("total_open") or 0),
+                    "threshold": threshold,
+                    "should": "work" if (has_tasks or has_order) else "personal",
+                    "idle": bool(phase == "sleep" and sleep_detail == "resting"),
+                    "note": pressure.get("note"),
+                }
+                # COUNT-WEIGHTED GROUPS (laurent 277; memory c296 fold key):
+                # drive_pressure()['groups'] clusters similar drives so a
+                # family of 12 similar questions surges above a lone one.
+                # Render-when-present passthrough — a group is a VIEW over
+                # the open drives (counts byte-unchanged), largest-first,
+                # computed by the same clustering the sleep miner runs.
+                groups = pressure.get("groups")
+                if isinstance(groups, list) and groups:
+                    dp["groups"] = groups
+                out["drive_pressure"] = dp
+        except ImportError:
+            warnings.append(
+                "#FALLBACK drive pressure unavailable: this engine predates "
+                "drive_pressure — upgrade abstractmemory"
+            )
+            _DRIVES_CACHE[manifest.slug] = (seq_now, drives, None)
+        except Exception as e:  # noqa: BLE001 - pressure is a signal, never a 500
+            warnings.append(f"#FALLBACK drive pressure unreadable: {e}")
     if warnings:
         out["warnings"] = warnings
     return out
@@ -1271,7 +2034,17 @@ def get_entity_life_state(name: str) -> Dict[str, Any]:
     try:
         durable = _visit_host().status(name)
         if durable.get("open"):
-            out["phase"] = "visiting"
+            # ONE GRAPH WORD (wave adversary P1-3): the hosted arm of this
+            # same endpoint serves phase="visit" (the c203 graph vocabulary)
+            # — this widening said "visiting", so one endpoint spoke two
+            # spellings of one axis depending on which lane the visit ran
+            # on. The nuance rides `posture` (spec v10
+            # NUANCE-NEVER-CONTRADICTS-PHASE; audit finding 2: widening
+            # phase alone left posture="resting" beside a live durable
+            # visit — clients preferring the ruled nuance-posture rendered
+            # "personal · resting" beside a live chat).
+            out["phase"] = "visit"
+            out["posture"] = "visiting"
             out["visit_run_id"] = durable.get("run_id")
     except Exception as e:  # noqa: BLE001
         # LABELED downgrade (entity forensics c2465 finding 1): a broken
@@ -1568,6 +2341,19 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
             },
         )
     if state_word == "asleep":
+        # VISITING POSTURE GUARD (mutual-exclusivity wave, audit finding 3 —
+        # the /loop/start registration-window pattern applied): a summon's
+        # wake-write over asleep+mode=visiting would destroy a live/mid-open
+        # visit's durable marker. The visit owns the phase; refuse.
+        if str(entity_state.get("mode") or "") == "visiting":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"a visit is open (or opening) on {name} — visiting posture set; "
+                    "a summon and a visit never overlap (the phases are mutually exclusive); "
+                    "retry after the visit ends"
+                ),
+            )
         from abstractruntime.identity.life import write_entity_state
 
         principal_for_wake = current_gateway_principal()
@@ -2018,6 +2804,8 @@ def get_entity_tool_policy(name: str) -> Dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     home_dir = registry.entities_dir / manifest.slug
+    from ..tool_inventory import phase_executability
+
     phases: Dict[str, Any] = {}
     for phase in PHASES:
         # Display resolution: the bare default posture — legacy visit/tasked/own_time
@@ -2025,7 +2813,19 @@ def get_entity_tool_policy(name: str) -> Dict[str, Any]:
         # 2026-07-11; Q1 c684), sleep the read-only exploration set;
         # enable_workspace is inert.
         grant = resolve_tool_grant(home_dir, phase, enable_workspace=False)
-        phases[phase] = {"tools": list(grant.tools), "source": grant.source, "notes": list(grant.notes)}
+        # executable per cell (entity's c72 wire shape; c69 audit: a check
+        # is the GRANT — what a live session can actually call also depends
+        # on the lane's wiring; cells with ok=false render the amber cue).
+        executable: Dict[str, Any] = {}
+        for tool in grant.tools:
+            ok, reason = phase_executability(tool, phase)
+            executable[tool] = {"ok": ok, **({"reason": reason} if reason else {})}
+        phases[phase] = {
+            "tools": list(grant.tools),
+            "source": grant.source,
+            "notes": list(grant.notes),
+            "executable": executable,
+        }
     return {
         "phases": phases,
         "all_tools": list(ALL_TOOL_NAMES),
@@ -2047,6 +2847,315 @@ def put_entity_tool_policy(name: str, req: PutToolPolicyRequest) -> Dict[str, An
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return get_entity_tool_policy(name)
+
+
+# ------------------------------------------------------------- work order
+# The work-phase lane's operator write surface (laurent seq 155 "the entity
+# must be able to work and execute commands when it works"; runtime shipped
+# the loop half — work_order.md's PRESENCE shifts the next day-open to
+# phase=work, the WORK column of tool_policy.yaml applies, the entity
+# declares done/blocked). The gateway owns the WRITE (the entity never
+# writes its own order — same authority split as tool_policy.yaml). A set
+# is marker-first (a work order is a mission on the entity's biography);
+# clearing archives visibly (never a silent delete — runtime's
+# archive_work_order rule). The completed order (work_order.done.md) is
+# served read-only so the operator sees the entity's verdict history.
+
+
+class PutWorkOrderRequest(BaseModel):
+    order: Optional[str] = Field(
+        default=None,
+        description="The work-order text (a mission the entity works next day-open). Null/omitted with clear=true removes the standing order.",
+        max_length=20000,
+    )
+    clear: bool = Field(default=False, description="true = archive+remove the standing order; personal time returns next day-open")
+
+
+@router.get("/{name}/work-order")
+def get_entity_work_order(name: str) -> Dict[str, Any]:
+    """The standing work order + the archived history (read-only).
+
+    `order` is the live standing order (null = no order, the day runs
+    personal). `active` mirrors presence. `done_history` is the archived
+    verdicts (work_order.done.md) so the operator reads what the entity
+    finished or was blocked on — visible, never deleted."""
+    from abstractruntime.identity.life import read_work_order
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+    order = read_work_order(home_dir)
+    out: Dict[str, Any] = {"order": order, "active": bool(order)}
+    done_path = home_dir / "work_order.done.md"
+    try:
+        if done_path.exists():
+            out["done_history"] = done_path.read_text(encoding="utf-8")
+    except Exception as e:  # noqa: BLE001 - history is garnish, never load-bearing
+        out["warnings"] = [f"#FALLBACK done history unreadable: {e}"]
+    return out
+
+
+@router.put("/{name}/work-order")
+def put_entity_work_order(name: str, req: PutWorkOrderRequest) -> Dict[str, Any]:
+    """Set or clear the entity's work order (marker-first). Setting writes
+    work_order.md (the loop shifts to phase=work next day-open); clearing
+    archives the standing order to work_order.done.md and removes it
+    (personal returns). The entity never reaches this door — the write
+    authority is the operator's, exactly like tool_policy.yaml."""
+    from abstractruntime.identity.life import (
+        WORK_ORDER_FILENAME,
+        archive_work_order,
+        read_work_order,
+    )
+
+    from ..entity_replay import record_host_marker
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+
+    order_text = (req.order or "").strip()
+    if not req.clear and not order_text:
+        raise HTTPException(
+            status_code=400,
+            detail="a work order needs text (or clear=true to remove the standing order)",
+        )
+    actor = _task_actor()
+    prior = read_work_order(home_dir)
+
+    # Marker BEFORE the write (P2-2: a recorded change that never happened is
+    # worse than a 4xx — validate first, then mark, then write).
+    try:
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="work_order_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details={
+                "channel": "operator",
+                "by": actor,
+                "change": "cleared" if req.clear else "set",
+                "had_prior": bool(prior),
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"work order change refused: the durable marker could not be recorded ({e}) — retry when the home is reachable",
+        )
+
+    if req.clear:
+        # Archive the standing order (verdict names the operator's clear),
+        # then it is gone from the live path — personal returns next day-open.
+        archive_work_order(home_dir, verdict=f"cleared by {actor}")
+        return get_entity_work_order(name)
+    try:
+        (home_dir / WORK_ORDER_FILENAME).write_text(order_text + "\n", encoding="utf-8")
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"could not write the work order: {e}")
+    return get_entity_work_order(name)
+
+
+# ------------------------------------------------------------- candidates
+# The sleep passes' review desk (W3 second half, wave-4 dispatch c3291;
+# unblocked 2026-07-20 — the engine verbs shipped ahead of the W2 miner:
+# promote_candidate carries the independence test, reject_candidate the
+# mandatory reason). Sleep PROPOSES; waking evidence DISPOSES — these doors
+# are the operator's disposal surface. Graph acts, journal-recorded by the
+# engine with the principal-stamped actor; no host marker needed (the
+# journal IS the record for graph writes; markers are for door/config acts).
+
+
+class PromoteCandidateRequest(BaseModel):
+    corroborating_ids: List[str] = Field(..., description="Records corroborating the candidate (independence test: >=2 distinct origins, distinct from the candidate's own)")
+    reason: str = Field(..., min_length=3, description="Why this candidate is promoted (journal-recorded)")
+
+
+class RejectCandidateRequest(BaseModel):
+    reason: str = Field(..., min_length=3, description="The honest no (mandatory; journal-recorded)")
+    hide: bool = Field(default=False, description="Also hide from search (judgment is not erasure; hiding is a separate stated act)")
+
+
+@router.get("/{name}/candidates")
+def list_entity_candidates(name: str) -> Dict[str, Any]:
+    """The standing review desk: inactive maintenance candidates awaiting
+    promote/reject. Serves the engine's shape verbatim (render-when-present;
+    an engine without candidates serves an empty list, never an error)."""
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home = registry.get_home(manifest.slug)
+    return {"candidates": home.list_maintenance_candidates()}
+
+
+def _candidate_scope(home: Any, record_id: str) -> tuple:
+    """The candidate's own scope pair — the verbs act in the scope the
+    record lives in, never a caller-claimed one."""
+    for c in home.list_maintenance_candidates(limit=500):
+        if c["record_id"] == record_id and c.get("scope") and c.get("owner_id"):
+            return str(c["scope"]), str(c["owner_id"])
+    raise HTTPException(status_code=404, detail=f"no standing candidate {record_id!r} on this home")
+
+
+@router.post("/{name}/candidates/{record_id}/promote")
+def promote_entity_candidate(name: str, record_id: str, req: PromoteCandidateRequest) -> Dict[str, Any]:
+    """Promote with the independence test (>=2 corroborating records of
+    distinct origins). The engine refuses thin evidence loudly — the door
+    passes its human-written error through."""
+    try:
+        from abstractmemory import promote_candidate
+    except ImportError:
+        raise HTTPException(status_code=501, detail="this engine predates candidate review — upgrade abstractmemory")
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home = registry.get_home(manifest.slug)
+    scope, owner = _candidate_scope(home, record_id)
+    try:
+        result = promote_candidate(
+            home.store, home.journal,
+            record_id=record_id, scope=scope, owner_id=owner,
+            corroborating_ids=list(req.corroborating_ids),
+            reason=req.reason.strip(),
+            actor=_task_actor(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"promoted": True, "record_id": record_id, "result": result}
+
+
+@router.post("/{name}/candidates/{record_id}/reject")
+def reject_entity_candidate(name: str, record_id: str, req: RejectCandidateRequest) -> Dict[str, Any]:
+    """The honest no: lifecycle=rejected with the mandatory reason; the
+    record stays indexed unless hide=true (a separate, stated act)."""
+    try:
+        from abstractmemory import reject_candidate
+    except ImportError:
+        raise HTTPException(status_code=501, detail="this engine predates candidate review — upgrade abstractmemory")
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home = registry.get_home(manifest.slug)
+    scope, owner = _candidate_scope(home, record_id)
+    try:
+        result = reject_candidate(
+            home.store, home.journal,
+            record_id=record_id, scope=scope, owner_id=owner,
+            reason=req.reason.strip(), hide=bool(req.hide),
+            actor=_task_actor(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"rejected": True, "record_id": record_id, "result": result}
+
+
+# ----------------------------------------------------------------- skills
+# Per-entity skills selection (laurent c2857; shape committed c2838, adopted
+# by skill c2840/uic c2863): WHAT an entity is taught beyond the capability
+# map. Selection persists in the home (<home>/skills.yaml — travels on
+# copy); resolution is SERVER-SIDE through the same trust gate as every
+# other lane (default-requested, never trust-bypassed); the GET serves the
+# selection + resolved roster rows + the PhaseCapabilityMatrix payload so
+# entity's tab and the console render ONE truth with zero mapping code.
+# DELIVERY into entity prompts deliberately absent until runtime elects the
+# composition slot (c2859 ask 1).
+
+
+class SkillSelectionEntry(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    phases: Optional[List[str]] = Field(
+        default=None,
+        description="Ruled-four phases this skill is selected for; ABSENT = selected everywhere (global)",
+    )
+
+
+class PutSkillsRequest(BaseModel):
+    skills: List[SkillSelectionEntry] = Field(
+        ...,
+        description="WHOLE-DOCUMENT REPLACE: the complete selection (an empty list deselects everything)",
+    )
+
+
+@router.get("/{name}/skills")
+def get_entity_skills(name: str) -> Dict[str, Any]:
+    from ..entity_skills import resolve_entity_skills
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    svc = get_gateway_service()
+    return resolve_entity_skills(
+        registry.entities_dir / manifest.slug,
+        data_dir=svc.config.data_dir,
+    )
+
+
+@router.put("/{name}/skills")
+def put_entity_skills(name: str, req: PutSkillsRequest) -> Dict[str, Any]:
+    """Replace the selection — marker-first like substrate/capability-map
+    (what a mind is taught is answerable from the stream); the response is
+    the resolved view, so a typo'd name or blocked skill is VISIBLE the
+    moment it is written (labeled verdict, never a silent no-op)."""
+    from ..entity_skills import read_skills_selection, validate_skills_selection, write_skills_selection
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+    # Validate BEFORE the marker (P2-2 rule: a recorded change that never
+    # happened is worse than a 400).
+    try:
+        normalized = validate_skills_selection([s.model_dump(exclude_none=True) for s in req.skills])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    prior = read_skills_selection(home_dir)
+    actor = _task_actor()
+    try:
+        from ..entity_replay import record_host_marker
+
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="skills_selection_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details={
+                "channel": "operator",
+                "by": actor,
+                "old": [{"name": s["name"], **({"phases": s["phases"]} if s.get("phases") else {})} for s in prior.get("skills") or []],
+                "new": [{"name": s["name"], **({"phases": s["phases"]} if s.get("phases") else {})} for s in normalized],
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"skills selection change refused: the durable marker could not be recorded ({e}) — "
+            "an unrecorded teaching change is not allowed; retry when the home is reachable",
+        )
+    try:
+        write_skills_selection(home_dir, normalized)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return get_entity_skills(name)
 
 
 # ------------------------------------------------------------ system prompt
@@ -2320,6 +3429,463 @@ def put_entity_substrate(name: str, req: PutSubstrateRequest) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return get_entity_substrate(name)
+
+
+# ------------------------------------------------------------------- voice
+# Per-entity voice (laurent dm#10, 2026-07-17; adversarial design review
+# folded — see entity_voice.py). The CHOICE lives in the home (voice.yaml,
+# full {provider, model, voice} triple — never a bare voice id); resolution
+# is late-bound and SERVER-SIDE in the entity TTS endpoints below; the
+# generic /runs/{id}/voice/tts* routes stay entity-blind (a run→home
+# back-resolution would trust client-crafted scope strings). Missing voice
+# DEGRADES down the chain (request > entity > user/gateway capability
+# default > engine default) — the opposite of substrate's refuse-on-missing,
+# which is why this is a separate file.
+
+
+class PutVoiceRequest(BaseModel):
+    provider: Optional[str] = Field(default=None, description="TTS provider (required unless clear)")
+    model: Optional[str] = Field(default=None, description="TTS model (required unless clear)")
+    voice: Optional[str] = Field(default=None, description="Voice id for that provider/model (required unless clear)")
+    speed: Optional[float] = Field(default=None, gt=0)
+    quality_preset: Optional[str] = Field(default=None, max_length=32)
+    clear: bool = Field(default=False, description="true = remove the choice; the entity falls back down the chain")
+
+
+@router.get("/{name}/voice")
+def get_entity_voice(name: str) -> Dict[str, Any]:
+    """The entity's voice choice + the RESOLVED effective triple.
+
+    Inheritance semantics (laurent dm#68, entity-personal-voice room:
+    "any entity should by default inherit the gateway default"): an UNSET
+    entity serves `effective` = the fully-resolved triple it would
+    actually speak with (the output.voice capability default — provider,
+    model, AND voice id, which the catalog alone cannot name), with
+    source="gateway-default". Render-when-present: no configured default
+    degrades to effective absent + a label — the engine-decides state is
+    honest, never a fabricated triple."""
+    from ..entity_voice import read_entity_voice
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    stored = read_entity_voice(registry.entities_dir / manifest.slug)
+    if stored:
+        return {**stored, "source": "entity", "effective": {**stored, "source": "entity"}}
+    out: Dict[str, Any] = {"provider": None, "model": None, "voice": None, "source": "unset"}
+    try:
+        from ..capability_defaults import gateway_capability_defaults_payload
+
+        payload = gateway_capability_defaults_payload(base_dir=registry.data_dir)
+        for row in payload.get("routes", []):
+            if (
+                str(row.get("kind")) == "output"
+                and str(row.get("modality")) == "voice"
+                and row.get("provider")
+            ):
+                options = row.get("options") if isinstance(row.get("options"), dict) else {}
+                out["effective"] = {
+                    "provider": row.get("provider"),
+                    "model": row.get("model"),
+                    "voice": options.get("voice"),
+                    "source": "gateway-default",
+                }
+                break
+        else:
+            out["note"] = "no gateway voice default configured — the voice engine decides"
+    except Exception as e:  # noqa: BLE001 - the choice read must not fail on the resolve
+        out["note"] = f"#FALLBACK effective default unresolved: {e}"
+    return out
+
+
+@router.put("/{name}/voice")
+def put_entity_voice(name: str, req: PutVoiceRequest) -> Dict[str, Any]:
+    """Set or clear the entity's voice — marker-first like substrate (a
+    voice change is audible identity presentation; 'which voice spoke
+    during which time' must be answerable from the stream)."""
+    from ..entity_voice import clear_entity_voice, read_entity_voice, write_entity_voice
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+    # Validate BEFORE the marker (P2-2 rule).
+    if req.clear:
+        if any(str(x or "").strip() for x in (req.provider, req.model, req.voice)):
+            raise HTTPException(status_code=400, detail="clear=true takes no other fields")
+    else:
+        if not (str(req.provider or "").strip() and str(req.model or "").strip() and str(req.voice or "").strip()):
+            raise HTTPException(
+                status_code=400,
+                detail="an entity voice needs provider AND model AND voice (a voice id is only "
+                "meaningful to its backend — the cross-provider leak class); send clear=true to unselect",
+            )
+    prior = read_entity_voice(home_dir)
+    actor = _task_actor()
+    new_value = None if req.clear else {"provider": str(req.provider).strip(), "model": str(req.model).strip(), "voice": str(req.voice).strip()}
+    try:
+        from ..entity_replay import record_host_marker
+
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="voice_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details={
+                "channel": "operator",
+                "by": actor,
+                "old": ({"provider": prior.get("provider"), "model": prior.get("model"), "voice": prior.get("voice")} if prior else None),
+                "new": new_value,
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"voice change refused: the durable marker could not be recorded ({e}) — "
+            "an unrecorded voice change is not allowed; retry when the home is reachable",
+        )
+    if req.clear:
+        clear_entity_voice(home_dir)
+    else:
+        try:
+            write_entity_voice(
+                home_dir,
+                provider=str(req.provider),
+                model=str(req.model),
+                voice=str(req.voice),
+                speed=req.speed,
+                quality_preset=req.quality_preset,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    return get_entity_voice(name)
+
+
+def _entity_tts_request(name: str, req: "GatewayVoiceTTSRequest") -> Tuple[Any, "GatewayVoiceTTSRequest", str, str]:
+    """Shared half of the entity TTS twins: manifest lookup, late-bound voice
+    resolution (anti-mixing rule — the home triple applies only when the
+    request names NO voice fields), and the server-minted session-memory
+    scope (never trusting a client-crafted scope to claim an entity's
+    voice)."""
+    from ..entity_voice import resolve_entity_voice_fields
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    fields, source = resolve_entity_voice_fields(
+        registry.entities_dir / manifest.slug,
+        request_provider=req.provider,
+        request_model=req.model,
+        request_voice=req.voice,
+        request_profile=req.profile,
+    )
+    tts_req = req
+    if fields:
+        tts_req = req.model_copy(update={
+            "provider": fields["provider"],
+            "model": fields["model"],
+            "voice": fields["voice"],
+            **({"speed": fields["speed"]} if "speed" in fields and req.speed is None else {}),
+            **({"quality_preset": fields["quality_preset"]} if "quality_preset" in fields and not req.quality_preset else {}),
+        })
+    scope = f"session_memory_entity_voice_{manifest.slug}"
+    return manifest, tts_req, scope, source
+
+
+@router.post("/{name}/voice/tts")
+async def entity_voice_tts(name: str, req: "GatewayVoiceTTSRequest") -> Dict[str, Any]:
+    """Speak AS the entity — the entity-owned TTS lane (non-stream twin).
+
+    Delegates to the SAME production machinery as the generic route —
+    watchdog, durable child, artifact ref all included. Executes on the
+    door's runtime, never the per-home store (media blobs must not ride
+    homes). The response carries `voice_source` (request|entity|unset) so
+    clients render the resolved truth instead of recomposing the chain."""
+    from .gateway import voice_tts
+
+    manifest, tts_req, scope, source = _entity_tts_request(name, req)
+    resp = await voice_tts(scope, tts_req)
+    out = resp.model_dump() if hasattr(resp, "model_dump") else dict(resp)
+    out["voice_source"] = source
+    out["entity"] = manifest.slug
+    return out
+
+
+@router.post("/{name}/voice/tts/stream")
+async def entity_voice_tts_stream(name: str, req: "GatewayVoiceTTSRequest"):
+    """Streaming twin of the entity TTS lane — same resolution, same
+    delegation; `X-Voice-Source` rides the response headers (the JSONL
+    stream body is the generic route's, byte-unchanged)."""
+    from .gateway import voice_tts_stream
+
+    manifest, tts_req, scope, source = _entity_tts_request(name, req)
+    response = await voice_tts_stream(scope, tts_req)
+    try:
+        response.headers["X-Voice-Source"] = source
+        response.headers["X-Entity"] = manifest.slug
+    except Exception:
+        pass
+    return response
+
+
+# ---------------------------------------------------------- capability map
+# The memory-teaching capability map (laurent c2710; skill seat's
+# entity-self-knowledge reference): one file per home
+# (`<home>/capability_map.md`), presented VERBATIM by runtime's
+# compose_system_base on every summon surface (chat drawer, durable visit,
+# own-time loop — read_capability_map in abstractruntime.identity.chat).
+# Lifecycle is operator-owned like tool_policy/substrate, and the PUT is
+# marker-first: a silent change to what a mind is TAUGHT is the same
+# incident class as an unrecorded substrate swap.
+
+
+class PutCapabilityMapRequest(BaseModel):
+    # 256 KiB ceiling: the canonical teaching is ~8 KB; the cap refuses a
+    # fat-fingered megabyte paste before it becomes every summon's prompt tax.
+    content: str = Field(..., min_length=1, max_length=262144, description="Full markdown teaching text installed as <home>/capability_map.md")
+
+
+def _capability_map_state(*, home_dir: Any) -> Dict[str, Any]:
+    import hashlib as _hashlib
+    from pathlib import Path as _Path
+
+    path = _Path(home_dir) / "capability_map.md"
+    if not path.is_file():
+        return {"installed": False, "size": 0, "sha256": None, "content": None}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"capability map unreadable: {e}")
+    raw = text.encode("utf-8")
+    return {"installed": True, "size": len(raw), "sha256": _hashlib.sha256(raw).hexdigest(), "content": text}
+
+
+@router.get("/{name}/capability-map")
+def get_entity_capability_map(name: str) -> Dict[str, Any]:
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    return _capability_map_state(home_dir=registry.entities_dir / manifest.slug)
+
+
+@router.put("/{name}/capability-map")
+def put_entity_capability_map(name: str, req: PutCapabilityMapRequest) -> Dict[str, Any]:
+    """Install/update the home's teaching map — marker-first, like substrate.
+
+    The `capability_map_changed` host marker (old/new sha256, principal,
+    timestamp) lands BEFORE the file moves so "what was this mind taught,
+    when, by whom" is answerable from the replay stream; a marker failure
+    refuses the write (an unrecorded teaching change is not allowed).
+    """
+    import hashlib as _hashlib
+    import os as _os
+    import tempfile as _tempfile
+    from pathlib import Path as _Path
+
+    from ..security.principal import current_gateway_principal
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+    # Strip-validate BEFORE the marker (the substrate P2-2 lesson:
+    # min_length=1 accepts " "; a recorded change that never happened is
+    # worse than a 400).
+    content = str(req.content or "")
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="content must be non-empty markdown teaching text")
+    prior = _capability_map_state(home_dir=home_dir)
+    new_sha = _hashlib.sha256(content.encode("utf-8")).hexdigest()
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    try:
+        from ..entity_replay import record_host_marker
+
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="capability_map_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details={
+                "channel": "operator",
+                "by": actor,
+                "old_sha256": prior.get("sha256"),
+                "new_sha256": new_sha,
+                "size": len(content.encode("utf-8")),
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"capability map change refused: the durable marker could not be recorded ({e}) — "
+            "an unrecorded teaching change is not allowed; retry when the home is reachable",
+        )
+    # Atomic replace so a crash mid-write never leaves a torn teaching file.
+    target = _Path(home_dir) / "capability_map.md"
+    fd, tmp_name = _tempfile.mkstemp(prefix=".capability_map_", suffix=".tmp", dir=str(home_dir))
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        _os.replace(tmp_name, str(target))
+    except Exception as e:  # noqa: BLE001
+        try:
+            _os.unlink(tmp_name)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"capability map write failed: {e}")
+    state = _capability_map_state(home_dir=home_dir)
+    state.pop("content", None)
+    return state
+
+
+# ---------------------------------------------------------------- task inbox
+# The G3 door half (plan v18 gateway §1): tasks left with an entity are
+# durable FACTS in the home (`<home>/task_inbox.jsonl`, append-only events,
+# fold at read — abstractgateway.entity_tasks). Writers: this endpoint
+# (operator origination — continuum's board, code's /entity task verb) and
+# visit close (tasks left in a visit). Reader: runtime's R-C day-open (the
+# loop half; file schema is the cross-package contract). Ruling-neutral
+# under D1: the door records facts; who opens the work phase is runtime's
+# ruled behavior. Origin is STAMPED from the authenticated principal or the
+# verified visit — payload origin claims are dropped (deposit-gate rule).
+
+
+class PostTaskRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500, description="What is asked, one line")
+    brief: str = Field(default="", max_length=20000, description="Spec/DoR/DoD — structured handoff text")
+    workflow: Optional[Dict[str, Any]] = Field(default=None, description="Optional workflow election target: {bundle_id, flow_id, inputs} (flow F1)")
+    backlog_ref: Optional[str] = Field(default=None, max_length=500, description="Optional backlog item reference")
+
+
+class PostTaskStatusRequest(BaseModel):
+    status: str = Field(..., description="pending | taken | done | parked")
+    note: Optional[str] = Field(default=None, max_length=2000, description="Optional status note")
+
+
+def _task_actor() -> str:
+    from ..security.principal import current_gateway_principal
+
+    principal = current_gateway_principal()
+    return f"person:{principal.user_id}" if principal is not None else "person:operator"
+
+
+def _task_inbox_marker(*, registry: Any, manifest: Any, detail: Dict[str, Any]) -> None:
+    """Marker-first like every operator-config write; a marker failure
+    REFUSES the write (an unrecorded task handoff would make 'why did the
+    entity shift into work?' unanswerable from the stream)."""
+    try:
+        from ..entity_replay import record_host_marker
+
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="task_inbox_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details=detail,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"task inbox change refused: the durable marker could not be recorded ({e}) — "
+            "an unrecorded task handoff is not allowed; retry when the home is reachable",
+        )
+
+
+@router.get("/{name}/tasks")
+def get_entity_tasks(name: str) -> Dict[str, Any]:
+    from ..entity_tasks import read_task_inbox
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    return read_task_inbox(registry.entities_dir / manifest.slug)
+
+
+@router.post("/{name}/tasks")
+def post_entity_task(name: str, req: PostTaskRequest) -> Dict[str, Any]:
+    from ..entity_tasks import append_task, read_task_inbox
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+    actor = _task_actor()
+    title = str(req.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title must be non-empty")
+    _task_inbox_marker(
+        registry=registry,
+        manifest=manifest,
+        detail={"channel": "operator", "by": actor, "change": "added", "title": title[:120]},
+    )
+    try:
+        event = append_task(
+            home_dir,
+            title=title,
+            brief=str(req.brief or ""),
+            origin=f"{actor} via POST /entities/{manifest.slug}/tasks",
+            by=actor,
+            workflow=req.workflow if isinstance(req.workflow, dict) else None,
+            backlog_ref=req.backlog_ref,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    folded = read_task_inbox(home_dir)
+    return {"task": event, "pending": folded["pending"]}
+
+
+@router.post("/{name}/tasks/{task_id}/status")
+def post_entity_task_status(name: str, task_id: str, req: PostTaskStatusRequest) -> Dict[str, Any]:
+    from ..entity_tasks import TASK_STATUSES, read_task_inbox, set_task_status
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+    actor = _task_actor()
+    # Validate BEFORE the marker (the substrate P2-2 rule: a recorded change
+    # that never happened is worse than a 4xx).
+    status2 = str(req.status or "").strip().lower()
+    if status2 not in TASK_STATUSES:
+        raise HTTPException(status_code=400, detail=f"unknown task status {req.status!r} (one of {TASK_STATUSES})")
+    known = {t["task_id"] for t in read_task_inbox(home_dir)["tasks"]}
+    if str(task_id).strip() not in known:
+        raise HTTPException(status_code=404, detail=f"unknown task {task_id!r}")
+    _task_inbox_marker(
+        registry=registry,
+        manifest=manifest,
+        detail={"channel": "operator", "by": actor, "change": "status", "task_id": str(task_id), "status": status2},
+    )
+    try:
+        event = set_task_status(home_dir, task_id=task_id, status=status2, by=actor, note=req.note)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    folded = read_task_inbox(home_dir)
+    return {"task": event, "pending": folded["pending"]}
 
 
 # ---------------------------------------------------------------- own time

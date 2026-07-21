@@ -126,4 +126,8 @@ def test_quota_refusal_happens_before_any_write(monkeypatch: pytest.MonkeyPatch,
 
     entities_dir = tmp_path / "runtime" / "entities"
     children = {c.name for c in entities_dir.iterdir() if c.is_dir()}
-    assert children == {"solo"}, f"refused create must not leave a home dir: {children}"
+    # .host_stream is the marker infrastructure minted by the FIRST (legal)
+    # create's birth-teaching marker (laurent seq 156) — not a home dir and
+    # not evidence the refused create wrote anything.
+    homes = {c for c in children if not c.startswith(".")}
+    assert homes == {"solo"}, f"refused create must not leave a home dir: {children}"

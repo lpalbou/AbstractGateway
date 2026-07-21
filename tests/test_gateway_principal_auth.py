@@ -59,12 +59,17 @@ def _set_cookie(response, name: str) -> str:
     raise AssertionError(f"missing Set-Cookie header for {name}")
 
 
-def test_legacy_gateway_token_resolves_local_admin(tmp_path: Path, monkeypatch) -> None:
+def test_legacy_gateway_token_resolves_default_admin(tmp_path: Path, monkeypatch) -> None:
+    # The static operator token carries the SAME identity as the user-registry
+    # admin (tenant=default, user=admin): one operator, one data world.
+    # The old identity (local/local-admin) routed static-token clients into an
+    # empty per-principal root (principal-split incident, commons c2690).
     client = _client(tmp_path, monkeypatch, user_auth=False)
     response = client.get("/api/gateway/me", headers={"Authorization": "Bearer admin-token"})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["principal"]["user_id"] == "local-admin"
+    assert payload["principal"]["user_id"] == "admin"
+    assert payload["principal"]["tenant_id"] == "default"
     assert payload["principal"]["admin"] is True
     assert payload["auth"]["mode"] == "legacy-token"
     assert payload["routing"]["mode"] == "single-user"

@@ -813,7 +813,17 @@ class GatewayRunner:
             try:
                 self._cursor_store.save(cur)
             except Exception:
-                pass
+                # A failing cursor save means a restart REPLAYS commands from
+                # the stale cursor (at-least-once becomes visibly-more-than-
+                # once). The loop must survive it, but silence made a full
+                # disk / permission break invisible until the replay incident
+                # (backlog 0070 exception audit).
+                logger.exception(
+                    "GatewayRunner: failed to persist command cursor %s to %s "
+                    "(restart will replay commands from the last saved cursor)",
+                    cur,
+                    self._base_dir / "commands_cursor.json",
+                )
         # A processed command may have changed run state (pause/resume/cancel/
         # emit_event all write runs) — force the next scheduling pass so its
         # effects tick without waiting for a fingerprint probe.
@@ -942,7 +952,10 @@ class GatewayRunner:
         try:
             self._repair_terminal_subworkflow_waits(waiting=waiting_all)
         except Exception:
-            pass
+            # The pass retries next poll, but a repeatedly-failing repair is
+            # exactly the "parent stuck forever on a finished child" incident
+            # this pass exists to prevent — it must be visible (0070 audit).
+            logger.exception("GatewayRunner: terminal-subworkflow wait repair pass failed (will retry next poll)")
 
     def _repair_terminal_subworkflow_waits(self, waiting: Any = None) -> None:
         if waiting is None:
@@ -1589,13 +1602,21 @@ class GatewayRunner:
                         logger.exception("GatewayRunner: failed to append tick_exception record for %s", run_id)
                 state = latest
             except Exception:
+                # Load/save failed AFTER the tick exception: the run stays
+                # RUNNING and will re-tick, but the failed promotion must not
+                # be silent — this is the path that turns a persistent store
+                # fault into an invisible infinite retry loop (0070 audit).
+                logger.exception(
+                    "GatewayRunner: failed to promote run %s to FAILED after tick exception (run stays RUNNING)",
+                    run_id,
+                )
                 return
 
         # Auto-compaction for scheduled workflows (best-effort).
         try:
             self._maybe_auto_compact(state)
         except Exception:
-            pass
+            logger.debug("GatewayRunner: auto-compact pass failed for %s", run_id, exc_info=True)
 
         # If this run completed, it may unblock a parent WAITING(SUBWORKFLOW).
         if getattr(state, "status", None) in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
@@ -1618,7 +1639,13 @@ class GatewayRunner:
 
                 self._resume_subworkflow_parents(child_run_id=run_id, child_output=child_out)
             except Exception:
-                pass
+                # The repair pass retries stuck parents on later polls, so
+                # this is recoverable — but a parent left WAITING on a
+                # finished child is durability-relevant and must be seen.
+                logger.exception(
+                    "GatewayRunner: failed resuming parents of terminal child %s (repair pass will retry)",
+                    run_id,
+                )
 
     def _resume_subworkflow_parents(self, *, child_run_id: str, child_output: Dict[str, Any]) -> None:
         list_runs = getattr(self.run_store, "list_runs", None)
@@ -1836,7 +1863,8 @@ class GatewayRunner:
             }
             self.run_store.save(parent)
         except Exception:
-            pass
+            # Marker-only write: the schedule change itself already persisted.
+            logger.debug("GatewayRunner: failed to record last_schedule_update marker for %s", run_id, exc_info=True)
 
     def _resolve_compaction_target_run_id(self, root_run_id: str) -> Optional[str]:
         """Pick the best-effort run_id whose vars contain context.messages to compact."""
@@ -1969,7 +1997,9 @@ class GatewayRunner:
             target.updated_at = utc_now_iso()
             self.run_store.save(target)
         except Exception:
-            pass
+            # A lost save here silently discards the whole compaction (the
+            # LLM spend happened; the compacted vars never landed) — 0070.
+            logger.exception("GatewayRunner: failed to persist compacted vars for run %s", target_id)
 
         if getattr(outcome, "status", None) == "failed":
             raise RuntimeError(getattr(outcome, "error", None) or "compact_memory failed")
@@ -1994,7 +2024,8 @@ class GatewayRunner:
             parent.updated_at = utc_now_iso()
             self.run_store.save(parent)
         except Exception:
-            pass
+            # Marker-only write: the compaction itself already persisted above.
+            logger.debug("GatewayRunner: failed to record last_compact_memory marker for %s", run_id, exc_info=True)
 
     # ---------------------------------------------------------------------
     # Auto-compaction for scheduled workflows
@@ -2063,7 +2094,13 @@ class GatewayRunner:
         try:
             self.run_store.save(run)
         except Exception:
-            pass
+            # A lost guard save means the trigger can thrash (re-fire every
+            # tick at the same token count) — visible, not fatal.
+            logger.warning(
+                "GatewayRunner: failed to persist auto-compact guard for %s (trigger may re-fire)",
+                getattr(run, "run_id", "?"),
+                exc_info=True,
+            )
 
         runtime = Runtime(run_store=self.run_store, ledger_store=self.ledger_store, artifact_store=self.artifact_store)
         try:
@@ -2088,7 +2125,12 @@ class GatewayRunner:
             run.updated_at = utc_now_iso()
             self.run_store.save(run)
         except Exception:
-            pass
+            # Same class as the out-of-band compact save: losing this save
+            # discards the compaction the run just paid for (0070 audit).
+            logger.exception(
+                "GatewayRunner: failed to persist auto-compacted vars for run %s",
+                getattr(run, "run_id", "?"),
+            )
         if getattr(outcome, "status", None) == "failed":
             # Best-effort: record the error for debuggability but do not fail ticking.
             try:
@@ -2096,4 +2138,4 @@ class GatewayRunner:
                 auto["last_error_at"] = utc_now_iso()
                 self.run_store.save(run)
             except Exception:
-                pass
+                logger.debug("GatewayRunner: failed to record auto-compact error marker", exc_info=True)

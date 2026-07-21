@@ -218,14 +218,14 @@ def test_backlog_execute_per_request_executor_choice(tmp_path: Path, monkeypatch
     app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
     with TestClient(app) as client:
         # Unknown executor refuses verbatim, and NOTHING lands in the queue.
-        r = client.post("/api/gateway/backlog/planned/720-framework-exec.md/execute?executor=not-a-thing")
+        r = client.post("/api/gateway/backlog/planned/720-framework-exec.md/execute?dor=skip&executor=not-a-thing")
         assert r.status_code == 400, r.text
         assert "unknown executor" in r.json()["detail"]
         assert not list((gateway_dir / "backlog_exec_queue").glob("*.json"))
 
         # abstractcode is probed via the importable package — present in this
         # venv, so the choice queues and the payload carries the stamp.
-        r2 = client.post("/api/gateway/backlog/planned/720-framework-exec.md/execute?executor=abstractcode")
+        r2 = client.post("/api/gateway/backlog/planned/720-framework-exec.md/execute?dor=skip&executor=abstractcode")
         if r2.status_code == 400:
             pytest.skip("abstractcode not importable in this environment")
         assert r2.status_code == 200, r2.text

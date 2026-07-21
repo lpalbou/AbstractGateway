@@ -152,7 +152,8 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
         assert f"`docs/backlog/planned/{filename2}`" in master_text
 
         # Execute queues a request file under gateway data dir.
-        exec_resp = client.post(f"/api/gateway/backlog/planned/{master_filename}/execute")
+        # dor=skip: DoR default-ON since c3546; this test owns queueing/idempotency.
+        exec_resp = client.post(f"/api/gateway/backlog/planned/{master_filename}/execute?dor=skip")
         assert exec_resp.status_code == 200
         rid = exec_resp.json()["request_id"]
         assert isinstance(rid, str) and rid
@@ -160,12 +161,13 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
         assert qpath.exists()
 
         # Duplicate execute should be rejected while queued/running.
-        exec_dup = client.post(f"/api/gateway/backlog/planned/{master_filename}/execute")
+        exec_dup = client.post(f"/api/gateway/backlog/planned/{master_filename}/execute?dor=skip")
         assert exec_dup.status_code == 409
 
         exec_batch = client.post(
             "/api/gateway/backlog/execute_batch",
-            json={"items": [{"kind": "planned", "filename": filename}, {"kind": "planned", "filename": filename2}]},
+            # dor=skip: default-ON since c3546; this test owns batch queueing.
+            json={"items": [{"kind": "planned", "filename": filename}, {"kind": "planned", "filename": filename2}], "dor": "skip"},
         )
         assert exec_batch.status_code == 200
         bid = exec_batch.json()["request_id"]
@@ -184,7 +186,7 @@ def test_backlog_create_move_update_execute_and_assist(tmp_path: Path, monkeypat
 
         exec_batch_dup = client.post(
             "/api/gateway/backlog/execute_batch",
-            json={"items": [{"kind": "planned", "filename": filename}, {"kind": "planned", "filename": filename2}]},
+            json={"items": [{"kind": "planned", "filename": filename}, {"kind": "planned", "filename": filename2}], "dor": "skip"},
         )
         assert exec_batch_dup.status_code == 409
 

@@ -56,7 +56,9 @@ def test_execute_payload_records_the_skills_union(tmp_path: Path, monkeypatch: p
 
     app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
     with TestClient(app) as client:
-        r = client.post("/api/gateway/backlog/planned/730-framework-skills.md/execute")
+        # dor=skip: DoR default-ON since c3546 (2026-07-20); this test owns
+        # the skills-union payload, not the readiness gate — bypass explicitly.
+        r = client.post("/api/gateway/backlog/planned/730-framework-skills.md/execute?dor=skip")
         assert r.status_code == 200, r.text
         qfiles = list((gateway_dir / "backlog_exec_queue").glob("*.json"))
         assert len(qfiles) == 1
@@ -88,7 +90,7 @@ def test_missing_shelf_is_a_labeled_verdict_never_a_block(tmp_path: Path, monkey
 
     app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
     with TestClient(app) as client:
-        r = client.post("/api/gateway/backlog/planned/731-framework-noshelf.md/execute")
+        r = client.post("/api/gateway/backlog/planned/731-framework-noshelf.md/execute?dor=skip")
         assert r.status_code == 200, r.text  # a missing teaching never blocks the run
         payload = json.loads(next((gateway_dir / "backlog_exec_queue").glob("*.json")).read_text(encoding="utf-8"))
         skills = payload["skills"]

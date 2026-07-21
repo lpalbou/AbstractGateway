@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
 import re
 import socket
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .notifier import send_email_notification, send_telegram_notification
+
+logger = logging.getLogger(__name__)
 
 
 def _as_bool(raw: Any, default: bool) -> bool:
@@ -826,7 +829,9 @@ def _store_backlog_exec_logs_to_ledger(
         )
         stores.run_store.save(run)
     except Exception:
-        pass
+        # The execution happened; losing this save silently erases its run
+        # evidence from the ledger surface (0070 exception audit).
+        logger.exception("backlog exec: failed to persist run record %s for request %s", rid, request_id)
 
     try:
         rec = StepRecord(
@@ -851,7 +856,7 @@ def _store_backlog_exec_logs_to_ledger(
         )
         stores.ledger_store.append(rec)
     except Exception:
-        pass
+        logger.exception("backlog exec: failed to append ledger record for request %s", request_id)
 
     return {"ledger_run_id": rid, "log_artifacts": log_artifacts}
 

@@ -9,7 +9,7 @@ from pypdf import PdfReader
 from abstractruntime.workflow_bundle import open_workflow_bundle
 
 ROOT = Path(__file__).resolve().parents[1]
-BUNDLE = ROOT / "flows" / "bundles" / "dp-research@0.1.0.flow"
+BUNDLE = ROOT / "flows" / "bundles" / "deep-research@0.1.7.flow"
 READ_ONLY_TOOLS = {
     "web_search",
     "fetch_url",
@@ -28,7 +28,7 @@ FORBIDDEN_AGENT_TOOLS = {
 }
 
 
-def _stub_dp_llm_data(schema: dict | None) -> dict:
+def _stub_deep_llm_data(schema: dict | None) -> dict:
     required = set(schema.get("required") or []) if isinstance(schema, dict) else set()
     if "report_markdown" in required:
         return {
@@ -48,7 +48,7 @@ def _stub_dp_llm_data(schema: dict | None) -> dict:
                 "## References\n\n"
                 "- [bad] Bad model-written reference that should be replaced.\n"
             ),
-            "research_run_manifest": {"bundle_id": "dp-research", "status": "smoke"},
+            "research_run_manifest": {"bundle_id": "deep-research", "status": "smoke"},
             "source_ledger": [
                 {
                     "source_id": "s1",
@@ -209,22 +209,25 @@ def _edge_handles(flow: dict) -> set[tuple[str, str, str, str]]:
     }
 
 
-def test_dp_research_bundle_manifest_and_entrypoint_contract() -> None:
+def test_deep_research_bundle_manifest_and_entrypoint_contract() -> None:
     bundle = open_workflow_bundle(BUNDLE)
     manifest = bundle.manifest
 
-    assert manifest.bundle_id == "dp-research"
-    assert manifest.bundle_version == "0.1.0"
-    assert manifest.default_entrypoint == "dp-research"
-    assert [ep.flow_id for ep in manifest.entrypoints] == ["dp-research"]
+    assert manifest.bundle_id == "deep-research"
+    assert manifest.bundle_version == "0.1.7"
+    assert manifest.default_entrypoint == "deep-research"
+    assert [ep.flow_id for ep in manifest.entrypoints] == ["deep-research"]
     assert set(manifest.flows) == {
-        "dp-plan",
-        "dp-investigate",
-        "dp-review",
-        "dp-render",
-        "dp-research",
+        "deep-plan",
+        "deep-investigate",
+        "deep-review",
+        "deep-render",
+        "deep-research",
     }
-    assert manifest.metadata["family"] == "dp"
+    # Metadata block restored by flow's in-place repack (c2579 — the
+    # dp->deep rename had dropped it accidentally; pack_deep_research_bundle
+    # now owns publishing so a repack cannot forget it again).
+    assert manifest.metadata["family"] == "deep-research"
     assert manifest.metadata["control_policy"]["user_budget_control"] == "effort"
     assert manifest.metadata["control_policy"]["outer_loop"] == "review_gated_while_with_effort_budget"
     assert manifest.metadata["default_model_profile"]["override_pins"] == ["provider", "model"]
@@ -235,9 +238,9 @@ def test_dp_research_bundle_manifest_and_entrypoint_contract() -> None:
     )
 
 
-def test_dp_research_start_inputs_are_product_facing() -> None:
+def test_deep_research_start_inputs_are_product_facing() -> None:
     bundle = open_workflow_bundle(BUNDLE)
-    root = _read_flow(bundle, "dp-research")
+    root = _read_flow(bundle, "deep-research")
     start = next(node for node in root["nodes"] if node["id"] == "start")
     outputs = _pin_ids(start, "outputs")
 
@@ -246,9 +249,9 @@ def test_dp_research_start_inputs_are_product_facing() -> None:
     assert defaults == {"effort": "standard", "provider": "", "model": ""}
 
 
-def test_dp_research_exports_markdown_pdf_docx_and_audit_files() -> None:
+def test_deep_research_exports_markdown_pdf_docx_and_audit_files() -> None:
     bundle = open_workflow_bundle(BUNDLE)
-    root = _read_flow(bundle, "dp-research")
+    root = _read_flow(bundle, "deep-research")
     node_types = {_node_type(node) for node in root["nodes"]}
     end = next(node for node in root["nodes"] if node["id"] == "end")
     end_inputs = _pin_ids(end, "inputs")
@@ -272,9 +275,9 @@ def test_dp_research_exports_markdown_pdf_docx_and_audit_files() -> None:
     assert "post_export_manifest" in {str(node.get("id")) for node in root["nodes"]}
 
 
-def test_dp_research_root_enforces_review_gated_research_rounds() -> None:
+def test_deep_research_root_enforces_review_gated_research_rounds() -> None:
     bundle = open_workflow_bundle(BUNDLE)
-    root = _read_flow(bundle, "dp-research")
+    root = _read_flow(bundle, "deep-research")
     node_types = {str(node.get("id")): _node_type(node) for node in root["nodes"]}
     edges = _edge_handles(root)
 
@@ -306,7 +309,7 @@ def test_dp_research_root_enforces_review_gated_research_rounds() -> None:
     assert ("get_review_rounds_completed", "value", "render_input", "review_rounds_completed") in edges
 
 
-def test_dp_research_agents_do_not_use_dangerous_tools() -> None:
+def test_deep_research_agents_do_not_use_dangerous_tools() -> None:
     bundle = open_workflow_bundle(BUNDLE)
     for flow_id in bundle.manifest.flows:
         flow = _read_flow(bundle, flow_id)
@@ -322,7 +325,7 @@ def test_dp_research_agents_do_not_use_dangerous_tools() -> None:
             assert not (tool_set & FORBIDDEN_AGENT_TOOLS)
 
 
-def test_dp_research_bundle_does_not_wire_thinking_controls() -> None:
+def test_deep_research_bundle_does_not_wire_thinking_controls() -> None:
     bundle = open_workflow_bundle(BUNDLE)
     for flow_id in bundle.manifest.flows:
         flow = _read_flow(bundle, flow_id)
@@ -344,9 +347,9 @@ def test_dp_research_bundle_does_not_wire_thinking_controls() -> None:
             assert edge.get("targetHandle") != "thinking", f"{flow_id} wires thinking target handle"
 
 
-def test_dp_research_structured_outputs_include_audit_contracts() -> None:
+def test_deep_research_structured_outputs_include_audit_contracts() -> None:
     bundle = open_workflow_bundle(BUNDLE)
-    render = _read_flow(bundle, "dp-render")
+    render = _read_flow(bundle, "deep-render")
     writer = _node_by_id(render, "writer")
     defaults = writer["data"]["pinDefaults"]
     schema = defaults["resp_schema"]
@@ -391,9 +394,9 @@ def test_dp_research_structured_outputs_include_audit_contracts() -> None:
     json.dumps(schema)
 
 
-def test_dp_render_normalizes_user_facing_report_before_export() -> None:
+def test_deep_render_normalizes_user_facing_report_before_export() -> None:
     bundle = open_workflow_bundle(BUNDLE)
-    render = _read_flow(bundle, "dp-render")
+    render = _read_flow(bundle, "deep-render")
     edges = _edge_handles(render)
     normalize = _node_by_id(render, "normalize_report_markdown")
     code_body = str(normalize["data"].get("codeBody") or "").lower()
@@ -408,7 +411,7 @@ def test_dp_render_normalizes_user_facing_report_before_export() -> None:
     assert "references" in code_body
 
 
-def test_dp_research_bundle_loads_through_gateway_bundle_host(tmp_path: Path) -> None:
+def test_deep_research_bundle_loads_through_gateway_bundle_host(tmp_path: Path) -> None:
     from abstractgateway.hosts.bundle_host import WorkflowBundleGatewayHost
     from abstractruntime.storage.artifacts import InMemoryArtifactStore
     from abstractruntime.storage.in_memory import InMemoryLedgerStore, InMemoryRunStore
@@ -426,17 +429,17 @@ def test_dp_research_bundle_loads_through_gateway_bundle_host(tmp_path: Path) ->
         artifact_store=InMemoryArtifactStore(),
     )
 
-    assert getattr(host, "_default_bundle_id", None) == "dp-research"
+    assert getattr(host, "_default_bundle_id", None) == "deep-research"
     assert {
-        "dp-research@0.1.0:dp-plan",
-        "dp-research@0.1.0:dp-investigate",
-        "dp-research@0.1.0:dp-review",
-        "dp-research@0.1.0:dp-render",
-        "dp-research@0.1.0:dp-research",
+        "deep-research@0.1.7:deep-plan",
+        "deep-research@0.1.7:deep-investigate",
+        "deep-research@0.1.7:deep-review",
+        "deep-research@0.1.7:deep-render",
+        "deep-research@0.1.7:deep-research",
     }.issubset(set(host.specs))
 
 
-def test_dp_research_mocked_run_exports_report_files(
+def test_deep_research_mocked_run_exports_report_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -458,7 +461,7 @@ def test_dp_research_mocked_run_exports_report_files(
         def _llm_stub(run, effect, default_next_node):
             del run, default_next_node
             payload = dict(effect.payload or {})
-            data = _stub_dp_llm_data(payload.get("response_schema"))
+            data = _stub_deep_llm_data(payload.get("response_schema"))
             return EffectOutcome.completed(
                 {
                     "content": json.dumps(data, separators=(",", ":")),
@@ -490,8 +493,8 @@ def test_dp_research_mocked_run_exports_report_files(
     )
 
     run_id = host.start_run(
-        flow_id="dp-research",
-        bundle_id="dp-research",
+        flow_id="deep-research",
+        bundle_id="deep-research",
         input_data={
             "request": "smoke",
             "viewpoint": "test",
@@ -566,14 +569,14 @@ def test_dp_research_mocked_run_exports_report_files(
     )
     assert output["export_status"] == {"smoke": True}
     assert manifest["model_export_status"] == {"smoke": True}
-    assert manifest["research_run_manifest"] == {"bundle_id": "dp-research", "status": "smoke"}
+    assert manifest["research_run_manifest"] == {"bundle_id": "deep-research", "status": "smoke"}
 
     child_workflows = {
         child.workflow_id
         for child in run_store.list_children(parent_run_id=run_id)
         if child.status == RunStatus.COMPLETED
     }
-    assert "dp-research@0.1.0:dp-plan" in child_workflows
-    assert "dp-research@0.1.0:dp-investigate" in child_workflows
-    assert "dp-research@0.1.0:dp-review" in child_workflows
-    assert "dp-research@0.1.0:dp-render" in child_workflows
+    assert "deep-research@0.1.7:deep-plan" in child_workflows
+    assert "deep-research@0.1.7:deep-investigate" in child_workflows
+    assert "deep-research@0.1.7:deep-review" in child_workflows
+    assert "deep-research@0.1.7:deep-render" in child_workflows

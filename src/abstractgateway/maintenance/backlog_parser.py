@@ -9,7 +9,7 @@ from typing import Iterable, List, Optional, Tuple
 _H1_RE = re.compile(r"^#\s+(?P<id>\d+)-(?P<pkg>[^:]+)\s*:\s*(?P<title>.+?)\s*$")
 _H2_RE = re.compile(r"^##\s+(?P<name>.+?)\s*$")
 _META_TYPE_RE = re.compile(r"^>\s*type\s*:\s*(?P<type>[a-zA-Z0-9_-]+)\s*$", re.IGNORECASE)
-_TITLE_TYPE_RE = re.compile(r"^\[(?P<type>bug|feature|task)\]\s*(?P<rest>.*)$", re.IGNORECASE)
+_TITLE_TYPE_RE = re.compile(r"^\[(?P<type>bug|feature|improvement|task)\]\s*(?P<rest>.*)$", re.IGNORECASE)
 _META_SOURCE_REPORT_RELPATH_RE = re.compile(r"^>\s*source\s+report\s+relpath\s*:\s*(?P<relpath>.+?)\s*$", re.IGNORECASE)
 _META_SOURCE_REPORT_ID_RE = re.compile(r"^>\s*source\s+report\s+id\s*:\s*(?P<id>.+?)\s*$", re.IGNORECASE)
 _INFER_SOURCE_REPORT_RELPATH_RE = re.compile(r"(?P<relpath>(?:bug_reports|feature_requests)/[A-Za-z0-9._-]{1,220}\.md)")
@@ -45,7 +45,7 @@ class BacklogItem:
     item_id: int
     package: str
     title: str
-    task_type: str = "task"  # bug|feature|task
+    task_type: str = "task"  # bug|feature|improvement|task
     summary: str = ""
     source_report_relpath: str = ""
     source_report_id: str = ""
@@ -85,8 +85,13 @@ def _parse_summary(text: str) -> str:
 
 
 def _normalize_task_type(raw: str) -> Optional[str]:
+    # The ruled enum (semantics decision:workitem-type-enum): bug | feature |
+    # improvement | task. "improvement" was missing here while backlog_dor's
+    # _DOR_TYPES carried it — the list parser coerced it to task upstream, so
+    # the DoR type refusal was unreachable over HTTP (skill's fable5 c3546).
+    # One set, kept in sync with backlog_dor._DOR_TYPES.
     t = str(raw or "").strip().lower()
-    if t in {"bug", "feature", "task"}:
+    if t in {"bug", "feature", "improvement", "task"}:
         return t
     return None
 

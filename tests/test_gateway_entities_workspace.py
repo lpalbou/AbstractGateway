@@ -101,6 +101,7 @@ def test_tool_policy_get_put_roundtrip():
         from abstractruntime.identity.tool_policy import (
             ALL_TOOL_NAMES,
             SLEEP_DEFAULT_TOOL_NAMES,
+            _default_tools,
         )
 
         before = client.get("/api/gateway/entities/Castor/tool-policy").json()
@@ -111,11 +112,18 @@ def test_tool_policy_get_put_roundtrip():
         # included — a wrong extra tool or a reorder must fail, not pass a
         # loose membership check).
         assert set(before["phases"]) == {"visit", "work", "personal", "sleep"}
-        assert before["phases"]["visit"]["tools"] == list(ALL_TOOL_NAMES)
-        assert before["phases"]["work"]["tools"] == list(ALL_TOOL_NAMES)
-        assert before["phases"]["personal"]["tools"] == list(ALL_TOOL_NAMES)
+        # The ruled default is the full set MINUS default-OFF tools:
+        # execute_command (tier2) ships OFF everywhere (laurent's sandbox is
+        # opt-in per phase), so it is in ALL_TOOL_NAMES but not the default
+        # grant (2026-07-19). Compare against the runtime default fold, not a
+        # bare ALL_TOOL_NAMES, so the exact-list intent survives the add.
+        default_full = list(_default_tools("visit", enable_workspace=True))
+        assert "execute_command" not in default_full  # default-OFF, in ALL but not granted
+        assert before["phases"]["visit"]["tools"] == default_full
+        assert before["phases"]["work"]["tools"] == default_full
+        assert before["phases"]["personal"]["tools"] == default_full
         assert before["phases"]["sleep"]["tools"] == list(SLEEP_DEFAULT_TOOL_NAMES)
-        assert set(before["tiers"]) == {"tier1", "workspace"}
+        assert set(before["tiers"]) == {"tier1", "tier2", "workspace"}
 
         put = client.put(
             "/api/gateway/entities/Castor/tool-policy",
@@ -123,7 +131,14 @@ def test_tool_policy_get_put_roundtrip():
         )
         assert put.status_code == 200, put.text
         after = put.json()
-        assert after["phases"]["visit"] == {"tools": ["diary_list", "diary_read"], "source": "policy-file", "notes": []}
+        # Per-key (the c69 wave added the per-cell `executable` map — a
+        # dict-equality pin here breaks on every additive field).
+        assert after["phases"]["visit"]["tools"] == ["diary_list", "diary_read"]
+        assert after["phases"]["visit"]["source"] == "policy-file"
+        assert after["phases"]["visit"]["notes"] == []
+        # The executable map covers exactly the granted tools (c72 shape).
+        assert set(after["phases"]["visit"]["executable"]) == {"diary_list", "diary_read"}
+        assert after["phases"]["visit"]["executable"]["diary_list"]["ok"] is True
         assert after["phases"]["personal"]["tools"] == ["diary_list"]
 
         # Migration window (N7 contract, runtime c672 + c786 rename): a legacy

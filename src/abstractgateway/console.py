@@ -242,7 +242,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 		      padding: 8px 10px;
 		      min-height: 0;
 		      border: none;
-		      border-radius: 8px;
+		      border-radius: var(--radius-md);
 		      background: transparent;
 		      color: var(--text-secondary);
 		      cursor: pointer;
@@ -283,7 +283,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      padding: 10px 12px;
 	      margin-bottom: 14px;
 	      border: 1px solid var(--line-soft);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      background: color-mix(in srgb, var(--text) 3%, transparent);
 	      color: var(--muted);
 	    }
@@ -292,7 +292,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    section {
 	      border: 1px solid var(--line-soft);
 	      background: var(--panel);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      padding: 16px;
 	      box-shadow: var(--shadow-card, 0 1px 2px rgba(0, 0, 0, .10));
     }
@@ -304,7 +304,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       display: inline-grid;
       place-items: center;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-md);
       color: var(--accent);
       background: var(--accent-subtle);
       font-size: 14px;
@@ -396,7 +396,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent);
     }
     button:disabled { opacity: .55; cursor: not-allowed; }
-    .button-icon { font-size: 14px; line-height: 1; }
+    .button-icon { font-size: 14px; line-height: 1; display: inline-flex; align-items: center; }
+    /* Registry SVGs (card 015 wave 3): stroke icons inherit currentColor so
+       every button/chip state tints its glyph for free. */
+    .button-icon svg, .section-icon svg, .chip-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .section-icon svg { width: 17px; height: 17px; }
+    .chip-icon { display: inline-flex; align-items: center; margin-right: 5px; }
+    .chip-icon svg { width: 12px; height: 12px; }
     table { width: 100%; border-collapse: collapse; }
     th { border-bottom: 1px solid var(--ui-border-2); }
     td { border-bottom: 1px solid var(--line-soft); }
@@ -405,14 +411,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     /* Polarity-safe hover wash (aesthetics adversary P0-3: the white literal
        was invisible on the light theme). */
     tbody tr:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
-    code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
+    code { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 2px 6px; }
     .muted { color: var(--muted); }
     .message { margin-top: 12px; color: var(--muted); overflow-wrap: anywhere; }
     /* Error text derives from the danger token (the old #ff9caf pale pink was
        unreadable on white). */
     .message.error { color: color-mix(in srgb, var(--danger) 72%, var(--text)); }
     .message.ok { color: var(--ok); }
-    .issued { margin: 12px 0; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 8px; padding: 10px; overflow-wrap: anywhere; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .issued { margin: 12px 0; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: var(--radius-md); padding: 10px; overflow-wrap: anywhere; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 	    .hidden { display: none !important; }
 	    body:not(.signed-in) .console-shell {
 	      display: grid;
@@ -421,8 +427,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    body:not(.signed-in) .session-only { display: none !important; }
 	    body.signed-in #login-section { display: none !important; }
-	    .pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; color: var(--muted); margin: 0 6px 6px 0; }
-	    .badge, .state-pill { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+	    /* ONE chip recipe (card 015 wave 3: the kit's measured AA color-mix
+	       derivation, mapped over every pill family — class names and state
+	       words preserved by ruling; families now differ only in their state
+	       color variables, never in shape/typography). */
+	    .pill, .badge, .state-pill, .entity-chip, .entity-warn-pill, .entity-live-badge {
+	      display: inline-flex; align-items: center; gap: 6px;
+	      border: 1px solid var(--line); border-radius: 999px;
+	      padding: 2px 8px; color: var(--muted);
+	      font-size: 12px; white-space: nowrap;
+	    }
+	    .pill { padding: 3px 8px; margin: 0 6px 6px 0; }
 	    .state-pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--success) 34%, transparent); background: color-mix(in srgb, var(--success) 8%, transparent); }
 	    .state-pill.off { color: var(--warn); border-color: color-mix(in srgb, var(--warning) 35%, transparent); background: color-mix(in srgb, var(--warning) 8%, transparent); }
 	    .state-pill.covered { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 36%, transparent); background: color-mix(in srgb, var(--info) 8%, transparent); }
@@ -441,9 +456,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     .danger-text { color: color-mix(in srgb, var(--danger) 72%, var(--text)); }
 	    /* ---- Summoned Entities ---- */
 	    .entity-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
-	    .entity-chip { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--text) 3%, transparent); }
+	    /* Chip family deltas only — the shared .chip recipe above owns shape. */
+	    .entity-chip { padding: 3px 10px; background: color-mix(in srgb, var(--text) 3%, transparent); }
 	    .entity-chip-locked { color: var(--text-secondary); border-color: color-mix(in srgb, var(--accent) 30%, transparent); background: var(--accent-subtle); }
-	    .entity-advanced { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: color-mix(in srgb, var(--text) 2%, transparent); }
+	    .entity-advanced { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 12px; margin: 10px 0; background: color-mix(in srgb, var(--text) 2%, transparent); }
 	    .entity-advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 	    .entity-config-block { margin: 12px 0 4px; }
 	    .entity-config-group {
@@ -464,7 +480,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-matrix-table tbody th { text-align: left; font-weight: 500; color: var(--text); }
 	    .entity-matrix-table thead th { color: var(--muted); text-transform: capitalize; }
 	    .entity-subtabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--line-soft); }
-	    .entity-subtab { background: transparent; color: var(--text-secondary); border-radius: 8px; padding: 6px 12px; font-size: 12px; }
+	    .entity-subtab { background: transparent; color: var(--text-secondary); border-radius: var(--radius-md); padding: 6px 12px; font-size: 12px; }
 	    .entity-subtab:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); filter: none; }
 	    .entity-subtab.active { color: var(--text); background: rgba(148, 163, 184, 0.16); font-weight: 600; outline: none; }
 	    .entity-subpanel { padding: 4px 0 8px; }
@@ -479,7 +495,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       AND border all derive from server truth — text always carries the
 	       state word so color is never the sole channel. */
 	    .entity-live-line { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 10px; font-size: 13px; }
-	    .entity-live-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 12px; font-size: 12px; font-weight: 600; border: 1.5px solid var(--line); color: var(--muted); }
+	    .entity-live-badge { padding: 3px 12px; font-weight: 600; border-width: 1.5px; }
 	    .entity-live-badge.phase-none { color: var(--ok); border-color: color-mix(in srgb, var(--success) 50%, transparent); background: color-mix(in srgb, var(--success) 8%, transparent); }
 	    .entity-live-badge.phase-visit { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 50%, transparent); background: color-mix(in srgb, var(--info) 10%, transparent); }
 	    .entity-live-badge.phase-work { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 60%, transparent); background: color-mix(in srgb, var(--info) 12%, transparent); }
@@ -500,17 +516,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      font-weight: 700;
 	    }
 	    .entity-state-btn.pressed:disabled { opacity: 1; cursor: default; }
-	    .owntime-btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 10px 16px; font-size: 13px; font-weight: 600; border: 2px solid var(--line); background: rgba(255, 255, 255, .03); color: var(--muted); margin: 6px 0; }
+	    .owntime-btn { display: inline-flex; align-items: center; gap: 8px; border-radius: var(--radius-lg); padding: 10px 16px; font-size: 13px; font-weight: 600; border: 2px solid var(--line); background: rgba(255, 255, 255, .03); color: var(--muted); margin: 6px 0; }
 	    .owntime-btn.on-ticking { color: var(--ok); border-color: rgba(52, 211, 153, .7); background: rgba(52, 211, 153, .14); }
 	    .owntime-btn.on-parked { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 60%, transparent); background: color-mix(in srgb, var(--info) 10%, transparent); }
 	    .owntime-btn.stopping { color: var(--warn); border-color: rgba(245, 158, 11, .6); background: color-mix(in srgb, var(--warning) 10%, transparent); }
-	    .entity-warn-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 11px; color: var(--warn); border: 1px solid rgba(245, 158, 11, .4); background: rgba(245, 158, 11, .07); margin-left: 6px; }
+	    .entity-warn-pill { font-size: 11px; color: var(--warn); border-color: color-mix(in srgb, var(--warning) 40%, transparent); background: color-mix(in srgb, var(--warning) 7%, transparent); margin-left: 6px; }
+	    /* Drive bars (cognition-health directive): RATIO with both counts
+	       visible — never a bare percentage; all-resolved/all-explored gets
+	       the amber never-100% cue (nothing open = no pull forward). */
+	    .entity-drives { display: grid; gap: 6px; margin: 4px 0 12px; max-width: 560px; }
+	    .drive-row { display: grid; grid-template-columns: 88px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
+	    .drive-label { color: var(--muted); font-weight: 600; }
+	    .drive-track { height: 8px; border-radius: 999px; background: rgba(255, 255, 255, .06); border: 1px solid var(--line); overflow: hidden; }
+	    .drive-fill { height: 100%; border-radius: 999px; background: color-mix(in srgb, var(--success) 70%, transparent); transition: width .3s ease; }
+	    .drive-fill.saturated { background: color-mix(in srgb, var(--warning) 75%, transparent); }
+	    .drive-counts { color: var(--muted); white-space: nowrap; }
+	    .drive-counts .drive-sat { color: var(--warn); font-weight: 600; }
 	    .tpl-spark { width: 100%; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; line-height: 1.5; }
 	    .entity-checkbox input { width: auto; }
 	    .entity-prompt-layers { display: grid; gap: 10px; margin: 8px 0; }
 	    .entity-prompt-layer textarea { width: 100%; font-family: inherit; font-size: 12px; }
 	    .entity-prompt-preview { white-space: pre-wrap; font-size: 11px; color: var(--muted); max-height: 320px; overflow: auto; }
-	    .entity-chat-transcript { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; min-height: 120px; max-height: 380px; overflow-y: auto; display: grid; gap: 8px; background: rgba(255, 255, 255, .015); }
+	    .entity-chat-transcript { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 12px; margin: 8px 0; min-height: 120px; max-height: 380px; overflow-y: auto; display: grid; gap: 8px; background: rgba(255, 255, 255, .015); }
 	    .entity-chat-line { display: flex; gap: 10px; font-size: 13px; }
 	    .entity-chat-you { justify-content: flex-end; }
 	    .entity-chat-bubble { max-width: min(86%, 72ch); }
@@ -531,14 +558,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .model-picker__note { color: var(--muted); font-size: 12px; line-height: 1.4; text-transform: none; letter-spacing: 0; }
 	    .model-summary {
 	      border: 1px solid var(--line);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      padding: 10px 12px;
 	      background: rgba(255, 255, 255, .025);
 	      color: var(--muted);
 	    }
 	    .advanced-panel {
 	      border: 1px solid var(--line-soft);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      padding: 0;
 	      background: rgba(0, 0, 0, .12);
 	    }
@@ -553,7 +580,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .connection-wizard { display: grid; gap: 16px; }
 	    .wizard-step {
 	      border: 1px solid var(--line-soft);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      padding: 12px;
 	      background: rgba(255, 255, 255, .02);
 	    }
@@ -591,7 +618,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .provider-preset span { display: block; color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.3; margin-top: 3px; }
 	    .setup-summary {
 	      border: 1px solid color-mix(in srgb, var(--info) 22%, transparent);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      padding: 10px 12px;
 	      background: color-mix(in srgb, var(--info) 6%, transparent);
 	      color: var(--muted);
@@ -600,7 +627,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .af-gateway-signin {
 	      width: min(760px, 100%);
 	      border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      padding: 24px;
 	      /* Theme-var surface: the old hardcoded dark gradient stayed dark in
 	         the light theme while --text went near-black (unreadable login). */
@@ -624,7 +651,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      display: grid;
 	      place-items: center;
 	      flex: 0 0 auto;
-	      border-radius: 24px;
+	      border-radius: var(--radius-lg);
 	      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
 	      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--error) 20%, transparent));
 	      color: rgba(255, 255, 255, .86);
@@ -683,7 +710,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      max-height: calc(100vh - 44px);
 	      overflow: auto;
 	      border: 1px solid var(--line);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      background: var(--panel);
 	      box-shadow: 0 28px 70px rgba(0, 0, 0, .46);
 	      padding: 18px;
@@ -697,7 +724,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      flex-direction: column;
 	      overflow: hidden;
 	      border: 1px solid rgba(255, 255, 255, .12);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      background: var(--bg-secondary);
 	      box-shadow: 0 24px 80px rgba(0, 0, 0, .55);
 	    }
@@ -866,7 +893,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      min-height: 38px;
 	      padding: 0;
 	      border: 1px solid var(--line-soft);
-	      border-radius: 13px;
+	      border-radius: var(--radius-lg);
 	      background: rgba(255, 255, 255, .03);
 	      color: var(--text-secondary);
 	      text-align: center;
@@ -890,7 +917,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      place-items: center;
 	      width: 30px;
 	      height: 30px;
-	      border-radius: 11px;
+	      border-radius: var(--radius-lg);
 	      background: var(--accent-subtle);
 	      color: var(--accent);
 	      font-weight: 700;
@@ -1055,7 +1082,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .sandbox-message-body.markdown code {
 	      border: 1px solid rgba(255, 255, 255, .10);
-	      border-radius: 6px;
+	      border-radius: var(--radius-sm);
 	      padding: 1px 5px;
 	      background: rgba(0, 0, 0, .26);
 	      color: var(--text-primary);
@@ -1066,7 +1093,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      overflow: auto;
 	      margin: 10px 0;
 	      border: 1px solid var(--line-soft);
-	      border-radius: 10px;
+	      border-radius: var(--radius-lg);
 	      padding: 10px 12px;
 	      background: rgba(0, 0, 0, .28);
 	    }
@@ -1124,7 +1151,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      max-width: 100%;
 	      max-height: min(440px, 48vh);
 	      border: 1px solid var(--line-soft);
-	      border-radius: 10px;
+	      border-radius: var(--radius-lg);
 	      background: rgba(0, 0, 0, .22);
 	      object-fit: contain;
 	    }
@@ -1132,9 +1159,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      width: 100%;
 	      min-width: 260px;
 	    }
+	    .default-modal-test {
+	      display: grid;
+	      gap: 8px;
+	      font-size: var(--font-size-sm);
+	      color: var(--text-muted);
+	    }
+	    .default-modal-test:empty { display: none; }
+	    .default-modal-test .sandbox-artifact audio { width: 100%; min-width: 220px; }
 	    .sandbox-media-error {
 	      border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
-	      border-radius: 8px;
+	      border-radius: var(--radius-md);
 	      padding: 8px 10px;
 	      color: color-mix(in srgb, var(--danger) 72%, var(--text));
 	      background: color-mix(in srgb, var(--danger) 8%, transparent);
@@ -1175,7 +1210,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      gap: 12px;
 	      align-items: end;
 	      border: 1px solid var(--line-soft);
-	      border-radius: 26px;
+	      border-radius: var(--radius-lg);
 	      padding: 10px 12px;
 	      /* Theme-safe composer pill (was a near-black literal — a dark slab
 	         inside the light theme's white page). */
@@ -1228,7 +1263,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      min-width: 40px;
 	      height: 40px;
 	      min-height: 40px;
-	      border-radius: 14px;
+	      border-radius: var(--radius-lg);
 	      padding: 0;
 	    }
 	    .sandbox-send {
@@ -1281,7 +1316,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .theme-swatch {
 	      width: 16px;
 	      height: 16px;
-	      border-radius: 4px;
+	      border-radius: var(--radius-sm);
 	      border: 1px solid rgba(255, 255, 255, .16);
 	    }
 	    .icon-only {
@@ -1302,7 +1337,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      body:not(.signed-in) .console-shell { align-content: start; padding-block: 18px; }
 	      .af-gateway-signin { padding: 18px; }
 	      .af-gateway-signin__hero { gap: 16px; }
-	      .af-gateway-signin__mark { width: 56px; height: 56px; border-radius: 18px; font-size: 26px; }
+	      .af-gateway-signin__mark { width: 56px; height: 56px; border-radius: var(--radius-lg); font-size: 26px; }
 	      .af-gateway-signin__form { grid-template-columns: 1fr; }
 	      .appearance-form { grid-template-columns: 1fr; }
 	      .provider-modal .provider-config-form { grid-template-columns: 1fr; }
@@ -1404,7 +1439,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◎</span><span>Runtimes</span></h2>
 	                  <p class="section-note">Every execution plane on this gateway: the default runtime, each user's own runtime, and each entity's own runtime. Click one to inspect its runs and sessions.</p>
 	                </div>
-	                <button id="runtimes-refresh" class="secondary icon-only" title="Reload the runtime inventory" aria-label="Refresh runtimes"><span class="button-icon" aria-hidden="true">↻</span></button>
+	                <button id="runtimes-refresh" class="secondary icon-only" title="Reload the runtime inventory" aria-label="Refresh runtimes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
 	              <div id="runtimes-message" class="message"></div>
 	              <table>
@@ -1435,7 +1470,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div class="inline">
 	                  <label>Status<select id="runs-status" title="Filter runs by their durable status"><option value="">all</option><option value="running">running</option><option value="waiting">waiting</option><option value="completed">completed</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select></label>
 	                  <label class="entity-checkbox" title="Hide child runs — one row per top-level run"><input id="runs-root-only" type="checkbox" checked> root runs only</label>
-	                  <button id="runs-refresh" class="secondary icon-only" title="Reload the run list" aria-label="Refresh runs"><span class="button-icon" aria-hidden="true">↻</span></button>
+	                  <button id="runs-refresh" class="secondary icon-only" title="Reload the run list" aria-label="Refresh runs"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	                </div>
 	              </div>
 	              <div id="runs-message" class="message"></div>
@@ -1451,7 +1486,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◈</span><span>Data &amp; Caches</span></h2>
 	                  <p class="section-note">Every data home registered on this machine (model caches, artifact stores, entity homes, logs) with live sizes. Protected rows refuse purging by their owner's rule — entity homes are never purgeable here.</p>
 	                </div>
-	                <button id="data-homes-refresh" class="secondary icon-only" title="Reload data homes with live sizes" aria-label="Refresh data homes"><span class="button-icon" aria-hidden="true">↻</span></button>
+	                <button id="data-homes-refresh" class="secondary icon-only" title="Reload data homes with live sizes" aria-label="Refresh data homes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
 	              <div id="data-homes-message" class="message"></div>
 	              <table>
@@ -1507,7 +1542,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <h2 class="section-title"><span class="section-icon" aria-hidden="true">◆</span><span>Multimodal Capabilities</span></h2>
 	              <p id="defaults-scope" class="section-note">Sign in to edit provider/model defaults for this Gateway runtime.</p>
 	            </div>
-	            <button id="refresh-catalog" class="secondary" title="Reload providers and capability defaults" aria-label="Refresh catalog"><span class="button-icon" aria-hidden="true">↻</span><span>Refresh</span></button>
+	            <button id="refresh-catalog" class="secondary" title="Reload providers and capability defaults" aria-label="Refresh catalog"><span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Refresh</span></button>
 	          </div>
 		          <table class="capability-table">
 		            <thead><tr><th>Route</th><th>Capability</th><th>Provider</th><th>Model</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
@@ -1583,7 +1618,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div class="section-actions">
 	                  <button id="open-create-entity" title="Summon a new entity from a spark template (the name is permanent — validated before anything is written)" aria-label="Summon entity"><span class="button-icon" aria-hidden="true">☾</span><span>Summon entity</span></button>
 	                  <button id="open-templates" class="secondary" title="View, edit, and version the spark templates entities are born from" aria-label="Manage templates"><span class="button-icon" aria-hidden="true">✎</span><span>Templates</span></button>
-	                  <button id="entities-refresh" class="secondary icon-only" title="Reload the entity roster" aria-label="Refresh entities"><span class="button-icon" aria-hidden="true">↻</span></button>
+	                  <button id="entities-refresh" class="secondary icon-only" title="Reload the entity roster" aria-label="Refresh entities"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	                </div>
 	              </div>
 	              <table>
@@ -1595,7 +1630,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <section id="entity-manage-section" class="session-only hidden">
 	              <div class="section-head">
 	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⚙</span><span>Manage <span id="entity-manage-name">entity</span></span></h2>
+	                  <h2 class="section-title"><span class="section-icon icon-gear" aria-hidden="true">⚙</span><span>Manage <span id="entity-manage-name">entity</span></span></h2>
 	                  <p class="section-note" id="entity-manage-sub">Lifecycle, substrate, capabilities, and prompt for this summoned entity.</p>
 	                </div>
                 <button id="entity-manage-close" class="secondary" title="Back to the entities list"><span class="button-icon" aria-hidden="true">←</span><span>Entities</span></button>
@@ -1611,6 +1646,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </nav>
 	              <div id="entity-subpanel-overview" class="entity-subpanel">
 	                <div id="entity-cognition-line" class="section-note"></div>
+	                <div id="entity-drives" class="entity-drives hidden" title="Drive ratios from the entity's own memory: open questions and interests are the pull forward — never-100% is the design, not a defect."></div>
+	                <details id="entity-candidates-box" class="entity-advanced hidden"><summary>Sleep candidates awaiting review (<span id="entity-candidates-count">0</span>)</summary>
+	                  <div class="section-note">Sleep proposes; waking evidence disposes. Promote needs two independent corroborating records; reject needs a reason (the honest no — judgment, not erasure).</div>
+	                  <div id="entity-candidates-list"></div>
+	                </details>
 	                <div id="entity-overview" class="entity-overview"></div>
 	                <button id="entity-verify" class="secondary" title="Verify the memory hash chain and spark attestation — pure read, never deposits usage"><span class="button-icon" aria-hidden="true">✓</span><span>Verify chain</span></button>
 	                <div id="entity-verify-out" class="section-note"></div>
@@ -1674,16 +1714,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  </details>
 	                  <div id="entity-loop-out" class="section-note"></div>
 	                </div>
-	                <div class="entity-config-group entity-config-group-danger">
-	                  <h3 class="entity-config-title entity-danger-title">Re-embed (repair) <span class="entity-config-hint">CRITICAL repair verb: re-derives every vector with the gateway's resolved embedder (atomic swap). The model field is a verification — type the resolved embedder shown below.</span></h3>
-	                  <div id="entity-embedding-status" class="section-note"></div>
-	                  <div class="inline">
-	                    <label>Embedding model (verification)<input id="entity-reembed-model" placeholder="must match the resolved embedder"></label>
-	                    <label>Reason<input id="entity-reembed-reason" placeholder="why — journaled + host-marked"></label>
-	                  </div>
-	                  <button id="entity-reembed" class="danger" title="CRITICAL repair: re-derive every memory vector with the gateway's resolved embedder (atomic swap; journaled + host-marked)"><span class="button-icon" aria-hidden="true">⟳</span><span>Re-embed</span></button>
-	                  <div id="entity-reembed-out" class="section-note"></div>
-	                </div>
 	              </div>
 	              <div id="entity-subpanel-substrate" class="entity-subpanel hidden">
 	                <h3 class="entity-config-title">Substrate <span class="entity-config-hint">the entity's mind — provider + model. Blank source = inherits the gateway default.</span></h3>
@@ -1694,9 +1724,53 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                </div>
 	                <button id="entity-substrate-save" class="secondary" title="Persist this provider/model pair as the entity's mind substrate (host-marked)"><span class="button-icon" aria-hidden="true">✓</span><span>Save substrate</span></button>
 	                <div id="entity-substrate-out" class="section-note"></div>
+	                <!-- Card 015 wave 3 (disclosure P0-3, second half): the re-embed
+	                     repair belongs beside the MIND it repairs (embedding = the
+	                     semantic space), behind a danger-zone disclosure — not in
+	                     Lifecycle where it read as a routine state verb. Element ids
+	                     unchanged (the JS wiring is id-based). -->
+	                <details class="entity-advanced entity-config-group-danger">
+	                  <summary class="entity-danger-title">Danger zone — Re-embed (CRITICAL repair)</summary>
+	                  <div class="entity-config-block">
+	                    <h3 class="entity-config-title entity-danger-title">Re-embed (repair) <span class="entity-config-hint">CRITICAL repair verb: re-derives every vector with the gateway's resolved embedder (atomic swap). The model field is a verification — type the resolved embedder shown below.</span></h3>
+	                    <div id="entity-embedding-status" class="section-note"></div>
+	                    <div class="inline">
+	                      <label>Embedding model (verification)<input id="entity-reembed-model" placeholder="must match the resolved embedder"></label>
+	                      <label>Reason<input id="entity-reembed-reason" placeholder="why — journaled + host-marked"></label>
+	                    </div>
+	                    <button id="entity-reembed" class="danger" title="CRITICAL repair: re-derive every memory vector with the gateway's resolved embedder (atomic swap; journaled + host-marked)"><span class="button-icon icon-retry" aria-hidden="true">⟳</span><span>Re-embed</span></button>
+	                    <div id="entity-reembed-out" class="section-note"></div>
+	                  </div>
+	                </details>
+	                <div class="entity-config-group">
+	                  <h3 class="entity-config-title">Voice <span class="entity-config-hint">the entity's spoken voice — a full provider/model/voice triple stored in the home (voice.yaml, marker-first). Unset = the gateway's default voice chain.</span></h3>
+	                  <div id="entity-voice-current" class="section-note"></div>
+	                  <div class="inline">
+	                    <label>Provider<select id="entity-voice-provider"><option value="">Choose a provider…</option></select></label>
+	                    <label>Model<select id="entity-voice-model" disabled><option value="">Select provider first</option></select></label>
+	                    <label>Voice<select id="entity-voice-voice" disabled><option value="">Select model first</option></select></label>
+	                  </div>
+	                  <div class="entity-btn-row">
+	                    <button id="entity-voice-audition" class="secondary" title="Hear the CURRENT SELECTION before saving — synthesizes a sample through the entity's own TTS lane"><span class="button-icon" aria-hidden="true">▶</span><span>Audition</span></button>
+	                    <button id="entity-voice-save" class="secondary" title="Persist this voice triple as the entity's own voice (host-marked voice_changed)"><span class="button-icon" aria-hidden="true">✓</span><span>Save voice</span></button>
+	                    <button id="entity-voice-clear" class="secondary" title="Remove the entity's own voice — falls back down the gateway default chain (host-marked)"><span class="button-icon" aria-hidden="true">×</span><span>Clear</span></button>
+	                  </div>
+	                  <div id="entity-voice-out" class="section-note"></div>
+	                </div>
 	              </div>
 	              <div id="entity-subpanel-tools" class="entity-subpanel hidden">
-	                <h3 class="entity-config-title">Per-phase capabilities <span class="entity-config-hint">the operator's word per phase. Only changed phases are written; a phase cleared of every tool resets to the framework default (or denies all, below).</span></h3>
+	                <div class="entity-config-group">
+	                  <h3 class="entity-config-title">Work order <span class="entity-config-hint">a mission the entity works instead of its own time. Its PRESENCE shifts the next day-open to phase=work — the WORK column grants below apply (execute_command included where you grant it). The entity declares done/blocked; you never write for it, and clearing archives visibly.</span></h3>
+	                  <div id="entity-workorder-current" class="section-note"></div>
+	                  <label>Order<textarea id="entity-workorder-text" rows="4" placeholder="the task, in plain words — it rides the entity's system prompt all work day"></textarea></label>
+	                  <div class="entity-btn-row">
+	                    <button id="entity-workorder-save" class="secondary" title="Set this as the standing work order (marker-first; the loop enters phase=work at its next day-open)"><span class="button-icon" aria-hidden="true">✓</span><span>Set work order</span></button>
+	                    <button id="entity-workorder-clear" class="secondary" title="Archive + remove the standing order — personal time returns next day-open"><span class="button-icon" aria-hidden="true">×</span><span>Clear (personal returns)</span></button>
+	                  </div>
+	                  <div id="entity-workorder-out" class="section-note"></div>
+	                  <details class="entity-advanced"><summary>Completed orders (the entity's verdicts, never deleted)</summary><pre id="entity-workorder-history" class="entity-prompt-preview"></pre></details>
+	                </div>
+	                <h3 class="entity-config-title">Per-phase capabilities <span class="entity-config-hint">the operator's word per phase. Only changed phases are written; a phase cleared of every tool resets to the framework default (or denies all, below). The WORK column applies on a work-order day; execute_command lets the entity run commands then.</span></h3>
 	                <div id="entity-manage-matrix" class="entity-matrix"></div>
 	                <label id="entity-tools-denyall-row" class="entity-checkbox"><input id="entity-tools-denyall" type="checkbox"> treat fully-cleared phases as DENY-ALL (explicit empty grant) instead of reset-to-default</label>
 	                <div class="entity-btn-row">
@@ -1732,11 +1806,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label>Model<select id="modal-default-model"></select></label>
 	          <label id="modal-default-voice-label" class="hidden">Voice<select id="modal-default-voice"></select></label>
 	          <div id="default-modal-message" class="message"></div>
+	          <div id="default-modal-test" class="default-modal-test"></div>
 	        </div>
 	      </div>
 	      <div class="modal-actions">
 	        <button id="close-default-modal" class="secondary">Cancel</button>
 	        <button id="clear-default" class="secondary" title="Remove this override — the route falls back to what it inherits"><span class="button-icon" aria-hidden="true">×</span><span>Clear</span></button>
+	        <button id="test-default" class="secondary hidden" title="Test this selection with a real generation through the production lane — for voice routes, hear the selected voice before saving"><span class="button-icon" aria-hidden="true">▶</span><span>Test</span></button>
 	        <button id="save-default" title="Persist this provider/model as the capability default"><span class="button-icon" aria-hidden="true">✓</span><span>Save</span></button>
 	      </div>
 	    </div>
@@ -1779,7 +1855,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	      <div class="modal-actions">
 	        <button id="cancel-endpoint-profile" class="secondary">Cancel</button>
-	        <button id="discover-endpoint-models" type="button" class="secondary" title="Probe the endpoint and list the models it actually serves"><span class="button-icon" aria-hidden="true">↻</span><span>Test</span></button>
+	        <button id="discover-endpoint-models" type="button" class="secondary" title="Probe the endpoint and list the models it actually serves"><span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Test</span></button>
 	        <button id="save-endpoint-profile" title="Store this connection server-side and expose it as a provider"><span class="button-icon" aria-hidden="true">✓</span><span>Confirm</span></button>
 	      </div>
 	    </div>
@@ -1948,6 +2024,33 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
+	    // Page-wide inline-SVG icon registry (card 015 wave 3: one glyph = one
+	    // verb; 24x24 stroke, currentColor — no emoji/unicode ambiguity, no
+	    // VS15 platform lottery). The sandbox's local svgIcon() promoted here.
+	    function svgIcon(paths, className = "") {
+	      return `<svg class="${esc(className)}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${paths}</svg>`;
+	    }
+	    const ICONS = {
+	      refresh: svgIcon('<path d="M20 11a8 8 0 1 0-2.3 6.3"></path><path d="M20 5v6h-6"></path>'),
+	      retry: svgIcon('<path d="M4 13a8 8 0 1 0 2.3-6.3"></path><path d="M4 19v-6h6"></path>'),
+	      gear: svgIcon('<circle cx="12" cy="12" r="3"></circle><path d="M12 2.5v3M12 18.5v3M4.4 6.2l2.1 2.1M17.5 15.7l2.1 2.1M2.5 12h3M18.5 12h3M4.4 17.8l2.1-2.1M17.5 8.3l2.1-2.1"></path>'),
+	      warn: svgIcon('<path d="M12 4 2.8 19.5h18.4L12 4z"></path><path d="M12 10v4.5"></path><circle cx="12" cy="17" r=".6"></circle>'),
+	      lock: svgIcon('<rect x="6" y="11" width="12" height="9" rx="2"></rect><path d="M9 11V8a3 3 0 0 1 6 0v3"></path>'),
+	    };
+	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
+	    // BROKEN while its fetch runs — every table loader says what is
+	    // happening. One recipe, per-table colspan.
+	    function tableLoadingRow(body, colSpan, text) {
+	      if (!body) return;
+	      body.textContent = "";
+	      const tr = document.createElement("tr");
+	      const td = document.createElement("td");
+	      td.colSpan = colSpan;
+	      td.className = "empty";
+	      td.textContent = text || "Loading…";
+	      tr.append(td);
+	      body.append(tr);
+	    }
 	    function renderMarkdownInline(value) {
 	      const renderPlain = (text) => {
 	        const codeParts = [];
@@ -2528,6 +2631,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            $("entity-new-matrix").textContent = "capability matrix unavailable: " + (e.message || e);
 	          }
 	        }
+	        tableLoadingRow($("entities-table"), 5, "Loading the roster…");
 	        const listed = await api("/api/gateway/entities");
 	        const rows = Array.isArray(listed.entities) ? listed.entities : [];
 	        const body = $("entities-table");
@@ -2571,14 +2675,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const stTd = document.createElement("td");
 	          stTd.id = `entity-state-cell-${nm}`;
 	          const stBadge = document.createElement("span");
-	          const stTone = stopped ? "phase-stopped" : (st === "asleep" ? "phase-sleep" : "phase-none");
+	          const stTone = stopped ? "phase-stopped" : "phase-sleep";
 	          stBadge.className = "entity-live-badge " + stTone;
-	          stBadge.textContent = stopped ? "STOPPED" : String(st);
+	          stBadge.textContent = stopped ? "STOPPED" : (st === "awake" ? "resting" : String(st));
 	          stTd.append(stBadge);
 	          if (stWarnings.length) {
 	            const warn = document.createElement("span");
 	            warn.className = "entity-warn-pill";
-	            warn.textContent = "⚠ state unreadable — treated as awake";
+	            warn.innerHTML = `<span class="chip-icon" aria-hidden="true">${ICONS.warn}</span>state unreadable — showing resting`;
 	            stTd.append(warn);
 	          }
 	          tr.append(stTd);
@@ -2646,7 +2750,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      for (const cv of cores) {
 	        const chip = document.createElement("span");
 	        chip.className = "entity-chip entity-chip-locked";
-	        chip.textContent = "🔒 " + cv;
+	        chip.innerHTML = `<span class="chip-icon" aria-hidden="true">${ICONS.lock}</span>${esc(cv)}`;
 	        chip.title = "core value — kept for life, cannot be removed";
 	        chips.append(chip);
 	      }
@@ -2753,10 +2857,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          return;
 	        }
 	        // The name is PERMANENT — there is no delete (spark v1-for-life).
-	        // Confirm the one irreversible act before writing anything.
+	        // Confirm the one irreversible act before writing anything. The
+	        // dry-run's WARNINGS ride the confirm (card 015 staging: the
+	        // review happens BEFORE the birth — surfacing them only in the
+	        // post-create note was reviewing after the irreversible act).
+	        const vWarnPre = Array.isArray(check.warnings) ? check.warnings.filter(Boolean) : [];
+	        const warnLine = vWarnPre.length ? "\\n\\nValidation warnings (review before summoning):\\n• " + vWarnPre.join("\\n• ") : "";
 	        const go = await confirmAction({
 	          title: `Summon ${name}?`,
-	          message: `This creates a permanent entity named "${name}". There is no delete — the name and its home are for life. Its spark's core values are locked. Substrate and per-phase capabilities can be changed later.`,
+	          message: `This creates a permanent entity named "${name}". There is no delete — the name and its home are for life. Its spark's core values are locked. Substrate and per-phase capabilities can be changed later.${warnLine}`,
 	          confirmLabel: "Summon",
 	        });
 	        if (!go) { msg.textContent = "Cancelled."; return; }
@@ -2844,6 +2953,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    const ENTITY_ADMIN_CONTROLS = [
 	      "entity-advanced", "entity-state-awake", "entity-state-asleep", "entity-stop", "entity-restore",
 	      "entity-owntime-toggle", "entity-loop-freeze", "entity-substrate-save",
+	      "entity-voice-save", "entity-voice-clear",
+	      "entity-workorder-save", "entity-workorder-clear",
 	      "entity-tools-save", "entity-tools-denyall-row", "entity-prompt-save", "entity-reembed",
 	    ];
 	    function applyEntityAdminGating() {
@@ -2907,7 +3018,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        await Promise.all([
 	          loadEntityOverview(name, token), loadEntitySubstrate(name, token),
-	          loadEntityToolPolicy(name, token), loadEntityPrompt(name, token),
+	          loadEntityVoice(name, token),
+	          loadEntityToolPolicy(name, token), loadEntityWorkOrder(name, token),
+	          loadEntityCandidates(name, token),
+	          loadEntityPrompt(name, token),
 	          loadEntityEmbedding(name, token), refreshEntityLive(name, token),
 	        ]);
 	      } catch (e) {
@@ -2992,6 +3106,202 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      } catch (e) {
 	        if (manageStale(token)) return;
 	        _entOut("entity-substrate-current", "substrate unavailable: " + (e.message || e));
+	      }
+	    }
+	    // ---- Entity voice (entity-personal-voice room; the server half is
+	    // voice.yaml + GET/PUT + the entity TTS lanes — this is the picker
+	    // laurent could not see). Same catalog sources as the capability
+	    // defaults modal (one discovery, two surfaces); the audition plays
+	    // the CURRENT UNSAVED selection through the ENTITY'S OWN TTS route
+	    // (anti-mixing: explicit fields win over the home triple), so what
+	    // you hear is what saving would produce — never a fabricated
+	    // selection presented as configuration.
+	    async function loadEntityVoice(name, token) {
+	      try {
+	        const v = await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`);
+	        if (manageStale(token)) return;
+	        state._entityVoice = v;
+	        // Inheritance render (laurent dm#68): unset names the RESOLVED
+	        // triple he would actually speak with, or the honest engine-decides
+	        // note — never a bare "unset" the operator must decode.
+	        let line;
+	        if (v.provider) {
+	          line = `Current: ${v.provider} / ${v.model || "?"} / ${v.voice || "?"} — his own choice (overrides the gateway default)`;
+	        } else if (v.effective && v.effective.provider) {
+	          line = `Current: inheriting the gateway default — ${v.effective.provider} / ${v.effective.model || "?"} / ${v.effective.voice || "(provider default)"}`;
+	        } else {
+	          line = `Current: unset — ${v.note || "no gateway voice default configured; the voice engine decides"}`;
+	        }
+	        _entOut("entity-voice-current", line);
+	        await loadEntityVoiceProviders(v.provider || "", v.model || "", v.voice || "");
+	      } catch (e) {
+	        if (manageStale(token)) return;
+	        _entOut("entity-voice-current", "voice unavailable: " + (e.message || e));
+	      }
+	    }
+	    async function loadEntityVoiceProviders(selProvider, selModel, selVoice) {
+	      const provSel = $("entity-voice-provider");
+	      try {
+	        const payload = await api(withQuery("/api/gateway/voice/voices", { providers_only: true, compact: true }));
+	        const providers = providerOptionsFromCatalog(payload, ["tts_providers", "providers", "available_providers"]);
+	        setSelectOptions(provSel, providers, { emptyLabel: "Choose a provider…", disabled: !providers.length, selected: selProvider });
+	        if (selProvider && providers.includes(selProvider)) {
+	          await loadEntityVoiceModels(selProvider, selModel, selVoice);
+	        }
+	      } catch (e) {
+	        setSelectOptions(provSel, [], { emptyLabel: "voice providers unavailable", disabled: true });
+	        _entOut("entity-voice-out", "provider discovery failed: " + (e.message || e));
+	      }
+	    }
+	    async function loadEntityVoiceModels(provider, selModel, selVoice) {
+	      const modelSel = $("entity-voice-model");
+	      if (!provider) {
+	        setSelectOptions(modelSel, [], { emptyLabel: "Select provider first", disabled: true });
+	        setSelectOptions($("entity-voice-voice"), [], { emptyLabel: "Select model first", disabled: true });
+	        return;
+	      }
+	      setSelectOptions(modelSel, [], { emptyLabel: "Loading models...", disabled: true });
+	      try {
+	        const payload = await api(withQuery("/api/gateway/audio/speech/models", { provider }));
+	        const models = modelOptionsFromCatalog(payload, provider, ["tts_models", "models", "data", "provider_models"], ["models_by_provider", "tts_models_by_provider"]);
+	        setSelectOptions(modelSel, models, { emptyLabel: models.length ? "Select model..." : "No models discovered", disabled: !models.length, selected: selModel });
+	        if (selModel && models.includes(selModel)) {
+	          await loadEntityVoiceVoices(provider, selModel, selVoice);
+	        } else {
+	          setSelectOptions($("entity-voice-voice"), [], { emptyLabel: "Select model first", disabled: true });
+	        }
+	      } catch (e) {
+	        setSelectOptions(modelSel, [], { emptyLabel: "models unavailable", disabled: true });
+	        _entOut("entity-voice-out", "model discovery failed: " + (e.message || e));
+	      }
+	    }
+	    async function loadEntityVoiceVoices(provider, model, selVoice) {
+	      const voiceSel = $("entity-voice-voice");
+	      setSelectOptions(voiceSel, [], { emptyLabel: "Loading voices...", disabled: true, labelMap: state.voiceLabels });
+	      try {
+	        const payload = await api(withQuery("/api/gateway/voice/voices", { provider, model, compact: true }));
+	        const voices = voiceOptionsFromCatalog(payload, provider, model);
+	        setSelectOptions(voiceSel, voices, {
+	          emptyLabel: voices.length ? "Use provider default voice" : "No voices discovered",
+	          disabled: !voices.length,
+	          selected: selVoice,
+	          labelMap: state.voiceLabels,
+	        });
+	      } catch (e) {
+	        setSelectOptions(voiceSel, [], { emptyLabel: "voices unavailable", disabled: true });
+	        _entOut("entity-voice-out", "voice discovery failed: " + (e.message || e));
+	      }
+	    }
+	    async function entityVoiceSave() {
+	      const name = state.manageEntity;
+	      if (!name) return;
+	      const provider = $("entity-voice-provider").value;
+	      const model = $("entity-voice-model").value;
+	      const voice = $("entity-voice-voice").value;
+	      if (!provider || !model || !voice) {
+	        _entOut("entity-voice-out", "select provider, model AND voice — the triple is whole (a bare voice id leaks across providers).");
+	        return;
+	      }
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`, { method: "PUT", body: JSON.stringify({ provider, model, voice }) });
+	        _entOut("entity-voice-out", "saved (voice_changed marker recorded).");
+	        await loadEntityVoice(name, state.manageToken);
+	      } catch (e) {
+	        _entOut("entity-voice-out", "save failed: " + (e.message || e));
+	      }
+	    }
+	    async function entityVoiceClear() {
+	      const name = state.manageEntity;
+	      if (!name) return;
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`, { method: "PUT", body: JSON.stringify({ clear: true }) });
+	        _entOut("entity-voice-out", "cleared — the entity falls back down the gateway default chain (marker recorded).");
+	        await loadEntityVoice(name, state.manageToken);
+	      } catch (e) {
+	        _entOut("entity-voice-out", "clear failed: " + (e.message || e));
+	      }
+	    }
+	    async function entityVoiceAudition() {
+	      const name = state.manageEntity;
+	      if (!name) return;
+	      const btn = $("entity-voice-audition");
+	      if (btn.disabled) return;
+	      const provider = $("entity-voice-provider").value;
+	      const model = $("entity-voice-model").value;
+	      const voice = $("entity-voice-voice").value;
+	      const out = $("entity-voice-out");
+	      if (!provider || !model) {
+	        _entOut("entity-voice-out", "select at least a provider and model to audition.");
+	        return;
+	      }
+	      btn.disabled = true;
+	      _entOut("entity-voice-out", "Synthesizing… (up to 25s)");
+	      const started = Date.now();
+	      try {
+	        const body = {
+	          text: `Hello — I am ${name}, and this is how I would sound.`,
+	          provider, model,
+	          timeout_s: 25,
+	        };
+	        if (voice) body.voice = voice;
+	        const res = await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice/tts`, { method: "POST", body: JSON.stringify(body) });
+	        const sec = ((Date.now() - started) / 1000).toFixed(1);
+	        out.textContent = "";
+	        const line = document.createElement("div");
+	        line.className = "message ok";
+	        line.textContent = `Synthesized in ${sec}s with ${provider}/${model}${voice ? "/" + voice : " (provider default voice)"} — this is the unsaved selection; Save makes it his.`;
+	        out.append(line);
+	        renderSandboxArtifact(out, { runId: res.run_id, ref: res.audio_artifact, mode: "audio", label: "Audition audio" });
+	      } catch (e) {
+	        out.textContent = "";
+	        const line = document.createElement("div");
+	        line.className = "message error";
+	        line.textContent = "Audition failed: " + (e.message || e);
+	        out.append(line);
+	      } finally {
+	        btn.disabled = false;
+	      }
+	    }
+	    // ---- Work order (the work-phase lane's operator write surface;
+	    // laurent seq 155). Presence shifts the loop to phase=work next
+	    // day-open; the entity declares done/blocked; clearing archives.
+	    async function loadEntityWorkOrder(name, token) {
+	      try {
+	        const w = await api(`/api/gateway/entities/${encodeURIComponent(name)}/work-order`);
+	        if (manageStale(token)) return;
+	        _entOut("entity-workorder-current", w.active
+	          ? "A work order is STANDING — the entity runs phase=work at its next day-open."
+	          : "No work order — the entity runs its own (personal) time.");
+	        $("entity-workorder-text").value = w.order || "";
+	        const hist = $("entity-workorder-history");
+	        if (hist) hist.textContent = w.done_history || "(no completed orders yet)";
+	      } catch (e) {
+	        if (manageStale(token)) return;
+	        _entOut("entity-workorder-current", "work order unavailable: " + (e.message || e));
+	      }
+	    }
+	    async function entityWorkOrderSave() {
+	      const name = state.manageEntity;
+	      if (!name) return;
+	      const order = $("entity-workorder-text").value.trim();
+	      if (!order) { _entOut("entity-workorder-out", "write the task, or use Clear to remove the standing order."); return; }
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/work-order`, { method: "PUT", body: JSON.stringify({ order }) });
+	        _entOut("entity-workorder-out", "set (work_order_changed marker recorded; phase=work at next day-open).");
+	        await loadEntityWorkOrder(name, state.manageToken);
+	      } catch (e) {
+	        _entOut("entity-workorder-out", "set failed: " + (e.message || e));
+	      }
+	    }
+	    async function entityWorkOrderClear() {
+	      const name = state.manageEntity;
+	      if (!name) return;
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/work-order`, { method: "PUT", body: JSON.stringify({ clear: true }) });
+	        _entOut("entity-workorder-out", "cleared + archived — personal time returns next day-open.");
+	        await loadEntityWorkOrder(name, state.manageToken);
+	      } catch (e) {
+	        _entOut("entity-workorder-out", "clear failed: " + (e.message || e));
 	      }
 	    }
 	    async function loadEntityToolPolicy(name, token) {
@@ -3117,6 +3427,125 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         btn.textContent = "Start personal time";
       }
     }
+	    // ---- Sleep-candidate review desk (W3 second half): list + promote/
+	    // reject through the engine verbs. Reject prompts for the mandatory
+	    // reason; promote asks for corroborating record ids (the independence
+	    // test lives engine-side and refuses thin evidence loudly).
+	    async function loadEntityCandidates(name, token) {
+	      try {
+	        const out = await api(`/api/gateway/entities/${encodeURIComponent(name)}/candidates`);
+	        if (manageStale(token)) return;
+	        const cands = out.candidates || [];
+	        const box = $("entity-candidates-box");
+	        if (!box) return;
+	        box.classList.toggle("hidden", cands.length === 0);
+	        const cnt = $("entity-candidates-count");
+	        if (cnt) cnt.textContent = String(cands.length);
+	        const list = $("entity-candidates-list");
+	        if (!list) return;
+	        list.innerHTML = "";
+	        for (const c of cands.slice(0, 20)) {
+	          const row = document.createElement("div");
+	          row.className = "entity-config-group";
+	          const title = document.createElement("div");
+	          title.textContent = `${c.proposed_kind ? "[" + c.proposed_kind + " offer] " : ""}${c.title || c.record_id} — ${String(c.digest || "").slice(0, 140)}`;
+	          const btns = document.createElement("div");
+	          btns.className = "entity-btn-row";
+	          const promote = document.createElement("button");
+	          promote.className = "secondary";
+	          promote.textContent = "Promote…";
+	          promote.onclick = async () => {
+	            const ids = prompt("Corroborating record ids (comma-separated, >=2 independent origins):");
+	            if (!ids) return;
+	            const reason = prompt("Why promote? (journal-recorded)");
+	            if (!reason) return;
+	            try {
+	              await api(`/api/gateway/entities/${encodeURIComponent(name)}/candidates/${encodeURIComponent(c.record_id)}/promote`, { method: "POST", body: JSON.stringify({ corroborating_ids: ids.split(",").map(s => s.trim()).filter(Boolean), reason }) });
+	              await loadEntityCandidates(name, token);
+	            } catch (e) { alert("promote refused: " + (e.message || e)); }
+	          };
+	          const reject = document.createElement("button");
+	          reject.className = "secondary";
+	          reject.textContent = "Reject…";
+	          reject.onclick = async () => {
+	            const reason = prompt("The honest no — why reject? (mandatory, journal-recorded)");
+	            if (!reason) return;
+	            try {
+	              await api(`/api/gateway/entities/${encodeURIComponent(name)}/candidates/${encodeURIComponent(c.record_id)}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+	              await loadEntityCandidates(name, token);
+	            } catch (e) { alert("reject refused: " + (e.message || e)); }
+	          };
+	          btns.append(promote, reject);
+	          row.append(title, btns);
+	          list.append(row);
+	        }
+	      } catch (e) {
+	        // Candidates are garnish on the overview — a failed read hides the box.
+	        const box = $("entity-candidates-box");
+	        if (box) box.classList.add("hidden");
+	      }
+	    }
+	    function _paintDrives(cog) {
+	      // Drive bars (G1): render from the SAME /cognition read as every
+	      // other state pixel. Absent drives = hidden block (honest pending —
+	      // the #FALLBACK warning rides the cognition line), never zeros.
+	      const box = $("entity-drives");
+	      if (!box) return;
+	      const d = cog.drives;
+	      if (!d) { box.classList.add("hidden"); box.textContent = ""; return; }
+	      box.textContent = "";
+	      const rows = [
+	        ["questions", d.questions, "resolved", "resolved"],
+	        ["interests", d.interests, "explored", "explored"],
+	        ["problems", d.problems, "repaired", "repaired"],
+	      ];
+	      let any = false;
+	      for (const [label, cat, doneKey, doneWord] of rows) {
+	        if (!cat) continue;
+	        const open = Number(cat.open || 0);
+	        const done = Number(cat[doneKey] || 0);
+	        const total = open + done;
+	        // problems row only when the category has ever had content —
+	        // questions/interests are THE drives and always render.
+	        if (label === "problems" && total === 0) continue;
+	        any = true;
+	        const row = document.createElement("div");
+	        row.className = "drive-row";
+	        const lab = document.createElement("span");
+	        lab.className = "drive-label";
+	        lab.textContent = label;
+	        row.append(lab);
+	        const track = document.createElement("div");
+	        track.className = "drive-track";
+	        const fill = document.createElement("div");
+	        fill.className = "drive-fill";
+	        const saturated = total > 0 && open === 0;
+	        if (saturated) fill.classList.add("saturated");
+	        fill.style.width = total ? `${Math.round((done / total) * 100)}%` : "0%";
+	        track.append(fill);
+	        row.append(track);
+	        const counts = document.createElement("span");
+	        counts.className = "drive-counts";
+	        if (total === 0) {
+	          // A 0/0 life has NO ratio — "none yet" is a state, not a failure.
+	          counts.textContent = "none yet";
+	        } else if (saturated) {
+	          // The never-100% design: nothing open means no pull forward —
+	          // the amber cue is a warning, not a success state.
+	          const n = document.createElement("span");
+	          n.textContent = `${done}/${total} ${doneWord} · `;
+	          const sat = document.createElement("span");
+	          sat.className = "drive-sat";
+	          sat.textContent = "nothing open — no pull forward";
+	          counts.append(n, sat);
+	        } else {
+	          counts.textContent = `${done}/${total} ${doneWord} · ${open} open`;
+	        }
+	        row.append(counts);
+	        box.append(row);
+	      }
+	      box.classList.toggle("hidden", !any);
+	    }
 	    async function refreshEntityLive(name, token) {
 	      let cog;
 	      try {
@@ -3128,6 +3557,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        _entOut("entity-cognition-line", "live state unavailable: " + (e.message || e));
 	        _entOut("entity-state-current", "live state unavailable: " + (e.message || e));
 	        _entOut("entity-loop-status", "live state unavailable: " + (e.message || e));
+	        _paintDrives({}); // stale bars on a failed read = the incident class
 	        return;
 	      }
       if (manageStale(token)) return;
@@ -3138,13 +3568,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // construction — stopped = the kill switch (state paused, promoted).
       // `frozen` is retired from the serve; nothing here reads it.
       const stopped = cog.liveness === "stopped";
-      // STRICT four-key phase (laurent 13:28/13:34): null = no phase active
-      // (awake, idle — the ruled machine has no idle state; the badge says
-      // the honest word instead of faking one). Stopped is an AXIS above the
-      // phase machine, deliberately NOT a phase.
+      // PHASE IS TOTAL WHILE ALIVE (laurent c203: "awake is NOT a state").
+      // The gateway now folds idle to sleep server-side, so phase is always
+      // one of the ruled four while alive; sleep_detail carries the honesty
+      // nuance (resting default vs dreaming vs bounded). A null phase can
+      // only mean an OLD gateway process — render it as settling toward
+      // sleep, never a green "idle". Stopped stays the axis above.
       const phase = cog.phase || null;
-      const badgeKey = stopped ? "stopped" : (phase || "none");
-      const badgeText = stopped ? "STOPPED (kill switch)" : (phase ? `phase: ${String(phase).toUpperCase()}${cog.resting ? " (resting)" : ""}` : "no phase active (idle)");
+      const badgeKey = stopped ? "stopped" : (phase || "sleep");
+      const sleepNote = cog.sleep_detail === "resting" ? " (resting)" : (cog.sleep_detail === "dreaming" ? " (dreaming)" : (cog.sleep_detail === "bounded" ? " (bounded)" : ""));
+      const badgeText = stopped ? "STOPPED (kill switch)" : (phase ? `phase: ${String(phase).toUpperCase()}${phase === "sleep" ? sleepNote : (cog.resting ? " (resting)" : "")}` : "SLEEP (settling)");
       // The banner outranks every chip (ruled UI shape); Restore is the exit.
       const banner = $("entity-stop-banner");
       if (banner) banner.classList.toggle("hidden", !stopped);
@@ -3163,7 +3596,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // engraved key and the served axis (c1559 spelling point 3).
 	        stateWord.textContent = stopped
 	          ? "state: paused — served as liveness: stopped (the kill switch)"
-	          : `state: ${st.state || "awake"}${st.mode ? ` (${st.mode})` : ""}`;
+	          : `state: ${(st.state === "awake" || !st.state) ? "resting" : st.state}${st.mode ? ` (${st.mode})` : ""}`;
 	        line.append(stateWord);
 	        if (st.warning) {
 	          const warn = document.createElement("span");
@@ -3192,7 +3625,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         b.textContent = stateBtns[key][1] + (current ? " · current" : "");
         b.disabled = current || !admin || stopped;
       }
-	      const stBits = [`current: ${st.state || "awake"}`];
+	      const stBits = [`current: ${(st.state === "awake" || !st.state) ? "resting" : st.state}`];
 	      if (st.reason) stBits.push(`reason: ${st.reason}`);
 	      if (st.changed_at) stBits.push(`since: ${String(st.changed_at).slice(0, 19)}`);
 	      _entOut("entity-state-current", stBits.join(" · "));
@@ -3216,7 +3649,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      _entOut("entity-loop-status", loopBits.join(" — "));
       // Overview cognition line (working + billed spend + labeled gaps).
       const spend = (cog.spend && cog.spend.lifetime) || {};
-      const cogBits = [cog.working ? "WORKING" : "idle", phase ? `phase: ${phase}` : "no phase"];
+      const cogBits = [cog.working ? "WORKING" : "idle", `phase: ${phase || "sleep"}`];
       if (cog.settling) cogBits.push("settling (state written, loop catching up)");
       if (cog.visit && cog.visit.open) cogBits.push(`visit: turn ${cog.visit.turn_n || 0} (${cog.visit.status || "?"})`);
       cogBits.push(`spend: ${spend.tokens_total || 0} tk / ${spend.llm_calls || 0} calls`);
@@ -3224,6 +3657,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (lv) cogBits.push(`this visit: ${lv.tokens_total || 0} tk`);
       for (const w of (cog.warnings || [])) cogBits.push(String(w));
       _entOut("entity-cognition-line", cogBits.join(" · "));
+      _paintDrives(cog);
       // Talk availability: surface the door's refusal BEFORE the click.
       const chatOpenBtn = $("entity-chat-open");
       if (chatOpenBtn && !state.chatId) {
@@ -3237,7 +3671,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         cell.textContent = "";
         const b = document.createElement("span");
         const cs = st.state || "awake";
-        b.className = "entity-live-badge " + (stopped ? "phase-stopped" : (phase ? `phase-${phase}` : (cs === "asleep" ? "phase-sleep" : "phase-none")));
+        b.className = "entity-live-badge " + (stopped ? "phase-stopped" : `phase-${phase || "sleep"}`);
         b.textContent = stopped ? "STOPPED" : `${cs}${phase ? ` · ${phase}` : ""}`;
         cell.append(b);
       }
@@ -3580,8 +4014,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          if (r.kind === "entity") {
 	            const b = document.createElement("span");
 	            const stopped = r.liveness === "stopped";
-	            b.className = "entity-live-badge " + (stopped ? "phase-stopped" : (r.state === "asleep" ? "phase-sleep" : "phase-none"));
-	            b.textContent = stopped ? "STOPPED" : (r.state || "awake");
+	            b.className = "entity-live-badge " + (stopped ? "phase-stopped" : "phase-sleep");
+	            b.textContent = stopped ? "STOPPED" : (r.state === "awake" || !r.state ? "resting" : r.state);
 	            stTd.append(b);
 	          } else {
 	            stTd.textContent = "—";
@@ -3684,6 +4118,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function loadDataHomes() {
 	      const body = $("data-homes-table");
 	      if (!body) return;
+	      tableLoadingRow(body, 6, "Measuring data homes…");
 	      try {
 	        const data = await api("/api/gateway/admin/data-homes");
 	        const rows = Array.isArray(data.homes) ? data.homes : [];
@@ -3765,6 +4200,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function loadRuns() {
 	      const body = $("runs-table");
 	      if (!body) return;
+	      tableLoadingRow(body, 6, "Loading runs…");
 	      try {
 	        const status = ($("runs-status").value || "").trim();
 	        const rootOnly = $("runs-root-only").checked;
@@ -5096,7 +5532,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const actions = document.createElement("td");
         actions.className = "actions";
         const rotate = document.createElement("button");
-        rotate.innerHTML = `<span class="button-icon" aria-hidden="true">↻</span><span>Rotate</span>`;
+        rotate.innerHTML = `<span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Rotate</span>`;
         rotate.className = "secondary";
         rotate.title = "Rotate this user's bearer token — the old token stops working immediately; the new one is shown once";
         rotate.setAttribute("aria-label", `Rotate token for ${u.user_id}`);
@@ -5232,9 +5668,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function sandboxRouteIcon(mode) {
 	      return { text: "T", image: "▣", voice: "◉", sound: "S", music: "♫", video: "▻" }[mode] || "T";
 	    }
-	    function svgIcon(paths, className = "") {
-	      return `<svg class="${esc(className)}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${paths}</svg>`;
-	    }
+	    // svgIcon is defined page-wide at the script top (icon registry).
 	    function sandboxRouteIconMarkup(mode) {
 	      const icons = {
 	        text: svgIcon('<path d="M5 6h14"></path><path d="M12 6v12"></path><path d="M8 18h8"></path>'),
@@ -5895,7 +6329,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("sandbox-prompt").value = "";
 	      renderSandboxAttachments();
 	    }
-	    async function openDefaultModal(row) {
+	    function defaultRowTestable(row) {
+	      // Test renders only where a REAL generation is cheap and the goal is
+	      // named (voice audition; tiny text smoke). Image/video/music tests
+	      // would be slow, expensive, and ride watchdog-less routes — the
+	      // Sandbox tab is their honest surface (adversarial review 2026-07-17).
+	      const key = defaultRowKey(row);
+	      return key === "output.voice" || key === "output.text" || key === "input.text";
+	    }
+	    function clearDefaultTest() {
+	      const target = $("default-modal-test");
+	      if (target) target.textContent = "";
+	    }
+    async function openDefaultModal(row) {
 	      if (defaultRowReadOnly(row)) return;
 	      state.activeDefaultRow = row;
 	      const key = defaultRowKey(row);
@@ -5905,6 +6351,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("default-modal-route").textContent = `${key} - ${defaultRowCapability(row)}`;
 	      $("default-modal-message").textContent = "";
 	      $("default-modal-message").className = "message";
+	      clearDefaultTest();
+	      $("test-default").classList.toggle("hidden", !defaultRowTestable(row));
 	      $("default-modal-backdrop").classList.remove("hidden");
 	      let discoveredProviders = [];
 	      try {
@@ -5938,7 +6386,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        } else {
 	          setSelectOptions($("modal-default-model"), [], { emptyLabel: "Model discovery failed", disabled: true });
 	        }
-	        await loadDefaultVoices($("modal-default-provider").value, $("modal-default-model").value, defaultVoiceValue(row), row).catch(() => {});
+	        // A swallowed voices failure left the select at "Loading voices..."
+        // forever (adversary F8) — degrade to an HONEST empty label instead.
+        await loadDefaultVoices($("modal-default-provider").value, $("modal-default-model").value, defaultVoiceValue(row), row).catch(() => {
+          setSelectOptions($("modal-default-voice"), [], { emptyLabel: "Voice discovery failed", disabled: true });
+        });
 	        $("default-modal-message").textContent = String(err.message || err);
 	        $("default-modal-message").className = "message error";
 	      }
@@ -6167,6 +6619,77 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         $("reservations-message").className = "message error";
       }
     }
+	    function voiceTestRunId() {
+	      const p = state.principal || {};
+	      const tenant = String(p.tenant_id || "default").toLowerCase().replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "") || "default";
+	      const user = String(p.user_id || p.runtime_id || "user").toLowerCase().replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "") || "user";
+	      return `session_memory_gateway_console_voicetest_${tenant}_${user}`;
+	    }
+	    async function testDefault() {
+	      // Single-flight: the button disables while one test runs — repeated
+	      // clicks against a wedged backend would pile stranded children
+	      // (2026-07-17 TTS wedge history; the request carries timeout_s so a
+	      // wedge fails fast with the watchdog's honest 504 instead of
+	      // hanging this modal).
+	      const row = state.activeDefaultRow;
+	      if (!row) return;
+	      const button = $("test-default");
+	      if (button.disabled) return;
+	      const target = $("default-modal-test");
+	      const provider = $("modal-default-provider").value;
+	      const model = $("modal-default-model").value;
+	      if (!provider || !model) {
+	        target.textContent = "Select a provider and model first.";
+	        return;
+	      }
+	      const key = defaultRowKey(row);
+	      button.disabled = true;
+	      target.textContent = key === "output.voice" ? "Synthesizing… (up to 25s)" : "Testing…";
+	      const started = Date.now();
+	      try {
+	        if (key === "output.voice") {
+	          const body = {
+	            text: "Hello — this is the voice you selected, speaking from the gateway.",
+	            provider,
+	            model,
+	            request_id: sandboxRequestId(),
+	            timeout_s: 25,
+	          };
+	          // Empty voice = audition the provider's DEFAULT voice — exactly
+	          // what saving without a voice would produce.
+	          const voice = $("modal-default-voice").value;
+	          if (voice) body.voice = voice;
+	          const runId = voiceTestRunId();
+	          const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { method: "POST", body: JSON.stringify(body) });
+	          const sec = ((Date.now() - started) / 1000).toFixed(1);
+	          target.textContent = "";
+	          const line = document.createElement("div");
+	          line.className = "message ok";
+	          line.textContent = `Synthesized in ${sec}s with ${provider}/${model}${voice ? "/" + voice : " (provider default voice)"}. Note: agents pick up SAVED voice defaults per lane — this proves the selection itself works.`;
+	          target.append(line);
+	          renderSandboxArtifact(target, { runId, ref: res.audio_artifact, mode: "audio", label: "Test audio" });
+	        } else {
+	          const res = await api("/api/gateway/sandbox/generate", {
+	            method: "POST",
+	            body: JSON.stringify({ capability: key, provider, model, prompt: "Reply with the single word: ready.", max_tokens: 16 }),
+	          });
+	          const sec = ((Date.now() - started) / 1000).toFixed(1);
+	          target.textContent = "";
+	          const line = document.createElement("div");
+	          line.className = "message ok";
+	          line.textContent = `Responded in ${sec}s with ${provider}/${model}: ${String(res.response || "").slice(0, 120) || "(empty response)"}`;
+	          target.append(line);
+	        }
+	      } catch (err) {
+	        target.textContent = "";
+	        const line = document.createElement("div");
+	        line.className = "message error";
+	        line.textContent = `Test failed: ${String(err.message || err)}`;
+	        target.append(line);
+	      } finally {
+	        button.disabled = false;
+	      }
+	    }
 	    async function saveDefault() {
 	      $("default-modal-message").textContent = "";
 	      try {
@@ -6270,6 +6793,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("entity-owntime-toggle").onclick = entityOwntimeToggle;
 	    $("entity-loop-freeze").onclick = entityLoopFreeze;
 	    $("entity-substrate-save").onclick = entitySubstrateSave;
+	    $("entity-voice-save").onclick = entityVoiceSave;
+	    $("entity-voice-clear").onclick = entityVoiceClear;
+	    $("entity-workorder-save").onclick = entityWorkOrderSave;
+	    $("entity-workorder-clear").onclick = entityWorkOrderClear;
+	    $("entity-voice-audition").onclick = entityVoiceAudition;
+	    $("entity-voice-provider").onchange = () => loadEntityVoiceModels($("entity-voice-provider").value, "", "");
+	    $("entity-voice-model").onchange = () => {
+	      const p = $("entity-voice-provider").value;
+	      const m = $("entity-voice-model").value;
+	      if (p && m) loadEntityVoiceVoices(p, m, "");
+	    };
 	    $("entity-tools-save").onclick = entityToolsSave;
 	    $("entity-prompt-save").onclick = entityPromptSave;
 	    $("entity-reembed").onclick = entityReembed;
@@ -6306,16 +6840,22 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("default-modal-backdrop").onclick = (event) => { if (event.target === $("default-modal-backdrop")) closeDefaultModal(); };
 	    $("modal-default-provider").onchange = async () => {
 	      const row = state.activeDefaultRow || null;
+	      clearDefaultTest();  // a stale audition must not survive a provider change
 	      await loadDefaultModels($("modal-default-provider").value, "", row);
 	      await loadDefaultVoices($("modal-default-provider").value, $("modal-default-model").value, "", row);
 	    };
-	    $("modal-default-model").onchange = () => loadDefaultVoices(
-	      $("modal-default-provider").value,
-	      $("modal-default-model").value,
-	      "",
-	      state.activeDefaultRow || null
-	    );
+	    $("modal-default-model").onchange = () => {
+	      clearDefaultTest();
+	      return loadDefaultVoices(
+	        $("modal-default-provider").value,
+	        $("modal-default-model").value,
+	        "",
+	        state.activeDefaultRow || null
+	      );
+	    };
+	    $("modal-default-voice").onchange = () => clearDefaultTest();
 	    $("save-default").onclick = saveDefault;
+	    $("test-default").onclick = testDefault;
 	    $("clear-default").onclick = () => clearDefault();
 	    $("sandbox-capability").onchange = updateSandboxControls;
 	    $("sandbox-provider").onchange = () => loadSandboxModels();
@@ -6353,6 +6893,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    if (state.activeTab === "users") loadEntities();
 	    initEndpointProfileFormOptions();
 	    setEndpointModelOptions([], []);
+	    // Icon hydration (card 015 wave 3): static-HTML glyph spans carry a
+	    // unicode fallback in markup; boot swaps them for the registry SVGs so
+	    // the page never depends on platform emoji/VS15 rendering. The unicode
+	    // stays the honest fallback wherever querySelectorAll is unavailable.
+	    if (typeof document.querySelectorAll === "function") {
+	      for (const [cls, icon] of [["icon-refresh", ICONS.refresh], ["icon-gear", ICONS.gear], ["icon-retry", ICONS.retry]]) {
+	        document.querySelectorAll("." + cls).forEach((el) => { el.innerHTML = icon; });
+	      }
+	    }
 	    refresh();
   </script>
 </body>

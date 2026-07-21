@@ -116,15 +116,24 @@ def test_telegram_bridge_stores_media_and_starts_run(tmp_path: Path) -> None:
     assert isinstance(attachments, list) and attachments
     assert attachments[0].get("artifact_id") == tg["media"][0].get("artifact_id")
 
+    # Durable-sessions migration: the bridge ships NO client transcript —
+    # the gateway seeds context.messages server-side from the session's
+    # durable prior runs (use_session_history).
     ctx = input_data.get("context")
     assert isinstance(ctx, dict)
-    msgs = ctx.get("messages")
-    assert isinstance(msgs, list) and msgs
-    assert msgs[-1].get("role") == "user"
-    assert msgs[-1].get("content") == "hi"
+    assert "messages" not in ctx
+    assert input_data.get("use_session_history") is True
+    assert input_data.get("session_history_max_messages") == 30
 
 
-def test_telegram_bridge_multi_turn_history_and_delivery(tmp_path: Path) -> None:
+def test_telegram_bridge_multi_turn_uses_durable_session_replay(tmp_path: Path) -> None:
+    """Durable-sessions migration: the bridge keeps NO private transcript.
+
+    Every turn opts into the gateway's server-side seed (use_session_history)
+    under the SAME stable session_id — the run store is the transcript. The
+    old behavior (binding['history'] shipped as context.messages) was the
+    second-source-of-truth risk named in the durable-sessions review.
+    """
     host = _SequencedHost()
     artifacts = InMemoryArtifactStore()
     run_store = InMemoryRunStore()
@@ -161,20 +170,23 @@ def test_telegram_bridge_multi_turn_history_and_delivery(tmp_path: Path) -> None
     assert bridge._maybe_deliver_thin_run_output(chat_id=99, session_id="telegram:99") is True  # type: ignore[attr-defined]
     assert sent and sent[-1][1] == "hello from run-1"
 
-    # Turn 2: next message starts a new run with prior transcript in context.messages.
+    # Turn 2: a new run on the SAME session, opted into the server-side seed,
+    # with no client-carried transcript.
     bridge._handle_bot_update(  # type: ignore[attr-defined]
         {"update_id": 2, "message": {"message_id": 11, "date": 1700000001, "chat": {"id": 99, "type": "private"}, "from": {"id": 7}, "text": "again"}}
     )
     assert len(host.starts) == 2
+    assert host.starts[1]["session_id"] == "telegram:99"
     input2 = host.starts[1]["input_data"]
+    assert input2.get("use_session_history") is True
+    assert input2.get("session_history_max_messages") == 30
     ctx2 = input2.get("context")
     assert isinstance(ctx2, dict)
-    msgs2 = ctx2.get("messages")
-    assert isinstance(msgs2, list)
-    assert [m.get("role") for m in msgs2] == ["user", "assistant", "user"]
-    assert msgs2[0].get("content") == "hi"
-    assert msgs2[1].get("content") == "hello from run-1"
-    assert msgs2[2].get("content") == "again"
+    assert "messages" not in ctx2
+    # No private transcript rests in the bridge state file.
+    binding = bridge._binding_for_chat(99)  # type: ignore[attr-defined]
+    assert isinstance(binding, dict)
+    assert "history" not in binding
 
 
 def test_telegram_bridge_start_bot_api_requires_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

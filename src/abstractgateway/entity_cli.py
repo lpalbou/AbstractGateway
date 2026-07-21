@@ -312,7 +312,11 @@ def _card_lines(payload: Dict[str, Any]) -> List[str]:
     (identity / current state / likes+dislikes / questions / key moments /
     discoveries) under the gateway overlays (name, age, state, substrate,
     host moments)."""
+    # "awake" never renders as a dwelling (laurent c203) — the CLI card says
+    # resting; asleep/paused keep their words.
     state = (payload.get("state") or {}).get("state") or "awake"
+    if state == "awake":
+        state = "resting"
     substrate = payload.get("mind_substrate") or {}
     ctx = payload.get("age_and_context") or {}
     age = payload.get("age_days")

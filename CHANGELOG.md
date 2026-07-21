@@ -7,6 +7,559 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Mutual-exclusivity write-side wave** (2026-07-21, laurent dm#94 via
+  entity's four-adversary write audit — "the 4 states are mutually
+  exclusive; an entity being visit can NOT be on personal time"): (a) BOTH
+  visit lanes (hosted chat + durable visits) now write the visiting posture
+  (`asleep` + `mode=visiting`, `written_by=visit-door`) UNCONDITIONALLY at
+  open — previously only when the own-time loop was running, so a visit on
+  an awake loop-less entity left nothing durable and the composite folds
+  rendered "personal · resting" beside a live chat; the operator's
+  pre-visit word is recorded and restored at close/terminal/abort. (b) The
+  unguarded awake writers are gated: `POST /{name}/state awake` refuses 409
+  under a LIVE visit (stale postures stay repairable — the operator door
+  never wedges); the summon wake-write refuses on a visiting posture
+  (the /loop/start registration-window pattern). (c) `/life_state`'s
+  durable widening serves `posture="visiting"` beside the phase and the
+  phase is the ONE graph word (`visit` — the widening used to say
+  "visiting" while the hosted arm of the same endpoint said "visit").
+  (d) Postures carry the visit's OWN identity (`[visit <chat_id|visit_id>]`)
+  and closes/terminals/aborts restore by OWNERSHIP token, never vocabulary;
+  the durable preflight refuses opens under a live hosted chat (cross-lane
+  one-life). Door-half adversary folded same-wave: a freshness gate at both
+  stale-posture adoption branches (a posture younger than the reaper grace
+  reads as MID-OPEN on the other lane and refuses — adopting it destroyed a
+  live visit's token), ownership-checked abort restores (an operator
+  pause/sleep landed mid-open-window stands), turn-failed runs finalize
+  (the posture no longer strands until the reaper), and the stamp mint
+  moved inside the restore window. Spec v10 re-vendored (sha b81e00f2).
+  Same-wave follow-up (runtime c343 seam): `prior_state` carries `wake_at`
+  and every restore passes it through — a BOUNDED operator sleep
+  interrupted by a visit keeps its wake deadline instead of restoring as a
+  default-bound sleep (an unattended entity could sleep past its 6h
+  need-check); pinned by
+  `test_bounded_sleep_keeps_its_wake_deadline_through_a_visit`.
+
+### Changed
+- **Durability-relevant exception swallows are loud** (2026-07-21, backlog
+  0070 M half): 13 silent `except Exception: pass` sites adjacent to durable
+  writes now log with context and consequence instead of vanishing — the
+  command-cursor save (a failing save means restart replays commands), the
+  terminal-subworkflow wait-repair pass, promote-to-FAILED after a tick
+  exception, parent-resume after a terminal child, compacted-vars persistence
+  (a lost save silently discarded a paid LLM compaction), auto-compact guard
+  saves, backlog-exec run/ledger persistence, and the session-memory anchor
+  save. Marker-only best-effort writes keep their swallow but log at DEBUG.
+  The loop still survives every failure (a broken disk must not kill
+  ticking); `tests/test_gateway_runner_swallow_audit.py` pins survive+log on
+  the two backlog-named paths.
+
+### Changed
+- **Blueprint edit lane rebuilt to the v12 overlay shape** (2026-07-21,
+  entity's design adversary P0-3 — the whole-file PUT "inverted the
+  one-graph handshake and put two pens near one counter"): operator edits
+  are now a TUNABLES OVERLAY beside the structural graph. The structural
+  `{spec, sha256}` is untouched by modulation (drift warns key on the
+  structural sha alone); GET serves `tunables_overlay` /
+  `effective_tunables` / `overlay.edit_seq` beside it; PUT is
+  tunables-only (the full-replace arm is DELETED — structure goes through
+  the entity pen), CAS-guarded (`if_match` = edit_seq, 409 on race), and
+  validated known-keys-only with bounds from `tunables_meta` (an unknown
+  key is a typo'd dial — refuse, never default silently). The overlay
+  source persists at `config/entity_phases_overlay.json`; the DERIVED
+  effective spec is atomically rewritten at `config/entity_phases.json` —
+  the exact file runtime's loop hook already reads. Spec re-vendored
+  v12→v13 same-hour (entity's healthy bumps; drift pin green each time).
+
+### Added
+- **Unattended need-check, loop-less host half** (2026-07-21, spec v13
+  `wake_conditions`; entity c356: "two hosts, ONE law — the loop's
+  need-check when a process is alive, YOUR SWEEPER for loop-less homes"):
+  the self-repair sweep now runs the cadence need-check on loop-less,
+  UNARMED, unstamped sleeps — zero-token by law (a read over the standing
+  sets, no summon, no LLM). A standing work order or pending tasks start
+  the loop (its own top gate opens the work day, v9b); nothing sanctioned
+  = silent re-sleep (sidecar timestamp only — no marker churn, the same
+  sleep continues). The cadence is read from the served blueprint's
+  `unattended_wake_cadence_h` dial, never a constant; armed-grant sleeps
+  belong to the cycle/stamped sources and are skipped. 4 pins.
+- **Entity loop self-repair** (2026-07-21, laurent's DM redirect: "the
+  point is more that you should self-repair the entity then?"): a gateway
+  daemon sweep (default 5 min; `ABSTRACTGATEWAY_ENTITY_SELF_REPAIR=0`
+  disables) respawns own-time loops that died WITHOUT the operator's word —
+  failure-culled (`stopped_by=failures`, the 03:03 incident's 40-minute
+  blind window) or crashed (status says day/between, pid dead). The guards
+  are the design: paused (kill switch) and lapsed personal grants block
+  repair; deliberate stop words never repair; a visit defers to the next
+  sweep; ONE repair per death (signature dedup) with a 30-min circuit
+  breaker — a second death stays down and notifies the operator (email
+  best-effort when configured). Respawns are faithful: `start_loop` now
+  records its spawn parameters to `<home>/loop_spawn.json` and the repair
+  replays them. Every repair/suppression lands a `personal_started`
+  biography marker (channel=self-repair). 12 pins in
+  `tests/test_gateway_entity_self_repair.py`.
+- **Editable blueprint lane** (2026-07-21, laurent dm#104 via entity c348:
+  "make those blueprints editable by me... this MUST become the source of
+  truth"): `PUT /entities/spec/phases` (admin-gated by policy row) persists
+  the operator's edit to `<data_dir>/config/entity_phases.json` — tunables
+  patches deep-merge (the dials laurent freely modulates); full-spec
+  replacement must keep the ruled-four phases. Every edit bumps
+  `_operator.rev`, recomputes the served sha, and records a
+  `blueprint_edited` host marker in EVERY entity's biography (write-first,
+  then markers — a marker claiming an edit that never landed would be a
+  false biography entry). GET serves the operator copy when present
+  (`operator_edited`/`operator_rev` on the wire); the detached own-time
+  loop reads the same FILE (no HTTP auth dependency). Spec re-vendored to
+  v11 (the personal↔sleep maintenance cycle + tunables block).
+- **skill requires_mcp/requires_tools consumer** (2026-07-21, abstractskill
+  0008 consumer half; laurent ruled it active): `resolve_run_skills` — the
+  ONE gate run-start, workforce spawn, and the entity lane ride — now checks
+  each active skill's declared dependencies against the gateway's DECLARED
+  MCP registry and the run-lane tool universe. Unmet => the skill drops from
+  active with a labeled verdict naming the missing dependency (honest
+  wording: "not declared on this gateway" — no probe lane exists, so "not
+  reachable" would be fabricated) + a structured `requires_unmet` map; never
+  a silent activation, never a run block; check-substrate failures skip with
+  `#FALLBACK`. The entity render serves requires/requires_unmet on resolved
+  rows and unmet matrix cells go `structurally_unavailable` with the
+  dependency in reason. Pinned by
+  `tests/test_gateway_skill_requires_consumer.py` (6 tests).
+- **Console overhaul wave 3** (2026-07-21, framework card 015; laurent ruled
+  it active): page-wide inline-SVG icon registry with boot hydration (lock/
+  warn emoji replaced; no VS15 platform dependence), one chip recipe over
+  the six pill families, re-embed relocated to Substrate behind a
+  danger-zone disclosure, loading rows on runs/data-homes/entities tables,
+  radius normalization onto the token scale, and create-flow staging (the
+  dry-run's warnings ride the confirm — reviewed BEFORE the irreversible
+  birth). Cross-repo flags posted to uic (`.af-dialogue` transcript recipe;
+  light-theme accent proposal — vendored-token pen discipline). Pinned by
+  `tests/test_gateway_console_wave3.py`.
+- **Camera toolset door-half pins** (2026-07-21, camera 0012 gateway half;
+  laurent's two-adversary condition met c3903/c3915, door half unblocked
+  c3917; own adversary folded): `tests/test_gateway_camera_surfacing.py`
+  pins the composition — run lanes derive camera exposure from runtime's
+  `default_approval_policy_sets()` fold through the real gateway surfaces
+  (`/discovery/tools` handler + default-constructed `ToolApprovalPolicy`),
+  flag-off means no camera name anywhere, the walled entity surfaces
+  (inventory, phase matrix, home grants) stay structurally camera-free even
+  flag-on, and no `abstractcamera` import exists in the gateway tree. Zero
+  gateway-side camera code. HONEST SCOPE from the door-half adversary: the
+  workplace summon lane runs on the shared bundle host whose run-lane tool
+  map carries camera flag-on (home per-phase grants are not consulted
+  there). RULED 2026-07-21 (laurent, user-right reading, commons c3938):
+  that exposure ships AS BUILT — camera is a tool like any other; capture
+  and detect verbs ask BY DEFAULT (a default, not a floor — users may
+  auto-accept camera per-run like any tool); reference/status tools
+  auto-approve per camera's own classification. 0012 complete.
+- **Route authorization contract test** (2026-07-21, backlog 0070 S half):
+  `tests/test_gateway_route_authorization_contract.py` pins the whole-app
+  authorization invariant in three layers — (1) every served route lives
+  behind the `/api/gateway` security-middleware boundary or on an explicit
+  public allowlist with a recorded reason; (2) every write route has an
+  explicit decision (a `GATEWAY_ROUTE_POLICIES` admin row or a
+  rationale-grouped user-level allowlist entry, pinned in both directions,
+  with session/login the only public write and a dead-policy-row check);
+  (3) served-surface proof — a real non-admin principal is 403'd through the
+  real middleware on a representative route of every policy family, and
+  user-level writes pass authorization. A new route now lands RED until its
+  author decides which side of the table it belongs to. The
+  exception-swallowing audit (0070's M half) remains open.
+- **Count-weighted drive groups served** (2026-07-20, laurent 277; memory
+  c296): `/cognition`'s `drive_pressure` block passes through the engine's
+  new `groups` fold render-when-present — `[{family, members, size,
+  exemplar, shared_terms}]`, largest-first — so a family of many similar
+  questions surges above a lone one. A group is a VIEW over the open drives
+  (the numeric counts are byte-unchanged); absent on engines predating
+  grouping.
+- **Night-voice narration sweep** (2026-07-20, wave-5; the emission seam
+  runtime ruled at c3750): runtime owns `<home>/night_narrations.jsonl`
+  (append-only, in the home, travels on copy); `sweep_night_narrations()`
+  reads it and interleaves `night_voice` host markers into the gateway's
+  host stream, deduped on `dream_record_id` (the ≥20h throttle = one
+  narration per dream). Recorded when present — idempotent, run before the
+  marker read on both `/replay` and `/replay/stream`, best-effort (a torn
+  or unlinked line is skipped, never breaks serving). The marker registers
+  the `night_voice` kind (a derived, host-authored, self-labeled artifact —
+  never enters the store, so recall stays clean) carrying
+  `{dream_record_id, narration, self_label, narrated_at, trigger}`; entity's
+  render keys on `dream_record_id`. Works for gateway-hosted AND detached
+  home-direct lives (a life that never met a gateway keeps its narrations;
+  the stream picks them up when it first serves the home).
+
+### Changed
+- **Act-only ref layer removed from the visit tool path** (2026-07-20,
+  laurent's A ruling; runtime c273 deleted `$act_only` refs +
+  `ACT_ONLY_TOOLS` + the `ToolDescriptor.act_only` flag): the HOME is the
+  privacy boundary (`runtime_<slug>.sqlite3` rests beside the book), so a
+  `diary_read` result resting in the home run store is inside the boundary,
+  not a leak. The door's TOOL_CALLS handler no longer intercepts diary
+  tools as act-only — `diary_read` materializes normally through
+  `execute_tool_elections` (reading from the home's own book) and the
+  turn-detail modal serves results verbatim (the operator diary-door
+  right covers the read). The reader-side private-gist containment in
+  SEARCH results and the write-boundary capture (fences to the book before
+  the result rests) are unchanged; the surviving audience boundary is the
+  served replay redaction + operator-only verbatim door. Dropped the dead
+  `act_only` rider from the tool-inventory MatrixCell and entity tool
+  declarations.
+
+### Added
+- **Sleep-candidate review desk** (2026-07-20, W3 second half — unblocked
+  ahead of memory's W2 miner: the engine verbs shipped first): `GET
+  /entities/{name}/candidates` lists the sleep passes' inactive
+  review-gated candidates (public TripleQuery surface, bounded); `POST
+  .../candidates/{record_id}/promote` (independence test — ≥2 corroborating
+  records of distinct origins; engine refusals pass through verbatim) and
+  `POST .../reject` (mandatory reason; hide is a separate stated act) wrap
+  the engine verbs with the principal-stamped actor, acting in the
+  candidate's OWN scope (never caller-claimed). Console overview gains the
+  review desk (list + promote/reject). Sleep proposes; waking evidence
+  disposes — these doors are the disposal surface.
+- **Multi-root backlog serving** (2026-07-20, continuum c3583; laurent
+  dm#110 "I must have proper access to everything in the board"): the read
+  routes (`GET /backlog/{kind}`, `GET .../content`) fold the umbrella +
+  every immediate child repo carrying `docs/backlog`; `package` on each
+  summary is the repo DIRECTORY name (one authority — header labels stay
+  parse-side); content resolves across roots with `?package=` as the
+  collision disambiguator; `ABSTRACTGATEWAY_BACKLOG_ROOTS` overrides
+  discovery. Write/exec lanes stay umbrella-scoped deliberately.
+- **The one state graph, served** (2026-07-20, laurent dm#79 via c3562):
+  `GET /entities/spec/phases` serves a vendored byte copy of entity's
+  `spec/entity_phases.json` (`{spec, vendored, sha256, source}`); a drift
+  test byte-compares the vendored copy against the pen whenever the
+  checkout is present; a serving-boundary pin asserts every `/cognition`
+  phase word is a graph word. Bump protocol: entity announces, gateway
+  re-vendors same-day.
+- **DoR gate default-ON** (2026-07-20, skill c3546: both co-signed sources
+  teach a wall — a raw curl silently bypassing it contradicted them):
+  `POST /backlog/{kind}/{filename}/execute` (and `execute_batch`) now
+  evaluate the Definition-of-Ready gate when the `dor` param is absent;
+  `dor=skip` bypasses EXPLICITLY and is recorded as `dor_overridden`
+  (a bypass is a choice, never a default); `dor=check` stays accepted.
+  Also fixed same report: the backlog parser's type enum was missing
+  `improvement` (coerced to task upstream, making the DoR type refusal
+  unreachable over HTTP) — the ruled four now hold in the parser, the
+  title regex, the API docs, and `_BACKLOG_TASK_TYPES`.
+- **Chat-drawer sleep restore** (2026-07-20, skill c219 audit): the hosted
+  chat drawer's close now restores `asleep` when THAT visit woke an
+  operator-asleep entity (`woke_for_visit`), guarded on the state still
+  being the visit-authored wake — leaving `awake` standing minted the
+  exact unphased dwelling laurent's c203 retires. Operator writes landed
+  mid-visit stay authoritative.
+- **drive_pressure serves the engine read** (2026-07-20, memory c215):
+  `/cognition`'s `drive_pressure` block now folds abstractmemory's
+  `drive_pressure()` composition (exact counts, six drive kinds incl.
+  `unresolved_tensions`) with the threshold IMPORTED from
+  `DRIVE_PRESSURE_BOUND` (one 20, never a second copy); the gateway adds
+  only the gate semantics (`over`, `should`, `idle`).
+- **Phase is total while alive — wave 1 of the lifecycle ruling**
+  (2026-07-20, laurent c203 "awake is NOT a state; the entity at all times
+  must be either visit/work/personal/sleep"): the `/cognition` phase fold
+  no longer serves `null` for an idle entity — idle folds to `sleep`, the
+  resting default (`sleep_detail: resting|dreaming|bounded` keeps the
+  render honest; a resting default never claims consolidation). A running
+  loop day with a standing work order now reads `work` (labeled
+  `phase_source: "derived"` until runtime's loop_status carries day_kind).
+  `/life_state`'s `awake` floor dies the same way (`sleep` replaces it).
+  POST `/state` accepts the phase-vocabulary verbs `sleep|restore` as
+  aliases (legacy `awake|asleep|paused` accepted forever; the at-rest
+  state words and every engraved marker are byte-unchanged — the fold is
+  serve-side only, and doors already wake resting sleepers so gate
+  behavior is untouched). `/cognition` also gains `drive_pressure`
+  ({over, counts, threshold, should, idle} — laurent's never-hanging
+  drives rule as a SURFACED SIGNAL; auto-action deliberately withheld
+  until the operator answers the cost fork). Console: the green
+  "no phase active (idle)" badge and awake state chips are gone —
+  resting renders as SLEEP (resting), never a celebrated idle.
+- **Default entity skills + birth map install** (2026-07-19, laurent seq 156
+  "all entities must know how their memory work and how to leverage it";
+  skill c161): entity create() with no skills field defaults the selection
+  to `entity-self-knowledge` (every phase) and installs
+  `capability_map.md` from the abstractskill shelf at birth, marker-first
+  (`skills_selection_changed` + `capability_map_changed`, `at_birth: true`).
+  Explicit selections are honored verbatim; explicit `skills: []` opts out
+  of both and writes no skills.yaml (the honest exists:false). Shelf
+  unreachable degrades to a labeled warning — a birth never fails over
+  teaching. All five existing homes backfilled live (map sha `820b6373`,
+  one marker each).
+- **Work-order write surface** (2026-07-19, laurent seq 155 "the entity
+  must be able to work and execute commands when it works"; runtime shipped
+  the loop half — `work_order.md` presence shifts the next day-open to
+  `phase=work`, the WORK column of tool_policy.yaml applies incl.
+  `execute_command` where granted): `GET/PUT /entities/{name}/work-order`
+  is the operator's write door (the entity never writes its own order —
+  the tool_policy.yaml authority split). Set is marker-first
+  (`work_order_changed`, text never on the marker); clear archives to
+  `work_order.done.md` (never a silent delete) and personal time returns;
+  the GET serves the standing order + the archived verdict history. Console
+  Capabilities panel gains the work-order textarea + set/clear + history,
+  admin-gated. The WORK-column executability tooltip's "no work lane exists
+  yet" is now false — the lane ships.
+- **W3 canonical night** (2026-07-20, wave-4 dispatch c3291): the operator
+  sleep verb (`set_state(dream=True)`) now runs the engine's FULL
+  `sleep_pass` (resolve → tend → dream — the same night the loop's
+  `on_sleep` runs), never the bare `dream_pass` that silently skipped
+  tending (adversary A's two-different-nights divergence). Older engines
+  without `sleep_pass` degrade to dream-only with a labeled `#FALLBACK`.
+- **Voice inheritance is rendered resolved** (2026-07-19, laurent dm#68:
+  "any entity should by default inherit the gateway default"):
+  `GET /entities/{name}/voice` serves `effective` — for an unset entity,
+  the fully-resolved triple it would actually speak with (the
+  `output.voice` capability default incl. the voice id the catalog alone
+  cannot name), `source: "gateway-default"`; no configured default
+  degrades to an honest engine-decides note, never a fabricated triple; a
+  set entity's `effective` is its own choice. Console renders the
+  inherited triple on the unset line.
+- **Entity voice picker on the console** (2026-07-19, laurent's
+  entity-personal-voice directive — the Jul-17 server half had no UI): the
+  entity manage page's Substrate panel gains a Voice section — current
+  triple + source line, cascading provider/model/voice selects fed from
+  the same capability discovery the defaults modal uses, Audition (hears
+  the CURRENT UNSAVED selection through the entity's own TTS lane — the
+  fabricated-selection lesson: a picker default is never presented as
+  configuration), Save (PUT, marker-first `voice_changed`), and Clear
+  (falls back down the gateway default chain, marked distinctly from
+  never-set). Save/Clear admin-gated in the UI as at the server.
+- **Diary → verbatims trail on the operator door** (2026-07-19, laurent's
+  diary---verbatims directive, lane C): `GET /entities/{name}/diary/{entry_id}`
+  serves an additive `trail` block — the entry's graph projection, its
+  `written_amid` episodes (what he attended at write time) and
+  `reflected_in` episodes (the conversation that led to the entry), each
+  with title/date/kind and verbatim availability — so the entity app
+  renders entry → verbatim click-through with the existing
+  `/records/{graph_id}/verbatim` endpoint. Pure reads over edges that
+  already stand; render-when-present (a projection-less old-vintage entry
+  serves its words with no trail, never an invented one; a graph hiccup
+  degrades to a labeled warning, never a failed book read). Live-verified
+  on Ephemeral's store: his "What does presence look like?" question
+  traces to the exact episode with a loadable verbatim.
+
+### Fixed
+- **Memory tools now execute on the visit lane — the granted-but-never-
+  offered audit** (2026-07-18, entity c69 / laurent's dashboard-vs-effective
+  directive; Ephemeral was right): `search_memory` / `read_memory` /
+  `recent_memories` were granted by the tool policy but never OFFERED in
+  visits — the door's hand-copied declaration map carried 7 of 10 walled
+  tools on a blocker comment that went stale the day runtime shipped the
+  session-free `HomeMemoryReader` (2026-07-10). Declarations now DERIVE
+  from runtime's `walled_tool_rows()` (offered ⇔ executable by
+  construction; the hand copy is dead) and the door executor wires the
+  reader with driver parity: ONE `tag_map` per visit (persisted in
+  `_visit.memory_tag_map`, so a #tag from turn 2 resolves in turn 5) and
+  PRIVATE-WORD CONTAINMENT — the durable lane's tool results rest (ledger
+  + cycle vars), so the reader gets a diary view whose private entries
+  carry a word-free marker instead of their gist; matching still sees the
+  text (a private entry is FOUND, its words stay in the book behind the
+  act-only `diary_read` hop). "Diary words never rest outside the book"
+  holds with zero runtime changes.
+- **Dashboard executability truth** (same audit): the capability matrix's
+  `executable: True` per-cell hardcode is dead — cells serve the lane
+  truth (visit/personal execute the walled set; sleep/work have no
+  tool-running lane, `ok=false` with the honest reason);
+  `GET /entities/{name}/tool-policy` serves the same per-cell
+  `executable` map (entity's c72 wire shape); `POST /visit/open` states a
+  narrowed grant (`allowlist_pruned`) when one exists — empty by
+  construction on a current stack, it appears exactly on version skew.
+- **Visit tool results now served — the "no result recorded" incident**
+  (2026-07-18, operator report: every lookup in a visit turn rendered "No
+  result recorded for this tool — the gateway did not return what the
+  lookup produced" while the run's ledger held 19 successful web_search
+  results): the durable visit lane served `tool_details: []` as a named
+  follow-up that never landed. The door now folds tool details from the
+  run's OWN ledger — turn-id-keyed via `answer_user` records (never
+  positional resume counting, which misattributes on the history sliding
+  window and empty-message resumes), args harvested from started twins
+  (`$slim` replaces >4KB completed payloads), results VERBATIM (the
+  2026-07-09 operator-transparency ruling — never gated, never truncated;
+  hosted-lane parity), act-only tools serve a label (their words never
+  rest in the ledger by design), failed calls serve their error text, and
+  executed-but-empty outputs serve an explicit marker. Served on the turn
+  probe (`POST /visit/{run_id}/turn`) and per-assistant-turn on
+  `GET /visit/{run_id}/transcript` (rehydration data; the entity app
+  consuming it there is entity's half). A failed ledger read degrades to
+  `[]` with a labeled notice, never a failed turn.
+- **Visit-close lesson elections were silently lost** (same forensics —
+  Ephemeral ledger seqs 119/121): runtime's lesson election (the cognition
+  directive's lessons-gap fix) forms `kind=lesson` into LIFE scope at the
+  close's APPLY stage, but the close-reflection segment's closed act set
+  predated lessons and refused every one (absorbed, invisible to the
+  visitor). `lesson→life` joins `interest→self` and
+  `summary-with-summarizes-edges` in the segment's act set; identity kinds
+  (value/purpose/trait) stay refused through every visit channel.
+
+### Added
+- **Drive ratios on the cognition wire** (2026-07-18, cognition-health
+  directive — G1 serving half): `GET /entities/{name}/cognition` carries a
+  `drives` block from memory's `cognition_health()` fold over the home's
+  full ladder (questions open/resolved, problems open/repaired, interests
+  open/explored; empty category ⇒ `ratio: null`, never a fabricated 100%).
+  The roster (`GET /entities`) carries the same block for warm homes only
+  (the roster stays file-cheap — it never opens a store; absent ≠ zero).
+  Render-when-present with labeled `#FALLBACK` degrade on version skew or
+  read failure. The gateway console renders two ratio bars in the entity
+  Overview panel from the same read — both counts always visible, amber
+  never-100% cue at saturation ("nothing open — no pull forward"), honest
+  "none yet" on empty categories, no stale bars on a failed read. The
+  cross-key fold divergence the adversary found (card discharged questions
+  via either `answers`/`resolves` ref while `cognition_health` folded
+  `answers` only) was reported to memory and fixed engine-side the same
+  day (`_REF_ATTRS` union) — the bar and the card agree by construction.
+- **Maintenance-hold race hardening** (same wave, adversary finding): both
+  registry caches (`get_home`, `get_entity_runtime`) re-check the
+  maintenance hold INSIDE the open lock on the miss path — a hold armed
+  mid-call can no longer cache a warm handle across the maintenance window.
+
+### Fixed
+- **Static operator token principal split** (2026-07-17, commons c2690 —
+  live-confirmed by code: thin clients on `ABSTRACTGATEWAY_AUTH_TOKEN`
+  authenticated into an EMPTY per-principal world, zero entities, stale run
+  store, while the browser admin session saw the real root): the legacy-token
+  principal now carries the SAME identity as the user-registry admin
+  (`user_id=admin`, `tenant_id=default`, `runtime_id=default` — was
+  local/local-admin/local-admin). One operator, one identity, one data world,
+  under either `ABSTRACTGATEWAY_ADMIN_USES_DEFAULT_RUNTIME` posture. Actor
+  stamps from static-token acts now read `person:admin`. Sessions persisted
+  under the old identity keep their old routing until they expire; the old
+  `users/local/local-admin` world stays on disk, dormant.
+
+### Added
+- **Voice TTS fail-loud watchdogs** (2026-07-17 outage: one wedged synthesis
+  — abstractvoice holds a per-VoiceManager lock across whole streams — left
+  child runs `running` for 2h+ and every later call queueing silently
+  forever): `POST /runs/{id}/voice/tts` now bounds synthesis
+  (`ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S`, default 300s, <=0 disables) and
+  answers 504 naming the request while best-effort cancel-commanding the
+  stuck child run; `POST /runs/{id}/voice/tts/stream` pulls events through a
+  feeder thread with bounded waits — an idle gap over the ceiling emits a
+  terminal error event (`watchdog_timeout: true`) plus the same child cancel
+  instead of a silent forever-stream. Honest limit: a truly wedged synthesis
+  thread cannot be killed; fail-loud unblocks the caller with the truth and
+  keeps durable state from reading `running` forever.
+
+### Added
+- **Per-entity voice + console Test button** (2026-07-17, operator directive
+  dm#10; design converged through two adversarial reviews):
+  - Each entity can have its own voice: the choice is a FULL
+    `{provider, model, voice}` triple in the home (`<home>/voice.yaml` — a
+    bare voice id recreates the cross-provider leak class), managed by
+    `GET/PUT /api/gateway/entities/{name}/voice` (admin-gated, marker-first
+    `voice_changed`, `clear: true` to unselect). New entity-owned TTS lanes
+    `POST /entities/{name}/voice/tts[/stream]` resolve the voice LATE-BOUND
+    server-side under the anti-mixing rule (the home triple applies only
+    when the request names no voice fields — partial requests pass through
+    untouched), mint their session-memory scope server-side, and delegate
+    to the same production machinery as the generic routes; responses carry
+    `voice_source` (request|entity|unset). The generic `/runs/{id}/voice/tts*`
+    routes stay entity-blind by design. Per-USER voice remains the
+    per-principal `output.voice` capability default — one resolution rule,
+    two runtime planes; the gateway default stays the last resort.
+  - Console multimodal modal gains a **Test** button (before Save): voice
+    routes audition the CURRENT UNSAVED selection through the production
+    TTS lane and play the audio inline (authenticated artifact fetch);
+    text routes run a tiny sandbox generation; other modalities defer to
+    the Sandbox tab (honest — no probe theater). Single-flight, stale
+    players clear on any selection change, and a failed voice discovery
+    now degrades to an honest "Voice discovery failed" label instead of a
+    stuck "Loading voices…".
+  - `VoiceTTSRequest.timeout_s`: per-request synthesis deadline, clamped to
+    the server watchdog (a client may tighten, never widen) — the Test
+    button sends 25s so a wedged synthesis fails fast with the watchdog's
+    honest 504 instead of hanging the modal.
+
+### Fixed
+- **TTS watchdog child correlation** (adversarial find on the 2026-07-17
+  watchdog): the stuck-child cancel now correlates by `request_id` from the
+  child's trace metadata before falling back to newest-first — repeated
+  interactive attempts against a wedged backend previously risked
+  cancelling a LATER attempt's child while the timed-out request's child
+  stayed running forever.
+
+### Added
+- **Per-entity skills selection** (2026-07-17, laurent c2857 "work on this
+  now"; the c2838 committed shape): `GET/PUT /api/gateway/entities/{name}/skills`
+  manages WHAT an entity is taught beyond the capability map. Selection
+  persists in the home (`<home>/skills.yaml` — `[{name, phases?}]`, phases
+  validated against runtime's ruled four, absent = everywhere) and travels
+  on copy; PUT is admin-gated, whole-document replace, marker-first
+  (`skills_selection_changed`, old/new names+phases, principal-stamped);
+  `POST /entities` accepts a birth selection (validated before anything is
+  created; the created entity stands with a labeled warning if the
+  selection half fails). GET serves ONE server-resolved truth for both UIs:
+  the stored selection, roster rows through the same trust gate as every
+  skills lane (default-requested never trust-bypassed; unresolvable names
+  are labeled verdicts visible at write time), and the
+  PhaseCapabilityMatrix payload (global selection renders the ruled four
+  with identical cells per uic's recommendation). Delivery into entity
+  prompts is deliberately absent until runtime elects the composition slot.
+
+### Added
+- **Per-entity task inbox — the G3 door half** (2026-07-17, plan v18
+  gateway §1; unblocks continuum origination, code's `/entity task` verb,
+  and runtime's R-C loop half): tasks left with an entity are durable
+  FACTS in the home — append-only events in `<home>/task_inbox.jsonl`
+  (flock-guarded appends; state is a fold; torn tail lines skip with a
+  labeled warning), written by `POST /entities/{name}/tasks` (admin-gated,
+  origin STAMPED from the authenticated principal — no payload origin
+  field exists to forge), `POST .../tasks/{task_id}/status`
+  (pending|taken|done|parked), and visit close (`tasks` on the close
+  request → origin `visit:<run_id>`; recorded only after a COMPLETED
+  close, failures surface as a labeled response warning, never a 5xx over
+  a finished close). Every write is marker-first (`task_inbox_changed`,
+  refusing when the marker cannot land). `GET /entities/{name}/tasks`
+  serves the fold; the entity roster carries `pending_tasks`
+  render-when-present (absent when no inbox exists — the c2665/c2801
+  three-consumer contract; `phase` deliberately waits for the phase
+  machine). Ruling-neutral under D1: the door records facts — who opens
+  the work phase is runtime's ruled behavior. The file schema is the
+  cross-package contract for runtime's R-C day-open reader.
+
+### Added
+- **Capability-map install lane** (2026-07-17, laurent c2710 / skill's
+  entity-self-knowledge teaching): `GET/PUT
+  /api/gateway/entities/{name}/capability-map` manages the per-home
+  memory-teaching file (`<home>/capability_map.md`) that runtime's
+  `compose_system_base` presents verbatim on every summon surface. PUT is
+  admin-gated and marker-first — a `capability_map_changed` host marker
+  (old/new sha256 + size, principal-stamped, never the text) lands BEFORE
+  the atomic file replace, and a marker failure refuses the write: what a
+  mind is TAUGHT changing between sessions is the same auditable class as a
+  substrate swap. GET reads honestly (`installed: false` for an uninstalled
+  map, never a 404 on an existing entity).
+
+### Changed
+- **Telegram bridge rides durable session replay** (2026-07-17, the
+  durable-sessions review's named follow-up): the bridge's private transcript
+  (`binding["history"]` in `telegram_bridge_state.json`, shipped into every
+  run as client `context.messages`) is RETIRED — it was the last
+  second-source-of-truth transcript in the gateway tree. Runs now opt into
+  the server-side seed (`use_session_history: true`,
+  `session_history_max_messages` from `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES`,
+  default 30) under the same stable per-chat session id; `/reset` already
+  rotates the session id, which is what clears replayed history. Behavior
+  deltas, deliberate: failed turns no longer replay into later prompts
+  (the old transcript kept "Sorry — the run failed" lines), and mid-run
+  ask-user exchanges live inside their run rather than being re-shipped
+  verbatim into every later run. Stale `history` keys in existing state
+  files are ignored.
+
+### Added
+- **Durable session conversation replay, seed side** (2026-07-16, operator
+  directive, agora `durable-sessions` contract v1): `start_run` with
+  `input_data.use_session_history` truthy and a `session_id` seeds
+  `context.messages` from the session's prior COMPLETED root runs via
+  `abstractruntime.session_history.session_chat_messages` — server-owned
+  conversation replay for thin clients (the assistant regression where every
+  turn started blank). Client-provided `context.messages` always win; explicit
+  `session_history_max_messages: 0` disables replay per run; caps come from
+  input (`session_history_max_messages`, `session_history_max_chars`) then
+  env (`ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES`, `..._MAX_CHARS`) then
+  defaults (40 messages / 24k chars); failures degrade to a labeled
+  `_runtime.session_history` `#FALLBACK` note plus a WARNING log — never a
+  blocked start. Opted-in runs always get a `context.messages` LIST (even
+  empty) so the session's first turn classifies as a chat turn for later
+  reads. Requires AbstractRuntime>=0.4.30 (dependency floor bumped).
+
 ### Added
 - Run-level skills selection COMPLETE end-to-end (card 0087, both halves):
   the gateway half (input_data.skills → trust-gated resolution →
@@ -27,6 +580,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   digests seat 50 in ~3,850 of the 7,864-token budget (2x headroom);
   if richer digests pin tokens_used, the companion knob is the recall
   budget's token_fraction 0.12 -> 0.16.
+
+### Changed
+- `dp-*` vocabulary retired for `deep-*` (operator ruling via flow c2559):
+  docs/dp-research.md renamed to docs/deep-research.md (contents synced to
+  deep-research@0.1.6 / abstractresearch.deep.v1), the bundle contract
+  suite ported (test_deep_research_bundle_contract.py — the archive move
+  of dp-research@0.1.x had turned it red), wheel/sdist force-include now
+  ships deep-research@0.1.6 (the old entries pointed at the MOVED file —
+  a wheel build would have shipped without the research bundle), and the
+  install-profile pins updated. Noted back to flow: 0.1.6's manifest
+  metadata block is empty where 0.1.0 carried family/tool_policy/etc.
 
 ### Fixed
 - World-model cards and lessons are viewable (operator ask via entity

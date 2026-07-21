@@ -80,7 +80,7 @@ def test_composition_is_the_union_with_gateway_attaching_containment() -> None:
             assert r["grant_lane"] is None and r["capability_class"] is None
         else:
             assert r["owner"] == "runtime"
-            assert r["grant_lane"] in ("tier1", "workspace")  # walled rows carry the grant lane
+            assert r["grant_lane"] in ("tier1", "tier2", "workspace")  # walled rows carry the grant lane (tier2 since execute_command, 2026-07-19)
 
 
 def test_total_order_is_executes_via_owner_name() -> None:
@@ -157,8 +157,10 @@ def test_matrix_default_cells_are_assigned_false_resolved_by_default() -> None:
 
 def test_matrix_cells_carry_descriptor_fields_server_side() -> None:
     cell = _items(phase_capability_matrix(None))["web_search"]["visit"]
-    for key in ("grant_lane", "capability_class", "mutating", "remote_write_capable", "act_only", "executable"):
+    # act_only died with the ref layer (runtime c273) — no longer a cell field.
+    for key in ("grant_lane", "capability_class", "mutating", "remote_write_capable", "executable"):
         assert key in cell, f"cell missing server-declared field {key!r}"
+    assert "act_only" not in cell, "act_only rider died with the ref layer"
     assert cell["executable"] is True
 
 

@@ -88,6 +88,47 @@ Structured LLM/Agent schemas are Runtime/Core-owned: `response` remains textual,
 and schema-conformant object values are available through the node `data` output
 for data edges such as Break Object and Switch.
 
+#### Durable session replay (`use_session_history`)
+
+Thin clients do not need to carry conversation transcripts. Passing
+`"input_data": {"use_session_history": true}` together with a `session_id`
+makes the gateway seed the run's `context.messages` from the session's prior
+COMPLETED root runs before the run starts — the run store is the durable
+transcript (agora `durable-sessions` contract v1, 2026-07-16).
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"bundle_id":"my-bundle","session_id":"sess-1","input_data":{"prompt":"and what did I say before?","use_session_history":true}}' \
+  "$BASE_URL/api/gateway/runs/start"
+```
+
+Rules (the model-vs-display divergence contract — what the model replays is
+deliberately narrower than what history views display):
+
+- Client-provided non-empty `context.messages` always win; the seed never
+  overwrites them. An EMPTY client `context.messages` list does not count as
+  a transcript — the seed still runs (use the cap below to disable).
+- Only COMPLETED root runs of the session contribute, as strictly alternating
+  user/assistant pairs. FAILED and CANCELLED turns are invisible to replay by
+  design (a promptless answer or answerless prompt would seed a dangling
+  message and invite re-answering a stale ask); history views still show them.
+- Steering/operator guidance injected mid-run is not replayed; over-long
+  messages are truncated with a labeled `#TRUNCATION` marker; whole oldest
+  turns are dropped first (`session_history_max_chars` cumulative budget).
+- Caps: `input_data.session_history_max_messages` (1..200; explicit `0`
+  disables replay for the run) > `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES`
+  > default 40. Chars: `session_history_max_chars` >
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` > default 24000.
+- Failures degrade to a labeled `_runtime.session_history` `#FALLBACK` note
+  and an unseeded start — never a blocked run. Success records
+  `_runtime.session_history = {seeded: N, ...}` on the run for observability.
+- Entity lanes never ride this: their transcript authority is the entity home
+  (`_visit.history` / the chat driver), not the run store.
+
+Evidence: `_seed_session_history` in `src/abstractgateway/hosts/bundle_host.py`;
+read half `abstractruntime.session_history.session_chat_messages` (>=0.4.30);
+tests `tests/test_gateway_session_history_seed.py`.
+
 ### 2b) Schedule a run (bundle mode)
 
 `POST /api/gateway/runs/schedule` starts a **scheduled parent run** that launches the target workflow as child runs over time.

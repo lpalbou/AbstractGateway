@@ -3431,6 +3431,9 @@ def _load_or_create_session_memory_owner_run(*, run_store: Any, run_id: str) -> 
     try:
         run_store.save(run)
     except Exception:
+        # Callers treat None as "no memory anchor" (session memory silently
+        # disabled for the turn) — degradation is fine, invisibility is not.
+        logger.warning("Failed to persist session-memory owner run %s; session memory unavailable this turn", rid, exc_info=True)
         return None
     return run
 
@@ -8511,7 +8514,10 @@ async def save_chat_thread(run_id: str, req: SaveChatThreadRequest) -> SaveChatT
     except HTTPException:
         raise
     except Exception:
-        pass
+        # Dedup-branch failure falls through to the PRIMARY store-and-emit
+        # path below (a fresh artifact + event), so nothing is lost — but the
+        # fallthrough should be diagnosable when duplicates pile up.
+        logger.debug("chat_thread dedup lookup failed; storing fresh copy", exc_info=True)
     tags: Dict[str, str] = {
         "kind": "chat_thread",
         "target": "observer",
@@ -8595,6 +8601,13 @@ class VoiceTTSRequest(BaseModel):
     quality: Optional[str] = Field(default=None, description="Compatibility alias for quality_preset.")
     instructions: Optional[str] = Field(default=None, description="Optional expressive/style instructions for backends that support them.")
     request_id: Optional[str] = Field(default=None, description="Optional idempotency key (UUID recommended).")
+    timeout_s: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Optional per-request synthesis deadline, clamped to the server watchdog "
+        "(ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S). Interactive callers (the console Test button) "
+        "send a short value so a wedged synthesis fails fast instead of hanging the UI.",
+    )
 
 
 class VoiceTTSResponse(BaseModel):
@@ -8614,6 +8627,101 @@ def _voice_stream_jsonl(event: Dict[str, Any]) -> bytes:
     elif audio is not None:
         payload["audio"] = audio
     return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _voice_tts_timeout_s() -> float:
+    """Watchdog ceiling for one synchronous TTS synthesis (seconds).
+
+    2026-07-17 incident: a wedged synthesis (abstractvoice serializes synth
+    behind a per-VoiceManager lock held across whole streams) left child runs
+    'running' for 2h+ and every later /voice/tts call queueing forever behind
+    it — the route had no deadline, so the outage was silent. <=0 disables.
+    """
+    raw = os.getenv("ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S")
+    try:
+        if raw is not None and str(raw).strip():
+            return float(str(raw).strip())
+    except Exception:
+        pass
+    return 300.0
+
+
+def _voice_tts_timeout_fail_loud(*, svc: Any, parent_run_id: str, request_id: str, timeout_s: float) -> str:
+    """Best-effort: name and durably cancel the stuck TTS child, return the 504 detail.
+
+    The synthesis thread itself cannot be killed (asyncio.to_thread has no
+    interrupt); what fail-loud buys is (a) the caller is unblocked with the
+    truth instead of hanging, (b) the child run is cancel-commanded so the
+    durable state does not read 'running' forever once the runner drains it.
+
+    Correlation is by REQUEST_ID first (it rides the child's trace_metadata):
+    under repeated interactive attempts against a wedged backend, multiple
+    stuck children exist under ONE session-memory parent — a newest-first
+    pick could cancel a LATER attempt's child while this request's child
+    stays running forever (adversary F4, 2026-07-17). Newest-first remains
+    only as the labeled fallback when no child carries the request id.
+    """
+    child_run_id = ""
+    try:
+        rs = svc.host.run_store
+        children = list(rs.list_children(parent_run_id=str(parent_run_id)) or [])
+        candidates = [
+            c for c in children
+            if "tts" in str(getattr(c, "workflow_id", "") or "")
+            and str(getattr(getattr(c, "status", None), "value", getattr(c, "status", "")) or "") in {"running", "waiting"}
+        ]
+
+        def _child_request_id(c: Any) -> str:
+            try:
+                rt = (getattr(c, "vars", None) or {}).get("_runtime") or {}
+                tm = rt.get("trace_metadata") or {}
+                if isinstance(tm, dict) and tm.get("request_id"):
+                    return str(tm.get("request_id"))
+                inp = (getattr(c, "vars", None) or {}).get("input") or {}
+                params = inp.get("params") if isinstance(inp, dict) else None
+                tm2 = (params or {}).get("trace_metadata") if isinstance(params, dict) else None
+                if isinstance(tm2, dict) and tm2.get("request_id"):
+                    return str(tm2.get("request_id"))
+            except Exception:
+                pass
+            return ""
+
+        matched = [c for c in candidates if _child_request_id(c) == str(request_id)]
+        pool = matched if matched else candidates
+        pool.sort(key=lambda c: str(getattr(c, "created_at", "") or ""), reverse=True)
+        if pool:
+            child_run_id = str(getattr(pool[0], "run_id", "") or "")
+    except Exception:
+        child_run_id = ""
+    if child_run_id:
+        try:
+            svc.runner.command_store.append(
+                CommandRecord(
+                    command_id=f"tts-watchdog-{request_id}",
+                    run_id=child_run_id,
+                    type="cancel",
+                    payload={"reason": f"voice/tts watchdog: synthesis exceeded {timeout_s:.0f}s"},
+                    ts="",
+                    client_id="gateway-voice-watchdog",
+                    seq=0,
+                )
+            )
+        except Exception:
+            logger.warning("#FALLBACK: TTS watchdog could not enqueue cancel for child %s", child_run_id, exc_info=True)
+    logger.error(
+        "voice/tts watchdog fired: synthesis exceeded %.0fs (parent=%s request_id=%s child=%s)",
+        timeout_s,
+        parent_run_id,
+        request_id,
+        child_run_id or "unknown",
+    )
+    child_part = f" Child run {child_run_id} was cancel-commanded." if child_run_id else ""
+    return (
+        f"TTS synthesis exceeded {timeout_s:.0f}s and was abandoned by the gateway watchdog "
+        f"(request_id={request_id}).{child_part} The synthesis backend may be wedged "
+        "(head-of-line lock); inspect the gateway process if this repeats. "
+        "Tune via ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S (<=0 disables)."
+    )
 
 
 @router.post("/runs/{run_id}/voice/tts", response_model=VoiceTTSResponse)
@@ -8699,14 +8807,30 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         }
     }
 
+    timeout_s = _voice_tts_timeout_s()
+    # Per-request deadline (console Test button lane): clamped to the env
+    # watchdog — a client may tighten the deadline, never widen past the
+    # operator's ceiling.
+    req_timeout = getattr(req, "timeout_s", None)
+    if req_timeout is not None and float(req_timeout) > 0:
+        timeout_s = min(float(req_timeout), timeout_s) if timeout_s > 0 else float(req_timeout)
     try:
-        child = await asyncio.to_thread(
+        synth = asyncio.to_thread(
             run_facade.generate_voice,
             str(getattr(run, "run_id", rid)),
             text=text,
             output=output_spec,
             params=params,
         )
+        child = await (asyncio.wait_for(synth, timeout=timeout_s) if timeout_s > 0 else synth)
+    except asyncio.TimeoutError:
+        detail = _voice_tts_timeout_fail_loud(
+            svc=svc,
+            parent_run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            timeout_s=timeout_s,
+        )
+        raise HTTPException(status_code=504, detail=detail)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
 
@@ -8828,20 +8952,78 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
         raise HTTPException(status_code=500, detail=f"TTS stream setup failed: {e}")
 
     def _iter_events():
+        # Idle watchdog (2026-07-17 wedge): a head-of-line-locked synthesis
+        # used to park this stream forever with ZERO events. Events are pulled
+        # on a feeder thread; each wait on the handoff queue is bounded — an
+        # idle gap over the watchdog ceiling emits a loud terminal error event
+        # instead of a silent forever-stream. The feeder thread itself cannot
+        # be killed if the backend is truly wedged; the stream ends honestly.
+        import queue as _queue
+
+        timeout_s = _voice_tts_timeout_s()
+        req_timeout = getattr(req, "timeout_s", None)
+        if req_timeout is not None and float(req_timeout) > 0:
+            timeout_s = min(float(req_timeout), timeout_s) if timeout_s > 0 else float(req_timeout)
+        if timeout_s <= 0:
+            try:
+                for event in events:
+                    if isinstance(event, dict):
+                        event.setdefault("request_id", request_id)
+                        yield _voice_stream_jsonl(event)
+                    else:
+                        yield _voice_stream_jsonl({"type": "event", "request_id": request_id, "value": str(event)})
+            except GeneratorExit:
+                close = getattr(events, "close", None)
+                if callable(close):
+                    close()
+                raise
+            except Exception as e:
+                yield _voice_stream_jsonl({"type": "error", "ok": False, "request_id": request_id, "error": str(e)})
+            finally:
+                close = getattr(events, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
+            return
+
+        handoff: "_queue.Queue[tuple[str, Any]]" = _queue.Queue(maxsize=64)
+
+        def _feed() -> None:
+            try:
+                for event in events:
+                    handoff.put(("event", event))
+                handoff.put(("end", None))
+            except Exception as e:  # noqa: BLE001 - surfaced as a stream error event
+                handoff.put(("error", e))
+
+        feeder = threading.Thread(target=_feed, name=f"tts-stream-feed-{request_id[:8]}", daemon=True)
+        feeder.start()
         try:
-            for event in events:
+            while True:
+                try:
+                    kind, value = handoff.get(timeout=timeout_s)
+                except _queue.Empty:
+                    detail = _voice_tts_timeout_fail_loud(
+                        svc=svc,
+                        parent_run_id=str(getattr(run, "run_id", rid)),
+                        request_id=request_id,
+                        timeout_s=timeout_s,
+                    )
+                    yield _voice_stream_jsonl({"type": "error", "ok": False, "request_id": request_id, "error": detail, "watchdog_timeout": True})
+                    return
+                if kind == "end":
+                    return
+                if kind == "error":
+                    yield _voice_stream_jsonl({"type": "error", "ok": False, "request_id": request_id, "error": str(value)})
+                    return
+                event = value
                 if isinstance(event, dict):
                     event.setdefault("request_id", request_id)
                     yield _voice_stream_jsonl(event)
                 else:
                     yield _voice_stream_jsonl({"type": "event", "request_id": request_id, "value": str(event)})
-        except GeneratorExit:
-            close = getattr(events, "close", None)
-            if callable(close):
-                close()
-            raise
-        except Exception as e:
-            yield _voice_stream_jsonl({"type": "error", "ok": False, "request_id": request_id, "error": str(e)})
         finally:
             close = getattr(events, "close", None)
             if callable(close):
@@ -16538,7 +16720,7 @@ class BacklogItemSummary(BaseModel):
     item_id: int
     package: str
     title: str
-    task_type: str = Field(default="task", description="bug|feature|task")
+    task_type: str = Field(default="task", description="bug|feature|improvement|task")
     summary: str = ""
     parsed: bool = True
     # Board metadata (continuum c1087 ask 1): parsed at list time from the
@@ -16599,7 +16781,7 @@ class BacklogCreateRequest(BaseModel):
     kind: str = Field(..., description="Backlog kind to create in (planned|proposed|recurrent).")
     package: str = Field(..., description="Package scope (e.g. framework, abstractruntime, abstractgateway).")
     title: str = Field(..., description="Backlog title.")
-    task_type: Optional[str] = Field(default=None, description="Backlog item type: bug|feature|task.")
+    task_type: Optional[str] = Field(default=None, description="Backlog item type: bug|feature|improvement|task.")
     summary: Optional[str] = Field(default=None, description="Optional 1-paragraph summary.")
     content: Optional[str] = Field(
         default=None,
@@ -16638,7 +16820,7 @@ class BacklogExecuteBatchRequest(BaseModel):
     target_reasoning_effort: Optional[str] = Field(
         default=None, description="Per-task reasoning-effort override: minimal|low|medium|high."
     )
-    dor: Optional[str] = Field(default=None, description="Definition-of-Ready gate: dor=check refuses 409 naming which members failed.")
+    dor: Optional[str] = Field(default=None, description="Definition-of-Ready gate (default-ON since 2026-07-20): absent/check evaluates per member, 409 naming which failed; dor=skip bypasses explicitly.")
     override: bool = Field(default=False, description="Operator override of the DoR gate.")
 
 
@@ -16646,7 +16828,7 @@ class BacklogMergeRequest(BaseModel):
     kind: str = Field(default="planned", description="Destination kind for the master backlog (planned|proposed|recurrent).")
     package: str = Field(..., description="Package scope for the master backlog (e.g. framework, abstractobserver).")
     title: str = Field(..., description="Title for the master backlog.")
-    task_type: Optional[str] = Field(default=None, description="Master backlog type: bug|feature|task (default: task).")
+    task_type: Optional[str] = Field(default=None, description="Master backlog type: bug|feature|improvement|task (default: task).")
     summary: Optional[str] = Field(default=None, description="Optional summary override for the master backlog.")
     items: List[BacklogRef] = Field(default_factory=list, description="Backlog items to reference (planned items).")
 
@@ -16706,7 +16888,7 @@ class BacklogAdvisorRequest(BaseModel):
         default=None,
         description="Optional current backlog tab (processing|planned|proposed|recurrent|completed|failed|deprecated|trash).",
     )
-    focus_type: Optional[str] = Field(default=None, description="Optional current type filter (bug|feature|task|all).")
+    focus_type: Optional[str] = Field(default=None, description="Optional current type filter (bug|feature|improvement|task|all).")
 
 
 class BacklogAdvisorResponse(BaseModel):
@@ -17153,6 +17335,56 @@ def _triage_repo_root_from_env() -> Optional[Path]:
         return Path(raw).expanduser().resolve()
     except Exception:
         return None
+
+
+def _backlog_roots() -> List[Tuple[str, Path]]:
+    """READ-scope backlog roots: [(package, repo_dir)] (continuum c3583;
+    laurent dm#110 "I must have proper access to everything in the board").
+
+    The old serving was SINGLE-ROOT — the umbrella's docs/backlog only; the
+    23 seat repos' backlogs never listed and their files 404'd while the
+    package chips (file-header labels) made it LOOK workspace-wide. Now:
+    the triage root itself + every immediate child directory carrying a
+    docs/backlog, package = the repo DIRECTORY name (one authority; header
+    labels diverge — "framework" vs "abstractframework" broke continuum's
+    dedup). ABSTRACTGATEWAY_BACKLOG_ROOTS (comma/colon-separated repo dirs)
+    overrides discovery entirely. WRITE/exec lanes stay umbrella-scoped
+    deliberately (staging discipline — continuum's ask says read-only
+    serving is the whole need)."""
+    explicit = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_ROOTS") or "").strip()
+    roots: List[Tuple[str, Path]] = []
+    seen: set = set()
+    if explicit:
+        for token in re.split(r"[,:]", explicit):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                p = Path(token).expanduser().resolve()
+            except Exception:
+                continue
+            if p.is_dir() and (p / "docs" / "backlog").is_dir() and p not in seen:
+                roots.append((p.name, p))
+                seen.add(p)
+        return roots
+    repo_root = _triage_repo_root_from_env()
+    if repo_root is None:
+        return []
+    if (repo_root / "docs" / "backlog").is_dir():
+        roots.append((repo_root.name, repo_root))
+        seen.add(repo_root)
+    try:
+        for child in sorted(repo_root.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            if child in seen:
+                continue
+            if (child / "docs" / "backlog").is_dir():
+                roots.append((child.name, child))
+                seen.add(child)
+    except OSError:
+        pass
+    return roots
 
 
 def _decision_to_summary(decision: Any) -> TriageDecisionSummary:
@@ -18822,8 +19054,13 @@ async def processes_log_tail(
 
 @router.get("/backlog/{kind}", response_model=BacklogListResponse)
 async def backlog_list(kind: str) -> BacklogListResponse:
-    repo_root = _triage_repo_root_from_env()
-    if repo_root is None:
+    """MULTI-ROOT since 2026-07-20 (continuum c3583; laurent dm#110): folds
+    every root from _backlog_roots() — the umbrella + each seat repo with a
+    docs/backlog. `package` on each summary is the repo DIRECTORY name (one
+    authority; the file-header label stays parse-side only). Per-root caps
+    keep the read bounded; the whole walk runs off the event loop (H7c)."""
+    roots = _backlog_roots()
+    if not roots:
         raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
 
     k = str(kind or "").strip().lower()
@@ -18835,61 +19072,71 @@ async def backlog_list(kind: str) -> BacklogListResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Backlog parser unavailable: {e}")
 
-    dir_path = repo_root / "docs" / "backlog" / k
-    if not dir_path.exists():
-        return BacklogListResponse(items=[])
-    # H7c discipline: this reads EVERY item file — off the event loop.
-    parsed_items = list(await asyncio.to_thread(iter_backlog_items, dir_path, kind=k))
-    parsed_items.sort(key=lambda i: int(getattr(i, "item_id", 0)), reverse=True)
-
-    parsed_names = {item.path.name for item in parsed_items}
-    raw_files = sorted(
-        [p for p in dir_path.glob("*.md") if p.name.lower() not in {"readme.md"}],
-        key=lambda p: p.name,
-    )
-
-    out: List[BacklogItemSummary] = []
-    for item in parsed_items[:500]:
-        out.append(
-            BacklogItemSummary(
-                kind=k,
-                filename=item.path.name,
-                item_id=int(item.item_id),
-                package=str(item.package),
-                title=str(item.title),
-                task_type=str(getattr(item, "task_type", "task") or "task"),
-                summary=str(item.summary or ""),
-                parsed=True,
-                priority=str(getattr(item, "priority", "") or ""),
-                labels=list(getattr(item, "labels", ()) or ()),
+    def _walk_roots() -> List[BacklogItemSummary]:
+        folded: List[BacklogItemSummary] = []
+        for package, repo_dir in roots:
+            dir_path = repo_dir / "docs" / "backlog" / k
+            if not dir_path.exists():
+                continue
+            parsed_items = list(iter_backlog_items(dir_path, kind=k))
+            parsed_items.sort(key=lambda i: int(getattr(i, "item_id", 0)), reverse=True)
+            parsed_names = {item.path.name for item in parsed_items}
+            for item in parsed_items[:500]:
+                folded.append(
+                    BacklogItemSummary(
+                        kind=k,
+                        filename=item.path.name,
+                        item_id=int(item.item_id),
+                        package=package,
+                        title=str(item.title),
+                        task_type=str(getattr(item, "task_type", "task") or "task"),
+                        summary=str(item.summary or ""),
+                        parsed=True,
+                        priority=str(getattr(item, "priority", "") or ""),
+                        labels=list(getattr(item, "labels", ()) or ()),
+                    )
+                )
+            # Best-effort: unparsed items stay browsable.
+            raw_files = sorted(
+                [p for p in dir_path.glob("*.md") if p.name.lower() not in {"readme.md"}],
+                key=lambda p: p.name,
             )
-        )
+            unparsed = 0
+            for p in raw_files:
+                if p.name in parsed_names:
+                    continue
+                folded.append(
+                    BacklogItemSummary(
+                        kind=k,
+                        filename=p.name,
+                        item_id=0,
+                        package=package,
+                        title=p.name,
+                        task_type="task",
+                        summary="",
+                        parsed=False,
+                    )
+                )
+                unparsed += 1
+                if unparsed >= 300:
+                    break
+        return folded
 
-    # Best-effort: include unparsed items so the UI can still browse them.
-    for p in raw_files:
-        if p.name in parsed_names:
-            continue
-        out.append(
-            BacklogItemSummary(
-                kind=k,
-                filename=p.name,
-                item_id=0,
-                package="",
-                title=p.name,
-                task_type="task",
-                summary="",
-                parsed=False,
-            )
-        )
-        if len(out) >= 800:
-            break
+    out = await asyncio.to_thread(_walk_roots)
+    # Newest ids first across roots (stable within a root by construction).
+    out.sort(key=lambda i: int(i.item_id), reverse=True)
     return BacklogListResponse(items=out)
 
 
 @router.get("/backlog/{kind}/{filename}/content", response_model=BacklogContentResponse)
-async def backlog_content(kind: str, filename: str) -> BacklogContentResponse:
-    repo_root = _triage_repo_root_from_env()
-    if repo_root is None:
+async def backlog_content(kind: str, filename: str, package: Optional[str] = None) -> BacklogContentResponse:
+    """MULTI-ROOT content resolution (continuum c3583 point c): (kind,
+    filename) resolves across every backlog root in order; `?package=`
+    (the repo directory name) disambiguates basename collisions. The
+    per-root containment check is unchanged — a filename never escapes its
+    backlog dir."""
+    roots = _backlog_roots()
+    if not roots:
         raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
 
     k = str(kind or "").strip().lower()
@@ -18902,18 +19149,23 @@ async def backlog_content(kind: str, filename: str) -> BacklogContentResponse:
     if not re.fullmatch(r"[a-zA-Z0-9._-]{1,220}\.md", raw):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    dir_path = repo_root / "docs" / "backlog" / k
-    path = (dir_path / raw).resolve()
-    # Ensure path is inside the backlog dir.
-    try:
-        path.relative_to(dir_path.resolve())
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid path")
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Backlog item not found")
+    want = str(package or "").strip().lower()
+    if want:
+        roots = [(name, d) for name, d in roots if name.lower() == want]
+        if not roots:
+            raise HTTPException(status_code=404, detail=f"No backlog root named {package!r}")
 
-    content = _read_text_bounded(path, max_chars=500_000)
-    return BacklogContentResponse(kind=k, filename=raw, content=content)
+    for _name, repo_dir in roots:
+        dir_path = repo_dir / "docs" / "backlog" / k
+        path = (dir_path / raw).resolve()
+        try:
+            path.relative_to(dir_path.resolve())
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid path")
+        if path.exists():
+            content = _read_text_bounded(path, max_chars=500_000)
+            return BacklogContentResponse(kind=k, filename=raw, content=content)
+    raise HTTPException(status_code=404, detail="Backlog item not found in any backlog root")
 
 
 _BACKLOG_KINDS = {"planned", "completed", "proposed", "recurrent", "deprecated", "trash"}
@@ -18938,8 +19190,11 @@ def _safe_backlog_package(value: str) -> Optional[str]:
     return raw
 
 
-_BACKLOG_TASK_TYPES = {"bug", "feature", "task"}
-_BACKLOG_TITLE_TYPE_PREFIX_RE = re.compile(r"^\[(bug|feature|task)\]\s*", re.IGNORECASE)
+# The ruled enum (decision:workitem-type-enum) — kept in sync with
+# backlog_parser._normalize_task_type and backlog_dor._DOR_TYPES (the
+# missing-"improvement" drift class, skill c3546).
+_BACKLOG_TASK_TYPES = {"bug", "feature", "improvement", "task"}
+_BACKLOG_TITLE_TYPE_PREFIX_RE = re.compile(r"^\[(bug|feature|improvement|task)\]\s*", re.IGNORECASE)
 
 
 def _safe_backlog_task_type(value: Optional[str]) -> Optional[str]:
@@ -19777,9 +20032,15 @@ async def backlog_execute(
     ),
     dor: Optional[str] = Query(
         default=None,
-        description="Definition-of-Ready gate (continuum c1088 ask 3): dor=check refuses 409 unless the spec passes the DoR checks.",
+        description=(
+            "Definition-of-Ready gate (continuum c1088 ask 3; default-ON since 2026-07-20, skill c3546: "
+            "both co-signed sources teach a WALL, and a raw curl silently bypassing it contradicted them). "
+            "Absent or dor=check evaluates the gate (409 definition_of_ready_failed with per-check evidence); "
+            "dor=skip bypasses EXPLICITLY (recorded as dor_overridden, same as override=true — a bypass is "
+            "always a recorded choice, never a default)."
+        ),
     ),
-    override: bool = Query(default=False, description="Operator override of the DoR gate (dor=check) — records dor_overridden=true."),
+    override: bool = Query(default=False, description="Operator override of the DoR gate — records dor_overridden=true."),
     executor: Optional[str] = Query(
         default=None,
         description="Per-request executor choice (continuum c1550 ask 2 / c1575 confirm): one of the "
@@ -19792,8 +20053,13 @@ async def backlog_execute(
     # the same names with env-config values.
     requested_model = target_model
     requested_effort = target_reasoning_effort
-    dor_requested = str(dor or "").strip().lower() == "check"
-    dor_overridden = bool(override)
+    # DEFAULT-ON (skill c3546): absent = check; dor=skip is the explicit
+    # bypass and is RECORDED as an override (a bypass is a choice, never a
+    # silent default — the wall the conventions doc + the c3514 co-sign
+    # teach). Legacy dor=check stays accepted verbatim.
+    dor_word = str(dor or "").strip().lower()
+    dor_requested = dor_word != "skip"
+    dor_overridden = bool(override) or dor_word == "skip"
     # Per-request executor (continuum c1575 "ship it"): validate BEFORE any
     # queue write — unknown/unavailable refuse 400 verbatim pre-enqueue,
     # never a queued item that dies at the worker.
@@ -19938,7 +20204,10 @@ async def backlog_execute(
             "requested": requested_executor or None,
         },
         "skills": skills_field,
-        "dor_overridden": bool(dor_requested and dor_overridden),
+        # Recorded whenever the gate was BYPASSED (override=true or the
+        # explicit dor=skip) — under default-ON the bypass itself is the
+        # choice worth recording, not just override-of-a-requested-check.
+        "dor_overridden": bool(dor_overridden),
         "prompt": prompt,
     }
     try:
@@ -19985,7 +20254,11 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
         raise HTTPException(status_code=409, detail=f"One or more backlog items are already queued/running: {joined}{more}")
 
     # DoR gate per member (continuum c1124: "refuse naming WHICH members failed").
-    if str(getattr(req, "dor", None) or "").strip().lower() == "check" and not bool(getattr(req, "override", False)):
+    # DEFAULT-ON (skill c3546, same flip as the single-execute route — one
+    # gate, one default): absent = check; dor=skip or override=true bypass
+    # explicitly.
+    _batch_dor_word = str(getattr(req, "dor", None) or "").strip().lower()
+    if _batch_dor_word != "skip" and not bool(getattr(req, "override", False)):
         from ..maintenance.backlog_dor import evaluate_dor
         from ..maintenance.backlog_parser import parse_backlog_item
 

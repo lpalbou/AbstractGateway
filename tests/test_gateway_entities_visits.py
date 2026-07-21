@@ -111,7 +111,7 @@ def test_visit_open_turn_close_full_cycle(monkeypatch: pytest.MonkeyPatch):
         run_id = body["run_id"]
         assert body["visit_id"].startswith("visit-")
         assert body["entity_id"] == "entity:castor"
-        assert "person:local-admin" in body["participants"]  # verified principal stamped
+        assert "person:admin" in body["participants"]  # verified principal stamped
         assert "entity:castor" in body["participants"]       # explicit co-presence
 
         status = client.get("/api/gateway/entities/Castor/visit").json()
@@ -506,8 +506,16 @@ def test_turn_serves_the_probe_payload_and_transcript_rehydrates(monkeypatch: py
 def test_visit_open_auto_wakes_an_operator_asleep_entity(monkeypatch: pytest.MonkeyPatch):
     """B1 ruling (a), laurent 04:58: 'if i click visit, it should awake the
     entity, period.' An operator-asleep entity (no visiting posture, no live
-    loop) is WOKEN by the visit rather than refused 'wake him first' — the
-    operator always has a path in. The wake reason records the visit did it."""
+    loop) is admitted by the visit rather than refused 'wake him first' —
+    the operator always has a path in.
+
+    MECHANISM RE-BASED by the mutual-exclusivity wave (laurent dm#94: the
+    four phases are mutually exclusive): the open now writes the VISITING
+    POSTURE unconditionally (asleep + mode=visiting + the visit's own
+    identity token) instead of a state-file 'awake' — the state file is the
+    restart-surviving visit truth, and every fold renders it phase=visit.
+    B1's substance (the door admits; the visit is real) is unchanged; close
+    still restores the operator's sleep from the recorded prior state."""
     _install_scripted_llm(monkeypatch, ["I'm awake now.", "Reflection."])
     from abstractruntime.identity.life import read_entity_state, write_entity_state
 
@@ -519,10 +527,18 @@ def test_visit_open_auto_wakes_an_operator_asleep_entity(monkeypatch: pytest.Mon
         opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
         assert opened.status_code == 200, opened.text  # NOT a 409 "wake him first"
         run_id = opened.json()["run_id"]
-        # He is awake, woken BY the visit (reason names it).
+        # The DURABLE visit marker stands: visiting posture with the visit's
+        # own identity (closes/restores match by ownership, never words).
         st = read_entity_state(_home_dir())
-        assert st["state"] == "awake"
-        assert "visit" in str(st.get("reason", "")).lower()
+        assert st["state"] == "asleep"
+        assert st.get("mode") == "visiting"
+        assert "[visit " in str(st.get("reason", ""))
+        # ... and the served fold reads it as the visit phase (never
+        # sleep/personal beside a live visit — the dm#94 defect; ONE graph
+        # word, adversary P1-3).
+        life = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert life["phase"] == "visit"
+        assert life.get("posture") == "visiting"
         # The visit is real and usable.
         turned = client.post(
             f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "hello"}
@@ -579,13 +595,17 @@ def test_life_state_counts_durable_visits(monkeypatch: pytest.MonkeyPatch):
         run_id = opened.json()["run_id"]
 
         life = client.get("/api/gateway/entities/Castor/life_state").json()
-        assert life["phase"] == "visiting"  # legacy chip keeps its historical spelling
+        # ONE GRAPH WORD (mutual-exclusivity wave adversary P1-3): the hosted
+        # arm of the same endpoint serves "visit" — the durable widening's
+        # "visiting" made one endpoint speak two spellings, lane-dependent.
+        assert life["phase"] == "visit"
+        assert life["posture"] == "visiting"
         assert life["visit_run_id"] == run_id
         cog = client.get("/api/gateway/entities/Castor/cognition").json()
         assert cog["phase"] == "visit"  # strict ruled key on the composite
 
         client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
-        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] != "visiting"
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] != "visit"
 
 
 def test_sleep_tears_down_an_open_durable_visit(monkeypatch: pytest.MonkeyPatch):
@@ -644,7 +664,7 @@ def test_open_ignores_client_claimed_participants(monkeypatch: pytest.MonkeyPatc
         # The smuggled claims never appear; only the door-derived pair does.
         assert "person:the-president" not in parts
         assert "person:laurent" not in parts
-        assert "person:local-admin" in parts and "entity:castor" in parts
+        assert "person:admin" in parts and "entity:castor" in parts
         client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close", json={})
 
 
@@ -825,12 +845,16 @@ def test_native_tool_calls_execute_through_the_grant(monkeypatch: pytest.MonkeyP
         assert closed.status_code == 200, closed.text
 
 
-def test_diary_read_via_tool_calls_rests_a_ref_never_words(monkeypatch: pytest.MonkeyPatch):
-    """G1 for the visit tool path (adversary A's P0): an act-only tool's
-    words must never enter the TOOL_CALLS effect result — the runtime rests
-    effect results in the per-home run ledger + node traces, which travel on
-    directory copy. The handler returns the canonical `$act_only` REFERENCE;
-    the words stay in the book and resolve only at send time."""
+def test_diary_read_via_tool_calls_reaches_the_entity_home_is_the_boundary(monkeypatch: pytest.MonkeyPatch):
+    """Post act-only-deletion (runtime c273, laurent's A ruling): the ref
+    layer is GONE — the HOME is the privacy boundary. runtime_<slug>.sqlite3
+    lives beside the book itself, so a diary_read result resting there is
+    inside the boundary, not a leak (refs inside the entity's own store were
+    "structure without a threat model"). This pins the RULED contract: the
+    diary read reaches the entity (the visit works) and the result rests as
+    served in the home run store. The surviving privacy boundary is the
+    SERVED surfaces (replay redaction, the operator-only verbatim door) —
+    tested elsewhere; the home's own transcript lane is not one of them."""
     pytest.importorskip("abstractagent.adapters.react_runtime")
     from abstractgateway import entity_chat
 
@@ -872,17 +896,20 @@ def test_diary_read_via_tool_calls_rests_a_ref_never_words(monkeypatch: pytest.M
             json={"text": "Do you remember what you wrote?"},
         )
         assert turned.status_code == 200, turned.text
+        # The visit WORKS: the diary read reached the entity, who spoke to it.
         assert "revisited" in turned.json()["reply"]
         client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
 
-        # The words REST nowhere outside the book: byte-grep the run store
-        # (ledger + vars + node traces live in one sqlite file).
+        # RULED (c273): the home run store is INSIDE the privacy boundary —
+        # the diary_read result rests as served there, and the $act_only ref
+        # machinery is gone. The old "words never rest in the run store"
+        # invariant was explicitly deleted by the ruling; the run store is
+        # not a served surface, so a byte-level assertion on it no longer
+        # pins a privacy property. (The surviving boundary — replay
+        # redaction + the operator-only verbatim door — is pinned in the
+        # replay/verbatim suites.)
         store_bytes = _store_bytes_checkpointed(registry.entities_dir / "castor" / "runtime_castor.sqlite3")
-        assert token.encode() not in store_bytes, "private diary words rested in the run store"
-        # The REF did rest (the act happened, durably, content-free).
-        assert b"$act_only" in store_bytes
-        # A private entry's gist never rides the ref either.
-        assert b"a private thought" not in store_bytes
+        assert b"$act_only" not in store_bytes, "the ref layer was deleted — no $act_only frame should rest"
 
 
 def test_empty_visit_grant_refuses_every_tool_call(monkeypatch: pytest.MonkeyPatch):
@@ -1022,24 +1049,32 @@ def test_door_composes_walled_defs_only_never_the_registry_binding():
 
     from abstractgateway import entity_visits
 
-    # A deliberately WIDENED grant: two walled names, one colliding name, one
-    # registry-only name (execute_command lives in abstractcore's shell_tools,
-    # never in the entity's walled declarations), one absent-driver name.
-    widened = ["web_search", "diary_list", "execute_command", "read_memory", "write_file"]
+    # A deliberately WIDENED grant: walled names + one genuinely registry-only
+    # name (shell_exec lives in abstractcore's shell_tools, never in the
+    # entity's walled declarations). Two names that USED to be the example
+    # here are now walled: read_memory (c69 wired HomeMemoryReader) and
+    # execute_command (laurent's sandbox, 2026-07-19) — both are offered
+    # walled tools now, so the registry-only example moved to shell_exec.
+    # Declarations derive from walled_tool_rows: offered ⇔ executable.
+    widened = ["web_search", "diary_list", "shell_exec", "read_memory", "write_file", "execute_command"]
     defs = entity_visits._entity_tool_definitions(widened, ToolDefinition)
     offered = {d.name for d in defs}
 
-    # (1) registry-only + absent-driver names are NOT offered by the door.
-    assert "execute_command" not in offered, "a registry-only name must never be offered by the door"
-    assert "read_memory" not in offered, "an absent-driver name is not offered (declaring baits dead calls)"
-    # Walled names it CAN execute are offered.
-    assert {"web_search", "diary_list", "write_file"} <= offered
+    # (1) registry-only names are NOT offered by the door.
+    assert "shell_exec" not in offered, "a registry-only name must never be offered by the door"
+    # Walled names it CAN execute are offered — read_memory + execute_command
+    # included (both walled now).
+    assert {"web_search", "diary_list", "write_file", "read_memory", "execute_command"} <= offered
 
     # (2) the colliding name carries the ENTITY (walled) parameter shape.
     web = next(d for d in defs if d.name == "web_search")
     params = getattr(web, "parameters", {}) or {}
     props = params.get("properties", params)  # tolerate either schema nesting
     assert "query" in props, f"web_search must be the WALLED def (query param), got {params}"
+    # Discriminating assert (adversary F5): the CORE registry's web_search
+    # also takes `query` — only the absence of its registry-only extras
+    # proves the walled def won.
+    assert "num_results" not in props, "core-registry web_search shape leaked into the walled offer"
 
     # (3) structural: the door's TOOL_CALLS executor is runtime's walled
     # dispatcher (`execute_tool_elections`, which dispatches through
@@ -1054,8 +1089,158 @@ def test_door_composes_walled_defs_only_never_the_registry_binding():
     assert "execute_tool_elections" in handler_src and "native_tool_elections" in handler_src, (
         "the entity tool path must dispatch through runtime's walled executor + allowed-name gate"
     )
-    # The visit path forbids diary materialization with a raising stub — proof
-    # the executor has no fallthrough that could reach an unwalled binding.
-    assert "_no_materialized_read" in handler_src, (
-        "the door's executor must pass a no-fallthrough diary read (walled dispatch only)"
+    # Post act-only-deletion (runtime c273): diary_read materializes from the
+    # entity's OWN book (_diary_read_effect -> er.home.diary.get_entry), never
+    # a core-registry binding — the walled dispatch invariant holds, the proof
+    # is the home-book read effect (the raising _no_materialized_read stub
+    # died with the ref layer).
+    assert "_diary_read_effect" in handler_src and "er.home.diary.get_entry" in handler_src, (
+        "the door's diary read must materialize from the home's own book, not a registry binding"
     )
+
+
+# ---------------------------------------------------------------------------
+# Mutual-exclusivity wave (laurent dm#94: "the 4 states are mutually
+# exclusive. an entity being visit can NOT be on personal time") — the
+# gateway write-side fixes: unconditional visiting posture (a), guarded
+# awake writers (b), posture ownership tokens (d), and the life_state
+# posture widening (c).
+# ---------------------------------------------------------------------------
+
+
+def test_loopless_awake_visit_writes_the_durable_visiting_posture(monkeypatch: pytest.MonkeyPatch):
+    """AUDIT FINDING 1 (the headline gap): a visit opened on an awake,
+    loop-less entity wrote NOTHING durable — the state file, other
+    processes, and post-restart folds could not know a visit existed, and
+    the composite rendered 'personal · resting' beside a live chat. The
+    open now writes asleep+mode=visiting with the visit's own identity at
+    EVERY open; close restores the pre-visit word."""
+    _install_scripted_llm(monkeypatch, ["Hello.", "Reflection."])
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # Awake, no loop — the exact case that used to write nothing.
+        write_entity_state(_home_dir(), "awake", reason="")
+
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        visit_id = opened.json()["visit_id"]
+
+        st = read_entity_state(_home_dir())
+        assert st["state"] == "asleep" and st.get("mode") == "visiting"
+        # OWNERSHIP (finding 4): the posture names ITS visit, so closes and
+        # restores match by identity, never by vocabulary.
+        assert f"[visit {visit_id}]" in str(st.get("reason", ""))
+
+        # (c) the life_state widening carries the posture beside the phase —
+        # a nuance-preferring client can no longer render 'resting' here
+        # (and the phase is the ONE graph word, adversary P1-3).
+        life = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert life["phase"] == "visit"
+        assert life["posture"] == "visiting"
+
+        run_id = opened.json()["run_id"]
+        closed = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+        assert closed.status_code == 200, closed.text
+        # Prior word restored: he was awake before; the posture is gone.
+        st2 = read_entity_state(_home_dir())
+        assert st2["state"] == "awake"
+        assert st2.get("mode") != "visiting"
+
+
+def test_state_awake_is_refused_under_a_live_visit(monkeypatch: pytest.MonkeyPatch):
+    """AUDIT FINDING 3 (unguarded awake writers): POST /state awake used to
+    rewrite the state under a LIVE visit — destroying the durable visiting
+    posture and minting the visit+personal ambiguity the ruling retires.
+    The /loop/start guard pattern now applies: a live visit owns the phase;
+    the door refuses and names the visit."""
+    _install_scripted_llm(monkeypatch, ["Hello.", "Reflection."])
+    from abstractruntime.identity.life import read_entity_state
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        run_id = opened.json()["run_id"]
+
+        woke = client.post("/api/gateway/entities/Castor/state", json={"state": "awake"})
+        assert woke.status_code == 409, woke.text
+        assert "visit" in woke.json()["detail"]
+
+        # The posture survived the refused write.
+        st = read_entity_state(_home_dir())
+        assert st["state"] == "asleep" and st.get("mode") == "visiting"
+
+        # A STALE posture with no live visit stays repairable — POST /state
+        # is the operator's repair door and must never wedge (close first,
+        # then wake).
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+        repaired = client.post("/api/gateway/entities/Castor/state", json={"state": "awake"})
+        assert repaired.status_code == 200, repaired.text
+
+
+def test_summon_wake_is_refused_on_a_visiting_posture(monkeypatch: pytest.MonkeyPatch):
+    """AUDIT FINDING 3, the summon writer: the workplace summon's wake-write
+    over asleep+mode=visiting would destroy a live/mid-open visit's durable
+    marker. The /loop/start registration-window pattern applies: refuse."""
+    _install_scripted_llm(monkeypatch, ["Hello.", "Reflection."])
+    from abstractruntime.identity.life import write_entity_state
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        write_entity_state(
+            _home_dir(), "asleep",
+            reason="in conversation with person:admin [visit visit-abc123]", mode="visiting",
+        )
+        summoned = client.post("/api/gateway/entities/Castor/summon", json={"prompt": "status?"})
+        assert summoned.status_code == 409, summoned.text
+        assert "mutually exclusive" in str(summoned.json().get("detail", ""))
+
+
+def test_durable_open_is_refused_under_a_live_hosted_chat(monkeypatch: pytest.MonkeyPatch):
+    """AUDIT FINDING 4 (cross-lane): the durable preflight used to ADOPT a
+    live hosted chat's posture as stale (prior=awake) and its abort paths
+    wrote awake UNDER the live chat — two sessions, one life. The chat
+    probe (already wired for the reaper) now guards the open."""
+    _install_scripted_llm(monkeypatch, ["Hosted reply.", "Hello.", "Reflection."])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        hosted = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
+        assert hosted.status_code == 200, hosted.text
+
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 409, opened.text
+        assert "one life, one summon" in opened.json()["detail"]
+
+        client.post(f"/api/gateway/entities/Castor/chat/{hosted.json()['chat_id']}/close")
+
+
+def test_bounded_sleep_keeps_its_wake_deadline_through_a_visit(monkeypatch: pytest.MonkeyPatch):
+    """Runtime c343 seam (wave P3 fold): a BOUNDED operator sleep (explicit
+    wake_at) interrupted by a visit used to restore as a default-bound sleep
+    — under the 6h cadence an unattended entity could sleep past its
+    need-check. prior_state now carries wake_at and every restore passes it
+    through write_entity_state's first-class param."""
+    _install_scripted_llm(monkeypatch, ["Hello.", "Reflection."])
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        deadline = "2027-01-01T06:00:00+00:00"
+        write_entity_state(_home_dir(), "asleep", reason="bounded nap", wake_at=deadline)
+        assert read_entity_state(_home_dir()).get("wake_at")  # precondition: the bound stands
+
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        run_id = opened.json()["run_id"]
+        closed = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+        assert closed.status_code == 200, closed.text
+
+        st = read_entity_state(_home_dir())
+        assert st["state"] == "asleep"
+        assert "bounded nap" in str(st.get("reason", ""))
+        restored = str(st.get("wake_at") or "")
+        assert restored.startswith("2027-01-01T06:00:00"), (
+            f"the wake deadline must survive the visit, got wake_at={restored!r}"
+        )

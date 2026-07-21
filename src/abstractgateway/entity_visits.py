@@ -50,7 +50,7 @@ from __future__ import annotations
 import secrets
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .config import entity_iterations_ceiling
 
@@ -99,6 +99,77 @@ ARM_REACT = "react"
 _VISIT_REFLECTION_NODES = ("REFLECT", "APPLY")
 
 
+def _woken_reason() -> str:
+    """The shared B1 wake-reason prefix (one spelling, entities.py owns it)."""
+    from .entities import WOKEN_BY_VISIT_REASON
+
+    return WOKEN_BY_VISIT_REASON
+
+
+def visiting_posture_age_s(state: Dict[str, Any]) -> Optional[float]:
+    """Seconds since a visiting posture was written, or None when the state
+    is not a visiting posture / carries no readable timestamp. The open
+    lanes use this as a FRESHNESS GATE (wave adversary P1-1): a posture
+    younger than the reaper's grace window may belong to a visit that is
+    MID-OPEN on the other lane (posture lands before the session registers)
+    — adopting it as stale destroyed a live visit's ownership token."""
+    from datetime import datetime, timezone
+
+    if str(state.get("state") or "") != "asleep":
+        return None
+    if str(state.get("mode") or "") != "visiting" and "auto-yield" not in str(state.get("reason") or ""):
+        return None
+    raw = str(state.get("changed_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        changed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if changed.tzinfo is None:
+            changed = changed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - changed).total_seconds())
+
+
+def _restore_prior_state(home_dir: Any, prior_state: Dict[str, Any], *, suffix: str, token: str = "") -> None:
+    """Failed-open restore: put the OPERATOR's pre-visit word back (mutual-
+    exclusivity wave — aborts used to hardcode awake/asleep, erasing the
+    operator's word on half the paths).
+
+    OWNERSHIP-CHECKED (wave adversary P1-2): with a token, the abort writes
+    ONLY while the standing state is still THIS visit's posture — an
+    operator pause/sleep landed mid-window is the coordination authority and
+    stands (the close paths' exact predicate). Best-effort: an abort
+    surfaces its own error, never a restore failure."""
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    try:
+        if token:
+            st = read_entity_state(home_dir)
+            still_ours = (
+                str(st.get("state") or "") == "asleep"
+                and str(st.get("mode") or "") == "visiting"
+                and token in str(st.get("reason") or "")
+            )
+            if not still_ours:
+                return  # the state changed hands mid-window; it stands
+        target = str((prior_state or {}).get("state") or "awake")
+        if target not in ("awake", "asleep"):
+            target = "awake"  # paused is the operator's act alone, never auto-restored
+        reason = str((prior_state or {}).get("reason") or "")
+        # A BOUNDED sleep keeps its deadline through the restore (runtime
+        # c343: write_entity_state takes wake_at first-class; dropping it
+        # meant an unattended entity could sleep past its need-check).
+        wake_at = str((prior_state or {}).get("wake_at") or "") if target == "asleep" else ""
+        write_entity_state(
+            home_dir, target,
+            reason=(f"{reason} {suffix}".strip() if reason else suffix),
+            wake_at=wake_at,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class VisitRefused(Exception):
     """A refusal with an HTTP status shape (mirrors ChatOpenRefused)."""
 
@@ -108,7 +179,111 @@ class VisitRefused(Exception):
         self.detail = detail
 
 
-def _compose_turn_probe(run_vars: Dict[str, Any]) -> Dict[str, Any]:
+_TOOL_ARG_EXCERPT_CHARS = 200
+
+
+# The act-only REF layer was DELETED runtime-side (laurent's A ruling,
+# 2026-07-20; runtime c273): $act_only refs, ACT_ONLY_TOOLS, and the
+# ToolDescriptor.act_only flag are gone — the HOME is the privacy boundary
+# (the visit transcript rests beside the book), so diary tool results now
+# rest AS SERVED. The write-boundary capture (```diary fences to the book
+# before the result rests) is unchanged and load-bearing; only the
+# never-rest-in-the-ledger REF machinery died. This door dropped its
+# _act_only_tool_names / _looks_like_act_frame consumers with it; the
+# turn-detail modal serves every tool result verbatim — consistent with
+# the operator diary-door right (the operator may read diary words through
+# an authed surface; 2026-07-08 ruling).
+
+
+def _ledger_tool_details(records: List[Dict[str, Any]]) -> Tuple[Dict[str, List[Dict[str, Any]]], List[str], List[Dict[str, Any]]]:
+    """Per-turn tool details folded from the run's OWN ledger (2026-07-18,
+    laurent's "unacceptable error with tools": the durable lane served
+    tool_details:[] as a named follow-up, and the entity app's placeholder
+    read as a tool FAILURE — while the ledger held every successful
+    web_search result all along. The ledger is the truth; serve it).
+
+    ATTRIBUTION IS TURN-ID-KEYED, never positional (adversary F1/F2:
+    counting `resume` rows breaks on the history sliding window, on
+    empty-message resumes that park without a turn, and on a lost resume
+    append): tool results accumulate in ledger order and BIND to the
+    `turn_id` carried on the next completed `answer_user` record's payload
+    (small field, survives $slim). Returns (buckets, order, tail):
+    buckets[turn_id] = that turn's details, order = turn ids in answer
+    order, tail = details accumulated after the last answer (a turn that
+    failed before its ANSWER — served as the current turn's honest best).
+
+    Only records with a dict `result` contribute (a started-only row is an
+    in-flight or crashed call; after crash recovery the re-executed call
+    lands its own completed record — surfacing the orphan would render one
+    call twice). Args are harvested from started AND completed rows (F5:
+    `$slim` replaces >4KB payload fields on COMPLETED records; the started
+    twin keeps the full payload). Results serve VERBATIM — the maintainer's
+    2026-07-09 transparency ruling (never gated, never truncated), hosted-
+    lane parity. Since the act-only ref layer was deleted (runtime c273),
+    diary tool results rest as served and surface verbatim here too — the
+    operator diary-door right covers the operator's read."""
+    buckets: Dict[str, List[Dict[str, Any]]] = {}
+    order: List[str] = []
+    pending: List[Dict[str, Any]] = []
+    args_by_id: Dict[str, Any] = {}
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        effect = rec.get("effect") or {}
+        etype = str(effect.get("type") or "").lower()
+        if etype == "answer_user":
+            result = rec.get("result")
+            if not isinstance(result, dict):
+                continue  # started row; the completed twin binds
+            turn_id = str((effect.get("payload") or {}).get("turn_id") or "")
+            if turn_id:
+                buckets[turn_id] = pending
+                order.append(turn_id)
+                pending = []
+            continue
+        if etype != "tool_calls":
+            continue
+        payload = effect.get("payload") or {}
+        calls = payload.get("tool_calls")
+        if isinstance(calls, list):  # a $slim marker is not a list — skip it
+            for call in calls:
+                if isinstance(call, dict) and call.get("call_id"):
+                    args_by_id[str(call["call_id"])] = call.get("arguments")
+        result = rec.get("result")
+        if not isinstance(result, dict):
+            continue  # started row (args harvested above; result on the twin)
+        for res in result.get("results") or []:
+            if not isinstance(res, dict):
+                continue
+            name = str(res.get("name") or "")
+            detail: Dict[str, Any] = {"name": name}
+            raw_args = args_by_id.get(str(res.get("call_id") or ""))
+            if raw_args is not None:
+                try:
+                    import json as _json
+
+                    arg_text = _json.dumps(raw_args, ensure_ascii=False)
+                except Exception:
+                    arg_text = str(raw_args)
+                if len(arg_text) > _TOOL_ARG_EXCERPT_CHARS:
+                    arg_text = arg_text[:_TOOL_ARG_EXCERPT_CHARS] + "…"
+                detail["arg"] = arg_text
+            success = res.get("success")
+            if "success" in res:
+                detail["success"] = bool(success)
+            output = res.get("output")
+            if success is False:
+                # A failed call serves its error — a real reach that failed
+                # loudly, never a blank.
+                detail["result"] = str(res.get("error") or output or "(the call failed with no recorded error text)")
+            else:
+                text = str(output if output is not None else "")
+                detail["result"] = text if text else "(the tool returned empty output)"
+            pending.append(detail)
+    return buckets, order, pending
+
+
+def _compose_turn_probe(run_vars: Dict[str, Any], *, tool_details: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """The probe payload the hosted chat lane serves per turn, composed from
     the DURABLE run's own vars (cutover gap 1). Field names mirror the hosted
     `ChatSession.turn` report exactly (entity's consumer contract: the drawer
@@ -121,9 +296,9 @@ def _compose_turn_probe(run_vars: Dict[str, Any]) -> Dict[str, Any]:
       report.memories carries (observer's prompt/probe-agreement rule).
     - memories_in_context / turn_id / notices / diary_entries / participants.
     - system_prompt: the byte-stable head (_visit.system_base).
-    - tool_details / files: NOT captured in the durable lane's vars yet —
-      served as empty lists (honest absence, never fabricated); the adapter's
-      turn_captures extension is the named follow-up, not a silent gap.
+    - tool_details: folded from the run's LEDGER by the caller (the
+      2026-07-18 fix — [] only when the turn genuinely ran no tools or the
+      ledger read failed, labeled); files: not captured in this lane.
     """
     visit_vars = run_vars.get("_visit") or {}
     turn_ns = run_vars.get("_turn") or {}
@@ -154,82 +329,106 @@ def _compose_turn_probe(run_vars: Dict[str, Any]) -> Dict[str, Any]:
             "origin": _origin_label(h),
         })
 
+    # records_formed: the FORM node's result lands in _turn.formed
+    # (record_ids). Served so the drawer's ATT "+N formed" annotation and
+    # effort facts work on the visit lane too (dm#56 pt4 — the field was
+    # silently absent here while the hosted lane always carried it).
+    formed_ns = turn_ns.get("formed")
+    formed_ids: List[str] = []
+    if isinstance(formed_ns, dict):
+        formed_ids = [str(r) for r in (formed_ns.get("record_ids") or [])]
+    elif isinstance(formed_ns, list):
+        formed_ids = [str(r) for r in formed_ns]
+
     return {
         "turn_id": str(turn_ns.get("turn_id") or ""),
         "tools_ran": [str(t) for t in (turn_ns.get("tools_ran") or []) if str(t or "").strip()],
         "memories": memories,
         "memories_in_context": len(memories),
+        "records_formed": formed_ids,
         "diary_entries": list(turn_ns.get("diary_meta") or []),
         "notices": list(turn_ns.get("notices") or []),
         "participants": list(visit_vars.get("participants") or []),
         "system_prompt": str(visit_vars.get("system_base") or ""),
-        "tool_details": [],
+        "tool_details": list(tool_details or []),
         "files": [],
     }
 
 
-# Native declarations for the ENTITY toolset — argument shapes match the
-# runtime executors these calls land on (`identity.tools`: body-first
-# convention, `path` as the one named arg for write_file), NOT abstractcore's
-# common_tools shapes (whose file_path/directory_path names the entity
-# executors do not read). Declarations belong beside their executors long
-# term — runtime's inventory-expansion item absorbs these; the door keeps
-# this copy deliberately minimal until then. read_memory/search_memory are
-# ABSENT on purpose: their driver resolvers are ChatSession methods the door
-# cannot reach yet — declaring a tool that cannot execute baits dead calls.
-_ENTITY_TOOL_DECLARATIONS: Dict[str, Dict[str, Any]] = {
-    "web_search": {
-        "description": "Search the live web. Returns titles, URLs and snippets for the query.",
-        "parameters": {"query": {"type": "string", "description": "What to search for."}},
-    },
-    "fetch_url": {
-        "description": "Fetch one web page and return its readable text content.",
-        "parameters": {"url": {"type": "string", "description": "The full http(s) URL to fetch."}},
-    },
-    "diary_list": {
-        "description": "List your recent diary entries (ids, kinds, gists) from your own book.",
-        "parameters": {},
-        "act_only": True,  # gists (private included) re-run fresh at send time; only the act-frame rests (e-s 233 R3)
-    },
-    "diary_read": {
-        "description": "Read one of your own diary entries verbatim by its entry id.",
-        "parameters": {"entry_id": {"type": "string", "description": "The diary entry id (from diary_list)."}},
-        "act_only": True,  # words resolve fresh from the book; only the act-frame rests
-    },
-    "write_file": {
-        "description": "Write a file in your workspace (creates or overwrites).",
-        "parameters": {
-            "path": {"type": "string", "description": "Relative path inside your workspace."},
-            "content": {"type": "string", "description": "The full file content to write."},
-        },
-    },
-    "read_file": {
-        "description": "Read a file from your workspace.",
-        "parameters": {"path": {"type": "string", "description": "Relative path inside your workspace."}},
-    },
-    "list_files": {
-        "description": "List files in your workspace (optionally under a subdirectory).",
-        "parameters": {"path": {"type": "string", "description": "Relative directory, default '.'"}},
-    },
-}
+# Native declarations for the ENTITY toolset — DERIVED from runtime's
+# `walled_tool_rows()` (descriptor contract v6: the SOLE field source; the
+# executor lives on the same record as the declaration). The old hand copy
+# is DEAD (c69 audit, 2026-07-18): it carried 7 of the 10 walled tools and
+# its "read/search memory resolvers are ChatSession methods the door cannot
+# reach yet" rationale went stale the day runtime shipped the session-free
+# HomeMemoryReader (2026-07-10, on the gateway's own ask) — the drift left
+# Ephemeral blind to his own graph in visits while the dashboard showed the
+# tools granted. Deriving means the door can never again offer fewer tools
+# than it executes, or execute fewer than it declares.
+_DECLARATIONS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _entity_tool_declarations() -> Dict[str, Dict[str, Any]]:
+    """{name: {description, parameters(flat props)}} from the runtime
+    rows. Optional params (absent from the row's `required` list)
+    gain a `default` marker — abstractcore's ToolDefinition convention
+    reads absence-of-default as required, so without it the wire would
+    demand args the executor treats as optional."""
+    global _DECLARATIONS_CACHE
+    if _DECLARATIONS_CACHE is not None:
+        return _DECLARATIONS_CACHE
+    try:
+        from abstractruntime.identity.tools import walled_tool_rows
+    except ImportError as e:  # adversary F3: a runtime too old for the
+        # rows must refuse LOUDLY at the door, not leak a raw ImportError
+        # from deep inside workflow build.
+        raise VisitRefused(
+            503,
+            f"entity tool declarations derive from runtime's walled_tool_rows, "
+            f"which this abstractruntime lacks: {e} — upgrade abstractruntime",
+        )
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for row in walled_tool_rows():
+        schema = row.get("parameters") or {}
+        props = dict(schema.get("properties") or {})
+        required = {str(r) for r in (schema.get("required") or [])}
+        for pname, meta in props.items():
+            if pname not in required and isinstance(meta, dict) and "default" not in meta:
+                props[pname] = {**meta, "default": ""}
+        decl: Dict[str, Any] = {
+            "description": str(row.get("description") or ""),
+            "parameters": props,
+        }
+        # act_only flag died with the ref layer (runtime c273) — walled rows
+        # no longer carry it; nothing to copy through.
+        out[str(row.get("name") or "")] = decl
+    _DECLARATIONS_CACHE = out
+    return out
 
 
 def _entity_tool_definitions(granted: Any, tool_definition_cls: Any) -> List[Any]:
     """ToolDefinitions for the GRANTED names the door can execute — grant
     order preserved, undeclarable names skipped (they refuse honestly at the
     executor if called by other means; they are simply not offered)."""
+    declarations = _entity_tool_declarations()
     out: List[Any] = []
     for name in granted or ():
-        decl = _ENTITY_TOOL_DECLARATIONS.get(str(name))
+        decl = declarations.get(str(name))
         if decl is None:
             continue
+        import copy as _copy
+
         kwargs: Dict[str, Any] = {
             "name": str(name),
             "description": decl["description"],
-            "parameters": dict(decl.get("parameters") or {}),
+            # DEEP copy (adversary F4, the c901 schema-isolation pin): a
+            # shallow copy shares the cached per-param dicts process-wide —
+            # one consumer scribble would rewrite every future declaration.
+            "parameters": _copy.deepcopy(decl.get("parameters") or {}),
         }
-        if decl.get("act_only"):
-            kwargs["act_only"] = True
+        # act_only died with the ref layer (runtime c273) — no declaration
+        # carries it, and the ToolDefinition flag was removed runtime-side.
         out.append(tool_definition_cls(**kwargs))
     return out
 
@@ -463,7 +662,7 @@ class EntityVisitHost:
             session_id=session_id,
             channel_label="operator-visit",
         )
-        return {
+        out = {
             "run_id": leg["run_id"],
             "visit_id": leg["visit_id"],
             "entity_id": pre["manifest"].entity_id,
@@ -472,6 +671,26 @@ class EntityVisitHost:
             "yielded_loop": pre["yielded"],
             "prelude_warnings": leg["prelude_warnings"],
         }
+        # allowlist_pruned (entity c72 wire shape; skill's pin: a narrowed
+        # grant is STATED at the door, never discovered by refusal): the
+        # grant names the door cannot OFFER this session. Declarations
+        # derive from walled_tool_rows, so post-c69 this is empty on a
+        # current stack — it appears exactly on version skew or future
+        # drift, which is when the statement matters.
+        try:
+            from abstractruntime import resolve_tool_grant
+
+            grant = resolve_tool_grant(Path(pre["home_dir"]), "visit")
+            declarable = set(_entity_tool_declarations().keys())
+            dropped = [t for t in grant.tools if t not in declarable]
+            if dropped:
+                out["allowlist_pruned"] = {
+                    "dropped": dropped,
+                    "reason": "granted but not offerable on this lane (no door declaration — version skew or drift; the grant stands, the session cannot call these)",
+                }
+        except Exception:  # noqa: BLE001 - an optional statement must not fail the open
+            pass
+        return out
 
     def open_leg(
         self,
@@ -488,7 +707,7 @@ class EntityVisitHost:
         two-entity meet — one code path, one guard."""
         slug = self._registry.manifest_for(name).slug
         with self._slug_lock(slug):
-            pre = self._preflight(name, participants)
+            pre = self._preflight(name, participants, visit_id=visit_id)
             leg = self._start_leg(
                 pre,
                 participants=list(participants),
@@ -539,11 +758,12 @@ class EntityVisitHost:
             )
 
     # ------------------------------------------------- shared leg machinery
-    def _preflight(self, name: str, participants: Optional[List[str]]) -> Dict[str, Any]:
+    def _preflight(self, name: str, participants: Optional[List[str]], *, visit_id: str = "") -> Dict[str, Any]:
         """The per-home gates every visit leg passes BEFORE anything durable:
-        substrate resolve (no-fallback), one-life-one-visit (durable),
-        paused refusal, and the auto-yield negotiation with the own-time
-        loop. Returns the resolved handles; raises VisitRefused on any gate."""
+        substrate resolve (no-fallback), one-life-one-visit (durable AND the
+        hosted lane), paused refusal, and the auto-yield negotiation with
+        the own-time loop. Returns the resolved handles; raises VisitRefused
+        on any gate."""
         from abstractruntime.identity.life import (
             await_loop_quiescent,
             read_entity_state,
@@ -572,6 +792,25 @@ class EntityVisitHost:
                 f"a visit is already open on {manifest.entity_id} (run {live.run_id!r}) — "
                 "one life, one summon; continue it with /turn or end it with /close",
             )
+        # ONE LIFE ACROSS LANES (mutual-exclusivity wave, audit finding 4):
+        # the hosted chat drawer and this durable lane serve the SAME home.
+        # Without this probe a durable open ADOPTED a live chat's visiting
+        # posture as stale (prior=awake) and its abort paths wrote awake
+        # UNDER the live chat — two sessions, one life. Standalone hosts
+        # (no probe wired) keep the old blindness honestly; the served
+        # gateway always wires it (service factory).
+        if self._chat_probe is not None:
+            try:
+                if bool(self._chat_probe(slug)):
+                    raise VisitRefused(
+                        409,
+                        f"a hosted chat session is already open on {manifest.entity_id} — "
+                        "one life, one summon; close the drawer session first",
+                    )
+            except VisitRefused:
+                raise
+            except Exception:  # noqa: BLE001 - a broken probe must not block the door
+                pass
 
         state = read_entity_state(home_dir)
         mode = str(state.get("mode") or "")
@@ -582,50 +821,72 @@ class EntityVisitHost:
         yielded = False
         woke_for_visit = False
         # The operator's PRIOR intent survives the visit (state-sources
-        # adversary, P0-1 residue): a visit may overwrite the state (yield /
-        # B1 wake), but close restores what the OPERATOR had set — a visit
-        # ending must never convert an operator's asleep into a standing
-        # awake behind their back. Recorded here, threaded into run vars by
-        # the leg, restored by _finalize_terminal.
-        prior_state = {"state": str(state.get("state") or "awake"), "reason": reason}
-        visitor = (participants or ["person:operator"])[0]
-        if bool(read_loop_status(home_dir).get("running")):
-            write_entity_state(
-                home_dir, "asleep",
-                reason=f"in conversation with {visitor} (auto-yield)", mode="visiting",
-            )
-            if not await_loop_quiescent(home_dir, timeout_seconds=55.0):
-                write_entity_state(home_dir, "awake", reason="visit open aborted (loop did not yield in time)")
-                raise VisitRefused(409, "the entity's own-time loop has not reached a tick boundary yet — retry shortly")
-            yielded = True
-        elif state.get("state") == "asleep":
+        # adversary, P0-1 residue): a visit may overwrite the state, but
+        # close restores what the OPERATOR had set — a visit ending must
+        # never convert an operator's asleep into a standing awake behind
+        # their back. Recorded here, threaded into run vars by the leg,
+        # restored by _finalize_terminal.
+        prior_state = {
+            "state": str(state.get("state") or "awake"),
+            "reason": reason,
+            # A BOUNDED sleep keeps its deadline through the visit (runtime
+            # c343 seam: wake_at is first-class on the writer).
+            "wake_at": str(state.get("wake_at") or ""),
+        }
+        if state.get("state") == "asleep":
             if mode == "visiting" or "auto-yield" in reason:
-                yielded = True
-                # A visiting-yield posture belongs to a PREVIOUS visit; the
-                # operator's own word is not recoverable from it — awake is
-                # the honest restore target.
+                # FRESHNESS GATE (wave adversary P1-1): the live-lane probes
+                # above see only REGISTERED sessions — a posture younger than
+                # the reaper's grace may belong to a visit MID-OPEN on the
+                # other lane (posture lands before registration). Adopting it
+                # destroyed the live visit's ownership token; refuse instead,
+                # exactly like the /loop/start registration-window guard.
+                age = visiting_posture_age_s(state)
+                if age is not None and age < float(EntityVisitHost.STALE_YIELD_GRACE_S):
+                    raise VisitRefused(
+                        409,
+                        f"a visit is opening on {manifest.entity_id} (visiting posture "
+                        f"{age:.0f}s old) — one life, one summon; retry shortly "
+                        "(a genuinely stale posture is adoptable after the grace window)",
+                    )
+                # A visiting-yield posture OLDER than the grace belongs to a
+                # PREVIOUS (crashed) visit; the operator's own word is not
+                # recoverable from it — awake is the honest restore.
                 prior_state = {"state": "awake", "reason": ""}
             else:
                 # B1 ruling (a), laurent 04:58: "if i click visit, it should
-                # awake the entity, period." An operator-asleep entity (not a
-                # visit-yield posture) is WOKEN by the visit itself rather than
-                # refused — the operator always has a path in. The wake reason
-                # records that the visit did it, and the loop (if any) is not
-                # running here (running-loop is the branch above), so no lease
-                # collision on this path; a mid-day loop lease is the separate
-                # runtime per-tick-release keystone (gateway c1315).
-                write_entity_state(
-                    home_dir, "awake",
-                    reason=f"woken by visit from {visitor}",
-                )
-                state = read_entity_state(home_dir)
+                # awake the entity, period." The unconditional posture write
+                # below supersedes the old explicit awake write; close
+                # restores the operator's sleep from prior_state.
                 woke_for_visit = True
+        visitor = (participants or ["person:operator"])[0]
+        loop_alive = bool(read_loop_status(home_dir).get("running"))
+        # THE VISITING POSTURE IS UNCONDITIONAL (laurent dm#94, audit
+        # finding 1): every open writes it — with the loop-running
+        # precondition, a visit on an awake loop-less entity wrote NOTHING
+        # durable, so no other process (or post-restart fold) could know a
+        # visit existed. The posture carries the visit's OWN identity so
+        # closes/restores match by ownership, never by words (finding 4).
+        visit_token = f"[visit {visit_id}]" if visit_id else ""
+        write_entity_state(
+            home_dir, "asleep",
+            reason=(f"in conversation with {visitor} {visit_token}".strip())
+            + (" (auto-yield)" if loop_alive else ""),
+            mode="visiting",
+            written_by="visit-door",
+        )
+        if loop_alive:
+            if not await_loop_quiescent(home_dir, timeout_seconds=55.0):
+                _restore_prior_state(home_dir, prior_state, suffix="(visit open aborted: loop did not yield in time)", token=visit_token)
+                raise VisitRefused(409, "the entity's own-time loop has not reached a tick boundary yet — retry shortly")
+            yielded = True
 
         return {
             "manifest": manifest, "slug": slug, "home_dir": home_dir, "er": er,
             "provider": provider, "model": model, "yielded": yielded,
             "woke_for_visit": woke_for_visit,
             "prior_state": prior_state,
+            "visit_token": visit_token,
         }
 
     def _start_leg(
@@ -642,8 +903,6 @@ class EntityVisitHost:
         The stamp lands BEFORE the first tick (this driver is the only
         ticker of the store — request-driven — so nothing executes in the
         mint->finalize window)."""
-        from abstractruntime.identity.life import write_entity_state
-
         from .entity_gate import (
             CHANNEL_WORKPLACE,
             finalize_summon_stamp,
@@ -656,7 +915,6 @@ class EntityVisitHost:
         slug = pre["slug"]
         home_dir = pre["home_dir"]
         er = pre["er"]
-        yielded = pre["yielded"]
 
         session = str(session_id or "").strip() or f"visit-{slug}-{secrets.token_hex(4)}"
         stamp_participants = [str(p) for p in participants]
@@ -664,29 +922,30 @@ class EntityVisitHost:
             stamp_participants.append(manifest.entity_id)  # explicit co-presence (a2a 0007)
         budget_profile = summon_budget_profile(None)
 
-        provisional = mint_summon_stamp(
-            data_dir=registry.data_dir,
-            entity_id=manifest.entity_id,
-            channel=CHANNEL_WORKPLACE,
-            session_id=session,
-            participants=stamp_participants,
-            budget_profile=budget_profile,
-            visit_id=visit_id,
-            # A visit is a WORKPLACE session, but its close-reflection segment
-            # (REFLECT/APPLY in build_visit_workflow) is the entity's OWN
-            # reflection — the door signs those node ids so the gate may
-            # narrow-widen workplace->entity-reflection for the reflection
-            # acts alone (config-object close-reflection ruling, option (a)).
-            phase="visit",
-            reflection_nodes=list(_VISIT_REFLECTION_NODES),
-        )
-
         try:
             # INSIDE the restore window (adversary find): the spec build can
-            # now raise (react is unconditional — a missing abstractagent
-            # refuses 503 here). A failure before this try used to strand a
-            # yielded own-time loop asleep in visiting posture with nothing
-            # ever waking it.
+            # raise (react is unconditional — a missing abstractagent refuses
+            # 503 here), and so can the STAMP MINT (unwritable .stamp_secret
+            # / data dir — wave adversary P2-5 moved it inside). A failure
+            # before this try used to strand a fresh visiting posture with
+            # nothing ever restoring it until the reaper's hardcoded awake.
+            provisional = mint_summon_stamp(
+                data_dir=registry.data_dir,
+                entity_id=manifest.entity_id,
+                channel=CHANNEL_WORKPLACE,
+                session_id=session,
+                participants=stamp_participants,
+                budget_profile=budget_profile,
+                visit_id=visit_id,
+                # A visit is a WORKPLACE session, but its close-reflection
+                # segment (REFLECT/APPLY in build_visit_workflow) is the
+                # entity's OWN reflection — the door signs those node ids so
+                # the gate may narrow-widen workplace->entity-reflection for
+                # the reflection acts alone (config-object close-reflection
+                # ruling, option (a)).
+                phase="visit",
+                reflection_nodes=list(_VISIT_REFLECTION_NODES),
+            )
             wf = self._build_spec(
                 er,
                 participants=stamp_participants,
@@ -723,24 +982,16 @@ class EntityVisitHost:
 
             state_after = self._drive(er, wf, run_id, max_steps=_OPEN_MAX_TICKS)
         except Exception:
-            if yielded:
-                write_entity_state(home_dir, "awake", reason="visit aborted (open failed)")
-            elif pre.get("woke_for_visit"):
-                # The B1 wake must not outlive a FAILED open (adversary
-                # P2-3): a refused prelude / missing adapter / lease error
-                # used to leave the entity awake with the operator's sleep
-                # silently erased — and no run existed to restore it later.
-                prior = dict(pre.get("prior_state") or {})
-                write_entity_state(
-                    home_dir, "asleep",
-                    reason=(str(prior.get("reason") or "") or "operator sleep restored") + " (visit open failed)",
-                )
+            # A failed open restores the OPERATOR's pre-visit word (mutual-
+            # exclusivity wave: the old hardcoded awake/asleep branches
+            # erased the operator's word on half the paths — adversary P2-3
+            # residue closed by one uniform restore).
+            _restore_prior_state(home_dir, pre.get("prior_state") or {}, suffix="(visit open failed)", token=str(pre.get("visit_token") or ""))
             raise
 
         output = dict(getattr(state_after, "output", None) or {})
         if str(getattr(state_after.status, "value", state_after.status)) == "completed" and output.get("refused"):
-            if yielded:
-                write_entity_state(home_dir, "awake", reason="visit aborted (prelude refused)")
+            _restore_prior_state(home_dir, pre.get("prior_state") or {}, suffix="(visit aborted: prelude refused)", token=str(pre.get("visit_token") or ""))
             raise VisitRefused(409, "summon refused: " + "; ".join(str(r) for r in output.get("reasons", [])))
 
         with self._lock:
@@ -820,13 +1071,41 @@ class EntityVisitHost:
         # operator's probe surfaces AND the tool-claim fabrication guard
         # (which reads tools_ran as data, never reply prose). Composed from
         # the run's own durable vars — the workflow's HARVEST/RENDER nodes
-        # already fold these; the door only surfaces them.
-        out.update(_compose_turn_probe(state.vars or {}))
+        # already fold these; the door only surfaces them. tool_details fold
+        # from the run's LEDGER (2026-07-18: [] read as "the gateway did not
+        # return what the lookup produced" while every result sat in the
+        # ledger); a failed ledger read degrades to [] with a notice, never
+        # a failed turn.
+        details: List[Dict[str, Any]] = []
+        ledger_notice = ""
+        try:
+            buckets, order, tail = _ledger_tool_details(er.ledger_store.list(run_id))
+            # THIS turn's details: keyed by the turn_id the probe itself
+            # carries (never positional); a turn that died before its
+            # ANSWER record serves the accumulated tail as the honest best.
+            this_turn = str(((state.vars or {}).get("_turn") or {}).get("turn_id") or "")
+            if this_turn and this_turn in buckets:
+                details = buckets[this_turn]
+            elif tail:
+                details = tail
+            elif order:
+                details = buckets[order[-1]]
+        except Exception as e:  # noqa: BLE001 - the probe must not fail the turn
+            ledger_notice = f"#FALLBACK tool details unavailable (ledger read failed: {e})"
+        out.update(_compose_turn_probe(state.vars or {}, tool_details=details))
+        if ledger_notice:
+            out["notices"] = [*out.get("notices", []), ledger_notice]
         if status == "completed":  # timed-out close raced this turn to terminal
             out["output"] = dict(state.output or {})
             self._finalize_terminal(er, manifest, run_id, state)
         elif status == "failed":
             out["error"] = str(getattr(state, "error", "") or "the turn failed; see the run ledger")
+            # A FAILED run is terminal and invisible to _live_visit_run (it
+            # scans WAITING/RUNNING) — without finalizing here the tokened
+            # posture stood until the reaper repaired it to a hardcoded
+            # awake, losing a B1 prior sleep (wave adversary P2-4; tick's
+            # failed branch already finalizes).
+            self._finalize_terminal(er, manifest, run_id, state)
         return out
 
     # ----------------------------------------------------------------- close
@@ -932,7 +1211,17 @@ class EntityVisitHost:
         MARKED reply — diary elections already captured at the handler
         boundary, so no private words rest here or serve here). Works on
         live AND terminal runs (a closed visit's transcript remains
-        readable, same as the hosted lane's)."""
+        readable, same as the hosted lane's).
+
+        Assistant turns carry `tool_details` folded from the run's LEDGER
+        (2026-07-18 fix), so the data for post-reload rendering is SERVED
+        here (the app's rehydration consuming it is entity's half, named on
+        the incident thread). Attribution is turn-id-keyed via answer_user
+        records and TAIL-ANCHORED onto the visible window — `_visit.history`
+        is a sliding window (last ~10 turns), so counting visible assistant
+        messages from the head misattributes every detail after the window
+        fills (adversary F1). A failed ledger read degrades to turns
+        without the field, labeled."""
         er, run, _wf, _manifest = self._load_visit(name, run_id)
         visit_vars = (run.vars or {}).get("_visit") or {}
         stamp = ((run.vars or {}).get("_runtime") or {}).get("entity") or {}
@@ -941,7 +1230,23 @@ class EntityVisitHost:
             for m in list(visit_vars.get("history") or [])
             if isinstance(m, dict)
         ]
-        return {
+        warnings: List[str] = []
+        try:
+            buckets, order, _tail = _ledger_tool_details(er.ledger_store.list(run_id))
+            assistants = [t for t in turns if t.get("role") == "assistant"]
+            # Tail anchor: the LAST visible assistant message is the LAST
+            # answered turn; walk both lists backward together. Older
+            # visible turns beyond the answer record trail get no field
+            # (honest absence, never a shifted guess).
+            for j, t in enumerate(assistants):
+                idx = len(order) - len(assistants) + j
+                if 0 <= idx < len(order):
+                    seg = buckets.get(order[idx]) or []
+                    if seg:
+                        t["tool_details"] = seg
+        except Exception as e:  # noqa: BLE001 - a probe fold must not break rehydration
+            warnings.append(f"#FALLBACK per-turn tool details unavailable (ledger read failed: {e})")
+        out = {
             "run_id": run.run_id,
             "session_id": run.session_id,
             "visit_id": stamp.get("visit_id"),
@@ -950,6 +1255,9 @@ class EntityVisitHost:
             "participants": list(visit_vars.get("participants") or []),
             "turns": turns,
         }
+        if warnings:
+            out["warnings"] = warnings
+        return out
 
     @staticmethod
     def _run_status_view(run: Any) -> Dict[str, Any]:
@@ -1025,12 +1333,14 @@ class EntityVisitHost:
             # declarations bait no-op native calls), but the adapter must SEE
             # the full grant so it intersects to the declarable set AND writes
             # the durable `_runtime.allowlist_pruned` note naming what the door
-            # could not offer (e.g. read_memory/search_memory, absent from
-            # _ENTITY_TOOL_DECLARATIONS today). Pre-filtering here made a
-            # 9-name grant arrive as 7 with zero trace — indistinguishable from
-            # door drift when someone debugs a missing tool later. Effective
-            # offer + execution allowlist are UNCHANGED (the adapter intersects
-            # against logic.tools); only the trace is added.
+            # could not offer. Pre-filtering here made a 9-name grant arrive
+            # as 7 with zero trace — indistinguishable from door drift when
+            # someone debugs a missing tool later (exactly how the c69 audit
+            # caught the memory-tools gap; declarations now derive from
+            # walled_tool_rows, so a pruned name means version skew, not a
+            # hand-copy hole). Effective offer + execution allowlist are
+            # UNCHANGED (the adapter intersects against logic.tools); only
+            # the trace is added.
             allowed_tools=list(grant.tools),
             final_next_node=HARVEST_NODE,
         )
@@ -1173,20 +1483,34 @@ class EntityVisitHost:
             st = read_entity_state(home_dir)
             word = str(st.get("state") or "")
             reason_now = str(st.get("reason") or "")
-            # Only VISIT-AUTHORED states are restored — an operator/admin act
-            # landed mid-visit (a pause, a fresh sleep) stands untouched.
-            yield_posture = word == "asleep" and (
+            # RESTORE BY OWNERSHIP (mutual-exclusivity wave, laurent dm#94,
+            # audit finding 4): the open stamps the posture with THIS visit's
+            # id, so terminal restores match the identity token — a posture
+            # belonging to ANOTHER lane's live session is never adopted.
+            # Backward compat: a posture WITHOUT any token (written by a
+            # pre-wave build — in-flight visits across the upgrade boundary)
+            # falls back to the old words-match; the b1 awake-wake check
+            # covers pre-wave opens that wrote awake instead of the posture.
+            prior: Dict[str, Any] = {}
+            visit_id = ""
+            try:
+                run = er.run_store.load(run_id)
+                run_vars = run.vars or {}
+                prior = dict((run_vars.get("_visit") or {}).get("prior_state") or {})
+                visit_id = str(((run_vars.get("_runtime") or {}).get("entity") or {}).get("visit_id") or "")
+            except Exception:
+                prior = {}
+            visiting_now = word == "asleep" and (
                 str(st.get("mode") or "") == "visiting" or "auto-yield" in reason_now
             )
-            b1_wake = word == "awake" and reason_now.startswith("woken by visit")
-            if yield_posture or b1_wake:
+            has_token = "[visit " in reason_now
+            owned = visiting_now and (
+                (visit_id and f"[visit {visit_id}]" in reason_now)  # ownership match
+                or not has_token  # pre-wave posture: words-match compat
+            )
+            b1_wake = word == "awake" and reason_now.startswith(_woken_reason())
+            if owned or b1_wake:
                 output = dict(getattr(state, "output", None) or {})
-                prior: Dict[str, Any] = {}
-                try:
-                    run = er.run_store.load(run_id)
-                    prior = dict(((run.vars or {}).get("_visit") or {}).get("prior_state") or {})
-                except Exception:
-                    prior = {}
                 target = str(prior.get("state") or "awake")
                 if target not in ("awake", "asleep"):
                     target = "awake"  # paused is an operator/admin act, never auto-restored
@@ -1195,11 +1519,18 @@ class EntityVisitHost:
                     write_entity_state(
                         home_dir, "asleep",
                         reason=(str(prior.get("reason") or "") or "operator sleep restored") + f" {suffix}",
+                        # Bounded sleeps keep their deadline (runtime c343).
+                        wake_at=str(prior.get("wake_at") or ""),
                     )
-                elif yield_posture:
+                elif owned:
                     write_entity_state(home_dir, "awake", reason=f"visitor session ended ({output.get('turns', 0)} turns; "
                                        f"{output.get('close_reason', 'closed')})")
                 # b1_wake with prior=awake: already awake — no idle rewrite.
+            elif visiting_now:
+                wake_warning = (
+                    "posture belongs to another session (ownership token mismatch) — left standing; "
+                    "state is the authority"
+                )
         except Exception as e:
             wake_warning = f"#FALLBACK wake-on-terminal failed ({e}); the next open treats the visiting posture as yielded"
         details: Dict[str, Any] = {

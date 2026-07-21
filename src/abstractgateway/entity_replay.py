@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -50,6 +51,7 @@ __all__ = [
     "marker_window_end",
     "merged_replay",
     "read_host_markers",
+    "sweep_night_narrations",
     "record_host_marker",
     "validate_families",
 ]
@@ -122,6 +124,71 @@ HOST_MARKER_KINDS = (
     # file moves (marker-then-write: a crash between leaves a recorded
     # intent, never an unrecorded change).
     "substrate_changed",
+    # Capability-map (teaching) change (laurent c2710, skill's
+    # entity-self-knowledge install lane): what a mind is TAUGHT changing
+    # between sessions is the same class as a substrate swap — marker-first
+    # with old/new sha256, principal-stamped; details carry hashes + size,
+    # never the teaching text itself.
+    "capability_map_changed",
+    # Voice change (laurent dm#10, 2026-07-17; BLESSED by semantics,
+    # decision:g3-marker-spellings v3 — substrate_changed is the precedent,
+    # no _selection_ infix: the voice IS the config): an entity's voice is
+    # audible identity presentation — "which voice spoke during which time"
+    # must be answerable from the stream. Marker-first like substrate;
+    # old/new carry the {provider, model, voice} triple (operator
+    # vocabulary; never audio, never provider secrets). CONVENTIONS on the
+    # record: new=null is an explicit VALUE meaning 'unselected' (old=null
+    # on first set = nothing was configured) — null-as-cleared is DISTINCT
+    # from the at_birth absence pattern (absence = not-that-act). BOUNDARY:
+    # this kind records the ENTITY-home act on voice.yaml only; per-USER
+    # voice defaults (per-principal capability plane) get NO biography
+    # marker — an entity's story records changes to ITS voice.
+    "voice_changed",
+    # Skills-selection change (laurent c2857; the c2838 committed shape):
+    # WHAT an entity is taught changing is the capability-map class —
+    # marker-first, old/new selection (names + phases — operator vocabulary,
+    # never skill bodies), principal-stamped. Spelling follows the *_changed
+    # family; semantics same-day pass requested on the room record (their
+    # c2860 standing offer) — rename-cheap until live streams carry it.
+    "skills_selection_changed",
+    # Task-inbox change (G3 door half, plan v18 gateway §1; BLESSED by
+    # semantics, decision:g3-marker-spellings): a task left with an entity
+    # — or its status advancing — is a recorded handoff, so "why did the
+    # entity shift into work?" is answerable from the stream. ONE kind for
+    # both acts (the payload field names the act — per-act kinds would
+    # repeat the per-phase-marker mistake). Two axes, two spellings: this
+    # KIND records the FILE act on the inbox; the work-entry CAUSE slot on
+    # phase_changed stays RESERVED AND UNSPELLED — its word comes through
+    # its own semantics pass when runtime's loop half lands (never
+    # pre-ruled here). Payload choice, named deliberately: `added` markers
+    # carry the task TITLE (truncated) — a divergence from the *_changed
+    # family's hashes-not-content convention, because operator work
+    # vocabulary is the answer to "what was asked", not sensitive text;
+    # briefs never ride the marker.
+    "task_inbox_changed",
+    # work_order_changed (laurent seq 155 the work lane): the operator setting
+    # or clearing the standing work order is an act on the entity's biography
+    # — a mission arrived, or the mission ended. Payload carries change
+    # (set|cleared) + had_prior, never the order text (that rides the system
+    # prompt at day-open, not the marker — same hashes-not-content rule as
+    # the *_changed family; the order itself can be long/operational text).
+    "work_order_changed",
+    # night_voice (wave-5 dream narration; memory's ruling c3745): the
+    # subconscious's one witnessed narration over a night's signal stream is
+    # a DERIVED, host-authored artifact — "dreamed, not lived", self-labeled,
+    # never graph truth (a dream is born-digest-protected; a post-formation
+    # attribute-setter would mint a new mutation class on an append-only
+    # store). It lives HOME-SIDE like turn verbatims + host markers, and
+    # interleaves at the dream's seq so every replay consumer sees it beside
+    # the dream's display.signals — structure (signals) and voice (narration)
+    # as visibly distinct layers, which is the self-label's whole point.
+    # Payload: {dream_record_id, narration (<=120 words), self_label}. The
+    # narration NEVER enters the store (recall stays clean by construction —
+    # the wake residue's fragments are the only waking trace). Render-when-
+    # present. The WRITER is runtime's narrator half (it owns the witnessed
+    # call + night_narrations.jsonl); the emission hook into this stream is
+    # the open wiring seam, named in the receipt.
+    "night_voice",
     # personal IS the grant (laurent c815; semantics c1443 spelling pass):
     # arming/revoking the personal phase are operator ACTS; expiry is the
     # timer's act, recorded by whichever process detects it at a read
@@ -130,6 +197,16 @@ HOST_MARKER_KINDS = (
     "personal_granted",
     "personal_grant_revoked",
     "personal_grant_expired",
+    # blueprint_edited (laurent dm#104 via entity c348: the editable
+    # blueprint — "so i can slightly modulate the entity cognition and
+    # cycle"): the operator changing the SHARED state graph is an act on
+    # EVERY entity's cognition rules, so the moment lands in each biography
+    # (one marker per entity per edit). Payload carries rev/changed/sha256/
+    # edited_by/reason — the dials' semantics, never a spec dump. Write-
+    # first, then markers (a marker claiming an edit that never landed
+    # would be a false biography entry — the inverse of marker-then-write
+    # for reads, where the marker records the ACCESS).
+    "blueprint_edited",
 )
 
 _marker_lock = threading.Lock()
@@ -330,6 +407,88 @@ def record_host_marker(
     return envelope
 
 
+def sweep_night_narrations(entities_dir: Path, slug: str, home: Any) -> int:
+    """Interleave runtime's night narrations into the host stream as
+    `night_voice` markers (the seam runtime ruled at c3750: runtime owns
+    `<home>/night_narrations.jsonl` — append-only, inside the home, travels
+    on copy; the gateway owns the host stream and SWEEPS the file into it,
+    deduped on dream_record_id). "record-when-present" — idempotent and
+    cheap (night cadence is <=1 narration per >=20h), safe to call on every
+    serving touch: `record_host_marker(dedup_field="dream_record_id")` skips
+    an already-swept narration atomically.
+
+    SEQ ANCHORING: the marker anchors at the DREAM'S FORMATION SEQ so the
+    narration sits beside its dream in the timeline (runtime's ruling, memory
+    c3755's fix): the formation seq rides the BINDING axis, not the usage
+    axis — `journal.bindings(record_id=<dream graph id>, fold=False)` returns
+    the formation binding (source='remember') whose `.seq` is exact (a
+    never-recalled dream has NO usage event, which is why events(record_id=)
+    found nothing). Anchor at min(seq) of the fold=False rows (later bindings
+    are revisions/promotions). Falls back to current high-water when the
+    lookup finds nothing (a narration for an unknown dream still delivers).
+    The precise link is also `dream_record_id` in the payload (entity's
+    render keys on it as the click-subject). Returns the count newly recorded
+    (0 when the file is absent or every entry is already a marker). NEVER
+    raises into the serving path — a bad line is skipped."""
+    narr_path = Path(home.home_dir) / "night_narrations.jsonl"
+    if not narr_path.is_file():
+        return 0
+    try:
+        raw = narr_path.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    recorded = 0
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except Exception:  # noqa: BLE001 - a torn/bad line is skipped, never fatal
+            continue
+        if not isinstance(entry, dict):
+            continue
+        dream_id = str(entry.get("dream_record_id") or "").strip()
+        narration = str(entry.get("narration") or "").strip()
+        if not dream_id or not narration:
+            continue  # a narration with no dream link or no words is not renderable
+        # The dream's formation seq (memory c3755): bindings, not usage —
+        # a never-recalled dream has no usage event. min(fold=False seq) is
+        # the formation binding; high-water is the honest fallback.
+        anchor_seq = int(home.memory.current_seq())
+        try:
+            formation = [
+                int(getattr(b, "seq", 0))
+                for b in (home.journal.bindings(record_id=dream_id, fold=False) or [])
+                if getattr(b, "seq", None) is not None
+            ]
+            if formation:
+                anchor_seq = min(formation)
+        except Exception:  # noqa: BLE001 - a lookup miss falls back to high-water, never fatal
+            pass
+        try:
+            result = record_host_marker(
+                entities_dir=entities_dir,
+                slug=slug,
+                entity_id=home.entity_id,
+                kind="night_voice",
+                journal_seq=anchor_seq,
+                details={
+                    "dream_record_id": dream_id,
+                    "narration": narration,
+                    "self_label": str(entry.get("self_label") or "dreamed, not lived"),
+                    "narrated_at": str(entry.get("narrated_at") or ""),
+                    "trigger": str(entry.get("trigger") or ""),
+                },
+                dedup_field="dream_record_id",
+            )
+            if not result.get("deduped"):
+                recorded += 1
+        except Exception:  # noqa: BLE001 - the sweep is best-effort; a marker failure never breaks serving
+            continue
+    return recorded
+
+
 def read_host_markers(
     entities_dir: Path,
     slug: str,
@@ -437,21 +596,120 @@ def _operator_diary_display(home: EntityHome, block: Dict[str, Any], cache: Dict
         return block  # best-effort: the redacted mark stands on any failure
 
 
+# Mechanical cue shapes the life loop composes (life.py: NEUTRAL_CUE,
+# DEFAULT_FIRST_CUE, the operator-wake cue) — every sibling, not just the
+# one string the operator screenshotted (adversary finding 2).
+_BOILERPLATE_EXCHANGE_TITLE = re.compile(
+    r"^(?P<prefix>Consolidated:\s*)?exchange:\s*("
+    r"your own time (continues|begins)\b.*"
+    r"|you were (asleep|resting|paused)\b.*"
+    r"|n)\s*[….]*\s*$",
+    re.IGNORECASE,
+)
+_MARKER_LINE_RE = re.compile(r"^\[[^\]]*\]$")
+_MARKER_CONTENT_RE = re.compile(r"\[([^\]]+)\]")
+_LEADING_MARKERS_RE = re.compile(r"^(?:\s*\[[^\]]*\])+\s*")
+
+
+def _digest_summary(digest: str, name: str) -> str:
+    """One-line summary from a record's digest — general, no cue cases.
+
+    Exchange digests carry "<speaker>: <cue> <Name>: <reply>": the summary
+    comes from the REPLY side (the entity's words carry the content); the
+    name match is case-insensitive (older records engraved lowercase
+    speaker tags). Non-exchange digests (consolidation candidates etc.)
+    summarize from their own first sentence. Leading act markers are
+    stripped ("[used tool: …] So here's…" summarizes as the prose —
+    adversary finding 3); marker-only replies summarize as the act words
+    themselves ("kept in diary"), which are act-frame, never content."""
+    text = " ".join((digest or "").split())
+    if not text:
+        return ""
+    marker = f"{(name or '').lower()}:"
+    idx = text.lower().rfind(marker) if marker != ":" else -1
+    tail = text[idx + len(marker):].strip() if idx >= 0 else text
+    for sentence in re.split(r"(?<=[.!?])\s+", tail):
+        s = _LEADING_MARKERS_RE.sub("", sentence.strip()).strip()
+        if s and not _MARKER_LINE_RE.match(s):
+            words = s.split()
+            return " ".join(words[:14]) + ("…" if len(words) > 14 else "")
+    acts = _MARKER_CONTENT_RE.findall(tail)
+    if acts:
+        return "; ".join(a.strip() for a in acts[:2])
+    return ""
+
+
+def _operator_exchange_title(home: EntityHome, block: Dict[str, Any], cache: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Rewrite BOILERPLATE exchange titles from the record's own digest.
+
+    Own-time ticks formed before the digest-v2 title fix carry the wake cue
+    as their engraved title ("exchange: your own time continues" ×78 on
+    Ephemeral's life — operator, 2026-07-17: "the node label MUST be a
+    short 1 sentence summary"), and consolidation candidates inherit it as
+    "Consolidated: exchange: …". The records are append-only; the DIGEST
+    holds the real content, so this serving end derives the summary from
+    it — the same audience-seam pattern as the diary gist resolution
+    above. Pure read; engraved attributes stay untouched; formation-side
+    titling is fixed in abstractruntime.identity.digest (new records never
+    take this path)."""
+    title = str(block.get("title") or "")
+    m = _BOILERPLATE_EXCHANGE_TITLE.match(title)
+    if not m:
+        return block
+    gid = str(block.get("graph_id") or "")
+    if not gid:
+        return block
+    cached = cache.get(f"title:{gid}")
+    if cached is not None:
+        return cached
+    out = block
+    try:
+        from abstractmemory.records import resolve_digest_assertion
+
+        assertion = resolve_digest_assertion(home.store, gid)
+        digest = str(getattr(assertion, "object", "") or "") if assertion is not None else ""
+        summary = _digest_summary(digest, home.manifest.name)
+        if summary:
+            prefix = m.group("prefix") or ""
+            out = {**block, "title": f"{prefix}exchange: {summary}" if not prefix else f"{prefix.strip()} {summary}"}
+    except Exception:
+        out = block  # best-effort: the engraved title stands on any failure
+    cache[f"title:{gid}"] = out
+    return out
+
+
+def _resolve_operator_block(home: EntityHome, block: Any, cache: Dict[str, Dict[str, Any]]) -> Any:
+    """One display block through both operator resolutions: diary
+    redaction → gist, boilerplate exchange title → digest summary."""
+    if not isinstance(block, dict):
+        return block
+    if block.get("redacted") == "diary":
+        return _operator_diary_display(home, block, cache)
+    title = block.get("title")
+    if isinstance(title, str) and _BOILERPLATE_EXCHANGE_TITLE.match(title):
+        return _operator_exchange_title(home, block, cache)
+    return block
+
+
 def _enrich_operator_displays(home: EntityHome, envelope: Dict[str, Any], cache: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """Resolve diary-redacted display blocks (top-level and co_selected
-    pair members) into operator-audience blocks. Pure read; idempotent."""
+    """Resolve display blocks — top-level AND co_selected pair members —
+    into operator-audience blocks (diary gists, boilerplate-title
+    rewrites). Pure read; idempotent. Pair members get the SAME
+    resolutions as top-level blocks (adversary finding 1: 7,495 pair
+    titles kept the boilerplate while every top-level title was clean —
+    the ledger's "Used together" lines rendered them verbatim)."""
     display = envelope.get("display")
-    if isinstance(display, dict):
-        if display.get("redacted") == "diary":
-            envelope = {**envelope, "display": _operator_diary_display(home, display, cache)}
-        elif isinstance(display.get("pair"), list):
-            pair = display["pair"]
-            if any(isinstance(m, dict) and m.get("redacted") == "diary" for m in pair):
-                new_pair = [
-                    _operator_diary_display(home, m, cache) if isinstance(m, dict) and m.get("redacted") == "diary" else m
-                    for m in pair
-                ]
-                envelope = {**envelope, "display": {**display, "pair": new_pair}}
+    if not isinstance(display, dict):
+        return envelope
+    new_display = _resolve_operator_block(home, display, cache)
+    base = new_display if isinstance(new_display, dict) else display
+    pair = base.get("pair")
+    if isinstance(pair, list):
+        new_pair = [_resolve_operator_block(home, m, cache) for m in pair]
+        if any(a is not b for a, b in zip(new_pair, pair)):
+            new_display = {**base, "pair": new_pair}
+    if new_display is not display:
+        return {**envelope, "display": new_display}
     return envelope
 
 
