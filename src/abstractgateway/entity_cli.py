@@ -327,7 +327,10 @@ def _card_lines(payload: Dict[str, Any]) -> List[str]:
         + f"; currently {state}",
     ]
     if substrate:
-        lines.append(f"Mind substrate: {substrate.get('model')} ({substrate.get('provider')})")
+        _mind = f"Mind substrate: {substrate.get('model')} ({substrate.get('provider')})"
+        if substrate.get("thinking"):
+            _mind += f", reasoning {substrate.get('thinking')}"
+        lines.append(_mind)
 
     kinds: Dict[str, int] = {}
     for per_scope in (ctx.get("record_counts") or {}).values():

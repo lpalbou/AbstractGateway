@@ -483,6 +483,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-subtab { background: transparent; color: var(--text-secondary); border-radius: var(--radius-md); padding: 6px 12px; font-size: 12px; }
 	    .entity-subtab:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); filter: none; }
 	    .entity-subtab.active { color: var(--text); background: rgba(148, 163, 184, 0.16); font-weight: 600; outline: none; }
+	    /* Runtimes master-detail (operator dm#32, two-adversary consensus):
+	       the master table is HEIGHT-BOUNDED so the detail pane below it is
+	       always on screen — the load-bearing half of the redesign (an
+	       unbounded list is exactly the fold math that failed on the
+	       entities tab and produced the "infinite scroll" complaint).
+	       max-height (not height): three runtimes never render an empty
+	       scroll box. Sticky thead needs the section's own opaque ground
+	       (--panel) or scrolled rows read through the header text. */
+	    .table-scroll { max-height: 40vh; overflow-y: auto; }
+	    .table-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+	    tr.row-selectable { cursor: pointer; }
+	    tr.row-selected td { background: rgba(148, 163, 184, 0.12); }
+	    .runs-filter-chip { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; padding: 2px 8px; border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--info-subtle); color: var(--text); font-size: 12px; }
+	    .runs-filter-chip button { background: transparent; border: none; color: var(--muted); padding: 0 2px; font-size: 12px; cursor: pointer; }
 	    .entity-subpanel { padding: 4px 0 8px; }
 	    .entity-overview { display: grid; gap: 4px; margin-bottom: 10px; }
 	    .entity-kv { display: flex; gap: 10px; font-size: 13px; }
@@ -1204,6 +1218,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      padding-top: 6px;
 	      padding-bottom: 6px;
 	    }
+	    .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
+	    #sandbox-reasoning { min-height: 34px; }
+	    .sandbox-reasoning-block {
+	      margin: 0 0 8px 0;
+	      font-size: 12px;
+	      color: var(--muted, #8a93a6);
+	    }
+	    .sandbox-reasoning-block summary { cursor: pointer; user-select: none; }
+	    .sandbox-reasoning-block pre {
+	      white-space: pre-wrap;
+	      margin: 6px 0 0 0;
+	      max-height: 240px;
+	      overflow: auto;
+	    }
 	    .sandbox-dropzone {
 	      display: grid;
 	      grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1429,71 +1457,108 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div id="tab-runtimes" class="tab-panel">
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
-	            <!-- RUNTIMES FIRST (operator order 12:24: "runtime tab = I SEE THE
-	                 RUNTIMES FIRST"). Master list -> drill-in: click a runtime to
-	                 see its sessions/runs; machine-wide Data & Caches after;
-	                 Retained reservations demoted to an advanced disclosure. -->
+	            <!-- RUNTIMES FIRST (operator order 12:24) + MASTER->TABBED DETAIL
+	                 (operator dm#32, 2026-07-25, two fable5 adversaries reconciled):
+	                 a HEIGHT-BOUNDED master table (always on screen, sticky header)
+	                 with row-click selection; ONE detail pane directly below with
+	                 [Runs | Sessions | Caches] subtabs — the old stacked global
+	                 sections were "an infinite scroll to get to each". The default
+	                 runtime auto-selects on tab open so the operator's run tools
+	                 (filter/inspect/steer/cancel) stay ZERO clicks away, exactly as
+	                 before. Machine-wide Data & Caches lives in a collapsed
+	                 disclosure (both adversaries rejected a "Machine" pseudo-row:
+	                 it lies in five columns and hides a purge surface behind a
+	                 fake runtime identity). -->
 	            <section id="runtimes-section" class="session-only hidden">
 	              <div class="section-head">
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◎</span><span>Runtimes</span></h2>
-	                  <p class="section-note">Every execution plane on this gateway: the default runtime, each user's own runtime, and each entity's own runtime. Click one to inspect its runs and sessions.</p>
+	                  <p class="section-note">Every execution plane on this gateway: the default runtime, each user's own runtime, and each entity's own runtime. Click a runtime to open its runs, sessions, and caches below.</p>
 	                </div>
 	                <button id="runtimes-refresh" class="secondary icon-only" title="Reload the runtime inventory" aria-label="Refresh runtimes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
 	              <div id="runtimes-message" class="message"></div>
-	              <table>
-	                <thead><tr><th>Runtime</th><th>Kind</th><th>Owner</th><th>State</th><th>Size</th><th>Actions</th></tr></thead>
-	                <tbody id="runtimes-table"></tbody>
-	              </table>
+	              <div class="table-scroll" id="runtimes-scroll">
+	                <table>
+	                  <thead><tr><th>Runtime</th><th>Kind</th><th>Owner</th><th>State</th><th>Size</th></tr></thead>
+	                  <tbody id="runtimes-table"></tbody>
+	                </table>
+	              </div>
 	            </section>
 	            <section id="runtime-detail-section" class="session-only hidden">
 	              <div class="section-head">
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▷</span><span>Runtime <span id="runtime-detail-name"></span></span></h2>
-	                  <p id="runtime-detail-sub" class="section-note">Runs and sessions on this plane.</p>
+	                  <p id="runtime-detail-sub" class="section-note">Runs, sessions and caches on this plane.</p>
 	                </div>
-	                <button id="runtime-detail-close" class="secondary icon-only" title="Back to the runtime list" aria-label="Close runtime detail"><span class="button-icon" aria-hidden="true">×</span></button>
+	                <button id="runtime-detail-refresh" class="secondary icon-only" title="Reload this runtime's view" aria-label="Refresh runtime detail"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
-	              <div id="runtime-detail-message" class="message"></div>
-	              <table>
-	                <thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Session</th><th>Updated</th></tr></thead>
-	                <tbody id="runtime-detail-runs"></tbody>
-	              </table>
-	            </section>
-	            <section id="runs-section" class="session-only hidden">
-	              <div class="section-head">
-	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▷</span><span>Runs — default runtime</span></h2>
-	                  <p class="section-note">Live and recent runs on the default runtime. Inspect state, cancel a run, or steer a running agent with a guidance note.</p>
+	              <!-- Console-TUI mirror (laurent dm#35): TWO tabs — Sessions |
+	                   Data & cache — and NOTHING loads until a runtime is
+	                   chosen. The Sessions tab lists the chosen runtime's runs
+	                   (session ids on every row), exactly like the TUI's
+	                   sessions panel. -->
+	              <p id="runtime-detail-teach" class="section-note">Select a runtime above — click a row — to load its sessions and data.</p>
+	              <nav class="entity-subtabs hidden" id="runtime-detail-tabs">
+	                <button id="runtime-subtab-sessions" class="entity-subtab active" type="button">Sessions</button>
+	                <button id="runtime-subtab-caches" class="entity-subtab" type="button">Data &amp; cache</button>
+	              </nav>
+	              <div id="runtime-panel-sessions" class="hidden">
+	                <!-- Default-plane block: the actionable runs machinery
+	                     (ids preserved so every existing handler keeps working).
+	                     TWO SEPARATE BLOCKS, two tbodies, deliberately: a stale
+	                     default loadRuns must never paint action buttons under
+	                     another plane's header (a Steer/Cancel there would fire
+	                     commands at the DEFAULT runtime — adversary B's misfire
+	                     class, killed structurally). -->
+	                <div id="runtime-runs-default" class="hidden">
+	                  <div class="inline" style="margin-bottom: 8px;">
+	                    <label>Status<select id="runs-status" title="Filter runs by their durable status"><option value="">all</option><option value="running">running</option><option value="waiting">waiting</option><option value="completed">completed</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select></label>
+	                    <label class="entity-checkbox" title="Hide child runs — one row per top-level run"><input id="runs-root-only" type="checkbox" checked> root runs only</label>
+	                    <span id="runs-session-chip"></span>
+	                    <button id="runs-refresh" class="secondary icon-only" title="Reload the run list" aria-label="Refresh runs"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	                  </div>
+	                  <div id="runs-message" class="message"></div>
+	                  <table>
+	                    <thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Node</th><th>Session</th><th>Updated</th><th>Actions</th></tr></thead>
+	                    <tbody id="runs-table"></tbody>
+	                  </table>
+	                  <div id="run-inspect" class="entity-overview"></div>
 	                </div>
-	                <div class="inline">
-	                  <label>Status<select id="runs-status" title="Filter runs by their durable status"><option value="">all</option><option value="running">running</option><option value="waiting">waiting</option><option value="completed">completed</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select></label>
-	                  <label class="entity-checkbox" title="Hide child runs — one row per top-level run"><input id="runs-root-only" type="checkbox" checked> root runs only</label>
-	                  <button id="runs-refresh" class="secondary icon-only" title="Reload the run list" aria-label="Refresh runs"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	                <div id="runtime-runs-readonly" class="hidden">
+	                  <p class="section-note">Read-only view — newest runs on this plane. Inspect/steer/cancel run through the default runtime's command lane and are not available here.</p>
+	                  <div id="runtime-detail-message" class="message"></div>
+	                  <table>
+	                    <thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Session</th><th>Updated</th></tr></thead>
+	                    <tbody id="runtime-detail-runs"></tbody>
+	                  </table>
 	                </div>
 	              </div>
-	              <div id="runs-message" class="message"></div>
-	              <table>
-	                <thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Node</th><th>Updated</th><th>Actions</th></tr></thead>
-	                <tbody id="runs-table"></tbody>
-	              </table>
-	              <div id="run-inspect" class="entity-overview"></div>
-	            </section>
-	            <section id="data-homes-section" class="session-only hidden">
-	              <div class="section-head">
-	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◈</span><span>Data &amp; Caches</span></h2>
-	                  <p class="section-note">Every data home registered on this machine (model caches, artifact stores, entity homes, logs) with live sizes. Protected rows refuse purging by their owner's rule — entity homes are never purgeable here.</p>
-	                </div>
-	                <button id="data-homes-refresh" class="secondary icon-only" title="Reload data homes with live sizes" aria-label="Refresh data homes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	              <div id="runtime-panel-caches" class="hidden">
+	                <div id="runtime-caches-message" class="message"></div>
+	                <table>
+	                  <thead><tr><th>Name</th><th>Kind</th><th>Size</th><th>Owner</th><th>Policy</th><th>Actions</th></tr></thead>
+	                  <tbody id="runtime-caches-table"></tbody>
+	                </table>
+	                <p id="runtime-caches-remainder" class="section-note"></p>
 	              </div>
-	              <div id="data-homes-message" class="message"></div>
-	              <table>
-	                <thead><tr><th>Name</th><th>Kind</th><th>Size</th><th>Owner</th><th>Policy</th><th>Actions</th></tr></thead>
-	                <tbody id="data-homes-table"></tbody>
-	              </table>
 	            </section>
+	            <details id="data-homes-section" class="entity-advanced session-only hidden">
+	              <summary>Machine-wide data &amp; caches <span id="data-homes-summary" class="entity-config-hint">every registered home on this machine, including rows tied to no runtime (model caches, foreign owners)</span></summary>
+	              <div class="entity-config-block">
+	                <div class="section-head">
+	                  <div>
+	                    <p class="section-note">Every data home registered on this machine (model caches, artifact stores, entity homes, logs) with live sizes. Protected rows refuse purging by their owner's rule — entity homes are never purgeable here.</p>
+	                  </div>
+	                  <button id="data-homes-refresh" class="secondary icon-only" title="Reload data homes with live sizes" aria-label="Refresh data homes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	                </div>
+	                <div id="data-homes-message" class="message"></div>
+	                <table>
+	                  <thead><tr><th>Name</th><th>Kind</th><th>Size</th><th>Owner</th><th>Policy</th><th>Actions</th></tr></thead>
+	                  <tbody id="data-homes-table"></tbody>
+	                </table>
+	              </div>
+	            </details>
 	            <details id="runtime-reservations-section" class="entity-advanced session-only hidden">
 	              <summary>Retained runtimes (advanced) <span class="entity-config-hint">deleted or reassigned users leave their runtime data retained here — transfer it to a new owner or purge it permanently. Rarely needed.</span></summary>
 	              <div class="entity-config-block">
@@ -1568,6 +1633,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <label id="sandbox-model-label" class="hidden">Model<select id="sandbox-model"></select></label>
 	              <div class="sandbox-composer-toolbar">
 	                <label id="sandbox-system-label" class="sandbox-system-compact">System prompt<input id="sandbox-system" placeholder="optional"></label>
+	                <label id="sandbox-reasoning-label" class="sandbox-system-compact" title="Reasoning effort for reasoning models. Default sends nothing; the model behaves as before.">Reasoning<select id="sandbox-reasoning">
+	                  <option value="">default</option>
+	                  <option value="none">none</option>
+	                  <option value="minimal">minimal</option>
+	                  <option value="low">low</option>
+	                  <option value="medium">medium</option>
+	                  <option value="high">high</option>
+	                  <option value="xhigh">xhigh</option>
+	                </select></label>
 	              </div>
 	              <div id="sandbox-dropzone" class="sandbox-dropzone">
 	                <button id="sandbox-attach" class="secondary icon-only sandbox-composer-icon" title="Attach files" aria-label="Attach files"><span class="button-icon" aria-hidden="true">＋</span></button>
@@ -1721,8 +1795,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div class="inline">
 	                  <label>Provider<input id="entity-substrate-provider" placeholder="abstractcore provider"></label>
 	                  <label>Model<input id="entity-substrate-model" placeholder="model id"></label>
+	                  <label title="Reasoning effort for reasoning models. None disables; leave on 'not set' to send nothing.">Reasoning<select id="entity-substrate-thinking">
+	                    <option value="">not set</option>
+	                    <option value="none">none</option>
+	                    <option value="minimal">minimal</option>
+	                    <option value="low">low</option>
+	                    <option value="medium">medium</option>
+	                    <option value="high">high</option>
+	                    <option value="xhigh">xhigh</option>
+	                  </select></label>
 	                </div>
-	                <button id="entity-substrate-save" class="secondary" title="Persist this provider/model pair as the entity's mind substrate (host-marked)"><span class="button-icon" aria-hidden="true">✓</span><span>Save substrate</span></button>
+	                <button id="entity-substrate-save" class="secondary" title="Persist this provider/model choice (and optional reasoning effort) as the entity's mind substrate (host-marked)"><span class="button-icon" aria-hidden="true">✓</span><span>Save substrate</span></button>
 	                <div id="entity-substrate-out" class="section-note"></div>
 	                <!-- Card 015 wave 3 (disclosure P0-3, second half): the re-embed
 	                     repair belongs beside the MIND it repairs (embedding = the
@@ -1950,6 +2033,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           <div class="inline">
             <label>Provider<select id="entity-new-provider" title="LLM provider for this entity's mind — Gateway default inherits the door's substrate"><option value="">Gateway default</option></select></label>
             <label>Model<select id="entity-new-model" disabled title="Model within the chosen provider"><option value="">Gateway default</option></select></label>
+            <label>Reasoning<select id="entity-new-thinking" title="Reasoning effort for reasoning models — optional; 'not set' sends nothing">
+              <option value="">not set</option>
+              <option value="none">none</option>
+              <option value="minimal">minimal</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+            </select></label>
           </div>
           <h3 class="entity-config-title">Embedding at birth <span class="entity-config-hint">the M1 pin — the semantic space this life is born into. "Gateway default" pins the door's resolved embedder. Changing it later is the CRITICAL re-embed ceremony.</span></h3>
           <div class="inline">
@@ -2876,11 +2968,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // Apply optional substrate (admin) — surface its own error, don't lose the create.
 	        if (provider && model) {
 	          try {
-	            await api(`/api/gateway/entities/${enc}/substrate`, { method: "PUT", body: JSON.stringify({ provider, model }) });
+	            const subBody = { provider, model };
+	            const newThinking = ($("entity-new-thinking")?.value || "").trim();
+	            if (newThinking) subBody.thinking = newThinking;
+	            await api(`/api/gateway/entities/${enc}/substrate`, { method: "PUT", body: JSON.stringify(subBody) });
 	            note += " Substrate set.";
 	          } catch (e) { note += " (substrate not set: " + (e.message || e) + ")"; }
 	        } else if (provider || model) {
 	          note += " (substrate needs BOTH provider and model — skipped)";
+	        } else if (($("entity-new-thinking")?.value || "").trim()) {
+	          note += " (reasoning effort needs a provider and model chosen — not applied)";
 	        }
 	        // Apply the capability matrix only if the operator opened Advanced AND
 	        // moved a cell off its default (readMatrix returns only changed phases).
@@ -3061,7 +3158,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          ["Born", card.born || card.created_at || ""],
 	          ["Age (days)", card.age_days != null ? String(card.age_days) : ""],
           ["State", card.state ? `${card.state.state || card.state}${card.state.mode ? ` (${card.state.mode})` : ""}` : ""],
-          ["Mind", card.mind_substrate ? `${card.mind_substrate.provider || "?"} / ${card.mind_substrate.model || "?"}` : ""],
+          ["Mind", card.mind_substrate ? `${card.mind_substrate.provider || "?"} / ${card.mind_substrate.model || "?"}${card.mind_substrate.thinking ? ` / reasoning ${card.mind_substrate.thinking}` : ""}` : ""],
           ["Sleeps", sleep.sleeps != null ? `${sleep.sleeps}` : (sleep.sleep_count != null ? `${sleep.sleep_count}` : "")],
 	        ];
         for (const [k, v] of rows) {
@@ -3100,9 +3197,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const s = await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`);
 	        if (manageStale(token)) return;
-	        _entOut("entity-substrate-current", `Current: ${s.provider || "(unset)"} / ${s.model || "(unset)"} — source: ${s.source || "unset"}`);
+	        const thinkingNote = s.thinking ? ` / reasoning ${s.thinking}` : "";
+	        _entOut("entity-substrate-current", `Current: ${s.provider || "(unset)"} / ${s.model || "(unset)"}${thinkingNote} — source: ${s.source || "unset"}`);
 	        $("entity-substrate-provider").value = s.provider || "";
 	        $("entity-substrate-model").value = s.model || "";
+	        const thinkSel = $("entity-substrate-thinking");
+	        if (thinkSel) {
+	          // A stored value outside the known options must not show as
+	          // "not set" (assigning a missing value no-ops on a select, and
+	          // the next save would then CLEAR it). Inject it as an option so
+	          // it displays and round-trips. Previously injected options are
+	          // removed first — one entity's stored value must not appear as
+	          // a choice on another entity's dropdown.
+	          Array.from(thinkSel.querySelectorAll("option[data-injected]")).forEach((o) => o.remove());
+	          const want = s.thinking || "";
+	          if (want && !Array.from(thinkSel.options).some((o) => o.value === want)) {
+	            const opt = document.createElement("option");
+	            opt.value = want;
+	            opt.textContent = want + " (stored)";
+	            opt.setAttribute("data-injected", "1");
+	            thinkSel.appendChild(opt);
+	          }
+	          thinkSel.value = want;
+	        }
 	      } catch (e) {
 	        if (manageStale(token)) return;
 	        _entOut("entity-substrate-current", "substrate unavailable: " + (e.message || e));
@@ -3792,7 +3909,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const provider = ($("entity-substrate-provider").value || "").trim();
 	      const model = ($("entity-substrate-model").value || "").trim();
 	      if (!provider || !model) { _entOut("entity-substrate-out", "provider and model are both required."); return; }
-	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`, { method: "PUT", body: JSON.stringify({ provider, model }) }); _entOut("entity-substrate-out", "saved."); await loadEntitySubstrate(name); }
+	      // Reasoning effort: the select's "not set" sends an explicit null
+	      // (clear) — the editor shows the stored value, so an untouched
+	      // select round-trips it and a deliberate reset truly clears.
+	      const thinkingSel = $("entity-substrate-thinking");
+	      const body = { provider, model, thinking: thinkingSel && thinkingSel.value ? thinkingSel.value : null };
+	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`, { method: "PUT", body: JSON.stringify(body) }); _entOut("entity-substrate-out", "saved."); await loadEntitySubstrate(name); }
 	      catch (e) { _entOut("entity-substrate-out", String(e.message || e)); }
 	    }
 	    async function entityToolsSave() {
@@ -3968,8 +4090,22 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (n >= 1e3) return (n / 1e3).toFixed(1) + " KB";
 	      return String(n) + " B";
 	    }
-	    // ---- Runtimes-first inventory (operator order 12:24): master list of
-	    // every execution plane, lazy drill-in for its runs/sessions. ----
+	    // ---- Runtimes: master -> tabbed detail (operator dm#32, 2026-07-25;
+	    // two fable5 adversaries reconciled). The master table is height-
+	    // bounded (CSS .table-scroll) and row-click selects; ONE detail pane
+	    // below carries [Runs | Sessions | Caches]. The default runtime
+	    // auto-selects on tab open so the operator's run machinery stays
+	    // zero clicks away. Every detail loader is guarded by a selection
+	    // token (the manageToken precedent): a stale response must never
+	    // render under another runtime's header. ----
+	    const RUNTIME_SUBTAB_KEY = "abstractgateway_runtime_subtab_v2";
+	    // Console-TUI mirror (laurent dm#35): two tabs, and NO selection
+	    // persistence across page loads — nothing loads until the operator
+	    // clicks a runtime this session.
+	    const RUNTIME_SUBTABS = ["sessions", "caches"];
+	    function _runtimeKeyOf(r) {
+	      return `${r.kind}|${r.tenant_id || "default"}|${r.runtime_id}`;
+	    }
 	    async function loadRuntimes() {
 	      const body = $("runtimes-table");
 	      if (!body) return;
@@ -3978,7 +4114,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      body.textContent = "";
 	      const loadingTr = document.createElement("tr");
 	      const loadingTd = document.createElement("td");
-	      loadingTd.colSpan = 6;
+	      loadingTd.colSpan = 5;
 	      loadingTd.className = "empty";
 	      loadingTd.textContent = "Scanning execution planes…";
 	      loadingTr.append(loadingTd);
@@ -3986,19 +4122,33 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const data = await api("/api/gateway/admin/runtimes");
 	        const rows = Array.isArray(data.runtimes) ? data.runtimes : [];
+	        state.runtimeRows = rows;
 	        $("runtimes-message").textContent = (data.warnings || []).join(" · ");
 	        body.textContent = "";
 	        for (const r of rows) {
 	          const tr = document.createElement("tr");
 	          if (r.error) {
 	            const td = document.createElement("td");
-	            td.colSpan = 6;
+	            td.colSpan = 5;
 	            td.className = "message";
 	            td.textContent = `${r.runtime_id || "?"}: ${r.error}`;
 	            tr.append(td);
 	            body.append(tr);
 	            continue;
 	          }
+	          // The ROW is the selector (the old per-row "Runs" button died
+	          // with the stacked sections). Keyboard path kept: the row is
+	          // focusable and Enter/Space select.
+	          tr.className = "row-selectable";
+	          tr.dataset.rtkey = _runtimeKeyOf(r);
+	          tr.tabIndex = 0;
+	          tr.setAttribute("role", "button");
+	          tr.setAttribute("aria-label", `Open runtime ${r.runtime_id}`);
+	          tr.onclick = () => selectRuntime(r);
+	          tr.onkeydown = (ev) => {
+	            if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectRuntime(r); }
+	          };
+	          if (r.note) tr.title = r.note;
 	          const owners = (r.owners || []).map((o) => o.user_id + ((o.enabled === false) ? " (disabled)" : "")).join(", ");
 	          const name = document.createElement("td");
 	          name.innerHTML = `<code>${esc(r.runtime_id || "")}</code>`;
@@ -4008,6 +4158,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          tr.append(kind);
 	          const owner = document.createElement("td");
 	          owner.textContent = owners || (r.materialized === false ? "(not materialized yet)" : "");
+	          if (r.note) {
+	            const note = document.createElement("span");
+	            note.className = "muted";
+	            note.textContent = " · " + r.note;
+	            owner.append(note);
+	          }
 	          tr.append(owner);
 	          // State: entities carry state+liveness; user/default planes don't.
 	          const stTd = document.createElement("td");
@@ -4025,39 +4181,34 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          size.textContent = (typeof r.size_bytes === "number") ? _fmtBytes(r.size_bytes) : "";
 	          if (r.size_note) size.title = r.size_note;
 	          tr.append(size);
-	          const actions = document.createElement("td");
-	          const inspect = document.createElement("button");
-	          inspect.className = "secondary";
-	          inspect.innerHTML = `<span class="button-icon" aria-hidden="true">▷</span><span>Runs</span>`;
-	          inspect.title = "Show the most recent runs and sessions on this runtime";
-	          inspect.setAttribute("aria-label", `Inspect runs on ${r.runtime_id}`);
-	          inspect.onclick = () => inspectRuntime(r);
-	          actions.append(inspect);
-	          if (r.note) {
-	            const note = document.createElement("span");
-	            note.className = "muted";
-	            note.textContent = " " + r.note;
-	            actions.append(note);
-	          }
-	          tr.append(actions);
 	          body.append(tr);
 	        }
 	        if (!rows.length) {
 	          const tr = document.createElement("tr");
 	          const td = document.createElement("td");
-	          td.colSpan = 6;
+	          td.colSpan = 5;
 	          td.className = "empty";
 	          td.textContent = "No runtimes found.";
 	          tr.append(td);
 	          body.append(tr);
 	        }
+	        // Selection resolve (console-TUI mirror, laurent dm#35): ONLY an
+	        // in-session choice survives a list refresh — the page never
+	        // auto-selects, so nothing loads until the operator clicks a
+	        // runtime. `preserve` keeps an unchanged selection's open panel
+	        // intact (a list refresh must not blow away a run-inspect
+	        // mid-read — adversary A hazard 4).
+	        const curKey = state.selectedRuntime ? _runtimeKeyOf(state.selectedRuntime) : "";
+	        const pick = curKey ? rows.find((r) => !r.error && _runtimeKeyOf(r) === curKey) || null : null;
+	        if (pick) selectRuntime(pick, { preserve: true });
+	        else _clearRuntimeSelection();
 	      } catch (e) {
 	        // The failure lands IN the table (one error surface, entities-row
 	        // pattern) — a header-only table must never be the failure render.
 	        body.textContent = "";
 	        const tr = document.createElement("tr");
 	        const td = document.createElement("td");
-	        td.colSpan = 6;
+	        td.colSpan = 5;
 	        td.className = "message error";
 	        td.textContent = "Runtime inventory unavailable: " + (e.message || e);
 	        tr.append(td);
@@ -4065,25 +4216,111 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("runtimes-message").textContent = "";
 	      }
 	    }
-	    async function inspectRuntime(r) {
-	      const section = $("runtime-detail-section");
-	      const body = $("runtime-detail-runs");
+	    function _highlightSelectedRuntimeRow() {
+	      const body = $("runtimes-table");
+	      if (!body) return;
+	      const key = state.selectedRuntime ? _runtimeKeyOf(state.selectedRuntime) : "";
+	      let selected = null;
+	      for (const tr of body.querySelectorAll("tr")) {
+	        const on = Boolean(key) && tr.dataset.rtkey === key;
+	        tr.classList.toggle("row-selected", on);
+	        if (on) selected = tr;
+	      }
+	      // The bounded table can restore a selection scrolled out of view —
+	      // the operator must SEE which row the detail pane belongs to
+	      // (adversary A hazard 5).
+	      if (selected) { try { selected.scrollIntoView({ block: "nearest" }); } catch {} }
+	    }
+	    function _clearRuntimeSelection() {
+	      // The TUI's teaching state: the inspect region stays visible with
+	      // its one-line instruction; tabs and panels only exist once a
+	      // runtime is chosen. Nothing loads in this state.
+	      state.selectedRuntime = null;
+	      _highlightSelectedRuntimeRow();
+	      $("runtime-detail-section").classList.remove("hidden");
+	      $("runtime-detail-teach").classList.remove("hidden");
+	      $("runtime-detail-tabs").classList.add("hidden");
+	      $("runtime-detail-name").textContent = "";
+	      $("runtime-detail-sub").textContent = "Select a runtime to inspect.";
+	      for (const t of RUNTIME_SUBTABS) $("runtime-panel-" + t).classList.add("hidden");
+	    }
+	    function selectRuntime(r, opts = {}) {
+	      const same = state.selectedRuntime && _runtimeKeyOf(state.selectedRuntime) === _runtimeKeyOf(r);
+	      state.selectedRuntime = r;
+	      _highlightSelectedRuntimeRow();
+	      $("runtime-detail-section").classList.remove("hidden");
+	      $("runtime-detail-teach").classList.add("hidden");
+	      $("runtime-detail-tabs").classList.remove("hidden");
 	      $("runtime-detail-name").textContent = r.runtime_id || "";
-	      $("runtime-detail-sub").textContent =
+	      const bits = [
 	        r.kind === "entity"
-	          ? `${r.label || r.entity} — the entity's own plane (visits, workflows, reflections run here).`
+	          ? `${r.label || r.entity} — the entity's own plane (visits, workflows, reflections run here)`
 	          : r.kind === "user"
-	            ? `${r.label} — this user's plane (their runs and flows live here).`
-	            : "The gateway default runtime (admin plane).";
+	            ? `${r.label} — this user's plane (their runs and flows live here)`
+	            : "The gateway default runtime (admin plane)",
+	      ];
+	      if (r.kind === "entity") bits.push(r.liveness === "stopped" ? "STOPPED" : (r.state === "awake" || !r.state ? "resting" : r.state));
+	      if (typeof r.size_bytes === "number") bits.push(_fmtBytes(r.size_bytes));
+	      if (r.materialized === false) bits.push("not materialized yet");
+	      $("runtime-detail-sub").textContent = bits.join(" · ") + ".";
+	      // TWO blocks, two tbodies (adversary B's misfire class): the default
+	      // machinery's table can never render under another plane's header.
+	      const isDefault = r.kind === "default";
+	      $("runtime-runs-default").classList.toggle("hidden", !isDefault);
+	      $("runtime-runs-readonly").classList.toggle("hidden", isDefault);
+	      if (same && opts.preserve) return; // unchanged selection: highlight only
+	      state.runtimeDetailToken = (state.runtimeDetailToken || 0) + 1;
+	      state.runtimeDrill = null;
+	      state.runsSessionFilter = "";
+	      _renderRunsSessionChip();
+	      openRuntimeSubtab(state.runtimeSubtab || readStringSetting(RUNTIME_SUBTAB_KEY, "sessions"));
+	    }
+	    function openRuntimeSubtab(name) {
+	      if (!RUNTIME_SUBTABS.includes(name)) name = "sessions";
+	      state.runtimeSubtab = name;
+	      writeStringSetting(RUNTIME_SUBTAB_KEY, name);
+	      for (const t of RUNTIME_SUBTABS) {
+	        $("runtime-subtab-" + t).classList.toggle("active", t === name);
+	        $("runtime-panel-" + t).classList.toggle("hidden", t !== name);
+	      }
+	      const r = state.selectedRuntime;
+	      if (!r) return;
+	      if (name === "sessions") {
+	        // The TUI's sessions panel: the chosen runtime's runs, session
+	        // ids on every row — actionable on the default plane, read-only
+	        // elsewhere. Loads ONLY here (lazy, per choice).
+	        if (r.kind === "default") loadRuns();
+	        else loadRuntimeRuns();
+	      } else {
+	        loadRuntimeCaches();
+	      }
+	    }
+	    async function _runtimeDrillItems(r, token) {
+	      // ONE drill-in payload feeds the read-only Runs table AND the
+	      // sessions fold (limit=200 — the server clamp; a copy-pasted 50
+	      // would silently make the sessions fold worse than the old count).
+	      if (state.runtimeDrill && state.runtimeDrill.key === _runtimeKeyOf(r)) return state.runtimeDrill.items;
+	      const q = `/api/gateway/admin/runtimes/${encodeURIComponent(r.kind)}/${encodeURIComponent(r.tenant_id || "default")}/${encodeURIComponent(r.runtime_id)}/runs?limit=200`;
+	      const data = await api(q);
+	      if (token !== state.runtimeDetailToken) return null; // stale — dropped
+	      const items = Array.isArray(data.items) ? data.items : [];
+	      state.runtimeDrill = { key: _runtimeKeyOf(r), items };
+	      return items;
+	    }
+	    async function loadRuntimeRuns() {
+	      const r = state.selectedRuntime;
+	      if (!r) return;
+	      const token = state.runtimeDetailToken;
+	      const body = $("runtime-detail-runs");
+	      tableLoadingRow(body, 5, "Reading this plane's run store…");
 	      $("runtime-detail-message").textContent = "";
-	      body.textContent = "";
-	      section.classList.remove("hidden");
+	      $("runtime-detail-message").className = "message";
 	      try {
-	        const q = `/api/gateway/admin/runtimes/${encodeURIComponent(r.kind)}/${encodeURIComponent(r.tenant_id || "default")}/${encodeURIComponent(r.runtime_id)}/runs?limit=50`;
-	        const data = await api(q);
-	        const items = Array.isArray(data.items) ? data.items : [];
+	        const items = await _runtimeDrillItems(r, token);
+	        if (items === null || token !== state.runtimeDetailToken) return;
+	        body.textContent = "";
 	        const seen = new Set();
-	        for (const it of items) {
+	        for (const it of items.slice(0, 50)) {
 	          const tr = document.createElement("tr");
 	          const cells = [
 	            String(it.run_id || "").slice(0, 8),
@@ -4097,9 +4334,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            td.textContent = String(c);
 	            tr.append(td);
 	          }
-	          if (it.session_id) seen.add(it.session_id);
 	          body.append(tr);
 	        }
+	        for (const it of items) if (it.session_id) seen.add(it.session_id);
 	        if (!items.length) {
 	          const tr = document.createElement("tr");
 	          const td = document.createElement("td");
@@ -4109,57 +4346,111 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          tr.append(td);
 	          body.append(tr);
 	        } else {
-	          $("runtime-detail-message").textContent = `${items.length} recent run${items.length === 1 ? "" : "s"} · ${seen.size} session${seen.size === 1 ? "" : "s"}`;
+	          $("runtime-detail-message").textContent =
+	            `${Math.min(items.length, 50)} shown of the ${items.length} most recent run${items.length === 1 ? "" : "s"} · ${seen.size} session${seen.size === 1 ? "" : "s"}`;
 	        }
 	      } catch (e) {
+	        if (token !== state.runtimeDetailToken) return;
+	        // 409 (maintenance hold) / 404 (not materialized) render verbatim
+	        // in the pane — the panel stays open, never a bounce to the list.
+	        body.textContent = "";
 	        $("runtime-detail-message").textContent = String((e && e.message) || e);
+	        $("runtime-detail-message").className = "message error";
 	      }
+	    }
+	    async function ensureDataHomes(force = false) {
+	      // ONE cache feeds the machine-wide disclosure AND every runtime's
+	      // Caches tab — a purge or explicit refresh invalidates it; a tab
+	      // switch never re-walks sizes.
+	      if (!force && state.dataHomes) return state.dataHomes;
+	      const data = await api("/api/gateway/admin/data-homes");
+	      const rows = Array.isArray(data.homes) ? data.homes : [];
+	      state.dataHomes = { rows, warnings: data.warnings || [] };
+	      const total = rows.reduce((a, h) => a + (typeof h.size_bytes === "number" ? h.size_bytes : 0), 0);
+	      const sum = $("data-homes-summary");
+	      if (sum) sum.textContent = `${rows.length} home${rows.length === 1 ? "" : "s"} · ${_fmtBytes(total)} — including rows tied to no runtime (model caches, foreign owners)`;
+	      return state.dataHomes;
+	    }
+	    function _samePath(a, b) {
+	      // Suffix-tolerant path identity (adversary hazard: the registry
+	      // stores resolve()d paths, the inventory serves unresolved ones —
+	      // macOS /var vs /private/var). Boundary-anchored, both directions;
+	      // a mis-bucket moves a row's SHELF, never its identity or blast
+	      // radius (purge stays name-keyed with its own confirm).
+	      if (!a || !b) return false;
+	      if (a === b) return true;
+	      return a.endsWith("/" + b.replace(/^[/]+/, "")) || b.endsWith("/" + a.replace(/^[/]+/, ""));
+	    }
+	    function homeAssociation(h) {
+	      // Which runtime shelf does this registered home render under?
+	      // Specific-first; anything unclaimed is machine-wide (ALWAYS
+	      // reachable through the disclosure — association is presentation).
+	      const rows = state.runtimeRows || [];
+	      const slug = (h.meta && h.meta.slug) || ((String(h.name || "").match(/^gateway-entity-(.+)-[0-9a-f]{8}$/) || [])[1]);
+	      if (slug && rows.some((r) => r.kind === "entity" && r.entity === slug)) return { kind: "entity", key: slug };
+	      if (h.kind === "entity-home") return { kind: "machine", key: "" }; // an unknown LIFE never folds under another plane
+	      const root = String((h.meta && h.meta.data_root) || "").replace(/[/]+$/, "");
+	      const path = String(h.path || "").replace(/[/]+$/, "");
+	      const um = (root || path).match(/[/]users[/]([^/]+)[/]([^/]+)(?:[/]runtime)?$/);
+	      if (um && rows.some((r) => r.kind === "user" && (r.tenant_id || "default") === um[1] && r.runtime_id === um[2])) {
+	        return { kind: "user", key: `${um[1]}|${um[2]}` };
+	      }
+	      const d = rows.find((r) => r.kind === "default");
+	      const droot = String((d && d.data_dir) || "").replace(/[/]+$/, "");
+	      // Equality only for the default root (never prefix-match it: the
+	      // root CONTAINS users/ and entities/ — a prefix rule would swallow
+	      // every other plane's homes).
+	      if (droot && _samePath(root, droot)) return { kind: "default", key: "default" };
+	      return { kind: "machine", key: "" };
+	    }
+	    function renderDataHomeRow(h, msgEl) {
+	      // ONE row renderer for both cache surfaces (machine disclosure +
+	      // per-runtime Caches tab) — policy pills and the purge flow must
+	      // never fork.
+	      const tr = document.createElement("tr");
+	      for (const cell of [h.name || "", h.kind || "", _fmtBytes(h.size_bytes), h.owner || ""]) {
+	        const td = document.createElement("td");
+	        td.textContent = String(cell);
+	        tr.append(td);
+	      }
+	      const pol = document.createElement("td");
+	      const pill = document.createElement("span");
+	      pill.className = h.safe_to_purge ? "entity-live-badge phase-none" : "entity-warn-pill";
+	      pill.textContent = h.safe_to_purge ? "purgeable" : "protected";
+	      pill.title = h.description || "";
+	      pol.append(pill);
+	      tr.append(pol);
+	      const actions = document.createElement("td");
+	      if (h.safe_to_purge) {
+	        // Danger class, not secondary (usability adversary P1-5): this
+	        // permanently deletes files — same visual weight as every other
+	        // destructive act.
+	        const btn = document.createElement("button");
+	        btn.className = "danger";
+	        btn.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Purge…</span>`;
+	        btn.title = "Delete the CONTENTS of this data home — a dry-run accounting is shown first";
+	        btn.setAttribute("aria-label", `Purge ${h.name}`);
+	        btn.onclick = () => purgeDataHome(h.name, msgEl);
+	        actions.append(btn);
+	      } else {
+	        const note = document.createElement("span");
+	        note.className = "muted";
+	        note.textContent = "owner-protected";
+	        note.title = h.description || "the owner declared safe_to_purge=false";
+	        actions.append(note);
+	      }
+	      tr.append(actions);
+	      return tr;
 	    }
 	    async function loadDataHomes() {
 	      const body = $("data-homes-table");
 	      if (!body) return;
 	      tableLoadingRow(body, 6, "Measuring data homes…");
 	      try {
-	        const data = await api("/api/gateway/admin/data-homes");
-	        const rows = Array.isArray(data.homes) ? data.homes : [];
-	        $("data-homes-message").textContent = (data.warnings || []).join(" · ");
+	        const { rows, warnings } = await ensureDataHomes(true);
+	        $("data-homes-message").textContent = (warnings || []).join(" · ");
 	        body.textContent = "";
-	        for (const h of rows) {
-	          const tr = document.createElement("tr");
-	          for (const cell of [h.name || "", h.kind || "", _fmtBytes(h.size_bytes), h.owner || ""]) {
-	            const td = document.createElement("td");
-	            td.textContent = String(cell);
-	            tr.append(td);
-	          }
-	          const pol = document.createElement("td");
-	          const pill = document.createElement("span");
-	          pill.className = h.safe_to_purge ? "entity-live-badge phase-none" : "entity-warn-pill";
-	          pill.textContent = h.safe_to_purge ? "purgeable" : "protected";
-	          pill.title = h.description || "";
-	          pol.append(pill);
-	          tr.append(pol);
-	          const actions = document.createElement("td");
-	          if (h.safe_to_purge) {
-	            // Danger class, not secondary (usability adversary P1-5): this
-	            // permanently deletes files — same visual weight as every other
-	            // destructive act.
-	            const btn = document.createElement("button");
-	            btn.className = "danger";
-	            btn.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Purge…</span>`;
-	            btn.title = "Delete the CONTENTS of this data home — a dry-run accounting is shown first";
-	            btn.setAttribute("aria-label", `Purge ${h.name}`);
-	            btn.onclick = () => purgeDataHome(h.name);
-	            actions.append(btn);
-	          } else {
-	            const note = document.createElement("span");
-	            note.className = "muted";
-	            note.textContent = "owner-protected";
-	            note.title = h.description || "the owner declared safe_to_purge=false";
-	            actions.append(note);
-	          }
-	          tr.append(actions);
-	          body.append(tr);
-	        }
+	        for (const h of rows) body.append(renderDataHomeRow(h, $("data-homes-message")));
 	        if (!rows.length) {
 	          const tr = document.createElement("tr");
 	          const td = document.createElement("td");
@@ -4173,8 +4464,81 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("data-homes-message").textContent = "Data homes unavailable: " + (e.message || e);
 	      }
 	    }
-	    async function purgeDataHome(name) {
-	      const msg = $("data-homes-message");
+	    async function loadRuntimeCaches(force = false) {
+	      const r = state.selectedRuntime;
+	      if (!r) return;
+	      const token = state.runtimeDetailToken;
+	      const body = $("runtime-caches-table");
+	      const msg = $("runtime-caches-message");
+	      const rem = $("runtime-caches-remainder");
+	      tableLoadingRow(body, 6, "Measuring data homes…");
+	      msg.textContent = "";
+	      msg.className = "message";
+	      rem.textContent = "";
+	      try {
+	        const { rows, warnings } = await ensureDataHomes(force);
+	        if (token !== state.runtimeDetailToken) return;
+	        msg.textContent = (warnings || []).join(" · ");
+	        const want =
+	          r.kind === "entity" ? { kind: "entity", key: r.entity }
+	          : r.kind === "user" ? { kind: "user", key: `${r.tenant_id || "default"}|${r.runtime_id}` }
+	          : { kind: "default", key: "default" };
+	        let mine = rows.filter((h) => {
+	          const a = homeAssociation(h);
+	          return a.kind === want.kind && a.key === want.key;
+	        });
+	        // Path-identity drift belt (adversary B hazard 2): if the default
+	        // plane claims zero rows while gateway-owned non-entity rows
+	        // plainly exist, show them matched-by-owner with the label — an
+	        // empty pane lying about reality is worse than a labeled guess.
+	        if (!mine.length && r.kind === "default") {
+	          mine = rows.filter((h) => h.owner === "abstractgateway" && !(h.meta && h.meta.slug) && h.kind !== "entity-home");
+	          if (mine.length) {
+	            msg.textContent = [msg.textContent, "#FALLBACK matched by owner — data_root did not string-match this plane (path resolution drift); verify in Machine-wide data & caches"]
+	              .filter(Boolean).join(" · ");
+	          }
+	        }
+	        body.textContent = "";
+	        for (const h of mine) body.append(renderDataHomeRow(h, msg));
+	        if (!mine.length) {
+	          const tr = document.createElement("tr");
+	          const td = document.createElement("td");
+	          td.colSpan = 6;
+	          td.className = "empty";
+	          td.textContent =
+	            r.kind === "entity"
+	              ? "No registered data home for this entity — homes register at creation (or when the registry facade lands)."
+	              : r.kind === "user"
+	                ? "No registered data homes for this plane — a user's homes register when their service first boots."
+	                : "No registered homes for the default plane.";
+	          tr.append(td);
+	          body.append(tr);
+	        }
+	        const rest = rows.length - mine.length;
+	        if (rest > 0) {
+	          const span = document.createElement("span");
+	          span.textContent = `${rest} more registered home${rest === 1 ? "" : "s"} are machine-wide or belong to other planes (model caches, other owners) — `;
+	          const link = document.createElement("a");
+	          link.href = "#";
+	          link.textContent = "Machine-wide data & caches";
+	          link.onclick = (ev) => {
+	            ev.preventDefault();
+	            const d = $("data-homes-section");
+	            d.open = true;
+	            loadDataHomes();
+	            try { d.scrollIntoView({ block: "start" }); } catch {}
+	          };
+	          rem.append(span, link);
+	        }
+	      } catch (e) {
+	        if (token !== state.runtimeDetailToken) return;
+	        body.textContent = "";
+	        msg.textContent = "Data homes unavailable: " + (e.message || e);
+	        msg.className = "message error";
+	      }
+	    }
+	    async function purgeDataHome(name, msgEl) {
+	      const msg = msgEl || $("data-homes-message");
 	      try {
 	        // Dry-run first: the confirm dialog shows the REAL accounting.
 	        const dry = await api("/api/gateway/admin/data-homes/purge", {
@@ -4190,29 +4554,57 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          method: "POST", body: JSON.stringify({ name, confirm_name: name }),
 	        });
 	        msg.textContent = `Purged ${name}: ${done.files_deleted} files, ${_fmtBytes(done.bytes_freed)} freed` + ((done.errors || []).length ? ` — errors: ${done.errors.join("; ")}` : "");
+	        // Both cache surfaces re-render off the invalidated cache: the
+	        // machine table always (cheap, may be hidden), the Caches tab
+	        // when it is the visible panel.
+	        state.dataHomes = null;
 	        await loadDataHomes();
+	        if (state.selectedRuntime && state.runtimeSubtab === "caches") await loadRuntimeCaches();
 	      } catch (e) {
 	        // Registry refusals arrive verbatim (409 detail) — render them.
 	        msg.textContent = String((e && e.message) || e);
 	      }
 	    }
 
+	    function _renderRunsSessionChip() {
+	      // The sessions->runs cross-filter's visible state: a dismissible
+	      // chip in the toolbar (an invisible filter would make the runs
+	      // table silently lie about "all runs").
+	      const box = $("runs-session-chip");
+	      if (!box) return;
+	      box.textContent = "";
+	      const sid = state.runsSessionFilter || "";
+	      if (!sid) return;
+	      const chip = document.createElement("span");
+	      chip.className = "runs-filter-chip";
+	      const label = document.createElement("span");
+	      label.textContent = "session: " + (sid.length > 24 ? sid.slice(0, 24) + "…" : sid);
+	      label.title = sid;
+	      const x = document.createElement("button");
+	      x.textContent = "×";
+	      x.title = "Clear the session filter";
+	      x.setAttribute("aria-label", "Clear the session filter");
+	      x.onclick = () => { state.runsSessionFilter = ""; _renderRunsSessionChip(); loadRuns(); };
+	      chip.append(label, x);
+	      box.append(chip);
+	    }
 	    async function loadRuns() {
 	      const body = $("runs-table");
 	      if (!body) return;
-	      tableLoadingRow(body, 6, "Loading runs…");
+	      tableLoadingRow(body, 7, "Loading runs…");
 	      try {
 	        const status = ($("runs-status").value || "").trim();
 	        const rootOnly = $("runs-root-only").checked;
 	        const q = new URLSearchParams({ limit: "100", include_ledger_len: "false", root_only: String(rootOnly) });
 	        if (status) q.set("status", status);
+	        if (state.runsSessionFilter) q.set("session_id", state.runsSessionFilter);
         const data = await api("/api/gateway/runs?" + q.toString());
         const rows = Array.isArray(data.items) ? data.items : (Array.isArray(data.runs) ? data.runs : []);
 	        body.textContent = "";
 	        for (const r of rows) {
 	          const tr = document.createElement("tr");
 	          const st = String(r.status || "");
-	          for (const cell of [r.run_id || "", r.workflow_id || "", st, r.current_node || "", String(r.updated_at || "").slice(0, 19)]) {
+	          for (const cell of [r.run_id || "", r.workflow_id || "", st, r.current_node || "", r.session_id || "", String(r.updated_at || "").slice(0, 19)]) {
 	            const td = document.createElement("td");
 	            td.textContent = String(cell);
 	            tr.append(td);
@@ -4238,7 +4630,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (!rows.length) {
 	          const tr = document.createElement("tr");
 	          const td = document.createElement("td");
-	          td.colSpan = 6; td.className = "section-note"; td.textContent = "No runs match.";
+	          td.colSpan = 7; td.className = "section-note"; td.textContent = "No runs match.";
 	          tr.append(td); body.append(tr);
 	        }
 	        $("runs-message").textContent = "";
@@ -5486,7 +5878,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("users-section").classList.toggle("hidden", !p.admin || Boolean(state.manageName));
       $("runtimes-section").classList.toggle("hidden", !p.admin);
       $("runtime-reservations-section").classList.toggle("hidden", !p.admin);
-      $("runs-section").classList.toggle("hidden", !p.admin);
+      // The detail pane shows only for admins WITH a live selection — a
+      // background account refresh must not re-hide an open detail, and a
+      // non-admin must never see it (dm#32 redesign: the pane replaced the
+      // old global runs-section).
+      $("runtime-detail-section").classList.toggle("hidden", !p.admin || !state.selectedRuntime);
       $("data-homes-section").classList.toggle("hidden", !p.admin);
       // Both Runtimes sections are admin-gated, so for a non-admin the tab
       // would render EMPTY (IA adversary) — hide the tab itself and fold a
@@ -6030,13 +6426,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      target.scrollTop = target.scrollHeight;
 	      return { el: div, bubble, body, meta };
 	    }
-	    function finalizeSandboxMessage(message, { content = "", meta = "", artifactRef = null, runId = "", mode = "", artifactLabel = "", usage = null, elapsedMs = 0, speakable = false } = {}) {
+	    function finalizeSandboxMessage(message, { content = "", meta = "", artifactRef = null, runId = "", mode = "", artifactLabel = "", usage = null, elapsedMs = 0, speakable = false, reasoning = "" } = {}) {
 	      if (!message || !message.bubble) return;
 	      const progress = Array.from(message.bubble.children || []).find((child) => String(child.className || "").includes("sandbox-progress"));
 	      if (progress) progress.className = "hidden";
 	      if (message.body) {
 	        const messageIsAssistant = String(message.el?.className || "").includes("assistant");
 	        setSandboxMessageBody(message.body, content, { markdown: messageIsAssistant });
+	      }
+	      // Show the model's reasoning, collapsed, above the answer — so a
+	      // test with a reasoning effort has a visible result.
+	      if (reasoning && message.body) {
+	        const details = document.createElement("details");
+	        details.className = "sandbox-reasoning-block";
+	        const summary = document.createElement("summary");
+	        summary.textContent = "Reasoning";
+	        const pre = document.createElement("pre");
+	        pre.textContent = String(reasoning);
+	        details.append(summary, pre);
+	        message.body.parentNode?.insertBefore(details, message.body);
 	      }
 	      const metaLine = sandboxUsageLabel(usage, elapsedMs) || meta;
 	      if (metaLine && message.meta?.children?.[1]) message.meta.children[1].textContent = metaLine;
@@ -6272,11 +6680,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            attachments: attachments.map((item) => item.artifact).filter(Boolean),
 	            client_context: sandboxClientContext(),
 	          };
+	          const reasoningChoice = ($("sandbox-reasoning")?.value || "").trim();
+	          if (reasoningChoice) payload.reasoning = reasoningChoice;
 	          pendingMessage = appendSandboxMessage(`${state.providerLabels.get(provider) || provider} / ${model}`, "Thinking...", { pending: true, pendingLabel: "Generating answer", kind: "assistant" });
 	          const res = await api("/api/gateway/sandbox/generate", { method: "POST", body: JSON.stringify(payload) });
 	          const text = res.response || "(empty response)";
 	          state.sandboxMessages.push({ role: "user", content: promptText }, { role: "assistant", content: text });
-	          finalizeSandboxMessage(pendingMessage, { content: text, usage: res.usage, elapsedMs: Date.now() - started, speakable: true });
+	          finalizeSandboxMessage(pendingMessage, { content: text, usage: res.usage, elapsedMs: Date.now() - started, speakable: true, reasoning: res.reasoning || "" });
 	        } else {
 	          const runId = sandboxRunId();
 	          let endpoint = "";
@@ -6415,7 +6825,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // catch: they sat at the end of a six-round-trip sequential chain, so
       // the first painted screen still showed the pre-login error row).
       if (state.activeTab === "users") loadEntities();
-      if (state.activeTab === "runtimes") { loadRuntimes(); loadDataHomes(); }
+      if (state.activeTab === "runtimes") loadRuntimes();  // data homes load on disclosure expand — nothing eager (dm#35)
       try {
         await loadEndpointProfiles();
       } catch (err) {
@@ -6454,7 +6864,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           $("reservations-message").textContent = String(err.message || err);
           $("reservations-message").className = "message error";
         }
-        loadRuns();
+        // (dm#32 redesign) no trailing loadRuns(): runs load through the
+        // runtimes tab's selection flow — a non-runtimes tab never pays
+        // for them, and the runtimes branch above already covers it.
       }
     }
     async function login() {
@@ -6759,8 +7171,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("appearance-font-size").onchange = updateAppearanceFromForm;
 	    $("appearance-header-size").onchange = updateAppearanceFromForm;
 	    $("tab-button-users").onclick = () => { setActiveTab("users"); loadEntities(); };
-	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); loadRuns(); loadDataHomes(); };
+	    // (dm#32 redesign) no direct loadRuns() on tab open: loadRuntimes'
+	    // selection restore auto-selects a runtime (default first) and its
+	    // Runs tab loader fires from there. loadDataHomes stays eager — it
+	    // is today's tab-open cost and feeds both the disclosure summary
+	    // and the Caches tab's cache.
+	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); };
 	    $("data-homes-refresh").onclick = loadDataHomes;
+	    // Lazy first load (dm#35 nothing-eager rule): the machine-wide walk
+	    // runs the first time the operator OPENS the disclosure.
+	    $("data-homes-section").ontoggle = () => {
+	      if ($("data-homes-section").open && !state.dataHomes) loadDataHomes();
+	    };
 	    $("tab-button-providers").onclick = () => setActiveTab("providers");
 	    $("tab-button-defaults").onclick = () => setActiveTab("defaults");
 	    $("tab-button-sandbox").onclick = () => setActiveTab("sandbox");
@@ -6830,7 +7252,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("templates-backdrop").onclick = (event) => { if (event.target === $("templates-backdrop")) closeTemplates(); };
 	    $("tpl-select").onchange = renderTplSelectState;
 	    $("runtimes-refresh").onclick = loadRuntimes;
-	    $("runtime-detail-close").onclick = () => $("runtime-detail-section").classList.add("hidden");
+	    // Detail refresh re-runs the ACTIVE subtab's loader; on Caches it
+	    // forces a registry re-walk (the cached homes are the point of the
+	    // shared ensureDataHomes, so only an explicit refresh pays sizes).
+	    $("runtime-detail-refresh").onclick = () => {
+	      if (!state.selectedRuntime) return;
+	      state.runtimeDrill = null;
+	      if (state.runtimeSubtab === "caches") { loadRuntimeCaches(true); return; }
+	      openRuntimeSubtab(state.runtimeSubtab || "sessions");
+	    };
+	    for (const _st of RUNTIME_SUBTABS) {
+	      $("runtime-subtab-" + _st).onclick = () => openRuntimeSubtab(_st);
+	    }
 	    $("refresh-catalog").onclick = async () => {
 	      state.providerModels.clear();
 	      await loadProviders();

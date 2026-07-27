@@ -81,7 +81,12 @@ class JsonlLedgerTail:
     # Per-read byte ceiling: a reconnect-from-0 on a multi-GB ledger must
     # not buffer the whole backlog in one read. The stream re-drains
     # immediately while records keep coming, so a capped read only shapes
-    # memory, never delivery.
+    # memory, never delivery. The window GROWS geometrically when a capped
+    # read finds no newline (fable5 adversary P0-1: a single line larger
+    # than the cap otherwise stalled the tail forever — offset pinned,
+    # silent truncation, 8MB futile re-read per poll) and resets after any
+    # progress; a line must be buffered whole to parse regardless (list()
+    # pays the same memory).
     _READ_MAX_BYTES = 8 * 1024 * 1024
 
     def __init__(self, path: Path, *, start_index: int = 0) -> None:
@@ -90,6 +95,13 @@ class JsonlLedgerTail:
         self._index = 0  # record index produced so far (== wire cursor)
         self._skip = max(0, int(start_index))  # catch-up records to swallow
         self._decoder = json.JSONDecoder()
+        self._window = int(self._READ_MAX_BYTES)
+        # Honest drain state (fable5 adversary P0-2): an empty read is NOT
+        # "fully drained" — a catch-up window swallowed by _skip, or a
+        # window-growth pass, made PROGRESS without emitting. The terminal
+        # close must gate on caught_up, and re-drain while progressed.
+        self.caught_up = False
+        self.progressed = False
 
     @property
     def index(self) -> int:
@@ -110,9 +122,15 @@ class JsonlLedgerTail:
         contract; clients dedupe by the emitted cursor/seq.
         """
         p = self._path
+        self.progressed = False
         try:
             size = p.stat().st_size
-        except OSError:
+        except FileNotFoundError:
+            # Legitimate empty ledger (no records appended yet). Other
+            # OSErrors propagate (adversary P1-1: masking a read error as
+            # "no news" let a terminal run close `done` over a truncated
+            # replay — errors must kill the stream loudly, clients reconnect).
+            self.caught_up = self._skip == 0
             return []
         if size < self._offset:
             logger.warning(
@@ -125,11 +143,15 @@ class JsonlLedgerTail:
             self._offset = 0
             self._index = 0
             self._skip = 0
+            self._window = int(self._READ_MAX_BYTES)
+            self.progressed = True
         if size == self._offset:
+            self.caught_up = self._skip == 0
             return []
+        self.caught_up = False
 
         out: List[Tuple[int, Dict[str, Any]]] = []
-        want = min(size - self._offset, self._READ_MAX_BYTES)
+        want = min(size - self._offset, self._window)
         with p.open("rb") as f:
             f.seek(self._offset)
             buf = f.read(want)
@@ -141,9 +163,19 @@ class JsonlLedgerTail:
         # cuts a character.
         end = buf.rfind(b"\n")
         if end < 0:
+            if len(buf) >= self._window and self._window < size - self._offset:
+                # Byte-capped window with no newline: a line larger than the
+                # window. Grow geometrically so the newline eventually fits
+                # (P0-1); progressed=True keeps the caller re-draining
+                # instead of treating this as caught-up.
+                self._window = min(self._window * 2, max(size - self._offset, self._window * 2))
+                self.progressed = True
+            # else: a torn trailing fragment (writer mid-append) — genuinely
+            # nothing complete to read yet; not progress.
             return []
         chunk = buf[: end + 1]
         consumed_bytes = end + 1
+        self._window = int(self._READ_MAX_BYTES)
 
         text = chunk.decode("utf-8", errors="replace")
         for line in text.split("\n"):
@@ -162,6 +194,8 @@ class JsonlLedgerTail:
         # _READ_MAX_BYTES cap is the real per-read bound (memory AND record
         # count); callers drain repeatedly.
         self._offset += consumed_bytes
+        self.progressed = True
+        self.caught_up = self._offset == size and self._skip == 0
         return out
 
 
@@ -173,19 +207,19 @@ class SeqLedgerTail:
         self._store = store
         self._run_id = str(run_id)
         self._cursor = max(0, int(start_index))
+        self._limit = 1000
+        self.caught_up = False
+        self.progressed = False
 
     @property
     def index(self) -> int:
         return self._cursor
 
     def read_new(self, *, max_records: int = 10_000) -> List[Tuple[int, Dict[str, Any]]]:
-        try:
-            records, next_cursor = self._store.list_after(
-                run_id=self._run_id, after=self._cursor, limit=int(max_records)
-            )
-        except Exception:
-            logger.exception("SeqLedgerTail: list_after failed for %s", self._run_id)
-            return []
+        # Errors propagate (adversary P1-1): a masked read error on a
+        # terminal run would close `done` over a truncated replay.
+        lim = min(int(max_records), self._limit)
+        records, next_cursor = self._store.list_after(run_id=self._run_id, after=self._cursor, limit=lim)
         out: List[Tuple[int, Dict[str, Any]]] = []
         cur = self._cursor
         for rec in records or []:
@@ -201,6 +235,9 @@ class SeqLedgerTail:
             self._cursor = max(cur, int(next_cursor or 0))
         except Exception:
             self._cursor = cur
+        self.progressed = bool(out)
+        # A full page means more may be pending; only a short page is drained.
+        self.caught_up = len(records or []) < lim
         return out
 
 
@@ -216,36 +253,40 @@ class ListSliceTail:
         self._store = store
         self._run_id = str(run_id)
         self._cursor = max(0, int(start_index))
+        self.caught_up = False
+        self.progressed = False
 
     @property
     def index(self) -> int:
         return self._cursor
 
     def read_new(self, *, max_records: int = 10_000) -> List[Tuple[int, Dict[str, Any]]]:
+        self.progressed = False
         # Cheap news gate first (the pre-0075 discipline): only materialize
         # the full list when the count moved past the cursor. Count/list can
         # disagree on corrupt lines (adversary F1) — emission truth stays the
         # materialized list; a news signal producing nothing is just an
-        # empty read.
+        # empty read (caught_up: the divergent phantom count must not hold
+        # the terminal close hostage).
         count_fn = getattr(self._store, "count", None)
         if callable(count_fn):
             try:
                 if int(count_fn(self._run_id)) <= self._cursor:
+                    self.caught_up = True
                     return []
             except Exception:
                 pass
-        try:
-            ledger = self._store.list(self._run_id)
-        except Exception:
-            logger.exception("ListSliceTail: list failed for %s", self._run_id)
-            return []
+        # Errors propagate (adversary P1-1) — never a silent empty read.
+        ledger = self._store.list(self._run_id)
         if not isinstance(ledger, list):
-            return []
+            ledger = []
         out: List[Tuple[int, Dict[str, Any]]] = []
         while self._cursor < len(ledger) and len(out) < max_records:
             rec = ledger[self._cursor]
             self._cursor += 1
             out.append((self._cursor, rec))
+        self.progressed = bool(out)
+        self.caught_up = self._cursor >= len(ledger)
         return out
 
 

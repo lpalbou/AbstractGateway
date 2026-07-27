@@ -126,6 +126,54 @@ def test_roster_drives_render_when_present_warm_homes_only(monkeypatch: pytest.M
         assert "drives" not in castor
 
 
+def test_roster_drives_fold_is_seq_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P1 (code-tui c4307, roster-latency): the per-row cognition_drives fold
+    is seq-cached — repeated roster calls at the same journal seq run the
+    fold ONCE, and a journal advance re-folds. Uncached, N warm homes stacked
+    ~90s reads per list into the shared threadpool (live 5.6s + timeouts)."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "drives-cache-secret")
+    from abstractgateway.app import app
+    import abstractgateway.entities as entities_mod
+
+    with TestClient(app, headers={"Authorization": "Bearer drives-cache-secret"}) as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark("Castor")}).status_code == 201
+
+        from abstractgateway.service import get_gateway_service
+
+        registry = get_gateway_service().entity_registry
+        home = registry.get_home("Castor")
+        _seed_drives(home)
+
+        calls = {"n": 0}
+        real = entities_mod.EntityHome.cognition_drives
+
+        def _counting(self):
+            calls["n"] += 1
+            return real(self)
+
+        monkeypatch.setattr(entities_mod.EntityHome, "cognition_drives", _counting)
+        entities_mod._ROSTER_DRIVES_CACHE.clear()
+
+        # Three roster reads at one journal seq: exactly ONE fold.
+        for _ in range(3):
+            roster = client.get("/api/gateway/entities").json()["entities"]
+            castor = next(e for e in roster if e.get("slug") == "castor")
+            assert castor.get("drives", {}).get("questions", {}).get("open") == 1
+        assert calls["n"] == 1, f"seq-cached roster must fold once, folded {calls['n']}x"
+
+        # A journal-seq change invalidates: poison the cache with a stale seq
+        # (the deterministic form of "the life grew") and assert the next
+        # roster read re-folds. Testing the seq-mismatch->refold logic
+        # directly, not the journal-write mechanics of a seed.
+        key = next(iter(entities_mod._ROSTER_DRIVES_CACHE))
+        stale_seq, drives = entities_mod._ROSTER_DRIVES_CACHE[key]
+        entities_mod._ROSTER_DRIVES_CACHE[key] = (stale_seq - 1, drives)
+        client.get("/api/gateway/entities")
+        assert calls["n"] == 2, "a journal-seq change must invalidate the roster drives cache"
+
+
 def test_cognition_wire_degrades_labeled_never_500(monkeypatch: pytest.MonkeyPatch) -> None:
     """Version skew (fold returns None) and read failures both degrade to a
     labeled #FALLBACK warning with NO drives key — absent until the source

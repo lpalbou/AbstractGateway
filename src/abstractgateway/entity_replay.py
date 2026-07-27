@@ -173,6 +173,12 @@ HOST_MARKER_KINDS = (
     # prompt at day-open, not the marker — same hashes-not-content rule as
     # the *_changed family; the order itself can be long/operational text).
     "work_order_changed",
+    # tool_policy_changed (entity c4643 standing ask, tiers wave): the
+    # operator changing the entity's per-phase tool grants is an act on the
+    # entity's powers — marker BEFORE the write (work-order discipline).
+    # Payload carries the phase names touched, never the grant lists (the
+    # policy file is the readable truth; hashes-not-content rule).
+    "tool_policy_changed",
     # night_voice (wave-5 dream narration; memory's ruling c3745): the
     # subconscious's one witnessed narration over a night's signal stream is
     # a DERIVED, host-authored artifact — "dreamed, not lived", self-labeled,
@@ -207,6 +213,39 @@ HOST_MARKER_KINDS = (
     # would be a false biography entry — the inverse of marker-then-write
     # for reads, where the marker records the ACCESS).
     "blueprint_edited",
+    # summon_refused (conversation-seat plan, item 3; operator incident
+    # 2026-07-25 — a probe took the one-life-one-summon seat between the
+    # maintainer's messages and his next message was refused with a raw 409):
+    # a refused summon is part of the biography — "who was turned away, when,
+    # while whom held the seat" must be answerable from the stream, not only
+    # from runtime/audit_log.jsonl. THE 409 branch writes it (a refusal that
+    # never happened would be a false entry — so it lands ONLY on the actual
+    # conflict, never speculatively). Payload carries the holding run/session,
+    # the refused caller's session, and the refusing principal — never the
+    # refused message text (the mailbox holds words; this marker holds the
+    # act). This is the refusal census; no seat asserts refusal-negatives
+    # from client state once it lands.
+    "summon_refused",
+    # seat_preempted (conversation-seat plan, item 2 — "machinery yields to
+    # humans"): a human summon took the seat from an agent/unknown holder.
+    # Written by the preempting branch ONLY on the actual takeover (a live
+    # holder run is cancelled at the turn boundary via runtime's terminal-
+    # guarded cancel_run; an idle TTL-held seat is taken without a cancel —
+    # holding_status in the payload says which). Payload carries the
+    # preempted run/session/holder + the preempting principal/session —
+    # never any message text.
+    "seat_preempted",
+    # The visit-queue census (decision:summon-queue-v1 §14, same argument
+    # that built summon_refused: queue acts were invisible to forensics
+    # until they marked). Each carries the ACT — who, when, position,
+    # queue_id — never the queued message words (the queue store holds
+    # words; a park entry is the mailbox). queue_reaped covers both the
+    # poll-silent reap and a non-contention admission failure (reason says
+    # which).
+    "queue_enqueued",
+    "queue_admitted",
+    "queue_stepped_away",
+    "queue_reaped",
 )
 
 _marker_lock = threading.Lock()

@@ -33,6 +33,43 @@ def _resolve_default_console_level() -> int:
     return logging.ERROR
 
 
+def _exit_now_if_nondaemon_stragglers() -> None:
+    """Exit the process hard when non-daemon threads survive shutdown.
+
+    Lifespan shutdown has already run by the time this is called, so every
+    durable store is closed/flushed; a surviving non-daemon thread only
+    proves some subsystem forgot to stop it (or marked it non-daemon by
+    accident). Without this belt the interpreter joins those threads at
+    exit FOREVER and the operator's TERM becomes a SIGKILL. We log names +
+    full stacks (the forensics the root fix needs), then _exit(0) — the
+    shutdown itself completed.
+    """
+    try:
+        stragglers = [
+            t
+            for t in threading.enumerate()
+            if t is not threading.main_thread() and t.is_alive() and not t.daemon
+        ]
+        if not stragglers:
+            return
+        names = ", ".join(sorted(t.name for t in stragglers))
+        print(
+            f"[WARN] shutdown complete but {len(stragglers)} non-daemon thread(s) survived: {names} — "
+            "dumping stacks and exiting hard (file the named thread as a stop-path bug)",
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            import faulthandler
+
+            faulthandler.dump_traceback(file=sys.stderr)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    os._exit(0)
+
+
 def _uvicorn_log_level(console_level: int) -> str:
     if console_level <= logging.DEBUG:
         return "debug"
@@ -502,6 +539,14 @@ def main(argv: list[str] | None = None) -> None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
             else:
                 os.environ["ABSTRACTGATEWAY_RUNNER"] = prev_runner_env
+            # Deterministic-exit belt (shutdown-forensics, 2026-07-24): after
+            # uvicorn returns, ANY surviving non-daemon thread makes the
+            # interpreter wait forever at exit — the true "TERM hangs, operator
+            # SIGKILLs" class (stage logging in _stop_gateway_service_instance
+            # covers the bounded-but-silent class). Lifespan shutdown already
+            # ran, so nothing durable is at risk: name the stragglers, dump
+            # every stack for the root fix, then exit hard.
+            _exit_now_if_nondaemon_stragglers()
         return
 
     if args.cmd == "runner":

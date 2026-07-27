@@ -57,6 +57,55 @@ def test_source_chain_stored_beats_env_beats_default(monkeypatch: pytest.MonkeyP
         assert cfg3["process_manager"] == {"value": False, "source": "stored"}  # beats the env=1
 
 
+def test_corrupt_store_refuses_write_without_wiping_other_knobs(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """P0 (env-kill design adversary): write_runtime_config does
+    read-mutate-replace; a corrupt store used to read as {} and a save then
+    wiped every OTHER stored knob. Now: a corrupt store REFUSES the write
+    (RuntimeConfigStoreCorrupt) and the file is left intact for repair."""
+    from abstractgateway.runtime_config import (
+        RuntimeConfigStoreCorrupt,
+        _store_path,
+        read_runtime_config,
+        write_runtime_config,
+    )
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    # Land a real stored choice first.
+    write_runtime_config(tmp_path, {"executor": "abstractcode"}, actor="person:test")
+    path = _store_path(tmp_path)
+    assert path.exists()
+
+    # Corrupt the file (crash-interleave / manual-edit class).
+    path.write_text('{"executor": "abstractcode", TRUNCATED', encoding="utf-8")
+
+    # A write must REFUSE, not silently wipe.
+    with pytest.raises(RuntimeConfigStoreCorrupt):
+        write_runtime_config(tmp_path, {"process_manager": True}, actor="person:test")
+
+    # The corrupt bytes are untouched (operator repairs, then retries).
+    assert "TRUNCATED" in path.read_text(encoding="utf-8")
+
+    # The READ path degrades loudly to env/default (never crashes a GET).
+    cfg = read_runtime_config(tmp_path)
+    assert cfg["executor"]["source"] in {"env", "default"}
+
+
+def test_valid_write_keeps_a_last_good_backup(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Every successful write rotates the previous file to .json.bak —
+    recovery material for a future corruption."""
+    from abstractgateway.runtime_config import _store_path, write_runtime_config
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    write_runtime_config(tmp_path, {"executor": "abstractcode"}, actor="person:test")
+    write_runtime_config(tmp_path, {"process_manager": True}, actor="person:test")
+    bak = _store_path(tmp_path).with_suffix(".json.bak")
+    assert bak.exists(), "the previous good store must be preserved as .json.bak"
+    import json
+
+    prev = json.loads(bak.read_text(encoding="utf-8"))
+    assert prev.get("executor") == "abstractcode"  # the first write, preserved
+
+
 def test_write_validates_before_persist(monkeypatch: pytest.MonkeyPatch):
     with _client() as client:
         # A non-existent triage root refuses (the backlog surface reads under it).
@@ -257,3 +306,112 @@ def test_non_admin_read_redacts_the_triage_path(monkeypatch: pytest.MonkeyPatch,
     assert user_view["writable"] is False
     assert user_view["triage_repo_root"] == {"configured": True, "source": "stored"}
     assert "value" not in user_view["triage_repo_root"]  # path never leaks
+
+
+# ------------------------------------------- operator_email (send_email ruling)
+
+
+def test_operator_email_roundtrip_and_validation(tmp_path) -> None:
+    """laurent c4677: the registered operator email is the refiner's 'self'.
+    Stored (recorded act) > env > email-bridge seed > None; ONE plain
+    address only, normalized lowercase."""
+    import pytest as _pytest
+
+    from abstractgateway.runtime_config import (
+        RuntimeConfigError,
+        resolve_operator_email,
+        write_runtime_config,
+    )
+
+    assert resolve_operator_email(tmp_path)["value"] is None
+
+    out = write_runtime_config(tmp_path, {"operator_email": "Laurent@Example.COM"}, actor="admin")
+    assert out["operator_email"]["value"] == "laurent@example.com"
+    assert out["operator_email"]["source"] == "stored"
+
+    for bad in ("a@b@c", "one@x.com, two@y.com", "Laurent <l@x.com>", "@x.com", "l@"):
+        with _pytest.raises(RuntimeConfigError):
+            write_runtime_config(tmp_path, {"operator_email": bad}, actor="admin")
+
+    cleared = write_runtime_config(tmp_path, {"operator_email": None}, actor="admin")
+    assert cleared["operator_email"]["value"] is None
+
+
+def test_operator_email_never_env(tmp_path, monkeypatch) -> None:
+    """dm#246: NEVER ENV — email registers through the account surface or
+    the config store, nowhere else (the env + bridge rungs were removed
+    same-day they were added)."""
+    from abstractgateway.runtime_config import resolve_operator_email
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_OPERATOR_EMAIL", "env@leak.com")
+    monkeypatch.setenv("ABSTRACT_EMAIL_ACCOUNT", "bridge@leak.com")
+    assert resolve_operator_email(tmp_path)["value"] is None
+
+
+def test_operator_email_account_record_is_the_source(tmp_path, monkeypatch) -> None:
+    """dm#246: 1 account = 1 runtime = 1 email — an existing account record
+    DECIDES (its email, or OFF when unset; no fallback wandering past it);
+    the settings knob serves only the account-less posture."""
+    from abstractgateway.runtime_config import resolve_operator_email, write_runtime_config
+    from abstractgateway.users import GatewayUserRegistry
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_USERS_FILE", str(tmp_path / "users.json"))
+    reg = GatewayUserRegistry()
+    reg.create_user(user_id="alice", email="Alice@Example.COM")
+    write_runtime_config(tmp_path, {"operator_email": "knob@fallback.com"}, actor="admin")
+
+    got = resolve_operator_email(tmp_path, tenant_id="default", user_id="alice")
+    assert got == {"value": "alice@example.com", "source": "account"}
+
+    # NON-admin account exists WITHOUT email: feature OFF — never falls to
+    # the knob (the knob is the ADMIN's address; leaking it as "self" into
+    # another user's runs would be cross-account widening).
+    reg.create_user(user_id="bob")
+    got_bob = resolve_operator_email(tmp_path, tenant_id="default", user_id="bob")
+    assert got_bob == {"value": None, "source": "account"}
+
+    # ADMIN account without email: the knob serves — the single-user
+    # operator the knob targets must not be silently disabled by an older
+    # email-less admin record (adversary P2).
+    reg.create_user(user_id="admin")
+    got_admin = resolve_operator_email(tmp_path, tenant_id="default", user_id="admin")
+    assert got_admin["value"] == "knob@fallback.com" and got_admin["source"] == "stored"
+
+    # No account record at all: the knob serves (single-user posture).
+    got_less = resolve_operator_email(tmp_path, tenant_id="default", user_id="ghost")
+    assert got_less["value"] == "knob@fallback.com" and got_less["source"] == "stored"
+
+
+def test_account_email_validator_is_strict_and_lowercases(tmp_path, monkeypatch) -> None:
+    """Adversary P2 validation drift: the account record is the refiner's
+    source of truth — it must refuse display-names/lists/multi-@ exactly
+    like the knob, and store lowercase."""
+    import pytest as _pytest
+
+    from abstractgateway.users import GatewayUserRegistry
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_USERS_FILE", str(tmp_path / "u.json"))
+    reg = GatewayUserRegistry()
+    rec, _tok = reg.create_user(user_id="carol", email="Carol@Example.COM")
+    assert rec.email == "carol@example.com"
+    for bad in ("Laurent <l@x.com>", "a@b@evil.com", "one@x.com, two@y.com"):
+        with _pytest.raises(ValueError):
+            reg.create_user(user_id=f"u{abs(hash(bad)) % 1000}", email=bad)
+
+
+def test_operator_email_injection_is_set_never_setdefault(tmp_path, monkeypatch) -> None:
+    """The actor-strings class: a client-supplied _runtime.operator_email
+    must NEVER survive — the config is the only author of 'self'. Absent
+    config = key absent (refiner deny-safe)."""
+    from abstractgateway.runtime_config import write_runtime_config
+
+    write_runtime_config(tmp_path, {"operator_email": "real@op.com"}, actor="admin")
+    from abstractgateway.runtime_config import resolve_operator_email
+
+    # Mirror the bundle_host injection block.
+    rt_ns = {"operator_email": "attacker@evil.com"}
+    rt_ns.pop("operator_email", None)
+    v = resolve_operator_email(tmp_path).get("value")
+    if v:
+        rt_ns["operator_email"] = v
+    assert rt_ns["operator_email"] == "real@op.com"

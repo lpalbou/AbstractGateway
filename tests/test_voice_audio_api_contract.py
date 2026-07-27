@@ -471,6 +471,187 @@ def test_voice_tts_treats_selected_profile_voice_as_profile_not_clone(tmp_path: 
 
 
 @pytest.mark.basic
+def test_bare_tts_request_resolves_gateway_default_not_hardcoded_openai(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ALWAYS USE THE GATEWAY DEFAULT (laurent dm#28): a provider-less TTS
+    request must resolve to the gateway's OWN configured voice default, never
+    fall through to abstractvoice's hardcoded openai fallback (the incident:
+    bare request → openai → operator quota → 429). The console sends bare."""
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-voice-default", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    # The gateway has a configured voice default (as the console would set).
+    monkeypatch.setattr(
+        gateway_routes,
+        "_configured_voice_output_defaults",
+        lambda kind: {"provider": "supertonic", "model": "supertonic-3", "voice": "M2"} if kind == "tts" else {},
+    )
+
+    headers = {"Authorization": f"Bearer {token}"}
+    calls: dict = {}
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:hello:wav", calls=calls)
+
+    with TestClient(app) as client:
+        tts = client.post(
+            "/api/gateway/runs/session_memory_s1/voice/tts",
+            json={"text": "hello", "request_id": "req-tts-bare"},  # BARE: no provider
+            headers=headers,
+        )
+
+    assert tts.status_code == 200, tts.text
+    # The gateway default filled the bare request — NOT openai.
+    assert calls["tts"][0]["provider"] == "supertonic", "bare request must resolve the gateway default provider"
+    assert calls["tts"][0]["model"] == "supertonic-3"
+    assert calls["tts"][0]["voice"] == "M2"
+
+
+@pytest.mark.basic
+def test_explicit_provider_still_wins_over_gateway_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gateway default fills only what the request left blank — an
+    explicit request provider always wins."""
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-voice-default-override", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(
+        gateway_routes,
+        "_configured_voice_output_defaults",
+        lambda kind: {"provider": "supertonic", "model": "supertonic-3"},
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    calls: dict = {}
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"x", calls=calls)
+
+    with TestClient(app) as client:
+        tts = client.post(
+            "/api/gateway/runs/session_memory_s1/voice/tts",
+            json={"text": "hello", "provider": "piper", "request_id": "req-tts-explicit"},
+            headers=headers,
+        )
+    assert tts.status_code == 200, tts.text
+    assert calls["tts"][0]["provider"] == "piper", "explicit request provider must win over the gateway default"
+
+
+@pytest.mark.basic
+def test_partial_request_does_not_fill_cross_provider_voice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """P0 (fable5 adversary): the fill is ALL-OR-NOTHING. A request naming
+    provider=piper but no voice must NOT get voice=M2 from a supertonic
+    default — that re-mints the 2026-07-17 'piper: Unknown voice_id M1'
+    cross-provider leak. A partial request is the caller's coherent intent,
+    passed through untouched."""
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-voice-partial", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(
+        gateway_routes,
+        "_configured_voice_output_defaults",
+        lambda kind: {"provider": "supertonic", "model": "supertonic-3", "voice": "M2"},
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    calls: dict = {}
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"x", calls=calls)
+
+    with TestClient(app) as client:
+        tts = client.post(
+            "/api/gateway/runs/session_memory_s1/voice/tts",
+            json={"text": "hi", "provider": "piper", "request_id": "req-tts-partial"},
+            headers=headers,
+        )
+    assert tts.status_code == 200, tts.text
+    assert calls["tts"][0]["provider"] == "piper", "the named provider is honored"
+    assert calls["tts"][0]["voice"] != "M2", "a cross-provider default voice must NOT be filled onto a partial request"
+    assert calls["tts"][0]["model"] != "supertonic-3", "a cross-provider default model must NOT be filled onto a partial request"
+
+
+@pytest.mark.basic
+def test_bare_transcribe_resolves_gateway_stt_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """P1 (fable5 adversary): STT had the same bare-request-falls-to-openai
+    hole. A provider-less transcribe now resolves the gateway's configured
+    input.voice default (provider + model), not the hardcoded openai STT."""
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-stt-default", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(
+        gateway_routes,
+        "_configured_voice_output_defaults",
+        lambda kind: {"provider": "faster-whisper", "model": "whisper-large-v3"} if kind == "stt" else {},
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    calls: dict = {}
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, transcript="hello world", calls=calls)
+
+    with TestClient(app) as client:
+        started = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": "bundle-stt-default", "session_id": "s1", "input_data": {"prompt": "hi"}},
+            headers=headers,
+        )
+        assert started.status_code == 200, started.text
+        run_id = started.json()["run_id"]
+        upload = client.post(
+            "/api/gateway/attachments/upload",
+            data={"session_id": "s1"},
+            files={"file": ("clip.wav", b"RIFF....", "audio/wav")},
+            headers=headers,
+        )
+        assert upload.status_code == 200, upload.text
+        audio_ref = upload.json()["attachment"]
+        tr = client.post(
+            f"/api/gateway/runs/{run_id}/audio/transcribe",
+            json={"audio_artifact": audio_ref, "request_id": "req-stt-bare"},  # BARE: no provider
+            headers=headers,
+        )
+    assert tr.status_code == 200, tr.text
+    stt_output = calls["stt"][0]["output"]
+    assert stt_output.get("provider") == "faster-whisper", "bare STT must resolve the gateway default provider, not openai"
+    assert stt_output.get("model") == "whisper-large-v3"
+
+
+@pytest.mark.basic
 def test_voice_tts_applies_explicit_provider_before_profile_voice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"

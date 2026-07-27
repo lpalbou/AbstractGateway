@@ -84,7 +84,16 @@ def _sweep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, respawns: List[Di
     monkeypatch.setattr("abstractgateway.entity_loop.start_loop", _fake_start_loop)
     monkeypatch.setattr(
         "abstractgateway.entity_chat.resolve_substrate",
-        lambda p, m, home_dir: (p or "lmstudio", m or "test-model"),
+        # Contract-faithful triple: (provider, model, thinking). Request
+        # values (the sidecar's, under the one-precedence-rule fix) win;
+        # the home file fills what the request leaves blank.
+        lambda p, m, home_dir, thinking=None: (
+            p or "lmstudio",
+            m or "test-model",
+            thinking
+            or __import__("abstractgateway.entity_chat", fromlist=["read_entity_substrate"]).read_entity_substrate(home_dir).get("thinking")
+            or None,
+        ),
     )
     if notifications is not None:
         monkeypatch.setattr(
@@ -118,6 +127,28 @@ def test_failure_culled_loop_respawns_with_recorded_params(
     markers = actions[0]["_markers"]
     assert markers and markers[0]["repair"] is True and markers[0]["channel"] == "self-repair"
     assert markers[0]["prior_stopped_by"] == "failures"
+
+
+def test_repair_respawn_replays_the_reasoning_effort(
+    tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Adversary cycle-1 D2: a repaired loop must run at the reasoning
+    effort the operator chose — resolving the triple and then discarding
+    the third element silently reverted the mind's effort on every repair."""
+    from abstractgateway.entity_chat import write_entity_substrate
+
+    _write_status(home, phase="stopped", stopped_by="failures", updated_at="2026-07-21T03:03:00+00:00")
+    write_entity_substrate(home, provider="lmstudio", model="ornith-1.0-35b", thinking="high")
+    entity_repair.record_spawn_params(home, {
+        "provider": "lmstudio", "model": "ornith-1.0-35b", "thinking": "high",
+        "tick_seconds": 20.0, "ticks_per_day": 8, "rest_minutes": 30.0,
+    })
+    respawns: List[Dict[str, Any]] = []
+    actions = _sweep(tmp_path, monkeypatch, respawns=respawns)
+    assert [a["action"] for a in actions] == ["repaired"], actions
+    assert respawns and respawns[0].get("thinking") == "high", (
+        "the respawn must carry the stored effort, never silently revert"
+    )
 
 
 def test_crashed_loop_respawns(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

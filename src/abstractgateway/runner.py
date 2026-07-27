@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional, Protocol
 from abstractruntime import Runtime
 from abstractruntime.core.event_keys import build_event_wait_key
 from abstractruntime.core.models import Effect, EffectType, RunStatus, StepRecord, WaitReason
+from abstractruntime.core.vars import is_paused_vars
 from abstractruntime.scheduler.scheduler import utc_now_iso
 from abstractruntime.storage.commands import (
     CommandCursorStore,
@@ -107,6 +108,12 @@ class GatewayRunnerConfig:
     command_batch_limit: int = 200
     tick_max_steps: int = 100
     tick_workers: int = 4
+    # Reserved workers for command-triggered ticks (backlog 0152): kept
+    # SEPARATE from tick_workers so a starved general pool (hung ticks) never
+    # queues an operator's resume/cancel. One is enough — commands are rare
+    # relative to scan ticks and each command tick is short (it just drives
+    # the just-resumed run one step into the general lane's territory).
+    command_tick_workers: int = 1
     run_scan_limit: int = 200
     # Consecutive workflow-resolution failures tolerated before a RUNNING run is
     # promoted to FAILED (~10s at the default 0.25s poll). Tolerates transient
@@ -118,6 +125,28 @@ class GatewayRunnerConfig:
     # cadence regardless; a processed command forces the next pass, and
     # runner.nudge() (run-start routes) skips the wait entirely.
     scan_gate_idle_interval_s: float = 0.5
+
+    # Idle-poller reaper (code-tui c4757 storm: 25 immortal wrapper-root
+    # status-poller subflows re-arming wait_until every ~4.5s forever, one
+    # ledger at 86,924 records — the "wrapper roots park forever on pollers"
+    # class). The reaper cancels a run ONLY when ALL hold (runtime c4764
+    # criterion, gateway-owned per the fix split): (a) waiting on WAIT_UNTIL
+    # — never WAIT_EVENT (every resident agent + parked visit parks on event;
+    # structurally excluded by the wait_reason scan filter), (b)
+    # `_runtime.wait_until_streak >= streak_min` (runtime's O(1) counter,
+    # reset on ANY non-wait effect dispatch — DENY-SAFE: absent or below =
+    # NEVER reap; positive spin proof required, so the reaper reaps nothing
+    # until runtime's counter feeds it), (c) run created > min_age_s ago
+    # (created_at is immutable — a spinner refreshes updated_at every tick, so
+    # run-recency would make it immortal; runtime c4764 fix ii). Policy dials
+    # (dm#177/#194 console-editable). KNOWN LIMIT (runtime c4764 iii): a flow
+    # doing real work in PURE CODE NODES appends no effect records, so its
+    # streak never resets and it reads as spin — acceptable because pure nodes
+    # have no external consequence, named for the adversary.
+    poller_reap_enabled: bool = True
+    poller_reap_streak_min: int = 800  # ~60 min of pure re-arm at ~4.5s/tick
+    poller_reap_min_age_s: float = 3600.0
+    poller_reap_interval_s: float = 300.0
 
 
 def file_store_fingerprint(base_dir: Path) -> tuple:
@@ -210,6 +239,21 @@ class GatewayRunner:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(self._cfg.tick_workers or 1)))
+        # COMMAND LANE (backlog 0152, framework c4988 wedge claim c4998): a
+        # RESERVED tick pool for command-triggered runs (resume/cancel/
+        # emit_event/inject_guidance). The general pool can be starved by
+        # hung ticks — a tool subprocess that outlives its timeout (an
+        # un-reaped headless Chrome) or a no-progress LLM call holds a worker
+        # for its whole duration, and a Python thread is not killable from
+        # outside. When the general pool is starved, an operator's resume was
+        # queued behind those hung ticks and never ran ("accepted, not
+        # ticked"). The command lane gives a just-commanded run its OWN worker
+        # so it makes progress regardless of the general backlog. This is a
+        # MITIGATION, not the cure: reaping the child TREE + an LLM
+        # no-progress timeout (runtime/core, c4998) is what stops ticks
+        # hanging; the command lane keeps resume/cancel alive through a hang.
+        self._command_executor = ThreadPoolExecutor(max_workers=max(1, int(self._cfg.command_tick_workers or 1)))
+        self._priority_tick_ids: set = set()
         # run_id -> tick start epoch (resilience wave 2026-07-21, adversary B
         # P1-1): timestamps make WEDGED ticks countable — with tick_workers=4,
         # four no-timeout provider calls used to freeze all run progression
@@ -217,6 +261,11 @@ class GatewayRunner:
         # health surface sees the pool starving before it is fully dead.
         self._inflight: Dict[str, float] = {}
         self._inflight_lock = threading.Lock()
+
+        # Idle-poller reaper state (observability surfaced in runner_status).
+        self._last_reap_at = 0.0
+        self._reaped_total = 0
+        self._last_reaped: list[str] = []
 
         self._singleton_lock_path = self._base_dir / "gateway_runner.lock"
         self._singleton_lock_fh = None
@@ -345,10 +394,11 @@ class GatewayRunner:
         # No NEW ticks will be scheduled (the loop thread is gone); cancel
         # QUEUED futures. cancel_futures does NOT interrupt an ALREADY-RUNNING
         # tick.
-        try:
-            self._executor.shutdown(wait=False, cancel_futures=True)  # type: ignore[call-arg]
-        except Exception:
-            pass
+        for _ex in (self._executor, self._command_executor):
+            try:
+                _ex.shutdown(wait=False, cancel_futures=True)  # type: ignore[call-arg]
+            except Exception:
+                pass
         # DRAIN BEFORE RELEASE (adversary find, 2026-07-11 — the wave's own
         # central invariant): releasing the flock while a tick is still
         # executing on an executor thread lets another runner (a live standby
@@ -714,6 +764,7 @@ class GatewayRunner:
             "enabled": bool(self._enable),
             "status": status,
             "active": bool(lock_held and loop_running),
+            "stopped_deliberately": stopped_deliberately,
             "thread_alive": thread_alive,
             "lock_held": lock_held,
             "lock_refused": refused,
@@ -751,6 +802,22 @@ class GatewayRunner:
             workers = max(1, int(self._cfg.tick_workers or 1))
             if len(wedged) >= workers:
                 out["all_tick_workers_wedged"] = True
+                # The command lane (backlog 0152) still ticks resume/cancel
+                # through a fully-wedged general pool — name the escape hatch
+                # so an operator knows a bounce is not the only recourse.
+                out["command_lane_available"] = True
+        with self._inflight_lock:
+            pending_priority = len(self._priority_tick_ids)
+        if pending_priority:
+            out["command_ticks_pending"] = pending_priority
+
+        # Idle-poller reaper visibility (code-tui c4757): a climbing
+        # reaped_total is the operator's cue that a workflow is leaking
+        # immortal pollers (the root cause the reaper only backstops).
+        if self._reaped_total:
+            out["idle_pollers_reaped_total"] = int(self._reaped_total)
+            if self._last_reaped:
+                out["idle_pollers_reaped_recent"] = list(self._last_reaped)
         return out
 
     def inactive_warning(self) -> Optional[str]:
@@ -908,6 +975,15 @@ class GatewayRunner:
                         self._schedule_ticks()
                 except Exception as e:
                     logger.exception("GatewayRunner tick scheduling error: %s", e)
+                # Idle-poller reap sweep — slow cadence, exception-guarded,
+                # runs ONLY here (in the lock-holding loop) so exactly one
+                # process reaps; a standby runner never does (it is not in
+                # _loop). Never blocks ticking: a broken sweep logs and the
+                # loop continues (the resilience-wave guard discipline).
+                try:
+                    self._reap_idle_pollers()
+                except Exception as e:
+                    logger.exception("GatewayRunner idle-poller reap error: %s", e)
                 self._stop.wait(timeout=float(self._cfg.poll_interval_s or 0.25))
             return False
         finally:
@@ -1024,7 +1100,129 @@ class GatewayRunner:
             horizon = now + max(0.05, float(self._cfg.scan_gate_idle_interval_s))
         self._next_due_epoch = horizon
 
+    def _reap_idle_pollers(self, *, now: Optional[float] = None) -> int:
+        """Cancel spinning wait_until pollers (code-tui c4757 storm class).
+
+        Deny-safe by construction: the candidate scan is filtered to
+        WAIT_UNTIL (WAIT_EVENT residents/visits are structurally invisible
+        here), and a run is cancelled ONLY with POSITIVE spin proof
+        (`_runtime.wait_until_streak >= streak_min`) plus an age belt. Absent
+        or low streak = never reaped — so with no runtime counter the sweep
+        cancels nothing. Returns the number cancelled this sweep."""
+        cfg = self._cfg
+        if not bool(getattr(cfg, "poller_reap_enabled", False)):
+            return 0
+        clock = float(now if now is not None else time.time())
+        if (clock - self._last_reap_at) < max(1.0, float(cfg.poller_reap_interval_s)):
+            return 0
+        self._last_reap_at = clock
+
+        list_runs = getattr(self.run_store, "list_runs", None)
+        if not callable(list_runs):
+            return 0
+        try:
+            candidates = list_runs(
+                status=RunStatus.WAITING,
+                wait_reason=WaitReason.UNTIL,
+                limit=int(cfg.run_scan_limit),
+            )
+        except TypeError:
+            # Older store without wait_reason filtering: fall back to WAITING
+            # and gate on the reason per-run (never skip the reason check).
+            try:
+                candidates = list_runs(status=RunStatus.WAITING, limit=int(cfg.run_scan_limit))
+            except Exception:
+                return 0
+        except Exception:
+            return 0
+
+        streak_min = max(1, int(cfg.poller_reap_streak_min))
+        min_age = max(0.0, float(cfg.poller_reap_min_age_s))
+        with self._inflight_lock:
+            inflight = set(self._inflight.keys())
+        reaped: list[str] = []
+        for run in candidates or []:
+            try:
+                if not self._is_gateway_owned_run(run):
+                    continue
+                # The real RunState field is `waiting` (adversary F1 — reading
+                # `wait` made the reaper a silent no-op on every real store,
+                # the hand-written-double class); `wait` kept only as a
+                # tolerance for older/alternate shapes. Belt for the
+                # TypeError fallback path: refuse anything not a timed wait
+                # (WAIT_EVENT must NEVER be reaped — criterion a).
+                wait = getattr(run, "waiting", None)
+                if wait is None:
+                    wait = getattr(run, "wait", None)
+                if wait is None or getattr(wait, "reason", None) != WaitReason.UNTIL:
+                    continue
+                rt_ns = (run.vars or {}).get("_runtime") if isinstance(run.vars, dict) else None
+                streak = rt_ns.get("wait_until_streak") if isinstance(rt_ns, dict) else None
+                # POSITIVE spin proof required — deny-safe on absent/low/typo.
+                if not isinstance(streak, int) or isinstance(streak, bool) or streak < streak_min:
+                    continue
+                created = _epoch_from_iso(getattr(run, "created_at", "") or "")
+                if created is None or (clock - created) < min_age:
+                    continue
+                rid = str(getattr(run, "run_id", "") or "")
+                if not rid:
+                    continue
+                # Never cancel a run the tick pool is actively resuming
+                # (adversary F2: JsonFileRunStore returns ALIASED RunStates —
+                # a cancel racing an in-flight tick could tear its save /
+                # resurrect it past CANCELLED). The streak persists, so a
+                # genuinely-stuck spinner is re-reaped next sweep once idle.
+                if rid in inflight:
+                    continue
+                reason = (
+                    f"idle poller reaped: wait_until_streak={streak} "
+                    f">= {streak_min} with no non-wait effect, run age "
+                    f"{int(clock - created)}s (gateway idle-poller reaper)"
+                )
+                try:
+                    runtime = self._host.runtime
+                    runtime.cancel_run(rid, reason=reason)
+                    reaped.append(rid)
+                    logger.warning("GatewayRunner reaped idle poller %s (%s)", rid, reason)
+                except Exception as e:
+                    logger.warning("GatewayRunner reap of %s failed (non-fatal): %s", rid, e)
+            except Exception:
+                continue
+        if reaped:
+            self._reaped_total += len(reaped)
+            self._last_reaped = reaped[-20:]
+        return len(reaped)
+
+    def _is_gateway_owned_run(self, run: Any) -> bool:
+        """True for runs this gateway runner ticks (actor_id == 'gateway').
+        The reaper never touches a run outside the gateway's lifecycle."""
+        return str(getattr(run, "actor_id", "") or "") == "gateway"
+
     def _schedule_ticks(self) -> None:
+        # COMMAND LANE drain (backlog 0152): submit just-commanded runs FIRST,
+        # via the reserved executor, BEFORE the windowed RUNNING scan. This
+        # runs even when the general pool is fully starved by hung ticks (its
+        # own worker), and it bypasses run_scan_limit (a resumed run outside
+        # the top-N window would otherwise be accepted-but-never-ticked). Each
+        # id is load-verified + gateway-owned-gated so a stale/session id is a
+        # no-op, never a false resolution failure. Drained once per pass; a
+        # still-RUNNING run is picked up by the general scan next pass.
+        with self._inflight_lock:
+            priority_ids = list(self._priority_tick_ids)
+            self._priority_tick_ids.clear()
+        if priority_ids:
+            load = getattr(self.run_store, "load", None)
+            for rid in priority_ids:
+                if not isinstance(rid, str) or not rid:
+                    continue
+                try:
+                    run = load(rid) if callable(load) else None
+                except Exception:
+                    run = None
+                if run is None or getattr(run, "actor_id", None) != "gateway":
+                    continue
+                self._submit_tick(rid, priority=True)
+
         list_runs = getattr(self.run_store, "list_runs", None)
         if callable(list_runs):
             runs = list_runs(status=RunStatus.RUNNING, limit=int(self._cfg.run_scan_limit))
@@ -1152,9 +1350,15 @@ class GatewayRunner:
                 # Best-effort recovery only; avoid blocking the runner loop on a single bad tree.
                 continue
 
-    def _submit_tick(self, run_id: str) -> None:
+    def _submit_tick(self, run_id: str, *, priority: bool = False) -> None:
         with self._inflight_lock:
             if run_id in self._inflight:
+                # Already ticking (in EITHER lane) — the shared in-flight set
+                # is the single-tick guard across both executors, so a run can
+                # never be double-ticked no matter which lane submits it. A
+                # priority resume of a run whose tick is already hung cannot
+                # un-hang it (threads are not killable); the value is keeping
+                # OTHER commanded runs moving, which the dedup does not block.
                 return
             self._inflight[run_id] = time.time()
 
@@ -1167,7 +1371,8 @@ class GatewayRunner:
             # gets its retry — the pre-gate 0.25s rescan was that retry loop.
             self._scan_force = True
 
-        fut = self._executor.submit(self._tick_run, run_id)
+        executor = self._command_executor if priority else self._executor
+        fut = executor.submit(self._tick_run, run_id)
         try:
             fut.add_done_callback(_done)
         except Exception:
@@ -1186,6 +1391,18 @@ class GatewayRunner:
         run_id = str(rec.run_id or "").strip()
         if not run_id:
             raise ValueError("Command.run_id is required")
+
+        # COMMAND LANE (backlog 0152): mark this run for a PRIORITY tick so a
+        # just-resumed/cancelled/steered run progresses through a starved
+        # general pool and past the run_scan_limit window. Only the
+        # DIRECT-run-target types — for emit_event the id is a SESSION id, not
+        # a run id (ticking it would false-fail via the resolution-failure
+        # promoter); its resumed runs ride the forced general scan. The drain
+        # in _schedule_ticks load-verifies before submitting, so a stale/bogus
+        # id here is a harmless no-op, never a false FAILED.
+        if typ in {"resume", "cancel", "inject_guidance", "update_schedule"}:
+            with self._inflight_lock:
+                self._priority_tick_ids.add(run_id)
 
         # pause/cancel are durability operations; apply to full run tree.
         if typ in {"pause", "cancel"}:
@@ -1461,6 +1678,17 @@ class GatewayRunner:
                 continue
             if _is_pause_wait(getattr(r, "waiting", None), run_id=str(getattr(r, "run_id", "") or "")):
                 continue
+            # PAUSED runs never WAKE on an event — but they must be SKIPPED
+            # here, not left to Runtime.resume's `ValueError("Run is paused")`:
+            # that raise used to abort the WHOLE emit before the durable
+            # append below ever ran, silently dropping durable events for
+            # every mailbox during any pause window (flow c5260 P1-A, run
+            # e6cb3e66: a `stop` steered during an operator pause vanished).
+            # `durable: true` exists precisely for windows when the run
+            # cannot receive — the append reaches paused runs; the wake stays
+            # refused by this skip.
+            if is_paused_vars(getattr(r, "vars", None)):
+                continue
             try:
                 runtime, wf = self._host.runtime_and_workflow_for_run(r.run_id)
             except Exception as e:
@@ -1468,7 +1696,15 @@ class GatewayRunner:
                 # every other matching WAIT_EVENT run behind it.
                 logger.warning("GatewayRunner: emit_event skip %s (workflow unresolvable): %s", r.run_id, e)
                 continue
-            runtime.resume(workflow=wf, run_id=r.run_id, wait_key=wait_key, payload=envelope, max_steps=0)
+            try:
+                runtime.resume(workflow=wf, run_id=r.run_id, wait_key=wait_key, payload=envelope, max_steps=0)
+            except Exception as e:
+                # Same isolation rule for the resume itself: one refusing
+                # listener (paused via a racing write, terminal, drifted
+                # wait_key) must not abort delivery to the runs behind it —
+                # and NEVER the durable append after this loop.
+                logger.warning("GatewayRunner: emit_event resume skip %s: %s", r.run_id, e)
+                continue
             resumed += 1
 
         # Durable mailbox delivery (opt-in via payload.durable, backlog: event-inbox agents).

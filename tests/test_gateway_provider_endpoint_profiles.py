@@ -74,11 +74,14 @@ def _app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, user_auth: b
 
 
 def _without_local_autoprobes(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # lmstudio/ollama are the server-shaped locals; mlx/huggingface are
+    # the IN-PROCESS locals (2026-07-26) — all four ride the same
+    # reachable-default auto-probe at the profiles GET.
     return [
         call
         for call in calls
         if not (
-            call.get("provider_name") in {"lmstudio", "ollama"}
+            call.get("provider_name") in {"lmstudio", "ollama", "mlx", "huggingface"}
             and call.get("timeout_s") == 1.5
         )
     ]
@@ -196,6 +199,61 @@ def test_endpoint_profile_model_discovery_uses_profile_url_and_key(tmp_path: Pat
             "timeout_s": 30.0,
         }
     ]
+
+
+def test_bulk_discovery_inlines_endpoint_profile_models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bulk-route contract (code-tui c4235): GET /discovery/providers?include_models=true
+    used to serve models:[] for endpoint profiles (no allowed_models declared)
+    while the per-provider route probed their upstream — every thin client
+    grew the same fallback loop. The bulk route now probes profiles inline
+    with the same facade call, best-effort."""
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **kwargs: Any) -> dict[str, Any]:
+            return {"items": [{"name": "lmstudio", "models": ["local-a"] if include_models else []}]}
+
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": ["remote-b", "remote-a"]}
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={
+                "id": "remote",
+                "display_name": "Remote Endpoint",
+                "provider_family": "openai-compatible",
+                "base_url": "https://remote.example.test/v1",
+                "api_key": "profile-key",
+                "scope": "gateway",
+                "capabilities": ["text"],
+                "allowed_models": [],
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        r = client.get("/api/gateway/discovery/providers?include_models=true", headers=headers)
+        assert r.status_code == 200, r.text
+        items = {str(i.get("name")): i for i in r.json()["items"]}
+        assert "endpoint:remote" in items
+        assert items["endpoint:remote"]["models"] == ["remote-a", "remote-b"], (
+            "endpoint-profile models must be inlined on the bulk route"
+        )
+        assert "profile-key" not in r.text
+
+        # Without include_models the bulk route stays cheap: no probe calls.
+        n_probes = len([c for c in calls if c.get("base_url") == "https://remote.example.test/v1"])
+        r2 = client.get("/api/gateway/discovery/providers", headers=headers)
+        assert r2.status_code == 200
+        n_probes2 = len([c for c in calls if c.get("base_url") == "https://remote.example.test/v1"])
+        assert n_probes2 == n_probes, "include_models=false must not probe endpoint profiles"
 
 
 def test_endpoint_profile_allowed_models_are_intersected_with_capability_filters(
@@ -713,6 +771,67 @@ def test_gateway_sandbox_text_generation_does_not_apply_console_prompt_caps(tmp_
     assert generate_call["messages"][-1] == {"role": "user", "content": long_prompt}
 
 
+def test_gateway_sandbox_reasoning_rides_the_thinking_key_and_is_visible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reasoning-first-citizen, sandbox half: a reasoning choice on the
+    sandbox request reaches the model as the `thinking` parameter (the one
+    wire name), and the response shows both the reasoning text and what was
+    requested — a test the operator can SEE. Absent choice = key absent,
+    older behavior unchanged."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeLLM:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def generate(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"generate": kwargs})
+            return {
+                "content": "the answer",
+                "reasoning": "step one, step two",
+                "usage": {"total_tokens": 5},
+            }
+
+    import abstractruntime.integrations.abstractcore.llm_client as llm_client
+
+    monkeypatch.setattr(llm_client, "LocalAbstractCoreLLMClient", FakeLLM)
+    headers = {"Authorization": "Bearer admin-token"}
+
+    with _app_client(tmp_path, monkeypatch) as client:
+        with_reasoning = client.post(
+            "/api/gateway/sandbox/generate",
+            headers=headers,
+            json={
+                "capability": "output.text",
+                "provider": "lmstudio",
+                "model": "some-reasoning-model",
+                "prompt": "why is the sky blue?",
+                "reasoning": "high",
+            },
+        )
+        without = client.post(
+            "/api/gateway/sandbox/generate",
+            headers=headers,
+            json={
+                "capability": "output.text",
+                "provider": "lmstudio",
+                "model": "some-reasoning-model",
+                "prompt": "why is the sky blue?",
+            },
+        )
+
+    assert with_reasoning.status_code == 200, with_reasoning.text
+    body = with_reasoning.json()
+    assert body["requested_reasoning"] == "high"
+    assert body["reasoning"] == "step one, step two"
+    assert calls[0]["generate"]["params"]["thinking"] == "high"
+
+    assert without.status_code == 200, without.text
+    assert "thinking" not in calls[1]["generate"]["params"], (
+        "no reasoning choice means the key is absent — older behavior"
+    )
+    assert without.json()["requested_reasoning"] is None
+
+
 def test_console_presents_provider_connections_without_capability_form() -> None:
     from abstractgateway.console import gateway_console_html
 
@@ -804,3 +923,94 @@ def test_bundle_host_resolves_endpoint_profiles_for_runtime_without_exposing_sec
     assert resolved["base_url"] == "https://llm.example.test/v1"
     assert resolved["api_key"] == "secret-key"
     assert resolved["api_key_set"] is True
+
+
+def test_tools_only_executor_gets_endpoint_profile_resolver(tmp_path: Path) -> None:
+    """A runtime built without an LLM client must still resolve endpoint profiles.
+
+    Normally the profile lookup rides on the LLM client. Tools-only runtimes
+    have no LLM client, so the gateway attaches the lookup function directly
+    to the tool executor. The lookup is bound to one user's profile store at
+    build time, so it can never read another user's profiles.
+    """
+    from abstractgateway.hosts.bundle_host import _attach_tools_only_endpoint_profile_resolver
+    from abstractgateway.provider_endpoint_profiles import ProviderEndpointProfileStore
+
+    data_root = tmp_path / "runtime"
+    root_data = tmp_path / "root"
+    ProviderEndpointProfileStore(base_dir=root_data).upsert_profile(
+        profile_id="airelay",
+        display_name="Air Relay",
+        description="Gateway-scoped profile (the Case-1 incident shape).",
+        provider_family="openai-compatible",
+        base_url="https://relay.example.test/v1",
+        api_key="relay-key",
+        scope="gateway",
+    )
+
+    class FakeExecutor:
+        """Contract-faithful stub of the runtime executor's attach surface."""
+
+        def __init__(self) -> None:
+            self.getter = None
+
+        def set_endpoint_profile_resolver_getter(self, getter) -> None:
+            self.getter = getter
+
+    executor = FakeExecutor()
+    _attach_tools_only_endpoint_profile_resolver(
+        tool_executor=executor, data_root=data_root, catalog_root=root_data
+    )
+    assert executor.getter is not None, "attach must reach the executor"
+    resolver = executor.getter()
+    assert callable(resolver)
+    # Full-spec pass-through (core calls with 'endpoint:<id>'): resolves.
+    resolved = resolver("endpoint:airelay")
+    assert resolved["provider"] == "openai-compatible"
+    assert resolved["base_url"] == "https://relay.example.test/v1"
+    assert resolved["api_key"] == "relay-key"
+    # Bare id and unknown specs clean-miss (None), never mis-resolve.
+    assert resolver("airelay") is None
+    assert resolver("endpoint:unknown") is None
+
+
+def test_in_process_local_providers_surface_when_models_exist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MLX / local-HF are in-process: no server, no base_url — 'reachable'
+    means the discovery facade lists local artifacts (operator report
+    2026-07-26: installed backends with local models were invisible in
+    both consoles). An empty listing keeps them absent; they must never
+    ride the configured-rows fold (no key/URL requirement to fail)."""
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            if provider_name == "mlx":
+                return {"provider": provider_name, "models": ["mlx-community/some-model-4bit"]}
+            # huggingface answers EMPTY: installed but no local cache.
+            return {"provider": provider_name, "models": []}
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+    monkeypatch.delenv("LMSTUDIO_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        profiles = client.get("/api/gateway/config/provider-endpoint-profiles", headers=headers)
+
+    assert profiles.status_code == 200, profiles.text
+    rows = profiles.json()["profiles"]
+    mlx = next(item for item in rows if item["provider_id"] == "mlx")
+    assert mlx["display_name"] == "MLX"
+    assert mlx["managed"] is False
+    assert mlx["source"] == "reachable-default"
+    assert mlx["discovered_model_count"] == 1
+    assert not mlx.get("base_url"), "in-process rows carry no base_url"
+    # Empty listing = absent (installed-but-empty is not usable).
+    assert not any(item["provider_id"] == "huggingface" for item in rows)
+    # The in-process probe was called WITHOUT a base_url kwarg.
+    mlx_call = next(c for c in calls if c["provider_name"] == "mlx")
+    assert "base_url" not in mlx_call

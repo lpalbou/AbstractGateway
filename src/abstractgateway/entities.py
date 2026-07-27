@@ -55,6 +55,13 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Roster per-row drives fold cache (code-tui c4307 P1): entity dir name ->
+# (journal_seq, drives). Keyed on the child dir name (unique per principal
+# AND per entity, like the communities cache) + the journal seq (pure-read
+# freshness). Same-seq roster calls serve the cached fold instead of
+# re-running the ~90s engine read per warm home per list.
+_ROSTER_DRIVES_CACHE: "Dict[str, Tuple[int, Optional[Dict[str, Any]]]]" = {}
+
 __all__ = [
     "EntityHome",
     "EntityManifest",
@@ -1633,7 +1640,7 @@ class EntityRegistry:
 
             home_dir = self.entities_dir / slug
             try:
-                provider, model = _ec.resolve_substrate(None, None, home_dir=home_dir)
+                provider, model, thinking = _ec.resolve_substrate(None, None, home_dir=home_dir)
             except _ec.ChatOpenRefused as e:
                 return EffectOutcome.failed(f"LLM_CALL refused: {e.detail}")
 
@@ -1660,6 +1667,10 @@ class EntityRegistry:
             # per entity beside substrate.yaml — is queued for the creation
             # modal (substrate config is already surfaced there).
             llm_kwargs: Dict[str, Any] = {"model": model, "max_output_tokens": 4096}
+            if thinking:
+                # The substrate's reasoning effort applies to the resident
+                # lane too — one mind, one triple, every lane.
+                llm_kwargs["thinking"] = thinking
             llm_kwargs.update(endpoint_kwargs)  # base_url/api_key from a resolved endpoint profile
             if (
                 provider in ("lmstudio", "openai-compatible", "openai_compatible")
@@ -1975,11 +1986,28 @@ class EntityRegistry:
             # stay absent here until something reads /cognition, which
             # always serves them and warms the home.) Absent ≠ zero — same
             # contract as pending_tasks.
+            #
+            # SEQ-KEYED CACHE (code-tui c4307 roster-latency P1, live-repro'd
+            # 5.6s + three >20s timeouts): cognition_drives() is the same
+            # engine fold that measured ~90s on a large home, and the roster
+            # ran it PER ROW on EVERY list call, uncached — N warm homes
+            # stacked into one request under the shared threadpool. The fold
+            # is a pure read of the store, so the journal seq IS the
+            # invalidation key (identical to the /cognition + communities
+            # caches): same seq = identical result, served without touching
+            # the store. Bounds the roster to one fold per home per journal
+            # advance, shared across every thin client.
             try:
                 with self._open_lock:
                     warm = self._open_homes.get(child.name)
                 if warm is not None:
-                    drives = warm.cognition_drives()
+                    seq_now = int(warm.memory.current_seq())
+                    cached = _ROSTER_DRIVES_CACHE.get(child.name)
+                    if cached is not None and cached[0] == seq_now:
+                        drives = cached[1]
+                    else:
+                        drives = warm.cognition_drives()
+                        _ROSTER_DRIVES_CACHE[child.name] = (seq_now, drives)
                     if drives is not None:
                         entry["drives"] = drives
             except Exception as e:

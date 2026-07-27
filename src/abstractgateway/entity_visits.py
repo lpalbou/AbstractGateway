@@ -171,12 +171,19 @@ def _restore_prior_state(home_dir: Any, prior_state: Dict[str, Any], *, suffix: 
 
 
 class VisitRefused(Exception):
-    """A refusal with an HTTP status shape (mirrors ChatOpenRefused)."""
+    """A refusal with an HTTP status shape (mirrors ChatOpenRefused).
 
-    def __init__(self, status: int, detail: str) -> None:
+    `code` (coder-tui c4307 ask 3): a STABLE machine-readable identifier for
+    the refusal class, served ADDITIVELY beside the human `detail` string
+    (routes serve {"detail", "code"} — existing detail-string consumers are
+    byte-unaffected). Codes are a closed vocabulary; new refusal classes add
+    a code, never reword an existing one (clients key on them)."""
+
+    def __init__(self, status: int, detail: str, *, code: str = "") -> None:
         super().__init__(detail)
         self.status = int(status)
         self.detail = detail
+        self.code = str(code or "").strip()
 
 
 _TOOL_ARG_EXCERPT_CHARS = 200
@@ -386,6 +393,7 @@ def _entity_tool_declarations() -> Dict[str, Dict[str, Any]]:
             503,
             f"entity tool declarations derive from runtime's walled_tool_rows, "
             f"which this abstractruntime lacks: {e} — upgrade abstractruntime",
+            code="runtime_too_old",
         )
 
     out: Dict[str, Dict[str, Any]] = {}
@@ -462,6 +470,7 @@ class EntityVisitHost:
         *,
         idle_timeout_s: float = DEFAULT_VISIT_IDLE_S,
         chat_probe: Any = None,
+        summon_seat_probe: Any = None,
     ) -> None:
         self._registry = registry
         # `chat_probe(slug) -> bool` = "does the HOSTED chat lane have a live
@@ -469,6 +478,13 @@ class EntityVisitHost:
         # never wake a home whose visiting posture belongs to a LIVE drawer
         # session; absent probe = assume none (standalone/test hosts).
         self._chat_probe = chat_probe
+        # `summon_seat_probe(slug) -> seat|None` = "does the SUMMON lane have
+        # a turn mid-flight on this home?" (conversation-seat plan item 5,
+        # service-wired from entity_seat.build_summon_seat_probe). The probe
+        # answers only LIVE runs — a TTL-idle summon seat never blocks the
+        # operator's own drawer surfaces; absent probe = the old blindness,
+        # honestly (standalone/test hosts).
+        self._summon_seat_probe = summon_seat_probe
         self._idle_timeout_s = float(idle_timeout_s)
         self._specs: Dict[str, Any] = {}  # run_id -> WorkflowSpec (rebuilt on miss)
         self._lock = threading.RLock()
@@ -754,6 +770,7 @@ class EntityVisitHost:
                 409,
                 f"{manifest.entity_id} is paused (hard freeze): {reason} — "
                 f"this visit cannot {verb}; close it (closed_by=pause) or wake him first",
+                code="entity_paused",
             )
         if word == "asleep" and str(state.get("mode") or "") != "visiting":
             reason = str(state.get("reason") or "") or "no reason recorded"
@@ -761,6 +778,7 @@ class EntityVisitHost:
                 409,
                 f"{manifest.entity_id} is asleep by the operator: {reason} — "
                 f"this visit cannot {verb}; close it or wake him first",
+                code="entity_asleep",
             )
 
     # ------------------------------------------------- shared leg machinery
@@ -785,7 +803,7 @@ class EntityVisitHost:
         home_dir = registry.entities_dir / slug
 
         try:
-            provider, model = resolve_substrate(None, None, home_dir=home_dir)
+            provider, model, thinking = resolve_substrate(None, None, home_dir=home_dir)
         except ChatOpenRefused as e:
             raise VisitRefused(e.status, e.detail)
 
@@ -797,6 +815,7 @@ class EntityVisitHost:
                 409,
                 f"a visit is already open on {manifest.entity_id} (run {live.run_id!r}) — "
                 "one life, one summon; continue it with /turn or end it with /close",
+                code="visit_already_open",
             )
         # ONE LIFE ACROSS LANES (mutual-exclusivity wave, audit finding 4):
         # the hosted chat drawer and this durable lane serve the SAME home.
@@ -812,17 +831,38 @@ class EntityVisitHost:
                         409,
                         f"a hosted chat session is already open on {manifest.entity_id} — "
                         "one life, one summon; close the drawer session first",
+                        code="chat_session_open",
                     )
             except VisitRefused:
                 raise
             except Exception:  # noqa: BLE001 - a broken probe must not block the door
                 pass
+        # THE SUMMON LANE too (conversation-seat plan, item 5: one seat,
+        # three doors): a summon turn mid-flight holds the one life — a
+        # visit opened under it would interleave a second session into the
+        # same home. The probe answers only LIVE runs (a TTL-idle seat does
+        # not block a visit; summon-vs-summon keeps the full TTL).
+        if self._summon_seat_probe is not None:
+            seat = None
+            try:
+                seat = self._summon_seat_probe(slug)
+            except Exception:  # noqa: BLE001 - a broken probe must not block the door
+                seat = None
+            if seat is not None:
+                raise VisitRefused(
+                    409,
+                    f"a summoned conversation is mid-turn on {manifest.entity_id} "
+                    f"(run {seat.get('run_id')!r}, session {seat.get('session_id')!r}, "
+                    f"holder {seat.get('holder') or 'unknown'}) — one life, one summon; "
+                    "wait for the turn to end",
+                    code="summon_seat_live",
+                )
 
         state = read_entity_state(home_dir)
         mode = str(state.get("mode") or "")
         reason = str(state.get("reason") or "")
         if state.get("state") == "paused":
-            raise VisitRefused(409, f"{manifest.entity_id} is paused (hard freeze): {reason or 'no reason recorded'}")
+            raise VisitRefused(409, f"{manifest.entity_id} is paused (hard freeze): {reason or 'no reason recorded'}", code="entity_paused")
 
         yielded = False
         woke_for_visit = False
@@ -884,12 +924,12 @@ class EntityVisitHost:
         if loop_alive:
             if not await_loop_quiescent(home_dir, timeout_seconds=55.0):
                 _restore_prior_state(home_dir, prior_state, suffix="(visit open aborted: loop did not yield in time)", token=visit_token)
-                raise VisitRefused(409, "the entity's own-time loop has not reached a tick boundary yet — retry shortly")
+                raise VisitRefused(409, "the entity's own-time loop has not reached a tick boundary yet — retry shortly", code="loop_busy")
             yielded = True
 
         return {
             "manifest": manifest, "slug": slug, "home_dir": home_dir, "er": er,
-            "provider": provider, "model": model, "yielded": yielded,
+            "provider": provider, "model": model, "thinking": thinking, "yielded": yielded,
             "woke_for_visit": woke_for_visit,
             "prior_state": prior_state,
             "visit_token": visit_token,
@@ -952,12 +992,16 @@ class EntityVisitHost:
                 phase="visit",
                 reflection_nodes=list(_VISIT_REFLECTION_NODES),
             )
+            _mi = {"provider": str(pre["provider"]), "model": str(pre["model"])}
+            if pre.get("thinking"):
+                # The mind's reasoning effort travels with the model choice.
+                _mi["thinking"] = str(pre["thinking"])
             wf = self._build_spec(
                 er,
                 participants=stamp_participants,
                 budget_profile=budget_profile,
                 visit_id=visit_id,
-                model_info={"provider": str(pre["provider"]), "model": str(pre["model"])},
+                model_info=_mi,
             )
             run_id = er.runtime.start(
                 workflow=wf,
@@ -973,6 +1017,11 @@ class EntityVisitHost:
                 run.vars["_runtime"] = rt_ns
             rt_ns["entity"] = final
             rt_ns["prompt_cache_binding"] = f"{manifest.entity_id}|{session}"
+            if pre.get("thinking"):
+                # Reasoning effort for every model call in this visit: the
+                # react adapter reads _runtime.thinking into each cycle's
+                # params, and child runs inherit it.
+                rt_ns["thinking"] = str(pre["thinking"])
             visit_ns = run.vars.get("_visit")
             if not isinstance(visit_ns, dict):
                 visit_ns = {}
@@ -998,7 +1047,7 @@ class EntityVisitHost:
         output = dict(getattr(state_after, "output", None) or {})
         if str(getattr(state_after.status, "value", state_after.status)) == "completed" and output.get("refused"):
             _restore_prior_state(home_dir, pre.get("prior_state") or {}, suffix="(visit aborted: prelude refused)", token=str(pre.get("visit_token") or ""))
-            raise VisitRefused(409, "summon refused: " + "; ".join(str(r) for r in output.get("reasons", [])))
+            raise VisitRefused(409, "summon refused: " + "; ".join(str(r) for r in output.get("reasons", [])), code="summon_refused")
 
         with self._lock:
             self._specs[run_id] = wf
@@ -1127,7 +1176,7 @@ class EntityVisitHost:
 
         kind = str(closed_by or "operator").strip().lower()
         if kind not in ("operator", "sleep", "pause"):
-            raise VisitRefused(400, f"unknown closed_by {closed_by!r} (operator | sleep | pause)")
+            raise VisitRefused(400, f"unknown closed_by {closed_by!r} (operator | sleep | pause)", code="bad_closed_by")
 
         er, run, wf, manifest = self._load_visit(name, run_id)
         payload: Dict[str, Any] = {"kind": "close", "closed_by": kind, "reason": str(reason or "")}
@@ -1200,7 +1249,7 @@ class EntityVisitHost:
         leg must report ITS run, not whatever visit happens to be live on
         the home now — a torn-down leg followed by a new solo visit must
         not masquerade as the meet's)."""
-        er, run, _wf, _manifest = self._load_visit(name, run_id)
+        er, run, _wf, _manifest = self._load_visit(name, run_id, need_spec=False)
         view = self._run_status_view(run)
         view["open"] = str(getattr(run.status, "value", run.status)) in ("waiting", "running")
         return view
@@ -1228,7 +1277,7 @@ class EntityVisitHost:
         messages from the head misattributes every detail after the window
         fills (adversary F1). A failed ledger read degrades to turns
         without the field, labeled."""
-        er, run, _wf, _manifest = self._load_visit(name, run_id)
+        er, run, _wf, _manifest = self._load_visit(name, run_id, need_spec=False)
         visit_vars = (run.vars or {}).get("_visit") or {}
         stamp = ((run.vars or {}).get("_runtime") or {}).get("entity") or {}
         turns = [
@@ -1264,6 +1313,49 @@ class EntityVisitHost:
         if warnings:
             out["warnings"] = warnings
         return out
+
+    def ledger(self, name: str, run_id: str, *, after: int = 0, limit: int = 500) -> Dict[str, Any]:
+        """The visit run's OWN ledger, paged (coder-tui c4307 ask 2: visit
+        runs live in the home's `runtime_<slug>.sqlite3`, invisible to
+        `/runs/*` — this is the observability read for that lane).
+
+        PURE READ through `_load_visit` (the stamped-visit check is the auth
+        boundary: the entity door serves ONLY stamped visit runs of THIS
+        entity — never an arbitrary run id fished out of the home store).
+        Cursor semantics match the main ledger stream: `after` = records
+        already consumed; each record is served with its 1-based cursor.
+        Privacy rides the formation-side contract (diary elections are
+        captured at the LLM handler boundary — the ledger holds MARKED
+        replies, no private words rest here; the 2026-07-16 wire-view rule).
+        CONSUMER CONTRACT: ledger payloads are the WIRE VIEW (prompt chrome,
+        MEMORIES decorations, prelude re-sent per cycle) — never a
+        conversation source; rebuild conversations from /transcript. Works
+        on live AND terminal runs. Meets-lane refusals still serve the plain
+        shape (no code) — v1 scope is the /visit/* lane."""
+        er, run, _wf, _manifest = self._load_visit(name, run_id, need_spec=False)
+        records = er.ledger_store.list(run_id)
+        if not isinstance(records, list):
+            records = []
+        # Clamp the cursor INTO the ledger (adversary F2: an over-shot
+        # `after` must not echo garbage next_cursor forever) and give
+        # limit=0 the minimum page, not the default (F3).
+        start = min(max(0, int(after or 0)), len(records))
+        lim = max(1, min(int(limit) if limit is not None else 500, 2000))
+        page = records[start : start + lim]
+        status = str(getattr(run.status, "value", run.status))
+        return {
+            "run_id": run.run_id,
+            "status": status,
+            "after": start,
+            "records": [
+                {"cursor": start + i + 1, "record": rec} for i, rec in enumerate(page)
+            ],
+            "next_cursor": start + len(page),
+            "total": len(records),
+            # done = the run is terminal AND this page reached the end —
+            # a poller can stop; a live run never serves done.
+            "done": status in ("completed", "failed", "cancelled") and start + len(page) >= len(records),
+        }
 
     @staticmethod
     def _run_status_view(run: Any) -> Dict[str, Any]:
@@ -1378,7 +1470,14 @@ class EntityVisitHost:
             self._specs[run.run_id] = wf
         return wf
 
-    def _load_visit(self, name: str, run_id: str):
+    def _load_visit(self, name: str, run_id: str, *, need_spec: bool = True):
+        """Load + verify a stamped visit run. `need_spec=False` is the PURE
+        READ path (ledger/transcript-class reads): it skips `_spec_for`, which
+        builds the whole react workflow (imports abstractagent, resolves the
+        tool grant) and caches it keyed by run_id — a poller sweeping TERMINAL
+        runs through a read endpoint would otherwise 503 on a read when
+        abstractagent is absent AND grow the spec cache unboundedly
+        (ledger-adversary F1, 2026-07-22)."""
         from abstractruntime.identity.visit_workflow import VISIT_WORKFLOW_ID
 
         registry = self._registry
@@ -1386,11 +1485,11 @@ class EntityVisitHost:
         er = registry.get_entity_runtime(manifest.slug)
         run = er.run_store.load(str(run_id or ""))
         if run is None or str(getattr(run, "workflow_id", "") or "") != VISIT_WORKFLOW_ID:
-            raise VisitRefused(404, f"no visit run {run_id!r} on {manifest.entity_id}")
+            raise VisitRefused(404, f"no visit run {run_id!r} on {manifest.entity_id}", code="visit_not_found")
         stamp = ((run.vars or {}).get("_runtime") or {}).get("entity") or {}
         if str(stamp.get("entity_id") or "") != manifest.entity_id:
-            raise VisitRefused(409, f"run {run_id!r} is not a stamped visit of {manifest.entity_id}")
-        wf = self._spec_for(er, run)
+            raise VisitRefused(409, f"run {run_id!r} is not a stamped visit of {manifest.entity_id}", code="not_a_visit")
+        wf = self._spec_for(er, run) if need_spec else None
         return er, run, wf, manifest
 
     def is_in_flight(self, run_id: str) -> bool:
@@ -1425,7 +1524,7 @@ class EntityVisitHost:
             )
         except ValueError as e:
             # Not waiting / paused / wait-key mismatch — client-visible truth.
-            raise VisitRefused(409, f"the visit cannot take this message now: {e}")
+            raise VisitRefused(409, f"the visit cannot take this message now: {e}", code="not_waiting")
         finally:
             with self._lock:
                 self._in_flight.discard(str(run_id))
@@ -1440,7 +1539,7 @@ class EntityVisitHost:
         try:
             return acquire_directory_lease(Path(er.home.home_dir), holder="visit-host")
         except DirectoryLeaseHeld as e:
-            raise VisitRefused(409, str(e))
+            raise VisitRefused(409, str(e), code="home_lease_held")
 
     def _live_visit_run(self, er: Any, *, janitor: bool = False) -> Any:
         """The home's live visit run, if any. STAMPED runs only: a run

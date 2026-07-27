@@ -521,6 +521,85 @@ def test_health_answers_starting_during_boot_and_settles_ready() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 11. Verified-token cache (idle-CPU incident, framework c4144)
+# ---------------------------------------------------------------------------
+
+
+def _auth_mw(tmp_path, monkeypatch, tokens=("t" * 32,), user_auth=True):
+    from abstractgateway.security.gateway_security import GatewayAuthPolicy, GatewaySecurityMiddleware
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1" if user_auth else "0")
+    policy = GatewayAuthPolicy(enabled=True, tokens=tokens, user_auth_enabled=user_auth)
+
+    async def _app(scope, receive, send):  # pragma: no cover
+        pass
+
+    return GatewaySecurityMiddleware(_app, policy=policy)
+
+
+@pytest.mark.basic
+def test_token_auth_caches_pbkdf2_verification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under user auth, EVERY bearer request used to re-run the registry
+    scan — one 260k-iteration PBKDF2 per enabled record per request
+    (~0.5s CPU on a 5-user registry). A handful of app pollers burned a
+    full core at zero runs (framework's live c4144). Successful
+    verifications now cache on (token sha256, registry file identity)."""
+    mw = _auth_mw(tmp_path, monkeypatch)  # sets DATA_DIR first: one registry path
+    from abstractgateway.users import GatewayUserRegistry
+
+    _, issued = GatewayUserRegistry().create_user(user_id="alice", tenant_id="default")
+
+    import abstractgateway.users as users_mod
+
+    calls = {"n": 0}
+    real_verify = users_mod.verify_gateway_token
+
+    def _counting_verify(token, token_hash):
+        calls["n"] += 1
+        return real_verify(token, token_hash)
+
+    monkeypatch.setattr(users_mod, "verify_gateway_token", _counting_verify)
+
+    p1 = mw._authenticate_token(issued)
+    assert p1 is not None and p1.user_id == "alice"
+    first_cost = calls["n"]
+    assert first_cost >= 1
+
+    for _ in range(10):
+        p = mw._authenticate_token(issued)
+        assert p is not None and p.user_id == "alice"
+    assert calls["n"] == first_cost, "cached verifications must not re-run PBKDF2"
+
+
+@pytest.mark.basic
+def test_token_cache_invalidates_on_registry_rotation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revocation honesty: rotating/disabling a user changes the registry
+    FILE identity, so the very next request re-verifies — a revoked token
+    dies at the same request boundary as before the cache."""
+    mw = _auth_mw(tmp_path, monkeypatch)  # sets DATA_DIR first: one registry path
+    from abstractgateway.users import GatewayUserRegistry
+
+    reg = GatewayUserRegistry()
+    _, issued = reg.create_user(user_id="bob", tenant_id="default")
+    assert mw._authenticate_token(issued) is not None
+
+    reg.update_user(user_id="bob", tenant_id="default", enabled=False)
+    assert mw._authenticate_token(issued) is None, "revoked token must die at the next request"
+
+
+@pytest.mark.basic
+def test_failed_tokens_are_never_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only SUCCESSFUL authentications cache — an attacker must not be able
+    to fill the map with garbage tokens (the lockout layer owns brute
+    force)."""
+    mw = _auth_mw(tmp_path, monkeypatch)
+    assert mw._authenticate_token("nope-" + "x" * 30) is None
+    cache = getattr(mw, "_auth_cache", {}) or {}
+    assert len(cache) == 0
+
+
+# ---------------------------------------------------------------------------
 # 7. CORS-safe security-middleware failure
 # ---------------------------------------------------------------------------
 

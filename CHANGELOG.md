@@ -7,7 +7,312 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **In-process local providers surface in the unified provider list**
+  (operator report 2026-07-26: "we are missing providers… where is our
+  ollama?"): the reachable-default auto-probe lane now covers IN-PROCESS
+  backends (`mlx`, `huggingface`) alongside the server-shaped locals
+  (lmstudio/ollama). In-process specs carry `in_process=True` — no
+  server, no base_url, no key; "reachable" means the discovery facade
+  lists local artifacts (MLX cache / local HF cache), and an empty
+  listing keeps them absent. They surface ONLY through the probe lane
+  (the configured-rows fold skips them — with no key/URL requirement to
+  fail they would otherwise emit always-present rows for backends that
+  may not be usable). Both consoles (web + TUI) render the new rows with
+  zero client changes — they already render this payload. Note: the
+  ollama half of the report was environmental — the ollama server was
+  simply not running; once started, the existing probe surfaced it.
+- **Structural graph editing through the blueprint overlay** (operator build,
+  laurent dm#276 via c4837; schema confirmed both ends c4865/c4870): `PUT
+  /api/gateway/entities/spec/phases` now accepts `graph: {"edge_ops": [...]}`
+  beside `tunables` — add/remove/redirect ops over the entity state graph,
+  validated against the vendored artifact's OWN `graph_overlay_contract`
+  (per-edge `edit_policy`, `cause_evaluators` status registry, refusal-code
+  vocabulary — rules read from the artifact, never a second copy; validator
+  in `phase_edge_ops.py`). Document-ownership semantics: `graph` present =
+  the list replaces the stored ops wholesale (empty list clears); absent =
+  stored ops ride along unchanged but ALWAYS re-validate against the current
+  artifact, so a dials-only edit after a re-vendor cannot silently carry
+  now-illegal ops (409 naming the drift). Refusals return the artifact's
+  code + message (`code` body sibling + `X-Gateway-Error-Code`). The derived
+  effective file now carries merged `transitions`, the `graph` block
+  (runtime's idempotent re-derivation input), and top-level
+  `structural_sha256` — runtime's H2 handshake: a consumer whose vendored
+  sha differs falls back to dials-only. One derivation point
+  (`_derive_effective_doc`) shared by PUT, GET, and boot; crash-window +
+  vendor-drift reconcile heals the effective file at boot and on GET (stored
+  ops that no longer validate degrade the file to dials-only LOUDLY — a
+  detached loop never reads an incoherent graph). `blueprint_edited` markers
+  carry `graph_ops` counts. A fable5 adversary returned DO-NOT-SHIP on the
+  first cut; four defects fixed + pinned (30 green): (P0) an `add`
+  duplicating a locked edge's exact from/to/cause overwrote it in the merge
+  (guards dropped, policy flipped, instruction smuggled) — add now refuses
+  any existing edge_id, checked AFTER the shape rules so target_visit/
+  kill_switch still win; (P0) a redirect onto a locked sibling's identity
+  collapsed onto the locked fallback (layering a guard onto the ungated
+  crash-recovery path) — redirect refuses locked-identity collisions,
+  editable-sibling collisions stay the pinned dedup; (P1) NaN/Infinity
+  `bound_h` slipped the sub-tick check (`nan/inf < 0.01` are both False)
+  into the durable file — `math.isfinite` gate added first; and a
+  remove+re-add policy-downgrade in one batch is refused. `compute_effective_
+  transitions` gained a defense-in-depth belt (never drop/overwrite a locked
+  edge even if handed unvalidated ops) and now carries the post-redirect
+  `edge_id` on redirected rows (`**base` copied the original — internally
+  keyed right, but consumers read the field).
+
+### Added
+- **The cognition map, served** (operator correction c5070: the editable
+  graph is the MEMORY-COGNITION state graph — passive/active memory
+  construction and what it creates: lessons, world models, the gradual
+  opinion system, safe identity updates — not the simple phase graph).
+  `GET /api/gateway/entities/spec/cognition-graph` serves a vendored byte
+  copy of entity's `spec/cognition_graph.json` with sha256 + node/edge
+  counts, closing the "bundled-only, unserved" one-truth gap. SERVE-ONLY
+  today with an honest `edit_status`: the overlay/proposal door reuses the
+  phase-lane machinery but is gated on entity widening the artifact with a
+  `graph_overlay_contract` and the operator's question-1 ruling
+  (engine-consult-first for structural edits); until then cognition
+  structure is routed proposals per the three-tier law. Drift pin holds the
+  vendored bytes to entity's pen (the phase-graph pin's twin).
+
 ### Fixed
+- **Guard-merge law (artifact v21) implemented in the effective-graph
+  merge**: entity ruled the gateway's c4934 guardmerge question into the
+  artifact — an editable-onto-editable redirect collision now carries the
+  UNION of both edges' guards in `compute_effective_transitions` (guards
+  are conjunctive preconditions; a collision merges laws and never silently
+  erases either side — pre-v21 the redirected source's guards overwrote the
+  target's, the reported P2). The deliberate supersede path stands:
+  removing the target edge in the same batch means no union (its guards die
+  by a recorded act). v21 re-vendored; pinned both directions.
+- **Command lane: resume/cancel progress through a starved tick pool**
+  (backlog 0152, framework c4988 wedge; gateway claim c4998). The runner's
+  fixed worker pool can be fully starved by hung ticks — a tool subprocess
+  that outlives its timeout (an un-reaped headless Chrome from an
+  `execute_command` heredoc) or a no-progress LLM call pins a worker for its
+  whole duration, and a Python thread is not killable from outside. When
+  every general worker was pinned, an operator's resume was queued behind
+  them and never ran ("accepted, not ticked"); and above `run_scan_limit`
+  RUNNING runs, a resumed run outside the window was never submitted at all.
+  Fix: a RESERVED `command_tick_workers` executor for command-triggered runs
+  (resume/cancel/inject_guidance/update_schedule), and those runs bypass the
+  scan window via a priority drain in `_schedule_ticks` (load-verified +
+  gateway-owned-gated so a stale/session id is a no-op, never a false
+  FAILED). The shared in-flight set is the single-tick guard across both
+  lanes, so no run is ever double-ticked. `runner_status` now reports
+  `command_lane_available` when the general pool is fully wedged (the escape
+  hatch an operator has short of a bounce) and `command_ticks_pending`. This
+  is the gateway MITIGATION; the starvation ROOT — `execute_command` reaping
+  its child process TREE on timeout and a no-progress timeout on the LLM
+  effect — is runtime/core's, routed at c4998. 4 new pins incl. a
+  real-executor proof that a resumed run ticks through a fully-starved
+  general pool.
+- **Gateway import boundary restored in `tool_catalog.py`** (backlog-0059
+  pin): the full-catalog build imported `abstractcore` directly in 8 places
+  (comms callables, builtin inventory, capability facts, plugin errors,
+  `derive_risk`). All routed through AbstractRuntime facades now: registry
+  rows + facts join via `core_registry_tool_rows` (comms rows there are
+  spec-grade — facts, description, parameters, risk trio — so the disabled
+  lane and the partial-comms remainder build rows with zero callable
+  imports), factless clamp via `derive_risk_assessment({})`. Camera
+  capability facts + capability plugin errors have NO runtime facade yet:
+  getattr-probed with labeled degradation until runtime ships them (asked
+  c4899); camera discovery rows honestly derive unvetted in the interim.
+  The comms kind→names map is drift-pinned by a test asserting equality
+  against runtime's composed toolset. Also: `PUT /tool-grants/default`
+  gained its route-authorization row (admin — widening the default grant
+  widens what agents auto-run gateway-wide), and three capability-catalog
+  tests were isolated from the HOST's real abstractcore config
+  (config-first voice-engine resolution leaked the operator's configured
+  engine into exact provider-list assertions — the ambient-escape class).
+- **Eager run rehydration + self-healing runner start** (backlog 0063,
+  theme-2 "entity lives survive anything"): in multi-user mode per-principal
+  runners started only on that user's first request, so after a
+  crash/redeploy every idle tenant's parked and scheduled runs stayed paused
+  until the user hit an endpoint (WAIT_UNTIL/event deadlines could miss their
+  windows indefinitely). Boot now warms each registered runtime's runner so
+  parked work resumes immediately, and a cached service whose runner lost the
+  singleton-lock race (returned dead) is re-started on the next access
+  instead of being served permanently stalled. Fable5 adversary
+  (SHIP-WITH-FIXES) folded same wave: the sweep runs on its OWN daemon thread
+  — NOT inline in the boot gate (P0-1: inline, the N heavy per-principal
+  builds held `/api/health` on `_boot_state="starting"` for the whole sweep,
+  parking every request and re-opening the false-recycle window the
+  background-boot fix just closed); `stop_gateway_runner` sets a shutdown
+  event checked per iteration and snapshots+clears the service caches
+  atomically under the lock (P1-1: an unsignalled sweep kept building after
+  shutdown, orphaning runners that flock-refuse the next boot's own twins);
+  the sweep skips `role=entity` principals and any principal whose runtime
+  dir does not already exist (P1-2: warming a never-run user/entity mkdir'd a
+  phantom runtime tree + standing threads scaling with registrations, not
+  parked work); filters enabled+non-entity BEFORE the cap (P2-1); returns
+  early in a no-runner split-mode process; deliberately-stopped runners are
+  never restarted (`stopped_deliberately` now on `runner_status`); the
+  outcome is surfaced on `/api/health` as `rehydration` (P1-3); and the
+  health snapshot uses a bounded `_service_lock` acquire that reports
+  `building: true` on contention instead of blocking a liveness probe behind
+  a build. 18 pins.
+
+### Fixed
+- **Camera-only (deterministic) flows register the TOOL_INVOKE handler**
+  (flow c4316, adversary-verified): a flow whose only tool work is
+  deterministic tool-invoke nodes (the operator's dm#49 camera shape:
+  `wait_event -> camera_open -> camera_capture_photo ->
+  camera_analyze_media`, no llm/agent node) fell to the bare runtime with no
+  `TOOL_INVOKE` handler and failed at execution ("No effect handler
+  registered for tool_invoke"). `_flow_uses_tools` matched only
+  `{tool_calls, agent}`, so `needs_tools` was False and neither the tool
+  executor nor the handler was wired; an llm+camera flow masked it because
+  the LLM branch's `build_effect_handlers` registers both. Now
+  `_flow_uses_tools` also detects TOOL_INVOKE-emitting node types (camera_*,
+  call_tool, tool_invoke) and the tools-only runtime branch registers
+  `EffectType.TOOL_INVOKE` alongside `TOOL_CALLS`. 5 pins.
+- **Entity roster latency — seq-cache the per-row drives fold** (code-tui
+  c4307 P1, live-reproduced: `GET /api/gateway/entities` took 5.6s then
+  three consecutive >20s timeouts while per-entity `/state`/`/visit`/
+  `/cognition` stayed <30ms): the roster ran `cognition_drives()` — the same
+  engine fold that measures ~90s on a large home — PER WARM ROW on EVERY
+  list call, uncached, stacking N homes' reads into one request on the
+  shared sync threadpool. Now seq-keyed cached (`_ROSTER_DRIVES_CACHE`,
+  entity-dir + journal-seq, matching the `/cognition` and communities
+  caches): a pure-read fold is served once per home per journal advance and
+  shared across every thin client. Render-when-present and warm-homes-only
+  contracts unchanged. Pinned.
+
+### Added
+- **Env-kill phase 0 — the declared environment-variable registry**
+  (`env_registry.py`; the shared-contract keystone, c4174/c4280): every env
+  var the gateway reads (~300 names) is declared and classified by the
+  three-test rule (behavior/deployment/secret) plus the migration classes
+  (foreign = owner-facade reads, legacy_alias = warn-when-winning), each row
+  carrying owner, scope, effectiveness (the deferred-flip contract), the
+  planned `console_path`, and operator-ruling citations (dm#201 keys pinned
+  SECRET, TOOL_MODE=behavior, USER_AUTH=deployment-circular, voice/vision
+  namespaces=FOREIGN). CI-enforced by `test_gateway_env_registry.py`: a
+  grep over every env READ SITE in `src/` fails on any undeclared name —
+  the inventory is an invariant, not a one-time audit (it caught 3
+  undeclared names on its first run). Unblocks the boot env scanner, the
+  TOOL_MODE/base_url/voice-alias migrations, and the dm#194 console+CLI
+  parity gate.
+
+### Fixed
+- **Voice/STT bare requests resolve the gateway default, never hardcoded
+  openai** (laurent dm#28 "you MUST always use the gateway defaults";
+  fable5-hardened): the console sends TTS requests bare (no provider),
+  trusting the gateway to fill its default — but the TTS **stream** lane
+  never merged the `output.voice` capability default, so a provider-less
+  request fell through to abstractvoice's hardcoded openai engine → the
+  operator's openai quota → 429. New `_configured_voice_output_defaults`
+  reads the console-set `output.voice`/`input.voice` route and fills the
+  provider+model+voice triple; wired on BOTH TTS lanes (artifact + stream)
+  AND the STT transcribe lane (adversary P1: STT had the identical hole,
+  and the assistant's default dictation shape is bare). Fills are
+  **ALL-OR-NOTHING** (adversary P0): only a request naming NONE of
+  provider/model/voice/profile resolves the default — a field-independent
+  fill re-minted the 2026-07-17 cross-provider leak (request `provider=piper`
+  + no voice → filled a supertonic `voice=M2` → "Unknown voice_id"). A
+  provider-less default row is not fillable (voice-only onto openai is the
+  same leak). The capability read is short-TTL cached (5s) and run off the
+  event loop (a split-mode read is an 8s-timeout HTTP GET — a per-request
+  read on the loop starves SSE). 5 pins. Follow-up filed to the runtime
+  seat: `stream_tts` should consult the runtime output-route merge so an
+  in-process stream caller (none today) can't fall back to hardcoded openai.
+- **Operator sleep is a composite act — disarm grant + clear orders** (spec
+  v17, laurent dm#127 "sleep is sleep, it can't wake up on personal time if
+  I put it to sleep"; gateway owns the composite write): `POST
+  /entities/{name}/state` with `asleep` (the operator sleep click) now
+  DISARMS the personal grant and CLEARS standing work orders in the SAME
+  act, before writing the state, named in one biography moment. Ordering is
+  the crash invariant — disarm first, so a crash before the state write
+  leaves a bare desk (which the need-check re-sleeps), never asleep+armed.
+  A corrupt `phases.yaml` REFUSES the sleep (409) rather than writing
+  asleep over an armed grant. This closes the incident where Ephemeral woke
+  to personal time ~1h after an operator sleep: the ~1h bounded-sleep wake
+  landed on a still-armed July-15 grant because the sleep click wrote
+  asleep-only. Self-elected/cycle sleeps are untouched (this governs the
+  operator's click only); the composite is surfaced in the response
+  (`composite_sleep`) and absent when there was nothing to disarm. Spec v17
+  re-vendored. 2 pins.
+- **Bulk provider discovery inlines endpoint-profile models** (code-tui
+  c4235, first post from the new seat): `GET /discovery/providers?include_
+  models=true` returned `models: []` for provider-endpoint profiles with no
+  declared `allowed_models` while the per-provider route probed their
+  upstream fine — every thin client grew the same fallback loop. The bulk
+  route now probes such profiles inline with the SAME facade call the
+  per-provider route uses — concurrent (wall time ≈ one probe timeout, not
+  N), best-effort (a dead endpoint yields `[]` + `models_error`, never
+  fails the route), sorted for shape parity, and only under
+  `include_models=true` (the documented may-be-slow arm; the cheap arm
+  stays probe-free — test-pinned).
+- **Env-var kill, named incident — voice engine config-first** (operator
+  dm#177: "REMOVE ALL UNNECESSARY ENV VARIABLES … ABSTRACTVOICE_TTS_ENGINE
+  keeps screwing up OUR GATEWAY DEFAULT"): the gateway's TTS/STT engine
+  resolution used `_env_first("ABSTRACTGATEWAY_VOICE_TTS_ENGINE",
+  "ABSTRACTVOICE_TTS_ENGINE")` across 6 sites, so an exported
+  `ABSTRACTVOICE_*` shell var (another package's namespace) silently
+  overrode the gateway-configured engine. New `_resolved_voice_engine(kind)`
+  inverts precedence: the console-editable capability-defaults route
+  (`output.voice`/`input.voice` provider) WINS; the env chain is a labeled
+  `#FALLBACK` below it, and a set-but-shadowed env is logged once so a stale
+  export is visible. Because the capability route is the same config
+  runtime/core execute from, advertising now aligns with execution (closes
+  the 2026-07-17 "advertised M1 vs executed M2" divergence class). Empty
+  config ⇒ env still resolves (no-silent-flip: a deployment that only sets
+  env is unchanged). 7 pins. First migration of the env-var kill lead
+  (design + migration transition adversaries folded; shared classification/
+  precedence/no-silent-flip contract posted for all seats).
+- **Runtime-config corrupt-store write-wipe** (env-kill design adversary
+  P0, existing code): `write_runtime_config` did read-mutate-replace and
+  `_read_store` returned `{}` on a corrupt file, so saving one knob silently
+  wiped every other stored choice — harmless at today's 4 knobs, a
+  catastrophe as the env→config migration grows the store. The write path
+  now refuses on a corrupt store (`RuntimeConfigStoreCorrupt` → 409, file
+  left intact for repair), every valid write rotates a `.json.bak`, and the
+  read path degrades loudly (`#FALLBACK` log, never a silent `{}`). 2 pins.
+- **Verified-token cache** (live idle-CPU incident, framework c4144: the
+  freshly-deployed gateway burned ~95-107% CPU at ZERO runs/clients —
+  sample dominated by PBKDF2/SHA256): under user auth, every bearer
+  request ran the registry scan first — one 260k-iteration PBKDF2
+  verification per enabled record per request (~0.5s CPU on the live
+  5-user registry), so a handful of connected app pollers (observer
+  board, entity app, assistant) burned a full core before the cheap
+  static-token compare even ran. Successful verifications now cache on
+  (token sha256 → principal) keyed to the registry FILE identity
+  (mtime_ns, ino, size): rotation/revocation invalidates at the very next
+  request exactly as before, failed tokens are never cached (the lockout
+  layer owns brute force; a failure cache would be attacker-fillable).
+  PBKDF2's cost stays where it matters — at rest against an exfiltrated
+  users.json — instead of per poll. 3 pins in the resilience suite.
+- **Event-driven ledger streaming** (backlog 0075 + 0082 harness; operator
+  TOP PRIORITY per the c4089 shortlist ruling — "if you are the one
+  responsible for 100% cpu usage, definitely put that as a top priority"):
+  the SSE run-ledger stream no longer re-reads the ledger per poll. New
+  `ledger_tail.py`: `JsonlLedgerTail` (byte-offset incremental reads — an
+  idle poll is ONE stat(), news costs O(new bytes); complete-lines-only so
+  torn concurrent appends are held, never dropped or emitted; recovery
+  parity with `list()` for concatenated-object lines; geometric window
+  growth over the 8MB per-read cap so an oversized line delivers instead
+  of stalling), `SeqLedgerTail` (SQLite `WHERE seq > cursor` indexed reads
+  — the dormant `list_after` put into service), `ListSliceTail`
+  (count-gated fallback for plain stores). `stream_ledger` rewired: the
+  dormant `ObservableLedgerStore.subscribe` is now a coalescing wakeup
+  (appends wake streams instantly in-process; the 0.25s fallback poll
+  stays for split-runner cross-process truth but costs a stat, not a
+  file scan), `Last-Event-ID` reconnects resume exactly, terminal runs
+  close with a `done` frame only after a genuinely progress-less final
+  drain. Fable5 adversary (standing rule) found 2 P0s in the byte cap —
+  oversized-line stall and premature `done` on skip-swallowed catch-up
+  windows — both folded with pins; read errors now propagate loudly
+  (a masked error used to close a terminal stream cleanly over a
+  truncated replay). 0082's replay-equivalence invariants pinned in
+  `test_gateway_ledger_stream_event_driven.py` (22 tests: tail==list on
+  both backends, exact resume, recovery parity, torn-append hold,
+  idle-poll-is-stat-only, end-to-end SSE on file AND sqlite backends).
+  Honest limits on record: the wire cursor remains the dense record INDEX
+  (coincides with SQLite seq; JSONL carries no record-level seq — no
+  schema change, coordination contract with runtime c4104/c4105/c4107),
+  and `migrate.py` cursor preservation across file→SQLite stays a named
+  follow-up.
 - **Gateway-internal resilience wave** (2026-07-21, operator order dm#150 via
   framework c4036 — "the gateway must be extremely resilient to failure";
   two adversarial reviews, process-lifecycle + subsystem-cascade angles):
@@ -212,16 +517,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/test_gateway_console_wave3.py`.
 - **Camera toolset door-half pins** (2026-07-21, camera 0012 gateway half;
   laurent's two-adversary condition met c3903/c3915, door half unblocked
-  c3917; own adversary folded): `tests/test_gateway_camera_surfacing.py`
+  c3917; own adversary folded; RE-BASED same day after the operator killed
+  the env gate — dm:camera--laurent#10, verbatim "i don't like those stupid
+  variables, remove it! there is a reason why EACH APP can decide which
+  tools run, STOP DUPLICATING gating"): `tests/test_gateway_camera_surfacing.py`
   pins the composition — run lanes derive camera exposure from runtime's
   `default_approval_policy_sets()` fold through the real gateway surfaces
   (`/discovery/tools` handler + default-constructed `ToolApprovalPolicy`),
-  flag-off means no camera name anywhere, the walled entity surfaces
-  (inventory, phase matrix, home grants) stay structurally camera-free even
-  flag-on, and no `abstractcamera` import exists in the gateway tree. Zero
-  gateway-side camera code. HONEST SCOPE from the door-half adversary: the
-  workplace summon lane runs on the shared bundle host whose run-lane tool
-  map carries camera flag-on (home per-phase grants are not consulted
+  ABSENT PACKAGE means no camera name anywhere (simulated via an import
+  blocker in a fresh probe interpreter; installed = registered is the only
+  gate left), the walled entity surfaces (inventory, phase matrix, home
+  grants) stay structurally camera-free even with the package installed,
+  and no `abstractcamera` import exists in the gateway tree. Zero
+  gateway-side camera code. The probe now mirrors the parent's sys.path
+  into the child (pytest's `pythonpath=["src"]` never reached
+  subprocesses). HONEST SCOPE from the door-half adversary: the workplace
+  summon lane runs on the shared bundle host whose run-lane tool map
+  carries camera when installed (home per-phase grants are not consulted
   there). RULED 2026-07-21 (laurent, user-right reading, commons c3938):
   that exposure ships AS BUILT — camera is a tool like any other; capture
   and detect verbs ask BY DEFAULT (a default, not a floor — users may

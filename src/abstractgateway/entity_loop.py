@@ -41,6 +41,7 @@ def start_loop(
     *,
     provider: str,
     model: str,
+    thinking: Optional[str] = None,
     base_url: Optional[str] = None,
     tick_seconds: float = 20.0,
     ticks_per_day: int = 8,
@@ -64,15 +65,17 @@ def start_loop(
     # schedule the operator started, never a default guess.
     from .entity_repair import record_spawn_params
 
-    record_spawn_params(Path(home_dir), {
+    spawn_record = {
         "provider": provider, "model": model, "base_url": base_url,
         "tick_seconds": tick_seconds, "ticks_per_day": ticks_per_day,
         "rest_minutes": rest_minutes, "shelf_size": shelf_size,
         "context_window": context_window,
-    })
+    }
+    if thinking:
+        spawn_record["thinking"] = thinking
+    record_spawn_params(Path(home_dir), spawn_record)
 
-    return spawn_loop_process(
-        Path(home_dir),
+    spawn_kwargs: Dict[str, Any] = dict(
         provider=provider,
         model=model,
         base_url=base_url,
@@ -82,6 +85,20 @@ def start_loop(
         shelf_size=shelf_size,
         context_window=context_window,
     )
+    if thinking:
+        # Pass the reasoning effort only when the runtime's spawner knows
+        # the parameter (their half of the coordinated wave). On an older
+        # runtime the loop still starts; its driver reads the effort from
+        # the home's substrate file once their resolver widens.
+        import inspect
+
+        try:
+            if "thinking" in inspect.signature(spawn_loop_process).parameters:
+                spawn_kwargs["thinking"] = thinking
+        except Exception:  # noqa: BLE001 - a signature probe must never block a start
+            pass
+
+    return spawn_loop_process(Path(home_dir), **spawn_kwargs)
 
 
 def stop_loop(home_dir: Path, *, reason: str = "", requested_by: str = "operator") -> Dict[str, Any]:

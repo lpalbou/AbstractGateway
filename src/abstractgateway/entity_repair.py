@@ -248,15 +248,26 @@ def _sweep_one(
 
     spawn = _read_json(home_dir / _SPAWN_SIDECAR)
     try:
-        provider, model = resolve_substrate(
+        provider, model, thinking = resolve_substrate(
             str(spawn.get("provider") or "") or None,
             str(spawn.get("model") or "") or None,
             home_dir=home_dir,
+            # ONE precedence rule for the whole triple (adversary cycle-2
+            # N2): the sidecar records what the operator STARTED — mixing
+            # sidecar provider/model with the current file's effort could
+            # respawn an old mind at a new mind's effort.
+            thinking=str(spawn.get("thinking") or "") or None,
         )
     except ChatOpenRefused as e:
         return {**base, "action": "skipped", "reason": f"substrate unresolvable: {e.detail}"}
 
     kwargs: Dict[str, Any] = {"provider": provider, "model": model}
+    if thinking:
+        # Faithful respawn includes the reasoning effort (adversary cycle-1
+        # D2): a repaired loop must run at the effort the operator chose,
+        # never silently revert. start_loop passes it to the runtime spawner
+        # only when their version knows the parameter.
+        kwargs["thinking"] = thinking
     for key in ("base_url", "tick_seconds", "ticks_per_day", "rest_minutes", "shelf_size", "context_window"):
         if spawn.get(key) is not None:
             kwargs[key] = spawn[key]
@@ -383,16 +394,27 @@ def _need_check_one(
 
     spawn = _read_json(home_dir / _SPAWN_SIDECAR)
     try:
-        provider, model = resolve_substrate(
+        provider, model, thinking = resolve_substrate(
             str(spawn.get("provider") or "") or None,
             str(spawn.get("model") or "") or None,
             home_dir=home_dir,
+            # ONE precedence rule for the whole triple (adversary cycle-2
+            # N2): the sidecar records what the operator STARTED — mixing
+            # sidecar provider/model with the current file's effort could
+            # respawn an old mind at a new mind's effort.
+            thinking=str(spawn.get("thinking") or "") or None,
         )
     except ChatOpenRefused as e:
         return {"slug": slug, "action": "need_check",
                 "outcome": f"work standing but substrate unresolvable: {e.detail}"}
 
     kwargs: Dict[str, Any] = {"provider": provider, "model": model}
+    if thinking:
+        # Faithful respawn includes the reasoning effort (adversary cycle-1
+        # D2): a repaired loop must run at the effort the operator chose,
+        # never silently revert. start_loop passes it to the runtime spawner
+        # only when their version knows the parameter.
+        kwargs["thinking"] = thinking
     for key in ("base_url", "tick_seconds", "ticks_per_day", "rest_minutes", "shelf_size", "context_window"):
         if spawn.get(key) is not None:
             kwargs[key] = spawn[key]

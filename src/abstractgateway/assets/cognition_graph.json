@@ -1,0 +1,1001 @@
+{
+ "$comment": "THE COGNITION GRAPH AS DATA (v5 — the c5070 WIDEN: the identity-update lane (realize→review→enact, waking-elects/sleep-enacts), the lesson miner, world models as first-class rows; every new row receipts shipped code, the one unshipped leg (gate→idreview surfacing) is declared not wired. v4, theme-3 build c4109 + the wave adversary's fold; laurent dm#112 'it should slowly become our only way to edit how the memory and cognition works at a high level'; schema entity-owned per debate cycle 2 — lane CONTENT enters as owners' sentences). LAWS: (1) the render derives FROM this file — no hand-tuned arrays beside it (the two-copies class); (2) edge STATUS is stored existence (wired = live code; declared = named gap or routed proposal, renders dashed; anti = the loop-breaker), while ACTIVITY is DERIVED from the toggle dial where one exists — never stored (the overlay owns that fact); (3) protection=constitutional FORBIDS a toggle field structurally (schema-checked); the constitutional set is RATIFIED BY PRECEDENT (framework c4779, operator findings 2026-07-23: no fresh signature was ever needed — each edge cites the standing ruling it derives from in ratified_by; only a genuinely NEW protection would go to laurent); (4) every edge names its OWNER = the seat WHOSE LAW the edge is (hand-assigned per row, v2 — the v1 source-node shortcut mislabeled seven rows; owner is the future proposal-routing key, so it must be the law-holder, never a geometry accident); (5) layout coords are world constants (spatial memory is an operator artifact); (6) no painted numeral may shadow a dial or engine constant (served values arrive via the params lane); (7) label_class carries the vocabulary contract structurally (semantics c4115): flow = the ruled verb register (feeds/triggers/lands-in/fills/strengthens…); engraved-relation = a stored memory relation (must match the declared memory_relations set); election-grammar = the key= diary grammar. All v2 rows are class flow. TO BE SERVED versioned+sha like the phase graph (gateway lane, routed); operator edge edits become PROPOSALS routed to the owning seat (the order-form lane, next wave — gateway door half).",
+ "artifact": "cognition_graph",
+ "version": 5,
+ "map_source": "spec/cognitive-memory-pathways.vendored.md v7 (the prose map; this file is the render/binding truth)",
+ "label_classes": {
+  "$comment": "The ruled label vocabulary (semantics c4115/c4147): a row's label_class declares which register its label speaks. FIRST-TOKEN RULE: a label whose first token is a key= form (resolves=/explores=/fulfills=...) is election-grammar regardless of the prose after it.",
+  "flow": "the ruled verb register (feeds/triggers/lands-in/fills/strengthens/offers/solicits/names/runs) — the map's highways",
+  "engraved-relation": "a stored memory relation (must match the declared memory_relations set; renders in the entity graph view, not yet on this map)",
+  "election-grammar": "the key= diary grammar (resolves=/explores=/fulfills=) — his election acts as edges"
+ },
+ "constitutional_note": "PROPOSED constitutional set (no toggle may ever exist on these; laurent signs or amends): episode formation (turn->s1), the recall feed (s1->recall), identity presence (s3->recall), the diary projection (s2->s1), the involuntary trail (prompt->deposit, deposit->s1), the anti-edge (dream->sleepw).",
+ "nodes": [
+  {
+   "id": "s3",
+   "label": "identity core",
+   "sub": "values · traits · purpose — present by right",
+   "kind": "store",
+   "owner": "memory",
+   "lane": "stores",
+   "layout": {
+    "x": 30,
+    "y": 40,
+    "w": 190,
+    "h": 54
+   }
+  },
+  {
+   "id": "s1",
+   "label": "memory graph",
+   "sub": "involuntary — records everything",
+   "kind": "store",
+   "owner": "memory",
+   "lane": "stores",
+   "layout": {
+    "x": 30,
+    "y": 300,
+    "w": 190,
+    "h": 54
+   }
+  },
+  {
+   "id": "s2",
+   "label": "the book (diary)",
+   "sub": "voluntary — sole-author, never purged",
+   "kind": "store",
+   "owner": "memory",
+   "lane": "stores",
+   "layout": {
+    "x": 30,
+    "y": 400,
+    "w": 190,
+    "h": 54
+   }
+  },
+  {
+   "id": "s6",
+   "label": "valence",
+   "sub": "accumulated feeling — never decays",
+   "kind": "store",
+   "owner": "memory",
+   "lane": "stores",
+   "layout": {
+    "x": 30,
+    "y": 500,
+    "w": 190,
+    "h": 54
+   }
+  },
+  {
+   "id": "s4",
+   "label": "workspace",
+   "sub": "files — artifacts of investigation",
+   "kind": "store",
+   "owner": "runtime",
+   "lane": "stores",
+   "layout": {
+    "x": 30,
+    "y": 600,
+    "w": 190,
+    "h": 54
+   }
+  },
+  {
+   "id": "s5",
+   "label": "the desk (standing sets)",
+   "sub": "open questions · problems · interests · commitments · tensions",
+   "kind": "store",
+   "owner": "memory",
+   "lane": "stores",
+   "layout": {
+    "x": 30,
+    "y": 720,
+    "w": 190,
+    "h": 64
+   }
+  },
+  {
+   "id": "stim",
+   "label": "what arrives",
+   "sub": "his words verbatim · who is present (door-stamped) · the day cue · his next-cue",
+   "kind": "act",
+   "owner": "runtime",
+   "lane": "stimulus",
+   "layout": {
+    "x": 620,
+    "y": 26,
+    "w": 226,
+    "h": 62
+   }
+  },
+  {
+   "id": "recall",
+   "label": "passive recall",
+   "sub": "channels + spreading → union fill: identity by right · STM · stimulus",
+   "kind": "act",
+   "owner": "memory",
+   "lane": "stimulus",
+   "layout": {
+    "x": 380,
+    "y": 26,
+    "w": 186,
+    "h": 62
+   }
+  },
+  {
+   "id": "deposit",
+   "label": "the involuntary trail",
+   "sub": "commit strengthens what the stimulus surfaced — no act of his",
+   "kind": "act",
+   "owner": "memory",
+   "lane": "stimulus",
+   "layout": {
+    "x": 620,
+    "y": 112,
+    "w": 212,
+    "h": 64
+   }
+  },
+  {
+   "id": "prompt",
+   "label": "prompt shelf",
+   "sub": "recall — presence ≠ use",
+   "kind": "act",
+   "owner": "runtime",
+   "lane": "turn",
+   "layout": {
+    "x": 380,
+    "y": 130,
+    "w": 180,
+    "h": 54
+   }
+  },
+  {
+   "id": "turn",
+   "label": "the lived turn",
+   "sub": "one exchange — conversation or own tick",
+   "kind": "act",
+   "owner": "runtime",
+   "lane": "turn",
+   "layout": {
+    "x": 380,
+    "y": 280,
+    "w": 180,
+    "h": 58
+   }
+  },
+  {
+   "id": "elections",
+   "label": "mid-turn elections",
+   "sub": "feel · lesson · interest — any turn (W1)",
+   "kind": "act",
+   "owner": "runtime",
+   "lane": "turn",
+   "layout": {
+    "x": 640,
+    "y": 280,
+    "w": 200,
+    "h": 54
+   }
+  },
+  {
+   "id": "close",
+   "label": "the close",
+   "sub": "feel + diary + goodbye — metronome dead (W1)",
+   "kind": "act",
+   "owner": "runtime",
+   "lane": "turn",
+   "layout": {
+    "x": 640,
+    "y": 380,
+    "w": 200,
+    "h": 54
+   }
+  },
+  {
+   "id": "execute",
+   "label": "execute (sandbox)",
+   "sub": "workspace-walled — rm/git-write forbidden",
+   "kind": "act",
+   "owner": "runtime",
+   "lane": "turn",
+   "layout": {
+    "x": 380,
+    "y": 620,
+    "w": 180,
+    "h": 54
+   }
+  },
+  {
+   "id": "gate",
+   "label": "THE DAY GATE",
+   "sub": "work order → work · desk + grant → personal · settled → sleep (v8/v9)",
+   "kind": "gate",
+   "owner": "runtime",
+   "lane": "day",
+   "layout": {
+    "x": 690,
+    "y": 620,
+    "w": 250,
+    "h": 66
+   }
+  },
+  {
+   "id": "cue",
+   "label": "day-open cue",
+   "sub": "one act-frame offer — “yours if it pulls, never owed”",
+   "kind": "act",
+   "owner": "runtime",
+   "lane": "day",
+   "layout": {
+    "x": 690,
+    "y": 500,
+    "w": 250,
+    "h": 54
+   }
+  },
+  {
+   "id": "sleepw",
+   "label": "sleep window",
+   "sub": "≤6h · preempted by work / unused grant (v9)",
+   "kind": "sleep",
+   "owner": "runtime",
+   "lane": "night",
+   "layout": {
+    "x": 380,
+    "y": 760,
+    "w": 200,
+    "h": 54
+   }
+  },
+  {
+   "id": "grouping",
+   "label": "grouping pass",
+   "sub": "similar drives cluster — size IS the signal (c277)",
+   "kind": "sleep",
+   "owner": "memory",
+   "lane": "night",
+   "layout": {
+    "x": 620,
+    "y": 760,
+    "w": 210,
+    "h": 54
+   }
+  },
+  {
+   "id": "dream",
+   "label": "dream + signals",
+   "sub": "top signals · signals_omitted honest · review-gated",
+   "kind": "sleep",
+   "owner": "memory",
+   "lane": "night",
+   "layout": {
+    "x": 380,
+    "y": 838,
+    "w": 200,
+    "h": 58
+   }
+  },
+  {
+   "id": "voice",
+   "label": "night voice",
+   "sub": "narration — “dreamed, not lived” · throttled",
+   "kind": "sleep",
+   "owner": "runtime",
+   "lane": "night",
+   "layout": {
+    "x": 660,
+    "y": 838,
+    "w": 210,
+    "h": 58
+   }
+  },
+  {
+   "id": "realize",
+   "label": "realize (waking elects)",
+   "sub": "mid-turn + look-back fence — his words + evidence, held for sleep",
+   "kind": "act",
+   "owner": "runtime",
+   "lane": "identity-update",
+   "layout": {
+    "x": 620,
+    "y": 920,
+    "w": 212,
+    "h": 58
+   }
+  },
+  {
+   "id": "idreview",
+   "label": "identity review (registrar)",
+   "sub": "pure read — pending proposals + the evidence-alive bar; never authors",
+   "kind": "act",
+   "owner": "memory",
+   "lane": "identity-update",
+   "layout": {
+    "x": 390,
+    "y": 920,
+    "w": 200,
+    "h": 58
+   }
+  },
+  {
+   "id": "enact",
+   "label": "enact (sleep disposes)",
+   "sub": "bars pass → close old + bind new, provenance; rejected = audited no",
+   "kind": "act",
+   "owner": "memory",
+   "lane": "identity-update",
+   "layout": {
+    "x": 160,
+    "y": 920,
+    "w": 200,
+    "h": 58
+   }
+  },
+  {
+   "id": "miner",
+   "label": "lesson miner",
+   "sub": "sleep pass — candidates from lived episodes, review-gated",
+   "kind": "act",
+   "owner": "memory",
+   "lane": "night",
+   "layout": {
+    "x": 620,
+    "y": 1000,
+    "w": 200,
+    "h": 54
+   }
+  },
+  {
+   "id": "worldm",
+   "label": "world models",
+   "sub": "orientation cards — mechanical distillation, refined night over night",
+   "kind": "store",
+   "owner": "memory",
+   "lane": "stores",
+   "layout": {
+    "x": 30,
+    "y": 1000,
+    "w": 190,
+    "h": 54
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "stim->recall",
+   "from": "stim",
+   "to": "recall",
+   "label": "triggers: the cue — every turn, visit or tick",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.5
+  },
+  {
+   "id": "s3->recall",
+   "from": "s3",
+   "to": "recall",
+   "label": "present by right — reserved seats, admitted by state (deposits nothing)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "protection": "constitutional",
+   "layout_t": 0.55,
+   "layout_via": {
+    "x": 290,
+    "y": 44
+   },
+   "receipts": [
+    "identity present by right (SELF_FRACTION_FLOOR)",
+    "constitutional: the summon posture"
+   ],
+   "ratified_by": "identity-always-present (maintainer ruling 2026-07-07: reserved seats — identity is present by right for a summoned entity; self_fraction floor)"
+  },
+  {
+   "id": "s1->recall",
+   "from": "s1",
+   "to": "recall",
+   "label": "feeds: candidates — recency + channels + spreading",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "protection": "constitutional",
+   "layout_t": 0.45,
+   "layout_via": {
+    "x": 270,
+    "y": 150
+   },
+   "receipts": [
+    "the recall feed — reconstruct.py channels+spreading",
+    "constitutional: a mind that cannot remember"
+   ],
+   "ratified_by": "recall design (memory-system v1: usage-weighted passive recall is the constructed mind — remove it and nothing surfaces)"
+  },
+  {
+   "id": "s6->recall",
+   "from": "s6",
+   "to": "recall",
+   "label": "feeds: feelings lens — automatic (his READ below is distinct)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.3,
+   "layout_via": {
+    "x": 246,
+    "y": 210
+   }
+  },
+  {
+   "id": "recall->prompt",
+   "from": "recall",
+   "to": "prompt",
+   "label": "fills: admission labeled",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.5
+  },
+  {
+   "id": "prompt->deposit",
+   "from": "prompt",
+   "to": "deposit",
+   "label": "lands-in: usage trail at commit — automatic",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "protection": "constitutional",
+   "layout_t": 0.5,
+   "receipts": [
+    "memory c-t-i #383: strengthening has exactly ONE path — commit",
+    "constitutional: presence≠use enforcement point"
+   ],
+   "ratified_by": "record-everything (laurent dm#53: the memory records everything, whether we want it or not — commit is involuntary)"
+  },
+  {
+   "id": "deposit->s1",
+   "from": "deposit",
+   "to": "s1",
+   "label": "strengthens: selected + co-use pairs (the Hebbian edges)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "protection": "constitutional",
+   "layout_t": 0.55,
+   "layout_via": {
+    "x": 330,
+    "y": 226
+   },
+   "receipts": [
+    "selected 8 + co-use pairs 4 (the Hebbian edges)",
+    "constitutional: the one strengthening path"
+   ],
+   "ratified_by": "record-everything (laurent dm#53: the involuntary trail IS the record — Hebbian strengthening never elective)"
+  },
+  {
+   "id": "s6->prompt",
+   "from": "s6",
+   "to": "prompt",
+   "label": "feeds: top standings → prelude",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.22,
+   "layout_via": {
+    "x": 292,
+    "y": 96
+   }
+  },
+  {
+   "id": "prompt->turn",
+   "from": "prompt",
+   "to": "turn",
+   "label": "feeds",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime"
+  },
+  {
+   "id": "turn->s1",
+   "from": "turn",
+   "to": "s1",
+   "label": "lands-in: episode (+verbatim) · world-model revise (mechanical)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "protection": "constitutional",
+   "layout_t": 0.45,
+   "receipts": [
+    "the involuntary episode (chat.py formation)",
+    "constitutional: records everything"
+   ],
+   "ratified_by": "record-everything (laurent dm#53: every turn forms its episode + lossless verbatim without an act of his)"
+  },
+  {
+   "id": "turn->s2",
+   "from": "turn",
+   "to": "s2",
+   "label": "lands-in: diary election",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.4,
+   "layout_via": {
+    "x": 320,
+    "y": 400
+   }
+  },
+  {
+   "id": "elections->s1",
+   "from": "elections",
+   "to": "s1",
+   "label": "form immediately",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.35,
+   "layout_via": {
+    "x": 600,
+    "y": 224
+   }
+  },
+  {
+   "id": "turn->elections",
+   "from": "turn",
+   "to": "elections",
+   "label": "offers: in the moment",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime"
+  },
+  {
+   "id": "elections->s6",
+   "from": "elections",
+   "to": "s6",
+   "label": "lands-in: feel — elected, clamped (never automatic)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.42,
+   "layout_via": {
+    "x": 500,
+    "y": 502
+   }
+  },
+  {
+   "id": "close->s6",
+   "from": "close",
+   "to": "s6",
+   "label": "lands-in: close feelings (same discipline)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.4,
+   "layout_via": {
+    "x": 408,
+    "y": 566
+   }
+  },
+  {
+   "id": "turn->close",
+   "from": "turn",
+   "to": "close",
+   "label": "triggers: at session end",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.55,
+   "layout_via": {
+    "x": 560,
+    "y": 420
+   }
+  },
+  {
+   "id": "close->s1",
+   "from": "close",
+   "to": "s1",
+   "label": "lands-in: summary",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.3,
+   "layout_via": {
+    "x": 560,
+    "y": 470
+   }
+  },
+  {
+   "id": "turn->execute",
+   "from": "turn",
+   "to": "execute",
+   "label": "offers: his act",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime"
+  },
+  {
+   "id": "execute->s4",
+   "from": "execute",
+   "to": "s4",
+   "label": "lands-in",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime"
+  },
+  {
+   "id": "s5->gate",
+   "from": "s5",
+   "to": "gate",
+   "label": "feeds: standing pull (ANY open drive)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.55,
+   "layout_via": {
+    "x": 500,
+    "y": 700
+   }
+  },
+  {
+   "id": "gate->cue",
+   "from": "gate",
+   "to": "cue",
+   "label": "triggers: a day arises — day_cause audited",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime"
+  },
+  {
+   "id": "cue->prompt",
+   "from": "cue",
+   "to": "prompt",
+   "label": "offers: one drive, act-frame — sits OUT of the first commit (F2)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.45,
+   "layout_via": {
+    "x": 986,
+    "y": 210
+   }
+  },
+  {
+   "id": "gate->sleepw",
+   "from": "gate",
+   "to": "sleepw",
+   "label": "triggers: settled desk → sleep (cadence-checked)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.45
+  },
+  {
+   "id": "gate->sleepw#2",
+   "from": "gate",
+   "to": "sleepw",
+   "label": "triggers: the maintenance nap — personal window elapsed → bounded sleep, wakes back through the gate (the cycle)",
+   "status": "wired",
+   "owner": "runtime",
+   "label_class": "flow",
+   "toggle": "personal_cycle.enabled",
+   "off_behavior": "the cycle holds while the clock keeps counting; re-enable resumes cadence, never a restart",
+   "receipts": [
+    "decision:personal-sleep-cycle v11 (laurent dm#104)",
+    "runtime c-t-i #349 (cycle machinery)",
+    "wave adversary P1-1 (the toggle sat on the settled-desk leg)"
+   ],
+   "layout_t": 0.72,
+   "layout_via": {
+    "x": 596,
+    "y": 726
+   }
+  },
+  {
+   "id": "sleepw->dream",
+   "from": "sleepw",
+   "to": "dream",
+   "label": "one novel dream / night",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory"
+  },
+  {
+   "id": "grouping->s5",
+   "from": "grouping",
+   "to": "s5",
+   "label": "offers: group offers (floored, supersession)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.5,
+   "layout_via": {
+    "x": 620,
+    "y": 720
+   }
+  },
+  {
+   "id": "sleepw->grouping",
+   "from": "sleepw",
+   "to": "grouping",
+   "label": "runs",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime"
+  },
+  {
+   "id": "dream->voice",
+   "from": "dream",
+   "to": "voice",
+   "label": "triggers (gated)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.5
+  },
+  {
+   "id": "dream->sleepw",
+   "from": "dream",
+   "to": "sleepw",
+   "label": "ANTI-EDGE: never feeds its own proof",
+   "label_class": "flow",
+   "status": "anti",
+   "owner": "memory",
+   "protection": "constitutional",
+   "layout_t": 0.5,
+   "layout_via": {
+    "x": 322,
+    "y": 826
+   },
+   "receipts": [
+    "the anti-edge: a dream never feeds its own proof (loop-breaker)",
+    "constitutional"
+   ],
+   "ratified_by": "sleep-proposes-waking-disposes (0023 ruling: the night proposes, waking evidence disposes — a dream never feeds its own proof)"
+  },
+  {
+   "id": "s2->s1",
+   "from": "s2",
+   "to": "s1",
+   "label": "feeds: projection (act-frame; words stay in the book)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "protection": "constitutional",
+   "layout_via": {
+    "x": 130,
+    "y": 365
+   },
+   "receipts": [
+    "diary projection, act-frame (words stay in the book)",
+    "constitutional: the book's findability"
+   ],
+   "ratified_by": "diary-projection ruling (2026-07-07: the graph records the ACT of writing; the words stay in the book — sole-author plane split)"
+  },
+  {
+   "id": "turn->s5",
+   "from": "turn",
+   "to": "s5",
+   "label": "resolves= settles the desk (chat lanes, LIVE)",
+   "label_class": "election-grammar",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.62,
+   "layout_via": {
+    "x": 236,
+    "y": 636
+   }
+  },
+  {
+   "id": "sleepw->s1",
+   "from": "sleepw",
+   "to": "s1",
+   "label": "passive resolve_dreams_pass: the day answers the night (E8a)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.42,
+   "layout_via": {
+    "x": 150,
+    "y": 806
+   }
+  },
+  {
+   "id": "turn->turn",
+   "from": "turn",
+   "to": "turn",
+   "label": "next-cue: his note to his next moment",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime"
+  },
+  {
+   "id": "turn->sleepw",
+   "from": "turn",
+   "to": "sleepw",
+   "label": "rest election — his act ends the day",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.35,
+   "layout_via": {
+    "x": 330,
+    "y": 560
+   }
+  },
+  {
+   "id": "s6->turn",
+   "from": "s6",
+   "to": "turn",
+   "label": "feelings_about READ — his act (G3, W4)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.4,
+   "layout_via": {
+    "x": 300,
+    "y": 460
+   }
+  },
+  {
+   "id": "s4->s1",
+   "from": "s4",
+   "to": "s1",
+   "label": "NOT BUILT: workspace ↔ graph (G4)",
+   "label_class": "flow",
+   "status": "declared",
+   "owner": "runtime",
+   "layout_t": 0.5,
+   "layout_via": {
+    "x": 16,
+    "y": 480
+   }
+  },
+  {
+   "id": "turn->s5#2",
+   "from": "turn",
+   "to": "s5",
+   "label": "visit lane NOT BUILT: tend/settlement (M7)",
+   "label_class": "flow",
+   "status": "declared",
+   "owner": "runtime",
+   "layout_t": 0.86,
+   "layout_via": {
+    "x": 262,
+    "y": 700
+   }
+  },
+  {
+   "id": "turn->realize",
+   "from": "turn",
+   "to": "realize",
+   "label": "elects: ```realize — body + evidence= (refused without); cap 2/session",
+   "label_class": "election-grammar",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.5,
+   "receipts": [
+    "runtime c4802/c4829: parse_realize_blocks (mid-turn + close look-back), evidence digest_assertion existence check, visit lane wired with _absorb_failure"
+   ]
+  },
+  {
+   "id": "realize->s1",
+   "from": "realize",
+   "to": "s1",
+   "label": "forms: kind=realization scope=self — INERT, derived_from evidence; graph-is-the-queue",
+   "label_class": "engraved-relation",
+   "status": "wired",
+   "owner": "runtime",
+   "layout_t": 0.45,
+   "receipts": [
+    "runtime c4802: _apply_realizations both chat lanes; memory c4817: kind live at rank 5"
+   ]
+  },
+  {
+   "id": "sleepw->idreview",
+   "from": "sleepw",
+   "to": "idreview",
+   "label": "runs: include_identity — nightly offers, cycle naps NEVER touch the self",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.5,
+   "receipts": [
+    "memory c4843: sleep_pass(include_identity=True) after mining, before the dream; cycle windows skip with the honest shape"
+   ]
+  },
+  {
+   "id": "idreview->enact",
+   "from": "idreview",
+   "to": "enact",
+   "label": "gates: the bars — evidence-alive in plain sentences before anyone adopts",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.5,
+   "receipts": [
+    "memory c4843: identity_review_pass pure read (seq+rows pinned unchanged); both-namespaces evidence resolution"
+   ]
+  },
+  {
+   "id": "enact->s3",
+   "from": "enact",
+   "to": "s3",
+   "label": "amends: close old + bind new — derived_from points BACK at the proposal ('on day X, decided Y because Z')",
+   "label_class": "engraved-relation",
+   "status": "wired",
+   "owner": "memory",
+   "protection": "constitutional",
+   "layout_t": 0.5,
+   "receipts": [
+    "memory c4843: enact_realization = lifecycle promotion + supersession edge, enacted_at on fresh rows only; refusals: closed/rejected proposals"
+   ],
+   "ratified_by": "identity-evolution-sleep-regulated (laurent dm#117: identity evolves ONLY during sleep under the regulated process, record-level, entity-owned; operator proposes — entity disposes; deposit gate uncrossed)"
+  },
+  {
+   "id": "sleepw->miner",
+   "from": "sleepw",
+   "to": "miner",
+   "label": "runs: mine candidates — review-gated, deposits none",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.45,
+   "receipts": [
+    "candidate_miner.py: mine_candidates_pass — sleep proposes, waking evidence disposes"
+   ]
+  },
+  {
+   "id": "miner->s5",
+   "from": "miner",
+   "to": "s5",
+   "label": "proposes: lesson candidates land on the desk — pull-visible verdicts, his call",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.5,
+   "receipts": [
+    "the miner-candidate pattern: visible, dated, adopt/reword/refuse on the record"
+   ]
+  },
+  {
+   "id": "sleepw->worldm",
+   "from": "sleepw",
+   "to": "worldm",
+   "label": "distills: world-model cards — mechanical, refined night over night (58→101 live)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.4,
+   "receipts": [
+    "memory ship 2026-07-12 c1148 + refine edges (retro-mining 2026-07-22: 50 refines in one pass)"
+   ]
+  },
+  {
+   "id": "worldm->recall",
+   "from": "worldm",
+   "to": "recall",
+   "label": "feeds: orientation — cards surface like any record (grouping presents, never merges)",
+   "label_class": "flow",
+   "status": "wired",
+   "owner": "memory",
+   "layout_t": 0.35,
+   "receipts": [
+    "world_model records ride normal recall admission; kind color first-class in the console"
+   ]
+  },
+  {
+   "id": "gate->idreview",
+   "from": "gate",
+   "to": "idreview",
+   "label": "surfaces: pending proposals at day-open + session open — offered, never owed",
+   "label_class": "flow",
+   "status": "declared",
+   "owner": "runtime",
+   "layout_t": 0.4,
+   "receipts": [
+    "runtime c4833 claim: the surfacing leg builds when gateway's door verb files the first proposal — declared until it ships"
+   ]
+  }
+ ]
+}

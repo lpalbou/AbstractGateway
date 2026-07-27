@@ -95,12 +95,13 @@ def test_console_runtimes_tab_order_and_creation_modals() -> None:
 
     html = gateway_console_html()
 
-    # Runtimes tab order: runtimes list -> drill-in -> runs -> data & caches
-    # -> retained (details disclosure, last).
+    # Runtimes tab order (console-TUI mirror, laurent dm#35): runtimes list
+    # -> inspect pane (teaching line until chosen; then Sessions | Data &
+    # cache tabs) -> machine-wide disclosure -> retained (last). No separate
+    # runs section: the chosen runtime's runs ARE the Sessions tab.
     order = [
         'id="runtimes-section"',
         'id="runtime-detail-section"',
-        'id="runs-section"',
         'id="data-homes-section"',
         'id="runtime-reservations-section"',
     ]

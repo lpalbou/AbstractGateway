@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from dataclasses import dataclass, replace
@@ -53,6 +54,10 @@ class GatewayService:
     # line here; /api/health surfaces them so a boot that quietly runs
     # without embeddings/shipped-catalog/self-repair is VISIBLE, not silent.
     boot_warnings: tuple = ()
+    # Boot env scan report (env-kill phase 1): the structured classification
+    # of the process environment (names only, never values) — the console's
+    # env-inventory read; the warning lines derived from it ride boot_warnings.
+    env_scan: Optional[Dict[str, Any]] = None
 
 
 _service: Optional[GatewayService] = None
@@ -171,11 +176,20 @@ def gateway_runner_health_snapshot() -> Dict[str, Any]:
     runner lost the singleton lock to another process and silently ticks
     nothing (runs hang forever on their entry node with zero ledger records).
     """
-    with _service_lock:
+    # Bounded acquire (adversary P0-1): the eager sweep and first-touch builds
+    # hold _service_lock across heavy service construction; a public liveness
+    # probe must never BLOCK behind a build (that re-opens the supervisor
+    # false-recycle window). On contention, report building=true and return —
+    # a gateway mid-build is alive, not degraded.
+    if not _service_lock.acquire(timeout=0.5):
+        return {"initialized": False, "degraded": False, "building": True, "runners": []}
+    try:
         services = []
         if _service is not None:
             services.append(_service)
         services.extend(list(_services_by_principal.values()))
+    finally:
+        _service_lock.release()
 
     runners: list[Dict[str, Any]] = []
     degraded = False
@@ -200,6 +214,22 @@ def gateway_runner_health_snapshot() -> Dict[str, Any]:
             warnings.append(f"#FALLBACK embeddings unavailable: {emb_err}")
         if warnings:
             st["boot_warnings"] = warnings
+        # Boot env scan (env-kill phase 1): COUNTS ONLY on this surface —
+        # /api/health is unauthenticated and must not disclose which
+        # credential/identity names this process holds (adversary F4); the
+        # full names live in the boot log banner and the authenticated
+        # console read of service.env_scan. A failed scan is flagged, never
+        # silent (F5).
+        scan = getattr(svc, "env_scan", None)
+        if isinstance(scan, dict) and (scan.get("scanned") or scan.get("error")):
+            st["env_scan"] = {
+                "scanned": scan.get("scanned"),
+                "foreign_count": len(scan.get("foreign") or []),
+                "undeclared_count": len(scan.get("undeclared") or []),
+                "legacy_alias_count": len(scan.get("legacy_alias") or []),
+                "behavior_env_count": scan.get("behavior_env_count"),
+                **({"error": True} if scan.get("error") else {}),
+            }
         # Degraded states: locked out with no live ticker, worker thread dead
         # without a deliberate stop (resilience wave 2026-07-21), the status
         # probe itself erroring, or every tick worker wedged past the wedge
@@ -261,6 +291,33 @@ def _config_for_principal(principal: GatewayPrincipal) -> GatewayHostConfig:
     )
 
 
+def _runner_needs_restart(runner: Any) -> bool:
+    """True when an ENABLED runner is not actually ticking and no live peer
+    is (backlog 0063): a start() that lost the singleton-lock race and
+    returned dead, or a worker that never started. A refused lock with a
+    fresh peer heartbeat (legit split/co-worker) is NOT a restart case, and
+    a DELIBERATELY-stopped runner is NEVER restarted — the self-heal must
+    not fight an operator stop (adversary P2-2). Never raises."""
+    try:
+        status_fn = getattr(runner, "runner_status", None)
+        if not callable(status_fn):
+            return False
+        st = dict(status_fn() or {})
+        if not st.get("enabled"):
+            return False
+        if bool(st.get("stopped_deliberately")):
+            return False  # operator stop() — leave it stopped
+        # active = holding the lock and looping; standby_peer_active = a live
+        # peer ticks it; starting = mid-acquire. Everything else on an
+        # enabled, not-deliberately-stopped runner (inactive-never-started /
+        # dead_worker / degraded_no_ticker) means runs accepted here would
+        # not be ticked — re-attempt start (idempotent: start() no-ops when
+        # the thread is alive).
+        return str(st.get("status")) not in {"active", "standby_peer_active", "starting"}
+    except Exception:
+        return False
+
+
 def get_gateway_service_for_principal(principal: GatewayPrincipal) -> GatewayService:
     if not gateway_multi_user_enabled():
         return get_gateway_service()
@@ -276,6 +333,25 @@ def get_gateway_service_for_principal(principal: GatewayPrincipal) -> GatewaySer
                 except Exception:
                     _services_by_principal.pop(key, None)
                     raise
+        elif getattr(svc.config, "runner_enabled", False) and _runner_needs_restart(svc.runner):
+            # Self-healing (backlog 0063): a cached service whose runner lost
+            # the lock race and returned dead used to be returned as-is
+            # forever — a permanent per-principal stall in split/multi-worker
+            # topologies after a lock holder dies. Re-attempt start on access;
+            # start() is idempotent (no-op when the worker thread is alive)
+            # and the worker owns the whole retry/takeover lifecycle from
+            # there. A failed restart never evicts a WORKING cache entry — the
+            # service still serves reads; the next access retries.
+            try:
+                svc.runner.start()
+            except Exception:
+                import logging
+
+                logging.getLogger("abstractgateway.service").warning(
+                    "runner restart attempt failed for principal service %s (will retry next access)",
+                    key,
+                    exc_info=True,
+                )
         return svc
 
 
@@ -324,6 +400,25 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     # that fails-and-continues records one line; the service carries them to
     # /api/health. Append-only within this factory run.
     boot_warnings: list[str] = []
+
+    # Boot env scan (env-kill phase 1; c4211 contamination class): classify
+    # the process environment against the declared registry and WARN on
+    # foreign/undeclared/legacy names — visibility only, never a gate (c4305).
+    # Memoized process-wide (adversary F8: per-principal factories share one
+    # scan; the banner logs once). Disclosure split (F4): full NAMES go to
+    # the log banner + the in-process report; PUBLIC boot_warnings carry
+    # counts only.
+    env_scan_report: dict = {}
+    try:
+        from .env_scanner import env_scan_summary_warnings, log_env_scan_banner, scan_process_env_once
+
+        first_scan = _service is None and not _services_by_principal
+        env_scan_report = scan_process_env_once()
+        if first_scan:
+            log_env_scan_banner(env_scan_report)
+        boot_warnings.extend(env_scan_summary_warnings(env_scan_report))
+    except Exception as e:  # noqa: BLE001 - the scanner must never block boot
+        boot_warnings.append(f"#FALLBACK boot env scan failed: {type(e).__name__}")
 
     # Best-effort: apply persisted process-manager env overrides early so runtime
     # integrations (email bridge, report triage, etc.) observe the configured values
@@ -545,7 +640,33 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
             run_store=stores.run_store,
             artifact_store=stores.artifact_store,
         )
-        entity_chat_host = EntityChatHost(entity_registry)
+        # A bundle reload swaps host.runtime for a BRAND-NEW instance
+        # (reload_bundles_from_disk) — without this hook the entity handlers
+        # die with the old runtime and every entity run after a catalog
+        # publish fails "No effect handler registered for memory_recall"
+        # (live defect, 2026-07-24). The hook re-arms each rebuilt runtime
+        # BEFORE it is published; registry/stores are service-scoped objects
+        # that survive reloads, so the closure stays valid for the service's
+        # whole life.
+        host.add_runtime_rebuild_hook(
+            # Default-arg binding is deliberate: freeze the registry OBJECT at
+            # registration time so a later `entity_registry = None` in the
+            # degrade path can never turn this hook into a dead-registry arm.
+            lambda rt, _reg=entity_registry, _rs=stores.run_store, _as=stores.artifact_store: install_entity_routing(
+                rt,
+                registry=_reg,
+                run_store=_rs,
+                artifact_store=_as,
+            )
+        )
+        # The summon-seat probe (conversation-seat plan item 5: one seat,
+        # three doors): visit/chat opens refuse while a summon turn is
+        # mid-flight on the home. Live-run-only by the probe's contract —
+        # a TTL-idle seat never blocks the drawer's own surfaces.
+        from .entity_seat import build_summon_seat_probe
+
+        summon_seat_probe = build_summon_seat_probe(stores.run_store, entity_registry.entities_dir)
+        entity_chat_host = EntityChatHost(entity_registry, summon_seat_probe=summon_seat_probe)
         # Durable-visit + meet hosts constructed ONCE at the factory (frozen
         # dataclass lesson): a per-request host would drop the in-process
         # open-locks and the meet index. The meet host shares the visit host so
@@ -553,7 +674,21 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         # chat_probe wires the hosted lane into the visit reaper's stale-yield
         # repair (c2465: an orphaned auto-yield posture must never be repaired
         # out from under a LIVE drawer session — and never left forever either).
-        entity_visit_host = EntityVisitHost(entity_registry, chat_probe=entity_chat_host.has_open)
+        entity_visit_host = EntityVisitHost(
+            entity_registry,
+            chat_probe=entity_chat_host.has_open,
+            summon_seat_probe=summon_seat_probe,
+        )
+        # The visit-queue sweeper backstop (decision:summon-queue-v1 inv 11):
+        # armed at boot so PARKED entries survive a bounce with zero client
+        # traffic (poll-driven admission covers watched queues; this clock
+        # covers the mailbox drops and dead pollers). Lazy no-op when no
+        # queue files exist; the executor is wired by routes/entities at its
+        # import (which the app's router include guarantees precedes any
+        # traffic).
+        from .entity_queue import ensure_queue_sweeper
+
+        ensure_queue_sweeper(entity_registry.entities_dir)
         entity_meet_host = EntityMeetHost(entity_visit_host)
     except Exception as e:
         import logging
@@ -601,6 +736,7 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         entity_visit_host=entity_visit_host,
         entity_meet_host=entity_meet_host,
         boot_warnings=tuple(boot_warnings),
+        env_scan=env_scan_report or None,
     )
 
 
@@ -731,16 +867,169 @@ def reset_gateway_boot_state() -> None:
     _boot_done.clear()
 
 
+_rehydrate_shutdown = threading.Event()
+_rehydrate_result: Dict[str, Any] = {}
+
+
+def rehydration_status() -> Dict[str, Any]:
+    """Last eager-rehydration outcome for /api/health (backlog 0063,
+    adversary P1-3: a failed warm is invisible otherwise — the idle tenants
+    this feature serves never send the request that would retry)."""
+    return dict(_rehydrate_result)
+
+
+def _principal_runtime_dir_exists(principal: GatewayPrincipal) -> bool:
+    """Cheap peek: does this principal's per-runtime data dir already exist?
+    (adversary P1-2: warming a never-run user/entity MKDIRs a phantom
+    runtime tree + standing threads scaling with registrations, not with
+    parked work). Never build to find out."""
+    try:
+        cfg = _config_for_principal(principal)
+        base = Path(getattr(cfg, "data_dir", "") or "")
+        return bool(str(base)) and base.exists()
+    except Exception:
+        return False
+
+
+def _eager_rehydrate_principal_runners() -> Dict[str, Any]:
+    """Boot-time re-arm of per-principal runners (backlog 0063).
+
+    In multi-user mode per-principal services (and their runner threads)
+    were created only on that principal's first authenticated request — so
+    after a crash/redeploy every idle tenant's in-flight and scheduled runs
+    stayed paused until that user happened to hit an endpoint, and
+    WAIT_UNTIL/event deadlines could miss their windows indefinitely. This
+    warms each registered runtime's service on boot so its runner ticks
+    parked work immediately.
+
+    Bounded + best-effort: runs on the background boot thread (never blocks
+    the listener), sequential (naturally one-at-a-time — no thundering
+    herd), capped by ABSTRACTGATEWAY_EAGER_REHYDRATE_MAX (0 disables), and a
+    per-principal failure never blocks the others or the boot. Each
+    principal has its OWN per-runtime data dir, so their singleton locks
+    never contend — warming N runners is N independent locks, not a race.
+    """
+    import logging
+
+    logger = logging.getLogger("abstractgateway.service")
+    result: Dict[str, Any] = {"attempted": 0, "started": 0, "skipped_by_cap": 0, "errors": []}
+    try:
+        raw = os.getenv("ABSTRACTGATEWAY_EAGER_REHYDRATE_MAX")
+        cap = int(str(raw).strip()) if raw and str(raw).strip() else 32
+    except ValueError:
+        cap = 32
+    if cap <= 0:
+        _rehydrate_result.clear()
+        _rehydrate_result.update(result)
+        return result
+    # A no-runner API process (split mode) must NOT do N heavy builds for
+    # zero ticking value (adversary angle C).
+    try:
+        if not bool(getattr(GatewayHostConfig.from_env(), "runner_enabled", True)):
+            result["skipped_reason"] = "runner disabled in this process (split mode)"
+            _rehydrate_result.clear()
+            _rehydrate_result.update(result)
+            return result
+    except Exception:
+        pass
+    try:
+        from .users import GatewayUserRegistry
+
+        users = GatewayUserRegistry().list_users()
+    except Exception as e:
+        logger.warning("eager rehydration could not list users: %s", e, exc_info=True)
+        result["errors"].append(f"list_users: {type(e).__name__}: {e}")
+        _rehydrate_result.clear()
+        _rehydrate_result.update(result)
+        return result
+
+    # Filter BEFORE the cap (adversary P2-1: cap-then-filter let disabled
+    # records at the front of the sorted list starve the enabled ones).
+    # Entities are enabled registry users by construction but their runtime
+    # plane is the per-home store, NOT users/<tenant>/<slug>/runtime — warming
+    # them mints phantom trees (adversary P1-2); skip role=entity. And warm
+    # only principals whose runtime dir ALREADY exists — never mkdir a tree
+    # for a user who has never run.
+    candidates = []
+    for rec in users:
+        if not getattr(rec, "enabled", True):
+            continue
+        if "entity" in {str(r).strip().lower() for r in (getattr(rec, "roles", ()) or ())}:
+            continue
+        candidates.append(rec)
+
+    for rec in candidates[cap:]:
+        result["skipped_by_cap"] += 1
+    if result["skipped_by_cap"]:
+        logger.warning(
+            "eager rehydration cap %s reached: %s principal(s) not warmed at boot "
+            "(they warm lazily on first request)",
+            cap,
+            result["skipped_by_cap"],
+        )
+
+    for rec in candidates[:cap]:
+        if _rehydrate_shutdown.is_set():
+            result["stopped"] = "shutdown"
+            break
+        try:
+            principal = rec.to_principal(token_fingerprint_value="")
+            if not _principal_runtime_dir_exists(principal):
+                continue  # never-run principal — no parked work, no mkdir on warm
+            result["attempted"] += 1
+            svc = get_gateway_service_for_principal(principal)
+            # get_gateway_service_for_principal already starts the runner on
+            # first build and self-heals a dead one; count a live ticker.
+            if not _runner_needs_restart(getattr(svc, "runner", None)):
+                result["started"] += 1
+        except Exception as e:
+            result["errors"].append(f"{rec.tenant_id}/{rec.user_id}: {type(e).__name__}: {e}")
+    if result["errors"]:
+        logger.warning(
+            "eager rehydration: %s principal(s) failed to warm: %s",
+            len(result["errors"]),
+            "; ".join(result["errors"][:5]),
+        )
+    _rehydrate_result.clear()
+    _rehydrate_result.update(result)
+    return result
+
+
 def start_gateway_runner() -> None:
+    # Effective-spec crash-window reconcile (structural-edit build c4859):
+    # the blueprint overlay + derived effective file are two atomic writes;
+    # a crash between them (or a re-vendor under a standing overlay) leaves
+    # the FILE detached loops read stale. Heal at boot BEFORE any loop
+    # process reads it — GET reconciles too, but loops don't call GET.
+    # data_dir passed explicitly: multi-user boot keeps services lazy, so
+    # the heal must not force a service build. Never raises by construction.
+    try:
+        from .routes.entities import reconcile_effective_spec_file
+
+        reconcile_effective_spec_file(data_dir=Path(GatewayHostConfig.from_env().data_dir))
+    except Exception:  # noqa: BLE001 - boot must never die on a heal pass
+        logger.warning("effective phase-spec reconcile skipped at boot", exc_info=True)
     if gateway_multi_user_enabled():
-        # Per-principal services are created and started lazily once auth resolves
-        # the current user. Starting a process-wide service here would recreate
-        # the singleton data-plane that hosted mode is meant to avoid.
-        # The BACKLOG EXEC RUNNER is deliberately not per-principal: the
-        # queue lives at the base data dir and executions run on the host —
-        # under user-auth the old early return silently never started it
-        # (the operator's "no execution agent" incident, 2026-07-14 21:09).
+        # Per-principal services are created and started lazily on first
+        # request; the BACKLOG EXEC RUNNER lives at the base data dir and is
+        # NOT per-principal — under user-auth the old early return silently
+        # never started it (the "no execution agent" incident 2026-07-14).
         sync_backlog_exec_runner()
+        # Eager re-arm (backlog 0063): warm every registered runtime's runner
+        # so parked/scheduled runs resume on boot. Runs on its OWN daemon
+        # thread, NOT inline (adversary P0-1: the sweep does N heavy builds
+        # under _service_lock — running it inline in the boot thread held the
+        # boot gate "starting" for the whole sweep, parking every
+        # /api/gateway/* request behind minutes of builds and re-opening the
+        # false-recycle window the background-boot fix just closed). The
+        # sweep is best-effort and every service insert is serialized by
+        # _service_lock, so racing live prewarms is already safe.
+        _rehydrate_shutdown.clear()
+        threading.Thread(
+            target=_eager_rehydrate_principal_runners,
+            name="gateway-eager-rehydrate",
+            daemon=True,
+        ).start()
         return
     svc = get_gateway_service()
     svc.runner.start()
@@ -759,12 +1048,24 @@ def start_gateway_runner() -> None:
 
 def stop_gateway_runner() -> None:
     global _service, _backlog_exec_runner, _backlog_exec_runner_error
+    # Tell the eager-rehydration sweep to stop (adversary P1-1: the sweep runs
+    # on its own thread and, unsignalled, kept building services AFTER
+    # shutdown returned — orphaned runners holding per-principal flocks that
+    # flock-refuse the next boot's own twins). Checked per sweep iteration.
+    _rehydrate_shutdown.set()
     try:
-        services = []
-        if _service is not None:
-            services.append(_service)
-        services.extend(list(_services_by_principal.values()))
-        if not services:
+        # Snapshot + clear the caches ATOMICALLY under the lock (adversary
+        # P1-1): the old unlocked snapshot let an in-flight build land in the
+        # cache AFTER the clear, surviving teardown. An in-flight build now
+        # lands in the snapshot or not at all.
+        with _service_lock:
+            services = []
+            if _service is not None:
+                services.append(_service)
+            services.extend(list(_services_by_principal.values()))
+            _service = None
+            _services_by_principal.clear()
+        if not services and _backlog_exec_runner is None:
             return
         try:
             if _backlog_exec_runner is not None:
@@ -782,45 +1083,61 @@ def stop_gateway_runner() -> None:
 
 
 def _stop_gateway_service_instance(service: GatewayService) -> None:
+    # Every stage logs start/done with elapsed time (shutdown-forensics,
+    # 2026-07-24): this path used to run in TOTAL SILENCE with every
+    # exception swallowed — a 60s+ TERM (runner drain 30s + per-visit
+    # close reflections that each run an LLM call) was indistinguishable
+    # from a wedge, and the operator loop SIGKILLed three healthy bounces.
+    # Failures stay non-fatal (stop must always keep going) but are now
+    # WARNED, never silent.
+    import sys as _sys
+    import time as _time
+
+    log = logging.getLogger("abstractgateway.service")
+
+    def _say(line: str) -> None:
+        # Plain stderr print, like the boot banner: the default console level
+        # filters INFO logs, and these lines exist precisely so an operator
+        # tailing the log during a bounce sees WORK, not silence.
+        try:
+            print(line, file=_sys.stderr, flush=True)
+        except Exception:
+            pass
+
+    def _stage(name: str, fn) -> None:
+        t0 = _time.monotonic()
+        _say(f"shutdown: {name} ...")
+        try:
+            fn()
+        except Exception:
+            log.warning("shutdown: %s FAILED (continuing)", name, exc_info=True)
+            _say(f"shutdown: {name} FAILED (continuing; see log)")
+            return
+        _say(f"shutdown: {name} done ({_time.monotonic() - t0:.1f}s)")
+
     try:
-        try:
-            bridge = getattr(service, "telegram_bridge", None)
-            if bridge is not None:
-                bridge.stop()
-        except Exception:
-            pass
-        try:
-            bridge2 = getattr(service, "email_bridge", None)
-            if bridge2 is not None:
-                bridge2.stop()
-        except Exception:
-            pass
-        try:
-            bridge3 = getattr(service, "agora_bridge", None)
-            if bridge3 is not None:
-                bridge3.stop()
-        except Exception:
-            pass
-        try:
-            service.runner.stop()
-        except Exception:
-            pass
-        try:
-            chat_host = getattr(service, "entity_chat_host", None)
-            if chat_host is not None:
-                # Reflect + close live visits FIRST (they hold their own home
-                # handles and may owe the own-time loop a wake).
-                chat_host.close_all()
-        except Exception:
-            pass
-        try:
-            registry = getattr(service, "entity_registry", None)
-            if registry is not None:
-                registry.close_all()
-        except Exception:
-            pass
+        bridge = getattr(service, "telegram_bridge", None)
+        if bridge is not None:
+            _stage("telegram bridge stop", bridge.stop)
+        bridge2 = getattr(service, "email_bridge", None)
+        if bridge2 is not None:
+            _stage("email bridge stop", bridge2.stop)
+        bridge3 = getattr(service, "agora_bridge", None)
+        if bridge3 is not None:
+            _stage("agora bridge stop", bridge3.stop)
+        _stage("runner drain", service.runner.stop)
+        chat_host = getattr(service, "entity_chat_host", None)
+        if chat_host is not None:
+            # Reflect + close live visits FIRST (they hold their own home
+            # handles and may owe the own-time loop a wake). Each close may
+            # run a reflection LLM call — the log line above is what tells
+            # the operator this is WORK, not a hang.
+            _stage("entity visits close_all (reflections may take a minute)", chat_host.close_all)
+        registry = getattr(service, "entity_registry", None)
+        if registry is not None:
+            _stage("entity homes close_all", registry.close_all)
     except Exception:
-        pass
+        log.warning("shutdown: unexpected failure in stop sequence", exc_info=True)
 
 
 def _summarize_run_output(value: Any, *, max_string: int = 50_000, max_items: int = 80, max_depth: int = 8) -> Any:

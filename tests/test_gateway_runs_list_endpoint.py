@@ -474,3 +474,86 @@ def test_list_runs_include_metrics_with_sqlite_backend(tmp_path: Path, monkeypat
         assert match.get("llm_calls") == 1
         assert match.get("tool_calls") == 2
         assert match.get("tokens_total") == 12
+
+
+def test_list_runs_rejects_unknown_query_params(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """flow c5253 P1-2: an unknown/typo'd filter used to be silently IGNORED
+    — ?parent_run_idd=... returned the whole global store while looking
+    filtered. Unknown params now refuse, naming the known set."""
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-unknown", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r = client.get("/api/gateway/runs?limitt=5", headers=headers)
+        assert r.status_code == 400, r.text
+        assert "limitt" in r.json()["detail"]
+        assert "known:" in r.json()["detail"]
+        # Known params still work.
+        ok = client.get("/api/gateway/runs?limit=5", headers=headers)
+        assert ok.status_code == 200, ok.text
+
+
+def test_list_runs_parent_run_id_filters_children(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """flow c5253 P1-2 (constructive half): ?parent_run_id= lists direct
+    children via the store's list_children — the capability existed
+    server-side with no HTTP surface. A parent with no children returns an
+    empty page, never the global store."""
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-children", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        start = client.post(
+            "/api/gateway/runs/start",
+            headers=headers,
+            json={"bundle_id": "bundle-children", "flow_id": "root", "input_data": {}},
+        )
+        assert start.status_code == 200, start.text
+        root_id = start.json()["run_id"]
+
+        # Plant a child run directly in the store (the minimal bundle has no
+        # subflow node; the filter is what is under test, not spawning).
+        from abstractgateway.service import get_gateway_service
+
+        svc = get_gateway_service()
+        parent = svc.host.run_store.load(root_id)
+        assert parent is not None
+        import dataclasses
+
+        child = dataclasses.replace(parent, run_id="child-1", parent_run_id=root_id)
+        svc.host.run_store.save(child)
+
+        r = client.get(f"/api/gateway/runs?parent_run_id={root_id}", headers=headers)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["parent_run_id"] == root_id
+        ids = [it["run_id"] for it in body["items"]]
+        assert ids == ["child-1"], body
+
+        # No children -> empty page, never the global store.
+        r2 = client.get("/api/gateway/runs?parent_run_id=child-1", headers=headers)
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["items"] == []

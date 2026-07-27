@@ -362,15 +362,49 @@ async def gateway_session_logout(request: Request, response: Response) -> Dict[s
 
 
 @router.get("/admin/users")
-async def gateway_admin_list_users(request: Request) -> Dict[str, Any]:
+async def gateway_admin_list_users(
+    request: Request,
+    kind: str = Query(
+        default="all",
+        description="Filter by principal kind: human | entity | all (default). "
+        "Every row also carries a first-class principal_kind field.",
+    ),
+) -> Dict[str, Any]:
+    """List gateway principals (operator order c5305).
+
+    NOTE the census asymmetry: /entities is the ENTITY census (homes);
+    ?kind=entity here is the entity-PRINCIPAL census — homes created before
+    principal minting have no row, so the two lists legitimately differ and
+    no client may derive one from the other.
+    """
     _require_admin_principal(request)
+    kind_s = str(kind or "all").strip().lower()
+    if kind_s not in {"human", "entity", "all"}:
+        raise HTTPException(status_code=400, detail="kind must be one of: human | entity | all")
     registry = GatewayUserRegistry()
-    return {"users": [record.public_dict() for record in registry.list_users()]}
+    rows = [record.public_dict() for record in registry.list_users()]
+    if kind_s != "all":
+        rows = [r for r in rows if r.get("principal_kind") == kind_s]
+    return {"users": rows, "kind": kind_s}
 
 
 @router.post("/admin/users")
 async def gateway_admin_create_user(request: Request, payload: GatewayUserCreateRequest) -> Dict[str, Any]:
     _require_admin_principal(request)
+    # 0089 front-door guard (adversary P1): entity principals are minted ONLY
+    # by the entities lane (which discards the born token — an entity bearer
+    # must not exist). The generic admin lane returns the issued token, so
+    # creating a role=entity principal here would hand out a live entity
+    # credential and seed an identity-capture record. Refuse; direct the
+    # operator to /entities.
+    if "entity" in {str(r).strip().lower() for r in (payload.roles or [])}:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "entity principals are created through /entities (an entity bearer must "
+                "not exist); the generic users lane does not mint role=entity accounts"
+            ),
+        )
     registry = GatewayUserRegistry()
     try:
         record, issued_token = registry.create_user(
@@ -408,6 +442,8 @@ async def gateway_admin_update_user(
     token_update: Optional[str] = payload.token
     if payload.rotate_token and token_update is None:
         token_update = ""
+    from ..users import EntityPrincipalGuardError
+
     try:
         record, issued_token = GatewayUserRegistry().update_user(
             user_id=user_id,
@@ -421,6 +457,10 @@ async def gateway_admin_update_user(
         )
     except KeyError as e:
         raise HTTPException(status_code=404, detail="Gateway user not found") from e
+    except EntityPrincipalGuardError as e:
+        # 0089: the entities lane owns this principal — 403, not 400: the
+        # request is well-formed, the authority boundary refuses it.
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     response: Dict[str, Any] = {"user": record.public_dict()}
@@ -436,7 +476,12 @@ async def gateway_admin_delete_user(
     tenant_id: str = Query(default="default"),
 ) -> Dict[str, Any]:
     _require_admin_principal(request)
-    deleted = GatewayUserRegistry().delete_user(user_id=user_id, tenant_id=tenant_id)
+    from ..users import EntityPrincipalGuardError
+
+    try:
+        deleted = GatewayUserRegistry().delete_user(user_id=user_id, tenant_id=tenant_id)
+    except EntityPrincipalGuardError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
     if not deleted:
         raise HTTPException(status_code=404, detail="Gateway user not found")
     return {"ok": True, "deleted": True, "user_id": user_id, "tenant_id": tenant_id}
@@ -466,11 +511,15 @@ async def gateway_admin_write_runtime_config(request: Request, payload: Dict[str
     principal-stamped in the response. A rejected value never lands (validate
     before write) and refuses with an operator-readable 4xx."""
     principal = _require_admin_principal(request)
-    from ..runtime_config import RuntimeConfigError, write_runtime_config
+    from ..runtime_config import RuntimeConfigError, RuntimeConfigStoreCorrupt, write_runtime_config
 
     actor = f"person:{principal.user_id}" if getattr(principal, "user_id", None) else "person:operator"
     try:
         out = write_runtime_config(gateway_data_dir_from_env(), dict(payload or {}), actor=actor)
+    except RuntimeConfigStoreCorrupt as e:
+        # 409: the store is unreadable; refusing to overwrite it (would wipe
+        # the other knobs). Operator repairs the file, then retries.
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except RuntimeConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     # The toggle must take effect LIVE (operator 21:09: continuum's enable
@@ -566,6 +615,8 @@ async def gateway_admin_transfer_runtime_reservation(
     if safe_principal_component(payload.confirm_runtime_id, default="") != runtime0:
         raise HTTPException(status_code=400, detail="confirm_runtime_id must match the retained runtime id")
     registry = GatewayUserRegistry()
+    from ..users import EntityPrincipalGuardError
+
     try:
         record, reservation, previous_runtime_id = registry.transfer_runtime_reservation(
             tenant_id=payload.tenant_id,
@@ -574,6 +625,11 @@ async def gateway_admin_transfer_runtime_reservation(
         )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'")) from e
+    except EntityPrincipalGuardError as e:
+        # 0089 transfer-lane guard (adversary P0): the authority boundary
+        # refuses, not a malformed-request 400. Must precede the ValueError
+        # handler — EntityPrincipalGuardError subclasses ValueError.
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     invalidate_gateway_service_for_runtime(tenant_id=record.tenant_id, runtime_id=previous_runtime_id)
@@ -1106,6 +1162,134 @@ def _env_first(*keys: str, default: Optional[str] = None) -> Optional[str]:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return default
+
+
+def _configured_voice_engine(kind: str) -> Optional[str]:
+    """The gateway-CONFIGURED voice engine for tts|stt, or None.
+
+    env-var kill (operator dm#177, named incident): the TTS/STT engine used
+    to resolve `_env_first("ABSTRACTGATEWAY_VOICE_TTS_ENGINE",
+    "ABSTRACTVOICE_TTS_ENGINE")` — so an exported ABSTRACTVOICE_* shell var
+    (another package's namespace) silently overrode the gateway's own
+    configured engine. The console-editable capability-defaults surface
+    (output.voice / input.voice route provider) is the source of truth AND
+    the config runtime/core actually EXECUTE from, so resolving it here
+    aligns advertising with execution (no split-brain divergence — the
+    2026-07-17 "advertised M1 vs executed M2" class). Returns the route's
+    configured provider; None when nothing is configured (env #FALLBACK
+    then applies at the call site). Best-effort + cached briefly: a payload
+    read must never break voice discovery."""
+    modality_key = "output.voice" if kind == "tts" else "input.voice"
+    try:
+        from ..capability_defaults import gateway_capability_defaults_payload
+
+        payload = gateway_capability_defaults_payload()
+        routes = payload.get("routes") if isinstance(payload, dict) else None
+        if not isinstance(routes, list):
+            return None
+        for row in routes:
+            if not isinstance(row, dict) or str(row.get("key") or "") != modality_key:
+                continue
+            if not bool(row.get("configured")):
+                return None
+            provider = str(row.get("provider") or "").strip()
+            return provider or None
+    except Exception:
+        return None
+    return None
+
+
+_VOICE_DEFAULTS_CACHE: Dict[str, tuple] = {}
+_VOICE_DEFAULTS_TTL_S = 5.0
+
+
+def _configured_voice_output_defaults(kind: str) -> Dict[str, Any]:
+    """The gateway-CONFIGURED voice route default (provider + model + voice)
+    for tts|stt from the capability-defaults output.voice/input.voice route,
+    or {} when nothing is configured.
+
+    THE ALWAYS-USE-GATEWAY-DEFAULTS mandate (laurent dm#28): a bare TTS
+    request (no provider) must resolve to the gateway's OWN default, never
+    fall through to abstractvoice's hardcoded openai fallback (which hit the
+    operator's openai quota → 429). The console sends bare and trusts the
+    gateway to fill in; this is the fill-in.
+
+    PROVIDER IS REQUIRED (fable5 adversary P0): a row configured with only
+    `options.voice` and no provider is NOT a fillable default — filling a
+    bare voice onto the hardcoded-openai engine is the same leak. Return {}
+    unless the row carries a provider, so the caller's all-or-nothing gate
+    has a coherent triple or nothing.
+
+    Short-TTL cached (adversary P1): the payload read is a disk parse
+    (embedded) or an 8s-timeout HTTP GET (split core server); a per-request
+    read on the async event loop is a starvation lever. The config changes
+    rarely (operator sets it once), so a 5s TTL removes the per-request cost
+    while keeping console edits effective within one breath. Best-effort; a
+    read failure never breaks synthesis."""
+    import time as _time
+
+    modality_key = "output.voice" if kind == "tts" else "input.voice"
+    now = _time.monotonic()
+    cached = _VOICE_DEFAULTS_CACHE.get(modality_key)
+    if cached is not None and (now - cached[0]) < _VOICE_DEFAULTS_TTL_S:
+        return dict(cached[1])
+
+    out: Dict[str, Any] = {}
+    try:
+        from ..capability_defaults import gateway_capability_defaults_payload
+
+        payload = gateway_capability_defaults_payload()
+        routes = payload.get("routes") if isinstance(payload, dict) else None
+        if isinstance(routes, list):
+            for row in routes:
+                if not isinstance(row, dict) or str(row.get("key") or "") != modality_key:
+                    continue
+                if not bool(row.get("configured")):
+                    break
+                provider = str(row.get("provider") or "").strip()
+                if not provider:
+                    break  # provider-less row is not a fillable default
+                out["provider"] = provider
+                model = str(row.get("model") or "").strip()
+                if model:
+                    out["model"] = model
+                options = row.get("options") if isinstance(row.get("options"), dict) else {}
+                voice = str(options.get("voice") or "").strip()
+                if voice:
+                    out["voice"] = voice
+                break
+    except Exception:
+        out = {}
+    _VOICE_DEFAULTS_CACHE[modality_key] = (now, dict(out))
+    return out
+
+
+def _resolved_voice_engine(kind: str) -> Optional[str]:
+    """Config-first voice engine: gateway console config WINS; the env chain
+    (gateway var, then the foreign ABSTRACTVOICE_* var) is a labeled
+    last-resort #FALLBACK below it (env-kill contract precedence). A set env
+    that LOSES to config is logged once so a stale export is visible."""
+    configured = _configured_voice_engine(kind)
+    env_var_pair = (
+        ("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE")
+        if kind == "tts"
+        else ("ABSTRACTGATEWAY_VOICE_STT_ENGINE", "ABSTRACTVOICE_STT_ENGINE")
+    )
+    env_value = _env_first(*env_var_pair)
+    if configured:
+        if env_value and str(env_value).strip().lower() != str(configured).strip().lower():
+            import logging
+
+            logging.getLogger("abstractgateway.voice").warning(
+                "#FALLBACK voice %s engine: gateway config %r WINS over shadowed env %s=%r — "
+                "delete the export (behavior config lives on the gateway/console, not env)",
+                kind,
+                configured,
+                env_var_pair[1],
+                env_value,
+            )
+        return configured
+    return env_value
 
 
 def _env_bool(*keys: Any, default: bool = False) -> bool:
@@ -6754,21 +6938,73 @@ async def get_run(run_id: str) -> Dict[str, Any]:
 
 @router.get("/runs")
 async def list_runs(
+    request: Request,
     limit: int = Query(50, ge=1, le=500, description="Maximum number of runs (most recent first)."),
     status: Optional[str] = Query(None, description="Optional status filter: running|waiting|completed|failed|cancelled"),
     workflow_id: Optional[str] = Query(None, description="Optional workflow id filter (e.g. bundle:flow)"),
     session_id: Optional[str] = Query(None, description="Optional session id filter (durable run.session_id)."),
+    parent_run_id: Optional[str] = Query(None, description="Optional parent filter: list only direct children of this run."),
     root_only: bool = Query(False, description="If true, return only root/parent runs (parent_run_id is empty)."),
     include_ledger_len: bool = Query(True, description="If true, include ledger_len (may be slow for file-backed ledgers)."),
     include_metrics: bool = Query(False, description="If true, include best-effort llm/tool counts (aggregated across child runs)."),
     include_drafts: bool = Query(False, description="If true, include private draft-test runs in the response."),
 ) -> Dict[str, Any]:
     """List recent runs (summary only; never returns full run.vars)."""
+    # Unknown query params are REFUSED, not ignored (flow c5253 P1-2): a
+    # filter typo used to return the whole global store while LOOKING
+    # filtered — their adversary got burned live by exactly that. Naming the
+    # known set makes the refusal self-correcting.
+    _known_params = {
+        "limit", "status", "workflow_id", "session_id", "parent_run_id",
+        "root_only", "include_ledger_len", "include_metrics", "include_drafts",
+    }
+    _unknown = [k for k in request.query_params.keys() if k not in _known_params]
+    if _unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown query parameter(s): {', '.join(sorted(_unknown))} — "
+                f"known: {', '.join(sorted(_known_params))}"
+            ),
+        )
+
     svc = get_gateway_service()
     rs = svc.host.run_store
 
     if not isinstance(rs, QueryableRunStore):
         raise HTTPException(status_code=400, detail="Run store does not support listing runs")
+
+    # Children listing (P1-2's constructive half): a direct-children filter
+    # backed by the store's list_children — the capability existed
+    # server-side with no HTTP surface.
+    prid = str(parent_run_id).strip() if isinstance(parent_run_id, str) and parent_run_id.strip() else None
+    if prid is not None:
+        list_children = getattr(rs, "list_children", None)
+        if not callable(list_children):
+            raise HTTPException(status_code=400, detail="Run store does not support children listing")
+        status_enum0: Optional[RunStatus] = None
+        if isinstance(status, str) and status.strip():
+            try:
+                status_enum0 = RunStatus(status.strip().lower())  # type: ignore[arg-type]
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid status (expected: running|waiting|completed|failed|cancelled)")
+        try:
+            children = list(list_children(parent_run_id=prid) or [])
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list children: {e}")
+        child_items: list[Dict[str, Any]] = []
+        for r in children:
+            if status_enum0 is not None and getattr(r, "status", None) != status_enum0:
+                continue
+            summary = run_summary(r)
+            if not include_drafts and bool(summary.get("is_draft") is True):
+                continue
+            child_items.append(summary)
+            if len(child_items) >= int(limit):
+                break
+        # Same envelope as the normal listing ("items") so consumers never
+        # branch on which filter produced the page.
+        return {"items": child_items, "count": len(child_items), "parent_run_id": prid}
 
     status_enum: Optional[RunStatus] = None
     if isinstance(status, str) and status.strip():
@@ -7300,6 +7536,12 @@ async def get_run_history_bundle(
     session_turn_limit: int = Query(200, ge=1, le=500, description="Max session turns to include when include_session=true."),
     ledger_mode: str = Query("tail", description="Ledger export mode: tail|full."),
     ledger_max_items: int = Query(2000, ge=0, le=20000, description="Max ledger items per run when ledger_mode=tail (0 disables tailing)."),
+    detail: str = Query(
+        "full",
+        description="Bundle detail: full | replay. 'replay' is a labeled transcript-fold "
+        "projection that drops request-side payloads + observability paths (runtime marks "
+        "each $omitted); ~52x smaller with gzip. Every field a transcript fold reads survives.",
+    ),
 ) -> Dict[str, Any]:
     """Return a versioned RunHistoryBundle (runtime-owned contract).
 
@@ -7323,6 +7565,15 @@ async def get_run_history_bundle(
         mode = "full"
         max_items = 0
 
+    # Replay-integrity incident R2 (code-tui c5552; runtime shipped the profile
+    # in history_bundle.py c5558): the gateway lane is one plumbing edit —
+    # thread the query param to the export kwarg. The omit-set/$omitted markers/
+    # fold-safety are runtime's and frozen against the client fold's pinned
+    # read-field list; the gateway never re-derives them.
+    detail_mode = str(detail or "full").strip().lower()
+    if detail_mode not in {"full", "replay"}:
+        raise HTTPException(status_code=400, detail="detail must be 'full' or 'replay'")
+
     try:
         store = getattr(getattr(svc, "stores", None), "artifact_store", None)
         # H7c (agency live finding, c1085): a busy-store bundle export took
@@ -7339,6 +7590,7 @@ async def get_run_history_bundle(
             session_turn_limit=int(session_turn_limit),
             ledger_mode=mode,
             ledger_max_items=max_items,
+            detail=detail_mode,
         )
         if not isinstance(bundle, dict):
             raise RuntimeError("export_run_history_bundle returned non-dict")
@@ -7869,9 +8121,14 @@ async def get_ledger_batch(req: LedgerBatchRequest) -> Dict[str, Any]:
 
 
 def _ledger_news_count(ledger_store: Any, run_id: str) -> int:
-    """Record count for the stream's news check — the store's fast `count()`
-    when it exists (JSONL/SQLite both ship one), else len(list()). Runs on a
-    worker thread (H7b discipline)."""
+    """Record count probe — the store's fast `count()` when it exists, else
+    len(list()).
+
+    LEGACY (0075): the SSE stream no longer calls this (per-client tail
+    readers carry their own news gates — ListSliceTail re-implements the
+    count gate internally); kept for the cursoring test pins and any
+    external callers.
+    """
     fn = getattr(ledger_store, "count", None)
     if callable(fn):
         try:
@@ -7926,7 +8183,7 @@ async def stream_ledger(
 
     # Fail fast: streaming a non-existent run should not hold open a keep-alive connection forever.
     try:
-        run0 = rs.load(run_id2)
+        run0 = await asyncio.to_thread(rs.load, run_id2)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run0 is None:
@@ -7950,7 +8207,7 @@ async def stream_ledger(
 
     async def _gen():
         tail = resolve_ledger_tail(svc.host.ledger_store, run_id2, start_index=start_index)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         dirty = asyncio.Event()
         dirty.set()  # first pass always drains (catch-up)
         unsubscribe = None
@@ -7976,9 +8233,11 @@ async def stream_ledger(
                 if await request.is_disconnected():
                     return
                 emitted = False
+                progressed = False
                 if dirty.is_set():
                     dirty.clear()
                     new_records = await asyncio.to_thread(tail.read_new)
+                    progressed = bool(getattr(tail, "progressed", False))
                     if new_records:
                         # Batched sends (~256KB): one ASGI send per record paid
                         # the per-line streaming tax (threadpool hop +
@@ -8002,12 +8261,21 @@ async def stream_ledger(
                         # immediately rather than waiting for the next signal.
                         dirty.set()
                 if not emitted:
+                    # Silent progress (fable5 adversary P0-2): an empty read
+                    # can still have ADVANCED (catch-up records swallowed by
+                    # the resume skip; a window-growth pass on an oversized
+                    # line). Treating it as "drained" closed terminal streams
+                    # prematurely with records missing — keep draining until
+                    # a genuinely progress-less pass.
+                    if progressed:
+                        dirty.set()
+                        continue
                     now = loop.time()
 
                     # Terminal close AFTER one final drain (this iteration read
-                    # the tail and found nothing new), so a status event
-                    # appended just after the terminal save (F6 window) is
-                    # caught before `terminal` is re-read.
+                    # the tail and found nothing new AND made no progress), so
+                    # a status event appended just after the terminal save
+                    # (F6 window) is caught before `terminal` is re-read.
                     if terminal:
                         payload = json.dumps(
                             {"run_id": run_id2, "cursor": int(tail.index), "status": "terminal"},
@@ -8884,6 +9152,26 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         content_type = "application/octet-stream"
         filename = f"tts.{fmt}" if fmt else "tts.bin"
 
+    # ALWAYS USE THE GATEWAY DEFAULT (laurent dm#28) — ALL-OR-NOTHING (fable5
+    # adversary P0): fill the gateway's configured voice triple ONLY when the
+    # request named NONE of provider/model/voice/profile. A field-independent
+    # fill re-mints the 2026-07-17 cross-provider leak (request provider=piper
+    # with no voice → filled voice=M2 → "Unknown voice_id" — the identity of
+    # a voice is provider-scoped, so a filled voice from a DIFFERENT provider
+    # is nonsense). This mirrors abstractcore's _route_row_contribution and
+    # the entity anti-mixing rule: a partial request is the caller's coherent
+    # intent and is passed through untouched; only a fully-bare request
+    # resolves the default. Runs off the event loop (the read may be a
+    # remote HTTP GET in split mode).
+    if provider_name is None and model_name is None and voice_name is None and profile_name is None:
+        _voice_defaults = await asyncio.to_thread(_configured_voice_output_defaults, "tts")
+        if _voice_defaults.get("provider"):
+            provider_name = str(_voice_defaults["provider"])
+            if _voice_defaults.get("model"):
+                model_name = str(_voice_defaults["model"])
+            if _voice_defaults.get("voice"):
+                voice_name = str(_voice_defaults["voice"])
+
     output_spec: Dict[str, Any] = {
         "modality": "voice",
         "task": "tts",
@@ -9052,6 +9340,21 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
     profile_name = str(profile).strip() if isinstance(profile, str) and profile.strip() else None
     model_name = str(model).strip() if isinstance(model, str) and model.strip() else None
     provider_name = str(provider).strip() if isinstance(provider, str) and provider.strip() else None
+
+    # ALWAYS USE THE GATEWAY DEFAULT (laurent dm#28) — THE STREAM LANE was the
+    # named root cause: it never merged the output.voice default, so a
+    # provider-less request fell through to abstractvoice's hardcoded openai
+    # engine → the operator's openai quota → 429. ALL-OR-NOTHING (adversary
+    # P0), same discipline as the artifact lane: fill only a fully-bare
+    # request, off the event loop.
+    if provider_name is None and model_name is None and voice_name is None and profile_name is None:
+        _voice_defaults = await asyncio.to_thread(_configured_voice_output_defaults, "tts")
+        if _voice_defaults.get("provider"):
+            provider_name = str(_voice_defaults["provider"])
+            if _voice_defaults.get("model"):
+                model_name = str(_voice_defaults["model"])
+            if _voice_defaults.get("voice"):
+                voice_name = str(_voice_defaults["voice"])
 
     output_spec: Dict[str, Any] = {
         "modality": "voice",
@@ -9457,6 +9760,21 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
     run_facade, err = _gateway_abstractcore_run_facade()
     if err or run_facade is None:
         raise HTTPException(status_code=503, detail=err or "Gateway runtime does not expose AbstractCore durable media helpers.")
+
+    # ALWAYS USE THE GATEWAY DEFAULT — STT symmetry (fable5 adversary P1): a
+    # bare transcription request (no provider) had the SAME hole as TTS —
+    # it fell through to abstractvoice's hardcoded openai STT engine and
+    # burned the operator's openai quota (the dm#28 class, STT side; the
+    # assistant's default dictation shape IS bare). Fill the gateway's
+    # configured input.voice default (provider + model only — STT has no
+    # "voice") when the request named NEITHER provider nor model; a partial
+    # request is the caller's coherent intent, untouched. Off the loop.
+    if stt_provider_name is None and stt_model_name is None:
+        _stt_defaults = await asyncio.to_thread(_configured_voice_output_defaults, "stt")
+        if _stt_defaults.get("provider"):
+            stt_provider_name = str(_stt_defaults["provider"])
+            if _stt_defaults.get("model"):
+                stt_model_name = str(_stt_defaults["model"])
 
     output_spec: Dict[str, Any] = {"modality": "text", "task": "transcription"}
     if language_hint:
@@ -11648,9 +11966,94 @@ async def discovery_tools() -> Dict[str, Any]:
         if isinstance(s, dict):
             name = s.get("name")
             if isinstance(name, str) and name.strip():
-                items.append(dict(s))
+                row = dict(s)
+                # Enabled lane: these toolsets ARE registered on this host.
+                row.setdefault("enabled", True)
+                items.append(row)
+    # FULL CATALOG (tool-tiers item H build, operator directive dm#228 via
+    # c4559): the env-gated toolsets (email/whatsapp/telegram/agora/shell)
+    # are served as VISIBLE disabled rows — real specs from the real
+    # callables, `enabled: false` + the gate that disables them. Exists-but-
+    # not-enabled is a state, never silence (Laurent's actual complaint).
+    catalog_warnings: list[str] = []
+    try:
+        from ..tool_catalog import disabled_toolset_rows, plugin_error_warnings
+
+        disabled_rows, catalog_warnings = disabled_toolset_rows()
+        items.extend(disabled_rows)
+        # Plugin load failures (camera c4634 boot-race class): core's
+        # registry holds them process-internally — surface them here so a
+        # silently-absent capability package is VISIBLE on the response.
+        catalog_warnings.extend(plugin_error_warnings())
+    except Exception as e:  # noqa: BLE001 - the catalog widening is additive
+        catalog_warnings = [f"#FALLBACK disabled-toolset catalog unavailable: {type(e).__name__}"]
+    # Per-item tier + approval_default (coder-tui c4336: persistent
+    # accepted-tier policies need the server's own vocabulary, not a client
+    # name-heuristic). RUNTIME authors both fields via its composition step
+    # (c4352); absent facade = items unchanged (render-when-present).
+    # Disabled rows annotate too, then CLAMP to ask (catalog adversary F3:
+    # the pre-tiers approval fold carries auto rows for telegram/agora — a
+    # disabled tool must never serve a pre-approval).
+    try:
+        from ..tool_catalog import clamp_disabled_approval, join_registry_facts
+        from ..tool_inventory import _annotate_tier_approval
+
+        # Order is load-bearing (observer c4647): join core's declared FACTS
+        # onto the fact-less prompt-lane specs FIRST, so runtime's fold
+        # derives the honest trio instead of factless->destroy/unvetted on
+        # every row; then annotate; then clamp disabled rows.
+        items = clamp_disabled_approval(_annotate_tier_approval(join_registry_facts(items)))
+    except Exception:  # noqa: BLE001 - annotation is additive
+        pass
     tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower() or "approval"
-    return {"items": items, "tool_mode": tool_mode}
+    out: Dict[str, Any] = {
+        "items": items,
+        "tool_mode": tool_mode,
+        # Pointers to the other discovery surfaces (the audit's map): entity
+        # life-tools are discoverable on the ENTITY inventory (grantable:false
+        # by plane — never on the agent consent surface); MCP servers are
+        # declared-only on their registry until a probe lane exists.
+        "see_also": {
+            "entity_inventory": _api_gateway_path("/entities/inventory/tools"),
+            "mcp_servers": _api_gateway_path("/mcp/servers"),
+        },
+    }
+    if catalog_warnings:
+        out["catalog_warnings"] = catalog_warnings
+    return out
+
+
+@router.get("/tool-grants")
+async def gateway_tool_grants(request: Request) -> Dict[str, Any]:
+    """The grant posture (tool-tiers grant-mode API): tier vocabulary +
+    version + the DEFAULT grant with source + reserved app overrides. Any
+    authenticated read — the consent surface renders served truth."""
+    principal = _principal_from_request(request)
+    del principal
+    from ..tool_grants import read_tool_grants
+
+    svc = get_gateway_service()
+    root = getattr(svc.config, "root_data_dir", None) or svc.stores.base_dir
+    return read_tool_grants(Path(root))
+
+
+@router.put("/tool-grants/default")
+async def gateway_put_default_grant(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Set the gateway DEFAULT tool grant (admin; a RECORDED ACT — the
+    grants ledger carries who/old/new/when/surface). Grant shape:
+    {mode: preset, tier_id: observe|act|outreach} or
+    {mode: custom, tools: [...]}. The destroy tier refuses as a standing
+    default (destructive is never a default — room-converged)."""
+    principal = _require_admin_principal(request)
+    from ..tool_grants import ToolGrantError, write_default_grant
+
+    svc = get_gateway_service()
+    root = getattr(svc.config, "root_data_dir", None) or svc.stores.base_dir
+    actor = getattr(principal, "user_id", None) or "operator"
+    try:
+        return write_default_grant(Path(root), payload, actor=str(actor), surface="api")
+    except ToolGrantError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/skills")
@@ -11838,7 +12241,7 @@ def _voice_profile_descriptors() -> list[Dict[str, Any]]:
             item["description"] = description.strip()
         profiles.append(item)
 
-    engine = _env_first("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE")
+    engine = _resolved_voice_engine("tts")
     engine_id = str(engine or "").strip().lower()
     if engine_id and engine_id not in {"auto", "default"}:
         for item in _builtin_voice_profile_records(engine_id):
@@ -12087,7 +12490,16 @@ def _reachable_default_local_provider_rows(
     existing = {str(value or "").strip().lower() for value in existing_ids if str(value or "").strip()}
     rows: list[Dict[str, Any]] = []
     for spec in builtin_provider_connection_specs():
-        if spec.provider_id not in {"lmstudio", "ollama"} or spec.provider_id in existing:
+        # Local-server backends (lmstudio/ollama) probe their default
+        # port; IN-PROCESS backends (mlx, huggingface — spec.in_process)
+        # have no server and no base_url: "reachable" means the
+        # discovery facade lists local artifacts (operator report
+        # 2026-07-26: installed backends with local models were
+        # invisible in both consoles because this lane only knew the
+        # two server-shaped locals).
+        if not (spec.provider_id in {"lmstudio", "ollama"} or spec.in_process):
+            continue
+        if spec.provider_id in existing:
             continue
         direct_kwargs = configured_provider_request_kwargs(
             spec.provider_id,
@@ -12095,15 +12507,21 @@ def _reachable_default_local_provider_rows(
             root_base_dir=root_base_dir,
         )
         base_url = str(direct_kwargs.get("base_url") or spec.default_base_url or "").strip().rstrip("/")
-        if not base_url:
+        if not base_url and not spec.in_process:
             continue
         try:
-            payload = discovery.list_provider_models(
-                spec.provider_id,
-                base_url=base_url,
-                provider_api_key=direct_kwargs.get("api_key"),
-                timeout_s=_local_provider_autoprobe_timeout_s(),
-            )
+            if spec.in_process:
+                payload = discovery.list_provider_models(
+                    spec.provider_id,
+                    timeout_s=_local_provider_autoprobe_timeout_s(),
+                )
+            else:
+                payload = discovery.list_provider_models(
+                    spec.provider_id,
+                    base_url=base_url,
+                    provider_api_key=direct_kwargs.get("api_key"),
+                    timeout_s=_local_provider_autoprobe_timeout_s(),
+                )
         except Exception:
             continue
         raw_models = payload.get("models") if isinstance(payload, dict) else None
@@ -12984,8 +13402,8 @@ def _static_voice_providers_only_response() -> Dict[str, Any]:
         if text and text not in target:
             target.append(text)
 
-    add(tts_providers, _env_first("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE"))
-    add(stt_providers, _env_first("ABSTRACTGATEWAY_VOICE_STT_ENGINE", "ABSTRACTVOICE_STT_ENGINE"))
+    add(tts_providers, _resolved_voice_engine("tts"))
+    add(stt_providers, _resolved_voice_engine("stt"))
     if _env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY"):
         add(tts_providers, "openai")
         add(stt_providers, "openai")
@@ -13057,7 +13475,7 @@ def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, 
         "ABSTRACTVOICE_REMOTE_TTS_MODEL",
     ):
         values.extend(_split_env_csv(os.getenv(key)))
-    engine = str(_env_first("ABSTRACTGATEWAY_VOICE_TTS_ENGINE", "ABSTRACTVOICE_TTS_ENGINE") or "").strip()
+    engine = str(_resolved_voice_engine("tts") or "").strip()
     provider_key = str(provider or engine or "").strip().lower()
     models_by_provider: Dict[str, list[str]] = {}
     if not provider_key or provider_key == "openai":
@@ -13114,7 +13532,7 @@ def _static_transcription_models_response() -> Dict[str, Any]:
         "ABSTRACTVOICE_REMOTE_STT_MODEL",
     ):
         values.extend(_split_env_csv(os.getenv(key)))
-    engine = str(_env_first("ABSTRACTGATEWAY_VOICE_STT_ENGINE", "ABSTRACTVOICE_STT_ENGINE") or "openai").strip().lower()
+    engine = str(_resolved_voice_engine("stt") or "openai").strip().lower()
     if engine in {"openai", "openai-compatible", "remote"}:
         values.extend(["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"])
     elif engine in {"faster_whisper", "faster-whisper", "whisper", "local"}:
@@ -13678,10 +14096,12 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
     run_facade, run_err = _gateway_abstractcore_run_facade()
     route_available = run_facade is not None and not run_err
     stream_route_available = bool(route_available and callable(getattr(run_facade, "stream_voice", None)))
-    configured = bool(plugin_available) or bool(
+    # Config-first (env-kill): the gateway-configured engine (capability
+    # route) counts as configured before any env; the remaining env keys are
+    # the labeled #FALLBACK sources (deployment base-urls + the foreign
+    # abstractvoice engine var).
+    configured = bool(plugin_available) or bool(_resolved_voice_engine(kind)) or bool(
         _env_first(
-            "ABSTRACTGATEWAY_VOICE_TTS_ENGINE" if kind == "tts" else "ABSTRACTGATEWAY_VOICE_STT_ENGINE",
-            "ABSTRACTVOICE_TTS_ENGINE" if kind == "tts" else "ABSTRACTVOICE_STT_ENGINE",
             "ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL",
             "ABSTRACTVOICE_REMOTE_BASE_URL",
             "ABSTRACTCORE_SERVER_BASE_URL",
@@ -14313,7 +14733,11 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
                 "thinking_control": {
                     "field": "thinking",
                     "runtime_field": "_runtime.thinking",
-                    "values": ["off", "low", "medium", "high", "xhigh"],
+                    # The contract vocabulary (reasoning plan, core C-VOCAB):
+                    # one disable spelling ("none") and the full effort
+                    # ladder — an advertised list a client cannot code
+                    # against is worse than none (adversary cycle-1 D6).
+                    "values": ["none", "minimal", "low", "medium", "high", "xhigh"],
                 },
             },
             "schedule": {"available": True, "endpoint": _api_gateway_path("/runs/schedule")},
@@ -15469,6 +15893,50 @@ async def discovery_providers(
         if name and name.lower() not in known_provider_names:
             items.append(item)
             known_provider_names.add(name.lower())
+
+    if include_models:
+        # Bulk-route contract fix (code-tui c4235): endpoint-profile items
+        # with no declared allowed_models used to serve models:[] here while
+        # the per-provider route probed their upstream — every thin client
+        # grew the same fallback loop. Probe them inline with the SAME
+        # facade call the per-provider route uses: concurrent (wall time ≈
+        # one probe timeout, not N), best-effort (a dead endpoint yields []
+        # + models_error, never fails the route). include_models=true is
+        # documented "may be slow" and already live-probes local providers.
+        try:
+            profiles_by_name = {
+                p.virtual_provider_id: p
+                for p in effective_endpoint_profiles(base_dir=current_base, root_base_dir=root_base)
+                if p.enabled
+            }
+        except Exception:
+            profiles_by_name = {}
+
+        async def _probe_profile_models(item: Dict[str, Any]) -> None:
+            prof = profiles_by_name.get(str(item.get("name") or "").strip())
+            if prof is None or item.get("models") or not getattr(prof, "base_url", None):
+                return
+            try:
+                payload2 = await asyncio.to_thread(
+                    discovery.list_provider_models,
+                    prof.provider_family,
+                    base_url=prof.base_url or None,
+                    provider_api_key=prof.api_key or _request_provider_api_key(request),
+                    timeout_s=_provider_models_timeout_s(),
+                )
+                models2 = payload2.get("models") if isinstance(payload2, dict) else None
+                if isinstance(models2, list):
+                    # Sorted for parity with the per-provider route's shape.
+                    item["models"] = sorted(
+                        _dedupe_strings([str(m).strip() for m in models2 if isinstance(m, str) and str(m).strip()])
+                    )
+            except Exception as e:
+                item.setdefault("models_error", str(e))
+
+        if profiles_by_name:
+            await asyncio.gather(
+                *[_probe_profile_models(it) for it in items if isinstance(it.get("provider_endpoint_profile"), dict)]
+            )
 
     items.sort(key=lambda x: str(x.get("name") or ""))
 
@@ -21452,6 +21920,13 @@ class _GatewaySandboxGenerateRequest(BaseModel):
     client_context: Optional[Dict[str, Any]] = Field(default=None)
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     max_tokens: Optional[int] = Field(default=None, ge=1)
+    # Reasoning effort for reasoning models (reasoning-first-citizen plan,
+    # G4-S). Passed through verbatim on the "thinking" wire key; the door
+    # never gates the value — core refuses unknown values loudly. Both
+    # spellings accepted (cycle-2 N6): `reasoning` is the UI label the
+    # console posts, `thinking` is the wire name every other door speaks.
+    reasoning: Optional[str] = Field(default=None, max_length=40)
+    thinking: Optional[str] = Field(default=None, max_length=40)
 
 
 class _GatewaySessionPromptCacheTarget(_GatewayPromptCacheTarget):
@@ -22281,6 +22756,13 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
         params["temperature"] = float(req.temperature)
     if req.max_tokens is not None:
         params["max_tokens"] = int(req.max_tokens)
+    # Reasoning effort rides the "thinking" wire key (the contract's one
+    # name). Absent or blank means the key is absent — older behavior,
+    # byte-identical. The value passes verbatim; capability checks belong
+    # to the selector and to core, never this door.
+    reasoning_effort = str(req.reasoning or req.thinking or "").strip()
+    if reasoning_effort:
+        params["thinking"] = reasoning_effort
     trace_metadata: Dict[str, Any] = {
         "user_id": str(principal.user_id or ""),
         "tenant_id": str(principal.tenant_id or "default"),
@@ -22331,6 +22813,15 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     text = str(result.get("content") or result.get("text") or result.get("response") or "").strip() if isinstance(result, dict) else str(result or "").strip()
+    # Show the model's reasoning when the provider returned it, so a test
+    # with a reasoning effort has a VISIBLE result (a test you cannot see
+    # is not a test). The runtime client already extracts reasoning from
+    # every provider shape into the result dict.
+    reasoning_text = None
+    if isinstance(result, dict):
+        raw_reasoning = result.get("reasoning")
+        if isinstance(raw_reasoning, str) and raw_reasoning.strip():
+            reasoning_text = raw_reasoning
     return {
         "ok": True,
         "capability": capability,
@@ -22338,6 +22829,8 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
         "routed_provider": routed_provider,
         "model": model,
         "response": text,
+        "reasoning": reasoning_text,
+        "requested_reasoning": reasoning_effort or None,
         "usage": result.get("usage") if isinstance(result, dict) else None,
         "provider_endpoint_profile": profile_public,
     }

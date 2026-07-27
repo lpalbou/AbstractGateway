@@ -241,3 +241,62 @@ def test_capability_matrix_route_is_entity_independent() -> None:
         assert [p["id"] for p in body["phases"]] == ["visit", "work", "personal", "sleep"]
         assert body["containment"] == CONTAINMENT_ENTITY_WALLED
         assert any(s["id"] == "tools" for s in body["sections"])
+
+
+# ------------------------------------------------- tier + approval passthrough
+
+
+def test_inventory_rows_carry_runtime_authored_tier_and_approval() -> None:
+    """coder-tui c4336 / runtime c4352: every served row carries `tier` +
+    `approval_default`, RUNTIME-authored via annotate_tool_rows — the gateway
+    never invents either from a tool name. Semantics pinned per runtime's
+    statement: walled rows tier == capability_class verbatim; registry rows
+    tier2_world by the ruled definition (tier = boundary crossed); approval
+    auto|ask from the ONE default-approval fold, unknown names fail toward ask.
+    """
+    if not _facade_present():
+        import pytest
+
+        pytest.skip("runtime tool_inventory_facade absent")
+    try:
+        from abstractruntime.integrations.abstractcore.tool_inventory_facade import annotate_tool_rows  # noqa: F401
+    except Exception:
+        import pytest
+
+        pytest.skip("runtime annotate_tool_rows not shipped yet")
+
+    inv = compose_tool_inventory()
+    for row in inv["tools"]:
+        assert row.get("tier") in {"tier0_core", "tier1_self", "tier2_world"}, row["name"]
+        assert row.get("approval_default") in {"auto", "ask"}, row["name"]
+    by_id = {(r["executes_via"], r["name"]): r for r in inv["tools"]}
+    # Registry rows: tier2_world by the ruled definition; mutating tools ask.
+    ec = by_id.get((CONTAINMENT_CORE_REGISTRY, "execute_command"))
+    if ec is not None:
+        assert ec["tier"] == "tier2_world"
+        assert ec["approval_default"] == "ask"
+    # Walled rows: capability_class IS the tier, stamped verbatim.
+    for row in inv["tools"]:
+        if row["executes_via"] == CONTAINMENT_ENTITY_WALLED and row.get("capability_class"):
+            assert row["tier"] == row["capability_class"], row["name"]
+
+
+def test_discovery_tools_route_serves_tier_fields() -> None:
+    """The thin-client discovery surface (what the TUI actually reads) carries
+    the same runtime-authored fields (render-when-present contract)."""
+    try:
+        from abstractruntime.integrations.abstractcore.tool_inventory_facade import annotate_tool_rows  # noqa: F401
+    except Exception:
+        import pytest
+
+        pytest.skip("runtime annotate_tool_rows not shipped yet")
+    with _client() as client:
+        r = client.get("/api/gateway/discovery/tools")
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        assert items, "discovery inventory should not be empty"
+        tiered = [t for t in items if t.get("tier")]
+        assert tiered, "at least the known registry tools must carry tier"
+        for t in tiered:
+            assert t["tier"] in {"tier0_core", "tier1_self", "tier2_world"}
+            assert t.get("approval_default") in {"auto", "ask"}

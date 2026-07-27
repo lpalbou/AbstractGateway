@@ -254,6 +254,91 @@ def test_fallback_tail_for_plain_stores() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Fable5 adversary folds (P0-1 fat line, P0-2 silent progress, P1-1 loud errors)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.basic
+def test_p0_1_line_larger_than_window_grows_and_delivers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A single line larger than the read window used to stall the tail
+    FOREVER (offset pinned, silent truncation, futile capped re-read per
+    poll). The window now grows geometrically until the newline fits, then
+    resets."""
+    store = _jsonl_store(tmp_path)
+    store.append(_mk_record("run-fat", 0))
+    fat = _mk_record("run-fat", 1)
+    fat.result = {"i": 1, "blob": "x" * 4096}
+    store.append(fat)
+    store.append(_mk_record("run-fat", 2))
+
+    tail = resolve_ledger_tail(store, "run-fat", start_index=0)
+    tail._window = 256  # simulate a >window line at test scale
+    monkeypatch.setattr(type(tail), "_READ_MAX_BYTES", 256, raising=False)
+
+    collected: List[Dict[str, Any]] = []
+    for _ in range(20):  # bounded drain loop (the route's re-drain shape)
+        got = tail.read_new()
+        collected.extend(r for _, r in got)
+        if tail.caught_up:
+            break
+    assert collected == store.list("run-fat"), "fat line must deliver, never stall or truncate"
+    assert tail.caught_up is True
+
+
+@pytest.mark.basic
+def test_p0_2_skip_swallowed_read_reports_progress_not_caught_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A capped catch-up window fully swallowed by the resume skip returns
+    zero records while making PROGRESS — the terminal close must not treat
+    it as drained (it used to emit `done` below the client's own cursor)."""
+    store = _jsonl_store(tmp_path)
+    for i in range(40):
+        store.append(_mk_record("run-deep", i))
+
+    tail = resolve_ledger_tail(store, "run-deep", start_index=20)
+    tail._window = 512  # a few records per read; skip swallows early windows
+
+    emitted: List[Dict[str, Any]] = []
+    saw_silent_progress = False
+    for _ in range(200):
+        got = tail.read_new()
+        if not got and tail.progressed:
+            saw_silent_progress = True
+        emitted.extend(r for _, r in got)
+        if tail.caught_up:
+            break
+    assert saw_silent_progress, "test setup must exercise the skip-swallowed window"
+    assert emitted == store.list("run-deep")[20:], "deep resume delivers exactly the suffix"
+
+
+@pytest.mark.basic
+def test_p1_1_read_errors_propagate_loudly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A read error must kill the stream loudly (client reconnects), never
+    masquerade as 'no news' — on a terminal run that masked a truncated
+    replay under a clean done frame."""
+    store = _jsonl_store(tmp_path)
+    store.append(_mk_record("run-err", 0))
+    tail = resolve_ledger_tail(store, "run-err", start_index=0)
+    assert len(tail.read_new()) == 1
+
+    def _boom(self, *a, **kw):
+        raise PermissionError("injected read failure")
+
+    monkeypatch.setattr(Path, "stat", _boom)
+    with pytest.raises(PermissionError):
+        tail.read_new()
+
+
+@pytest.mark.basic
+def test_missing_ledger_file_is_caught_up_empty(tmp_path: Path) -> None:
+    """No ledger file = legitimately empty (no records appended yet), not an
+    error: caught_up so a terminal run with zero records still closes."""
+    store = _jsonl_store(tmp_path)
+    tail = resolve_ledger_tail(store, "run-none", start_index=0)
+    assert tail.read_new() == []
+    assert tail.caught_up is True
+
+
+# ---------------------------------------------------------------------------
 # I2 + I5 through the real route (SSE end-to-end)
 # ---------------------------------------------------------------------------
 
@@ -282,10 +367,14 @@ def _sse_events(body: str) -> List[Dict[str, Any]]:
 
 
 @pytest.mark.basic
-def test_i2_i5_stream_equals_replay_and_closes_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """End-to-end through the route: a terminal run streams exactly its
-    replay (I2) from cursor 0 AND from a mid-stream reconnect cursor (I3),
-    then closes with a `done` frame (I5)."""
+@pytest.mark.parametrize("backend", ["file", "sqlite"])
+def test_i2_i5_stream_equals_replay_and_closes_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
+    """End-to-end through the route ON BOTH BACKENDS (adversary P1-2: the
+    SQLite SeqLedgerTail was never driven through the route): a terminal run
+    streams exactly its replay (I2) from cursor 0 AND from a mid-stream
+    reconnect cursor (I3), then closes with a `done` frame (I5)."""
     from fastapi.testclient import TestClient
 
     from test_gateway_runs_list_endpoint import _write_min_bundle
@@ -300,6 +389,7 @@ def test_i2_i5_stream_equals_replay_and_closes_terminal(tmp_path: Path, monkeypa
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", backend)
 
     from abstractgateway.app import app
 

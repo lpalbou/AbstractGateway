@@ -112,6 +112,11 @@ def test_voice_catalog_static_fallback_surfaces_supertonic_builtin_profiles_with
     import abstractgateway.routes.gateway as gateway_routes
 
     monkeypatch.setattr(gateway_routes, "_module_available", lambda _name: False)
+    # Isolate from the HOST's real abstractcore config (ambient-escape class):
+    # config-first resolution (env-kill wave) reads output.voice/input.voice
+    # from the real capability defaults — a machine with a configured engine
+    # would leak it into the static provider list under test.
+    monkeypatch.setattr(gateway_routes, "_configured_voice_engine", lambda _kind: None)
     monkeypatch.setattr(
         gateway_routes,
         "_builtin_voice_profile_records",
@@ -266,6 +271,11 @@ def test_speech_provider_only_catalog_uses_fast_static_provider_path(
     monkeypatch.delenv("ABSTRACTVOICE_OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(gateway_routes, "_module_available", lambda name: name == "omnivoice")
     monkeypatch.setattr(gateway_routes, "_has_builtin_voice_profiles", lambda _engine: False)
+    # Host-config isolation (ambient-escape class): config-first engine
+    # resolution reads the REAL capability defaults — a machine whose
+    # output.voice names an engine (e.g. supertonic) would leak it into
+    # the exact provider-list assertion below.
+    monkeypatch.setattr(gateway_routes, "_configured_voice_engine", lambda _kind: None)
     _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _client(tmp_path, monkeypatch)
@@ -334,6 +344,11 @@ def test_transcription_provider_only_catalog_uses_fast_static_stt_provider_path(
     monkeypatch.delenv("ABSTRACTVOICE_OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(gateway_routes, "_module_available", lambda name: name == "faster_whisper")
     monkeypatch.setattr(gateway_routes, "_has_builtin_voice_profiles", lambda _engine: False)
+    # Host-config isolation (ambient-escape class): a machine with a
+    # configured input.voice/output.voice route would leak its engine into
+    # the exact provider-list assertions below (this test passes on an
+    # unconfigured-STT host by accident otherwise).
+    monkeypatch.setattr(gateway_routes, "_configured_voice_engine", lambda _kind: None)
     _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
 
     client, headers = _client(tmp_path, monkeypatch)

@@ -99,9 +99,28 @@ def read_entity_substrate(home_dir: Any) -> Dict[str, str]:
     try:
         from abstractruntime.identity.substrate import read_home_substrate
 
-        return read_home_substrate(Path(home_dir))
+        out = read_home_substrate(Path(home_dir))
+        # Version-skew belt (adversary cycle-2 N1): a runtime reader from
+        # before the thinking field drops it on every read — and the PUT
+        # door's keep-semantics would then rewrite the file WITHOUT it
+        # (permanent loss). The gateway wrote the key; reading its own key
+        # when the delegate does not return it is coherent, not a fork.
+        if isinstance(out, dict) and out.get("provider") and out.get("model") and "thinking" not in out:
+            local = _read_substrate_locally(home_dir)
+            t = str(local.get("thinking") or "").strip()
+            if t:
+                out = dict(out)
+                out["thinking"] = t
+        return out
     except ImportError:
         pass  # older runtime without identity.substrate — parse locally
+
+    return _read_substrate_locally(home_dir)
+
+
+def _read_substrate_locally(home_dir: Any) -> Dict[str, str]:
+    """The gateway's own substrate.yaml parse (fallback + the N1 belt)."""
+    from pathlib import Path
 
     path = Path(home_dir) / SUBSTRATE_FILENAME
     if not path.exists():
@@ -114,15 +133,32 @@ def read_entity_substrate(home_dir: Any) -> Dict[str, str]:
             return {}
         p = str(data.get("provider") or "").strip()
         m = str(data.get("model") or "").strip()
-        return {"provider": p, "model": m} if (p and m) else {}
+        if not (p and m):
+            return {}
+        out = {"provider": p, "model": m}
+        # Optional reasoning effort, spelled `thinking` at rest (the
+        # reasoning plan's one-spelling decision). Same rules as the
+        # runtime reader: rides only with a full provider+model pair,
+        # blank means unset. Mirrored here so the older-runtime fallback
+        # never drops a stored choice.
+        t = str(data.get("thinking") or "").strip()
+        if t:
+            out["thinking"] = t
+        return out
     except Exception:
         return {}
 
 
-def write_entity_substrate(home_dir: Any, *, provider: str, model: str) -> None:
+def write_entity_substrate(
+    home_dir: Any, *, provider: str, model: str, thinking: Optional[str] = None
+) -> None:
     """Persist the operator's one-per-entity substrate choice (his home,
     operator-owned like tool_policy.yaml; the entity's tools cannot touch
-    the home root)."""
+    the home root).
+
+    `thinking` is the optional reasoning effort for the mind. None means
+    "no choice" and writes nothing — the file stays exactly as small as
+    before this field existed."""
     from pathlib import Path
 
     p, m = str(provider or "").strip(), str(model or "").strip()
@@ -130,29 +166,44 @@ def write_entity_substrate(home_dir: Any, *, provider: str, model: str) -> None:
         raise ValueError("substrate needs BOTH provider and model (explicit operator choice)")
     import yaml
 
-    (Path(home_dir) / SUBSTRATE_FILENAME).write_text(
-        yaml.safe_dump({"provider": p, "model": m}, sort_keys=True), encoding="utf-8"
-    )
+    data: Dict[str, str] = {"provider": p, "model": m}
+    t = str(thinking or "").strip()
+    if t:
+        data["thinking"] = t
+    # Atomic write (adversary cycle-2 N7): a crash mid-write must never
+    # leave malformed YAML that reads as "substrate unset".
+    target = Path(home_dir) / SUBSTRATE_FILENAME
+    tmp = target.with_suffix(".yaml.tmp")
+    tmp.write_text(yaml.safe_dump(data, sort_keys=True), encoding="utf-8")
+    tmp.replace(target)
 
 
 def resolve_substrate(
-    provider: Optional[str], model: Optional[str], *, home_dir: Any = None
-) -> Tuple[str, str]:
+    provider: Optional[str], model: Optional[str], *, home_dir: Any = None,
+    thinking: Optional[str] = None,
+) -> Tuple[str, str, Optional[str]]:
     """Request override > home substrate.yaml > operator env > refuse.
-    Never a code default (NO FALLBACK)."""
+    Never a code default (NO FALLBACK).
+
+    Returns (provider, model, thinking). The reasoning effort follows the
+    same chain but NEVER refuses: a mind without a declared effort is
+    valid, so absent stays absent (None). There is no environment variable
+    for it — the home file is the one persisted choice."""
     import os as _os
 
     p = (provider or "").strip()
     m = (model or "").strip()
-    if not (p and m) and home_dir is not None:
+    t = (thinking or "").strip()
+    if (not (p and m) or not t) and home_dir is not None:
         stored = read_entity_substrate(home_dir)
         p = p or stored.get("provider", "")
         m = m or stored.get("model", "")
+        t = t or stored.get("thinking", "")
     p = p or (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER") or "").strip()
     m = m or (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL") or "").strip()
     if not p or not m:
         raise ChatOpenRefused(400, SUBSTRATE_REFUSAL)
-    return p, m
+    return p, m, (t or None)
 
 
 class ChatOpenRefused(Exception):
@@ -175,15 +226,23 @@ class _RuntimeLLMAdapter:
     RunState-safe dicts, so this adapter lifts `content` back into the
     attribute shape the chat driver expects."""
 
-    def __init__(self, provider: str, *, model: str, **llm_kwargs: Any) -> None:
+    def __init__(self, provider: str, *, model: str, thinking: Optional[str] = None, **llm_kwargs: Any) -> None:
         from abstractruntime.integrations.abstractcore import LocalAbstractCoreLLMClient
 
         self._client = LocalAbstractCoreLLMClient(provider=provider, model=model, llm_kwargs=dict(llm_kwargs))
+        # The mind's reasoning effort (substrate triple). Injected into each
+        # call's params on the one wire name; None sends nothing.
+        self._thinking = str(thinking or "").strip() or None
 
     def generate(self, **kwargs: Any) -> Any:
         from types import SimpleNamespace
 
         kwargs.setdefault("prompt", "")
+        if self._thinking:
+            params = kwargs.get("params")
+            params = dict(params) if isinstance(params, dict) else {}
+            params.setdefault("thinking", self._thinking)
+            kwargs["params"] = params
         out = self._client.generate(**kwargs)
         if isinstance(out, dict):
             return SimpleNamespace(**{"content": out.get("content"), **{k: v for k, v in out.items() if k != "content"}})
@@ -192,7 +251,8 @@ class _RuntimeLLMAdapter:
 
 def _default_llm_factory(provider: str, **kwargs: Any) -> Any:
     model = str(kwargs.pop("model", "") or "")
-    return _RuntimeLLMAdapter(provider, model=model, **kwargs)
+    thinking = kwargs.pop("thinking", None)
+    return _RuntimeLLMAdapter(provider, model=model, thinking=thinking, **kwargs)
 
 
 def _woken_reason() -> str:
@@ -243,8 +303,16 @@ class EntityChatHost:
         llm_factory: Optional[Callable[..., Any]] = None,
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
         yield_wait_s: float = DEFAULT_YIELD_WAIT_S,
+        summon_seat_probe: Any = None,
     ) -> None:
         self._registry = registry
+        # `summon_seat_probe(slug) -> seat|None` (conversation-seat plan item
+        # 5, service-wired from entity_seat.build_summon_seat_probe): a
+        # summon turn MID-FLIGHT holds the one life, so a chat open under it
+        # would interleave sessions. Live-run-only by the probe's contract
+        # (a TTL-idle seat never blocks the drawer); absent probe = the old
+        # blindness, honestly (standalone/test hosts).
+        self._summon_seat_probe = summon_seat_probe
         # Late-bound: the module attribute is looked up at OPEN time, so a
         # test monkeypatching `_default_llm_factory` reaches hosts that were
         # constructed before the patch (a def-time default would freeze the
@@ -360,7 +428,8 @@ class EntityChatHost:
         # ONE substrate per entity (maintainer ruling 2026-07-09 06:32:
         # visits and own time share the SAME mind). Request override > the
         # home's persisted substrate.yaml > operator env > loud refusal.
-        provider, model = resolve_substrate(provider, model, home_dir=home_dir)
+        # The third element is the mind's reasoning effort (optional).
+        provider, model, thinking = resolve_substrate(provider, model, home_dir=home_dir)
 
         with self._lock:
             self._reap_idle_locked()
@@ -370,6 +439,24 @@ class EntityChatHost:
                     409,
                     f"a chat session is already open on {manifest.entity_id} (chat_id {live!r}) — "
                     "one life, one summon; close it or let it idle out",
+                )
+        # THE SUMMON LANE too (conversation-seat plan, item 5: one seat,
+        # three doors): a summon turn mid-flight holds the one life. The
+        # probe answers only LIVE runs — a TTL-idle summon seat never blocks
+        # the drawer's own chat open.
+        if self._summon_seat_probe is not None:
+            seat = None
+            try:
+                seat = self._summon_seat_probe(slug)
+            except Exception:  # noqa: BLE001 - a broken probe must not block the door
+                seat = None
+            if seat is not None:
+                raise ChatOpenRefused(
+                    409,
+                    f"a summoned conversation is mid-turn on {manifest.entity_id} "
+                    f"(run {seat.get('run_id')!r}, session {seat.get('session_id')!r}, "
+                    f"holder {seat.get('holder') or 'unknown'}) — one life, one summon; "
+                    "wait for the turn to end",
                 )
 
         state = read_entity_state(home_dir)
@@ -478,6 +565,9 @@ class EntityChatHost:
         try:
             home = open_home(home_dir, embedder=self._registry._resolve_embedder())
             llm_kwargs: Dict[str, Any] = {"model": model, "max_output_tokens": int(max_output_tokens)}
+            if thinking:
+                # The mind's reasoning effort rides every turn of this visit.
+                llm_kwargs["thinking"] = thinking
             if str(provider).strip().lower() in ("lmstudio", "openai-compatible", "openai_compatible"):
                 llm_kwargs["base_url"] = base_url
             factory = self._llm_factory or _default_llm_factory
@@ -489,7 +579,14 @@ class EntityChatHost:
                 context_window=context_window,
                 enable_tools=bool(enable_tools),
                 enable_workspace=bool(enable_workspace),
-                model_info={"provider": str(provider), "model": str(model)},
+                model_info=(
+                    # The mind stamp records the full triple when a reasoning
+                    # effort is set, so "which effort was the mind at when
+                    # this record formed" is answerable later.
+                    {"provider": str(provider), "model": str(model), "thinking": str(thinking)}
+                    if thinking
+                    else {"provider": str(provider), "model": str(model)}
+                ),
                 out=quiet.append,  # prelude warnings surface in the response, not a console
             )
             if shelf_size is not None:

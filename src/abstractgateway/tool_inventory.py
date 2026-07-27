@@ -25,7 +25,10 @@ grant has no defined entity-phase semantics in v1.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # The gateway-owned containment values (contract v6, semantics c885 rename).
 CONTAINMENT_ENTITY_WALLED = "entity_walled"
@@ -59,7 +62,7 @@ def _core_rows() -> Optional[List[Dict[str, Any]]]:
         r.setdefault("grant_lane", None)
         r.setdefault("capability_class", None)
         out.append(r)
-    return out
+    return _annotate_tier_approval(out)
 
 
 def _walled_rows() -> List[Dict[str, Any]]:
@@ -70,7 +73,31 @@ def _walled_rows() -> List[Dict[str, Any]]:
         r = dict(row)
         r["executes_via"] = CONTAINMENT_ENTITY_WALLED
         out.append(r)
-    return out
+    return _annotate_tier_approval(out)
+
+
+def _annotate_tier_approval(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Stamp per-row `tier` + `approval_default` via runtime's composition
+    step (coder-tui c4336 / laurent's auto-mode-still-modals bug; runtime
+    shipped annotate_tool_rows at c4352).
+
+    RUNTIME AUTHORS these fields (its tier vocabulary + its default-approval
+    fold); the gateway only CALLS the composition step and passes the result
+    through — the derive-never-copy contract (rule 1) holds exactly as it
+    does for executes_via: no tier/approval is invented from a tool name
+    here. Absent facade (older runtime) = rows unchanged + no tier/approval
+    keys (render-when-present downstream), never a gateway-invented default.
+    """
+    try:
+        from abstractruntime.integrations.abstractcore.tool_inventory_facade import annotate_tool_rows
+    except Exception:  # noqa: BLE001 - older runtime without the annotator
+        return rows
+    try:
+        annotated = annotate_tool_rows(rows)
+        return annotated if isinstance(annotated, list) else rows
+    except Exception:  # noqa: BLE001 - annotation is additive; never break the inventory
+        logger.warning("tool tier/approval annotation failed; serving rows without tier fields", exc_info=True)
+        return rows
 
 
 def _order_key(row: Dict[str, Any]) -> tuple:

@@ -143,9 +143,26 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert "/api/gateway/entities/${encodeURIComponent(name)}/reembed" in console.text
     assert "/api/gateway/entities/${encodeURIComponent(name)}/verify" in console.text
     assert "/api/gateway/entities/${encodeURIComponent(name)}/card" in console.text
-    # Runtime domain: the Runs management surface (list/inspect/cancel/steer)
-    # wired over runtime's existing verbs (operator directive, 3-domain pass).
-    assert 'id="runs-section"' in console.text
+    # Runtime domain (operator dm#32 redesign, 2026-07-25): master table ->
+    # ONE tabbed detail pane [Runs | Sessions | Caches]. The old global
+    # Console-TUI mirror (laurent dm#35): TWO tabs only — Sessions | Data &
+    # cache — behind a teaching line; nothing loads until a runtime is
+    # chosen. The runs machinery (ids preserved: runs-table/runs-refresh/
+    # run-inspect) lives INSIDE the Sessions tab; there is no Runs tab and
+    # no session-fold table. Machine-wide Data & Caches stays a collapsed
+    # disclosure whose walk loads on first expand.
+    assert 'id="runs-section"' not in console.text  # the stacked section is gone
+    assert 'id="runtime-detail-teach"' in console.text
+    assert 'id="runtime-detail-tabs"' in console.text
+    assert 'id="runtime-subtab-runs"' not in console.text  # no Runs tab (dm#35)
+    assert 'id="runtime-subtab-sessions"' in console.text
+    assert 'id="runtime-subtab-caches"' in console.text
+    assert 'id="runtime-runs-default"' in console.text
+    assert 'id="runtime-runs-readonly"' in console.text
+    assert 'id="runtime-sessions-table"' not in console.text  # fold table gone (dm#35)
+    assert 'id="runtime-caches-table"' in console.text
+    assert '<details id="data-homes-section"' in console.text
+    assert 'class="table-scroll"' in console.text  # bounded master (load-bearing)
     assert 'id="runs-table"' in console.text
     assert 'id="runs-refresh"' in console.text
     assert "/api/gateway/runs?" in console.text

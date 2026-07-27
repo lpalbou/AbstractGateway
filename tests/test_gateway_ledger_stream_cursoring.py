@@ -1,9 +1,13 @@
-"""H7 run-ledger SSE cursoring (hooks plan, 2026-07-12).
+"""Run-ledger SSE cursoring pins (H7 2026-07-12, re-based on 0075 2026-07-21).
 
-The previous stream body re-read the ENTIRE ledger every 0.25s per client,
-on the event loop. Now: reads run off-loop (H7b discipline), idle polls
-probe the cheap record COUNT and only materialize the full list when there
-is news past the cursor, and abandoned clients stop the generator.
+History: the original body re-read the ENTIRE ledger every 0.25s per client
+on the event loop; H7 gated news on the cheap count probe; 0075 replaced the
+poll shape with per-client incremental tail readers (ledger_tail.py) + the
+ObservableLedgerStore wakeup. These pins survive because the fallback tail
+(ListSliceTail — plain stores like these test doubles) keeps the count-gate
+discipline, and disconnect/terminal semantics are unchanged.
+_ledger_news_count itself is legacy (stream no longer calls it) but stays
+pinned for external callers.
 """
 
 from __future__ import annotations

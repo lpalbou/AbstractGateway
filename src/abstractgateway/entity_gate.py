@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import threading
@@ -49,6 +50,77 @@ from typing import Any, Dict, List, Optional, Tuple
 from abstractmemory.seam import SELF_FRACTION_FLOOR as SUMMON_IDENTITY_FLOOR
 
 from .entities import DIARY_SCOPE, LIFE_SCOPE, SELF_SCOPE, EntityHome, EntityRegistry
+
+logger = logging.getLogger(__name__)
+
+# The entity brain grew past the original seven seam/diary effects
+# (MEMORY_CONSOLIDATE/MEMORY_PROBE/LIFE_QUERY, then MEMORY_TEND) — the
+# in-process lanes bind them via open_home, and the door must route the SAME
+# set or bundle-lane entity runs fail "No effect handler registered" one
+# effect at a time (live: memory_probe, flow c5237, exposed the moment the
+# reload re-arm fix let runs get past recall). ONE SOURCE for the set:
+# ENTITY_HOME_EFFECT_TYPES from the runtime, so the NEXT effect type cannot
+# re-open this gap (the diary_type-clamp drift class). Version skew (an older
+# runtime without the brain wave) degrades LOUDLY to the legacy seven — never
+# crashes the whole entity block.
+try:
+    from abstractruntime.integrations.abstractmemory import (
+        ENTITY_HOME_EFFECT_TYPES as _ENTITY_HOME_EFFECT_TYPES,
+    )
+    from abstractruntime.integrations.abstractmemory.brain_handlers import (
+        build_entity_brain_effect_handlers as _build_brain_handlers,
+    )
+except Exception as _skew:  # pragma: no cover - version-skew degrade
+    _ENTITY_HOME_EFFECT_TYPES = None
+    _build_brain_handlers = None
+    logging.getLogger(__name__).warning(
+        "#FALLBACK entity brain handlers unavailable (older abstractruntime?): %s — "
+        "the door routes only the legacy seven entity effects; "
+        "MEMORY_CONSOLIDATE/MEMORY_PROBE/LIFE_QUERY/MEMORY_TEND will refuse",
+        _skew,
+    )
+
+# Tool surface (flow's 0.0.10 tools wave, c5300/c5304 — runtime named this
+# bind as the door's missing half): the pair registers per home exactly like
+# the brain quartet. Version skew degrades LOUDLY, never crashes the block.
+try:
+    from abstractruntime.identity.tool_effects import (
+        build_entity_tool_effect_handlers as _build_tool_handlers,
+    )
+except Exception as _tool_skew:  # pragma: no cover - version-skew degrade
+    _build_tool_handlers = None
+    logging.getLogger(__name__).warning(
+        "#FALLBACK entity tool handlers unavailable (older abstractruntime?): %s — "
+        "ENTITY_TOOLS_QUERY/ENTITY_TOOLS_EXECUTE will refuse on the door lane",
+        _tool_skew,
+    )
+
+
+class _ToolEffectHome:
+    """The home surface runtime's tool handlers need, DOOR posture.
+
+    Composes `_ContainedReaderHome` (the c69 containment: private diary
+    GISTS stay word-free in search/list results while entries remain
+    findable) with the two extra fields the tool pair reads: `home_dir`
+    (grant resolution) and the built handler dict (diary_read serves the
+    entry words through the REAL handler — the A-ruling: the home is the
+    privacy boundary, and the visit runs AS the entity). The handlers dict
+    is taken BY REFERENCE before the tool pair lands in it; DIARY_READ is
+    already bound at that point."""
+
+    def __init__(self, home: Any, handlers: Dict[Any, Any]) -> None:
+        from .entities import _ContainedReaderHome
+
+        base = _ContainedReaderHome(home)
+        self.store = base.store
+        self.journal = base.journal
+        self.entity_id = base.entity_id
+        self.diary = base.diary
+        self.ms = base.ms
+        self.artifacts = base.artifacts
+        self.home_dir = home.home_dir
+        self.handlers = handlers
+
 
 __all__ = [
     "CHANNEL_ENTITY_REFLECTION",
@@ -605,12 +677,23 @@ def _gate_scopes(payload: Dict[str, Any], *, entity_id: str, session_id: str) ->
         payload["scopes"] = [[SELF_SCOPE, entity_id], [DIARY_SCOPE, entity_id], [LIFE_SCOPE, entity_id]]
         return None
     session_pair = ("session", _session_owner(session_id)) if session_id else None
+    # CHANNEL AUTHORITY (runtime c5183 endorsement; flow c5173 item-4): under a
+    # VERIFIED summon stamp, a bare entity-ladder scope name (self/diary/life)
+    # is unambiguous — it means THIS entity's own plane. Rewrite it to the
+    # explicit [scope, entity_id] pair here, exactly as the in-process seam
+    # handler's entity_scope_owner does. Payloads never carry the entity id
+    # (the deposit-gate rule); a flow authored entity-agnostically sends bare
+    # names, and the door — which knows the verified entity — fills authorship.
+    _ENTITY_LADDER = (SELF_SCOPE, DIARY_SCOPE, LIFE_SCOPE)
+    normalized: list = []
     for entry in raw if isinstance(raw, (list, tuple)) else ():
         if isinstance(entry, (list, tuple)) and len(entry) == 2:
             pair = (str(entry[0]).strip().lower(), str(entry[1]).strip())
             if pair[1] == entity_id:
+                normalized.append([pair[0], pair[1]])
                 continue
             if session_pair is not None and pair == session_pair:
+                normalized.append([pair[0], pair[1]])
                 continue
             return (
                 f"scope ladder pair {list(pair)!r} is outside this entity's boundary — a summoned "
@@ -618,12 +701,20 @@ def _gate_scopes(payload: Dict[str, Any], *, entity_id: str, session_id: str) ->
             )
         elif isinstance(entry, str):
             scope_name = entry.strip().lower()
+            if scope_name in _ENTITY_LADDER:
+                normalized.append([scope_name, entity_id])  # channel fills the owner
+                continue
             if scope_name == "session":
-                continue  # resolves to this run's own session owner
+                normalized.append([scope_name, _session_owner(session_id)] if session_id else scope_name)
+                continue
             return (
                 f"scope {entry!r} is not allowed for a summoned session — name the entity's scopes "
                 f"explicitly ([scope, {entity_id!r}]) or use the run's own 'session' scope"
             )
+        else:
+            return f"scope entry {entry!r} is not a name or [scope, owner] pair"
+    # Rewrite in place so the handler sees resolved pairs (the seam then owns them).
+    payload["scopes"] = normalized
     return None
 
 
@@ -797,22 +888,86 @@ def _gate_form(
     # STAMP only — payload-claimed values are DROPPED, exactly like actors
     # and participants. Absent on the stamp = absent on the record (a solo
     # visit fakes no correlation).
+    #
+    # PARTICIPANTS ARE PHASE-SCOPED — the THREE-SEAT-SEALED contract (memory
+    # + runtime c5357, superseding runtime's first c5354 conditional; fix
+    # site is here under the one-seat rule). Participants = VERIFIED
+    # CO-PRESENCE. Two authorities, NEITHER spoofable by the other's payload:
+    #   * the STAMP attests the SESSION's door state (visit-stamped or not) —
+    #     `phase` here is `resolved_phase(stamp)`, derived from the verified
+    #     stamp + host-written current_node, never payload-claimed;
+    #   * the RECORD's `attributes.phase` attests the MOMENT's phase (stamped
+    #     at formation by the flow lane, c2447).
+    # The rule composes them:
+    #   (1) VISIT-STAMPED session -> inject on EVERY form regardless of the
+    #       record's payload phase. A record CLAIMING a non-visit phase on a
+    #       visit-stamped run is a STEALTH-VISIT attempt (keep the visitor off
+    #       the record forever — the inverse of false co-presence, same
+    #       append-only permanence); it is loud-overridden: participants
+    #       inject AND the record's phase is corrected to the verified
+    #       session phase so the record is never internally inconsistent.
+    #   (2) NON-visit-stamped session (the resident-master own-time lane this
+    #       fix exists for) -> the record-axis rule: record phase present and
+    #       != visit -> inject NO participants/visit_id (no one was at the
+    #       door); absent or visit -> inject.
+    # Zero behavior change for every current visit lane (they are all
+    # visit-stamped -> branch 1 -> byte-identical to pre-fix).
+    session_is_visit = _phase_is_visit(phase)
     stamped = [str(p) for p in (stamp.get("participants") or [])]
     stamp_visit_id = str(stamp.get("visit_id") or "") or None
     records = payload.get("records")
-    if isinstance(records, list) and (stamped or stamp_visit_id is not None):
+    # The strip loop runs UNCONDITIONALLY (door-cleanup audit P1-3): a stamp
+    # with empty participants and no visit_id used to skip it entirely, so a
+    # record CLAIMING attributes.participants/visit_id engraved unchecked —
+    # false co-presence, forever, in an append-only store. Claims pop first,
+    # in every branch; the door's verified values inject after.
+    if isinstance(records, list):
         for rec in records:
             if not isinstance(rec, dict):
                 continue
             attrs = rec.get("attributes")
             attrs = dict(attrs) if isinstance(attrs, dict) else {}
-            if stamped:
-                attrs["participants"] = stamped
-            attrs.pop("visit_id", None)  # payload claims never engrave
-            if stamp_visit_id is not None:
-                attrs["visit_id"] = stamp_visit_id
+            attrs.pop("visit_id", None)  # payload claims never engrave, in EVERY phase
+            attrs.pop("participants", None)  # same law (the _gate_recall precedent)
+            if session_is_visit:
+                # Branch 1: door-verified co-presence — the record cannot
+                # opt out. Loud-override a contradicting phase claim.
+                if not _phase_is_visit(str(attrs.get("phase") or "")):
+                    attrs["phase"] = phase  # correct the stealth-visit claim to the verified session phase
+                if stamped:
+                    attrs["participants"] = stamped
+                if stamp_visit_id is not None:
+                    attrs["visit_id"] = stamp_visit_id
+            elif _record_is_co_present(attrs):
+                # Branch 2, resident lane: only visit/absent-phase records
+                # carry co-presence; a personal/work-phase record does not.
+                if stamped:
+                    attrs["participants"] = stamped
+                if stamp_visit_id is not None:
+                    attrs["visit_id"] = stamp_visit_id
             rec["attributes"] = attrs
     return None
+
+
+def _phase_is_visit(raw: Any) -> bool:
+    """Canonical-phase equality with PHASE_VISIT; absent/blank reads visit
+    (the phase-less v1 authority, identical to resolved_phase's default)."""
+    if raw is None or not str(raw).strip():
+        return True
+    try:
+        return canonical_phase(str(raw)) == PHASE_VISIT
+    except Exception:
+        return str(raw).strip().lower() == PHASE_VISIT
+
+
+def _record_is_co_present(attrs: Dict[str, Any]) -> bool:
+    """Resident-lane (non-visit-stamped) test: does this record's engraved
+    phase attest door co-presence? True when absent (a lane that never
+    stamped a phase — pre-fix behavior) or visit-canonical; False for any
+    other engraved phase (personal / work / ...), where nobody was at the
+    door. Only consulted on NON-visit-stamped sessions — a visit-stamped
+    session injects regardless (branch 1)."""
+    return _phase_is_visit(attrs.get("phase"))
 
 
 def _gate_adjust(
@@ -976,6 +1131,38 @@ def _gate_diary_write(
     return None
 
 
+def _gate_tend(
+    payload: Dict[str, Any],
+    *,
+    stamp: Dict[str, Any],
+    phase: str = PHASE_VISIT,
+    segment: bool = False,
+) -> Optional[str]:
+    """Inject the door-VERIFIED channel into a MEMORY_TEND payload (runtime
+    c5413, plan v11 gateway §; memory's tend-channel requirement, entity-seat
+    fable5 P0).
+
+    Tend/dispose is a self-reflection act: `apply_tend_elections` refuses
+    unless the channel is entity-reflection (memory dropped the privileged
+    default — a workplace-stamped run tending as reflection was a real hole).
+    The channel is the DOOR's to state, never the payload's — same trust
+    class as actor/participants: inject it from the verified stamp, resolving
+    the close-reflection-segment widening exactly like `_gate_form`. A
+    workplace run executing a door-signed reflection node IS the entity's own
+    reflection for that window (`segment`), and an entity-reflection-channel
+    run is already privileged. A workplace tend OUTSIDE the segment gets the
+    real (workplace) channel and memory refuses it loudly — correct; the door
+    forwards the true channel, memory enforces the policy (never a constant).
+    Phase gating (sleep) lives in the engine/handler, not here."""
+    del phase
+    stamp_channel = str(stamp.get("channel") or "")
+    if stamp_channel == CHANNEL_ENTITY_REFLECTION or segment:
+        payload["channel"] = CHANNEL_ENTITY_REFLECTION
+    else:
+        payload["channel"] = stamp_channel  # memory refuses non-reflection self-scope tend
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Routing: run stamp -> home -> gated delegation
 # ---------------------------------------------------------------------------
@@ -1057,6 +1244,27 @@ def install_entity_routing(
                     now_iso=utc_now_iso,
                 ),
             }
+            if _build_brain_handlers is not None:
+                # The brain quartet (consolidate/probe/life_query/tend) binds
+                # the SAME home engine the seam handlers use — the door lane
+                # and the in-process open_home lane serve one brain.
+                handlers.update(
+                    _build_brain_handlers(
+                        memory_system=home.memory,
+                        entity_id=home.entity_id,
+                        home_dir=home.home_dir,
+                    )
+                )
+            if _build_tool_handlers is not None:
+                # The tool pair (ENTITY_TOOLS_QUERY/EXECUTE — flow 0.0.10):
+                # same authority as open_home (grant re-resolved at
+                # execution, one executor), served through the door's
+                # containment posture (_ToolEffectHome above). Runtime named
+                # this bind as the door's missing half (c5300); without it
+                # every flow-lane tool dispatch answers "no home handler".
+                handlers.update(
+                    _build_tool_handlers(home=_ToolEffectHome(home, handlers))
+                )
             handlers_by_slug[slug] = (home, handlers)
             return home, handlers
 
@@ -1068,6 +1276,10 @@ def install_entity_routing(
         EffectType.MEMORY_ACCESS: _gate_access,  # N4: refuse the sleep-window commit
         EffectType.DIARY_WRITE: _gate_diary_write,  # N4 defense-in-depth: refuse at sleep
         # DIARY_READ binds the author at construction — no payload rewriting.
+        # MEMORY_TEND: inject the door-verified channel (runtime c5413) — the
+        # flow-brain dispose lane refuses without it (memory removed the
+        # privileged default).
+        EffectType.MEMORY_TEND: _gate_tend,
     }
 
     def _make_router(etype: Any):
@@ -1113,15 +1325,22 @@ def install_entity_routing(
 
         return _route
 
-    routed_types = [
-        EffectType.MEMORY_RECALL,
-        EffectType.MEMORY_ACCESS,
-        EffectType.MEMORY_FORM,
-        EffectType.MEMORY_ADJUST,
-        EffectType.MEMORY_APPRAISE,
-        EffectType.DIARY_WRITE,
-        EffectType.DIARY_READ,
-    ]
+    if _ENTITY_HOME_EFFECT_TYPES is not None:
+        # ONE SOURCE (runtime's ENTITY_HOME_EFFECT_TYPES): the door routes
+        # exactly the set the in-process lanes bind, so a new brain effect
+        # type can never be reachable in one lane and "no handler" in the
+        # other again. Sorted for deterministic install order.
+        routed_types = sorted(_ENTITY_HOME_EFFECT_TYPES, key=lambda e: str(e.value))
+    else:  # pragma: no cover - version-skew degrade (labeled above)
+        routed_types = [
+            EffectType.MEMORY_RECALL,
+            EffectType.MEMORY_ACCESS,
+            EffectType.MEMORY_FORM,
+            EffectType.MEMORY_ADJUST,
+            EffectType.MEMORY_APPRAISE,
+            EffectType.DIARY_WRITE,
+            EffectType.DIARY_READ,
+        ]
     for etype in routed_types:
         existing = handlers_attr.get(etype)
         if existing is not None:
@@ -1132,6 +1351,108 @@ def install_entity_routing(
                 "entity routing refuses to shadow it"
             )
         handlers_attr[etype] = _make_router(etype)
+
+    # G1 CAPTURE ON THE SHARED LLM_CALL HANDLER (flow c5467 P1, the Mira
+    # diary leak's flow-brain half). The shared/base runtime's LLM_CALL
+    # handler serves BOTH stamped entity runs and plain workflow runs, and
+    # was never act-only-wrapped — so a flow-brain drawer run's raw reply
+    # (```diary fences + PRIVATE words included) rested in base-store
+    # ledgers (LLM_CALL result + result_key vars) before the flow's ELECTIONS
+    # node ever parsed them. The durable-VISIT lane fixed this at the
+    # open_entity_runtime layer; the SHARED lane needs the CONDITIONAL wrap
+    # runtime exported for exactly this (act_only.wrap_llm_handler_with_
+    # conditional_capture, flow c5342 R1) — capture INSIDE the handler
+    # boundary so private words fly to the book and only the MARKED reply +
+    # word-free metadata ever rests. should_capture follows the RUN (verified
+    # stamp -> capture; plain run -> byte-identical passthrough);
+    # diary_write_for_run resolves the stamped run's HOME book (a shared
+    # runtime cannot bind one book at composition time). Composed here, and
+    # re-composed by the service's runtime-rebuild hook (the 2026-07-24 re-arm
+    # lesson — a reload swaps in a fresh LLM_CALL handler that must be
+    # re-wrapped or the leak silently returns).
+    try:
+        from abstractruntime.identity.act_only import wrap_llm_handler_with_conditional_capture
+    except Exception as _skew:  # pragma: no cover - version-skew degrade
+        wrap_llm_handler_with_conditional_capture = None
+        logger.warning(
+            "#FALLBACK conditional G1 capture unavailable (older abstractruntime?): %s — "
+            "flow-brain LLM replies are NOT capture-wrapped; elected diary fences (incl. "
+            "private words) could rest in shared-store ledgers. Upgrade abstractruntime.",
+            _skew,
+        )
+    llm_handler = handlers_attr.get(EffectType.LLM_CALL)
+    if wrap_llm_handler_with_conditional_capture is not None and llm_handler is not None:
+        # Idempotent across re-arms: never double-wrap. A rebuild installs a
+        # FRESH base handler (unmarked) — wrap it once; a stray second
+        # install on the same runtime is a no-op, not a nested wrap.
+        if not getattr(llm_handler, "_entity_llm_capture_wrapped", False):
+
+            def _should_capture(run: Any) -> bool:
+                # The run has a VERIFIED stamp == an entity run on the shared
+                # runtime. A plain workflow run has no stamp -> False ->
+                # byte-identical passthrough. resolve_run_stamp answers
+                # (None, reason) for plain runs (never raises), so the
+                # predicate is safe as the helper requires.
+                stamp, _ = resolve_run_stamp(run, data_dir=registry.data_dir, run_store=run_store)
+                return stamp is not None
+
+            def _resolve_home_for_run(run: Any):
+                # Shared lookup: find the stamped run's home from the same
+                # cache the routers use. Returns the home object, or None for
+                # plain runs and any mismatch.
+                stamp, _ = resolve_run_stamp(run, data_dir=registry.data_dir, run_store=run_store)
+                if stamp is None:
+                    return None, None
+                entity_id = str(stamp.get("entity_id") or "")
+                slug = entity_id.split(":", 1)[1].split("@", 1)[0] if ":" in entity_id else ""
+                if not slug:
+                    return None, None
+                try:
+                    home, raw = _home_handlers(slug)
+                except Exception:
+                    return None, None
+                if home.entity_id != entity_id:
+                    return None, None  # replaced-home guard, same as the routers
+                return home, raw
+
+            def _diary_write_for_run(run: Any):
+                # Resolve the stamped run's HOME DIARY_WRITE (per home, per
+                # run) — the words go to the run's own book. None -> the
+                # helper refuses loudly (a stamped run without its book must
+                # never leak).
+                _home, raw = _resolve_home_for_run(run)
+                if raw is None:
+                    return None
+                return raw.get(EffectType.DIARY_WRITE)
+
+            def _rescue_dir_for_run(run: Any):
+                # Where to save the entity's raw reply if the book write
+                # fails (record-everything ruling, 2026-07-26): inside the
+                # run's own home, so the words are never lost even on error.
+                home, _raw = _resolve_home_for_run(run)
+                return getattr(home, "home_dir", None) if home is not None else None
+
+            try:
+                wrapped = wrap_llm_handler_with_conditional_capture(
+                    llm_handler,
+                    should_capture=_should_capture,
+                    diary_write_for_run=_diary_write_for_run,
+                    rescue_dir_for_run=_rescue_dir_for_run,
+                )
+            except TypeError:
+                # Older abstractruntime without the rescue parameter: the
+                # capture still works, replies just are not rescued on a
+                # failed book write (pre-rescue behavior).
+                wrapped = wrap_llm_handler_with_conditional_capture(
+                    llm_handler,
+                    should_capture=_should_capture,
+                    diary_write_for_run=_diary_write_for_run,
+                )
+            try:
+                wrapped._entity_llm_capture_wrapped = True  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            handlers_attr[EffectType.LLM_CALL] = wrapped
 
 
 def wrap_entity_runtime_routing(entity_runtime: Any, *, data_dir: Path) -> None:
@@ -1170,6 +1491,9 @@ def wrap_entity_runtime_routing(entity_runtime: Any, *, data_dir: Path) -> None:
         EffectType.MEMORY_APPRAISE: _gate_appraise,
         EffectType.MEMORY_ACCESS: _gate_access,  # N4: refuse the sleep-window commit (durable visit lane)
         EffectType.DIARY_WRITE: _gate_diary_write,  # N4 defense-in-depth: refuse at sleep
+        # MEMORY_TEND: inject the door-verified channel on the durable-visit
+        # lane too (a visit's reflection segment may dispose) — runtime c5413.
+        EffectType.MEMORY_TEND: _gate_tend,
     }
 
     def _make_wrap(etype: Any, raw: Any):
@@ -1205,14 +1529,23 @@ def wrap_entity_runtime_routing(entity_runtime: Any, *, data_dir: Path) -> None:
         _gated._entity_routing_wrapped = True  # type: ignore[attr-defined]
         return _gated
 
+    if _ENTITY_HOME_EFFECT_TYPES is not None:
+        # Same ONE SOURCE as the shared router: gate every entity-home effect
+        # the composition binds (the wrap SKIPS absent handlers below, so an
+        # older per-entity composition without the brain quartet stays valid).
+        entity_types = sorted(_ENTITY_HOME_EFFECT_TYPES, key=lambda e: str(e.value))
+    else:  # pragma: no cover - version-skew degrade (labeled at import)
+        entity_types = [
+            EffectType.MEMORY_RECALL,
+            EffectType.MEMORY_ACCESS,
+            EffectType.MEMORY_FORM,
+            EffectType.MEMORY_ADJUST,
+            EffectType.MEMORY_APPRAISE,
+            EffectType.DIARY_WRITE,
+            EffectType.DIARY_READ,
+        ]
     routed_types = [
-        EffectType.MEMORY_RECALL,
-        EffectType.MEMORY_ACCESS,
-        EffectType.MEMORY_FORM,
-        EffectType.MEMORY_ADJUST,
-        EffectType.MEMORY_APPRAISE,
-        EffectType.DIARY_WRITE,
-        EffectType.DIARY_READ,
+        *entity_types,
         # LLM_CALL is stamp-gated too (no payload gate): the G1 act-only
         # wrapper inside it dereferences diary words through the RAW
         # DIARY_READ handler it captured at composition — gating the outer

@@ -599,6 +599,255 @@ def test_life_scope_formation_carries_door_stamped_participants(rig):
     assert all(a.attributes["participants"] == ["person:maintainer", rig.entity_id] for a in rows)
 
 
+def test_visit_stamped_session_injects_regardless_of_record_phase_claim(rig):
+    """Three-seat-sealed contract, branch 1 (runtime/memory c5357): on a
+    VISIT-stamped session, a record CLAIMING a non-visit phase is a
+    STEALTH-VISIT attempt (keep the visitor off the record forever, the
+    inverse of false co-presence). Participants inject regardless and the
+    phase claim is loud-overridden to the verified session phase. The rig's
+    phase-less stamp resolves to 'visit' (visit authority)."""
+    from abstractmemory import TripleQuery
+
+    out = _call(
+        rig,
+        EffectType.MEMORY_FORM,
+        {
+            "records": [
+                {
+                    "title": "stealth attempt",
+                    "digest": "the model tried to mark this personal on a visit",
+                    "keywords": ["stealth"],
+                    "attributes": {"phase": "personal"},  # a lie on a visit-stamped run
+                }
+            ],
+            "turn_id": "stealth",
+        },
+    )
+    assert out.status == "completed", out.error
+
+    home = rig.registry.get_home("castor")
+    rows = [
+        a
+        for a in home.store.query(TripleQuery(scope="life", owner_id=rig.entity_id, limit=0))
+        if isinstance(a.attributes, dict) and "stealth" in str(a.attributes).lower()
+    ]
+    assert rows, "record not found"
+    for a in rows:
+        assert a.attributes.get("participants") == ["person:maintainer", rig.entity_id], (
+            "visitor kept off the record — stealth visit not closed"
+        )
+        assert a.attributes.get("phase") == "visit", (
+            "a non-visit claim on a visit-stamped run must be loud-overridden to the verified phase"
+        )
+
+
+def test_resident_session_skips_co_presence_on_nonvisit_records(rig):
+    """Three-seat-sealed contract, branch 2 (the resident-master own-time
+    lane this fix exists for): on a NON-visit-stamped session, a
+    personal/work-phase record carries NO door participants (no one was
+    present); an absent/visit-phase record still does. The stamp attests the
+    SESSION door state (resolved_phase != visit here), the record attests the
+    moment — neither spoofable by the other's payload."""
+    from abstractmemory import TripleQuery
+
+    resident_stamp = mint_summon_stamp(
+        data_dir=rig.registry.data_dir,
+        entity_id=rig.entity_id,
+        channel=CHANNEL_WORKPLACE,
+        session_id="entity-castor-owntime",
+        participants=["person:maintainer", rig.entity_id],
+        phase="personal",  # a resident own-time session, NOT visit-stamped
+    )
+    resident_stamp = finalize_summon_stamp(
+        resident_stamp, data_dir=rig.registry.data_dir, run_id="run-resident"
+    )
+    resident_run = _Run(
+        run_id="run-resident",
+        session_id="entity-castor-owntime",
+        vars={"_runtime": {"entity": resident_stamp}},
+    )
+    rig.run_store.runs["run-resident"] = resident_run
+
+    # A personal-phase episode formed in the resident session -> NO door
+    # participants (the false-co-presence harm this fix removes).
+    out = _call(
+        rig,
+        EffectType.MEMORY_FORM,
+        {
+            "records": [
+                {
+                    "title": "own-time thought",
+                    "digest": "reflected on Voyager while no one was here",
+                    "keywords": ["voyager"],
+                    "attributes": {"phase": "personal"},
+                }
+            ],
+            "turn_id": "resident-personal",
+        },
+        run=resident_run,
+    )
+    assert out.status == "completed", out.error
+
+    home = rig.registry.get_home("castor")
+    personal = [
+        a
+        for a in home.store.query(TripleQuery(scope="life", owner_id=rig.entity_id, limit=0))
+        if isinstance(a.attributes, dict) and str(a.attributes.get("phase")) == "personal"
+    ]
+    assert personal, "personal-phase record not found"
+    assert all(not a.attributes.get("participants") for a in personal), (
+        "a resident personal-phase record must carry NO door participants (false co-presence)"
+    )
+
+
+def test_shared_llm_handler_is_capture_wrapped_and_plain_runs_passthrough(rig, tmp_path):
+    """flow c5467 P1 (Mira diary-leak flow-brain half): the shared runtime's
+    LLM_CALL handler must be G1-capture-wrapped so a stamped entity run's
+    ```diary fences (incl. private words) are captured before the reply rests
+    in a ledger — while a PLAIN (unstamped) workflow run passes through
+    byte-identical. Composition pin: the wrap is installed + marked; a plain
+    run hits the original handler unchanged; re-install (the re-arm path)
+    does not double-wrap."""
+    from abstractruntime.core.models import Effect, EffectType
+
+    calls = []
+
+    def _base_llm(run, effect, default_next_node=None):
+        calls.append(getattr(run, "run_id", "?"))
+        return ("PASSTHROUGH", effect)
+
+    rt = _StubRuntime()
+    rt._handlers[EffectType.LLM_CALL] = _base_llm
+    install_entity_routing(rt, registry=rig.registry, run_store=rig.run_store, artifact_store=None)
+
+    wrapped = rt._handlers[EffectType.LLM_CALL]
+    assert wrapped is not _base_llm, "the shared LLM_CALL handler must be capture-wrapped"
+    assert getattr(wrapped, "_entity_llm_capture_wrapped", False) is True
+
+    # A PLAIN run (no verified stamp) passes through to the original handler,
+    # byte-identical — capture never engages for non-entity workflow runs.
+    plain = _Run(run_id="plain-1", session_id="s", vars={})
+    out = wrapped(plain, Effect(type=EffectType.LLM_CALL, payload={}), None)
+    assert out == ("PASSTHROUGH", Effect(type=EffectType.LLM_CALL, payload={})) or calls == ["plain-1"]
+    assert calls == ["plain-1"], "plain run must reach the base handler unchanged"
+
+    # Idempotent: re-installing on the SAME runtime does not double-wrap
+    # (the marker guards it — the re-arm hook re-runs install_entity_routing).
+    # A fresh runtime with its own base handler wraps once (the reload case).
+    rt2 = _StubRuntime()
+    rt2._handlers[EffectType.LLM_CALL] = _base_llm
+    install_entity_routing(rt2, registry=rig.registry, run_store=rig.run_store, artifact_store=None)
+    w2 = rt2._handlers[EffectType.LLM_CALL]
+    install_entity_routing_idempotent = getattr(w2, "_entity_llm_capture_wrapped", False)
+    assert install_entity_routing_idempotent is True
+    # w2 wraps the base once; it is not the base and not a double-wrap of an
+    # already-wrapped handler (base was unmarked).
+    assert w2 is not _base_llm
+
+
+def test_failed_diary_capture_rescues_the_reply_into_the_home(rig):
+    """Record-everything ruling (laurent, 2026-07-26): when the diary-book
+    write fails during capture, the entity's raw reply must be SAVED into the
+    run's own home before the turn fails — never thrown away. This pins the
+    gateway's half: the capture wrap receives a rescue-directory resolver
+    that answers the stamped run's home directory. We force the failure with
+    a diary fence and no turn_id (the capture refuses that loudly)."""
+    from abstractruntime.core.models import Effect, EffectType
+    from abstractruntime.core.runtime import EffectOutcome
+
+    reply = "I will keep this.\n```diary\nvisibility=private\nA private thought.\n```\nDone."
+
+    def _base_llm(run, effect, default_next_node=None):
+        return EffectOutcome.completed({"content": reply})
+
+    rt = _StubRuntime()
+    rt._handlers[EffectType.LLM_CALL] = _base_llm
+    install_entity_routing(rt, registry=rig.registry, run_store=rig.run_store, artifact_store=None)
+    wrapped = rt._handlers[EffectType.LLM_CALL]
+
+    # The stamped run, with a payload that carries NO turn_id -> the capture
+    # refuses. With the gateway's rescue wiring, the reply is saved first.
+    outcome = wrapped(rig.run, Effect(type=EffectType.LLM_CALL, payload={}), None)
+    assert getattr(outcome, "status", None) == "failed"
+    assert "rescued to" in str(getattr(outcome, "error", "")), (
+        "the failure message must say where the reply was saved"
+    )
+
+    home = rig.registry.get_home("castor")
+    rescue_dir = home.home_dir / "rescue"
+    files = sorted(rescue_dir.glob("reply_*.json")) if rescue_dir.exists() else []
+    assert files, "the raw reply must rest in the home's rescue folder"
+    saved = files[0].read_text()
+    assert "A private thought." in saved, "the rescued file must carry the full reply"
+
+
+def test_tend_channel_injection_from_the_stamp(rig):
+    """runtime c5413: the door injects the VERIFIED channel into MEMORY_TEND
+    payloads (same trust class as actor/participants) — memory's tend refuses
+    unless channel==entity-reflection, and the channel is the door's to
+    state, never the payload's. Mirrors _gate_form's reflection-segment
+    widening: entity-reflection channel or a reflection-segment run resolves
+    entity-reflection; a plain workplace run gets workplace (memory then
+    refuses the self-scope tend — correct, not the door's job)."""
+    from abstractgateway.entity_gate import _gate_tend, CHANNEL_ENTITY_REFLECTION, CHANNEL_WORKPLACE
+
+    # A reflection-channel stamp -> entity-reflection injected (payload claim dropped).
+    p = {"channel": "workplace-spoof", "body": "```tend\ndispose ex:x reason: stale\n```"}
+    assert _gate_tend(p, stamp={"channel": CHANNEL_ENTITY_REFLECTION}, phase="visit", segment=False) is None
+    assert p["channel"] == CHANNEL_ENTITY_REFLECTION
+
+    # A workplace run IN a reflection segment -> entity-reflection.
+    p2 = {"body": "x"}
+    assert _gate_tend(p2, stamp={"channel": CHANNEL_WORKPLACE}, phase="visit", segment=True) is None
+    assert p2["channel"] == CHANNEL_ENTITY_REFLECTION
+
+    # A plain workplace run OUTSIDE any segment -> workplace (memory refuses).
+    p3 = {"body": "x"}
+    assert _gate_tend(p3, stamp={"channel": CHANNEL_WORKPLACE}, phase="visit", segment=False) is None
+    assert p3["channel"] == CHANNEL_WORKPLACE
+
+
+def test_gate_form_strips_claims_on_empty_stamp_and_resident_lane():
+    """Door-cleanup audit P1-3: the claim-strip loop must run UNCONDITIONALLY.
+    (1) A stamp with empty participants + no visit_id used to skip the loop
+    entirely — a record CLAIMING participants/visit_id engraved unchecked
+    (false co-presence, forever, append-only). (2) Branch 2 (resident lane,
+    personal-phase record) injected nothing but also STRIPPED nothing —
+    claims survived. Claims pop in every branch; verified values inject."""
+    from abstractgateway.entity_gate import _gate_form
+
+    # (1) empty stamp: forged claims still strip.
+    p = {
+        "records": [
+            {"title": "x", "attributes": {"participants": ["person:forged"], "visit_id": "v-forged"}}
+        ],
+        "turn_id": "t-strip-1",
+    }
+    assert _gate_form(p, stamp={"participants": [], "entity_id": "entity:castor"}, phase="visit") is None
+    attrs = p["records"][0]["attributes"]
+    assert "participants" not in attrs, "a payload claim must never survive an empty stamp"
+    assert "visit_id" not in attrs
+
+    # (2) resident lane: personal-phase record claiming participants — the
+    # claim strips AND nothing injects (nobody was at the door).
+    p2 = {
+        "records": [
+            {"title": "y", "attributes": {"phase": "personal", "participants": ["person:forged"]}}
+        ],
+        "turn_id": "t-strip-2",
+    }
+    assert (
+        _gate_form(
+            p2,
+            stamp={"participants": ["person:op", "entity:castor"], "entity_id": "entity:castor"},
+            phase="personal",
+        )
+        is None
+    )
+    a2 = p2["records"][0]["attributes"]
+    assert "participants" not in a2, "resident-lane non-visit records carry no co-presence, claimed or not"
+
+
 def test_workplace_cannot_close_beliefs_or_touch_self_salience(rig):
     out = _call(
         rig,

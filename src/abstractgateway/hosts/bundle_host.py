@@ -73,10 +73,14 @@ def _bundle_ref(bundle_id: str, bundle_version: str) -> str:
     return f"{bid}@{bv}"
 
 
-def _attach_provider_endpoint_profile_resolver(*, runtime: Runtime, data_root: Path, catalog_root: Path) -> None:
-    llm_client = getattr(runtime, "_abstractcore_llm_client", None)
-    if llm_client is None:
-        return
+def _endpoint_profile_resolver(*, data_root: Path, catalog_root: Path):
+    """Build a function that looks up endpoint profiles for one user's store.
+
+    Each user's runtime gets its own lookup function, bound to that user's
+    profile directory (plus the gateway root as a fallback). Because the
+    directory is fixed when the function is created, one user's runtime can
+    never read another user's profiles. Used by both attach helpers below.
+    """
 
     def _resolve(provider_id: str) -> Optional[Dict[str, Any]]:
         try:
@@ -86,6 +90,39 @@ def _attach_provider_endpoint_profile_resolver(*, runtime: Runtime, data_root: P
         if profile is None or not profile.enabled:
             return None
         return profile.private_resolution()
+
+    return _resolve
+
+
+def _attach_tools_only_endpoint_profile_resolver(*, tool_executor: Any, data_root: Path, catalog_root: Path) -> None:
+    """Give a tools-only runtime access to endpoint profile lookups.
+
+    Runtimes built with an LLM client get profile lookups through that client.
+    Tools-only runtimes have no LLM client, so without this step their tools
+    could not resolve "endpoint:..." providers. We attach the lookup function
+    directly to the tool executor instead. On older abstractruntime versions
+    that lack this hook, we skip quietly — behavior is then the same as
+    before the hook existed.
+    """
+    try:
+        from abstractruntime.integrations.abstractcore.tool_executor import (
+            attach_endpoint_profile_resolver_getter,
+        )
+    except Exception:  # noqa: BLE001 - version skew: pre-seam runtime
+        return
+    resolver = _endpoint_profile_resolver(data_root=data_root, catalog_root=catalog_root)
+    try:
+        attach_endpoint_profile_resolver_getter(tool_executor, lambda: resolver)
+    except Exception:  # noqa: BLE001 - never block a tools-only host build
+        pass
+
+
+def _attach_provider_endpoint_profile_resolver(*, runtime: Runtime, data_root: Path, catalog_root: Path) -> None:
+    llm_client = getattr(runtime, "_abstractcore_llm_client", None)
+    if llm_client is None:
+        return
+
+    _resolve = _endpoint_profile_resolver(data_root=data_root, catalog_root=catalog_root)
 
     setter = getattr(llm_client, "set_provider_endpoint_profile_resolver", None)
     if callable(setter):
@@ -529,6 +566,34 @@ def _flow_uses_llm(raw: Dict[str, Any]) -> bool:
     return False
 
 
+# Node types that emit a TOOL_INVOKE effect (one deterministic tool call per
+# node — runtime's write_chart/camera pattern, c4207) as opposed to TOOL_CALLS
+# (a model-driven batch). A flow using ONLY these still needs the tool
+# executor + the TOOL_INVOKE handler; without them it fell to the bare runtime
+# and failed at execution with "No effect handler registered for tool_invoke"
+# (flow c4316 — the operator's deterministic camera flow: wait_event ->
+# camera_open -> camera_capture_photo -> camera_analyze_media, NO llm/agent).
+_TOOL_INVOKE_NODE_TYPES = frozenset({
+    "tool_invoke",
+    "call_tool",
+    "camera_open",
+    "camera_close",
+    "camera_capture_photo",
+    "camera_capture_video",
+    "camera_analyze_media",
+})
+
+
+def _flow_uses_tool_invoke(raw: Dict[str, Any]) -> bool:
+    nodes = raw.get("nodes")
+    if not isinstance(nodes, list):
+        return False
+    for n in nodes:
+        if _node_type_from_raw(n) in _TOOL_INVOKE_NODE_TYPES:
+            return True
+    return False
+
+
 def _flow_uses_tools(raw: Dict[str, Any]) -> bool:
     nodes = raw.get("nodes")
     if not isinstance(nodes, list):
@@ -537,7 +602,9 @@ def _flow_uses_tools(raw: Dict[str, Any]) -> bool:
         t = _node_type_from_raw(n)
         if t in {"tool_calls", "agent"}:
             return True
-    return False
+    # A deterministic tool-invoke node needs the same tool executor +
+    # handlers as a tool_calls batch (flow c4316).
+    return _flow_uses_tool_invoke(raw)
 
 
 def _flow_uses_model_residency(raw: Dict[str, Any]) -> bool:
@@ -632,6 +699,12 @@ class WorkflowBundleGatewayHost:
     memory_store: Optional[Any] = None
     memory_store_info: Optional[Dict[str, Any]] = None
     _lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
+    # Hooks re-applied to every REBUILT runtime before it is published
+    # (reload_bundles_from_disk swaps self.runtime for a brand-new instance;
+    # anything the composition root armed on the old one — entity routing —
+    # would silently vanish otherwise: the 2026-07-24 "No effect handler
+    # registered for memory_recall after a catalog publish" defect).
+    _runtime_rebuild_hooks: Any = field(default_factory=list, repr=False, compare=False)
 
     @staticmethod
     def _dynamic_flow_filename(workflow_id: str) -> str:
@@ -748,6 +821,83 @@ class WorkflowBundleGatewayHost:
         return spec
 
     @staticmethod
+    def _min_runtime_gap(man: Any) -> Optional[str]:
+        """The min_runtime ENFORCEMENT gate (flow c5652, claimed c5653):
+        a bundle declaring `metadata.min_runtime` REFUSES to load on an
+        older serving runtime — the fail-dangerous skew (a pin-expression
+        bundle on a non-evaluating runtime inverts control signals: a
+        FAILED run reads as SUCCESS) becomes a loud refuse-to-load.
+
+        Refusal fires only on a PROVEN gap: absent metadata = no gate
+        (today's bundles unchanged); an unparsable declaration or an
+        unresolvable installed version WARNS loudly and loads (a typo must
+        not brick a working bundle — the failure direction inverts there).
+        Returns the human refusal string, or None to load."""
+        meta = getattr(man, "metadata", None)
+        declared = ""
+        if isinstance(meta, dict):
+            declared = str(meta.get("min_runtime") or "").strip()
+        if not declared:
+            return None
+        installed = ""
+        try:
+            # The CANONICAL compare surface (runtime c5654):
+            # abstractruntime.__version__ — a lazy attribute over the
+            # installed dist metadata, so the serving truth is one source.
+            import abstractruntime as _rt
+
+            installed = str(getattr(_rt, "__version__", "") or "")
+        except Exception:
+            pass
+        if not installed:
+            try:
+                import importlib.metadata as _im
+
+                installed = _im.version("abstractruntime")
+            except Exception:
+                logger.warning(
+                    "#FALLBACK min_runtime gate: installed abstractruntime version unresolvable — "
+                    "bundle declaring min_runtime=%s loads UNVERIFIED",
+                    declared,
+                )
+                return None
+
+        def _cmp(a: str, b: str) -> Optional[bool]:
+            """a < b, packaging semantics with a numeric-tuple fallback
+            (packaging is not a declared dep — soft import only)."""
+            try:
+                from packaging.version import Version
+
+                return Version(a) < Version(b)
+            except Exception:
+                pass
+            try:
+                ta = tuple(int(x) for x in a.split("."))
+                tb = tuple(int(x) for x in b.split("."))
+                return ta < tb
+            except Exception:
+                return None  # unparsable — the caller warns and loads
+
+        older = _cmp(installed, declared)
+        if older is None:
+            logger.warning(
+                "#FALLBACK min_runtime gate: cannot compare declared min_runtime=%r "
+                "against installed abstractruntime %s — loading UNVERIFIED (fix the "
+                "declaration; a typo must not brick the bundle)",
+                declared, installed,
+            )
+            return None
+        if older:
+            return (
+                f"requires abstractruntime >= {declared} but this gateway serves "
+                f"abstractruntime {installed} — refusing to load (the bundle would run "
+                "WRONG, not just degraded: features like pin expressions are silently "
+                "ignored by older runtimes and can invert control signals). Upgrade "
+                "abstractruntime or publish a bundle without the requirement."
+            )
+        return None
+
+    @staticmethod
     def load_from_dir(
         *,
         bundles_dir: Path,
@@ -851,7 +1001,10 @@ class WorkflowBundleGatewayHost:
             logger.warning("No bundles found in %s (expected *.flow). Starting gateway with zero loaded bundles.", base)
 
         default_bundle_id = sorted(private_bundle_ids)[0] if len(private_bundle_ids) == 1 else None
-        latest_versions: Dict[str, str] = {bid: _pick_latest_version(versions) for bid, versions in bundles_by_id.items()}
+        # NOTE: latest_versions is computed AFTER the spec loop below — the
+        # loop DROPS skipped bundles (min_runtime gate / compile failure)
+        # from bundles_by_id, and a latest pointer at a dropped version
+        # would resurrect a bundle the skip declared absent.
 
         dep_store = WorkflowDeprecationStore(path=data_root / "workflow_deprecations.json")
         dynamic_dir = data_root / "dynamic_flows"
@@ -866,33 +1019,100 @@ class WorkflowBundleGatewayHost:
         specs: Dict[str, WorkflowSpec] = {}
         flows_by_namespaced_id: Dict[str, Dict[str, Any]] = {}
 
-        for bid, versions in bundles_by_id.items():
-            for bver, b in versions.items():
+        skipped_bundles: list[str] = []
+
+        def _drop_skipped(bid: str, bver: str) -> None:
+            # A skipped bundle must be ABSENT everywhere, not just spec-less
+            # (flow's live min_runtime probe read the CATALOG LISTING as the
+            # gate's verdict — the specs had correctly never registered, but
+            # bundles_by_id still listed the bundle, so the skip looked like
+            # a load). Same law for compile-skips.
+            try:
+                versions0 = bundles_by_id.get(bid) or {}
+                versions0.pop(bver, None)
+                if not versions0:
+                    bundles_by_id.pop(bid, None)
+                srcs = bundle_sources.get(bid) or {}
+                srcs.pop(bver, None)
+                if not srcs:
+                    bundle_sources.pop(bid, None)
+            except Exception:
+                pass
+
+        for bid, versions in list(bundles_by_id.items()):
+            for bver, b in list(versions.items()):
                 bundle_ref = _bundle_ref(bid, bver)
                 man = b.manifest
+                # min_runtime ENFORCEMENT (flow c5652): a declared floor the
+                # serving runtime cannot meet refuses THIS bundle loudly —
+                # BEFORE compilation (an old runtime may compile the flows
+                # fine and still run them wrong; the gate exists exactly for
+                # the compiles-but-inverts-signals class).
+                _gap = WorkflowBundleGatewayHost._min_runtime_gap(man)
+                if _gap is not None:
+                    skipped_bundles.append(f"{bid}@{bver}")
+                    logger.warning(
+                        "WorkflowBundleGatewayHost: SKIPPING bundle '%s@%s' — %s",
+                        bid, bver, _gap,
+                    )
+                    _drop_skipped(bid, bver)
+                    continue
                 if not man.flows:
                     raise WorkflowBundleError(f"Bundle '{bid}@{bver}' has no flows (manifest.flows is empty)")
 
                 flow_ids = set(man.flows.keys())
                 id_map = {flow_id: _namespace(bundle_ref, flow_id) for flow_id in flow_ids}
 
+                # BOOT RESILIENCE (flow, 2026-07-24): one un-compilable bundle
+                # must never wedge the whole control plane. Compile a bundle's
+                # flows into a STAGING registry first; on any failure, log a
+                # loud warning and SKIP that bundle entirely (it neither
+                # registers nor half-registers), then keep loading the rest.
+                # The failure is still loud (warning + boot_warnings surface on
+                # /api/health) and the bundle is simply absent until fixed —
+                # the honest degradation the compile-refusal (c5182) needs so a
+                # stale draft using an unknown node type doesn't take the
+                # gateway down. Published good bundles keep serving.
+                staged_specs: Dict[str, WorkflowSpec] = {}
+                staged_flows: Dict[str, Dict[str, Any]] = {}
+                bundle_error: Optional[str] = None
                 for flow_id, rel in man.flows.items():
                     raw = b.read_json(rel)
                     if not isinstance(raw, dict):
-                        raise WorkflowBundleError(f"VisualFlow JSON for '{bid}@{bver}:{flow_id}' must be an object")
+                        bundle_error = f"VisualFlow JSON for '{flow_id}' must be an object"
+                        break
                     namespaced_raw = _namespace_visualflow_raw(
                         raw=raw,
                         bundle_id=bundle_ref,
                         flow_id=flow_id,
                         id_map=id_map,
                     )
-                    flows_by_namespaced_id[str(namespaced_raw.get("id") or _namespace(bundle_ref, flow_id))] = namespaced_raw
+                    nsid = str(namespaced_raw.get("id") or _namespace(bundle_ref, flow_id))
+                    staged_flows[nsid] = namespaced_raw
                     try:
                         spec = compile_visualflow(namespaced_raw)
                     except Exception as e:
-                        raise WorkflowBundleError(f"Failed compiling VisualFlow '{bid}@{bver}:{flow_id}': {e}") from e
+                        bundle_error = f"flow '{flow_id}' failed to compile: {e}"
+                        break
+                    staged_specs[str(spec.workflow_id)] = spec
+                if bundle_error is not None:
+                    skipped_bundles.append(f"{bid}@{bver}")
+                    logger.warning(
+                        "WorkflowBundleGatewayHost: SKIPPING bundle '%s@%s' — %s "
+                        "(the bundle is absent until fixed; other bundles keep serving)",
+                        bid, bver, bundle_error,
+                    )
+                    _drop_skipped(bid, bver)  # absent means absent — listings included
+                    continue
+                # Bundle compiled whole — commit it.
+                for wfid, spec in staged_specs.items():
                     wf_reg.register(spec)
-                    specs[str(spec.workflow_id)] = spec
+                    specs[wfid] = spec
+                flows_by_namespaced_id.update(staged_flows)
+
+        # Computed after the skip drops (see the note above): only SERVING
+        # bundles get latest pointers.
+        latest_versions: Dict[str, str] = {bid: _pick_latest_version(versions) for bid, versions in bundles_by_id.items()}
 
         # Load dynamic flows persisted in data_dir (e.g. scheduled wrapper flows).
         try:
@@ -1090,8 +1310,17 @@ class WorkflowBundleGatewayHost:
             else:
                 # Tools-only runtime: avoid constructing an LLM client.
                 from abstractruntime.core.models import EffectType
-                from abstractruntime.integrations.abstractcore.effect_handlers import make_tool_calls_handler
+                from abstractruntime.integrations.abstractcore.effect_handlers import (
+                    make_tool_calls_handler,
+                    make_tool_invoke_handler,
+                )
 
+                # BOTH effect types (flow c4316): a deterministic tool-invoke
+                # node (camera, call_tool) emits TOOL_INVOKE, not TOOL_CALLS.
+                # A camera-only flow with no llm/agent node reaches this
+                # tools-only branch and must find its TOOL_INVOKE handler here
+                # — the LLM branch registers both via build_effect_handlers,
+                # which is why an llm+camera flow masked the gap.
                 runtime = Runtime(
                     run_store=run_store,
                     ledger_store=ledger_store,
@@ -1103,8 +1332,19 @@ class WorkflowBundleGatewayHost:
                             artifact_store=artifact_store,
                             run_store=run_store,
                         ),
+                        EffectType.TOOL_INVOKE: make_tool_invoke_handler(
+                            tools=tool_executor,
+                            artifact_store=artifact_store,
+                            run_store=run_store,
+                        ),
                         **extra_effect_handlers,
                     },
+                )
+                # This runtime has no LLM client, so tools here would not be
+                # able to look up "endpoint:..." providers. Attach the lookup
+                # function directly to the tool executor.
+                _attach_tools_only_endpoint_profile_resolver(
+                    tool_executor=tool_executor, data_root=data_root, catalog_root=catalog_root
                 )
                 try:  # pragma: no cover
                     setter = getattr(runtime, "set_tool_executor_for_resume", None)
@@ -1333,6 +1573,17 @@ class WorkflowBundleGatewayHost:
     def artifact_store(self) -> Any:
         return self.runtime.artifact_store
 
+    def add_runtime_rebuild_hook(self, hook: Any) -> None:
+        """Register a callable re-applied to every rebuilt Runtime.
+
+        The composition root (service factory) arms effect handlers on
+        `host.runtime` AFTER load_from_dir (entity routing today). A reload
+        swaps in a brand-new Runtime, so those arms must be re-applied or the
+        reloaded process serves entity runs with no MEMORY_*/DIARY_* handlers.
+        Hooks run on the NEW runtime BEFORE it is published (race-free: no
+        tick can observe an unarmed runtime)."""
+        self._runtime_rebuild_hooks.append(hook)
+
     def reload_bundles_from_disk(self) -> Dict[str, Any]:
         """Reload bundles/specs from bundles_dir (best-effort, intended for dev).
 
@@ -1355,6 +1606,21 @@ class WorkflowBundleGatewayHost:
             ledger_store=self.ledger_store,
             artifact_store=self.artifact_store,
         )
+        # Re-arm the NEW runtime BEFORE the swap publishes it: the factory's
+        # post-load arms (entity routing) live on the OLD runtime object and
+        # would otherwise vanish with it — the exact defect behind
+        # "No effect handler registered for memory_recall" after any catalog
+        # publish/reload (2026-07-24). Doing it pre-swap means no tick can
+        # ever observe the rebuilt runtime unarmed.
+        rearm_warnings: list[str] = []
+        for hook in list(self._runtime_rebuild_hooks or []):
+            try:
+                hook(new_host.runtime)
+            except Exception as e:
+                logger.exception(
+                    "runtime rebuild hook failed; the reloaded runtime may be missing factory-armed effect handlers"
+                )
+                rearm_warnings.append(f"#FALLBACK runtime rebuild hook failed: {type(e).__name__}: {e}")
         with self._lock:
             old_memory_store = getattr(self, "memory_store", None)
             self.bundles = new_host.bundles
@@ -1383,7 +1649,10 @@ class WorkflowBundleGatewayHost:
         except Exception:
             pass
         bundle_ids = sorted([str(k) for k in (self.bundles or {}).keys() if isinstance(k, str)])
-        return {"ok": True, "bundle_ids": bundle_ids, "count": len(bundle_ids)}
+        out: Dict[str, Any] = {"ok": True, "bundle_ids": bundle_ids, "count": len(bundle_ids)}
+        if rearm_warnings:
+            out["warnings"] = rearm_warnings
+        return out
 
     def _seed_session_history(
         self,
@@ -1704,6 +1973,49 @@ class WorkflowBundleGatewayHost:
                 rt_ns["provider"] = default_provider.strip().lower()
             if isinstance(default_model, str) and default_model.strip() and not str(rt_ns.get("model") or "").strip():
                 rt_ns["model"] = default_model.strip()
+
+        # Gateway DEFAULT tool grant (tool-tiers grant-mode API, cycle-3):
+        # when the caller sent NO tool_policy of its own, the operator's
+        # default grant rides in — preset tiers inject the risk-tier ceiling
+        # (runtime's auto_approve_max_risk_rank consumer), custom injects the
+        # name list. Client policy always wins when present; injection is
+        # additive and a broken grant store never blocks a start.
+        try:
+            from ..tool_grants import inject_default_grant
+
+            # Gateway-ROOT store (adversary F3): under user auth the per-
+            # principal data dir is not the control center — the operator's
+            # default grant lives at the gateway root (the catalog-root
+            # precedent, line ~1637); single-user layouts are identical.
+            grant_note = inject_default_grant(Path(self.catalog_root_data_dir or self.data_dir), rt_ns)
+            if grant_note:
+                rt_ns["tool_grant_note"] = grant_note
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Registered-user-email identity for the send_email recipient refiner
+        # + notifications (laurent c4677 + dm#246 via c4693; runtime's seam
+        # ask c4679): the gateway INJECTS the run principal's registered
+        # email into run vars. PER-ACCOUNT source of truth (1 account = 1
+        # runtime = 1 email): the host's catalog principal names the account
+        # record; the settings knob covers only the account-less posture.
+        # SET, never setdefault — a client-supplied value here would let a
+        # payload widen "self" to an attacker address (the actor-strings
+        # class); absent email = key absent (refiner deny-safe: no
+        # self-value -> everything asks; notifications simply off).
+        try:
+            from ..runtime_config import resolve_operator_email
+
+            rt_ns.pop("operator_email", None)
+            op_email = resolve_operator_email(
+                Path(self.catalog_root_data_dir or self.data_dir),
+                tenant_id=self.catalog_tenant_id,
+                user_id=self.catalog_user_id,
+            ).get("value")
+            if isinstance(op_email, str) and op_email:
+                rt_ns["operator_email"] = op_email
+        except Exception:  # noqa: BLE001 - identity injection is additive
+            rt_ns.pop("operator_email", None)
 
         # Durable session conversation replay (agora `durable-sessions` contract v1):
         # when the caller opts in (`input_data.use_session_history`) and the run

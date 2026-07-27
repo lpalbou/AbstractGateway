@@ -50,15 +50,22 @@ def _split_csv(raw: Optional[str]) -> list[str]:
 
 
 def _normalize_email(value: Any) -> str:
+    """ONE plain address, normalized lowercase (dm#246 + email-adversary P2:
+    the account record is the refiner's "self" source of truth, so it must
+    be at least as STRICT as the config-knob validator — the looser shape
+    ("Laurent <l@x.com>", multi-@) would become an auto-send comparison
+    value; two validators drifting is how that happens). Empty = unset."""
     raw = str(value or "").strip()
     if not raw:
         return ""
-    if len(raw) > 254 or "@" not in raw:
-        raise ValueError("email must be empty or a valid email address")
+    if len(raw) > 254 or raw.count("@") != 1:
+        raise ValueError("email must be empty or ONE plain email address")
+    if any(c in raw for c in (",", ";", " ", "<", ">")):
+        raise ValueError("email must be empty or ONE plain email address (no lists or display names)")
     local, _, domain = raw.partition("@")
     if not local.strip() or "." not in domain.strip():
         raise ValueError("email must be empty or a valid email address")
-    return raw
+    return raw.lower()
 
 
 def gateway_data_dir_from_env() -> Path:
@@ -140,6 +147,24 @@ def verify_gateway_token(token: str, token_hash: str) -> bool:
         return False
 
 
+class EntityPrincipalGuardError(ValueError):
+    """A write the entities lane owns was attempted through the generic
+    admin users lane (backlog 0089, operator order c5305):
+
+    - rotate/set token mints a live entity bearer that BY DESIGN must not
+      exist (entity principals are born with the token discarded — door-
+      issued secrets never travel);
+    - roles/runtime_id edits re-shape the entity's door identity;
+    - delete removes the name-collision guard and invites identity capture
+      (a human user created under the slug would be adopted as the entity's
+      principal by the next create).
+
+    Raised at the REGISTRY chokepoint so the HTTP routes and the config CLI
+    both refuse; routes translate it to 403 naming the entities lane.
+    `enabled` (the door-side disable) and `email`/`scopes` stay editable per
+    the filed spec."""
+
+
 @dataclass(frozen=True)
 class GatewayUserRecord:
     user_id: str
@@ -173,6 +198,13 @@ class GatewayUserRecord:
             "updated_at": self.updated_at,
         }
 
+    @property
+    def principal_kind(self) -> str:
+        """First-class kind (operator order c5305): "entity" for GW-H entity
+        principals (roles convention), "human" for everyone else. ONE source
+        — clients must never re-derive kind from roles again."""
+        return "entity" if "entity" in {str(r).strip().lower() for r in self.roles} else "human"
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "user_id": self.user_id,
@@ -182,6 +214,7 @@ class GatewayUserRecord:
             "scopes": list(self.scopes),
             "enabled": bool(self.enabled),
             "runtime_id": self.runtime_id or self.user_id,
+            "principal_kind": self.principal_kind,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -512,6 +545,18 @@ class GatewayUserRegistry:
             rec = records.get(key)
             if rec is None:
                 raise KeyError(f"Gateway user not found: {tenant_id}/{user_id}")
+            # 0089 guard: the entities lane owns entity principals' shape.
+            # token (incl. rotate), roles and runtime_id refuse here — the
+            # ONE chokepoint both HTTP and the config CLI pass through.
+            if rec.principal_kind == "entity" and (
+                token is not None or roles is not None or runtime_id is not None
+            ):
+                raise EntityPrincipalGuardError(
+                    f"this principal belongs to summoned entity '{rec.user_id}' — "
+                    "token rotation, roles and runtime_id are managed under /entities, "
+                    "never the generic users lane (an entity bearer must not exist; "
+                    "its door identity is not an admin edit)"
+                )
             token_hash = rec.token_hash
             token_fp = rec.token_fingerprint
             if token is not None:
@@ -552,6 +597,17 @@ class GatewayUserRegistry:
             rec = records.get(key)
             if rec is None:
                 return False
+            # 0089 guard: deleting an entity principal removes the name-
+            # collision guard (identity capture: a human user created under
+            # the slug is adopted by the next entity create) and invites a
+            # data purge on a plane named for a living entity.
+            if rec.principal_kind == "entity":
+                raise EntityPrincipalGuardError(
+                    f"this principal belongs to summoned entity '{rec.user_id}' — "
+                    "entity principals are never deleted through the users lane "
+                    "(the record is the name-collision guard for the entity's identity); "
+                    "manage the entity under /entities"
+                )
             records.pop(key, None)
             self._reserve_runtime_unlocked(reservations, record=rec, reason="deleted-user")
             self._save_store_unlocked(records, reservations)
@@ -633,6 +689,20 @@ class GatewayUserRegistry:
             target = records.get(target_key)
             if target is None:
                 raise KeyError(f"Gateway user not found: {tenant0}/{target0}")
+            # 0089 guard, transfer lane (adversary P0, 2026-07-25): a
+            # reservation transfer rewrites the TARGET's runtime_id — the
+            # same field update_user refuses for entity principals. Without
+            # this the runtime_id guard is sidesteppable AND the entity's
+            # runtime name is minted as a purgeable reservation (the exact
+            # data-purge-on-a-living-entity hazard 0089 §3 names, reachable
+            # with no delete). The chokepoint must be EVERY writer of the
+            # field, not just update_user.
+            if target.principal_kind == "entity":
+                raise EntityPrincipalGuardError(
+                    f"target principal belongs to summoned entity '{target.user_id}' — "
+                    "its runtime is managed under /entities; a reservation transfer "
+                    "cannot rewrite an entity principal's runtime_id"
+                )
             for rec in records.values():
                 if rec.key == target.key:
                     continue

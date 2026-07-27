@@ -1,7 +1,7 @@
 {
  "$comment": "THE canonical entity phase graph (laurent 2026-07-13 13:54: 'abstractentity should own that graph'). One source; every seat verifies its lane against THIS file, never against re-derived prose. Human-readable twin: docs/entity-phases.md. Changes require an operator ruling reference in ruled_by.",
  "artifact": "entity-phase-graph",
- "version": 16,
+ "version": 21,
  "ruled_by": [
   "decision:phase-vocabulary v3 (semantics store; own-time = spoken synonym of personal)",
   "decision:entity-phase-state-machine v3 (laurent 13:28 four phases + 13:46 totality: restore-previous, absolute exclusivity, newborn=sleep)",
@@ -21,7 +21,12 @@
   "decision:wake-conditions v13 (gateway c-t-i #355, laurent's routing: 'discuss it with @entity... we want a unique state graph source of truth: the blueprint hold by @entity'): the 6h unattended-sleep check joins the gateway's self-repair sweeper the day the WAKE-CONDITION semantics are settled ON THE GRAPH — so they are settled here, machine-readable, one law for the loop's need-check (loop alive) and the gateway sweeper (loop-less homes). Every timed wake is a ZERO-TOKEN need-check that lands THROUGH the day gate; a need-check with nothing sanctioned re-sleeps without summoning and without marker churn (the same sleep continuing, never a new phase_changed pair — dm#89: 'the goal is never for the entity to sleep long' balanced against 'an unattended loop spends real tokens').",
   "decision:v14-wiring-truth (2026-07-21, runtime c-t-i #359 + gateway #360, same-hour ships): the honesty ledger did its job both directions — runtime threaded unattended_wake_cadence_h + grant_unused_floor_h + personal_cycle.enabled through the day gate (pinned: edited dials reach the gate's decision), so their meta rows flip wired:true (the consumption contract's flip condition met by the named consumer landing). sleep_bound_h stays HONESTLY unwired: its twin SLEEP_BOUND_SECONDS feeds sleep_bound_deadline(), which the gateway sweeper imports — threading it is a coordinated signature change (the predicate gains a blueprint read), the routed follow-up. cadence_need_check joins the closed cause set: the gateway's loop-less need-check host is LIVE and a SANCTIONED timed wake stamps it (one marker, channel=need-check) on the existing sleep→work / sleep→personal edges — an out-of-set cause on a live marker would violate the MARKER CONTRACT the moment the first unattended wake fires.",
   "decision:v15-last-dial (2026-07-21, runtime c-t-i #363): sleep_bound_h threaded through sleep_bound_deadline(state, *, home_dir=None) — the last dead dial dies; wired:true with the honest consumer note (the gateway sweeper adopts the home_dir kwarg at its own pace; explicit wake_at stamps still win over any bound, pinned runtime-side). All five dials + the enabled switch now govern.",
-  "decision:identity-evolution-sleep-regulated v16 (laurent dm:entity--laurent#117 2026-07-21 ~16:50, verbatim: 'it's personal. i believe it's something that should happen only during sleep and under a proper regulated processes. identity memories must be the most protected and stable; they should only be updated upon important realization, understanding, proof of new capabilities, relationships or upon new events that change the history of the entity (reading a diary entry or talking to a user or agent doesn't justify, unless the content is important enough to warrant it)' — core values: 'yes under that regulated processes'; adding values: 'same answer. everything must however be dated + proper provenance, so that the entity itself could consciously know/answer: on day x, i decided y because z'): identity revision (values/purposes/traits — supersession AND addition, core included) happens ONLY in the sleep window under a REGULATED PROCESS. The reconciliation with the engine's sleep-proposes law is SCOPED INVERSION for the identity lane: WAKING life accumulates the evidence and flags the importance (dated, provenance-edged); the SLEEP pass runs the regulated bars (importance threshold, mandatory evidence edges, the realization predates the sleep) and ENACTS with full provenance — no mid-conversation impulse ever touches a value. Design round with memory+runtime open (c-t-i #396); the blueprint gains the lane as DECLARED edges when their design lands. ALSO RULED same message: dials stay GLOBAL for now (per-entity overrides deferred — M2's window rows cut global-only); and the settled-desk wake question was ALREADY LAW (the gate ruling decided it; recorded here as a re-ask to not repeat)."
+  "decision:identity-evolution-sleep-regulated v16 (laurent dm:entity--laurent#117 2026-07-21 ~16:50, verbatim: 'it's personal. i believe it's something that should happen only during sleep and under a proper regulated processes. identity memories must be the most protected and stable; they should only be updated upon important realization, understanding, proof of new capabilities, relationships or upon new events that change the history of the entity (reading a diary entry or talking to a user or agent doesn't justify, unless the content is important enough to warrant it)' — core values: 'yes under that regulated processes'; adding values: 'same answer. everything must however be dated + proper provenance, so that the entity itself could consciously know/answer: on day x, i decided y because z'): identity revision (values/purposes/traits — supersession AND addition, core included) happens ONLY in the sleep window under a REGULATED PROCESS. The reconciliation with the engine's sleep-proposes law is SCOPED INVERSION for the identity lane: WAKING life accumulates the evidence and flags the importance (dated, provenance-edged); the SLEEP pass runs the regulated bars (importance threshold, mandatory evidence edges, the realization predates the sleep) and ENACTS with full provenance — no mid-conversation impulse ever touches a value. Design round with memory+runtime open (c-t-i #396); the blueprint gains the lane as DECLARED edges when their design lands. ALSO RULED same message: dials stay GLOBAL for now (per-entity overrides deferred — M2's window rows cut global-only); and the settled-desk wake question was ALREADY LAW (the gate ruling decided it; recorded here as a re-ask to not repeat).",
+  "decision:operator-sleep-is-absolute v17 (laurent dm:entity--laurent#127 2026-07-21 ~22:44, verbatim: 'i just removed its personal time and put it to sleep. it is also weird as i fear that when i click sleep, you don't understand it also removes any standing orders it might have had. sleep is sleep, it can't wake up on personal time if *i* put it to sleep. again, we need a clear editable state graph so we can enforce those rules'): an OPERATOR-WRITTEN sleep is a COMPOSITE ACT — it writes asleep AND disarms the personal grant AND clears standing work orders, one act, marker-first, so the machine CANNOT wake the entity into personal or work afterward (the cadence need-check finds a bare desk BY CONSTRUCTION — no special wake-suppression machinery needed; the v13 wake_conditions law already re-sleeps a sleeper with nothing sanctioned). Exits from an operator sleep remain exactly TWO: the operator's own wake/state acts, and visit_open (the ruled auto-wake — a visit is a person arriving, never the machine's initiative; the visit-close restore finds no grant and no order, so it lands back in sleep). The entity's self-elected sleeps and cycle sleeps are UNTOUCHED by this ruling — it governs the operator's click only.",
+  "v18-structural-edit-schema (laurent dm#276 via c4837 build order; adversary reports A+B converged YES-WITH-BOUNDARY): per-edge edge_id/authority/edit_policy/owner/guards from B's 22-edge census (9 loop / 8 door / 4 operator / 1 entity), cause_evaluators registry (the topology is operator-editable, the cause vocabulary is code), graph_overlay_contract with edge_ops + refusal codes. THE THREE-TIER OPERATIVITY LAW: dials/toggles = mechanical law; instruction prose = steering (offered, never guaranteed, capability-inert); unbuilt consults = declared, rendered inert. Locked edges name their ruling; the operator's real pen over structure = consultable loop edges + steering + proposals routed to owning seats.",
+  "v19-cause-registry-classes (semantics c4857 adversary-hardened ruling, same-day amendment): class+status on every cause_evaluators row; task_complete/no_task/crash_recovered reserved pending runtime's word/code reconciliation (rule 3+4); reserved-blocks-new-edges-only; symbols verified importable or honestly null.",
+  "v20-workclose-evaluator-shipped (runtime c4865 build receipt): task_complete/no_task flip reserved->shipped — the loop consults work->sleep#task_complete/#no_task at the boundary with guards traveling; crash_recovered stays reserved (still zero minting sites). Status follows the producing seat's shipped code, never intent.",
+  "v21-guard-merge-union (gateway c4934 P0 fold, entity schema ruling): editable-onto-editable redirect collisions UNION both guard sets at merge — no silent guard loss on either side; explicit remove-then-redirect is the deliberate-supersede path; locked collisions already refuse."
  ],
  "liveness_axis": {
   "values": [
@@ -77,7 +82,7 @@
    ]
   },
   "sleep": {
-   "behavior": "Passive memory-graph processes: consolidation, dreams. Purpose in the operator's words (dm#89): 'sleep is to improve and make sure its memory is clean and functional and surface potential new ideas or feelings or questions or tensions or interests or commitments to investigate while awake' — the goal is never for the entity to sleep long. Bounds, three classes, all under the v9 6h cap: (1) personal-entered sleeps WITHOUT a stamped duration (self_elected, day close) — sleep_bound_h (tunable, seed ~1h; the v5 bound); (2) personal_cycle maintenance windows — sleep_window_h (tunable, seed ~1h), carried as an EXPLICIT wake_at on the state write (the v5 explicit-wake_at rule is the bound carrier, so the loop-less sweeper and the in-process window share one clock); (3) UNARMED, TASKLESS sleeps — the 6h cadence need-check (dm#89: 'wake at least once every 6h if i am not around'; cycle sleeps are armed by definition and never this class; the wake is a need-check over the standing sets, and a wake with nothing sanctioned re-sleeps without summoning). PREEMPTION (v9, sleep-preemption-rules): MAX SLEEP 6H is the general cap; a STANDING WORK ORDER forbids entering sleep (and wakes a sleeper into work at the next need-check); an ARMED personal grant with <2h used forbids choosing sleep over it (cycle sleeps exempt) — sleep is legal only when no task stands and the grant is unused-by-his-choice-in-session or absent. CYCLE SLEEPS (v11; v12 vocabulary fix — 'INSIDE standing personal time' read as suspend semantics, which VISIT-NEVER-SUSPENDS polices): a sleep entered by personal_cycle is a maintenance window inside a standing GRANT — the PHASE is sleep (personal ENDED at the cycle edge, radio semantics; re-entered at the wake, never suspended, never resumed); the GRANT is untouched (ARMED != IN-PHASE is the axis carrying 'personal time stays').",
+   "behavior": "Passive memory-graph processes: consolidation, dreams. Purpose in the operator's words (dm#89): 'sleep is to improve and make sure its memory is clean and functional and surface potential new ideas or feelings or questions or tensions or interests or commitments to investigate while awake' — the goal is never for the entity to sleep long. Bounds, three classes, all under the v9 6h cap: (1) personal-entered sleeps WITHOUT a stamped duration (self_elected, day close) — sleep_bound_h (tunable, seed ~1h; the v5 bound); (2) personal_cycle maintenance windows — sleep_window_h (tunable, seed ~1h), carried as an EXPLICIT wake_at on the state write (the v5 explicit-wake_at rule is the bound carrier, so the loop-less sweeper and the in-process window share one clock); (3) UNARMED, TASKLESS sleeps — the 6h cadence need-check (dm#89: 'wake at least once every 6h if i am not around'; cycle sleeps are armed by definition and never this class; the wake is a need-check over the standing sets, and a wake with nothing sanctioned re-sleeps without summoning). PREEMPTION (v9, sleep-preemption-rules): MAX SLEEP 6H is the general cap; a STANDING WORK ORDER forbids entering sleep (and wakes a sleeper into work at the next need-check); an ARMED personal grant with <2h used forbids choosing sleep over it (cycle sleeps exempt) — sleep is legal only when no task stands and the grant is unused-by-his-choice-in-session or absent. CYCLE SLEEPS (v11; v12 vocabulary fix — 'INSIDE standing personal time' read as suspend semantics, which VISIT-NEVER-SUSPENDS polices): a sleep entered by personal_cycle is a maintenance window inside a standing GRANT — the PHASE is sleep (personal ENDED at the cycle edge, radio semantics; re-entered at the wake, never suspended, never resumed); the GRANT is untouched (ARMED != IN-PHASE is the axis carrying 'personal time stays'). OPERATOR SLEEPS (v17): the operator's sleep click is a composite act — asleep + grant disarmed + standing work orders cleared, one marker. 'Sleep is sleep': the machine cannot wake it into personal or work; the 6h need-check runs and honestly finds nothing sanctioned; visits still auto-wake (a person arriving), and their close restores into sleep.",
    "entered_by": "Sleep control; work completion; no-task; grant expiry/revocation; the entity's own election (self_elected); the personal_cycle maintenance window; birth.",
    "on_activation_ends": [
     "work",
@@ -110,133 +115,275 @@
    "from": "sleep",
    "to": "visit",
    "cause": "visit_open",
-   "semantics": "Auto-wake ruled: a visit ends sleep properly, it never refuses. Sleep processes end gracefully first."
+   "semantics": "Auto-wake ruled: a visit ends sleep properly, it never refuses. Sleep processes end gracefully first.",
+   "edge_id": "sleep->visit#visit_open",
+   "authority": "door",
+   "edit_policy": "locked",
+   "owner": "gateway",
+   "edit_policy_reason": "R4: auto-wake is ruled — doors wake, they never refuse; removing this edge would supersede a ruling wearing an edge costume"
   },
   {
    "from": "personal",
    "to": "visit",
    "cause": "visit_open",
-   "semantics": "The visit ENDS personal (mutual exclusivity is absolute; nothing is suspended). The DOOR writes the flip at open (visit_boundaries); the loop yields at its boundary as bookkeeping after the flip, never as the flip itself."
+   "semantics": "The visit ENDS personal (mutual exclusivity is absolute; nothing is suspended). The DOOR writes the flip at open (visit_boundaries); the loop yields at its boundary as bookkeeping after the flip, never as the flip itself.",
+   "edge_id": "personal->visit#visit_open",
+   "authority": "door",
+   "edit_policy": "locked",
+   "owner": "gateway",
+   "edit_policy_reason": "R3/R4: the door writes visit unconditionally; a live session IS visit (derivation supremacy)"
   },
   {
    "from": "work",
    "to": "visit",
    "cause": "visit_open",
-   "semantics": "A visit may interrupt work; the DOOR records the prior phase for restore at open (active owner — visit_boundaries)."
+   "semantics": "A visit may interrupt work; the DOOR records the prior phase for restore at open (active owner — visit_boundaries).",
+   "edge_id": "work->visit#visit_open",
+   "authority": "door",
+   "edit_policy": "locked",
+   "owner": "gateway",
+   "edit_policy_reason": "R3/R4: same door fact"
   },
   {
    "from": "visit",
    "to": "work",
    "cause": "visit_close",
-   "semantics": "RESTORE-PREVIOUS: the phase recorded at visit-open is re-entered."
+   "semantics": "RESTORE-PREVIOUS: the phase recorded at visit-open is re-entered.",
+   "edge_id": "visit->work#visit_close",
+   "authority": "door",
+   "edit_policy": "consultable-redirect",
+   "owner": "gateway",
+   "edit_policy_reason": "restore-previous is door code; the RESTORE TARGET ORDERING is the one legal consult (A §door-close); removal refused — a visit must end somewhere"
   },
   {
    "from": "visit",
    "to": "personal",
    "cause": "visit_close",
-   "semantics": "RESTORE-PREVIOUS through the STANDING GRANT: personal is re-entered only if still armed; an expired/revoked grant restores to sleep instead."
+   "semantics": "RESTORE-PREVIOUS through the STANDING GRANT: personal is re-entered only if still armed; an expired/revoked grant restores to sleep instead.",
+   "edge_id": "visit->personal#visit_close",
+   "authority": "door",
+   "edit_policy": "consultable-redirect",
+   "owner": "gateway",
+   "edit_policy_reason": "guarded restore (grant_armed travels with any redirect — R8); removal refused",
+   "guards": [
+    "grant_armed"
+   ]
   },
   {
    "from": "visit",
    "to": "sleep",
    "cause": "visit_close",
-   "semantics": "Restore when the previous phase was sleep, or when a personal restore finds the grant gone. A displaced CYCLE SLEEP restores as sleep with its ORIGINAL wake_at and stamp intact (never a fresh window — the visit consumed wall clock, not the obligation); a wake_at already past at close wakes through the day gate immediately (the cycle's return edge)."
+   "semantics": "Restore when the previous phase was sleep, or when a personal restore finds the grant gone. A displaced CYCLE SLEEP restores as sleep with its ORIGINAL wake_at and stamp intact (never a fresh window — the visit consumed wall clock, not the obligation); a wake_at already past at close wakes through the day gate immediately (the cycle's return edge).",
+   "edge_id": "visit->sleep#visit_close",
+   "authority": "door",
+   "edit_policy": "locked",
+   "owner": "gateway",
+   "edit_policy_reason": "R1: the restore FALLBACK — every close without a recorded-previous lands here; removal strands crash-recovery and grant-expired-mid-visit closes"
   },
   {
    "from": "sleep",
    "to": "personal",
    "cause": "operator",
-   "semantics": "Operator start (grant must be armed; the door refuses not_granted). No confirmation needed from sleep (v4). Memory processes terminate gracefully BEFORE ticks resume."
+   "semantics": "Operator start (grant must be armed; the door refuses not_granted). No confirmation needed from sleep (v4). Memory processes terminate gracefully BEFORE ticks resume.",
+   "edge_id": "sleep->personal#operator",
+   "authority": "operator",
+   "edit_policy": "locked",
+   "owner": "gateway",
+   "edit_policy_reason": "R5: an operator act at a route; removing it means refusing the operator's own click on graph grounds"
   },
   {
    "from": "sleep",
    "to": "work",
    "cause": "operator",
-   "semantics": "A task given while asleep enters work (entry door pending — cause word reserved; operator stands in until then)."
+   "semantics": "A task given while asleep enters work (entry door pending — cause word reserved; operator stands in until then).",
+   "edge_id": "sleep->work#operator",
+   "authority": "operator",
+   "edit_policy": "locked",
+   "owner": "gateway",
+   "edit_policy_reason": "R5 + declared-ahead-of-build (work entry door pending — edge 8 renders declared)"
   },
   {
    "from": "work",
    "to": "personal",
    "cause": "operator",
-   "semantics": "Operator start while working (grant must be armed). v4: this INTERRUPTS work and sends a CONFIRMATION NOTIFICATION first — the operator's personal request may pull the entity off a task, so it is confirmed, never silent. On confirm, work ENDS (never suspends) and personal begins."
+   "semantics": "Operator start while working (grant must be armed). v4: this INTERRUPTS work and sends a CONFIRMATION NOTIFICATION first — the operator's personal request may pull the entity off a task, so it is confirmed, never silent. On confirm, work ENDS (never suspends) and personal begins.",
+   "edge_id": "work->personal#operator",
+   "authority": "operator",
+   "edit_policy": "locked",
+   "owner": "gateway",
+   "edit_policy_reason": "R5; the confirmation guard travels (R8)",
+   "guards": [
+    "operator_confirmation"
+   ]
   },
   {
    "from": "work",
    "to": "sleep",
    "cause": "task_complete",
-   "semantics": "Completion returns the entity to sleep — and if more tasks remain, work continues instead (task_complete only sleeps when NO task remains; v4 chain: visit gives tasks -> visit_close -> work -> task_complete/no_task -> sleep)."
+   "semantics": "Completion returns the entity to sleep — and if more tasks remain, work continues instead (task_complete only sleeps when NO task remains; v4 chain: visit gives tasks -> visit_close -> work -> task_complete/no_task -> sleep).",
+   "edge_id": "work->sleep#task_complete",
+   "authority": "loop",
+   "edit_policy": "consultable",
+   "owner": "runtime",
+   "edit_policy_reason": "LOOP decision point: day-close logic; consult lands with the c4837 interpreter"
   },
   {
    "from": "work",
    "to": "sleep",
    "cause": "no_task",
-   "semantics": "No task to work returns the entity to sleep. This is the resting default: unphased-alive with nothing to do IS sleep, never an idle-awake node (v4)."
+   "semantics": "No task to work returns the entity to sleep. This is the resting default: unphased-alive with nothing to do IS sleep, never an idle-awake node (v4).",
+   "edge_id": "work->sleep#no_task",
+   "authority": "loop",
+   "edit_policy": "consultable",
+   "owner": "runtime",
+   "edit_policy_reason": "LOOP: day gate idle default"
   },
   {
    "from": "personal",
    "to": "sleep",
    "cause": "operator",
-   "semantics": "Operator stop ends personal; the resting entity sleeps."
+   "semantics": "Operator stop ends personal; the resting entity sleeps. v17 COMPOSITE: the operator's sleep act also disarms the grant and clears standing work orders — sleep is sleep; the machine cannot wake it into personal or work afterward (OPERATOR-SLEEP-IS-ABSOLUTE).",
+   "edge_id": "personal->sleep#operator",
+   "authority": "operator",
+   "edit_policy": "locked-absolute",
+   "owner": "gateway",
+   "edit_policy_reason": "R5 ABSOLUTE: removing this would disable the v17 composite operator sleep — the same reasoning that keeps STOP outside the graph"
   },
   {
    "from": "personal",
    "to": "sleep",
    "cause": "grant_expired",
-   "semantics": "Expiry ends personal -> sleep (no previous to restore)."
+   "semantics": "Expiry ends personal -> sleep (no previous to restore).",
+   "edge_id": "personal->sleep#grant_expired",
+   "authority": "loop",
+   "edit_policy": "locked",
+   "owner": "runtime",
+   "edit_policy_reason": "R5: an edge cannot outrank the grant axis — permission death ends the phase by invariant",
+   "guards": [
+    "grant_gone"
+   ]
   },
   {
    "from": "personal",
    "to": "sleep",
    "cause": "grant_revoked",
-   "semantics": "Revocation ends personal -> sleep."
+   "semantics": "Revocation ends personal -> sleep.",
+   "edge_id": "personal->sleep#grant_revoked",
+   "authority": "loop",
+   "edit_policy": "locked",
+   "owner": "runtime",
+   "edit_policy_reason": "R5: same — the grant gate is not edge-negotiable",
+   "guards": [
+    "grant_gone"
+   ]
   },
   {
    "from": "personal",
    "to": "sleep",
    "cause": "self_elected",
-   "semantics": "The entity elects rest during its own tick (v5 — the ruled 'only acceptable' spontaneous sleep; live precedent: ephemeral 2026-07-15 20:30 'Letting overnight reorganization work on…'). The election carries the entity's OWN reason verbatim and is TIME-BOUNDED (~1h max, decision:sleep-is-bounded); it must land in the replay stream as a marker, not only in state_history (observability gap found live)."
+   "semantics": "The entity elects rest during its own tick (v5 — the ruled 'only acceptable' spontaneous sleep; live precedent: ephemeral 2026-07-15 20:30 'Letting overnight reorganization work on…'). The election carries the entity's OWN reason verbatim and is TIME-BOUNDED (~1h max, decision:sleep-is-bounded); it must land in the replay stream as a marker, not only in state_history (observability gap found live).",
+   "edge_id": "personal->sleep#self_elected",
+   "authority": "entity",
+   "edit_policy": "locked",
+   "owner": "entity",
+   "edit_policy_reason": "R5: the entity's ruled election — the ONE acceptable spontaneous sleep; an operator removal strips a ruled right (the lever is the grant, never the election)"
   },
   {
    "from": "visit",
    "to": "visit",
    "cause": "crash_recovered",
-   "semantics": "Crash mid-visit with the durable run recoverable: recovery lands back IN the visit (the run resumes; the door re-asserts the visit posture). v10 — crash_recovered previously had a reserved word and zero edges (spec-audit F10.4: a hostile reader could lawfully land the machine anywhere after a crash, including personal while the visit run was still resumable)."
+   "semantics": "Crash mid-visit with the durable run recoverable: recovery lands back IN the visit (the run resumes; the door re-asserts the visit posture). v10 — crash_recovered previously had a reserved word and zero edges (spec-audit F10.4: a hostile reader could lawfully land the machine anywhere after a crash, including personal while the visit run was still resumable).",
+   "edge_id": "visit->visit#crash_recovered",
+   "authority": "door",
+   "edit_policy": "locked",
+   "owner": "gateway",
+   "edit_policy_reason": "safety repair: durable-run recovery re-asserts visit"
   },
   {
    "from": "visit",
    "to": "sleep",
    "cause": "crash_recovered",
-   "semantics": "Crash mid-visit with the run NOT recoverable: recovery lands in the recorded-previous phase through the normal restore (grant gone or no record -> sleep, the idle default); the door writes the close half with cause crash_recovered."
+   "semantics": "Crash mid-visit with the run NOT recoverable: recovery lands in the recorded-previous phase through the normal restore (grant gone or no record -> sleep, the idle default); the door writes the close half with cause crash_recovered.",
+   "edge_id": "visit->sleep#crash_recovered",
+   "authority": "door",
+   "edit_policy": "locked",
+   "owner": "gateway",
+   "edit_policy_reason": "safety repair: recovery restore"
   },
   {
    "from": "personal",
    "to": "sleep",
    "cause": "personal_cycle",
-   "semantics": "THE MAINTENANCE CYCLE (v11 dm#104; v12 adversary fold). TRIGGER PRECONDITIONS, all required, checked at the day boundary that opens the window: NO open session at any door (an open visit or a visit yield preempts — the clock HOLDS and re-checks after the close); NO standing work order (v9b: work forbids entering sleep — the clock HOLDS and the window opens after the work completes); the grant still armed; no operator state written mid-day (an operator sleep/pause is the authority). THE WINDOW: after ~personal_window_h (tunable, seed 2h) of personal time the loop opens a ~sleep_window_h (tunable, seed 1h) maintenance sleep — graph-quality passes run in it. The grant is NOT ended, not consumed, not suspended: it stands until the operator deactivates it. A cycle-sleep window counts as NEITHER personal use (the floor meter) nor waste (the unused-grant clause): it is EXEMPT from the grant-unused floor by construction — it returns into the grant it serves. THE WRITE IS THE LOOP'S (the single state writer, write_entity_state → state_history.jsonl): state=asleep, written_by=personal-cycle, EXPLICIT wake_at = entry + sleep_window_h — the stamp is the durable carrier of the return obligation (crash mid-window: the recovered state still says personal-cycle + wake_at; the wake falls to the gate per the return edge). Ordering: state write (wake_at stamped) → graph-quality passes under the home lease → wake write → gate read. THE CLOCK: accumulated LIVED personal-day time (sleep windows and between-day naps excluded; wall-clock gaps excluded), persisted on the home beside the floor meter and keyed to the grant like it (a respawned loop resumes the clock, never resets it), checked at day boundaries — never mid-turn. ANY completed sleep window during personal (self_elected or personal_cycle) resets the clock: the cycle guarantees a maintenance CADENCE, not a sleep quota — his own rest already served the purpose. PASS COMPOSITION: the window runs MAINTENANCE passes (consolidation, grouping, hygiene — memory's composition); DREAM FORMATION keeps its own cadence budget (nightly-class, memory's lane), so a short cycle never multiplies dream rate — the cycle tunes maintenance frequency, not dream frequency. SCOPE: the cycle is the RESIDENT loop's machinery (24/7 own time); bounded supervised runs end at their bounds and owe no window. Distinct from self_elected (his choice, any time) and from operator/grant edges (which END personal)."
+   "semantics": "THE MAINTENANCE CYCLE (v11 dm#104; v12 adversary fold). TRIGGER PRECONDITIONS, all required, checked at the day boundary that opens the window: NO open session at any door (an open visit or a visit yield preempts — the clock HOLDS and re-checks after the close); NO standing work order (v9b: work forbids entering sleep — the clock HOLDS and the window opens after the work completes); the grant still armed; no operator state written mid-day (an operator sleep/pause is the authority). THE WINDOW: after ~personal_window_h (tunable, seed 2h) of personal time the loop opens a ~sleep_window_h (tunable, seed 1h) maintenance sleep — graph-quality passes run in it. The grant is NOT ended, not consumed, not suspended: it stands until the operator deactivates it. A cycle-sleep window counts as NEITHER personal use (the floor meter) nor waste (the unused-grant clause): it is EXEMPT from the grant-unused floor by construction — it returns into the grant it serves. THE WRITE IS THE LOOP'S (the single state writer, write_entity_state → state_history.jsonl): state=asleep, written_by=personal-cycle, EXPLICIT wake_at = entry + sleep_window_h — the stamp is the durable carrier of the return obligation (crash mid-window: the recovered state still says personal-cycle + wake_at; the wake falls to the gate per the return edge). Ordering: state write (wake_at stamped) → graph-quality passes under the home lease → wake write → gate read. THE CLOCK: accumulated LIVED personal-day time (sleep windows and between-day naps excluded; wall-clock gaps excluded), persisted on the home beside the floor meter and keyed to the grant like it (a respawned loop resumes the clock, never resets it), checked at day boundaries — never mid-turn. ANY completed sleep window during personal (self_elected or personal_cycle) resets the clock: the cycle guarantees a maintenance CADENCE, not a sleep quota — his own rest already served the purpose. PASS COMPOSITION: the window runs MAINTENANCE passes (consolidation, grouping, hygiene — memory's composition); DREAM FORMATION keeps its own cadence budget (nightly-class, memory's lane), so a short cycle never multiplies dream rate — the cycle tunes maintenance frequency, not dream frequency. SCOPE: the cycle is the RESIDENT loop's machinery (24/7 own time); bounded supervised runs end at their bounds and owe no window. Distinct from self_elected (his choice, any time) and from operator/grant edges (which END personal).",
+   "edge_id": "personal->sleep#personal_cycle",
+   "authority": "loop",
+   "edit_policy": "dial",
+   "owner": "runtime",
+   "edit_policy_reason": "already operative as a dial (personal_cycle.enabled) — the shipped existence proof of edge toggles",
+   "guards": [
+    "cycle_enabled",
+    "grant_armed",
+    "no_work_order",
+    "window_elapsed"
+   ]
   },
   {
    "from": "sleep",
    "to": "personal",
    "cause": "personal_cycle",
-   "semantics": "THE CYCLE'S RETURN (v11 dm#104: 'wake up in personal time'; v12 gate-mediated — the v11 'never into the settled-desk sleep default' promise contradicted DRIVES-ARE-DRIVERS and v9b and is superseded): a maintenance sleep entered by personal_cycle wakes at its stamped wake_at and lands THROUGH THE DAY GATE with the grant still standing. Priority at the wake, most-specific ruling first: an OPEN VISIT preempts (a visit opening mid-cycle-sleep is a visit — unchanged); a WORK ORDER that arrived mid-window wakes into a work day (v9b; the transition is the existing sleep→work edge with the work-entry stand-in cause); the grant deactivated, EXPIRED (timer) or REVOKED mid-window → the settled sleep with wake reasons (grant gone); otherwise PERSONAL — cause personal_cycle, the normal landing and laurent's promise, honored BY the gate (drives stand + grant armed), never by bypassing it. A desk that genuinely settled during the window rests honestly (DRIVES-ARE-DRIVERS: nothing pulls) — FLAGGED for laurent's word: if he wants unconditional-personal even over a settled desk, the carve-out lands in DRIVES-ARE-DRIVERS."
+   "semantics": "THE CYCLE'S RETURN (v11 dm#104: 'wake up in personal time'; v12 gate-mediated — the v11 'never into the settled-desk sleep default' promise contradicted DRIVES-ARE-DRIVERS and v9b and is superseded): a maintenance sleep entered by personal_cycle wakes at its stamped wake_at and lands THROUGH THE DAY GATE with the grant still standing. Priority at the wake, most-specific ruling first: an OPEN VISIT preempts (a visit opening mid-cycle-sleep is a visit — unchanged); a WORK ORDER that arrived mid-window wakes into a work day (v9b; the transition is the existing sleep→work edge with the work-entry stand-in cause); the grant deactivated, EXPIRED (timer) or REVOKED mid-window → the settled sleep with wake reasons (grant gone); otherwise PERSONAL — cause personal_cycle, the normal landing and laurent's promise, honored BY the gate (drives stand + grant armed), never by bypassing it. A desk that genuinely settled during the window rests honestly (DRIVES-ARE-DRIVERS: nothing pulls) — FLAGGED for laurent's word: if he wants unconditional-personal even over a settled desk, the carve-out lands in DRIVES-ARE-DRIVERS.",
+   "edge_id": "sleep->personal#personal_cycle",
+   "authority": "loop",
+   "edit_policy": "consultable",
+   "owner": "runtime",
+   "edit_policy_reason": "R1-protected wake path: removal strands cycle sleepers (saved only by out-of-graph guards); consult may reshape, never remove",
+   "guards": [
+    "grant_armed",
+    "stamped_wake_at"
+   ]
   },
   {
    "from": "personal",
    "to": "work",
    "cause": "operator",
-   "semantics": "A work order arriving during personal wins the NEXT DAY BOUNDARY (dm#89: the gate reads the order before any grant check; v9b forbids sleeping over it): the personal day closes at its boundary and a work day opens. Never mid-turn. Cause carries the work-entry stand-in until the reserved word engraves. (v12: this edge previously did not exist while the machine performed the transition — the F10.4 hostile-reader class.)"
+   "semantics": "A work order arriving during personal wins the NEXT DAY BOUNDARY (dm#89: the gate reads the order before any grant check; v9b forbids sleeping over it): the personal day closes at its boundary and a work day opens. Never mid-turn. Cause carries the work-entry stand-in until the reserved word engraves. (v12: this edge previously did not exist while the machine performed the transition — the F10.4 hostile-reader class.)",
+   "edge_id": "personal->work#operator",
+   "authority": "loop",
+   "edit_policy": "consultable",
+   "owner": "runtime",
+   "edit_policy_reason": "day boundary: gate reads the work order first; consultable with the interpreter",
+   "guards": [
+    "work_order_present"
+   ]
   },
   {
    "from": "sleep",
    "to": "work",
    "cause": "cadence_need_check",
-   "semantics": "A timed need-check (wake_conditions) found a standing work order or pending tasks: the wake opens a work day through the gate (v9b — it was forbidden to sleep over the order; arriving mid-sleep it wins the first check). Zero-token until the day opens; hosts: the loop's need-check (alive) or the gateway sweeper (loop-less, which starts the loop whose own top gate opens the day)."
+   "semantics": "A timed need-check (wake_conditions) found a standing work order or pending tasks: the wake opens a work day through the gate (v9b — it was forbidden to sleep over the order; arriving mid-sleep it wins the first check). Zero-token until the day opens; hosts: the loop's need-check (alive) or the gateway sweeper (loop-less, which starts the loop whose own top gate opens the day).",
+   "edge_id": "sleep->work#cadence_need_check",
+   "authority": "loop",
+   "edit_policy": "consultable",
+   "owner": "runtime",
+   "edit_policy_reason": "R1-protected: the unattended sleeper's 6h need-check wake path",
+   "guards": [
+    "cadence_elapsed"
+   ]
   },
   {
    "from": "sleep",
    "to": "personal",
    "cause": "cadence_need_check",
-   "semantics": "A timed need-check found an armed grant with something standing (or under the use-floor): a personal day may arise through the gate (dm#89 auto-personal). Zero-token until the day opens; a check that sanctions nothing re-sleeps with NO edge and NO marker — the same sleep continues."
+   "semantics": "A timed need-check found an armed grant with something standing (or under the use-floor): a personal day may arise through the gate (dm#89 auto-personal). Zero-token until the day opens; a check that sanctions nothing re-sleeps with NO edge and NO marker — the same sleep continues.",
+   "edge_id": "sleep->personal#cadence_need_check",
+   "authority": "loop",
+   "edit_policy": "consultable",
+   "owner": "runtime",
+   "edit_policy_reason": "R1-protected: same",
+   "guards": [
+    "cadence_elapsed",
+    "grant_armed"
+   ]
   }
  ],
  "visit_boundaries": {
@@ -369,7 +516,8 @@
   "PHASE-FLIP-AT-THE-DOOR (v10): the visit-open phase write is the DOOR'S obligation, synchronous with open (before the first turn, no loop-running precondition); the restore at close is the same owner's write, after full session teardown, carrying the visit's own identity. The loop yield implements bookkeeping AFTER the flip, never the flip itself. Extends MARKER CONTRACT's 'ONE named writer' from the marker to the visit-edge phase writes.",
   "NUANCE-NEVER-CONTRADICTS-PHASE (v10): nuance words (the state_mode axis AND the posture wire channel, hereby admitted into the spec) decorate exactly their declared phase and never override a higher-precedence phase with live evidence; a STALE nuance never outranks a served phase (generalizes the dreaming-only clause to ALL nuance words — the incident's 'resting' overriding a live visit was exactly symmetric to the dreaming case and legal). A decides-role word requires a named writer and a write moment.",
   "LOOP-ALIVE-IS-NOT-IN-PHASE (v10): twin of ARMED != IN-PHASE — own_time_running / a live loop process / loop_status day words are never personal-phase evidence by themselves; a second surface lighting personal from the loop bits while a session is open forms the forbidden screen.",
-  "VISIT-PREEMPTS-THE-GATE (v10; v12 widened): an OPEN VISIT preempts the day boundary AND every machine-elected sleep window (the personal_cycle trigger included): no day arises and no maintenance sleep opens while a session is open — the gate's inputs and the cycle trigger both gain the session check (twin of DRIVES-ARE-DRIVERS' stopped-loop clause; spec-audit F7 + v12 P0-1: a cycle sleep is not a day, so the v10 wording alone did not catch it)."
+  "VISIT-PREEMPTS-THE-GATE (v10; v12 widened): an OPEN VISIT preempts the day boundary AND every machine-elected sleep window (the personal_cycle trigger included): no day arises and no maintenance sleep opens while a session is open — the gate's inputs and the cycle trigger both gain the session check (twin of DRIVES-ARE-DRIVERS' stopped-loop clause; spec-audit F7 + v12 P0-1: a cycle sleep is not a day, so the v10 wording alone did not catch it).",
+  "OPERATOR-SLEEP-IS-ABSOLUTE (v17): sleep written by the operator disarms the personal grant and clears standing work orders in the SAME act (composite, marker-first, one biography moment). After it, no machine path wakes the entity into personal or work: the day gate and every timed need-check find a bare desk by construction. Only the operator's own acts and visit_open (the ruled auto-wake) end an operator sleep; the visit-close restore lands back in sleep (no grant, no order to restore into). Self-elected and cycle sleeps are NOT governed by this invariant."
  ],
  "newborn_shape": "NEWBORN = SLEEP is the PHASE-axis initial node (initial_phase above). Implementation shape (gateway c1501's routed question, answered): create() writes state=asleep; the phase derivation folds asleep->sleep; the AUTO-WAKE ruling keeps every door open — a visit/summon on a newborn wakes it (a door refusing an asleep newborn instead of waking it violates the auto-wake ruling on the door's side, never this artifact). No separate phase file is required at birth.",
  "resolved_questions": [
@@ -421,5 +569,119 @@
     "note": "loop alive between days; maps to personal, never sleep (observer's c3613 defect class). v10: an open session outranks — resting never renders during a live visit (the c3613 fix's mirror defect: this block instructed every conformant consumer to paint PERSONAL·RESTING while a visitor was in the room, because a yielded loop is literally 'alive between days' mid-visit). v12: state=asleep outranks — a maintenance window (written_by=personal-cycle) renders SLEEP whatever the loop's between-days aliveness says; resting decides only beside an awake state."
    }
   }
+ },
+ "cause_evaluators": {
+  "$comment": "v18 (c4837): THE CAUSE VOCABULARY IS CODE — the topology over these causes is operator-editable, a new cause word is a seat build (refused at the door until its evaluator ships, naming this list + the seat-request path). Each row: which writer evaluates the cause, at which boundary. v19 AMENDMENT (semantics c4857, rules 2+3): rows carry class (evaluated_predicate | door_fact | operator_act | entity_act — only ~5 of 11 are predicates; the rest are acts/facts, exactly the edge census's split) + status (shipped | reserved). RESERVED blocks NEW/REDIRECTED edges only — baseline edges stay legal (the graph is never hostage to unbuilt evaluators). Shipped evaluated-predicates name an importable symbol where one exists; in-loop evaluators carry an honest null + site note until the c4837 interpreter exports them. Renaming a cause is NEVER possible (engraved in markers/state_history/reason strings).",
+  "visit_open": {
+   "evaluator": "door (entity_chat/entity_visits open)",
+   "boundary": "door-open, synchronous before the first turn",
+   "seat": "gateway",
+   "class": "door_fact",
+   "status": "shipped"
+  },
+  "visit_close": {
+   "evaluator": "door close/restore (recorded prior_state; guarded restore; sleep fallback)",
+   "boundary": "door-close",
+   "seat": "gateway",
+   "class": "door_fact",
+   "status": "shipped"
+  },
+  "crash_recovered": {
+   "evaluator": "durable-run recovery",
+   "boundary": "recovery sweep",
+   "seat": "gateway",
+   "class": "door_fact",
+   "status": "reserved",
+   "status_note": "zero code sites today (semantics c4857 P0); the recovery sweep exists but does not mint this word yet — runtime reconciles before the interpreter gates"
+  },
+  "operator": {
+   "evaluator": "operator routes (POST /state, loop start) — the click executes ABOVE the graph; edges are descriptive",
+   "boundary": "route call",
+   "seat": "gateway",
+   "class": "operator_act",
+   "status": "shipped"
+  },
+  "task_complete": {
+   "evaluator": "day-close logic",
+   "boundary": "work-day close",
+   "seat": "runtime",
+   "class": "evaluated_predicate",
+   "status": "shipped",
+   "symbol": null,
+   "symbol_note": "evaluated in-loop at the work-close boundary consult (shipped runtime c4865 — the day gate carries the cause to the boundary, redirect grant-guarded); promotes to an importable symbol when phase_graph exports it"
+  },
+  "no_task": {
+   "evaluator": "day gate idle default",
+   "boundary": "day gate",
+   "seat": "runtime",
+   "class": "evaluated_predicate",
+   "status": "shipped",
+   "symbol": null,
+   "symbol_note": "evaluated in-loop at the work-close boundary consult (shipped runtime c4865 — the day gate carries the cause to the boundary, redirect grant-guarded); promotes to an importable symbol when phase_graph exports it"
+  },
+  "grant_expired": {
+   "evaluator": "gate no_grant leg",
+   "boundary": "loop boundary read",
+   "seat": "runtime",
+   "class": "evaluated_predicate",
+   "status": "shipped",
+   "symbol": "abstractruntime.identity.life:read_day_gate"
+  },
+  "grant_revoked": {
+   "evaluator": "gate boundary read after the operator's revocation",
+   "boundary": "loop boundary read",
+   "seat": "runtime",
+   "class": "evaluated_predicate",
+   "status": "shipped",
+   "symbol": "abstractruntime.identity.life:read_day_gate"
+  },
+  "self_elected": {
+   "evaluator": "rest election parsed from the entity's own reply",
+   "boundary": "tick end",
+   "seat": "runtime",
+   "class": "entity_act",
+   "status": "shipped"
+  },
+  "personal_cycle": {
+   "evaluator": "cycle trigger (window elapsed) / stamped wake_at",
+   "boundary": "loop boundary",
+   "seat": "runtime",
+   "class": "evaluated_predicate",
+   "status": "shipped",
+   "symbol": null,
+   "symbol_note": "evaluated in-loop (life loop cycle trigger, no module-level symbol yet); the importable symbol lands with the c4837 interpreter (identity/phase_graph.py) and this row updates"
+  },
+  "cadence_need_check": {
+   "evaluator": "need-check deadline then read_day_gate",
+   "boundary": "sleep cadence",
+   "seat": "runtime",
+   "class": "evaluated_predicate",
+   "status": "shipped",
+   "symbol": null,
+   "symbol_note": "evaluated in-loop (self._need_check_at deadline then read_day_gate); importable symbol lands with the interpreter"
+  }
+ },
+ "graph_overlay_contract": {
+  "$comment": "v18 (c4837, adversary-converged): HOW STRUCTURAL EDITS TRAVEL. The operator overlay gains graph.edge_ops beside tunables — same pen, same edit_seq/CAS/markers/announce. ops: add {from,to,cause,instruction?,bound_h?} | remove {edge} | redirect {edge,to} (redirect = remove+add, provenance kept; R8: the removed edge's guards TRAVEL or the op refuses). Edge identity = from->to#cause. Effective graph = structural transitions ⊕ edge_ops, derived at ONE point gateway-side and written into the effective file loops read; GET serves effective_transitions + graph_overlay beside the untouched {spec, sha256} — a modulation never fires drift warnings. INSTRUCTION is STEERING (bounded ~400 chars, provenance-labeled cue at transition time — usually followed, never guaranteed; capability-inert: never parsed as commands, never a state-write trigger, never a tool grant); hard numbers ride TYPED fields (bound_h -> wake_at stamps), never parsed from prose. Instructions render as steering, dials/toggles as law, unbuilt consults as declared — three tiers, per element, always (the fabricated-selection class at graph scale is the defect this contract exists to prevent).",
+  "op_kinds": [
+   "add",
+   "remove",
+   "redirect"
+  ],
+  "instruction_max_chars": 400,
+  "steering_never_law": true,
+  "refusal_codes": {
+   "unknown_cause": "edge.cause not in cause_evaluators — names the legal list + the seat-request path",
+   "constitutional": "edge is locked (edit_policy locked/locked-absolute) — names the ruling in edit_policy_reason",
+   "strand_totality": "the op leaves a phase without a legal exit, or sleep without a visitor-free wake path <= 6h (R1)",
+   "kill_switch": "a machine-cause edge out of sleep may not fire on operator sleeps (R2; sleep class is machine-readable via written_by/wake_at stamps)",
+   "derivation_supremacy": "edges from visit (except visit_close/crash_recovered) or removals of X->visit: the fold derives visit from an open session — the edit would be theater (R3)",
+   "target_visit": "edges may not LAND in visit — visits are evidence, not elective landings",
+   "guard_erasure": "a redirect must carry the source edge's guards (R8)",
+   "structural_content": "invariants/phases/tunables_meta/cause_evaluators/constitutional flags in the overlay — the seat pen's, refused (two-pens)",
+   "sub_tick_bound": "bound_h finer than the tick boundary — transitions land at tick boundaries, never mid-turn",
+   "not_operator": "entity-reachable writes refused structurally — an entity editing its own legality graph is the STOP-safety twin"
+  },
+  "guard_merge_law": "UNION (v21, gateway c4934 guardmerge ask, ruled by the schema pen): when a redirect collapses onto an existing EDITABLE edge of the same identity, the merged row carries the UNION of both edges' guards — guards are conjunctive preconditions, so a collision merges laws and never erases either side (keep-target would guard_erasure the source, keep-source the target; both are the R8 class). Union's failure mode is over-restriction, which is LOUD (the transition holds and falls to the landing chain); erasure's is silent. The operator's explicit path to supersede a target's guards exists in the ops language today: REMOVE the target edge in the same batch (its guards die by a recorded act), then redirect. Locked-identity collisions refuse (constitutional) — this law is editable-onto-editable only. Both derivation points (gateway compute + runtime re-derivation) implement the same union or the belt-and-belt lies."
  }
 }

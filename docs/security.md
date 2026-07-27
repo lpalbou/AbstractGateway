@@ -46,11 +46,28 @@ mode. The presence of an `auth/users.json` registry file is readiness state; it
 does not silently enable hosted user auth unless `ABSTRACTGATEWAY_USER_AUTH_AUTO=1`
 is set for compatibility. Admin principals can manage users through:
 
-- `GET /api/gateway/admin/users`
+- `GET /api/gateway/admin/users?kind=human|entity|all` (default `all`)
 - `POST /api/gateway/admin/users`
 - `GET /api/gateway/admin/users/{user_id}?tenant_id=...`
 - `PATCH /api/gateway/admin/users/{user_id}?tenant_id=...`
 - `DELETE /api/gateway/admin/users/{user_id}?tenant_id=...`
+
+Every user row carries a first-class `principal_kind` field (`"human"` or
+`"entity"`); clients must read it (or the `kind` filter) instead of
+re-deriving kind from the `roles` convention. Census asymmetry is deliberate:
+`GET /api/gateway/entities` is the ENTITY census (homes on disk), while
+`?kind=entity` here is the entity-PRINCIPAL census — homes created before
+principal minting have no user row, so the two lists can legitimately differ
+and neither may be derived from the other.
+
+Entity principals (minted at entity creation) are shaped by the entities
+lane, not the users lane: `PATCH` refuses `token`/`rotate_token`/`roles`/
+`runtime_id` and `DELETE` refuses outright (HTTP 403 naming the lane). A
+rotation would mint a live entity bearer that by design must not exist, and
+a delete would remove the name-collision guard protecting the entity's
+identity. `enabled` (the door-side disable), `email`, and `scopes` stay
+editable. The guard lives in `GatewayUserRegistry` itself, so the config CLI
+refuses the same writes.
 - `GET /api/gateway/admin/runtime-reservations`
 - `POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer`
 - `POST /api/gateway/admin/runtime-reservations/{runtime_id}/purge`

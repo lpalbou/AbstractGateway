@@ -157,6 +157,17 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
         exact=("/api/gateway/entities/spec/phases",),
         methods=("PUT",),
     ),
+    # The DEFAULT tool grant (tool-tiers grant-mode API, laurent dm#221
+    # item G): the grant every run inherits when a client sends no policy —
+    # widening it widens what agents auto-run gateway-wide, the operator's
+    # consent surface alone. GET /tool-grants (read the vocabulary +
+    # current grant) stays user-level so clients can render the policy.
+    GatewayRoutePolicy(
+        resource="settings",
+        reason_code="admin_required",
+        exact=("/api/gateway/tool-grants/default",),
+        methods=("PUT",),
+    ),
     GatewayRoutePolicy(
         resource="entities",
         reason_code="admin_required",

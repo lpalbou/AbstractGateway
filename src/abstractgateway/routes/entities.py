@@ -13,7 +13,12 @@ here) knows how.
 
 from __future__ import annotations
 
+import datetime as _datetime
+import json
+import logging
 import secrets
+import threading
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException
@@ -21,7 +26,20 @@ from pydantic import BaseModel, Field
 
 from ..config import entity_iterations_ceiling
 from ..entities import EntityRegistry, entity_slug
+from ..entity_seat import (
+    cancel_run_tree,
+    door_decision,
+    normalize_caller_kind,
+    record_seat,
+    seat_occupancy,
+)
 from ..service import get_gateway_service
+
+logger = logging.getLogger(__name__)
+
+
+def _now_iso() -> str:
+    return _datetime.datetime.now(_datetime.timezone.utc).isoformat()
 
 # The entity TTS twins reuse the generic route's request model so the two
 # lanes cannot drift (module-level import is safe: gateway.py's entities
@@ -37,6 +55,26 @@ def _registry() -> EntityRegistry:
     if isinstance(registry, EntityRegistry):
         return registry
     return EntityRegistry(data_dir=svc.config.data_dir)
+
+
+def _visit_refused_response(e: Any):
+    """VisitRefused -> the ADDITIVE structured error shape (coder-tui c4307
+    ask 3): `detail` stays the human STRING it always was (existing
+    consumers byte-unaffected — a dict detail would change its type under
+    them), and the stable machine `code` rides as a SIBLING body key plus
+    an X-Gateway-Error-Code header. Codes are a closed vocabulary owned by
+    entity_visits.VisitRefused raise sites; absent code = plain shape."""
+    from fastapi.responses import JSONResponse
+
+    status = int(getattr(e, "status", 500))
+    detail = str(getattr(e, "detail", e))
+    code = str(getattr(e, "code", "") or "").strip()
+    body: Dict[str, Any] = {"detail": detail}
+    headers = None
+    if code:
+        body["code"] = code
+        headers = {"X-Gateway-Error-Code": code}
+    return JSONResponse(status_code=status, content=body, headers=headers)
 
 
 @router.post("/auth/probe")
@@ -299,6 +337,12 @@ def _packaged_spec_raw() -> str:
     return (_resources.files("abstractgateway") / "assets" / "entity_phases.json").read_text(encoding="utf-8")
 
 
+def _packaged_cognition_raw() -> str:
+    from importlib import resources as _resources
+
+    return (_resources.files("abstractgateway") / "assets" / "cognition_graph.json").read_text(encoding="utf-8")
+
+
 def _read_overlay() -> Tuple[Dict[str, Any], Optional[str]]:
     """(overlay, warning): the stored overlay ({edit_seq, edited_by/at,
     reason, tunables}) or {}, plus a LOUD warning when the file exists but
@@ -370,6 +414,162 @@ def _effective_tunables(structural: Dict[str, Any], overlay: Dict[str, Any]) -> 
     return _deep_merge_numbers(base, patch)
 
 
+def _overlay_edge_ops(overlay: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The stored structural edge ops (graph.edge_ops), shape-filtered."""
+    graph = overlay.get("graph")
+    ops = graph.get("edge_ops") if isinstance(graph, dict) else None
+    if not isinstance(ops, list):
+        return []
+    return [op for op in ops if isinstance(op, dict)]
+
+
+def _derive_effective_doc(
+    structural: Dict[str, Any], raw_sha: str, overlay: Dict[str, Any]
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """ONE derivation point for the effective spec doc (PUT + reconcile +
+    boot all call this — the structural-edit build's 'effective graph
+    derived at ONE gateway point', c4859): structural spec + merged
+    tunables + (when the overlay carries graph.edge_ops) merged
+    transitions AND the graph block itself (runtime's interpreter applies
+    ops idempotently over the resolved doc, c4865 — overlay-only and
+    merged files read identically; belt-and-belt).
+
+    `structural_sha256` rides TOP-LEVEL: runtime's H2 handshake input —
+    the sha of the vendored structural artifact these ops were validated
+    against. A consumer whose own vendored spec differs falls back to
+    dials-only rather than applying ops against a graph they were never
+    checked on.
+
+    Returns (doc, degrade_warning). Stored ops that no longer validate
+    against the CURRENT structural artifact (re-vendor drift) degrade to
+    a dials-only effective file LOUDLY — a detached loop must never read
+    an incoherent graph; the overlay is untouched, nothing lost."""
+    from ..phase_edge_ops import compute_effective_transitions, validate_edge_ops
+
+    effective = dict(structural)
+    effective["tunables"] = _effective_tunables(structural, overlay)
+    effective["structural_sha256"] = raw_sha
+    degrade: Optional[str] = None
+    ops = _overlay_edge_ops(overlay)
+    if ops:
+        refusal = validate_edge_ops(structural, ops)
+        if refusal is None:
+            effective["transitions"] = compute_effective_transitions(structural, ops)
+            effective["graph"] = {"edge_ops": ops}
+        else:
+            degrade = (
+                f"#FALLBACK stored graph.edge_ops no longer valid against the current structural spec "
+                f"({refusal.code}: {refusal.detail}) — the effective file serves the structural graph + dials only; "
+                f"re-read GET /spec/phases and re-apply graph.edge_ops (the overlay is untouched, nothing lost)"
+            )
+    effective["_operator"] = {
+        "edit_seq": int(overlay.get("edit_seq") or 0),
+        "edited_by": overlay.get("edited_by"),
+        "edited_at": overlay.get("edited_at"),
+        "derived": True,
+    }
+    return effective, degrade
+
+
+def _write_effective_spec_file(
+    structural: Dict[str, Any], raw_sha: str, overlay: Dict[str, Any], eff_path: Optional[Any] = None
+) -> Tuple[Any, Optional[str]]:
+    """Atomically (re)write the derived effective file loops read."""
+    import json as _json
+
+    doc, degrade = _derive_effective_doc(structural, raw_sha, overlay)
+    if eff_path is None:
+        eff_path = _effective_spec_file_path()
+    eff_path.parent.mkdir(parents=True, exist_ok=True)
+    eff_tmp = eff_path.with_suffix(f".tmp.{int(overlay.get('edit_seq') or 0)}")
+    eff_tmp.write_text(_json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    eff_tmp.replace(eff_path)
+    return eff_path, degrade
+
+
+def reconcile_effective_spec_file(data_dir: Optional[Any] = None) -> Optional[str]:
+    """CRASH-WINDOW + VENDOR-DRIFT reconcile (boot + GET, c4859/c4871): the
+    overlay and the derived effective file are two separate atomic writes —
+    a crash between them, OR a re-vendor changing the structural artifact
+    under a standing overlay, leaves the effective file STALE against what
+    a PUT would derive today. Freshness = the effective file's
+    (_operator.edit_seq, structural_sha256) both match the overlay + the
+    current vendored sha; anything else re-derives through the ONE
+    derivation point. Pre-this-build effective files carry no
+    structural_sha256, so they read stale ONCE and self-migrate.
+
+    `data_dir` lets the BOOT caller name the base dir without building a
+    service (multi-user boot keeps services lazy); route callers omit it
+    and resolve through the registry as always.
+
+    Returns the degrade warning when stored ops no longer validate
+    (labeled dials-only), else None. Never raises: reconcile trouble is
+    logged + surfaced by GET, never a 500 in front of the console."""
+    import hashlib as _hashlib
+    import json as _json
+    import logging as _logging
+
+    try:
+        if data_dir is not None:
+            from pathlib import Path as _Path
+
+            base = _Path(data_dir)
+            overlay_path = base / "config" / "entity_phases_overlay.json"
+            eff_path = base / "config" / "entity_phases.json"
+            if not overlay_path.is_file():
+                return None  # no operator edits — nothing derived, nothing stale
+            try:
+                overlay = _json.loads(overlay_path.read_text(encoding="utf-8"))
+                if not isinstance(overlay, dict):
+                    return None  # corrupt overlay is GET's loud-degrade lane
+            except Exception:  # noqa: BLE001
+                return None
+        else:
+            overlay, _warn = _read_overlay()
+            eff_path = _effective_spec_file_path()
+        if not overlay:
+            return None  # no operator edits — nothing derived, nothing stale
+        raw = _packaged_spec_raw()
+        structural = _json.loads(raw)
+        sha = _hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        current: Dict[str, Any] = {}
+        if eff_path.is_file():
+            try:
+                loaded = _json.loads(eff_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    current = loaded
+            except Exception:  # noqa: BLE001 - unreadable effective = rewrite
+                current = {}
+        meta = current.get("_operator") or {}
+        fresh = (
+            int(meta.get("edit_seq") or 0) == int(overlay.get("edit_seq") or 0)
+            and str(current.get("structural_sha256") or "") == sha
+        )
+        if fresh:
+            return None
+        _path, degrade = _write_effective_spec_file(structural, sha, overlay, eff_path=eff_path)
+        if degrade:
+            _logging.getLogger(__name__).error(degrade)
+        return degrade
+    except Exception as e:  # noqa: BLE001
+        _logging.getLogger(__name__).warning("effective spec reconcile skipped: %s", e)
+        return None
+
+
+def _edge_op_refusal_response(refusal: Any, *, status: int = 400):
+    """EdgeOpRefusal -> the additive structured error shape (the visit-error
+    precedent): `detail` stays a human string (artifact message + specific
+    why); the ARTIFACT refusal code rides as a sibling body key + header."""
+    from fastapi.responses import JSONResponse
+
+    code = str(getattr(refusal, "code", "") or "")
+    return JSONResponse(
+        status_code=status,
+        content={"detail": f"{refusal.message} — {refusal.detail}", "code": code},
+        headers={"X-Gateway-Error-Code": code} if code else None,
+    )
+
+
 @router.get("/spec/phases")
 def entity_phase_spec() -> Dict[str, Any]:
     """THE ONE STATE GRAPH, served (laurent dm#79 via c3562: "gateway MUST
@@ -398,7 +598,13 @@ def entity_phase_spec() -> Dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"phase spec unavailable: {e} — re-vendor assets/entity_phases.json")
 
+    # Crash-window/vendor-drift heal BEFORE serving (c4859: reconcile at
+    # boot + GET) — the detached loops read the FILE; the console reads
+    # this route; both must agree after a mid-PUT crash or a re-vendor.
+    reconcile_warning = reconcile_effective_spec_file()
+
     overlay, overlay_warning = _read_overlay()
+    warnings: list = []
     out: Dict[str, Any] = {
         "spec": structural,
         "vendored": True,
@@ -406,6 +612,11 @@ def entity_phase_spec() -> Dict[str, Any]:
         "source": "abstractentity/spec/entity_phases.json (one pen: entity; gateway serves a synced byte copy)",
         "operator_edited": bool(overlay),
         "effective_tunables": _effective_tunables(structural, overlay),
+        # Lane-liveness signal (entity c5120 detection gap): the edge_ops
+        # door is LIVE on this route even before the first edit — clients
+        # light their edit affordances on this key's PRESENCE (empty list
+        # = no ops yet), never via a probe-PUT.
+        "graph_overlay": {"edge_ops": _overlay_edge_ops(overlay) if overlay else []},
     }
     if overlay:
         out["tunables_overlay"] = dict(overlay.get("tunables") or {})
@@ -415,16 +626,95 @@ def entity_phase_spec() -> Dict[str, Any]:
             "edited_at": overlay.get("edited_at"),
             "reason": overlay.get("reason"),
         }
+        # STRUCTURAL edge ops (operator build c4837): the stored ops serve
+        # beside the dials, and the EFFECTIVE graph (structural ⊕ ops,
+        # derived at the one point) serves only when the ops still validate
+        # against the current structural artifact — never a broken merge.
+        ops = _overlay_edge_ops(overlay)
+        if ops:
+            out["overlay"]["graph"] = {"edge_ops": ops}
+            from ..phase_edge_ops import compute_effective_transitions, validate_edge_ops
+
+            refusal = validate_edge_ops(structural, ops)
+            if refusal is None:
+                out["effective_transitions"] = compute_effective_transitions(structural, ops)
+            else:
+                warnings.append(
+                    f"#FALLBACK stored graph.edge_ops invalid against the current structural spec "
+                    f"({refusal.code}: {refusal.detail}) — effective graph is structural-only until re-applied"
+                )
     if overlay_warning:
-        out["warnings"] = [overlay_warning]
+        warnings.append(overlay_warning)
+    if reconcile_warning and reconcile_warning not in warnings:
+        warnings.append(reconcile_warning)
+    if warnings:
+        out["warnings"] = warnings
     return out
 
 
+@router.get("/spec/cognition-graph")
+def entity_cognition_graph_spec() -> Dict[str, Any]:
+    """THE COGNITION MAP, served (operator correction c5070 / laurent: the
+    editable graph is "the COMPLEX MEMORY COGNITION STATE GRAPH ... ALL THE
+    PASSIVE AND ACTIVE MEMORY CONSTRUCTION AND RECONSTRUCTION PROCESSES AND
+    WHAT THEY CREATE — lessons, world models, gradual opinion system, safe
+    identity update"). The pen is entity's (abstractentity/spec/
+    cognition_graph.json — one pen, version-bumped); the gateway VENDORS a
+    byte copy at sync time and serves it here so every client (blueprint
+    page, observer) reads the SAME map from the wire, not a bundled copy
+    each re-derives (the "bundled-only, unserved: zero references" gap
+    c5070 named).
+
+    Distinct from BOTH sibling surfaces: `/spec/phases` serves the SIMPLE
+    phase-transition graph (the four resting phases); `/{name}/cognition`
+    serves a live entity's CURRENT cognition STATE. This serves the
+    cognition MAP artifact — the topology of memory-construction lanes.
+
+    SERVE-ONLY today (structural read + sha, the one-truth mechanism c5070
+    made unambiguous-and-now). The overlay/proposal EDIT door reuses the
+    phase-lane machinery but is gated on (a) entity WIDENING the artifact
+    with a graph_overlay_contract and (b) laurent's question 1 (must
+    structural edits be engine-consulted first) — until then cognition
+    structure is ROUTED PROPOSALS, not live edge_ops (the three-tier law).
+    A drift pin holds the vendored bytes to entity's pen; the bump protocol
+    is entity announces a widen -> consumers re-vendor same-day. Declared
+    BEFORE the /{name} routes so the literal path wins the match."""
+    import hashlib as _hashlib
+    import json as _json
+
+    try:
+        raw = _packaged_cognition_raw()
+        graph = _json.loads(raw)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"cognition graph unavailable: {e} — re-vendor assets/cognition_graph.json")
+
+    nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    edges = graph.get("edges") if isinstance(graph.get("edges"), list) else []
+    return {
+        "graph": graph,
+        "vendored": True,
+        "sha256": _hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        "source": "abstractentity/spec/cognition_graph.json (one pen: entity; gateway serves a synced byte copy)",
+        "version": graph.get("version"),
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        # No overlay block yet: the cognition edit door is gated (see docstring).
+        # operator_edited stays false until the overlay lane opens, so a client
+        # reads the same "structural truth, no operator modulation" shape the
+        # phase GET serves before its first edit.
+        "operator_edited": False,
+        "editable": False,
+        "edit_status": "serve-only — the cognition edit door is gated on entity's overlay-contract widen + laurent Q1 (structural-edits-engine-consulted); structure is routed proposals until then",
+    }
+
+
 class PhaseSpecEditRequest(BaseModel):
-    # v12 P0-3: TUNABLES ONLY. The full-replace arm is GONE — structural
-    # changes go through the entity pen (git + re-vendor), never this door;
-    # policy where structure is needed is the deposit-gate class.
-    tunables: Dict[str, Any] = Field(..., description="Partial tunables patch — deep-merged onto the structural tunables (the operator's dials). Known keys only, bounds-checked against tunables_meta.")
+    # v12 P0-3 (dials) + the structural-edit build (c4837): tunables and/or
+    # graph.edge_ops. The full-replace arm stays GONE — structure beyond the
+    # artifact's own overlay contract (per-edge edit_policy) goes through
+    # the entity pen (git + re-vendor), never this door.
+    tunables: Optional[Dict[str, Any]] = Field(default=None, description="Partial tunables patch — deep-merged onto the structural tunables (the operator's dials). Known keys only, bounds-checked against tunables_meta.")
+    graph: Optional[Dict[str, Any]] = Field(default=None, description="Structural edge ops: {'edge_ops': [{op: add|remove|redirect, ...}]}. PRESENT = document ownership (the list REPLACES the stored ops wholesale — read GET first, edit, PUT back); ABSENT = stored ops untouched. Validated against the vendored artifact's graph_overlay_contract; one illegal op refuses the whole batch.")
     if_match: Optional[int] = Field(default=None, description="CAS token: the overlay edit_seq this edit was based on (0/absent = no overlay existed). 409 on race.")
     reason: Optional[str] = Field(default=None, description="Why — carried into every entity's blueprint_edited host marker.")
 
@@ -468,37 +758,82 @@ def _validate_dials(patch: Dict[str, Any], structural: Dict[str, Any]) -> Option
 
 @router.put("/spec/phases")
 def edit_entity_phase_spec(req: PhaseSpecEditRequest) -> Dict[str, Any]:
-    """THE EDITABLE BLUEPRINT (laurent dm#104), v12 P0-3 shape: dial
-    overlays beside the structural graph — never a second pen near one
-    counter. Admin-gated (route policy table).
+    """THE EDITABLE BLUEPRINT (laurent dm#104), v12 P0-3 shape + the
+    structural-edit build (laurent dm#276 via c4837): dial overlays AND
+    graph.edge_ops beside the structural graph — never a second pen near
+    one counter. Admin-gated (route policy table).
 
     - The overlay persists at `<data_dir>/config/entity_phases_overlay.json`
       (edit_seq CAS: send `if_match` = the edit_seq you read; 409 on race);
     - the DERIVED effective spec is atomically rewritten at
       `<data_dir>/config/entity_phases.json` — the file detached loops read;
-    - validation is known-keys-only + bounds from tunables_meta;
+      when edge_ops ride, it carries merged transitions + the graph block +
+      structural_sha256 (runtime's H2 handshake input: sha mismatch on the
+      consumer side = dials-only);
+    - dial validation is known-keys-only + bounds from tunables_meta;
+      edge_ops validate against the artifact's own graph_overlay_contract
+      (per-edge edit_policy, cause registry, refusal codes — the rules ARE
+      the artifact's, never a gateway copy); one illegal op refuses the
+      whole batch;
     - every edit records a `blueprint_edited` host marker in EVERY entity's
       biography (write-first, then markers — a marker claiming an edit that
       never landed would be a false biography entry). The STRUCTURAL sha is
-      untouched: drift warns never fire on a modulation."""
+      untouched: drift warns never fire on an overlay edit."""
     import hashlib as _hashlib
     import json as _json
     from datetime import datetime, timezone
 
-    if not isinstance(req.tunables, dict) or not req.tunables:
-        raise HTTPException(status_code=400, detail="tunables patch must be a non-empty object")
+    tunables_patch = req.tunables if isinstance(req.tunables, dict) else {}
+    graph_present = req.graph is not None
+    if not tunables_patch and not graph_present:
+        raise HTTPException(status_code=400, detail="provide a non-empty tunables patch and/or a graph.edge_ops block")
 
     try:
         raw = _packaged_spec_raw()
         structural = _json.loads(raw)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"phase spec unavailable: {e}")
+    sha = _hashlib.sha256(raw.encode("utf-8")).hexdigest()  # STRUCTURAL — untouched by design
 
-    problem = _validate_dials(req.tunables, structural)
-    if problem:
-        raise HTTPException(status_code=400, detail=problem)
+    if tunables_patch:
+        problem = _validate_dials(tunables_patch, structural)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
 
     overlay, _overlay_warning = _read_overlay()
+
+    # STRUCTURAL edge ops (operator build c4837, the gateway's refusal
+    # door): request graph PRESENT = document ownership (full replace,
+    # empty list clears); ABSENT = stored ops ride along UNCHANGED — but
+    # the FINAL set always re-validates against the CURRENT artifact, so a
+    # dials-only PUT after a re-vendor cannot silently carry now-illegal
+    # ops into the effective file (fail-closed, the drift named).
+    if graph_present:
+        if not isinstance(req.graph, dict) or not isinstance(req.graph.get("edge_ops"), list):
+            raise HTTPException(status_code=400, detail="graph must be an object carrying edge_ops: [...] (a list of ops)")
+        final_ops: List[Dict[str, Any]] = [op for op in req.graph["edge_ops"] if isinstance(op, dict)]
+        if len(final_ops) != len(req.graph["edge_ops"]):
+            raise HTTPException(status_code=400, detail="each edge_op must be an object")
+    else:
+        final_ops = _overlay_edge_ops(overlay)
+    if final_ops:
+        from ..phase_edge_ops import validate_edge_ops
+
+        refusal = validate_edge_ops(structural, final_ops)
+        if refusal is not None:
+            if graph_present:
+                # The request's own ops are illegal: the artifact's ruled
+                # refusal (code + its own message) goes back verbatim.
+                return _edge_op_refusal_response(refusal)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"stored graph.edge_ops no longer valid against the current structural spec "
+                    f"({refusal.code}: {refusal.detail}) — re-read GET /spec/phases and re-apply "
+                    f"graph.edge_ops before (or with) this edit"
+                ),
+            )
+
     current_seq = int(overlay.get("edit_seq") or 0)
     if req.if_match is not None and int(req.if_match) != current_seq:
         raise HTTPException(
@@ -511,14 +846,19 @@ def edit_entity_phase_spec(req: PhaseSpecEditRequest) -> Dict[str, Any]:
     principal = current_gateway_principal()
     editor = f"person:{principal.user_id}" if principal is not None else "person:operator"
     edit_seq = current_seq + 1
-    merged_overlay_tunables = _deep_merge_numbers(dict(overlay.get("tunables") or {}), req.tunables)
-    new_overlay = {
+    merged_overlay_tunables = _deep_merge_numbers(dict(overlay.get("tunables") or {}), tunables_patch)
+    new_overlay: Dict[str, Any] = {
         "edit_seq": edit_seq,
         "edited_by": editor,
         "edited_at": datetime.now(timezone.utc).isoformat(),
         "reason": str(req.reason or ""),
         "tunables": merged_overlay_tunables,
+        # Provenance: the structural artifact these ops were validated
+        # against (reconcile + consumers read drift from it).
+        "structural_sha256": sha,
     }
+    if final_ops:
+        new_overlay["graph"] = {"edge_ops": final_ops}
 
     overlay_path = _operator_overlay_path()
     overlay_path.parent.mkdir(parents=True, exist_ok=True)
@@ -526,20 +866,19 @@ def edit_entity_phase_spec(req: PhaseSpecEditRequest) -> Dict[str, Any]:
     tmp.write_text(_json.dumps(new_overlay, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(overlay_path)
 
-    # The DERIVED effective file: structural spec + merged tunables — what
-    # the loops consume, atomically rewritten (v12 item 5).
-    effective = dict(structural)
-    effective["tunables"] = _effective_tunables(structural, new_overlay)
-    effective["_operator"] = {"edit_seq": edit_seq, "edited_by": editor,
-                              "edited_at": new_overlay["edited_at"], "derived": True}
-    eff_path = _effective_spec_file_path()
-    eff_tmp = eff_path.with_suffix(f".tmp.{edit_seq}")
-    eff_tmp.write_text(_json.dumps(effective, ensure_ascii=False, indent=1), encoding="utf-8")
-    eff_tmp.replace(eff_path)
+    # The DERIVED effective file — what detached loops read, atomically
+    # rewritten through the ONE derivation point (v12 item 5 + c4859):
+    # merged tunables, merged transitions when ops ride, structural_sha256
+    # for runtime's H2 handshake. Degrade is impossible here (the final
+    # ops just validated above), but the seam stays honest.
+    eff_path, _degrade = _write_effective_spec_file(structural, sha, new_overlay)
 
-    sha = _hashlib.sha256(raw.encode("utf-8")).hexdigest()  # STRUCTURAL — untouched by design
-    rev = edit_seq
-    changed = "tunables"
+    changed = "+".join(
+        part for part in (
+            "tunables" if tunables_patch else None,
+            "graph" if graph_present else None,
+        ) if part
+    )
 
     # The moment lands in every biography (best-effort, labeled — the edit
     # itself already persisted; a marker failure must not roll it back).
@@ -556,15 +895,20 @@ def edit_entity_phase_spec(req: PhaseSpecEditRequest) -> Dict[str, Any]:
                 continue  # labeled stray/unreadable homes get no marker
             try:
                 home = registry.get_home(slug)
+                marker_details: Dict[str, Any] = {
+                    "edit_seq": edit_seq, "changed": changed,
+                    "structural_sha256": sha,
+                    "edited_by": editor, "reason": str(req.reason or ""),
+                }
+                if graph_present:
+                    marker_details["graph_ops"] = len(final_ops)
                 record_host_marker(
                     entities_dir=registry.entities_dir,
                     slug=slug,
                     entity_id=entity_id,
                     kind="blueprint_edited",
                     journal_seq=int(home.memory.current_seq()),
-                    details={"edit_seq": edit_seq, "changed": changed,
-                             "structural_sha256": sha,
-                             "edited_by": editor, "reason": str(req.reason or "")},
+                    details=marker_details,
                 )
                 marked += 1
             except Exception as e:  # noqa: BLE001
@@ -581,8 +925,27 @@ def edit_entity_phase_spec(req: PhaseSpecEditRequest) -> Dict[str, Any]:
         "effective_path": str(eff_path),
         "markers_recorded": marked,
         "tunables_overlay": merged_overlay_tunables,
-        "effective_tunables": effective["tunables"],
+        "effective_tunables": _effective_tunables(structural, new_overlay),
+        # GET-SYMMETRIC overlay block (entity c4828 YES to gateway c4814):
+        # the save note renders "edit N" from a PRESENT field instead of an
+        # inferred dangling "?" — the lying-save-note class (framework c4779)
+        # cured at the source. Same shape the GET serves under `overlay`, so
+        # a client reads success identically from either call.
+        "operator_edited": True,
+        "overlay": {
+            "edit_seq": edit_seq,
+            "edited_by": editor,
+            "edited_at": new_overlay["edited_at"],
+            "reason": new_overlay.get("reason") or "",
+        },
     }
+    if final_ops:
+        # GET-symmetry for the structural lane too: the stored ops + the
+        # effective graph a client would read back.
+        out["overlay"]["graph"] = {"edge_ops": final_ops}
+        from ..phase_edge_ops import compute_effective_transitions
+
+        out["effective_transitions"] = compute_effective_transitions(structural, final_ops)
     if marker_warnings:
         out["warnings"] = marker_warnings
     return out
@@ -1014,7 +1377,22 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
     reason_in = str(req.reason or "").strip()
     stamp = f"[by {actor} via POST /entities/{name}/state]"
-    stamped_reason = f"{reason_in} {stamp}".strip() if reason_in else stamp
+    # OPERATOR-SLEEP-IS-ABSOLUTE (laurent dm#127, spec v17 — "sleep is sleep,
+    # it can't wake up on personal time if I put it to sleep"): the operator
+    # sleep click is a COMPOSITE act — asleep + personal grant DISARMED +
+    # standing work orders CLEARED, ONE act named in ONE biography moment.
+    # After it, no machine path wakes into personal or work (the v13
+    # need-check finds a bare desk and re-sleeps — no new suppression
+    # machinery). Tonight's incident (Ephemeral woke to personal 1h after an
+    # operator sleep) was precisely the missing disarm: the ~1h bounded-sleep
+    # wake landed on a still-armed July-15 grant. The composite reason names
+    # all three so the single host marker is self-describing.
+    is_operator_sleep = target == "asleep"
+    if is_operator_sleep:
+        composite_note = "operator sleep (v17): personal grant disarmed + standing orders cleared — sleep is sleep"
+        stamped_reason = f"{reason_in} {composite_note} {stamp}".strip() if reason_in else f"{composite_note} {stamp}"
+    else:
+        stamped_reason = f"{reason_in} {stamp}".strip() if reason_in else stamp
     closed: Optional[Dict[str, Any]] = None
     closed_durable: Optional[Dict[str, Any]] = None
     # AWAKE UNDER A LIVE VISIT IS REFUSED (mutual-exclusivity wave, laurent
@@ -1050,6 +1428,51 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
                     "which tears it down"
                 ),
             )
+    # COMPOSITE DISARM FIRST (v17 crash-safety): for an operator sleep, disarm
+    # the personal grant and clear standing orders BEFORE writing asleep. The
+    # ordering is the crash invariant — a crash AFTER disarm but BEFORE the
+    # state write leaves a BARE DESK (no grant, no order, still awake), which
+    # the v13 need-check re-sleeps; the reverse order (asleep first) is the
+    # exact bug tonight's incident hit (asleep + armed grant → the ~1h
+    # bound woke into personal). If the disarm itself fails (corrupt
+    # phases.yaml), we REFUSE the sleep rather than write asleep over an
+    # armed grant — the operator repairs the file and retries (same
+    # loud-refuse discipline write_personal_grant already enforces).
+    composite: Dict[str, Any] = {}
+    if is_operator_sleep:
+        try:
+            from abstractruntime.identity.life import (
+                archive_work_order,
+                read_personal_grant,
+                read_work_order,
+                write_personal_grant,
+            )
+
+            manifest_c = _registry().manifest_for(name)
+            home_dir_c = _registry().entities_dir / manifest_c.slug
+            prior_grant = read_personal_grant(home_dir_c)
+            if str(prior_grant.get("mode") or "disabled") != "disabled":
+                write_personal_grant(home_dir_c, mode="disabled", granted_by=actor)
+                composite["grant_disarmed"] = {
+                    "was_mode": prior_grant.get("mode"),
+                    "was_granted_by": prior_grant.get("granted_by"),
+                }
+            standing_order = read_work_order(home_dir_c)
+            if standing_order:
+                archive_work_order(home_dir_c, verdict=f"cleared by operator sleep {stamp}")
+                composite["work_order_cleared"] = True
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+        except Exception as e:  # noqa: BLE001 - a corrupt grant file must not become asleep+armed
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"operator sleep could not disarm {name}'s personal grant "
+                    f"({e}); refusing to sleep over an armed grant — repair "
+                    "phases.yaml and retry (sleep-is-absolute needs the disarm to land)"
+                ),
+            )
+
     # STATE WRITES FIRST (state-sources adversary P0-2, trigger b): the state
     # file is the coordination authority — writing it before the teardown
     # makes the visit gates (open/turn/tick check asleep+paused) refuse any
@@ -1112,6 +1535,10 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
             # visit was open" — the state flipped, the gates protect
             # cognition, but the response says what actually happened.
             closed_durable = {"error": f"#FALLBACK durable teardown errored: {e}", "teardown_failed": True}
+    if composite:
+        # Surface the composite in the response so the operator sees the sleep
+        # DID disarm/clear (not a silent side effect).
+        result["composite_sleep"] = composite
     if closed is not None:
         result["closed_visit"] = {"turns": closed.get("turns"), "summary": closed.get("summary")}
     if closed_durable is not None:
@@ -1250,7 +1677,7 @@ def open_visit(name: str, req: OpenVisitRequest) -> Dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+        return _visit_refused_response(e)
 
 
 @router.post("/{name}/visit/{run_id}/turn")
@@ -1262,7 +1689,7 @@ def visit_turn(name: str, run_id: str, req: VisitTurnRequest) -> Dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+        return _visit_refused_response(e)
 
 
 @router.post("/{name}/visit/{run_id}/close")
@@ -1274,7 +1701,7 @@ def visit_close(name: str, run_id: str, req: VisitCloseRequest) -> Dict[str, Any
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+        return _visit_refused_response(e)
 
     # G3 door half: record tasks left in this visit AFTER a successful close
     # (the close is the visitor's word that these remain owed). The close
@@ -1323,6 +1750,10 @@ def visit_close(name: str, run_id: str, req: VisitCloseRequest) -> Dict[str, Any
             f"#FALLBACK tasks NOT recorded: close ended with status={out.get('status')!r} — "
             "re-close or POST /entities/{name}/tasks once the visit is settled"
         )
+    # CLOSE FIRES THE QUEUE HEAD (queue contract invariant 11) — on a
+    # background thread so the closing visitor's response never waits on
+    # the next visitor's summon executing; the sweeper backstops it.
+    _fire_queue_admission(name)
     return out
 
 
@@ -1338,7 +1769,7 @@ def visit_tick(name: str, run_id: str) -> Dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+        return _visit_refused_response(e)
 
 
 @router.get("/{name}/visit")
@@ -1350,7 +1781,24 @@ def visit_status(name: str) -> Dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+        return _visit_refused_response(e)
+
+
+@router.get("/{name}/visit/{run_id}/ledger")
+def visit_ledger(name: str, run_id: str, after: int = 0, limit: int = 500) -> Any:
+    """The visit run's own ledger, paged (coder-tui c4307 ask 2): visit runs
+    execute in the home's `runtime_<slug>.sqlite3`, invisible to `/runs/*` —
+    this is the observability read for that lane. Pure read; works on live
+    and terminal runs; the stamped-visit check inside the host is the auth
+    boundary (only stamped visits of THIS entity are served)."""
+    from ..entity_visits import VisitRefused
+
+    try:
+        return _visit_host().ledger(name, run_id, after=after, limit=limit)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except VisitRefused as e:
+        return _visit_refused_response(e)
 
 
 @router.get("/{name}/visit/{run_id}/transcript")
@@ -1366,7 +1814,7 @@ def visit_transcript(name: str, run_id: str) -> Dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+        return _visit_refused_response(e)
 
 
 # ------------------------------------------------------------- entity meets
@@ -2232,16 +2680,19 @@ def entity_chat_transcript(name: str, chat_id: str) -> Dict[str, Any]:
 async def close_entity_chat(name: str, chat_id: str, req: Optional[CloseChatRequest] = None) -> Dict[str, Any]:
     """End the visit: reflection pass (feelings move), close summary, home
     closed, the own-time loop woken if the open yielded it."""
-    del name
     from ..entity_chat import ChatOpenRefused
     from fastapi.concurrency import run_in_threadpool
 
     try:
-        return await run_in_threadpool(
+        out = await run_in_threadpool(
             _chat_host().close, chat_id, reflect=bool(req.reflect) if req is not None else True
         )
     except ChatOpenRefused as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
+    # CLOSE FIRES THE QUEUE HEAD (queue contract invariant 11) — background
+    # thread: the closing response never waits on the next summon executing.
+    _fire_queue_admission(name)
+    return out
 
 
 @router.get("/{name}/chat")
@@ -2253,8 +2704,32 @@ def entity_chat_status(name: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
 
 
+@router.get("/{name}/seat")
+def entity_seat(name: str) -> Dict[str, Any]:
+    """The held conversation seat, or {held: false} (conversation-seat plan,
+    item 6). A read surface for the drawer's start-screen occupancy line — a
+    human sees whether someone is already talking to this entity before
+    summoning. Pure read; never mutates the seat."""
+    svc = get_gateway_service()
+    registry = _registry()
+    try:
+        home = registry.get_home(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    view = _seat_view(svc, registry, name, home.manifest.slug)
+    view["entity_id"] = home.entity_id
+    return view
+
+
 class SummonEntityRequest(BaseModel):
-    prompt: str = Field(..., description="The work brief for this session")
+    # Boundary validation (flow c5253 P1-3): an empty prompt used to be
+    # accepted here and die 2.5s later inside the run as "MEMORY_PROBE
+    # op=probe requires payload.cue" — engine jargon for an input the door
+    # can check. min_length rejects ""; the route additionally strip-checks
+    # (whitespace-only passes min_length but is the same empty stimulus).
+    prompt: str = Field(..., min_length=1, description="The work brief for this session")
     flow_id: Optional[str] = Field(default=None, description="Target flow (default: the gateway's default bundle entrypoint)")
     bundle_id: Optional[str] = Field(default=None)
     bundle_version: Optional[str] = Field(default=None)
@@ -2267,6 +2742,118 @@ class SummonEntityRequest(BaseModel):
         default=None,
         description="Declared model context window; refused below the 20k floor (maintainer ruling)",
     )
+    # Conversation-seat plan item 2: the caller's DECLARED kind drives the
+    # priority matrix (human preempts agent holders; agents never displace).
+    # Absent = agent — an undeclared caller never preempts (fails toward the
+    # human). The declaration is etiquette-bound + audit-trailed (markers
+    # carry principal + kind) until GW-H per-agent principals make it
+    # structural. Human surfaces (the drawer, the TUI) declare "human".
+    caller_kind: Optional[str] = Field(
+        default=None,
+        pattern="^(human|agent)$",
+        description='Who is summoning: "human" (may preempt an agent-held seat) or "agent" (default; waits)',
+    )
+    # decision:summon-queue-v1 (contract §1/§5): queueing is EXPLICIT opt-in —
+    # without queue=true, a held seat answers today's 409 + retry_after_s
+    # byte-unchanged (agent probes that should fail fast keep failing fast;
+    # silent queueing would time-shift agent traffic into a human's session).
+    # park=true is the "leave it with her" posture: the entry persists without
+    # a polling client (it IS the mailbox drop) and the answer lands in the
+    # durable session.
+    queue: bool = Field(default=False, description="If the seat is held, wait in the door queue (202 + poll) instead of a 409")
+    park: bool = Field(default=False, description="With queue=true: leave the message with the entity (no polling client expected; exempt from poll-silence reaping)")
+
+
+# ------------------------------------------------------- one life, one summon
+# flow c5260 P1-B foundation + conversation-seat plan slice 2 + the queue
+# (decision:summon-queue-v1): the seat record, TTL liveness, the priority
+# matrix, and the per-slug guard RLock live in `entity_seat.py`; the queue
+# store lives in `entity_queue.py`. This file owns the HTTP shapes, the
+# markers, and the admission executor (which re-runs the whole summon path
+# for a stored payload). Seat + queue files stay gateway bookkeeping
+# OUTSIDE the home (door-local facts, like .host_stream; they must not
+# travel on directory copy).
+from ..entity_seat import summon_guard_lock as _summon_guard_lock
+
+
+def _cross_lane_occupancy(name: str) -> Optional[Dict[str, Any]]:
+    """A live visit/chat holding this one life, for the /seat READ surface.
+
+    Source: the VISITING POSTURE (asleep + mode=visiting — the one write
+    every visit/chat open lands unconditionally, laurent dm#94), the same
+    restart-surviving signal the summon door's own gate refuses on. ONE
+    cheap file read — deliberately NOT the visit-host status probe: that
+    builds the per-entity runtime on first touch (measured ~15s cold),
+    which no read surface may cost. The chat host's in-memory status
+    refines the lane label when it is live; otherwise the posture reads as
+    the durable-visit lane."""
+    registry = _registry()
+    try:
+        from abstractruntime.identity.life import read_entity_state
+
+        manifest = registry.manifest_for(name)
+        state = read_entity_state(registry.entities_dir / manifest.slug)
+        if str(state.get("state") or "") != "asleep" or str(state.get("mode") or "") != "visiting":
+            return None
+    except Exception:
+        return None  # a broken read must not break the read surface
+    try:
+        svc = get_gateway_service()
+        chat_host = getattr(svc, "entity_chat_host", None)
+        if chat_host is not None:
+            st = chat_host.status(name)
+            if bool(st.get("open")):
+                return {
+                    "lane": "chat",
+                    "run_id": str(st.get("chat_id") or ""),
+                    "session_id": str(st.get("session_id") or ""),
+                }
+    except Exception:
+        pass
+    return {"lane": "visit", "run_id": "", "session_id": "", "reason": str(state.get("reason") or "")}
+
+
+def _seat_view(svc: Any, registry: Any, name: str, slug: str) -> Dict[str, Any]:
+    """The GET /seat read surface (conversation-seat plan, item 6): the held
+    seat block, or {held: false}. Feeds the drawer's start-screen occupancy
+    line so a human sees 'someone is talking to <entity>' before summoning.
+    Pure read. Folds all three lanes: an open visit/chat renders held with
+    its lane; the summon seat renders with the full record (TTL included) —
+    the same occupancy the guard consults, so read and door never disagree."""
+    from ..entity_queue import queue_depth as _queue_depth
+
+    # The roster's "someone waits at the door" fact (queue contract §20) —
+    # served on every seat read, held or free.
+    depth = _queue_depth(registry.entities_dir, slug)
+    cross = _cross_lane_occupancy(name)
+    if cross is not None:
+        return {
+            "held": True,
+            "lane": cross["lane"],
+            "run_id": cross["run_id"],
+            "session_id": cross["session_id"],
+            "status": "open",
+            "queue_depth": depth,
+        }
+    seat = seat_occupancy(svc.host.run_store, registry.entities_dir, slug)
+    if seat is None:
+        return {"held": False, "queue_depth": depth}
+    return {
+        "held": True,
+        "lane": "summon",
+        "run_id": seat["run_id"],
+        "session_id": seat["session_id"],
+        "status": seat["status"],
+        "run_live": seat["run_live"],
+        "holder": seat["holder"],
+        "holder_kind": seat["holder_kind"],
+        "held_since": seat["held_since"],
+        "renewed_at": seat["renewed_at"],
+        "idle_ttl_s": seat["idle_ttl_s"],
+        "ttl_remaining_s": seat["ttl_remaining_s"],
+        "current_idle_deadline": _seat_idle_deadline(seat),
+        "queue_depth": depth,
+    }
 
 
 def _declared_context_window(req: "SummonEntityRequest", input_data: Dict[str, Any]) -> Optional[int]:
@@ -2282,8 +2869,41 @@ def _declared_context_window(req: "SummonEntityRequest", input_data: Dict[str, A
 
 
 @router.post("/{name}/summon")
-def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
-    """Summon the entity into a work session.
+def summon_entity(name: str, req: SummonEntityRequest):
+    """Summon the entity into a work session (thin wrapper: identity comes
+    from the authenticated principal here; `_summon_core` carries the whole
+    door so the QUEUE ADMISSION executor can re-run it for a stored payload
+    under the enqueuer's identity — decision:summon-queue-v1 §4)."""
+    from fastapi.responses import JSONResponse
+
+    from ..security.principal import current_gateway_principal
+
+    principal = current_gateway_principal()
+    caller_id = principal.user_id if principal is not None else "operator"
+    out = _summon_core(
+        name,
+        req,
+        caller_id=caller_id,
+        caller_kind=normalize_caller_kind(req.caller_kind),
+    )
+    if out.get("queued"):
+        # Queued admission is 202 (contract §2): accepted for processing,
+        # not yet a run. The body carries queue_id/position/poll.
+        return JSONResponse(status_code=202, content=out)
+    return out
+
+
+def _summon_core(
+    name: str,
+    req: SummonEntityRequest,
+    *,
+    caller_id: str,
+    caller_kind: str,
+    from_queue_id: Optional[str] = None,
+    svc: Any = None,
+    registry: Any = None,
+) -> Dict[str, Any]:
+    """The whole summon door, identity-explicit.
 
     Order matters and is non-negotiable (a2a 0004 constraints):
     1. Render the identity prelude (a PURE read over the home).
@@ -2295,6 +2915,12 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
        is parked outside the tick loop until the SIGNED stamp (bound to the
        run id) is persisted, so no effect can ever execute against the home
        without a verified stamp.
+
+    `caller_id`/`caller_kind` are EXPLICIT (never read from request context)
+    so queue admission runs under the ENQUEUER's identity, not whoever's
+    request happened to tick the queue. `from_queue_id` marks a queued
+    attempt: it must never re-enqueue itself (its seat refusal propagates to
+    the admission executor, which keeps the entry queued).
     """
     from abstractruntime.identity import render_summon_prelude
 
@@ -2304,10 +2930,17 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
         mint_summon_stamp,
         summon_budget_profile,
     )
-    from ..security.principal import current_gateway_principal
 
-    svc = get_gateway_service()
-    registry = _registry()
+    # Whitespace-only prompts are the empty stimulus min_length can't catch
+    # (P1-3, boundary validation belongs to the boundary).
+    if not str(req.prompt or "").strip():
+        raise HTTPException(status_code=422, detail="summon prompt must not be empty or whitespace-only")
+
+    # svc/registry may be threaded in by queue admission (a background
+    # thread has no request context — re-resolving there would swap a
+    # per-principal home for the base service's, the multi-user hole).
+    svc = svc if svc is not None else get_gateway_service()
+    registry = registry if registry is not None else _registry()
 
     try:
         home = registry.get_home(name)
@@ -2315,6 +2948,36 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    if from_queue_id is not None:
+        # QUEUED-ATTEMPT FAST PATH (door-cleanup audit P0-1/P2-4/P2-8): an
+        # admission attempt against a still-held seat must cost one cheap
+        # read — never a prelude render, never a wake write on an asleep
+        # entity, and NEVER a summon_refused marker (the biography records
+        # ACTS, not retries; poll/sweep cadence would flood the append-only
+        # stream permanently). The authoritative re-check under the guard
+        # lock still runs below for attempts that pass here.
+        _pre_seat = seat_occupancy(svc.host.run_store, registry.entities_dir, home.manifest.slug)
+        _pre = door_decision(
+            _pre_seat,
+            caller=caller_id,
+            caller_kind=caller_kind,
+            session_id=str(req.session_id or "").strip(),
+        )
+        if _pre["action"] == "refuse":
+            assert _pre_seat is not None
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "refused": True,
+                    "reasons": ["seat still held — the queued entry stays at head (attempt-not-grant)"],
+                    "entity_id": home.entity_id,
+                    "lane": "summon",
+                    "live_run_id": str(_pre_seat.get("run_id") or ""),
+                    "live_session_id": str(_pre_seat.get("session_id") or ""),
+                    "retry_after_s": int(_pre.get("retry_after_s") or 0) or None,
+                },
+            )
 
     # THE LIVENESS GATE (laurent 16:06/16:12, decision:entity-liveness-axis):
     # reachability rides the liveness axis, not sleep. PAUSED = the kill
@@ -2356,11 +3019,9 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
             )
         from abstractruntime.identity.life import write_entity_state
 
-        principal_for_wake = current_gateway_principal()
-        summoner = f"person:{principal_for_wake.user_id}" if principal_for_wake is not None else "person:operator"
         write_entity_state(
             registry.entities_dir / entity_slug(name), "awake",
-            reason=f"woken by summon from {summoner}",
+            reason=f"woken by summon from person:{caller_id}",
         )
         entity_state = registry.state_of(name)
 
@@ -2439,19 +3100,107 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
     session_id = str(req.session_id or "").strip() or f"entity-{slug}-{secrets.token_hex(4)}"
 
     # WHO is stamped by the door, never claimed by the payload (situation
-    # contract): the verified participant is the authenticated principal;
-    # a local single-operator gateway (auth off) is the operator. The entity
-    # stamps ITSELF into its own records (EXPLICIT co-presence, ruled a2a
-    # 0007: the entity IS present at its own session by construction —
-    # owners are never implied).
-    principal = current_gateway_principal()
-    participants: List[str] = [f"person:{principal.user_id}"] if principal is not None else ["person:operator"]
-    participants.append(home.entity_id)
+    # contract): the verified participant is the authenticated principal
+    # (threaded in as caller_id — for a QUEUED admission this is the
+    # ENQUEUER, engraved at enqueue time, never whoever's request ticked
+    # the queue); a local single-operator gateway (auth off) is the
+    # operator. The entity stamps ITSELF into its own records (EXPLICIT
+    # co-presence, ruled a2a 0007: the entity IS present at its own session
+    # by construction — owners are never implied).
+    participants: List[str] = [f"person:{caller_id}", home.entity_id]
 
     input_data: Dict[str, Any] = dict(req.input_data or {})
     input_data["prompt"] = req.prompt
     caller_system = str(input_data.get("system") or "").strip()
     input_data["system"] = prelude["text"] + (("\n\n" + caller_system) if caller_system else "")
+
+    # ONE substrate per entity, NO code default (maintainer rulings
+    # 2026-07-09 04:26/06:32; flow c5253 P1-1): a summon without explicit
+    # provider/model used to fall through to the gateway CAPABILITY default
+    # silently — the home's substrate.yaml never consulted, the substitution
+    # named nowhere. The chain is the chat/loop lane's, from the SAME
+    # resolver (request > home substrate.yaml > operator env > LOUD
+    # REFUSAL), and the resolved pair is stamped into the run inputs AND the
+    # response so the substrate is always caller-visible.
+    from ..entity_chat import ChatOpenRefused, read_entity_substrate, resolve_substrate
+
+    req_provider = str(input_data.get("provider") or "").strip()
+    req_model = str(input_data.get("model") or "").strip()
+    # Request-level reasoning effort: top-level keys OR a caller-seeded
+    # _runtime.thinking — all three are the caller's ask, and folding the
+    # _runtime spelling in here keeps the response's substrate block and
+    # the run's actual value identical (adversary cycle-1 D1). Precedence:
+    # thinking > reasoning > _runtime.thinking (explicit top-level beats a
+    # seeded internal). Typed values normalize (cycle-2 N3): boolean false
+    # is the explicit "none" spelling, boolean true means "auto" — an
+    # or-chain would read both as absent and let the seed run unstamped.
+
+    def _req_thinking_value(v: Any) -> str:
+        if isinstance(v, bool):
+            return "none" if v is False else "auto"
+        if isinstance(v, str):
+            return v.strip()
+        # Typed garbage (dict, list, number) is unresolvable — returning ""
+        # routes it to the pop branch below, so the run never carries a
+        # value the response would misreport (cycle-3 F1).
+        return ""
+
+    _rt_seed = input_data.get("_runtime") if isinstance(input_data.get("_runtime"), dict) else {}
+    req_thinking = ""
+    for _container, _key in ((input_data, "thinking"), (input_data, "reasoning"), (_rt_seed, "thinking")):
+        if _key in _container:
+            req_thinking = _req_thinking_value(_container.get(_key))
+            if req_thinking:
+                break
+    try:
+        resolved_provider, resolved_model, resolved_thinking = resolve_substrate(
+            req_provider, req_model, home_dir=home.home_dir, thinking=req_thinking or None
+        )
+    except ChatOpenRefused as e:
+        raise HTTPException(
+            status_code=e.status,
+            detail={
+                "refused": True,
+                "reasons": [f"#REFUSED summon: {e.detail}"],
+                "entity_id": home.entity_id,
+            },
+        )
+    # Display-only source label (the CHAIN authority stays resolve_substrate):
+    # which chain step filled each field, honest under mixed resolution
+    # (e.g. provider from the request, model from the home).
+    _stored = read_entity_substrate(home.home_dir)
+
+    def _substrate_src(req_val: str, stored_val: str) -> str:
+        if req_val:
+            return "request"
+        if stored_val:
+            return "home substrate.yaml"
+        return "operator env"
+
+    _p_src = _substrate_src(req_provider, str(_stored.get("provider") or ""))
+    _m_src = _substrate_src(req_model, str(_stored.get("model") or ""))
+    substrate_source: Any = _p_src if _p_src == _m_src else {"provider": _p_src, "model": _m_src}
+    input_data["provider"] = resolved_provider
+    input_data["model"] = resolved_model
+    substrate_block = {"provider": resolved_provider, "model": resolved_model, "source": substrate_source}
+    if resolved_thinking:
+        # Reasoning effort (the substrate's optional third field): stamped
+        # into the run vars so every model call in the summon inherits it,
+        # and shown in the response beside provider/model. ASSIGN, never
+        # setdefault: the resolved value already folded every request
+        # spelling, so run and response cannot diverge.
+        _rt_in = input_data.get("_runtime")
+        _rt: Dict[str, Any] = dict(_rt_in) if isinstance(_rt_in, dict) else {}
+        _rt["thinking"] = resolved_thinking
+        input_data["_runtime"] = _rt
+        substrate_block["thinking"] = resolved_thinking
+    elif isinstance(input_data.get("_runtime"), dict) and "thinking" in input_data["_runtime"]:
+        # Nothing resolved but the caller seeded SOMETHING (empty string, a
+        # non-normalizable type): drop it so no unresolved value runs while
+        # the response shows none (the last crack of the D1 divergence).
+        _rt = dict(input_data["_runtime"])
+        _rt.pop("thinking", None)
+        input_data["_runtime"] = _rt
 
     # OPERATOR ITERATIONS CEILING (laurent c786; seam (b) c805/c809): the
     # gateway serves `_limits.max_iterations_ceiling` into entity-run vars;
@@ -2473,67 +3222,246 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
     # omits a budget runs on it (the gate injects from the stamp).
     budget_profile = summon_budget_profile(declared_window)
 
-    stamp = mint_summon_stamp(
-        data_dir=registry.data_dir,
-        entity_id=home.entity_id,
-        channel=CHANNEL_WORKPLACE,
-        session_id=session_id,
-        participants=participants,
-        prelude_as_of_seq=prelude.get("as_of_seq"),
-        budget_profile=budget_profile,
-    )
+    # ONE LIFE, ONE CONVERSATION — the seat (conversation-seat plan, slice 2;
+    # foundation flow c5260 P1-B). The per-slug lock spans check -> preempt
+    # -> start -> record so two concurrent summons cannot both pass, and a
+    # preempt's cancel + takeover is atomic against a racing summon.
+    # (caller_id / caller_kind arrive as parameters — identity is explicit.)
 
-    try:
-        # Parked actor: the runner only ticks actor_id == "gateway", so the
-        # run (and any listener children) is invisible to the tick loop
-        # until the finalized, run-bound stamp is saved below. A crash in
-        # this window leaves an inert parked run — a failed summon, never a
-        # half-stamped session.
-        run_id = svc.host.start_run(
-            flow_id=str(req.flow_id or ""),
-            bundle_id=req.bundle_id,
-            bundle_version=req.bundle_version,
-            input_data=input_data,
-            actor_id="gateway:summon-pending",
-            session_id=session_id,
-        )
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to start summoned run: {e}")
-
-    final_stamp = finalize_summon_stamp(stamp, data_dir=registry.data_dir, run_id=str(run_id))
-
-    run_store = svc.host.run_store
-    from abstractruntime.core.runtime import utc_now_iso
-
-    to_unpark = [str(run_id)]
-    list_children = getattr(run_store, "list_children", None)
-    if callable(list_children):
+    def _refuse_summon(
+        *,
+        reason: str,
+        holding: Dict[str, Any],
+        retry_after: Optional[int],
+        lane: str,
+    ) -> None:
+        # summon_refused host marker (item 3): the refusal enters the
+        # biography — "who was turned away while whom held the seat"
+        # answerable from the stream, not only from runtime/audit_log.jsonl.
+        # Written ONLY on the real conflict (never speculatively); the
+        # refused MESSAGE text is not recorded (the mailbox holds words;
+        # this marker holds the act). QUEUED ATTEMPTS never mark (audit
+        # P0-1): a retry is not an act — the queue recorded the wait at
+        # enqueue; this belt covers the race where the fast path passed but
+        # the locked re-check refuses.
+        if from_queue_id is not None:
+            detail0: Dict[str, Any] = {
+                "refused": True,
+                "reasons": [reason],
+                "entity_id": home.entity_id,
+                "lane": lane,
+                "live_run_id": str(holding.get("run_id") or ""),
+                "live_session_id": str(holding.get("session_id") or ""),
+            }
+            if retry_after is not None:
+                detail0["retry_after_s"] = int(retry_after)
+            raise HTTPException(status_code=409, detail=detail0)
         try:
-            for child in list_children(parent_run_id=str(run_id)) or []:
-                cid = getattr(child, "run_id", None)
-                if isinstance(cid, str) and cid:
-                    to_unpark.append(cid)
+            from ..entity_replay import record_host_marker
+
+            record_host_marker(
+                entities_dir=registry.entities_dir,
+                slug=home.manifest.slug,
+                entity_id=home.entity_id,
+                kind="summon_refused",
+                journal_seq=int(prelude.get("as_of_seq") or 0),
+                session_id=session_id,
+                details={
+                    "lane": lane,
+                    "holding_run_id": str(holding.get("run_id") or ""),
+                    "holding_session_id": str(holding.get("session_id") or ""),
+                    "holding_status": str(holding.get("status") or ""),
+                    "holder": str(holding.get("holder") or ""),
+                    "holder_kind": str(holding.get("holder_kind") or ""),
+                    "refused_session_id": session_id,
+                    "refused_caller_kind": caller_kind,
+                    "refusing_principal": caller_id,
+                },
+            )
         except Exception:
-            pass
-    for rid in to_unpark:
-        run = run_store.load(rid)
-        if run is None:
-            continue
-        vars_obj = getattr(run, "vars", None)
-        if not isinstance(vars_obj, dict):
-            vars_obj = {}
-            run.vars = vars_obj  # type: ignore[attr-defined]
-        runtime_ns = vars_obj.get("_runtime")
-        if not isinstance(runtime_ns, dict):
-            runtime_ns = {}
-            vars_obj["_runtime"] = runtime_ns
-        runtime_ns["entity"] = dict(final_stamp)
-        runtime_ns["run_mode"] = "summon"
-        run.actor_id = "gateway"  # type: ignore[attr-defined]
-        run.updated_at = utc_now_iso()  # type: ignore[attr-defined]
-        run_store.save(run)
+            logger.warning("summon_refused marker failed for %s (refusal still returned)", home.manifest.slug, exc_info=True)
+        detail: Dict[str, Any] = {
+            "refused": True,
+            "reasons": [reason],
+            "entity_id": home.entity_id,
+            "lane": lane,
+            "live_run_id": str(holding.get("run_id") or ""),
+            "live_session_id": str(holding.get("session_id") or ""),
+        }
+        headers = None
+        if retry_after is not None:
+            detail["retry_after_s"] = int(retry_after)
+            headers = {"Retry-After": str(int(retry_after))}
+        raise HTTPException(status_code=409, detail=detail, headers=headers)
+
+    # CROSS-LANE note (item 5): summon-vs-visit/chat is refused ABOVE by the
+    # visiting-posture gate (asleep+mode=visiting, mutual-exclusivity wave) —
+    # every visit/chat open writes that posture unconditionally, so no host
+    # probe is needed here. This guard owns summon-vs-summon: the seat.
+    guard_lock = _summon_guard_lock(home.manifest.slug)
+    with guard_lock:
+        seat = seat_occupancy(svc.host.run_store, registry.entities_dir, home.manifest.slug)
+        decision = door_decision(seat, caller=caller_id, caller_kind=caller_kind, session_id=session_id)
+        seat_held_since: Optional[str] = None
+        if decision["action"] == "refuse":
+            assert seat is not None
+            if bool(req.queue) and from_queue_id is None:
+                # QUEUED ADMISSION (decision:summon-queue-v1): the caller
+                # opted to WAIT — store the FULL payload; the door executes
+                # it at admission (the client never resubmits, contract §4).
+                # Only the SEAT lane queues: paused/visiting/prelude/floor
+                # refusals above stay loud 409s (a queue does not wait out a
+                # kill switch). A queued attempt (from_queue_id set) never
+                # reaches here — it re-raises to the admission executor.
+                return _enqueue_summon(
+                    svc, registry, home,
+                    req=req, caller_id=caller_id, caller_kind=caller_kind,
+                    seat=seat, prelude_seq=int(prelude.get("as_of_seq") or 0),
+                )
+            live_bit = "live run" if seat.get("run_live") else f"idle, seat held {seat.get('ttl_remaining_s')}s more"
+            _refuse_summon(
+                reason=(
+                    f"one life, one summon: {home.entity_id}'s seat is held by "
+                    f"{seat.get('holder') or 'unknown'} ({seat.get('holder_kind')}) — "
+                    f"session {seat.get('session_id')}, {live_bit}; retry after retry_after_s "
+                    "(humans may preempt an agent-held seat by declaring caller_kind=human, "
+                    "or wait in line by declaring queue=true)"
+                ),
+                holding=seat,
+                retry_after=int(decision.get("retry_after_s") or 0) or None,
+                lane="summon",
+            )
+        elif decision["action"] == "slide":
+            # The same conversation continuing (same session + same holder):
+            # the seat's held_since survives the per-turn run churn.
+            assert seat is not None
+            seat_held_since = str(seat.get("held_since") or "") or None
+        elif decision["action"] == "preempt":
+            # MACHINERY YIELDS TO HUMANS (item 2): a human summon takes the
+            # seat from an agent/unknown holder. A LIVE holder run is
+            # cancelled at the turn boundary — runtime's terminal-guarded
+            # cancel_run + the tick loop's between-steps abort ARE the
+            # semantics (their section, c5399); formations already lived
+            # stand (append-only stores). An idle TTL-held seat is taken
+            # without a cancel. The marker lands BEFORE the takeover
+            # proceeds so a crash mid-preempt leaves the recorded intent.
+            assert seat is not None
+            cancelled_runs: list[str] = []
+            if bool(seat.get("run_live")):
+                try:
+                    cancelled_runs = cancel_run_tree(
+                        svc.host.runtime,
+                        svc.host.run_store,
+                        str(seat.get("run_id") or ""),
+                        reason=(
+                            f"preempted: human summon by {caller_id} on {home.entity_id} "
+                            f"(seat holder {seat.get('holder') or 'unknown'}/{seat.get('holder_kind')})"
+                        ),
+                    )
+                except Exception:
+                    logger.warning("preempt cancel failed for %s (takeover proceeds)", home.manifest.slug, exc_info=True)
+            try:
+                from ..entity_replay import record_host_marker
+
+                record_host_marker(
+                    entities_dir=registry.entities_dir,
+                    slug=home.manifest.slug,
+                    entity_id=home.entity_id,
+                    kind="seat_preempted",
+                    journal_seq=int(prelude.get("as_of_seq") or 0),
+                    session_id=session_id,
+                    details={
+                        "preempted_run_id": str(seat.get("run_id") or ""),
+                        "preempted_session_id": str(seat.get("session_id") or ""),
+                        "holder": str(seat.get("holder") or ""),
+                        "holder_kind": str(seat.get("holder_kind") or ""),
+                        "holding_status": "live" if seat.get("run_live") else "ttl_held",
+                        "cancelled_runs": cancelled_runs,
+                        "preempting_principal": caller_id,
+                        "preempting_session_id": session_id,
+                    },
+                )
+            except Exception:
+                logger.warning("seat_preempted marker failed for %s (takeover proceeds)", home.manifest.slug, exc_info=True)
+
+        stamp = mint_summon_stamp(
+            data_dir=registry.data_dir,
+            entity_id=home.entity_id,
+            channel=CHANNEL_WORKPLACE,
+            session_id=session_id,
+            participants=participants,
+            prelude_as_of_seq=prelude.get("as_of_seq"),
+            budget_profile=budget_profile,
+        )
+
+        try:
+            # Parked actor: the runner only ticks actor_id == "gateway", so the
+            # run (and any listener children) is invisible to the tick loop
+            # until the finalized, run-bound stamp is saved below. A crash in
+            # this window leaves an inert parked run — a failed summon, never a
+            # half-stamped session.
+            run_id = svc.host.start_run(
+                flow_id=str(req.flow_id or ""),
+                bundle_id=req.bundle_id,
+                bundle_version=req.bundle_version,
+                input_data=input_data,
+                actor_id="gateway:summon-pending",
+                session_id=session_id,
+            )
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to start summoned run: {e}")
+
+        final_stamp = finalize_summon_stamp(stamp, data_dir=registry.data_dir, run_id=str(run_id))
+
+        run_store = svc.host.run_store
+        from abstractruntime.core.runtime import utc_now_iso
+
+        to_unpark = [str(run_id)]
+        list_children = getattr(run_store, "list_children", None)
+        if callable(list_children):
+            try:
+                for child in list_children(parent_run_id=str(run_id)) or []:
+                    cid = getattr(child, "run_id", None)
+                    if isinstance(cid, str) and cid:
+                        to_unpark.append(cid)
+            except Exception:
+                pass
+        for rid in to_unpark:
+            run = run_store.load(rid)
+            if run is None:
+                continue
+            vars_obj = getattr(run, "vars", None)
+            if not isinstance(vars_obj, dict):
+                vars_obj = {}
+                run.vars = vars_obj  # type: ignore[attr-defined]
+            runtime_ns = vars_obj.get("_runtime")
+            if not isinstance(runtime_ns, dict):
+                runtime_ns = {}
+                vars_obj["_runtime"] = runtime_ns
+            runtime_ns["entity"] = dict(final_stamp)
+            runtime_ns["run_mode"] = "summon"
+            run.actor_id = "gateway"  # type: ignore[attr-defined]
+            run.updated_at = utc_now_iso()  # type: ignore[attr-defined]
+            run_store.save(run)
+
+        # Take (or slide) the seat LAST — after the actor flip — so a crash
+        # in the parked window (an inert run the tick loop never sees) can
+        # never hold the one-life guard against future summons. holder = the
+        # summoning principal; holder_kind = the caller's DECLARATION
+        # ('unknown' when undeclared — reads as agent, preemptable, until
+        # GW-H per-agent principals make it structural). A slide preserves
+        # held_since: one conversation, one seat, many per-turn runs.
+        record_seat(
+            registry.entities_dir,
+            home.manifest.slug,
+            run_id=str(run_id),
+            session_id=session_id,
+            holder=caller_id,
+            holder_kind=(req.caller_kind or "unknown"),
+            held_since=seat_held_since,
+        )
 
     svc.runner.start()
 
@@ -2556,6 +3484,7 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
             "prelude_warnings": list(prelude.get("warnings") or []),
             "context_window_tokens": declared_window,
             "warnings": summon_warnings,
+            "substrate": substrate_block,
         },
     )
 
@@ -2567,6 +3496,7 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
         "participants": participants,
         "context_window_tokens": declared_window,
         "warnings": summon_warnings,
+        "substrate": substrate_block,
         "prelude": {
             "text": prelude["text"],
             "section_tokens": prelude.get("section_tokens"),
@@ -2575,6 +3505,468 @@ def summon_entity(name: str, req: SummonEntityRequest) -> Dict[str, Any]:
             "warnings": list(prelude.get("warnings") or []),
         },
     }
+
+
+# ----------------------------------------------------------- the visit queue
+# decision:summon-queue-v1 (sealed 2026-07-25, room summon-queue-design;
+# commons receipt c5625). The STORE lives in entity_queue.py; this block owns
+# the door logic: enqueue (from _summon_core's refuse arm), the ADMISSION
+# EXECUTOR (re-runs the whole summon path for the stored payload under the
+# enqueuer's identity), the poll/leave endpoints, and the sweep the backstop
+# clock calls. Runtime's invariants bind here: the lease is untouched
+# (admission = the right to ATTEMPT; the executed summon acquires it like a
+# fresh one), nothing is ever held for a waiter, close-paths fire the head
+# with the sweeper as backstop, and admission is idempotent per queue_id
+# (the guard RLock spans head-read -> summon-core, so racing tickers cannot
+# double-admit).
+
+
+def _fire_queue_admission(name: str) -> None:
+    """Best-effort fire-and-forget head admission (the close hooks' shape).
+    The service + registry are captured AT REQUEST TIME so a per-principal
+    close admits against its own homes, not the base service's (the
+    background thread has no request context)."""
+    try:
+        svc = get_gateway_service()
+        registry = _registry()
+    except Exception:
+        return
+
+    def _run() -> None:
+        try:
+            _attempt_queue_admission(name, svc=svc, registry=registry)
+        except Exception:
+            logger.warning("close-fired queue admission failed for %s (sweeper backstops)", name, exc_info=True)
+
+    threading.Thread(target=_run, name=f"queue-admit-{name}", daemon=True).start()
+
+
+def _queue_marker(registry: Any, home: Any, kind: str, *, journal_seq: int, details: Dict[str, Any]) -> None:
+    """Queue acts are census rows (contract §14): the ACT — who, when,
+    position — never the message words (the queue store holds words)."""
+    try:
+        from ..entity_replay import record_host_marker
+
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=home.manifest.slug,
+            entity_id=home.entity_id,
+            kind=kind,
+            journal_seq=journal_seq,
+            details=details,
+        )
+    except Exception:
+        logger.warning("%s marker failed for %s (act still stands)", kind, home.manifest.slug, exc_info=True)
+
+
+def _seat_idle_deadline(seat: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The ONLY ETA the contract allows (§2): the held seat's idle ceiling —
+    a fact about config, never a prediction. None while the run is live
+    (visit lengths are unbounded; an invented number is a lie)."""
+    if seat is None or bool(seat.get("run_live")):
+        return None
+    remaining = int(seat.get("ttl_remaining_s") or 0)
+    if remaining <= 0:
+        return None
+    return (_datetime.datetime.now(_datetime.timezone.utc) + _datetime.timedelta(seconds=remaining)).isoformat()
+
+
+def _enqueue_summon(
+    svc: Any,
+    registry: Any,
+    home: Any,
+    *,
+    req: SummonEntityRequest,
+    caller_id: str,
+    caller_kind: str,
+    seat: Dict[str, Any],
+    prelude_seq: int,
+) -> Dict[str, Any]:
+    """Store the summon as a queue entry (called under the guard RLock from
+    _summon_core's refuse arm). The FULL payload rests in the entry — the
+    door executes it at admission; a park entry IS the mailbox drop."""
+    from ..entity_queue import (
+        QUEUE_MAX_PER_HOME,
+        ensure_queue_sweeper,
+        new_entry,
+        position_of,
+        queued_entries,
+        read_queue,
+        write_queue,
+    )
+
+    slug = home.manifest.slug
+    entries = read_queue(registry.entities_dir, slug)
+    if len(queued_entries(entries)) >= QUEUE_MAX_PER_HOME:
+        # Loud cap (contract §19): refused at enqueue, never silently dropped.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "refused": True,
+                "reasons": [
+                    f"the door queue for {home.entity_id} is full "
+                    f"({QUEUE_MAX_PER_HOME} waiting) — retry later or leave the queue to the operator"
+                ],
+                "entity_id": home.entity_id,
+            },
+        )
+    # The stored payload's session id is minted AT ENQUEUE when absent
+    # (audit P1-2): admission reconciliation after a crash needs a
+    # DETERMINISTIC session to match the seat record against — a session
+    # minted inside the core at execute time is unknowable to the
+    # reconciler. Same shape the core mints.
+    stored = req.model_dump()
+    if not str(stored.get("session_id") or "").strip():
+        stored["session_id"] = f"entity-{slug}-{secrets.token_hex(4)}"
+    entry = new_entry(
+        payload=stored,
+        caller=caller_id,
+        caller_kind=caller_kind,
+        park=bool(req.park),
+    )
+    entries.append(entry)
+    write_queue(registry.entities_dir, slug, entries)
+    position = position_of(entries, entry["queue_id"]) or len(queued_entries(entries))
+    _queue_marker(
+        registry, home, "queue_enqueued",
+        journal_seq=prelude_seq,
+        details={
+            "queue_id": entry["queue_id"],
+            "position": position,
+            "caller": caller_id,
+            "caller_kind": caller_kind,
+            "park": bool(req.park),
+            "behind_session_id": str(seat.get("session_id") or ""),
+        },
+    )
+    ensure_queue_sweeper(registry.entities_dir, context=(svc, registry))
+    return {
+        "queued": True,
+        "queue_id": entry["queue_id"],
+        "position": position,
+        "park": bool(req.park),
+        "entity_id": home.entity_id,
+        "current_idle_deadline": _seat_idle_deadline(seat),
+        "poll": f"/api/gateway/entities/{home.manifest.slug}/queue/{entry['queue_id']}",
+    }
+
+
+def _is_contention_refusal(detail: Any) -> Optional[str]:
+    """Discriminate CONTENTION (the seat/life is held — the design working,
+    entry stays queued) from a refusal that can never admit (paused kill
+    switch, prelude refusal, context floor, substrate — mark failed; audit
+    P1-1: status-code alone is the wrong axis because the door speaks 409
+    for both classes). Returns 'seat' | 'visit' | None(=not contention).
+    'visit' also feeds the card's waiting_behind (entity room#12)."""
+    if isinstance(detail, dict) and str(detail.get("lane") or "") == "summon":
+        return "seat"
+    text = str(detail).lower()
+    if "visit is open" in text or "visiting posture" in text:
+        return "visit"
+    return None
+
+
+def _mark_admitted(registry: Any, home: Any, entries: Any, head: Dict[str, Any], *, run_id: str, session_id: str, prelude_seq: int) -> None:
+    from ..entity_queue import write_queue
+
+    head["state"] = "admitted"
+    head["admitted_run_id"] = run_id
+    head["admitted_session_id"] = session_id
+    head["waiting_behind"] = None
+    write_queue(registry.entities_dir, home.manifest.slug, entries)
+    _queue_marker(
+        registry, home, "queue_admitted",
+        journal_seq=prelude_seq,
+        details={
+            "queue_id": head["queue_id"],
+            "run_id": run_id,
+            "session_id": session_id,
+            "caller": head.get("caller"),
+            "caller_kind": head.get("caller_kind"),
+            "park": bool(head.get("park")),
+            "attempts": head.get("attempts"),
+        },
+    )
+
+
+def _attempt_queue_admission(name: str, *, svc: Any = None, registry: Any = None) -> None:
+    """Try to admit the queue head (idempotent per queue_id — the RLock
+    spans head-read -> summon-core in-process, and the ADMITTING intent
+    write + seat reconciliation cover process death; audit P1-2).
+    Every caller is best-effort: polls, close paths, and the sweeper all
+    converge here; one attempt per free seat wins, the rest see the state."""
+    from ..entity_queue import head_entry, read_queue, write_queue
+
+    svc = svc if svc is not None else get_gateway_service()
+    registry = registry if registry is not None else _registry()
+    try:
+        home = registry.get_home(name)
+    except Exception:
+        return  # an unresolvable home cannot admit; the entry stays for the operator
+    slug = home.manifest.slug
+    with _summon_guard_lock(slug):
+        entries = read_queue(registry.entities_dir, slug)
+        # CRASH RECONCILIATION (audit P1-2): a previous attempt that died
+        # between the run start and the admitted write left an entry in
+        # 'admitting' — it takes precedence over any queued entry behind it
+        # (head_entry only sees queued states). The seat record is the
+        # truth: if the seat carries the entry's deterministic session +
+        # holder, the run WAS minted — mark admitted idempotently instead
+        # of executing the prompt twice.
+        head = None
+        for e in entries:
+            if str(e.get("state") or "") == "admitting":
+                head = e
+                break
+        if head is None:
+            head = head_entry(entries)
+        if head is None:
+            return
+        if str(head.get("state") or "") == "admitting":
+            stored_session = str((head.get("payload") or {}).get("session_id") or "")
+            seat_now = seat_occupancy(svc.host.run_store, registry.entities_dir, slug)
+            if (
+                seat_now is not None
+                and stored_session
+                and str(seat_now.get("session_id") or "") == stored_session
+                and str(seat_now.get("holder") or "") == str(head.get("caller") or "")
+            ):
+                _mark_admitted(
+                    registry, home, entries, head,
+                    run_id=str(seat_now.get("run_id") or ""),
+                    session_id=stored_session,
+                    prelude_seq=int(home.memory.current_seq()),
+                )
+                return
+            # No matching seat: the previous attempt died BEFORE the mint —
+            # fall through and execute (state resets to queued via the
+            # normal write below on contention, or admits).
+        try:
+            payload = dict(head.get("payload") or {})
+            payload["queue"] = False
+            payload["park"] = False
+            req = SummonEntityRequest(**payload)
+        except Exception as e:
+            head["state"] = "failed"
+            head["failed_reason"] = f"stored payload no longer parses: {e}"
+            write_queue(registry.entities_dir, slug, entries)
+            _queue_marker(
+                registry, home, "queue_reaped",
+                journal_seq=int(home.memory.current_seq()),
+                details={"queue_id": head["queue_id"], "reason": "payload unparsable", "caller": head.get("caller")},
+            )
+            return
+        head["attempts"] = int(head.get("attempts") or 0) + 1
+        head["last_attempt_at"] = _now_iso()
+        # INTENT WRITE (audit P1-2): 'admitting' rests durably BEFORE the
+        # core executes, so a crash mid-execution is reconcilable above.
+        head["state"] = "admitting"
+        write_queue(registry.entities_dir, slug, entries)
+        try:
+            out = _summon_core(
+                name,
+                req,
+                caller_id=str(head.get("caller") or "operator"),
+                caller_kind=str(head.get("caller_kind") or "agent"),
+                from_queue_id=str(head.get("queue_id")),
+                svc=svc,
+                registry=registry,
+            )
+        except HTTPException as e:
+            contention = _is_contention_refusal(e.detail)
+            if contention is not None:
+                # The seat/life is held: the design working — the entry
+                # stays queued at head (attempt-not-grant, invariant 9).
+                head["state"] = "queued"
+                head["waiting_behind"] = "visit" if contention == "visit" else None
+                write_queue(registry.entities_dir, slug, entries)
+                return
+            # A refusal that can never admit (paused kill switch, prelude
+            # refusal, floor, substrate) — mark failed honestly instead of
+            # clogging the head forever. The poll serves the reason verbatim.
+            head["state"] = "failed"
+            head["failed_reason"] = str(e.detail)
+            write_queue(registry.entities_dir, slug, entries)
+            _queue_marker(
+                registry, home, "queue_reaped",
+                journal_seq=int(home.memory.current_seq()),
+                details={"queue_id": head["queue_id"], "reason": "admission refused (non-contention)", "caller": head.get("caller")},
+            )
+            return
+        except Exception:
+            # A non-HTTP failure (store hiccup, registry error): back to
+            # queued — the next tick retries; never strand 'admitting'
+            # without a mint (the reconciler would just fall through, but
+            # honest state beats a misleading one).
+            head["state"] = "queued"
+            write_queue(registry.entities_dir, slug, entries)
+            raise
+        _mark_admitted(
+            registry, home, entries, head,
+            run_id=str(out.get("run_id") or ""),
+            session_id=str(out.get("session_id") or ""),
+            prelude_seq=int((out.get("prelude") or {}).get("as_of_seq") or 0),
+        )
+
+
+def _queue_sweep(slug: str, context: Any = None) -> None:
+    """The backstop clock's per-home pass (contract invariant 11): reap
+    poll-silent non-park entries, then attempt the head. `context` is the
+    OWNING (svc, registry) pair registered with the swept dir (audit P1-4 —
+    the sweeper thread has no request principal, and a context-free
+    get_gateway_service() always answers the BASE service; that fallback
+    stays correct for the base dir only). Per-principal dirs get their
+    context from door touches; after a bounce with zero traffic, a
+    per-principal parked entry admits on that principal's next door touch
+    (documented residual — principal services build lazily and cannot be
+    resolved from a thread)."""
+    from ..entity_queue import read_queue, reap_poll_silent, write_queue
+
+    if isinstance(context, tuple) and len(context) == 2:
+        svc, registry = context
+    else:
+        svc, registry = get_gateway_service(), _registry()
+    try:
+        home = registry.get_home(slug)
+    except Exception:
+        return
+    lock = _summon_guard_lock(home.manifest.slug)
+    # P2-1: the backstop must never wedge behind one home's slow summon —
+    # a bounded wait skips this tick; the next tick retries.
+    if not lock.acquire(timeout=5.0):
+        return
+    try:
+        entries = read_queue(registry.entities_dir, home.manifest.slug)
+        reaped = reap_poll_silent(entries)
+        if reaped:
+            write_queue(registry.entities_dir, home.manifest.slug, entries)
+            for e in reaped:
+                _queue_marker(
+                    registry, home, "queue_reaped",
+                    journal_seq=int(home.memory.current_seq()),
+                    details={"queue_id": e.get("queue_id"), "reason": e.get("failed_reason"), "caller": e.get("caller")},
+                )
+    finally:
+        lock.release()
+    _attempt_queue_admission(slug, svc=svc, registry=registry)
+
+
+# The sweeper thread calls this for every slug with a queue file; wired at
+# import (entity_queue never imports the routes — no cycle).
+from ..entity_queue import set_queue_sweep_executor as _set_queue_sweep_executor  # noqa: E402
+
+_set_queue_sweep_executor(_queue_sweep)
+
+
+def _queue_entry_view(entries: Any, entry: Dict[str, Any], seat: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    from ..entity_queue import position_of
+
+    view: Dict[str, Any] = {
+        "queue_id": entry.get("queue_id"),
+        "state": entry.get("state"),
+        "position": position_of(entries, str(entry.get("queue_id") or "")),
+        "park": bool(entry.get("park")),
+        "waiting_behind": entry.get("waiting_behind"),
+        "current_idle_deadline": _seat_idle_deadline(seat),
+        "enqueued_at": entry.get("enqueued_at"),
+        "attempts": entry.get("attempts"),
+    }
+    if entry.get("admitted_run_id"):
+        view["run_id"] = entry.get("admitted_run_id")
+        view["session_id"] = entry.get("admitted_session_id")
+    if entry.get("failed_reason"):
+        view["reason"] = entry.get("failed_reason")
+    return view
+
+
+@router.get("/{name}/queue/{queue_id}")
+def poll_queue_entry(name: str, queue_id: str) -> Dict[str, Any]:
+    """The waiter's poll (contract §3). POLL-DRIVEN ADMISSION: a poll on a
+    queued head attempts admission synchronously — the waiting client's own
+    cadence drives the queue, and the sweeper covers everyone else. Each
+    poll renews the entry's liveness (poll-silent non-park entries reap)."""
+    from ..entity_queue import ensure_queue_sweeper, find_entry, read_queue, write_queue
+
+    svc = get_gateway_service()
+    registry = _registry()
+    try:
+        home = registry.get_home(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    slug = home.manifest.slug
+    ensure_queue_sweeper(registry.entities_dir, context=(svc, registry))
+    with _summon_guard_lock(slug):
+        entries = read_queue(registry.entities_dir, slug)
+        entry = find_entry(entries, queue_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"no queue entry {queue_id!r} on {home.entity_id}")
+        if str(entry.get("state") or "") == "queued":
+            entry["last_poll_at"] = _now_iso()
+            write_queue(registry.entities_dir, slug, entries)
+    # Attempt OUTSIDE the read block (the executor takes the lock itself;
+    # RLock makes the nesting safe either way, but the re-read below must
+    # see the attempt's outcome). Wrapped (audit P2-7): a non-HTTP failure
+    # in the HEAD entry's admission must not 500 the innocent poller — the
+    # poll's job is the entry's state, which the re-read serves.
+    try:
+        _attempt_queue_admission(name, svc=svc, registry=registry)
+    except Exception:
+        logger.warning("poll-driven admission failed for %s (poll still serves state)", name, exc_info=True)
+    with _summon_guard_lock(slug):
+        entries = read_queue(registry.entities_dir, slug)
+        entry = find_entry(entries, queue_id)
+        if entry is None:  # pragma: no cover - removed between locks (never happens: entries are marked, not deleted)
+            raise HTTPException(status_code=404, detail=f"no queue entry {queue_id!r} on {home.entity_id}")
+        seat = seat_occupancy(svc.host.run_store, registry.entities_dir, slug)
+        view = _queue_entry_view(entries, entry, seat)
+    view["entity_id"] = home.entity_id
+    return view
+
+
+@router.post("/{name}/queue/{queue_id}/leave")
+def leave_queue(name: str, queue_id: str) -> Dict[str, Any]:
+    """The explicit step-away (contract §6): a polite dequeue — the client
+    button's verb. Tab death is the reaper's job, never a stranded slot."""
+    from ..entity_queue import find_entry, read_queue, write_queue
+
+    registry = _registry()
+    try:
+        home = registry.get_home(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    slug = home.manifest.slug
+    with _summon_guard_lock(slug):
+        entries = read_queue(registry.entities_dir, slug)
+        entry = find_entry(entries, queue_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"no queue entry {queue_id!r} on {home.entity_id}")
+        state = str(entry.get("state") or "")
+        if state == "queued":
+            entry["state"] = "stepped_away"
+            write_queue(registry.entities_dir, slug, entries)
+            # The marker distinguishes WHO ACTED from whose entry it was
+            # (audit P2-5): the queue_id is a capability token, so another
+            # principal holding it can dequeue — the biography must not say
+            # "X stepped away" when Y removed X.
+            from ..security.principal import current_gateway_principal
+
+            _actor = current_gateway_principal()
+            _queue_marker(
+                registry, home, "queue_stepped_away",
+                journal_seq=int(home.memory.current_seq()),
+                details={
+                    "queue_id": queue_id,
+                    "caller": entry.get("caller"),
+                    "by": (_actor.user_id if _actor is not None else "operator"),
+                },
+            )
+        view = _queue_entry_view(entries, entry, None)
+    view["entity_id"] = home.entity_id
+    return view
 
 
 # --------------------------------------------------------------- workspace
@@ -2826,22 +4218,69 @@ def get_entity_tool_policy(name: str) -> Dict[str, Any]:
             "notes": list(grant.notes),
             "executable": executable,
         }
-    return {
+    out: Dict[str, Any] = {
         "phases": phases,
         "all_tools": list(ALL_TOOL_NAMES),
         "tiers": {tier: list(names) for tier, names in TIERS.items()},
     }
+    # Per-tool RISK TRIO join (entity c4643: the console's badge is staged
+    # dark and lights on this map). Source: the annotated walled rows — the
+    # SAME runtime-authored fields discovery serves (risk_tier=band word,
+    # risk_rank=int, presentation; grantable rides for the life-plane rows).
+    # Render-when-present: an older runtime serves no map, never a fake one.
+    try:
+        from ..tool_inventory import entity_walled_inventory
+
+        risk: Dict[str, Any] = {}
+        for row in entity_walled_inventory():
+            fields = {
+                k: row[k]
+                for k in ("risk_tier", "risk_rank", "risk_presentation", "risk_mapping_version", "grantable")
+                if k in row and row[k] is not None
+            }
+            if fields:
+                risk[str(row["name"])] = fields
+        if risk:
+            out["risk"] = risk
+    except Exception:  # noqa: BLE001 - the join is additive
+        pass
+    return out
 
 
 @router.put("/{name}/tool-policy")
 def put_entity_tool_policy(name: str, req: PutToolPolicyRequest) -> Dict[str, Any]:
+    """Write the entity's phase tool grants — MARKER-FIRST (entity c4643
+    standing ask, the work-order PUT's exact discipline): a grant change is
+    an operator act on the entity's biography; the durable marker lands
+    BEFORE the write, and a home that cannot record refuses the change."""
     from abstractruntime import write_policy_file
+
+    from ..entity_replay import record_host_marker
 
     registry = _registry()
     try:
         manifest = registry.manifest_for(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    try:
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="tool_policy_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details={
+                "channel": "operator",
+                "by": _task_actor(),
+                "phases_named": sorted(k for k in (req.policy or {}).keys() if isinstance(k, str)),
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"tool policy change refused: the durable marker could not be recorded ({e}) — retry when the home is reachable",
+        )
     try:
         write_policy_file(registry.entities_dir / manifest.slug, req.policy)
     except ValueError as e:
@@ -3348,6 +4787,11 @@ def put_entity_prompt(name: str, req: PutPromptOverlayRequest) -> Dict[str, Any]
 class PutSubstrateRequest(BaseModel):
     provider: str = Field(..., min_length=1, description="abstractcore provider (explicit operator choice)")
     model: str = Field(..., min_length=1, description="Model (explicit operator choice)")
+    # Optional reasoning effort for the mind (reasoning-first-citizen plan).
+    # Absent = keep whatever is stored; explicit null = clear; a value sets
+    # it (presence is read from model_fields_set). Spelled `thinking` on the
+    # wire and at rest (the one-name decision).
+    thinking: Optional[str] = Field(default=None, max_length=40)
 
 
 @router.get("/{name}/substrate")
@@ -3363,12 +4807,17 @@ def get_entity_substrate(name: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     stored = read_entity_substrate(registry.entities_dir / manifest.slug)
     if stored:
-        return {"provider": stored["provider"], "model": stored["model"], "source": "entity"}
+        return {
+            "provider": stored["provider"],
+            "model": stored["model"],
+            "thinking": stored.get("thinking") or None,
+            "source": "entity",
+        }
     env_p = (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER") or "").strip()
     env_m = (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL") or "").strip()
     if env_p and env_m:
-        return {"provider": env_p, "model": env_m, "source": "operator-env"}
-    return {"provider": None, "model": None, "source": "unset"}
+        return {"provider": env_p, "model": env_m, "thinking": None, "source": "operator-env"}
+    return {"provider": None, "model": None, "thinking": None, "source": "unset"}
 
 
 @router.put("/{name}/substrate")
@@ -3378,15 +4827,31 @@ def put_entity_substrate(name: str, req: PutSubstrateRequest) -> Dict[str, Any]:
     (old → new, principal, timestamp) lands BEFORE the file moves, so
     "which llm was behind during which time" is answerable from the
     stream even if the write itself crashes. Direct file edits bypass
-    this record; the 12:24 emergency flip proved the gap from inside."""
-    from ..entity_chat import read_entity_substrate, write_entity_substrate
-    from ..security.principal import current_gateway_principal
+    this record; the 12:24 emergency flip proved the gap from inside.
+
+    Serialized per slug (adversary cycle-2 N5): read-prior -> marker ->
+    write must not interleave with a concurrent PUT — keep-semantics reads
+    the prior, so a racing provider-only save could rewrite the file
+    without an effort neither caller asked to clear."""
+    from ..entity_seat import summon_guard_lock
 
     registry = _registry()
     try:
         manifest = registry.manifest_for(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    _put_lock = summon_guard_lock(manifest.slug)
+    if not _put_lock.acquire(timeout=10.0):
+        raise HTTPException(status_code=503, detail="substrate write busy — retry")
+    try:
+        return _put_entity_substrate_locked(name, req, registry=registry, manifest=manifest)
+    finally:
+        _put_lock.release()
+
+
+def _put_entity_substrate_locked(name: str, req: PutSubstrateRequest, *, registry, manifest) -> Dict[str, Any]:
+    from ..entity_chat import read_entity_substrate, write_entity_substrate
+    from ..security.principal import current_gateway_principal
     home_dir = registry.entities_dir / manifest.slug
     # Strip-validate BEFORE the marker (adversary P2-2: min_length=1 accepts
     # " "; the writer strips and raises AFTER the substrate_changed marker
@@ -3396,6 +4861,28 @@ def put_entity_substrate(name: str, req: PutSubstrateRequest) -> Dict[str, Any]:
     if not provider_in or not model_in:
         raise HTTPException(status_code=400, detail="provider and model must both be non-empty")
     prior = read_entity_substrate(home_dir) or {}
+    # Reasoning effort: absent field = keep the stored value (a client that
+    # predates the field can never erase it); explicit null = clear; a
+    # value sets it. The value must be from the advertised vocabulary
+    # (adversary cycle-2 N4): this is the ONE sanctioned write door for a
+    # closed set the gateway itself advertises — a stored typo would fail
+    # one lane loudly and silently do nothing in another. This validates
+    # VOCABULARY, never model capability (that stays core's).
+    _THINKING_VOCAB = {"none", "minimal", "low", "medium", "high", "xhigh", "auto", "on"}
+    if "thinking" in req.model_fields_set:
+        thinking_in = str(req.thinking or "").strip() or None
+        if thinking_in is not None and thinking_in.lower() not in _THINKING_VOCAB:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"unknown reasoning effort {thinking_in!r} — one of: "
+                    + ", ".join(sorted(_THINKING_VOCAB))
+                ),
+            )
+        if thinking_in is not None:
+            thinking_in = thinking_in.lower()
+    else:
+        thinking_in = str(prior.get("thinking") or "").strip() or None
     principal = current_gateway_principal()
     actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
     # MARKER-FIRST: record the intent before the file changes. A marker
@@ -3414,8 +4901,12 @@ def put_entity_substrate(name: str, req: PutSubstrateRequest) -> Dict[str, Any]:
             details={
                 "channel": "operator",
                 "by": actor,
-                "old": {"provider": prior.get("provider"), "model": prior.get("model")},
-                "new": {"provider": provider_in, "model": model_in},
+                "old": {
+                    "provider": prior.get("provider"),
+                    "model": prior.get("model"),
+                    "thinking": prior.get("thinking") or None,
+                },
+                "new": {"provider": provider_in, "model": model_in, "thinking": thinking_in},
             },
         )
     except Exception as e:  # noqa: BLE001
@@ -3425,7 +4916,7 @@ def put_entity_substrate(name: str, req: PutSubstrateRequest) -> Dict[str, Any]:
             "an unrecorded mind swap is not allowed; retry when the home is reachable",
         )
     try:
-        write_entity_substrate(home_dir, provider=provider_in, model=model_in)
+        write_entity_substrate(home_dir, provider=provider_in, model=model_in, thinking=thinking_in)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return get_entity_substrate(name)
@@ -4055,7 +5546,7 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
     )
 
     try:
-        provider, model = resolve_substrate(req.provider, req.model, home_dir=home_dir)
+        provider, model, thinking = resolve_substrate(req.provider, req.model, home_dir=home_dir)
     except ChatOpenRefused as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
     base_url = (req.base_url or _os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_BASE_URL") or "http://127.0.0.1:1234/v1").strip()
@@ -4084,6 +5575,7 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
             home_dir,
             provider=provider,
             model=model,
+            thinking=thinking,
             base_url=base_url,
             tick_seconds=req.tick_seconds,
             ticks_per_day=req.ticks_per_day,

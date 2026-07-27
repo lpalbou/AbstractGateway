@@ -1244,3 +1244,89 @@ def test_bounded_sleep_keeps_its_wake_deadline_through_a_visit(monkeypatch: pyte
         assert restored.startswith("2027-01-01T06:00:00"), (
             f"the wake deadline must survive the visit, got wake_at={restored!r}"
         )
+
+
+def test_visit_ledger_read_paged_and_structured_codes(monkeypatch: pytest.MonkeyPatch):
+    """coder-tui c4307 asks 2+3: (2) GET /visit/{run_id}/ledger serves the
+    visit run's own ledger (per-home store, invisible to /runs/*) paged with
+    stable cursors, on live AND terminal runs; (3) visit-lane refusals carry
+    a machine `code` SIBLING beside the unchanged human `detail` string
+    (additive: detail stays a string) + the X-Gateway-Error-Code header."""
+    _install_scripted_llm(monkeypatch, [
+        "Hello — ledger test.",
+        "Reflection: done.",
+    ])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        run_id = opened.json()["run_id"]
+
+        turned = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn",
+            json={"text": "Hello"},
+        )
+        assert turned.status_code == 200, turned.text
+
+        # Live read: records with 1-based cursors; done=False while live.
+        r = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/ledger")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["run_id"] == run_id and body["done"] is False
+        total = body["total"]
+        assert total >= 1 and len(body["records"]) == total
+        assert body["records"][0]["cursor"] == 1
+        assert body["records"][-1]["cursor"] == total == body["next_cursor"]
+        assert isinstance(body["records"][0]["record"], dict)
+
+        # Paged read: exact resume from a mid cursor, no overlap, no gap.
+        first = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/ledger?limit=1").json()
+        assert len(first["records"]) == 1 and first["next_cursor"] == 1
+        rest = client.get(
+            f"/api/gateway/entities/Castor/visit/{run_id}/ledger?after={first['next_cursor']}"
+        ).json()
+        assert rest["records"][0]["cursor"] == 2
+        assert [x["cursor"] for x in first["records"]] + [x["cursor"] for x in rest["records"]] == list(
+            range(1, total + 1)
+        )
+
+        # Unknown run: structured code beside the unchanged string detail.
+        missing = client.get("/api/gateway/entities/Castor/visit/run-nope/ledger")
+        assert missing.status_code == 404
+        mb = missing.json()
+        assert isinstance(mb["detail"], str) and "no visit run" in mb["detail"]
+        assert mb["code"] == "visit_not_found"
+        assert missing.headers.get("X-Gateway-Error-Code") == "visit_not_found"
+
+        closed = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/close",
+            json={"closed_by": "operator", "reason": "done"},
+        )
+        assert closed.status_code == 200, closed.text
+
+        # Terminal read: done=True once the page reaches the end; the ledger
+        # grew through close (reflection etc). Cursor STABILITY under growth
+        # (adversary F6): the record at cursor 1 is byte-identical before and
+        # after the ledger grew — append-only, cursors never shift.
+        done = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/ledger").json()
+        assert done["status"] == "completed" and done["done"] is True
+        assert done["total"] >= total
+        assert done["records"][0]["record"] == body["records"][0]["record"]
+
+        # Cursor clamps (adversary F2/F3): over-shot after clamps to total
+        # (next_cursor echoes truth, never garbage); limit=0 = minimum page.
+        over = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/ledger?after=999999").json()
+        assert over["records"] == [] and over["next_cursor"] == over["total"]
+        tiny = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/ledger?limit=0").json()
+        assert len(tiny["records"]) == 1
+
+        # Second open refused with the one-life code (structured shape on a
+        # NON-404 refusal too)... a closed visit frees the home, so force the
+        # refusal via the unknown-closed_by 400 instead (deterministic).
+        bad = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/close",
+            json={"closed_by": "not-a-thing"},
+        )
+        assert bad.status_code == 400
+        bb = bad.json()
+        assert bb["code"] == "bad_closed_by" and isinstance(bb["detail"], str)

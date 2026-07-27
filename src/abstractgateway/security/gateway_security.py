@@ -562,19 +562,64 @@ class GatewaySecurityMiddleware:
                 return True
         return False
 
+    # -- verified-token cache (idle-CPU incident, framework c4144) ----------
+    #
+    # Under user auth, EVERY bearer request ran the registry scan FIRST:
+    # per enabled record one PBKDF2 verification at 260k iterations
+    # (~100ms CPU each) — ~0.5s of pure CPU per request on a 5-user
+    # registry, even when the token was the static operator token that the
+    # cheap constant-time compare would accept afterwards. A handful of
+    # connected app pollers (observer board, entity app, assistant) burned
+    # a full core on a gateway with ZERO runs. PBKDF2's cost is the point
+    # AT REST (an exfiltrated users.json resists brute force); re-deriving
+    # it per request adds nothing — the cache keys on the token's sha256
+    # and invalidates the instant the registry FILE identity changes
+    # (mtime_ns, ino, size — same-mtime rewrites still caught by inode),
+    # so revocation/rotation takes effect at the next request exactly as
+    # before. Only SUCCESSFUL authentications are cached: unknown tokens
+    # stay uncacheable (the lockout layer owns brute force; a failure
+    # cache would be an attacker-fillable map).
+
+    _AUTH_CACHE_MAX = 256
+
+    def _registry_file_identity(self) -> tuple:
+        try:
+            from ..users import gateway_user_registry_path_from_env
+
+            st = gateway_user_registry_path_from_env().stat()
+            return (st.st_mtime_ns, st.st_ino, st.st_size)
+        except FileNotFoundError:
+            return ("absent",)
+        except Exception:
+            return ("unreadable",)
+
     def _authenticate_token(self, token: str) -> Optional[GatewayPrincipal]:
         if not token:
             return None
+        user_auth = self._policy.user_auth_enabled or gateway_user_auth_enabled()
+        cache_key = hashlib.sha256(str(token).encode("utf-8", errors="ignore")).hexdigest()
+        registry_id = self._registry_file_identity() if user_auth else ("no-user-auth",)
+        cache = getattr(self, "_auth_cache", None)
+        if cache is None:
+            cache = {}
+            self._auth_cache = cache
+        hit = cache.get(cache_key)
+        if hit is not None and hit[0] == registry_id:
+            return hit[1]
+
+        principal: Optional[GatewayPrincipal] = None
         try:
-            if self._policy.user_auth_enabled or gateway_user_auth_enabled():
+            if user_auth:
                 principal = GatewayUserRegistry().authenticate(token)
-                if principal is not None:
-                    return principal
         except Exception as e:
             logger.warning("Gateway user registry auth failed: %s", e)
-        if self._token_valid(token):
-            return local_admin_principal(token_fingerprint=token_fingerprint(token))
-        return None
+        if principal is None and self._token_valid(token):
+            principal = local_admin_principal(token_fingerprint=token_fingerprint(token))
+        if principal is not None:
+            if len(cache) >= self._AUTH_CACHE_MAX:
+                cache.clear()  # tiny cardinality in practice; simplest bound
+            cache[cache_key] = (registry_id, principal)
+        return principal
 
     def _authenticate_session_cookie(self, cookie_header: Optional[str]) -> Optional[tuple[GatewayPrincipal, str]]:
         session_id = gateway_session_id_from_cookie_header(cookie_header)

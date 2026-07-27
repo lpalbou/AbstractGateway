@@ -22,6 +22,16 @@ class BuiltinProviderConnectionSpec:
     default_base_url: str = ""
     requires_api_key: bool = False
     requires_base_url: bool = False
+    # In-process backends (MLX, local HuggingFace cache): no server, no
+    # base_url, no key — "reachable" means the discovery facade lists
+    # local artifacts. They surface ONLY through the reachable-probe
+    # lane (a models listing is the honest gate); the configured-rows
+    # fold skips them, otherwise a spec with no key/URL requirement
+    # would emit an always-present "configured" row for a backend that
+    # may not even be importable (operator report 2026-07-26: "where is
+    # our ollama" — the sibling gap was mlx/huggingface never surfacing
+    # at all).
+    in_process: bool = False
 
 
 BUILTIN_PROVIDER_CONNECTIONS: tuple[BuiltinProviderConnectionSpec, ...] = (
@@ -90,6 +100,18 @@ BUILTIN_PROVIDER_CONNECTIONS: tuple[BuiltinProviderConnectionSpec, ...] = (
         base_url_env_vars=("OPENAI_BASE_URL",),
         requires_base_url=True,
     ),
+    BuiltinProviderConnectionSpec(
+        provider_id="mlx",
+        display_name="MLX",
+        description="Apple MLX models served in-process from the local cache (no server needed).",
+        in_process=True,
+    ),
+    BuiltinProviderConnectionSpec(
+        provider_id="huggingface",
+        display_name="HuggingFace",
+        description="Local HuggingFace cache served in-process (no server needed).",
+        in_process=True,
+    ),
 )
 
 
@@ -114,6 +136,12 @@ def configured_builtin_provider_public_rows(
     rows: list[Dict[str, Any]] = []
     for spec in BUILTIN_PROVIDER_CONNECTIONS:
         if spec.provider_id.lower() in skip:
+            continue
+        # In-process backends surface only through the reachable-probe
+        # lane (their models listing is the gate) — with no key/URL
+        # requirement to fail, they would otherwise emit always-present
+        # "configured" rows for backends that may not be usable.
+        if spec.in_process:
             continue
         api_key, api_key_source = configured_provider_api_key(
             spec.provider_id,

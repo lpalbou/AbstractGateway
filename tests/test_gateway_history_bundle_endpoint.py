@@ -137,6 +137,35 @@ def test_history_bundle_endpoint_includes_snapshot_and_replays_after_restart(tmp
         items = arts.json().get("items") or []
         assert any(str(i.get("artifact_id") or "") == artifact_id for i in items)
 
+        # Replay-integrity R2 (code-tui c5552; runtime shipped the profile,
+        # gateway threads the query param): ?detail=replay is validated and
+        # forwarded to export_run_history_bundle, and the bundle carries the
+        # "detail" label so a client knows which projection it got. An invalid
+        # value refuses at the boundary (400), not silently.
+        r_replay = client.get(
+            f"/api/gateway/runs/{run_id}/history_bundle",
+            headers=headers,
+            params={"include_subruns": "false", "detail": "replay"},
+        )
+        assert r_replay.status_code == 200, r_replay.text
+        assert r_replay.json().get("detail") == "replay"
+
+        r_full = client.get(
+            f"/api/gateway/runs/{run_id}/history_bundle",
+            headers=headers,
+            params={"include_subruns": "false", "detail": "full"},
+        )
+        assert r_full.status_code == 200, r_full.text
+        assert r_full.json().get("detail") in ("full", None)  # runtime labels; full may be implicit
+
+        r_bad = client.get(
+            f"/api/gateway/runs/{run_id}/history_bundle",
+            headers=headers,
+            params={"detail": "bogus"},
+        )
+        assert r_bad.status_code == 400, r_bad.text
+        assert "detail must be" in r_bad.json()["detail"]
+
     # Restart simulation: new service process (same data_dir/db) should serve the same snapshot ref.
     with TestClient(app) as client2:
         r2 = client2.get(

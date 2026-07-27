@@ -68,6 +68,51 @@ def test_state_writes_carry_server_derived_principal_provenance():
         assert r2.json()["state"]["reason"] == "[by person:admin via POST /entities/Castor/state]"
 
 
+def test_operator_sleep_is_composite_disarms_grant_and_clears_orders():
+    """OPERATOR-SLEEP-IS-ABSOLUTE (laurent dm#127, spec v17): the sleep click
+    is ONE composite act — asleep + personal grant DISARMED + standing work
+    orders CLEARED — so no machine path wakes into personal/work afterward.
+    Tonight's incident: Ephemeral woke to personal ~1h after an operator
+    sleep because the sleep wrote asleep-only and left a standing grant armed."""
+    from abstractruntime.identity.life import read_personal_grant, read_work_order, write_personal_grant
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # Arm a standing personal grant + a work order the way the live box carried them.
+        import abstractgateway.routes.entities as ent
+
+        manifest = ent._registry().manifest_for("Castor")
+        home = ent._registry().entities_dir / manifest.slug
+        write_personal_grant(home, mode="until_revoked", granted_by="person:admin")
+        (home / "work_order.md").write_text("stand up the daily report", encoding="utf-8")
+        assert read_personal_grant(home).get("mode") == "until_revoked"
+        assert read_work_order(home) is not None
+
+        # The operator sleep click.
+        r = client.post("/api/gateway/entities/Castor/state", json={"state": "asleep", "reason": "goodnight"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["state"]["state"] == "asleep"
+        # Composite surfaced + effective on disk.
+        assert body["composite_sleep"]["grant_disarmed"]["was_mode"] == "until_revoked"
+        assert body["composite_sleep"]["work_order_cleared"] is True
+        assert read_personal_grant(home).get("mode") == "disabled", "grant must be disarmed by the operator sleep"
+        assert read_work_order(home) is None, "standing order must be cleared by the operator sleep"
+        # One biography moment names all three (the composite reason).
+        assert "sleep is sleep" in body["state"]["reason"]
+
+
+def test_operator_sleep_without_grant_or_order_is_plain():
+    """No armed grant / no order = no composite noise: the sleep is a plain
+    asleep write (composite_sleep absent), so the common path stays clean."""
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        client.post("/api/gateway/entities/Castor/state", json={"state": "awake"})
+        r = client.post("/api/gateway/entities/Castor/state", json={"state": "asleep"})
+        assert r.status_code == 200, r.text
+        assert "composite_sleep" not in r.json(), "a bare-desk sleep must not fabricate a composite block"
+
+
 def test_state_verbs_door_and_markers():
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201

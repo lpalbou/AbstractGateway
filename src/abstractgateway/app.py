@@ -67,6 +67,24 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+# Wire gzip for large control-plane payloads (replay-integrity incident,
+# code-tui c5547/c5552 R1; operator: whole turns lost when a single-turn
+# history_bundle exceeded a client's 10 MiB reader). Measured 3.7-4.8x on the
+# live incident bundles (14.29 -> 2.97 MB), which de-risks every thin client's
+# fetch. SSE LIVE TAILS ARE SAFE: starlette 0.52.1's GZipMiddleware carries
+# DEFAULT_EXCLUDED_CONTENT_TYPES = ("text/event-stream",), so the run-ledger
+# stream and the entity /replay/stream (both text/event-stream) are never
+# compressed — verified in the installed source before wiring. Compression is
+# CLIENT-OPT-IN (only when the request carries Accept-Encoding: gzip) and only
+# above minimum_size, so tiny responses and non-gzip clients are untouched.
+# NDJSON bounded reads (application/x-ndjson) and JSON bundles DO compress —
+# exactly the incident target. Content-Encoding: gzip is transparent to any
+# standard HTTP client. Added after CORS so CORS headers are set before the
+# body is compressed.
+from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
+
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 # Entities routers first: their literal paths (/gateway/entities/...) must win
 # over any parametrized /gateway/... routes in the main gateway router.
 app.include_router(entities_router, prefix="/api")
@@ -416,6 +434,18 @@ async def health_check():
         st = backlog_exec_runner_status()
         if st.get("alive") or st.get("error"):
             body["backlog_exec_runner"] = st
+    except Exception:
+        pass
+    # Eager rehydration outcome (backlog 0063, adversary P1-3): a failed warm
+    # is otherwise invisible — the idle tenants this serves never send the
+    # request that would retry. Surfaced (not degrading: a warm failure is a
+    # per-principal stall the self-heal retries on that principal's access).
+    try:
+        from .service import rehydration_status
+
+        reh = rehydration_status()
+        if reh:
+            body["rehydration"] = reh
     except Exception:
         pass
     if runner_snapshot.get("degraded"):
