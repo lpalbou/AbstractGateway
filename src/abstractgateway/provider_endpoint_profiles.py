@@ -360,6 +360,35 @@ def effective_endpoint_profiles(*, base_dir: Path, root_base_dir: Optional[Path]
     return profiles
 
 
+def explain_endpoint_profile_miss(provider: Any, *, base_dir: Path, root_base_dir: Optional[Path] = None) -> Optional[str]:
+    """A plain-words reason why an endpoint profile did not resolve, when one
+    is knowable — or None when the profile simply does not exist.
+
+    The case that matters (release gap 2, delegate order c5863): a profile
+    CREATED single-user carries the silent default scope 'user'; after
+    multi-user auth turns on, per-principal services only inherit ROOT
+    profiles scoped 'gateway', so the profile 'vanishes' with a misleading
+    'not configured' error. Naming the real cause turns a mystery into a
+    one-line fix an admin can apply."""
+    profile_id = profile_id_from_virtual_provider(provider)
+    if not profile_id:
+        return None
+    if root_base_dir is None or Path(root_base_dir).expanduser().resolve() == Path(base_dir).expanduser().resolve():
+        return None
+    for p in ProviderEndpointProfileStore(base_dir=root_base_dir).list_profiles():
+        if p.id.lower() != profile_id.lower():
+            continue
+        if not p.enabled:
+            return f"endpoint profile {profile_id!r} exists at the gateway root but is disabled — enable it to use it"
+        if p.scope != "gateway":
+            return (
+                f"endpoint profile {profile_id!r} exists at the gateway root but its scope is {p.scope!r} "
+                "(private to the admin's own runtime) — per-user runtimes only inherit profiles scoped "
+                "'gateway'; an admin can share it by setting scope 'gateway' in the console's provider settings"
+            )
+    return None
+
+
 def resolve_effective_endpoint_profile(provider: Any, *, base_dir: Path, root_base_dir: Optional[Path] = None) -> Optional[ProviderEndpointProfile]:
     profile_id = profile_id_from_virtual_provider(provider)
     if not profile_id:

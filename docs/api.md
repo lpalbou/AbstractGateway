@@ -619,6 +619,98 @@ curl -sS -H "$AUTH" \
   "$BASE_URL/api/gateway/bundles/my-bundle/flows/ac-echo/input_schema"
 ```
 
+### Native-loop bundles (react / codeact / memact)
+
+Some shipped bundles declare `metadata.native_loop_factory` instead of VisualFlow
+JSON (`manifest.flows` is empty). The gateway materializes an abstractagent
+loop at load time. Discovery uses the same bundle list endpoint — **not**
+`/discovery/workflows`.
+
+Thin clients should:
+
+1. `GET /api/gateway/bundles` (authenticated).
+2. Filter entrypoints whose `interfaces` includes `abstractcode.agent.v1`.
+3. Read `metadata.native_loop_factory` (`react`, `codeact`, or `memact`) to
+   distinguish native loops from VisualFlow agent bundles.
+4. Use each entrypoint's `workflow_id` (for example `react-agent@0.1.0:react`).
+5. Start runs with `POST /api/gateway/runs/start` and
+   `bundle_id` / `flow_id` from the bundle listing (for example
+   `react-agent` + `react`).
+
+Native-loop entrypoints do not ship VisualFlow JSON. The gateway serves a
+versioned input-schema stub (`prompt` required; `provider` and `model`
+optional) from
+`GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema`.
+Headless clients may also pass those fields without fetching the schema.
+
+The shipped `react-agent@0.1.0` bundle is built by
+`scripts/build_react_agent_bundle.py` and force-included in the wheel. A running
+gateway process must restart (or call bundle reload) after the file lands on
+disk before `/bundles` lists it.
+
+### Run history bundle (`GET /runs/{run_id}/history_bundle`)
+
+Thin clients should prefer this endpoint over stitching ledger, session, and
+artifact endpoints. The export is owned by AbstractRuntime; the gateway forwards
+query parameters and returns the bundle JSON unchanged (including in-band
+degradations).
+
+Query parameters:
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `include_subruns` | `true` | Descendant runs in the bundle tree |
+| `include_session` | `false` | Root session turn list |
+| `session_turn_limit` | `200` | Cap when `include_session=true` |
+| `ledger_mode` | `tail` | `tail` or `full` |
+| `ledger_max_items` | `2000` | Per-run ledger cap when `ledger_mode=tail` |
+| `detail` | `full` | `full` (complete payloads) or `replay` (transcript-fold projection) |
+
+**`detail=replay`** drops request-side payloads and observability paths the
+transcript fold never reads; runtime marks each omission with `$omitted` inside
+ledger records. Use it for session replay and thin-client folds — it is much
+smaller than `full` (gzip helps further; send `Accept-Encoding: gzip`).
+
+**`warnings`** (always present, may be empty): typed degradations the export
+survived instead of failing silently. Each entry is an object with at least
+`code` and `detail`; many include `run_id`. Known codes today:
+
+| Code | Meaning |
+|------|---------|
+| `subtree_discovery_failed` | Could not list child runs; bundle covers root only |
+| `subtree_truncated` | Descendant discovery hit the run cap |
+| `ledger_read_failed` | Ledger for a run id could not be read |
+| `torn_rows_skipped` | Corrupt/unparseable ledger lines skipped |
+| `ledger_tail_window` | Ledger truncated to `ledger_max_items` (tail mode) |
+| `input_data_offload_failed` | Input-data artifact reference could not be resolved |
+
+Clients must surface non-empty `warnings` to the operator — a bundle that
+"looks complete" but carries warnings may be missing subruns, ledger tail, or
+offloaded input data.
+
+### Session history bloc (`GET /sessions/{session_id}/history/bloc`)
+
+Returns one cursor-bounded bloc of **root session turns**, each with an inline
+`history_bundle` export — one round-trip instead of N per-turn bundle fetches
+(laurent c5551). Resume pagination uses an ISO `created_at` cursor in the
+`before` query parameter (never turn-count offsets).
+
+Query parameters:
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `before` | *(omit)* | ISO-8601 cursor; only turns strictly **before** this timestamp |
+| `limit` | `5` | Max turns in this bloc (1–50) |
+| `detail` | `replay` | Forwarded to each turn's bundle export (`full` \| `replay`) |
+| `include_subruns` | `true` | Per-turn bundle tree |
+| `ledger_mode` | `tail` | `tail` or `full` |
+| `ledger_max_items` | `2000` | Per-turn ledger cap when `ledger_mode=tail` |
+| `include_drafts` | `false` | Include draft-test root runs |
+
+Response fields: `session_id`, `cursor_before` (echo of `before`), `cursor_after`
+(oldest turn returned — pass as the next `before`), `older_remaining`, `warnings`,
+and `turns[]` (`run_id`, `created_at`, `status`, `bundle` or `error`).
+
 The editor observes runs with the core lifecycle endpoints above:
 `/runs/start`, `/runs/{run_id}`, `/runs/{run_id}/ledger`,
 `/runs/{run_id}/ledger/stream`, `/runs/ledger/batch`,

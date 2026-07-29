@@ -186,6 +186,7 @@ flows/bundles/*
 !flows/bundles/basic-agent.flow
 !flows/bundles/abstractassistant-orchestrator@0.0.0.flow
 !flows/bundles/docs-qa@0.1.0.flow
+!flows/bundles/react-agent@0.1.0.flow
 !flows/bundles/deep-research@0.1.6.flow
 !flows/bundles/coding-agent@0.1.0.flow
 !flows/bundles/coding-agent@0.1.1.flow

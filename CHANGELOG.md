@@ -7,7 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **VisualFlow CRUD accepts the flow function library** (flow editor
+  adversary P0-1, 2026-07-27): `POST/PUT /visualflows` request models were
+  `extra="forbid"` without a `functions` field, so any editor save carrying
+  flow-level functions got 422 — and since the client omitted them, saves
+  silently STRIPPED the whole library while toasting success. Both models
+  now carry `functions` ({name, code, kind?, description?} entries),
+  `_coerce_visualflow` validates the shape loudly, and the create/update
+  handlers persist it. Live-verified round-trip (POST with functions → GET
+  returns them → PUT can clear them).
+
 ### Added
+- **Session history bloc endpoint** (bloc-streaming unit 4, c5551): `GET
+  /sessions/{session_id}/history/bloc` returns one cursor-bounded bloc of root
+  session turns with inline `history_bundle` exports (`detail=replay` default,
+  ISO `before` cursor, `older_remaining` count). Capabilities advertise
+  `runs.session_history_bloc`; docs and integration tests added.
+- **Run history bundle capabilities** (session-replay-honesty unit 3):
+  `capabilities.contracts.common.runs.history_bundle` now advertises
+  `detail_modes: ["full", "replay"]` and `warnings_in_band: true` so thin
+  clients can feature-detect replay profiles and in-band honesty without
+  reading `docs/api.md`. Contract test updated.
+- **Run history bundle contract** (session-replay-honesty unit 2): `docs/api.md`
+  documents `GET /runs/{run_id}/history_bundle` query params (`detail=full|replay`,
+  ledger tail knobs), the in-band `warnings[]` vocabulary, and gzip guidance for
+  thin clients.
+- **Run history bundle warnings pin** (session-replay-honesty unit 1): integration
+  test asserts `warnings` is always a list on full and replay bundles.
+- **Native-loop bundle input_schema stub** (native-loop-packs unit 3): manifest-only
+  native-loop entrypoints (`react|codeact|memact`) now serve
+  `GET /bundles/{bundle_id}/flows/{flow_id}/input_schema` with a versioned
+  stub (`prompt` required; `provider`/`model` optional; `native_loop_factory`
+  in the response) instead of 404. VisualFlow bundles unchanged.
+  Tests: `tests/test_gateway_native_loop_bundle_loader.py`.
+- **Native-loop bundle loader** (loop-surfacing unit 4): bundles may declare
+  `metadata.native_loop_factory` (`react|codeact|memact`) with empty
+  `manifest.flows`; the gateway materializes an abstractagent
+  `WorkflowSpec` at load time (react wired today; codeact/memact skip until
+  agent pack lands). Invalid native declarations skip per-bundle without
+  bricking boot; empty flows without a native declaration still refuse loudly.
+  Tests: `tests/test_gateway_native_loop_bundle_loader.py`.
+- **Shipped `react-agent@0.1.0` native-loop bundle** (loop-surfacing unit 5):
+  manifest-only bundle with `native_loop_factory: react` and
+  `abstractcode.agent.v1` entrypoint; built via
+  `scripts/build_react_agent_bundle.py`, force-included in wheel/sdist.
+  Running gateway must restart (or reload bundles) to pick up the new file
+  on `:8080`.
 - **In-process local providers surface in the unified provider list**
   (operator report 2026-07-26: "we are missing providers… where is our
   ollama?"): the reachable-default auto-probe lane now covers IN-PROCESS

@@ -143,6 +143,54 @@ def test_visit_open_turn_close_full_cycle(monkeypatch: pytest.MonkeyPatch):
         assert "summon" in kinds and "session_closed" in kinds
 
 
+def test_turn_speaker_claim_is_verified_against_the_stamp(monkeypatch: pytest.MonkeyPatch):
+    """Deep-check P2 (entity c5901): the turn's speaker string is engraved
+    into digest prose and verbatims — permanent record text. A claim that
+    names a STAMPED participant passes (full or display form); anything
+    else is replaced by the verified participant so a visitor cannot
+    engrave an arbitrary name into the entity's memory."""
+    _install_scripted_llm(monkeypatch, [
+        "Reply one.",
+        "Reply two.",
+        "Looking back: fine.",  # reflection
+    ])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        run_id = opened.json()["run_id"]
+
+        # A forged speaker is replaced by the verified participant.
+        t1 = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn",
+            json={"text": "hello", "speaker": "fable5-guest"},
+        )
+        assert t1.status_code == 200, t1.text
+
+        # A claim matching the stamped participant's display form passes.
+        t2 = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn",
+            json={"text": "again", "speaker": "admin"},
+        )
+        assert t2.status_code == 200, t2.text
+
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+
+        # The home's verbatim artifacts carry the VERIFIED name, never the
+        # forged one (the digest text derives from the same speaker value).
+        home = _home_dir()
+        blobs = []
+        for p in (home / "artifacts").rglob("*"):
+            if p.is_file():
+                try:
+                    blobs.append(p.read_text(encoding="utf-8", errors="ignore"))
+                except Exception:
+                    pass
+        joined = "\n".join(blobs)
+        assert "fable5-guest" not in joined, "a forged speaker must never rest in record text"
+        assert "person:admin" in joined or "admin" in joined
+
+
 def test_reaper_closes_an_abandoned_visit_and_unstrands_the_home(monkeypatch: pytest.MonkeyPatch):
     """The stranded auto-yield (entity forensics c2465 ask 1): an abandoned
     browser visit used to hold state=asleep(auto-yield) FOREVER — the D3

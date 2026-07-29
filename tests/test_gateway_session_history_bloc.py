@@ -8,8 +8,40 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from abstractgateway.session_history_bloc import (
+    parse_created_at_cursor,
+    select_bloc_turns,
+)
 
-pytestmark = pytest.mark.integration
+
+def test_parse_created_at_cursor_accepts_z_suffix() -> None:
+    assert parse_created_at_cursor("2026-07-28T06:00:00Z") == "2026-07-28T06:00:00+00:00"
+
+
+def test_parse_created_at_cursor_rejects_garbage() -> None:
+    with pytest.raises(ValueError, match="Invalid ISO-8601"):
+        parse_created_at_cursor("not-a-date")
+
+
+def test_select_bloc_turns_uses_iso_cursor_not_counts() -> None:
+    turns = [
+        {"run_id": "r3", "created_at": "2026-07-28T03:00:00+00:00"},
+        {"run_id": "r2", "created_at": "2026-07-28T02:00:00+00:00"},
+        {"run_id": "r1", "created_at": "2026-07-28T01:00:00+00:00"},
+    ]
+    bloc, cursor_after, older = select_bloc_turns(turns, before="2026-07-28T04:00:00+00:00", limit=2)
+    assert [t["run_id"] for t in bloc] == ["r3", "r2"]
+    assert cursor_after == "2026-07-28T02:00:00+00:00"
+    assert older == 1
+
+    older_bloc, older_cursor, older_remaining = select_bloc_turns(
+        turns,
+        before=cursor_after,
+        limit=5,
+    )
+    assert [t["run_id"] for t in older_bloc] == ["r1"]
+    assert older_cursor == "2026-07-28T01:00:00+00:00"
+    assert older_remaining == 0
 
 
 def _wait_until(predicate, *, timeout_s: float = 8.0, poll_s: float = 0.05):
@@ -23,7 +55,6 @@ def _wait_until(predicate, *, timeout_s: float = 8.0, poll_s: float = 0.05):
 
 def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> None:
     bundles_dir.mkdir(parents=True, exist_ok=True)
-
     flow = {
         "id": flow_id,
         "name": "minimal",
@@ -46,7 +77,6 @@ def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> Non
         "edges": [{"id": "e1", "source": "node-1", "sourceHandle": "exec-out", "target": "node-2", "targetHandle": "exec-in"}],
         "entryNode": "node-1",
     }
-
     manifest = {
         "bundle_format_version": "1",
         "bundle_id": bundle_id,
@@ -58,18 +88,20 @@ def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> Non
         "assets": {},
         "metadata": {},
     }
-
     bundle_path = bundles_dir / f"{bundle_id}.flow"
     with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
         zf.writestr(f"flows/{flow_id}.json", json.dumps(flow, indent=2))
 
 
-def test_history_bundle_endpoint_includes_snapshot_and_replays_after_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+pytestmark = pytest.mark.integration
+
+
+def test_session_history_bloc_endpoint_returns_cursor_bloc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_dir = tmp_path / "runtime"
     db_path = runtime_dir / "gateway.sqlite3"
     bundles_dir = tmp_path / "bundles"
-    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-history", flow_id="root")
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-bloc", flow_id="root")
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
@@ -85,17 +117,17 @@ def test_history_bundle_endpoint_includes_snapshot_and_replays_after_restart(tmp
     from abstractgateway.app import app
 
     headers = {"Authorization": f"Bearer {token}"}
-    session_id = "sess_history_1"
+    session_id = "sess_bloc_1"
 
-    def _start_and_wait(client: TestClient) -> str:
+    def _start_and_wait(client: TestClient, prompt: str) -> str:
         start = client.post(
             "/api/gateway/runs/start",
             headers=headers,
             json={
-                "bundle_id": "bundle-history",
+                "bundle_id": "bundle-bloc",
                 "flow_id": "root",
                 "session_id": session_id,
-                "input_data": {"prompt": "hello", "context": {"messages": [{"role": "user", "content": "hello"}], "attachments": []}},
+                "input_data": {"prompt": prompt, "context": {"messages": [{"role": "user", "content": prompt}], "attachments": []}},
             },
         )
         assert start.status_code == 200, start.text
@@ -110,75 +142,48 @@ def test_history_bundle_endpoint_includes_snapshot_and_replays_after_restart(tmp
         return rid
 
     with TestClient(app) as client:
-        run_id = _start_and_wait(client)
-        r = client.get(
-            f"/api/gateway/runs/{run_id}/history_bundle",
+        run_ids = [_start_and_wait(client, f"turn-{i}") for i in range(3)]
+        assert len(set(run_ids)) == 3
+
+        first = client.get(
+            f"/api/gateway/sessions/{session_id}/history/bloc",
             headers=headers,
-            params={"include_subruns": "false", "include_session": "true", "session_turn_limit": 50, "ledger_mode": "tail", "ledger_max_items": 50},
+            params={"limit": 2, "detail": "replay", "include_subruns": "false"},
         )
-        assert r.status_code == 200, r.text
-        bundle = r.json()
-        assert bundle.get("version") == 1
-        assert bundle.get("run", {}).get("run_id") == run_id
-        # R4 (code-tui c5552): degradations must be in-band — never silent drops.
-        assert isinstance(bundle.get("warnings"), list)
+        assert first.status_code == 200, first.text
+        body = first.json()
+        assert body.get("session_id") == session_id
+        assert body.get("cursor_before") is None
+        assert isinstance(body.get("warnings"), list)
+        turns = body.get("turns") or []
+        assert len(turns) == 2
+        assert all(isinstance(t.get("bundle"), dict) for t in turns)
+        assert body.get("older_remaining") == 1
+        cursor_after = body.get("cursor_after")
+        assert isinstance(cursor_after, str) and cursor_after
 
-        ws = bundle.get("workflow_snapshot")
-        assert isinstance(ws, dict)
-        artifact_id = str(ws.get("artifact_id") or "").strip()
-        assert artifact_id
-        assert str(ws.get("sha256") or "").strip()
-
-        session = bundle.get("session") or {}
-        assert session.get("session_id") == session_id
-        turns = session.get("turns") or []
-        assert any(t.get("run_id") == run_id and t.get("kind") == "chat" for t in turns)
-
-        arts = client.get(f"/api/gateway/runs/{run_id}/artifacts", headers=headers)
-        assert arts.status_code == 200, arts.text
-        items = arts.json().get("items") or []
-        assert any(str(i.get("artifact_id") or "") == artifact_id for i in items)
-
-        # Replay-integrity R2 (code-tui c5552; runtime shipped the profile,
-        # gateway threads the query param): ?detail=replay is validated and
-        # forwarded to export_run_history_bundle, and the bundle carries the
-        # "detail" label so a client knows which projection it got. An invalid
-        # value refuses at the boundary (400), not silently.
-        r_replay = client.get(
-            f"/api/gateway/runs/{run_id}/history_bundle",
+        second = client.get(
+            f"/api/gateway/sessions/{session_id}/history/bloc",
             headers=headers,
-            params={"include_subruns": "false", "detail": "replay"},
+            params={"before": cursor_after, "limit": 5, "detail": "replay", "include_subruns": "false"},
         )
-        assert r_replay.status_code == 200, r_replay.text
-        replay_body = r_replay.json()
-        assert replay_body.get("detail") == "replay"
-        assert isinstance(replay_body.get("warnings"), list)
+        assert second.status_code == 200, second.text
+        body2 = second.json()
+        assert body2.get("cursor_before") == cursor_after
+        assert body2.get("older_remaining") == 0
+        assert len(body2.get("turns") or []) == 1
 
-        r_full = client.get(
-            f"/api/gateway/runs/{run_id}/history_bundle",
+        bad = client.get(
+            f"/api/gateway/sessions/{session_id}/history/bloc",
             headers=headers,
-            params={"include_subruns": "false", "detail": "full"},
+            params={"before": "yesterday"},
         )
-        assert r_full.status_code == 200, r_full.text
-        assert r_full.json().get("detail") in ("full", None)  # runtime labels; full may be implicit
+        assert bad.status_code == 400
 
-        r_bad = client.get(
-            f"/api/gateway/runs/{run_id}/history_bundle",
+        unknown = client.get(
+            f"/api/gateway/sessions/{session_id}/history/bloc",
             headers=headers,
-            params={"detail": "bogus"},
+            params={"offset": "0"},
         )
-        assert r_bad.status_code == 400, r_bad.text
-        assert "detail must be" in r_bad.json()["detail"]
-
-    # Restart simulation: new service process (same data_dir/db) should serve the same snapshot ref.
-    with TestClient(app) as client2:
-        r2 = client2.get(
-            f"/api/gateway/runs/{run_id}/history_bundle",
-            headers=headers,
-            params={"include_subruns": "false", "include_session": "true", "session_turn_limit": 50, "ledger_mode": "tail", "ledger_max_items": 50},
-        )
-        assert r2.status_code == 200, r2.text
-        bundle2 = r2.json()
-        ws2 = bundle2.get("workflow_snapshot")
-        assert isinstance(ws2, dict)
-        assert str(ws2.get("artifact_id") or "").strip() == artifact_id
+        assert unknown.status_code == 400
+        assert "Unknown query parameter" in unknown.text

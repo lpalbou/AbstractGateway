@@ -173,6 +173,18 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
         wheel_force["flows/bundles/deep-research@0.1.7.flow"]
         == "abstractgateway/flows/bundles/deep-research@0.1.7.flow"
     )
+    assert (
+        wheel_force["flows/bundles/react-agent@0.1.0.flow"]
+        == "abstractgateway/flows/bundles/react-agent@0.1.0.flow"
+    )
+    assert (
+        wheel_force["flows/bundles/codeact-agent@0.1.0.flow"]
+        == "abstractgateway/flows/bundles/codeact-agent@0.1.0.flow"
+    )
+    assert (
+        wheel_force["flows/bundles/memact-agent@0.1.0.flow"]
+        == "abstractgateway/flows/bundles/memact-agent@0.1.0.flow"
+    )
     assert sdist_force["flows/bundles/basic-agent.flow"] == "flows/bundles/basic-agent.flow"
     assert (
         sdist_force["flows/bundles/abstractassistant-orchestrator@0.0.0.flow"]
@@ -181,6 +193,18 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
     assert (
         sdist_force["flows/bundles/deep-research@0.1.7.flow"]
         == "flows/bundles/deep-research@0.1.7.flow"
+    )
+    assert (
+        sdist_force["flows/bundles/react-agent@0.1.0.flow"]
+        == "flows/bundles/react-agent@0.1.0.flow"
+    )
+    assert (
+        sdist_force["flows/bundles/codeact-agent@0.1.0.flow"]
+        == "flows/bundles/codeact-agent@0.1.0.flow"
+    )
+    assert (
+        sdist_force["flows/bundles/memact-agent@0.1.0.flow"]
+        == "flows/bundles/memact-agent@0.1.0.flow"
     )
 
 

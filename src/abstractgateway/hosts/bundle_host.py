@@ -30,6 +30,10 @@ from ..workflow_catalog import (
     verify_workflow_policy_signature,
 )
 from ..security.principal import GatewayPrincipal, safe_principal_component
+from .native_loop_bundles import (
+    declares_native_loop_bundle,
+    materialize_native_loop_specs,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -152,7 +156,16 @@ def _resolve_gateway_default_endpoint_profile(
         raise WorkflowBundleError(f"Invalid Gateway provider endpoint profile {provider_s!r}: {exc}") from exc
     if profile is None:
         if provider_s.startswith("endpoint:"):
-            raise WorkflowBundleError(f"Gateway provider endpoint profile {provider_s!r} is not configured or is disabled.")
+            # Name the REAL cause when it is knowable (release gap 2): a
+            # root profile scoped 'user' is invisible to per-user runtimes,
+            # and "not configured" sent operators hunting a config that
+            # existed all along.
+            from ..provider_endpoint_profiles import explain_endpoint_profile_miss
+
+            reason = explain_endpoint_profile_miss(provider_s, base_dir=data_root, root_base_dir=catalog_root)
+            raise WorkflowBundleError(
+                reason or f"Gateway provider endpoint profile {provider_s!r} is not configured or is disabled."
+            )
         return provider_s, configured_provider_request_kwargs(
             provider_s,
             current_base_dir=data_root,
@@ -1057,6 +1070,30 @@ class WorkflowBundleGatewayHost:
                     )
                     _drop_skipped(bid, bver)
                     continue
+
+                _factory = declares_native_loop_bundle(man)
+                if _factory:
+                    native_specs, native_error = materialize_native_loop_specs(
+                        manifest=man,
+                        bundle_ref=bundle_ref,
+                        namespace=_namespace,
+                    )
+                    if native_error is not None:
+                        skipped_bundles.append(f"{bid}@{bver}")
+                        logger.warning(
+                            "WorkflowBundleGatewayHost: SKIPPING native-loop bundle '%s@%s' — %s "
+                            "(the bundle is absent until fixed; other bundles keep serving)",
+                            bid,
+                            bver,
+                            native_error,
+                        )
+                        _drop_skipped(bid, bver)
+                        continue
+                    for wfid, spec in native_specs.items():
+                        wf_reg.register(spec)
+                        specs[wfid] = spec
+                    continue
+
                 if not man.flows:
                     raise WorkflowBundleError(f"Bundle '{bid}@{bver}' has no flows (manifest.flows is empty)")
 
@@ -1245,6 +1282,7 @@ class WorkflowBundleGatewayHost:
                 core_server_base_url = _env("ABSTRACTCORE_SERVER_BASE_URL")
                 provider: Optional[str] = None
                 model: Optional[str] = None
+                provider_deferred_error: Optional[Exception] = None
                 try:
                     provider, model = resolve_gateway_provider_model(
                         flow_defaults=_scan_flows_for_llm_defaults(flows_by_namespaced_id),
@@ -1252,13 +1290,24 @@ class WorkflowBundleGatewayHost:
                         purpose="bundle LLM execution",
                     ).require()
                 except ProviderModelConfigError as e:
-                    if needs_llm or not core_server_base_url:
-                        raise WorkflowBundleError(
-                            "Bundle contains LLM nodes or local model_residency nodes but no default provider/model is configured. "
-                            "Configure the execution-host output.text capability default, provide "
-                            "flow defaults, or ensure the flow JSON includes provider/model on at least "
-                            "one llm_call/agent node."
-                        ) from e
+                    # FRESH-INSTALL DEFERRAL (release gap, delegate order
+                    # c5863): a brand-new install has NO provider configured
+                    # anywhere — refusing here meant the shipped catalog
+                    # never published and first-run users saw an empty
+                    # gateway. Loading a bundle does not call a model;
+                    # provider/model resolve at RUN time (caller-supplied
+                    # _runtime values, console pickers, capability defaults
+                    # set later) and a run that still has nothing fails
+                    # loudly at the call with core's actionable error. We
+                    # keep the original error to re-raise if the deferred
+                    # construction is impossible on this runtime version.
+                    provider_deferred_error = e
+                    logger.warning(
+                        "#FALLBACK no default provider/model configured (%s) — loading the "
+                        "bundle anyway; runs must carry provider/model or a default must be "
+                        "configured before LLM nodes can execute",
+                        e,
+                    )
 
                 provider_for_runtime, default_profile_kwargs, provider_override = _resolve_gateway_default_endpoint_profile(
                     provider=provider,
@@ -1287,19 +1336,34 @@ class WorkflowBundleGatewayHost:
                         if isinstance(handlers, dict):
                             handlers.update(dict(extra_effect_handlers))
                 else:
-                    runtime = create_local_runtime(
-                        provider=str(provider_for_runtime or ""),
-                        model=str(model or ""),
-                        llm_kwargs=default_profile_kwargs or None,
-                        run_store=run_store,
-                        ledger_store=ledger_store,
-                        artifact_store=artifact_store,
-                        tool_executor=tool_executor,
-                        prompt_cache_export_root_dir=data_root / "prompt_cache_exports",
-                        extra_effect_handlers=extra_effect_handlers,
-                        core_config_file=data_root / "config" / "abstractcore.json",
-                        capability_defaults=gateway_capability_defaults_payload(base_dir=data_root),
-                    )
+                    try:
+                        runtime = create_local_runtime(
+                            provider=str(provider_for_runtime or ""),
+                            model=str(model or ""),
+                            llm_kwargs=default_profile_kwargs or None,
+                            run_store=run_store,
+                            ledger_store=ledger_store,
+                            artifact_store=artifact_store,
+                            tool_executor=tool_executor,
+                            prompt_cache_export_root_dir=data_root / "prompt_cache_exports",
+                            extra_effect_handlers=extra_effect_handlers,
+                            core_config_file=data_root / "config" / "abstractcore.json",
+                            capability_defaults=gateway_capability_defaults_payload(base_dir=data_root),
+                        )
+                    except Exception as _construct_err:
+                        if provider_deferred_error is None:
+                            raise
+                        # Version tolerance: this runtime cannot build a
+                        # client without a provider (older releases construct
+                        # the default client eagerly). Keep the original loud
+                        # refusal so behavior is never worse than before the
+                        # deferral existed.
+                        raise WorkflowBundleError(
+                            "Bundle contains LLM nodes or local model_residency nodes but no default provider/model is configured. "
+                            "Configure the execution-host output.text capability default, provide "
+                            "flow defaults, or ensure the flow JSON includes provider/model on at least "
+                            "one llm_call/agent node."
+                        ) from provider_deferred_error
                 if provider_override:
                     try:
                         setattr(runtime, "_gateway_default_provider_override", provider_override)
@@ -1757,6 +1821,22 @@ class WorkflowBundleGatewayHost:
             vars0["context"] = ctx0
         ctx0["messages"] = list(messages)
 
+    @staticmethod
+    def _normalize_agent_loop_input(vars0: Dict[str, Any]) -> None:
+        """Map thin-client ``input_data.prompt`` into native-loop ``context.task``."""
+        prompt = vars0.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return
+        if isinstance(vars0.get("task"), str) and str(vars0.get("task") or "").strip():
+            return
+        ctx = vars0.get("context")
+        if not isinstance(ctx, dict):
+            ctx = {}
+            vars0["context"] = ctx
+        if str(ctx.get("task") or "").strip():
+            return
+        ctx["task"] = prompt
+
     def start_run(
         self,
         *,
@@ -2027,6 +2107,8 @@ class WorkflowBundleGatewayHost:
         # a labeled record, never a blocked start.
         if sid and _bool_text(vars0.get("use_session_history")) is True:
             self._seed_session_history(vars0=vars0, rt_ns=rt_ns, session_id=sid)
+
+        self._normalize_agent_loop_input(vars0)
 
         run_id = str(self.runtime.start(workflow=spec, vars=vars0, actor_id=actor_id, session_id=sid))
 

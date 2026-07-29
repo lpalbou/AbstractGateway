@@ -372,6 +372,54 @@ def test_fresh_install_serves_docs_qa_through_the_catalog_route(
         assert "docs-qa" in text and "docsqa001" in text
 
 
+def test_fresh_install_loads_with_no_provider_and_old_runtimes_keep_the_loud_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The release-gap fix (delegate order c5863), both halves landed.
+
+    End-to-end with the REAL factory: a bundle with LLM nodes loads and
+    registers on a zero-config install — provider resolution defers to run
+    time (runtime's blank-pair guard + factory fix, c5894/c5902). Version
+    tolerance still pinned: on an older runtime that cannot build without a
+    provider (simulated by a raising factory), the load keeps the original
+    actionable refusal — never a raw crash."""
+    import shutil
+
+    from abstractgateway.hosts.bundle_host import WorkflowBundleGatewayHost
+    from abstractruntime.storage.artifacts import FileArtifactStore
+    from abstractruntime.storage.json_files import JsonFileRunStore, JsonlLedgerStore
+    from abstractruntime.workflow_bundle.models import WorkflowBundleError
+
+    flows = tmp_path / "flows"
+    flows.mkdir()
+    shutil.copy2(_shipped_docs_qa(), flows / _shipped_docs_qa().name)
+    data = tmp_path / "runtime"
+    data.mkdir()
+    stores = dict(
+        run_store=JsonFileRunStore(str(data / "runs")),
+        ledger_store=JsonlLedgerStore(str(data / "ledgers")),
+        artifact_store=FileArtifactStore(str(data / "artifacts")),
+    )
+
+    # Real factory, no provider anywhere: the load SUCCEEDS and the bundle
+    # registers — the fresh-install release blocker, closed end to end.
+    host = WorkflowBundleGatewayHost.load_from_dir(bundles_dir=flows, data_dir=data, **stores)
+    assert host.specs, "a zero-config install must load and register the shipped bundle"
+
+    # An OLDER runtime (factory refuses without a provider, simulated):
+    # the load keeps the original actionable message — never worse than
+    # before the deferral existed.
+    from abstractruntime.integrations.abstractcore import factory as ac_factory
+
+    def _old_factory(**kwargs):
+        raise ValueError(f"Unknown provider: {kwargs.get('provider')!r}")
+
+    monkeypatch.setattr(ac_factory, "create_local_runtime", _old_factory)
+    with pytest.raises(WorkflowBundleError) as err:
+        WorkflowBundleGatewayHost.load_from_dir(bundles_dir=flows, data_dir=data, **stores)
+    assert "no default provider/model is configured" in str(err.value)
+
+
 # ------------------------------------------------------------------ helpers
 
 

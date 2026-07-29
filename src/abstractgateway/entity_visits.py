@@ -1100,7 +1100,30 @@ class EntityVisitHost:
 
         payload: Dict[str, Any] = {"text": str(text or "")}
         if speaker:
-            payload["speaker"] = str(speaker)
+            # SPEAKER IS A CLAIM, THE STAMP IS THE TRUTH (deep-check P2,
+            # entity c5901): the workflow engraves this string into digest
+            # prose and verbatims — permanent record text. A claim is
+            # honored only when it names a participant the door stamped at
+            # open; anything else is replaced by the verified participant,
+            # so a visitor cannot engrave an arbitrary name into the
+            # entity's memory.
+            claim = str(speaker).strip()
+            stamped = [
+                str(p) for p in (((run.vars or {}).get("_runtime") or {}).get("entity") or {}).get("participants") or []
+            ]
+
+            def _matches(claim_s: str, participant: str) -> bool:
+                if claim_s == participant:
+                    return True
+                # "person:laurent" may be claimed as "laurent" (display form).
+                return ":" in participant and participant.split(":", 1)[1] == claim_s
+
+            if stamped and not any(_matches(claim, p) for p in stamped):
+                verified = next((p for p in stamped if not p.startswith("entity:")), stamped[0])
+                payload["speaker"] = verified
+                payload["speaker_claim_rejected"] = claim
+            else:
+                payload["speaker"] = claim
 
         state = self._resume(er, wf, run_id, payload=payload, max_steps=_TURN_MAX_TICKS,
                              wait_key=VISITOR_WAIT_KEY, manifest=manifest)

@@ -273,6 +273,15 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert contracts["common"]["runs"]["history_bundle"] == {
         "available": True,
         "endpoint": "/api/gateway/runs/{run_id}/history_bundle",
+        "detail_modes": ["full", "replay"],
+        "warnings_in_band": True,
+    }
+    assert contracts["common"]["runs"]["session_history_bloc"] == {
+        "available": True,
+        "endpoint": "/api/gateway/sessions/{session_id}/history/bloc",
+        "cursor": "created_at_iso",
+        "detail_modes": ["full", "replay"],
+        "warnings_in_band": True,
     }
     code_execution = contracts["common"]["execution"]["code"]
     assert code_execution["contract"] == "code_execution_policy_v1"

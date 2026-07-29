@@ -5571,11 +5571,14 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
         context_window = _env_int("ABSTRACTGATEWAY_ENTITY_CHAT_CONTEXT_WINDOW") or DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
 
     try:
+        # No thinking here on purpose: the loop reads the reasoning dial
+        # from the home's substrate file at each day-open (file is the
+        # authority — runtime c5890); the resolved value above still rides
+        # the response so the caller sees the full triple.
         started = start_loop(
             home_dir,
             provider=provider,
             model=model,
-            thinking=thinking,
             base_url=base_url,
             tick_seconds=req.tick_seconds,
             ticks_per_day=req.ticks_per_day,

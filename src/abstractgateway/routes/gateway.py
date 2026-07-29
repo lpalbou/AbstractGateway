@@ -84,6 +84,7 @@ from ..run_retention import (
     purge_ephemeral_draft_runs,
     write_gateway_workspace_marker,
 )
+from ..session_history_bloc import assemble_session_history_bloc, parse_created_at_cursor
 from ..security import load_gateway_auth_policy_from_env
 from ..security.sessions import (
     GatewaySessionStore,
@@ -1541,6 +1542,11 @@ class VisualFlowCreateRequest(BaseModel):
     nodes: List[Dict[str, Any]] = Field(default_factory=list)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     entryNode: Optional[str] = None
+    # Flow-level function library ({name, code, kind?, description?} entries;
+    # the runtime compiler consumes flow.functions). extra="forbid" made the
+    # old model 422 on any save carrying functions — an editor save silently
+    # STRIPPED the whole library (persistence adversary P0-1, 2026-07-27).
+    functions: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class VisualFlowUpdateRequest(BaseModel):
@@ -1554,6 +1560,7 @@ class VisualFlowUpdateRequest(BaseModel):
     nodes: Optional[List[Dict[str, Any]]] = None
     edges: Optional[List[Dict[str, Any]]] = None
     entryNode: Optional[str] = None
+    functions: Optional[List[Dict[str, Any]]] = None
 
 
 class VisualFlowCodeSimulateRequest(BaseModel):
@@ -1658,6 +1665,18 @@ def _coerce_visualflow(raw: Dict[str, Any]) -> Dict[str, Any]:
     entry_node = out.get("entryNode")
     if entry_node is not None and (not isinstance(entry_node, str) or not entry_node.strip()):
         raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: entryNode must be a non-empty string")
+
+    functions = out.get("functions")
+    if functions is not None:
+        if not isinstance(functions, list):
+            raise HTTPException(status_code=400, detail="Invalid VisualFlow JSON: functions must be a list")
+        for idx, fn_entry in enumerate(functions):
+            if not isinstance(fn_entry, dict):
+                raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: functions.{idx} must be an object")
+            if not isinstance(fn_entry.get("name"), str) or not fn_entry["name"].strip():
+                raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: functions.{idx}.name is required")
+            if not isinstance(fn_entry.get("code"), str) or not fn_entry["code"].strip():
+                raise HTTPException(status_code=400, detail=f"Invalid VisualFlow JSON: functions.{idx}.code is required")
 
     nodes = raw.get("nodes")
     if not isinstance(nodes, list):
@@ -5790,6 +5809,8 @@ async def create_visualflow(req: VisualFlowCreateRequest) -> Dict[str, Any]:
         "created_at": now,
         "updated_at": now,
     }
+    if req.functions:
+        raw["functions"] = list(req.functions)
     data = _coerce_visualflow(raw)
     data["id"] = flow_id
     data.setdefault("created_at", now)
@@ -5831,6 +5852,8 @@ async def update_visualflow(flow_id: str, req: VisualFlowUpdateRequest) -> Dict[
         raw["edges"] = list(req.edges or [])
     if req.entryNode is not None:
         raw["entryNode"] = req.entryNode
+    if req.functions is not None:
+        raw["functions"] = list(req.functions or [])
     raw["id"] = str(flow_id)
     raw["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     data = _coerce_visualflow(raw)
@@ -6379,14 +6402,15 @@ async def get_bundle_flow(
     }
 
 
-def _resolve_bundle_flow_json(
+def _resolve_bundle_entrypoint(
     *,
     host: Any,
     bundle_id: str,
     flow_id: str,
     bundle_version: Optional[str] = None,
     allow_catalog_internal: bool = False,
-) -> Tuple[str, str, str, Dict[str, Any]]:
+) -> Tuple[str, str, str, Any]:
+    """Resolve bundle + entrypoint id. Returns (bundle_id, version, flow_id, bundle)."""
     bid = str(bundle_id or "").strip()
     if not bid:
         raise HTTPException(status_code=400, detail="bundle_id is required")
@@ -6424,6 +6448,41 @@ def _resolve_bundle_flow_json(
         allow_catalog_internal=allow_catalog_internal,
     )
 
+    return bid_base, str(selected_ver), fid, bundle
+
+
+def _resolve_bundle_flow_json(
+    *,
+    host: Any,
+    bundle_id: str,
+    flow_id: str,
+    bundle_version: Optional[str] = None,
+    allow_catalog_internal: bool = False,
+) -> Tuple[str, str, str, Dict[str, Any]]:
+    from abstractgateway.hosts.native_loop_bundles import manifest_lists_entrypoint, native_loop_factory
+
+    bid_base, selected_ver, fid, bundle = _resolve_bundle_entrypoint(
+        host=host,
+        bundle_id=bundle_id,
+        flow_id=flow_id,
+        bundle_version=bundle_version,
+        allow_catalog_internal=allow_catalog_internal,
+    )
+
+    if native_loop_factory(bundle.manifest):
+        if not manifest_lists_entrypoint(bundle.manifest, fid):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Flow '{fid}' not found in bundle '{bid_base}@{selected_ver}'",
+            )
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Native-loop entrypoint '{fid}' has no VisualFlow JSON "
+                f"(bundle '{bid_base}@{selected_ver}')"
+            ),
+        )
+
     rel = bundle.manifest.flow_path_for(fid)
     if not isinstance(rel, str) or not rel.strip():
         raise HTTPException(status_code=404, detail=f"Flow '{fid}' not found in bundle '{bid_base}@{selected_ver}'")
@@ -6442,14 +6501,47 @@ async def get_bundle_flow_input_schema(
     bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to latest)."),
 ) -> Dict[str, Any]:
     """Return a stable Run Flow input schema for a bundled VisualFlow entrypoint."""
+    from abstractgateway.hosts.native_loop_bundles import (
+        entrypoint_input_schema_for_native_loop,
+        manifest_lists_entrypoint,
+        native_loop_factory,
+    )
+
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
-    bid_base, selected_ver, fid, raw = _resolve_bundle_flow_json(
+    bid_base, selected_ver, fid, bundle = _resolve_bundle_entrypoint(
         host=host,
         bundle_id=bundle_id,
         flow_id=flow_id,
         bundle_version=bundle_version,
     )
+    factory = native_loop_factory(bundle.manifest)
+    if factory is not None:
+        if not manifest_lists_entrypoint(bundle.manifest, fid):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Flow '{fid}' not found in bundle '{bid_base}@{selected_ver}'",
+            )
+        schema = entrypoint_input_schema_for_native_loop(factory=factory)
+        return {
+            "bundle_id": bid_base,
+            "bundle_version": selected_ver,
+            "bundle_ref": f"{bid_base}@{selected_ver}",
+            "flow_id": fid,
+            "workflow_id": f"{bid_base}@{selected_ver}:{fid}",
+            "native_loop_factory": factory,
+            **schema,
+        }
+
+    rel = bundle.manifest.flow_path_for(fid)
+    if not isinstance(rel, str) or not rel.strip():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Flow '{fid}' not found in bundle '{bid_base}@{selected_ver}'",
+        )
+    raw = bundle.read_json(rel)
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=500, detail="Flow JSON is invalid")
     schema = _entrypoint_input_schema_from_visualflow(raw)
     return {
         "bundle_id": bid_base,
@@ -7601,6 +7693,99 @@ async def get_run_history_bundle(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to export history bundle: {e}")
+
+
+@router.get("/sessions/{session_id}/history/bloc")
+async def get_session_history_bloc(
+    request: Request,
+    session_id: str,
+    before: Optional[str] = Query(
+        None,
+        description="ISO-8601 created_at cursor — return root turns strictly before this timestamp.",
+    ),
+    limit: int = Query(5, ge=1, le=50, description="Max root turns in this bloc."),
+    detail: str = Query(
+        "replay",
+        description="Bundle detail forwarded to each turn export: full | replay.",
+    ),
+    include_subruns: bool = Query(True, description="Include descendant runs in each turn bundle."),
+    ledger_mode: str = Query("tail", description="Ledger export mode: tail|full."),
+    ledger_max_items: int = Query(2000, ge=0, le=20000, description="Max ledger items per turn when ledger_mode=tail."),
+    include_drafts: bool = Query(False, description="Include draft-test root runs."),
+) -> Dict[str, Any]:
+    """Return one cursor-bounded bloc of session turns with inline history bundles."""
+    _known_params = {
+        "before",
+        "limit",
+        "detail",
+        "include_subruns",
+        "ledger_mode",
+        "ledger_max_items",
+        "include_drafts",
+    }
+    _unknown = [k for k in request.query_params.keys() if k not in _known_params]
+    if _unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown query parameter(s): {', '.join(sorted(_unknown))} — "
+                f"known: {', '.join(sorted(_known_params))}"
+            ),
+        )
+
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    parsed_before: Optional[str] = None
+    if before is not None and str(before).strip():
+        try:
+            parsed_before = parse_created_at_cursor(before)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    detail_mode = str(detail or "replay").strip().lower()
+    if detail_mode not in {"full", "replay"}:
+        raise HTTPException(status_code=400, detail="detail must be 'full' or 'replay'")
+
+    mode = str(ledger_mode or "tail").strip().lower()
+    if mode not in {"tail", "full"}:
+        raise HTTPException(status_code=400, detail="ledger_mode must be 'tail' or 'full'")
+    max_items = int(ledger_max_items)
+    if mode == "tail" and max_items <= 0:
+        mode = "full"
+        max_items = 0
+
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    if not isinstance(rs, (QueryableRunIndexStore, QueryableRunStore)):
+        raise HTTPException(status_code=400, detail="Run store does not support session history blocs")
+
+    store = getattr(getattr(svc, "stores", None), "artifact_store", None)
+    ledger_store = getattr(getattr(svc, "host", None), "ledger_store", None)
+
+    try:
+        return await asyncio.to_thread(
+            assemble_session_history_bloc,
+            run_store=rs,
+            ledger_store=ledger_store,
+            artifact_store=store,
+            session_id=sid,
+            before=parsed_before,
+            limit=int(limit),
+            detail=detail_mode,
+            include_subruns=bool(include_subruns),
+            ledger_mode=mode,
+            ledger_max_items=max_items,
+            include_drafts=bool(include_drafts),
+            export_bundle=None,
+        )
+    except TypeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export session history bloc: {e}") from e
 
 
 @router.get("/artifacts/search", response_model=ArtifactSearchResponse)
@@ -14745,7 +14930,19 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "list": {"available": True, "endpoint": _api_gateway_path("/runs")},
             "purge_drafts": {"available": True, "endpoint": _api_gateway_path("/runs/purge_drafts")},
             "input_data": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/input_data")},
-            "history_bundle": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/history_bundle")},
+            "history_bundle": {
+                "available": True,
+                "endpoint": _api_gateway_path("/runs/{run_id}/history_bundle"),
+                "detail_modes": ["full", "replay"],
+                "warnings_in_band": True,
+            },
+            "session_history_bloc": {
+                "available": True,
+                "endpoint": _api_gateway_path("/sessions/{session_id}/history/bloc"),
+                "cursor": "created_at_iso",
+                "detail_modes": ["full", "replay"],
+                "warnings_in_band": True,
+            },
             "commands": {
                 "available": True,
                 "endpoint": _api_gateway_path("/commands"),
@@ -17461,6 +17658,7 @@ class BacklogAssistRequest(BaseModel):
     messages: List[Dict[str, Any]] = Field(default_factory=list, description="Chat messages: {role, content}.")
     provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
     model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
+    thinking: Optional[str] = Field(default=None, max_length=40, description="Optional reasoning effort (one wire name: thinking).")
 
 
 class BacklogAssistResponse(BaseModel):
@@ -17485,6 +17683,7 @@ class BacklogAdvisorRequest(BaseModel):
     messages: List[Dict[str, Any]] = Field(default_factory=list, description="Chat messages: {role, content}.")
     provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
     model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
+    thinking: Optional[str] = Field(default=None, max_length=40, description="Optional reasoning effort (one wire name: thinking).")
     agent: Optional[str] = Field(
         default=None,
         description="Optional agent bundle id override (default: basic-agent).",
@@ -20043,6 +20242,7 @@ def _generate_backlog_assist_json(
     *,
     provider: str,
     model: str,
+    thinking: Optional[str] = None,
     template_md: str,
     kind: str,
     package: str,
@@ -20093,7 +20293,11 @@ def _generate_backlog_assist_json(
         prompt_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
 
     llm = LocalAbstractCoreLLMClient(provider=str(provider), model=str(model))
-    res = llm.generate(prompt="", messages=prompt_msgs, system_prompt=system, params={"temperature": 0.2})
+    gen_params: Dict[str, Any] = {"temperature": 0.2}
+    if str(thinking or "").strip():
+        # Reasoning effort on the one wire name; absent means absent.
+        gen_params["thinking"] = str(thinking).strip()
+    res = llm.generate(prompt="", messages=prompt_msgs, system_prompt=system, params=gen_params)
     raw = str(res.get("content") or "").strip()
     try:
         obj = json.loads(raw)
@@ -21032,6 +21236,7 @@ async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
             _generate_backlog_assist_json,
             provider=provider,
             model=model,
+            thinking=req.thinking,
             template_md=template_md,
             kind=k,
             package=pkg,
@@ -21649,6 +21854,9 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
                 **({"workspace_allowed_paths": allowed_paths} if allowed_paths else {}),
                 "provider": provider,
                 "model": model,
+                # Reasoning effort rides the run vars on the one key path
+                # (the advisor is an agent run; every cycle inherits it).
+                **({"_runtime": {"thinking": str(req.thinking).strip()}} if str(req.thinking or "").strip() else {}),
                 "prompt": prompt,
                 "resp_schema": schema,
                 "max_iterations": 10,
@@ -22541,8 +22749,21 @@ async def provider_endpoint_profiles_get(request: Request) -> Dict[str, Any]:
 async def provider_endpoint_profiles_create(request: Request, req: _GatewayProviderEndpointProfileCreateRequest) -> Dict[str, Any]:
     principal = _principal_from_request(request)
     current_base, root_base = _gateway_profile_dirs()
+    # Scope default that survives a later multi-user switch (release gap 2):
+    # when an ADMIN creates a profile WITHOUT naming a scope and the write
+    # would land at the gateway root anyway (single-user layout, or the
+    # admin on the default runtime), default to 'gateway' — the silent
+    # 'user' default made the profile vanish from every per-user runtime
+    # the day multi-user auth turned on. An explicit scope always wins.
+    effective_scope = req.scope
+    if (
+        "scope" not in req.model_fields_set
+        and principal.is_admin()
+        and Path(current_base).expanduser().resolve() == Path(root_base).expanduser().resolve()
+    ):
+        effective_scope = "gateway"
     try:
-        store = _endpoint_profile_store_for_scope(scope=req.scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
+        store = _endpoint_profile_store_for_scope(scope=effective_scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
         profile = store.upsert_profile(
             profile_id=req.id,
             display_name=req.display_name,
@@ -22550,7 +22771,7 @@ async def provider_endpoint_profiles_create(request: Request, req: _GatewayProvi
             provider_family=req.provider_family,
             base_url=req.base_url,
             api_key=req.api_key,
-            scope=req.scope,
+            scope=effective_scope,
             capabilities=req.capabilities,
             allowed_models=req.allowed_models,
             enabled=req.enabled,

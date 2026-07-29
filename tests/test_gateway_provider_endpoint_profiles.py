@@ -925,6 +925,82 @@ def test_bundle_host_resolves_endpoint_profiles_for_runtime_without_exposing_sec
     assert resolved["api_key_set"] is True
 
 
+def test_per_principal_resolution_inherits_gateway_scope_and_explains_user_scope(tmp_path: Path) -> None:
+    """Release gap 2 (delegate order c5863), the repro pinned both ways.
+
+    A per-user runtime inherits ROOT profiles only when they are scoped
+    'gateway'. A root profile scoped 'user' (the silent creation default
+    before the fix) must not resolve — but the miss must EXPLAIN itself in
+    plain words instead of the misleading 'not configured'."""
+    from abstractgateway.provider_endpoint_profiles import (
+        ProviderEndpointProfileStore,
+        explain_endpoint_profile_miss,
+        resolve_effective_endpoint_profile,
+    )
+
+    root = tmp_path / "runtime"
+    per_user = root / "users" / "default" / "veya" / "runtime"
+    per_user.mkdir(parents=True)
+    store = ProviderEndpointProfileStore(base_dir=root)
+    store.upsert_profile(
+        profile_id="shared-ovh", display_name="g", description="",
+        provider_family="openai-compatible", base_url="https://x.test/v1",
+        api_key="k", scope="gateway",
+    )
+    store.upsert_profile(
+        profile_id="private-ovh", display_name="u", description="",
+        provider_family="openai-compatible", base_url="https://y.test/v1",
+        api_key="k", scope="user",
+    )
+
+    # Gateway-scoped: inherited by the per-user runtime.
+    assert resolve_effective_endpoint_profile("endpoint:shared-ovh", base_dir=per_user, root_base_dir=root) is not None
+    # User-scoped at the root: not inherited (admin-private), and the miss
+    # names the real cause + the fix.
+    assert resolve_effective_endpoint_profile("endpoint:private-ovh", base_dir=per_user, root_base_dir=root) is None
+    reason = explain_endpoint_profile_miss("endpoint:private-ovh", base_dir=per_user, root_base_dir=root)
+    assert reason and "scope" in reason and "gateway" in reason
+    # A genuinely unknown profile has no explanation (honest None).
+    assert explain_endpoint_profile_miss("endpoint:nope", base_dir=per_user, root_base_dir=root) is None
+    # Single-user layout (root == current): no explanation lane at all.
+    assert explain_endpoint_profile_miss("endpoint:private-ovh", base_dir=root, root_base_dir=root) is None
+
+
+def test_admin_profile_creation_defaults_to_gateway_scope_on_the_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The migration hazard cured at the source: an admin creating a profile
+    WITHOUT naming a scope, on a single-user layout, gets scope 'gateway' —
+    so the profile survives a later multi-user switch. An explicit 'user'
+    choice still wins."""
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        r1 = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={
+                "id": "default-scope-probe",
+                "display_name": "Probe",
+                "provider_family": "openai-compatible",
+                "base_url": "https://probe.test/v1",
+            },
+        )
+        assert r1.status_code == 200, r1.text
+        assert r1.json()["profile"]["scope"] == "gateway"
+
+        r2 = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={
+                "id": "explicit-user-probe",
+                "display_name": "Probe2",
+                "provider_family": "openai-compatible",
+                "base_url": "https://probe2.test/v1",
+                "scope": "user",
+            },
+        )
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["profile"]["scope"] == "user"
+
+
 def test_tools_only_executor_gets_endpoint_profile_resolver(tmp_path: Path) -> None:
     """A runtime built without an LLM client must still resolve endpoint profiles.
 
