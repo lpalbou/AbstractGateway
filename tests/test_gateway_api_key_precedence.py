@@ -11,6 +11,7 @@ class core had to invert).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -19,9 +20,18 @@ pytestmark = pytest.mark.basic
 
 
 def _write_core_config_key(base_dir: Path, attr: str, value: str) -> None:
+    """Set a provider key in THE AbstractCore store.
+
+    ONE STORE (operator ruling 2026-08-01): API keys are Core-owned, so "the
+    config" a key is set in is AbstractCore's config file -- the same one
+    `abstractcore --set-api-key` writes -- and the Gateway reads it in every
+    mode. `base_dir` is retained for callers that still name a scope; the
+    Gateway data dir is no longer a base of its own.
+    """
     from abstractruntime.integrations.abstractcore import config_facade
 
-    cfg = base_dir / "config" / "abstractcore.json"
+    _ = base_dir
+    cfg = Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])
     cfg.parent.mkdir(parents=True, exist_ok=True)
     # Use the facade's own writer path if present; else a minimal JSON the
     # reader understands (read_config_api_key reads api_keys.<attr>).

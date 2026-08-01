@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -561,7 +562,15 @@ def test_configured_builtin_provider_surfaces_without_manual_endpoint_profile(tm
     ]
 
 
-def test_configured_builtin_provider_can_use_gateway_core_config_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configured_builtin_provider_can_use_the_core_config_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key held in THE AbstractCore store is a key the Gateway can use.
+
+    API keys are Core-owned, so the store `abstractcore --set-api-key` writes is
+    the store the Gateway reads -- in every mode. Before the one-store ruling
+    (2026-08-01) a user-auth Gateway consulted only its own
+    `<data_dir>/config/abstractcore.json` and a key configured through
+    AbstractCore on the same machine was invisible to it.
+    """
     calls: list[dict[str, Any]] = []
 
     class StubDiscoveryFacade:
@@ -577,8 +586,8 @@ def test_configured_builtin_provider_can_use_gateway_core_config_key(tmp_path: P
 
     monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    runtime_dir = tmp_path / "runtime"
-    manager = ConfigurationManager(config_file=runtime_dir / "config" / "abstractcore.json", apply_env=False)
+    core_store = Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])
+    manager = ConfigurationManager(config_file=core_store, apply_env=False)
     assert manager.set_api_key("openai", "openai-config-key")
 
     headers = {"Authorization": "Bearer admin-token"}
@@ -586,7 +595,7 @@ def test_configured_builtin_provider_can_use_gateway_core_config_key(tmp_path: P
         profiles = client.get("/api/gateway/config/provider-endpoint-profiles", headers=headers)
         assert profiles.status_code == 200, profiles.text
         row = next(item for item in profiles.json()["profiles"] if item["provider_id"] == "openai")
-        assert row["scope"] == "user"
+        assert row["scope"] == "core"
         assert row["api_key_set"] is True
         assert "openai-config-key" not in profiles.text
 

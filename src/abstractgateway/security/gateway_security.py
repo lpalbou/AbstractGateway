@@ -207,8 +207,16 @@ class GatewayAuthPolicy:
     # Supports '*' suffix wildcard for prefix matches (e.g., 'http://localhost:*').
     allowed_origins: Tuple[str, ...] = ("http://localhost:*", "http://127.0.0.1:*")
 
-    # Abuse resistance
-    max_body_bytes: int = 256_000
+    # Abuse resistance.
+    #
+    # 10MB, not the former 256KB. This limit is abuse resistance for API calls,
+    # but VisualFlow documents go through the same write path, and a saved flow
+    # is a whole authored artifact rather than a request payload: the editor
+    # expands every flow on load (template pin docs, canonical pins, regenerated
+    # code bodies), so a shipped 92-node example serializes to ~308KB and could
+    # never be saved again after a single edit. Refusing to store a user's work
+    # is a far worse outcome than accepting a large document.
+    max_body_bytes: int = 10 * 1024 * 1024
     # Upload endpoints can legitimately exceed `max_body_bytes` (multipart). 0 means "auto"
     # (derived from the explicit endpoint caps).
     max_upload_body_bytes: int = 0
@@ -297,7 +305,7 @@ def load_gateway_auth_policy_from_env() -> GatewayAuthPolicy:
         except Exception:
             return default
 
-    max_body = _as_int("ABSTRACTGATEWAY_MAX_BODY_BYTES", "ABSTRACTFLOW_GATEWAY_MAX_BODY_BYTES", 256_000)
+    max_body = _as_int("ABSTRACTGATEWAY_MAX_BODY_BYTES", "ABSTRACTFLOW_GATEWAY_MAX_BODY_BYTES", 10 * 1024 * 1024)
     max_upload_body = _as_int("ABSTRACTGATEWAY_MAX_UPLOAD_BODY_BYTES", "ABSTRACTFLOW_GATEWAY_MAX_UPLOAD_BODY_BYTES", 0)
     max_attach = _as_int(
         "ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES",

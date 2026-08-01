@@ -160,3 +160,66 @@ def test_triage_action_endpoint_approve_writes_draft(tmp_path: Path, monkeypatch
     draft_path = repo_root / decisions2[0].draft_relpath
     assert draft_path.exists()
 
+
+
+def test_the_triage_assistant_reads_the_settings_abstractcore_stores(monkeypatch) -> None:
+    """One assistant, one store.
+
+    AbstractCore holds the triage LLM's provider settings in its `maintenance`
+    config section. An operator who set the model there has configured this
+    assistant; requiring the same six values again as Gateway environment
+    variables would make the two entry points disagree about one feature.
+    """
+    import abstractgateway.maintenance.llm_assist as llm_assist
+
+    for name in (
+        "ABSTRACT_TRIAGE_LLM",
+        "ABSTRACTGATEWAY_TRIAGE_LLM",
+        "ABSTRACT_TRIAGE_LLM_BASE_URL",
+        "ABSTRACTGATEWAY_TRIAGE_LLM_BASE_URL",
+        "ABSTRACT_TRIAGE_LLM_MODEL",
+        "ABSTRACTGATEWAY_TRIAGE_LLM_MODEL",
+        "ABSTRACT_TRIAGE_LLM_TEMPERATURE",
+        "ABSTRACTGATEWAY_TRIAGE_LLM_TEMPERATURE",
+        "ABSTRACT_TRIAGE_LLM_MAX_TOKENS",
+        "ABSTRACTGATEWAY_TRIAGE_LLM_MAX_TOKENS",
+        "ABSTRACT_TRIAGE_LLM_TIMEOUT_S",
+        "ABSTRACTGATEWAY_TRIAGE_LLM_TIMEOUT_S",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setattr(
+        llm_assist,
+        "_core_maintenance_settings",
+        lambda: {
+            "triage_llm_enabled": True,
+            "triage_llm_base_url": "http://127.0.0.1:1234",
+            "triage_llm_model": "qwen/qwen3-next-80b",
+            "triage_llm_temperature": 0.4,
+            "triage_llm_max_tokens": 512,
+            "triage_llm_timeout_s": 12.0,
+        },
+    )
+
+    config = llm_assist.load_llm_assist_config()
+    assert config["enabled"] is True
+    assert config["base_url"] == "http://127.0.0.1:1234"
+    assert config["model"] == "qwen/qwen3-next-80b"
+    assert config["temperature"] == 0.4
+    assert config["max_tokens"] == 512
+    assert config["timeout_s"] == 12.0
+
+
+def test_a_gateway_environment_variable_still_overrides_the_stored_triage_model(monkeypatch) -> None:
+    """The environment stays the override rung, not the only rung."""
+    import abstractgateway.maintenance.llm_assist as llm_assist
+
+    monkeypatch.setenv("ABSTRACT_TRIAGE_LLM_MODEL", "override/model")
+    monkeypatch.delenv("ABSTRACTGATEWAY_TRIAGE_LLM_MODEL", raising=False)
+    monkeypatch.setattr(
+        llm_assist,
+        "_core_maintenance_settings",
+        lambda: {"triage_llm_enabled": True, "triage_llm_model": "stored/model"},
+    )
+
+    assert llm_assist.load_llm_assist_config()["model"] == "override/model"

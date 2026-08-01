@@ -491,38 +491,65 @@ def test_summon_whitespace_prompt_refused_at_boundary(client: TestClient):
     assert "whitespace" in r_ws.json()["detail"]
 
 
-def test_context_floor_refuses_small_windows(client: TestClient):
-    """Maintainer round 8: 'the minimal context should be 20 000 tokens,
-    never less.' Declared windows below the floor refuse the summon; an
-    undeclared window proceeds with a labeled warning (the gateway checks
+def test_context_recommendation_is_soft(client: TestClient):
+    """Operator 2026-08-01 (both passes; superseding the round-8 hard
+    floor): 50k is the RECOMMENDED working size and 200k the soft
+    ACCEPTABLE ceiling ("it is acceptable to go to 200k context, but
+    ideally, let's have a (soft) recommended target of 50k tokens");
+    'more a soft than a hard limit ... if it needs to grow, it needs to
+    grow' still governs. Declared windows below the recommendation PROCEED
+    with a labeled #RECOMMENDED warning; windows above the acceptable
+    ceiling PROCEED with the same warning class naming 200k; an undeclared
+    window proceeds with a labeled #FALLBACK warning (the gateway checks
     what it can see, never guesses what it cannot)."""
     assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
     # Newborn = sleep (c1503): wake so the summon reaches the gate under test.
     assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
-    # Explicit declaration below the floor -> refused.
+    # Explicit declaration below the recommendation -> accepted, labeled.
     r = client.post(
         "/api/gateway/entities/Castor/summon",
-        json={"prompt": "hi", "bundle_id": "min", "flow_id": "root", "context_window_tokens": 8192},
+        json={
+            "prompt": "hi",
+            "bundle_id": "min",
+            "flow_id": "root",
+            "context_window_tokens": 8192,
+            "session_id": "ctx-soft-1",
+            "input_data": {"provider": "mock", "model": "mock-model"},
+        },
     )
-    assert r.status_code == 409, r.text
-    assert "20 000 tokens" in json.dumps(r.json()["detail"]["reasons"])
+    assert r.status_code == 200, r.text
+    warns = r.json()["warnings"]
+    assert any(w.startswith("#RECOMMENDED") and "8192" in w and "50000-token" in w for w in warns), warns
+    assert any("recommendation, not a wall" in w for w in warns), warns
 
-    # A flow pin declaring a small window -> refused too.
+    # A flow pin declaring a small window -> the same soft warning (same
+    # conversation slides the seat; a fresh session would 409 on the seat,
+    # which is the ONE-LIFE gate, not the context gate).
     r2 = client.post(
         "/api/gateway/entities/Castor/summon",
-        json={"prompt": "hi", "bundle_id": "min", "flow_id": "root", "input_data": {"max_in_tokens": 4096}},
+        json={
+            "prompt": "hi",
+            "bundle_id": "min",
+            "flow_id": "root",
+            "session_id": "ctx-soft-1",
+            "input_data": {"max_in_tokens": 4096, "provider": "mock", "model": "mock-model"},
+        },
     )
-    assert r2.status_code == 409, r2.text
+    assert r2.status_code == 200, r2.text
+    assert any(w.startswith("#RECOMMENDED") and "4096" in w for w in r2.json()["warnings"])
 
-    # Declared at/above the floor -> proceeds, no context warning.
+    # Declared at/above the recommendation and within the acceptable
+    # ceiling -> proceeds, no context warning (growth is never blocked:
+    # 50k <= 65536 <= 200k passes clean).
     r3 = client.post(
         "/api/gateway/entities/Castor/summon",
         json={
             "prompt": "hi",
             "bundle_id": "min",
             "flow_id": "root",
-            "context_window_tokens": 32768,
+            "session_id": "ctx-soft-1",
+            "context_window_tokens": 65536,
             "input_data": {"provider": "mock", "model": "mock-model"},
         },
     )
@@ -555,3 +582,33 @@ def test_context_floor_refuses_small_windows(client: TestClient):
     )
     assert r4.status_code == 200, r4.text
     assert any("#FALLBACK context window undeclared" in w for w in r4.json()["warnings"])
+
+    # Above the 200k ACCEPTABLE ceiling -> proceeds with the soft
+    # #RECOMMENDED-class warning naming 200000 (operator 2026-08-01: "it is
+    # acceptable to go to 200k context" — beyond is guidance, never a block).
+    r4_run = r4.json()["run_id"]
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        rr = client.get(f"/api/gateway/runs/{r4_run}")
+        if rr.status_code == 200 and rr.json().get("status") in {"completed", "failed", "cancelled"}:
+            break
+        time.sleep(0.1)
+    r5 = client.post(
+        "/api/gateway/entities/Castor/summon",
+        json={
+            "prompt": "hi",
+            "bundle_id": "min",
+            "flow_id": "root",
+            "session_id": r4.json()["session_id"],
+            "context_window_tokens": 262144,
+            "input_data": {"provider": "mock", "model": "mock-model"},
+        },
+    )
+    assert r5.status_code == 200, r5.text
+    warns5 = r5.json()["warnings"]
+    assert any(
+        w.startswith("#RECOMMENDED") and "262144" in w and "200000-token" in w and "above" in w
+        for w in warns5
+    ), warns5
+    # And never the below-recommendation text on an above-ceiling window.
+    assert not any("below" in w and "context window" in w for w in warns5), warns5

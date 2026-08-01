@@ -14,7 +14,12 @@ from abstractruntime.core.runtime import EffectOutcome
 from abstractruntime.visualflow_compiler import compile_visualflow
 from abstractruntime.workflow_bundle import WorkflowBundle, WorkflowBundleError, open_workflow_bundle
 
-from ..capability_defaults import core_server_token, gateway_capability_defaults_payload
+from ..core_config import (
+    capability_defaults_config_signature,
+    core_server_token,
+    gateway_capability_defaults_payload,
+    runtime_core_config_file,
+)
 from ..memory_store import build_gateway_memory_embedder, open_gateway_memory_store
 from ..provider_endpoint_profiles import ProviderEndpointProfileError, resolve_effective_endpoint_profile
 from ..provider_connections import configured_provider_request_kwargs
@@ -568,6 +573,17 @@ def _scan_flows_for_llm_defaults(flows_by_id: Dict[str, Dict[str, Any]]) -> Opti
     return None
 
 
+def _capability_defaults_signature(data_root: Path) -> Optional[tuple]:
+    """Cheap fingerprint of the files the capability-defaults payload reads.
+
+    Thin wrapper so the host has ONE spelling of "has the store moved?" and the
+    tests have one place to patch. ``None`` means "not file-backed" (a split
+    AbstractCore server owns the store).
+    """
+
+    return capability_defaults_config_signature(base_dir=data_root)
+
+
 def _flow_uses_llm(raw: Dict[str, Any]) -> bool:
     nodes = raw.get("nodes")
     if not isinstance(nodes, list):
@@ -711,6 +727,16 @@ class WorkflowBundleGatewayHost:
     _default_bundle_id: Optional[str]
     memory_store: Optional[Any] = None
     memory_store_info: Optional[Dict[str, Any]] = None
+    # The flow-scanned provider/model bootstrap pair used at load time. Kept so
+    # `refresh_capability_defaults` re-resolves through the IDENTICAL cascade
+    # instead of a second, subtly different one.
+    _flow_scanned_llm_defaults: Optional[Tuple[str, str]] = None
+    # (path, mtime_ns, size) of every capability-defaults config file as of the
+    # last time this host published them. Watched so the OTHER entry point --
+    # `abstractcore config set-default` / the core console-TUI, which write the
+    # same file without going through a Gateway route -- is not silently
+    # ignored by a running host. See `refresh_capability_defaults_if_config_changed`.
+    _capability_defaults_config_signature: Optional[tuple] = None
     _lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
     # Hooks re-applied to every REBUILT runtime before it is published
     # (reload_bundles_from_disk swaps self.runtime for a brand-new instance;
@@ -1177,6 +1203,7 @@ class WorkflowBundleGatewayHost:
         except Exception:
             pass
 
+        flow_scanned_llm_defaults: Optional[Tuple[str, str]] = None
         needs_llm = any(_flow_uses_llm(raw) for raw in flows_by_namespaced_id.values())
         needs_tools = any(_flow_uses_tools(raw) for raw in flows_by_namespaced_id.values())
         needs_model_residency = any(_flow_uses_model_residency(raw) for raw in flows_by_namespaced_id.values())
@@ -1283,9 +1310,10 @@ class WorkflowBundleGatewayHost:
                 provider: Optional[str] = None
                 model: Optional[str] = None
                 provider_deferred_error: Optional[Exception] = None
+                flow_scanned_llm_defaults = _scan_flows_for_llm_defaults(flows_by_namespaced_id)
                 try:
                     provider, model = resolve_gateway_provider_model(
-                        flow_defaults=_scan_flows_for_llm_defaults(flows_by_namespaced_id),
+                        flow_defaults=flow_scanned_llm_defaults,
                         base_dir=Path(data_root),
                         purpose="bundle LLM execution",
                     ).require()
@@ -1328,7 +1356,7 @@ class WorkflowBundleGatewayHost:
                         ledger_store=ledger_store,
                         artifact_store=artifact_store,
                         tool_executor=tool_executor,
-                        core_config_file=data_root / "config" / "abstractcore.json",
+                        core_config_file=runtime_core_config_file(data_root),
                         capability_defaults=gateway_capability_defaults_payload(base_dir=data_root),
                     )
                     if extra_effect_handlers:
@@ -1347,23 +1375,37 @@ class WorkflowBundleGatewayHost:
                             tool_executor=tool_executor,
                             prompt_cache_export_root_dir=data_root / "prompt_cache_exports",
                             extra_effect_handlers=extra_effect_handlers,
-                            core_config_file=data_root / "config" / "abstractcore.json",
+                            core_config_file=runtime_core_config_file(data_root),
                             capability_defaults=gateway_capability_defaults_payload(base_dir=data_root),
                         )
                     except Exception as _construct_err:
-                        if provider_deferred_error is None:
-                            raise
-                        # Version tolerance: this runtime cannot build a
-                        # client without a provider (older releases construct
-                        # the default client eagerly). Keep the original loud
-                        # refusal so behavior is never worse than before the
-                        # deferral existed.
+                        if provider_deferred_error is not None:
+                            # Version tolerance: this runtime cannot build a
+                            # client without a provider (older releases construct
+                            # the default client eagerly). Keep the original loud
+                            # refusal so behavior is never worse than before the
+                            # deferral existed.
+                            raise WorkflowBundleError(
+                                "Bundle contains LLM nodes or local model_residency nodes but no default provider/model is configured. "
+                                "Configure the execution-host output.text capability default, provide "
+                                "flow defaults, or ensure the flow JSON includes provider/model on at least "
+                                "one llm_call/agent node."
+                            ) from provider_deferred_error
+                        # A default IS configured and the runtime still could
+                        # not build it -- an older runtime, an unreachable
+                        # provider, weights not downloaded yet. Once the
+                        # recommended seed started writing a default into every
+                        # fresh install, `provider_deferred_error is None`
+                        # became the COMMON case, so re-raising raw here meant a
+                        # bare ValueError escaping bundle loading with nothing
+                        # to act on. Name the pair and keep the cause.
                         raise WorkflowBundleError(
-                            "Bundle contains LLM nodes or local model_residency nodes but no default provider/model is configured. "
-                            "Configure the execution-host output.text capability default, provide "
-                            "flow defaults, or ensure the flow JSON includes provider/model on at least "
-                            "one llm_call/agent node."
-                        ) from provider_deferred_error
+                            f"Bundle contains LLM nodes but the execution host's configured default "
+                            f"({provider_for_runtime or '<unset>'}/{model or '<unset>'}) could not be "
+                            f"prepared: {_construct_err}. Configure a different output.text capability "
+                            "default, download this model's weights (`abstractcore models status`), or "
+                            "put provider/model on the flow's llm_call/agent nodes."
+                        ) from _construct_err
                 if provider_override:
                     try:
                         setattr(runtime, "_gateway_default_provider_override", provider_override)
@@ -1623,6 +1665,10 @@ class WorkflowBundleGatewayHost:
             memory_store=memory_store_obj,
             memory_store_info=memory_store_info,
             _default_bundle_id=default_bundle_id,
+            _flow_scanned_llm_defaults=flow_scanned_llm_defaults,
+            # The store as this host just published it; anything newer on disk
+            # is an out-of-band write from the core entry point.
+            _capability_defaults_config_signature=_capability_defaults_signature(Path(data_root)),
         )
 
     @property
@@ -1647,6 +1693,171 @@ class WorkflowBundleGatewayHost:
         Hooks run on the NEW runtime BEFORE it is published (race-free: no
         tick can observe an unarmed runtime)."""
         self._runtime_rebuild_hooks.append(hook)
+
+    def refresh_capability_defaults(self) -> Dict[str, Any]:
+        """Re-apply the execution-host capability defaults to the LIVE runtime.
+
+        A DEFAULT IS A DEFAULT: the operator sets it in the console and expects
+        the next run to use it. Until this existed, the default provider/model
+        was resolved ONCE at `load_from_dir` and baked into the pooled LLM
+        client, so a console change was invisible until the process restarted
+        or bundles were reloaded. Reproduced live 2026-07-31: after a
+        console-path PUT of the text default, the very next unpinned run still
+        used the previous provider/model.
+
+        This re-runs the SAME cascade as load (`resolve_gateway_provider_model`
+        with the same flow-scanned bootstrap pair, then the same endpoint
+        profile resolution) and re-points the pool in place. It touches the
+        DEFAULT identity only -- per-call provider/model pins are resolved per
+        call and are never clobbered by it. It does not recompile bundles and
+        does not disturb in-flight runs.
+        """
+
+        with self._lock:
+            runtime = self.runtime
+            data_root = Path(self.data_dir)
+            catalog_root = Path(self.catalog_root_data_dir) if self.catalog_root_data_dir else data_root
+            flow_defaults = self._flow_scanned_llm_defaults
+            # Stamp the fingerprint BEFORE re-deriving: whatever is on disk now
+            # is what this refresh is about to publish, so a write that lands
+            # mid-refresh still looks "changed" to the next check.
+            self._capability_defaults_config_signature = _capability_defaults_signature(data_root)
+
+        client = getattr(runtime, "_abstractcore_llm_client", None)
+        if client is None:
+            return {"ok": True, "changed": False, "reason": "runtime has no AbstractCore LLM client"}
+
+        payload = gateway_capability_defaults_payload(base_dir=data_root)
+
+        resolution = resolve_gateway_provider_model(
+            flow_defaults=flow_defaults,
+            base_dir=data_root,
+            purpose="bundle LLM execution",
+        )
+        provider, model = resolution.provider, resolution.model
+
+        provider_for_runtime: Optional[str] = None
+        profile_kwargs: Dict[str, Any] = {}
+        provider_override: Optional[str] = None
+        if provider:
+            try:
+                provider_for_runtime, profile_kwargs, provider_override = _resolve_gateway_default_endpoint_profile(
+                    provider=provider,
+                    data_root=data_root,
+                    catalog_root=catalog_root,
+                )
+            except WorkflowBundleError as exc:
+                # A default pointing at a broken/absent endpoint profile must
+                # not silently half-apply: keep the live default as it was and
+                # tell the caller why.
+                return {"ok": False, "changed": False, "error": str(exc)}
+
+        setter = getattr(client, "set_default_provider_model", None)
+        if not callable(setter):
+            return {"ok": True, "changed": False, "reason": "runtime LLM client does not support live default refresh"}
+
+        changed = bool(
+            setter(
+                provider=provider_for_runtime or "",
+                model=model or "",
+                llm_kwargs=profile_kwargs if provider else {},
+                capability_defaults=payload,
+            )
+        )
+        try:
+            # The pool serves `endpoint:<id>` virtual providers under their
+            # real family; the runtime records the virtual name for evidence.
+            setattr(runtime, "_gateway_default_provider_override", provider_override)
+        except Exception:
+            pass
+
+        # BOTH TRUTHS, OR NEITHER. `Runtime.start()` seeds
+        # `_runtime.provider|model` from RuntimeConfig, and every VisualFlow
+        # Agent node whose provider/model is Auto reads THAT -- not the LLM
+        # client. Refreshing only the client left agent nodes on the previous
+        # default while plain llm_call nodes followed the new one: two
+        # different defaults inside one host. The capability probe rides along
+        # so the derived tool_support bits describe the model now in force.
+        config_changed = False
+        runtime_setter = getattr(runtime, "set_default_provider_model", None)
+        if callable(runtime_setter):
+            capabilities: Optional[Dict[str, Any]] = None
+            if changed and (provider_for_runtime or model):
+                try:
+                    probe = getattr(client, "get_model_capabilities", None)
+                    capabilities = probe() if callable(probe) else None
+                except Exception as exc:  # noqa: BLE001 - a probe miss must not block the refresh
+                    logger.warning("capability probe failed after a default change: %s", exc)
+                    capabilities = None
+            # The REAL provider family, matching what `create_local_runtime`
+            # records at load; the virtual `endpoint:<id>` name stays on
+            # `_gateway_default_provider_override`, which start_run prefers.
+            config_changed = bool(
+                runtime_setter(
+                    provider=provider_for_runtime,
+                    model=model,
+                    model_capabilities=capabilities,
+                )
+            )
+
+        if changed:
+            _attach_provider_endpoint_profile_resolver(runtime=runtime, data_root=data_root, catalog_root=catalog_root)
+        return {
+            "ok": True,
+            "changed": bool(changed or config_changed),
+            "client_changed": changed,
+            "config_changed": config_changed,
+            "provider": provider_override or provider_for_runtime or None,
+            "model": model or None,
+            "source": resolution.source,
+        }
+
+    def refresh_capability_defaults_if_config_changed(self) -> bool:
+        """Refresh ONLY when a capability-defaults config file actually moved.
+
+        TWO ENTRY POINTS, ONE STORE -- and the OTHER entry point writes without
+        telling us. `abstractcore config set-default <route> --provider ...`
+        and AbstractCore's console-TUI edit the same config file the Gateway's
+        PUT routes do; those routes push the new payload into the live runtime,
+        the CLI cannot. And once a payload has been pushed, the runtime stops
+        consulting disk entirely (unconfigured rows travel as an explicit
+        `source: "not_configured"`, which short-circuits
+        `resolve_capability_default_route`'s config-file fallback for EVERY
+        route). So without this the core-side entry point silently did nothing
+        to a running Gateway until the next Gateway write or a restart.
+
+        Cost: one `stat` per config file per run -- ~24us measured, no parse.
+        The payload is re-derived only when a file changed. Best-effort in the
+        strongest sense: this must never be able to fail a run.
+        """
+
+        try:
+            current = _capability_defaults_signature(Path(self.data_dir))
+        except Exception:  # noqa: BLE001 - a stat hiccup must not fail a run
+            return False
+        if current is None:
+            # Split AbstractCore server: no file to watch (see
+            # `capability_defaults_config_signature`).
+            return False
+        with self._lock:
+            previous = getattr(self, "_capability_defaults_config_signature", None)
+        if previous is not None and current == previous:
+            return False
+        try:
+            result = self.refresh_capability_defaults()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("out-of-band capability-defaults refresh failed: %s", exc)
+            with self._lock:
+                self._capability_defaults_config_signature = current
+            return False
+        if previous is not None and isinstance(result, dict) and result.get("changed"):
+            logger.info(
+                "capability defaults changed on disk out-of-band (abstractcore config / console-TUI); "
+                "live runtime refreshed to provider=%r model=%r",
+                result.get("provider"),
+                result.get("model"),
+            )
+        return bool(isinstance(result, dict) and result.get("changed"))
 
     def reload_bundles_from_disk(self) -> Dict[str, Any]:
         """Reload bundles/specs from bundles_dir (best-effort, intended for dev).
@@ -1847,6 +2058,15 @@ class WorkflowBundleGatewayHost:
         bundle_version: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> str:
+        # A DEFAULT IS A DEFAULT, WHICHEVER ENTRY POINT SET IT. Gateway writes
+        # push themselves into the live runtime; a `abstractcore config
+        # set-default` / console-TUI write cannot. One `stat` here (no parse)
+        # makes the core entry point effective on the very next run instead of
+        # at the next Gateway write or restart. Never load-bearing.
+        try:
+            self.refresh_capability_defaults_if_config_changed()
+        except Exception:  # noqa: BLE001 - freshness must never fail a run
+            pass
         fid_raw = str(flow_id or "").strip()
 
         bid_raw = str(bundle_id or "").strip() if isinstance(bundle_id, str) else ""

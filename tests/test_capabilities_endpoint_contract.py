@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -445,7 +446,19 @@ def test_generated_image_contract_separates_light_package_from_backend_config(mo
 
 
 def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With NO image route configured, an OpenAI key is what makes it available.
+
+    The premise has to be stated: the image backend is config-first, so a store
+    that carries an `output.image` row (a configured one, or the recommended
+    seed a never-written store answers with) names the backend and the env key
+    is irrelevant. An EXISTING store carrying no routes is how a test says
+    "nothing is configured" -- an absent file means a fresh install.
+    """
     import abstractgateway.routes.gateway as gateway_routes
+
+    core_store = Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])
+    core_store.parent.mkdir(parents=True, exist_ok=True)
+    core_store.write_text("{}", encoding="utf-8")
 
     monkeypatch.delenv("ABSTRACTVISION_BASE_URL", raising=False)
     monkeypatch.delenv("ABSTRACTVISION_API_KEY", raising=False)

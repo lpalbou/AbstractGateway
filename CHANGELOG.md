@@ -7,7 +7,134 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The fresh-install capability seed belongs to the INSTALL, not to every
+  scope (2026-08-01).** AbstractCore now seeds its recommended routes (text
+  `lmstudio/qwen/qwen3.5-9b`, voice `supertonic/supertonic-3`, image
+  `mlx-gen/AbstractFramework/flux.2-klein-4b-8bit`) into a config file that has
+  never existed, so a new install works out of the box. The Gateway reads
+  per-principal and per-runtime stores as OVERLAYS, where an absent file has
+  always meant "this scope overrides nothing" — left alone, the seed would fire
+  on every one of them and each newly created user would silently shadow the
+  operator's gateway-wide default with the framework recommendation, with no
+  way for an admin to set a default that new users inherit.
+  `core_config._load_configured_routes_from_core_config` now answers "no
+  routes" for an absent scope file. The install-level read still gets the seed,
+  so a fresh Gateway serves the recommendation and its users inherit it
+  normally (`test_a_fresh_gateway_serves_the_recommended_seed_and_users_inherit_it`).
+- **`GET /api/gateway/config/capability-defaults` carries the seed provenance.**
+  The payload now has `seeded: "recommended-v1"` when its rows came from the
+  fresh-install seed, read through the new
+  `config_facade.capability_defaults_seed_marker` (the Gateway still never
+  imports AbstractCore directly). Informational only — the seeded rows are
+  ordinary rows, overridable and clearable from either entry point and always
+  beaten by a request pin — so a surface can label them "recommended" instead
+  of implying the operator chose them. A corrupt store is never seeded and
+  never marked; it keeps serving its loud `errors` line.
+- **The summoned-entity context gate is a 40k RECOMMENDATION, not a wall
+  (operator re-ruling 2026-08-01, superseding maintainer round 8).** Operator
+  verbatim intent: "it should be 40k and ... more a soft than a hard limit.
+  the idea is that the entity is gonna be more efficient if it tries to keep
+  the context around 40k ... but if it needs to grow, it needs to grow." Three
+  hard gates became soft, labeled warnings:
+  - the summon door's 409 refusal for declared windows below the floor is now
+    a `#RECOMMENDED` warning riding the summon response (the summon proceeds);
+    the undeclared-window `#FALLBACK` warning names the recommendation instead
+    of a guaranteed floor (`routes/entities.py`);
+  - `StartLoopRequest.context_window` dropped its `ge=20000` hard 422
+    (`ge=1` now); a sub-recommendation loop start succeeds and carries a
+    `#RECOMMENDED` warning in the response;
+  - the engine side (`abstractmemory.ENTITY_CONTEXT_FLOOR`, one constant both
+    sides import) is now `40_000` with the honest alias
+    `ENTITY_CONTEXT_RECOMMENDED`, and `entity_recall_budget` no longer raises
+    below it (the 2400 token-budget starvation guard is the only floor left).
+    `entity_gate.py` re-exports `SUMMON_CONTEXT_RECOMMENDED_TOKENS` beside the
+    legacy `SUMMON_CONTEXT_FLOOR_TOKENS` name.
+  Growth above 40k was and remains unblocked everywhere (no upper cap exists
+  on the context lanes; defaults stay wide at 65536). KNOWN REMAINDER outside
+  this repo: `abstractruntime/identity/life.py` `main()` still hard-refuses
+  `--context-window` below the imported constant (now 40k) at the CLI start
+  door — the loop lane's spawned process dies with exit 2 for explicit
+  sub-40k windows until that gate is softened in runtime's lane.
+
+### Added
+- **The reasoning effort for text generation is editable from the Gateway (2026-08-01).**
+  `PUT /api/gateway/config/capability-defaults/output/text` accepts a `reasoning`
+  field, and the console's capability-defaults panel offers it on the text route.
+  It is stored on AbstractCore's text route, so both entry points read and write
+  the same value.
+- **One seam for AbstractCore-owned configuration (2026-08-01).**
+  `abstractgateway/core_config.py` is the only Gateway module that reads or writes
+  AbstractCore's configuration — capability routes, the reasoning effort, route
+  options, Core-held provider API keys, the host's mail connection, and the
+  maintenance-triage LLM settings — with read-through freshness, write-through
+  live refresh, and the split-server posture in one place. A test fails any other
+  Gateway module that reaches AbstractCore config off the seam, whether through
+  the config facade, the integration package's flat re-exports, a dynamic import,
+  a re-export shim, or a shell-out to `abstractcore config`.
+  **Migration:** `abstractgateway/capability_defaults.py` is removed; import
+  `gateway_capability_defaults_payload`, `save_gateway_capability_default`,
+  `clear_gateway_capability_default`, `capability_defaults_config_signature` and
+  the `core_server_*` helpers from `abstractgateway.core_config`.
+
 ### Fixed
+- **A Gateway write no longer discards fields it did not name (2026-08-01).**
+  AbstractCore stores a capability route as one row, so a save of provider and
+  model replaced the whole row and cleared a reasoning effort or route options
+  set through `abstractcore config set-default`. A `PUT` is now a partial update:
+  omitted fields keep their stored value and `""` clears a field, so the two entry
+  points cannot overwrite each other. This holds in split deployments too
+  (`ABSTRACTCORE_SERVER_BASE_URL`): the write resolves the merge against the row
+  the AbstractCore server serves and sends the whole resolved row.
+- **The console save sends only the fields its modal controls (2026-08-01).**
+  It echoed back the `base_url` and `options` of the row the grid last rendered,
+  so a save that meant to change the model could roll back a change made through
+  `abstractcore config` between render and save. It now sends provider and model,
+  the reasoning select on text routes, and the options dict only on the voice
+  routes whose picker edits it; every other field is left unset and preserved.
+- **The Gateway reads the mail connection and triage settings AbstractCore stores
+  (2026-08-01).** The email bridge resolved IMAP host, port, username, folder and
+  password-variable name from `ABSTRACT_EMAIL_*` alone, and the maintenance triage
+  assistant resolved its six provider settings from `ABSTRACT_TRIAGE_LLM_*` alone,
+  while AbstractCore holds both in its `email` and `maintenance` config sections
+  and its own tools resolve from them. Both now read that store, with the same
+  environment variables kept as the override rung above it, so a connection
+  configured once through AbstractCore does not have to be stated again.
+- **An entity's substrate refusal names where the choice lives (2026-08-01).**
+  The 400 returned when no mind substrate is chosen now names `substrate.yaml`,
+  the `ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER` / `_MODEL` host-wide fallback, and
+  states that AbstractCore's `output.text` default is deliberately not consulted
+  for it — so an operator who set that default learns why it does not apply.
+
+- **A console default is USED — immediately, without a restart (2026-08-01).**
+  The operator's ruling is that the gateway default provider/model they set in
+  the console is what runs, unless an app overrides it. It was not. The default
+  was resolved ONCE at bundle load (`hosts/bundle_host.py`, via
+  `resolve_gateway_provider_model`) and baked into the constructed runtime, so
+  `PUT /api/gateway/config/capability-defaults/{kind}/{modality}` persisted the
+  change to `abstractcore.json` and nothing else. Live-reproduced: after a
+  console-path PUT of the text default, the very next unpinned run still routed
+  to the previous provider/model. New `WorkflowBundleGatewayHost.
+  refresh_capability_defaults()` re-runs the SAME cascade as load and re-points
+  the live runtime in place — both the pooled LLM client (what `llm_call` nodes
+  use) and `RuntimeConfig` (what `start()` seeds into `_runtime.provider|model`,
+  which every Auto Agent node reads); refreshing only one had the two node kinds
+  on different defaults. The capability-defaults PUT/DELETE routes call it and
+  report the outcome as `runtime_refresh` in their response. No bundle recompile,
+  no disturbance to in-flight runs, and a refresh failure never fails a save that
+  already landed on disk.
+- **The text-generation default is read BY NAME (2026-08-01).**
+  `provider_defaults._gateway_capability_text_default` found the default by
+  iterating `for kind in ("output", "input")` over the route rows and taking the
+  first text row — correct only by iteration order, and it named no key, so
+  neither the code nor the config told you what the default WAS. It now reads
+  the canonical route key `output.text` (the catalog's `text_generation` route),
+  falling back to the legacy storage key `input.text` so an unmigrated config
+  keeps working, and the resolution `source` now NAMES the key that answered
+  (`abstractcore.capability_defaults:output.text`). Both keys exist because
+  AbstractCore deliberately stores ONE text provider/model under `input.text`
+  and derives `output.text` as a read-only view of it.
+
 - **VisualFlow CRUD accepts the flow function library** (flow editor
   adversary P0-1, 2026-07-27): `POST/PUT /visualflows` request models were
   `extra="forbid"` without a `functions` field, so any editor save carrying
@@ -17,6 +144,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_coerce_visualflow` validates the shape loudly, and the create/update
   handlers persist it. Live-verified round-trip (POST with functions → GET
   returns them → PUT can clear them).
+
+### Documented
+- **The provider/model cascade contract, in one place**
+  (`src/abstractgateway/provider_defaults.py` module docstring): explicit
+  request pins > flow defaults > gateway console default > flow-scanned
+  bootstrap. A default never clobbers an app override, and applies whenever
+  nothing overrides. The apparent inversion (an authored flow default outranks
+  the console default, but a flow-SCANNED pair does not) is spelled out: what an
+  author wrote travels with the call; what a scanner guessed about flows must
+  never outrank the operator's own setting.
 
 ### Added
 - **Session history bloc endpoint** (bloc-streaming unit 4, c5551): `GET

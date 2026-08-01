@@ -11,12 +11,39 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.basic
 
 
+def _empty_core_store(path: Path) -> Path:
+    """An EXISTING AbstractCore store that configures nothing.
+
+    "No default is configured" is a store that exists and carries no routes --
+    NOT an absent file. Since the operator ruling of 2026-08-01 an absent file
+    means a truly fresh install, and AbstractCore seeds it with the recommended
+    stack (text `lmstudio/qwen/qwen3.5-9b`, voice `supertonic/supertonic-3`,
+    image `mlx-gen/AbstractFramework/flux.2-klein-4b-8bit`). A test that means
+    "nothing is configured" therefore has to say so by materializing the store,
+    exactly as AbstractCore's own `tests/config` do; leaving the file absent
+    would silently assert the fresh-install journey instead.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}", encoding="utf-8")
+    return path
+
+
+def _empty_home_core_store(home: Path) -> Path:
+    return _empty_core_store(home / ".abstractcore" / "config" / "abstractcore.json")
+
+
 def _clear_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in (
         "ABSTRACTGATEWAY_PROVIDER",
         "ABSTRACTGATEWAY_MODEL",
         "ABSTRACTFLOW_PROVIDER",
         "ABSTRACTFLOW_MODEL",
+        "ABSTRACTGATEWAY_USER_AUTH",
+        "ABSTRACTGATEWAY_MULTI_USER",
+        "ABSTRACTFLOW_GATEWAY_USER_AUTH",
+        "ABSTRACTGATEWAY_AUTH_MODE",
+        "ABSTRACTCORE_CONFIG_FILE",
+        "ABSTRACTCORE_CONFIG_DIR",
         "ABSTRACTCORE_SERVER_BASE_URL",
         "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN",
         "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_API_KEY",
@@ -78,6 +105,9 @@ def test_provider_model_resolver_prefers_request_then_capability_route_then_flow
 
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    # Tier 4 only gets a turn when tier 3 said nothing, so this half of the
+    # cascade needs a store that exists and configures nothing.
+    _empty_home_core_store(tmp_path / "home")
 
     req = provider_defaults.resolve_gateway_provider_model(provider="OLLAMA", model="llama3", purpose="test").require()
     assert req == ("ollama", "llama3")
@@ -97,7 +127,10 @@ def test_provider_model_resolver_prefers_request_then_capability_route_then_flow
     assert (route.provider, route.model, route.source) == (
         "lmstudio",
         "qwen-local",
-        "abstractcore.capability_defaults",
+        # The source now NAMES the route key that answered, so a run's
+        # evidence says where the default came from (canonical output.text,
+        # or the legacy input.text storage key on an unmigrated config).
+        "abstractcore.capability_defaults:output.text",
     )
 
 
@@ -154,7 +187,7 @@ def test_provider_model_resolver_ignores_partial_capability_route(
 
 
 def test_core_server_token_accepts_core_auth_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    from abstractgateway.capability_defaults import core_server_token
+    from abstractgateway.core_config import core_server_token
 
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("ABSTRACTCORE_AUTH_TOKEN", "core-token")
@@ -163,15 +196,82 @@ def test_core_server_token_accepts_core_auth_token(monkeypatch: pytest.MonkeyPat
 
 
 def test_provider_model_resolver_reports_clear_config_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The error path is still reachable -- from an EXISTING store with no routes.
+
+    A host whose operator cleared the text default (or who never had one and
+    has a store from some earlier write) gets the named, actionable error. An
+    ABSENT store is a different journey now: see
+    `test_a_fresh_install_resolves_to_the_recommended_text_default`.
+    """
     from abstractgateway import provider_defaults
 
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("HOME", str(tmp_path))
+    _empty_home_core_store(tmp_path)
 
     resolved = provider_defaults.resolve_gateway_provider_model(purpose="summary helper")
     assert resolved.provider is None
     assert resolved.model is None
     assert "No provider/model is configured for summary helper" in str(resolved.error)
+
+
+def test_a_fresh_install_resolves_to_the_recommended_text_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """THE FRESH-INSTALL JOURNEY, end to end through the Gateway resolver.
+
+    Operator ruling 2026-08-01: an install where no AbstractCore config file
+    has ever existed works out of the box on the recommended stack instead of
+    refusing until configured. So a Gateway on a brand-new host resolves the
+    text default rather than raising the "No provider/model is configured"
+    error it used to -- and the resolution names the ordinary route key that
+    answered, because the seed writes ordinary rows and nothing else.
+    """
+    from abstractgateway import provider_defaults
+
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert not (tmp_path / ".abstractcore" / "config" / "abstractcore.json").exists()
+
+    resolved = provider_defaults.resolve_gateway_provider_model(purpose="test")
+
+    assert (resolved.provider, resolved.model) == ("lmstudio", "qwen/qwen3.5-9b")
+    assert resolved.source == "abstractcore.capability_defaults:output.text"
+    assert resolved.error is None
+
+    # A request pin still beats it -- the seed is a default, not a policy.
+    pinned = provider_defaults.resolve_gateway_provider_model(provider="ollama", model="granite", purpose="test")
+    assert (pinned.provider, pinned.model, pinned.source) == ("ollama", "granite", "request")
+
+
+def test_a_fresh_install_serves_the_three_recommended_routes_with_their_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The same journey at the payload the console renders.
+
+    All three recommended routes are ordinary, configured rows in the grid, and
+    the payload carries the `seeded` marker so a surface can label them
+    "recommended" rather than implying the operator picked them.
+    """
+    from abstractgateway.core_config import gateway_capability_defaults_payload
+
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert not (tmp_path / ".abstractcore" / "config" / "abstractcore.json").exists()
+
+    payload = gateway_capability_defaults_payload()
+    rows = {row.get("key"): row for row in payload["routes"] if isinstance(row, dict)}
+
+    for key, provider, model in (
+        ("output.text", "lmstudio", "qwen/qwen3.5-9b"),
+        ("output.voice", "supertonic", "supertonic-3"),
+        ("output.image", "mlx-gen", "AbstractFramework/flux.2-klein-4b-8bit"),
+    ):
+        assert rows[key]["configured"] is True, f"{key} must be an ordinary configured row"
+        assert rows[key]["provider"] == provider
+        assert rows[key]["model"] == model
+
+    assert payload.get("seeded") == "recommended-v1", "the payload must carry the seed provenance"
 
 
 def test_provider_model_resolver_uses_execution_host_capability_default(
@@ -192,7 +292,10 @@ def test_provider_model_resolver_uses_execution_host_capability_default(
     assert (resolved.provider, resolved.model, resolved.source) == (
         "lmstudio",
         "qwen-local",
-        "abstractcore.capability_defaults",
+        # The source now NAMES the route key that answered, so a run's
+        # evidence says where the default came from (canonical output.text,
+        # or the legacy input.text storage key on an unmigrated config).
+        "abstractcore.capability_defaults:output.text",
     )
 
 
@@ -205,6 +308,7 @@ def test_provider_model_resolver_ignores_legacy_gateway_defaults_file(
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     legacy = tmp_path / "runtime" / "config" / "capability_defaults.json"
     legacy.parent.mkdir(parents=True)
@@ -212,6 +316,10 @@ def test_provider_model_resolver_ignores_legacy_gateway_defaults_file(
         json.dumps({"version": 1, "routes": {"output.text": {"provider": "legacy-provider", "model": "legacy-model"}}}),
         encoding="utf-8",
     )
+    # The live store exists and is empty, so "nothing resolves" can only mean
+    # the legacy overlay was ignored -- not that a fresh install got seeded.
+    # ONE STORE (2026-08-01): the live store is Core's, not a Gateway base.
+    _empty_home_core_store(tmp_path)
 
     resolved = provider_defaults.resolve_gateway_provider_model(base_dir=tmp_path / "runtime", purpose="test")
 
@@ -238,7 +346,10 @@ def test_provider_model_resolver_falls_back_to_abstractcore_capability_default(
     assert (resolved.provider, resolved.model, resolved.source) == (
         "ollama",
         "qwen3:8b",
-        "abstractcore.capability_defaults",
+        # The source now NAMES the route key that answered, so a run's
+        # evidence says where the default came from (canonical output.text,
+        # or the legacy input.text storage key on an unmigrated config).
+        "abstractcore.capability_defaults:output.text",
     )
 
 
@@ -247,7 +358,7 @@ def test_provider_model_resolver_does_not_use_gateway_host_core_config_when_remo
     tmp_path: Path,
 ) -> None:
     from abstractcore.config.manager import ConfigurationManager
-    import abstractgateway.capability_defaults as capability_defaults
+    import abstractgateway.core_config as capability_defaults
     from abstractgateway import provider_defaults
 
     _clear_provider_env(monkeypatch)
@@ -274,6 +385,9 @@ def test_summary_helper_rejects_missing_provider_model_config(tmp_path: Path, mo
 
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("HOME", str(tmp_path))
+    # An UNCONFIGURED host is an existing store with no routes; an absent store
+    # would be a fresh install, which now has a recommended default to run with.
+    _empty_home_core_store(tmp_path)
 
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
@@ -313,6 +427,10 @@ def test_discovery_providers_reports_default_error_without_hardcoded_fallback(
 
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("HOME", str(tmp_path))
+    # Discovery reports the resolver's own answer. With an existing, empty
+    # store that answer is the error -- and the point of the test is that it is
+    # the ERROR and not some hardcoded provider baked into the route.
+    _empty_home_core_store(tmp_path)
 
     class StubDiscoveryFacade:
         def list_providers(self, *, include_models: bool = False, **_kwargs):

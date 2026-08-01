@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .config import GatewayHostConfig
-from .capability_defaults import (
+from .core_config import (
     clear_gateway_capability_default,
     core_server_token,
     gateway_capability_defaults_payload,

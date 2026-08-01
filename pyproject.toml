@@ -81,6 +81,11 @@ packages = ["src/abstractgateway"]
 "flows/bundles/basic-agent.flow" = "abstractgateway/flows/bundles/basic-agent.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
 "flows/bundles/deep-research@0.1.7.flow" = "abstractgateway/flows/bundles/deep-research@0.1.7.flow"
+# Out-of-box flagship workflows: a fresh install serves a proven coder
+# (coding-agent:coder — abstractcode-tui's default agent when installed),
+# deep research, and co-scientist without any manual bundle install.
+"flows/bundles/coding-agent@0.2.6.flow" = "abstractgateway/flows/bundles/coding-agent@0.2.6.flow"
+"flows/bundles/co-scientist@0.2.0.flow" = "abstractgateway/flows/bundles/co-scientist@0.2.0.flow"
 # The console assistant drawer's transport bundle: boot ensure-publishes it
 # into the tenant catalog (shipped_catalog.py, card 013) — the wheel must
 # actually carry it or a fresh pip install has nothing to publish.
@@ -103,6 +108,8 @@ exclude = [
 "flows/bundles/basic-agent.flow" = "flows/bundles/basic-agent.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
 "flows/bundles/deep-research@0.1.7.flow" = "flows/bundles/deep-research@0.1.7.flow"
+"flows/bundles/coding-agent@0.2.6.flow" = "flows/bundles/coding-agent@0.2.6.flow"
+"flows/bundles/co-scientist@0.2.0.flow" = "flows/bundles/co-scientist@0.2.0.flow"
 "flows/bundles/docs-qa@0.1.0.flow" = "flows/bundles/docs-qa@0.1.0.flow"
 "flows/bundles/react-agent@0.1.0.flow" = "flows/bundles/react-agent@0.1.0.flow"
 "flows/bundles/codeact-agent@0.1.0.flow" = "flows/bundles/codeact-agent@0.1.0.flow"

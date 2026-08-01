@@ -55,16 +55,21 @@ from ..memory_store import (
     resolve_memory_store_config,
 )
 from ..embeddings_config import resolve_embedding_config
-from ..capability_defaults import (
+from ..core_config import (
+    apply_recommended_gateway_capability_defaults,
     clear_gateway_capability_default,
     gateway_capability_defaults_payload,
+    gateway_model_availability_payload,
+    runtime_core_config_file,
     save_gateway_capability_default,
+    text_route_provider_warnings,
 )
 from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from ..provider_endpoint_profiles import (
     ProviderEndpointProfileError,
     ProviderEndpointProfileStore,
     effective_endpoint_profiles,
+    endpoint_profile_store_authority,
     normalize_api_key,
     normalize_base_url,
     normalize_provider_family,
@@ -1165,6 +1170,75 @@ def _env_first(*keys: str, default: Optional[str] = None) -> Optional[str]:
     return default
 
 
+def _configured_capability_route_provider(route_key: str) -> Optional[str]:
+    """The provider configured on ONE capability-default route, or None.
+
+    ONE STORE, EVERY MODALITY. Gateway keeps no defaults of its own: this reads
+    the execution host's AbstractCore store (through the Gateway control-plane
+    payload) for any route key -- `output.voice`, `input.voice`, `output.image`,
+    `output.video`, `output.music`, ... A modality that resolves its provider
+    from env instead of from here is a duplicate default by another name.
+
+    Returns the route's configured provider; None when nothing is configured
+    (a labeled env #FALLBACK then applies at the call site). Best-effort: a
+    payload read must never break capability discovery."""
+    key_s = str(route_key or "").strip()
+    if not key_s:
+        return None
+    try:
+        from ..core_config import gateway_capability_defaults_payload
+
+        payload = gateway_capability_defaults_payload()
+        routes = payload.get("routes") if isinstance(payload, dict) else None
+        if not isinstance(routes, list):
+            return None
+        for row in routes:
+            if not isinstance(row, dict) or str(row.get("key") or "") != key_s:
+                continue
+            if not bool(row.get("configured")):
+                return None
+            provider = str(row.get("provider") or "").strip()
+            return provider or None
+    except Exception:
+        return None
+    return None
+
+
+def _configured_modality_route_provider(modality: str, *, kind: str = "output") -> Optional[str]:
+    """The provider that will actually serve a BARE `<kind>.<modality>` request.
+
+    THE MODALITY CELL IS A PARENT, NOT THE ONLY KEY. `output.image` answers every
+    image task that has no row of its own, and `output.image.text_to_image`
+    overrides it for the task a bare image request executes. Asking the modality
+    cell alone inverts that hierarchy, and it is the shape the console produces:
+    the Multimodal tab writes TASK rows, so a fully configured host routinely has
+    all three `output.image.*` rows set and `output.image` empty. Advertising then
+    reported the hardcoded `openai` env fallback for a host that executes mlx-gen
+    -- the exact advertised-vs-executed split-brain `_resolved_vision_backend`
+    below says it killed for voice.
+
+    Resolution order is the one AbstractCore executes with
+    (`capability_route_keys_for_output`): canonical task row, then modality cell.
+    Modalities with no task rows (voice/sound/music) resolve at the cell itself,
+    which is their PRIMARY key -- the same call answers them correctly.
+    """
+    try:
+        from abstractcore.config.capability_defaults import capability_route_keys_for_output
+
+        exact, broad = capability_route_keys_for_output(modality, None)
+    except Exception:
+        exact, broad = None, None
+    if not exact:
+        exact, broad = f"{str(kind).strip().lower()}.{str(modality).strip().lower()}", None
+    for key in (exact, broad):
+        if not key:
+            continue
+        provider = _configured_capability_route_provider(key)
+        if provider:
+            return provider
+    return None
+
+
 def _configured_voice_engine(kind: str) -> Optional[str]:
     """The gateway-CONFIGURED voice engine for tts|stt, or None.
 
@@ -1176,28 +1250,28 @@ def _configured_voice_engine(kind: str) -> Optional[str]:
     (output.voice / input.voice route provider) is the source of truth AND
     the config runtime/core actually EXECUTE from, so resolving it here
     aligns advertising with execution (no split-brain divergence — the
-    2026-07-17 "advertised M1 vs executed M2" class). Returns the route's
-    configured provider; None when nothing is configured (env #FALLBACK
-    then applies at the call site). Best-effort + cached briefly: a payload
-    read must never break voice discovery."""
-    modality_key = "output.voice" if kind == "tts" else "input.voice"
-    try:
-        from ..capability_defaults import gateway_capability_defaults_payload
+    2026-07-17 "advertised M1 vs executed M2" class)."""
+    return _configured_capability_route_provider("output.voice" if kind == "tts" else "input.voice")
 
-        payload = gateway_capability_defaults_payload()
-        routes = payload.get("routes") if isinstance(payload, dict) else None
-        if not isinstance(routes, list):
-            return None
-        for row in routes:
-            if not isinstance(row, dict) or str(row.get("key") or "") != modality_key:
-                continue
-            if not bool(row.get("configured")):
-                return None
-            provider = str(row.get("provider") or "").strip()
-            return provider or None
-    except Exception:
-        return None
-    return None
+
+# Shadowed-env warnings are ONE-SHOT per (env var, config value, env value).
+# Both `_resolved_voice_engine` and `_resolved_vision_backend` documented
+# themselves as "logged once" while logging on EVERY call, and both sit on
+# console-polled discovery routes (`/capabilities`, the voice catalog), so a
+# deployment with a stale export got the warning at poll frequency forever.
+# A warning that repeats is a warning that gets filtered out; mirrors
+# AbstractCore's own `_VISION_ROUTE_WARNED` in server/vision_endpoints.py.
+_ENV_SHADOWED_BY_CONFIG_WARNED: set = set()
+
+
+def _warn_env_shadowed_by_config(logger_name: str, message: str, *args: Any) -> None:
+    key = (logger_name, message, tuple(str(a) for a in args))
+    if key in _ENV_SHADOWED_BY_CONFIG_WARNED:
+        return
+    _ENV_SHADOWED_BY_CONFIG_WARNED.add(key)
+    import logging
+
+    logging.getLogger(logger_name).warning(message, *args)
 
 
 _VOICE_DEFAULTS_CACHE: Dict[str, tuple] = {}
@@ -1237,7 +1311,7 @@ def _configured_voice_output_defaults(kind: str) -> Dict[str, Any]:
 
     out: Dict[str, Any] = {}
     try:
-        from ..capability_defaults import gateway_capability_defaults_payload
+        from ..core_config import gateway_capability_defaults_payload
 
         payload = gateway_capability_defaults_payload()
         routes = payload.get("routes") if isinstance(payload, dict) else None
@@ -1279,9 +1353,8 @@ def _resolved_voice_engine(kind: str) -> Optional[str]:
     env_value = _env_first(*env_var_pair)
     if configured:
         if env_value and str(env_value).strip().lower() != str(configured).strip().lower():
-            import logging
-
-            logging.getLogger("abstractgateway.voice").warning(
+            _warn_env_shadowed_by_config(
+                "abstractgateway.voice",
                 "#FALLBACK voice %s engine: gateway config %r WINS over shadowed env %s=%r — "
                 "delete the export (behavior config lives on the gateway/console, not env)",
                 kind,
@@ -1383,12 +1456,45 @@ def _env_is_openai_base_url(value: Optional[str]) -> bool:
     return "api.openai.com" in str(value or "").strip().lower()
 
 
+def _resolved_vision_backend() -> str:
+    """Config-first image backend: the `output.image` capability default WINS;
+    the env chain is a labeled last-resort #FALLBACK below it.
+
+    THE SAME env-kill CONTRACT VOICE ALREADY HAS (dm#177). Image advertising
+    resolved `_env_first("ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND",
+    default="openai")` and never looked at the operator's console default, so a
+    stale `ABSTRACTVISION_*` export from another package's namespace -- or the
+    bare hardcoded "openai" -- outranked the setting the operator actually made,
+    and the gateway advertised a backend the runtime would not execute. That
+    hardcoded fallback WAS a second, gateway-side store of the image default;
+    the store is AbstractCore's. A set env that LOSES to config is logged once so
+    a stale export is visible.
+
+    Resolved through the ROUTE HIERARCHY, not off `output.image` alone: the
+    console writes task rows, so reading only the modality cell reported `openai`
+    on a host whose three `output.image.*` rows all named mlx-gen (operator
+    report 2026-08-01). See `_configured_modality_route_provider`."""
+    configured = _configured_modality_route_provider("image")
+    env_value = _env_first("ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND")
+    if configured:
+        if env_value and str(env_value).strip().lower() != str(configured).strip().lower():
+            _warn_env_shadowed_by_config(
+                "abstractgateway.vision",
+                "#FALLBACK image backend: gateway config %r WINS over shadowed env "
+                "ABSTRACTVISION_BACKEND=%r — delete the export (behavior config lives on the "
+                "gateway/console, not env)",
+                configured,
+                env_value,
+            )
+        return str(configured).strip().lower().replace("_", "-")
+    return str(env_value or "openai").strip().lower().replace("_", "-")
+
+
 def _gateway_direct_image_configured() -> bool:
     if _env_first("ABSTRACTCORE_SERVER_BASE_URL"):
         return True
 
-    backend = str(_env_first("ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND", default="openai") or "openai")
-    backend = backend.strip().lower().replace("_", "-")
+    backend = _resolved_vision_backend()
 
     if backend in {"mlx-gen", "mlxgen", "mflux", "m-flux"}:
         if _env_first("ABSTRACTVISION_MFLUX_MODEL", "ABSTRACTGATEWAY_VISION_MFLUX_MODEL", "ABSTRACTVISION_MODEL_ID"):
@@ -12830,6 +12936,21 @@ def _gateway_abstractcore_run_facade() -> tuple[Optional[Any], Optional[str]]:
     runtime, err = _gateway_runtime()
     if err:
         return None, err
+    # ONE STORE, TWO ENTRY POINTS -- and the media helpers do not go through
+    # `host.start_run`, so its freshness hook does not cover them. This is the
+    # single accessor EVERY media helper route uses (image generate/edit/
+    # upscale, video, TTS/STT, music) plus the capability descriptors that
+    # advertise them, so it is where an out-of-band `abstractcore config
+    # set-default` write becomes visible. One `stat` per call, no parse; the
+    # payload is re-derived only when a config file actually moved. Never
+    # load-bearing: a failure here must not break media.
+    try:
+        svc = get_gateway_service()
+        refresher = getattr(getattr(svc, "host", None), "refresh_capability_defaults_if_config_changed", None)
+        if callable(refresher):
+            refresher()
+    except Exception:  # noqa: BLE001 - freshness must never break a media call
+        pass
     try:
         from abstractruntime.integrations.abstractcore import get_abstractcore_run_facade
 
@@ -14222,7 +14343,16 @@ def _merge_voice_catalog_responses(*responses: Optional[Dict[str, Any]]) -> Dict
 
 def _static_vision_provider_models_response(*, task: Optional[str]) -> Dict[str, Any]:
     pairs: list[tuple[str, str]] = []
-    configured_backend = str(_env_first("ABSTRACTGATEWAY_VISION_BACKEND", "ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND") or "").strip().lower().replace("_", "-")
+    # Config-first (see `_resolved_vision_backend`): the console's image default
+    # outranks the env chain here too, so the models this route advertises are
+    # labeled with the backend that will actually execute. Resolved through the
+    # route hierarchy (task row, then the `output.image` parent) — the console
+    # writes task rows, so the parent alone is usually empty.
+    configured_backend = str(
+        _configured_modality_route_provider("image")
+        or _env_first("ABSTRACTGATEWAY_VISION_BACKEND", "ABSTRACTVISION_BACKEND", "ABSTRACTCORE_VISION_BACKEND")
+        or ""
+    ).strip().lower().replace("_", "-")
     for key, provider in (
         ("OPENAI_IMAGE_MODEL_ID", "openai"),
         ("OPENAI_IMAGE_MODEL", "openai"),
@@ -14294,6 +14424,15 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
     )
     available = bool(route_available and configured and installed and (plugin_available is not False))
 
+    # ADVERTISE WHAT WILL EXECUTE. `active_model` used to be env-only, so a
+    # deployment whose model comes from the operator's console default (the
+    # `output.voice`/`input.voice` route) advertised nothing -- or worse,
+    # advertised a stale ABSTRACTVOICE_* export while the runtime executed the
+    # configured route. That env chain was a second, gateway-side store of the
+    # voice model, the same duplicate `_resolved_vision_backend` closed for
+    # image. Config wins; env stays the labeled #FALLBACK beneath it.
+    active_model = str(_configured_voice_output_defaults(kind).get("model") or "").strip() or None
+
     hint = ""
     if not route_available:
         hint = str(run_err or "Gateway runtime is not wired to AbstractCore durable media helpers.")
@@ -14314,7 +14453,8 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
             "stream_endpoint": _api_gateway_path("/runs/{run_id}/voice/tts/stream"),
             "catalog_endpoint": _api_gateway_path("/voice/voices"),
             "models_endpoint": _api_gateway_path("/audio/speech/models"),
-            "active_model": _env_first(
+            "active_model": active_model
+            or _env_first(
                 "ABSTRACTGATEWAY_VOICE_TTS_MODEL",
                 "ABSTRACTVOICE_TTS_MODEL",
                 "ABSTRACTVOICE_OPENAI_TTS_MODEL",
@@ -14355,7 +14495,8 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
         "unsupported": not installed,
         "endpoint": _api_gateway_path("/runs/{run_id}/audio/transcribe"),
         "models_endpoint": _api_gateway_path("/audio/transcriptions/models"),
-        "active_model": _env_first(
+        "active_model": active_model
+        or _env_first(
             "ABSTRACTGATEWAY_VOICE_STT_MODEL",
             "ABSTRACTVOICE_STT_MODEL",
             "ABSTRACTVOICE_OPENAI_STT_MODEL",
@@ -22070,10 +22211,41 @@ class _GatewayModelResidencyUnloadRequest(BaseModel):
 
 
 class _GatewayCapabilityDefaultRequest(BaseModel):
+    """A partial update of one capability route.
+
+    Every field is optional and a field left unset keeps its stored value, so a
+    save that changes the provider does not discard a reasoning effort set
+    through `abstractcore config set-default`. Send `""` to clear a field.
+    """
+
     provider: Optional[str] = Field(default=None, description="Default provider/backend id for this capability route.")
     model: Optional[str] = Field(default=None, description="Default model id for this capability route.")
     base_url: Optional[str] = Field(default=None, description="Optional upstream provider base URL for this capability route.")
+    reasoning: Optional[str] = Field(
+        default=None,
+        max_length=40,
+        description="Default reasoning effort for reasoning-capable text routes, for example minimal|low|medium|high. "
+        "Unset sends no reasoning parameter.",
+    )
     options: Optional[Dict[str, Any]] = Field(default=None, description="Optional plugin/provider parameters, such as voice/profile/language.")
+
+
+class _GatewayApplyRecommendedDefaultsRequest(BaseModel):
+    """Make this host's capability routes match AbstractCore's recommendation.
+
+    Safe by default: a route the operator configured differently is KEPT and
+    reported, never silently replaced -- `force` is the explicit "overrule me".
+    `dry_run` returns the same per-route report and writes nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    only: Optional[List[str]] = Field(
+        default=None,
+        description="Limit to some recommendations: text, voice, image. Unset means all three.",
+    )
+    force: bool = Field(default=False, description="Also replace routes configured differently.")
+    dry_run: bool = Field(default=False, description="Report what would change and write nothing.")
 
 
 class _GatewayProviderEndpointProfileCreateRequest(BaseModel):
@@ -22699,6 +22871,97 @@ def _session_prompt_cache_modules_from_request(req: _GatewaySessionPromptCacheRe
     return modules
 
 
+class _GatewayModelDownloadRequest(BaseModel):
+    """Fetch ONE artifact, or every missing recommended default.
+
+    `artifact` is the exact weights reference, quantization included
+    (`qwen/qwen3.5-9b@4bit`) -- NOT the served model id the capability route
+    stores, which drops the quantization suffix when a single quant is
+    installed. The availability grid hands the right string back as
+    `download_artifact`; a caller that sends the route's `model` instead would
+    ask LM Studio for a name that resolves to whatever quant it feels like.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Optional[str] = Field(default=None, max_length=120, description="Provider id: lmstudio, ollama, mlx-gen, supertonic, huggingface.")
+    artifact: Optional[str] = Field(default=None, max_length=400, description="Exact artifact reference, quantization included.")
+    recommended: bool = Field(default=False, description="Fetch every MISSING model of the recommended fresh-install set.")
+    dry_run: bool = Field(default=False, description="Resolve the command and report it without downloading.")
+
+
+@router.get("/models/availability")
+async def model_availability_get() -> Dict[str, Any]:
+    """The capability grid, annotated with local weight availability.
+
+    Read-only and never downloads. Probes talk to localhost daemons (`lms ls`,
+    `GET /api/tags`) and walk the HF cache, so the whole payload is built OFF
+    the event loop -- a stalled LM Studio socket must slow this route down, not
+    the whole Gateway.
+    """
+    svc = get_gateway_service()
+    base_dir = Path(svc.config.data_dir)
+    return await asyncio.to_thread(gateway_model_availability_payload, base_dir=base_dir)
+
+
+@router.post("/models/download")
+async def model_download_start(req: _GatewayModelDownloadRequest) -> Dict[str, Any]:
+    """Start a download and return its job id. NEVER blocks on the bytes.
+
+    SINGLE-FLIGHT: a second request for an artifact already downloading joins
+    the running job instead of starting a second `ollama pull` over the same
+    files (the returned job's `joined` counter says so). Poll
+    `GET /models/download/{job}` for progress.
+    """
+    from ..model_downloads import start_download, start_recommended_downloads
+
+    if req.recommended and (req.provider or req.artifact):
+        raise HTTPException(
+            status_code=400,
+            detail="`recommended` fetches the recommended set; do not also name a provider/artifact.",
+        )
+    if req.recommended:
+        jobs = await asyncio.to_thread(start_recommended_downloads, dry_run=req.dry_run)
+        return {"ok": True, "recommended": True, "jobs": jobs}
+    if not (req.provider and req.artifact):
+        raise HTTPException(status_code=400, detail="`provider` and `artifact` are required (or pass `recommended`).")
+    try:
+        job = await asyncio.to_thread(start_download, req.provider, req.artifact, dry_run=req.dry_run)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "job": job}
+
+
+@router.get("/models/download/{job_id}")
+async def model_download_status(job_id: str) -> Dict[str, Any]:
+    """One job's progress.
+
+    404 after a Gateway restart is expected and is not a lost download: jobs
+    are in-process, the provider tool owns the bytes. Re-read
+    `/models/availability` to learn whether the weights landed.
+    """
+    from ..model_downloads import get_job
+
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No download job {job_id!r}. Jobs live in the Gateway process; after a restart, "
+                "read /models/availability to see whether the weights are present."
+            ),
+        )
+    return {"ok": True, "job": job}
+
+
+@router.get("/models/downloads")
+async def model_downloads_list() -> Dict[str, Any]:
+    """Every download job this Gateway process knows about, newest first."""
+    from ..model_downloads import list_jobs
+
+    return {"ok": True, "jobs": list_jobs()}
+
+
 @router.get("/models/loaded")
 async def model_residency_loaded(
     request: Request,
@@ -22734,15 +22997,23 @@ async def capability_defaults_get() -> Dict[str, Any]:
 
 @router.get("/config/provider-endpoint-profiles")
 async def provider_endpoint_profiles_get(request: Request) -> Dict[str, Any]:
-    """List reusable Gateway-owned provider endpoint profiles without exposing secrets."""
+    """List reusable provider endpoint profiles without exposing secrets.
+
+    Carries the same authority header the capability-defaults payload carries
+    (`authority`, `config_file`, `writable`), because since the one-store ruling
+    a shared profile IS an AbstractCore row: a settings UI must be able to say
+    which file it is about to edit instead of implying a Gateway-private one.
+    """
     principal = _principal_from_request(request)
     current_base, root_base = _gateway_profile_dirs()
-    return {
+    payload: Dict[str, Any] = {
         "ok": True,
         "profiles": _effective_endpoint_profile_public_rows(current_base_dir=current_base, root_base_dir=root_base),
         "can_create_gateway_scope": principal.is_admin(),
         "source": "abstractgateway.provider_endpoint_profiles",
     }
+    payload.update(endpoint_profile_store_authority(base_dir=current_base, root_base_dir=root_base))
+    return payload
 
 
 @router.post("/config/provider-endpoint-profiles")
@@ -23006,7 +23277,16 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
             model=model,
             llm_kwargs=llm_kwargs or None,
             artifact_store=artifact_store,
-            core_config_file=current_base / "config" / "abstractcore.json",
+            # ONE STORE ON THE EXECUTION PATH TOO (operator ruling
+            # 2026-08-01). `<data_dir>/config/abstractcore.json` is the
+            # RETIRED second store: after the migration that file does not
+            # exist, so the console's own smoke test was resolving providers
+            # and keys from a file neither `abstractcore` nor a real run
+            # opens — the sandbox could fail on a provider the gateway runs
+            # fine. `runtime_core_config_file` is the same seam the bundle
+            # host uses: this scope's overlay when it has one, else THE Core
+            # store.
+            core_config_file=runtime_core_config_file(current_base),
             capability_defaults=capability_defaults,
         )
         resolver = getattr(llm, "set_provider_endpoint_profile_resolver", None)
@@ -23115,9 +23395,65 @@ async def provider_endpoint_profiles_delete(request: Request, profile_id: str) -
     }
 
 
+def _apply_capability_defaults_to_live_runtime(svc: Any) -> Dict[str, Any]:
+    """Push freshly-written capability defaults onto the running host.
+
+    A default the operator just set in the console must be what the NEXT run
+    uses. The host resolves its default provider/model once at bundle load, so
+    without this the write only landed in the config file and the live runtime
+    kept serving the previous default until a restart (reproduced live
+    2026-07-31). Best-effort by design: the config write already succeeded, and
+    a refresh failure is reported in the response rather than failing the save.
+    """
+    payload = gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    refresh: Dict[str, Any]
+    try:
+        host = getattr(svc, "host", None)
+        refresher = getattr(host, "refresh_capability_defaults", None)
+        refresh = refresher() if callable(refresher) else {"ok": True, "changed": False, "reason": "host does not support live refresh"}
+    except Exception as exc:  # noqa: BLE001 - never fail a successful save
+        logger.warning("capability defaults saved but the live runtime refresh failed: %s", exc)
+        refresh = {"ok": False, "changed": False, "error": str(exc)}
+    payload = dict(payload)
+    payload["runtime_refresh"] = refresh
+    return payload
+
+
+def _with_capability_default_warnings(
+    payload: Dict[str, Any],
+    kind: str,
+    modality: str,
+    *,
+    task: Optional[str] = None,
+    provider: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Append save-time advisories to a capability-defaults payload.
+
+    Advisories, not errors: `ok` stays True and the value stays saved. They
+    exist so a typo in the text provider is reported at SAVE time, next to the
+    control that made it, instead of at the first run hours later.
+    """
+    try:
+        warnings = text_route_provider_warnings(kind, modality, task=task, provider=provider)
+    except Exception:  # noqa: BLE001 - an advisory must never fail a successful save
+        warnings = []
+    if not warnings:
+        return payload
+    out = dict(payload)
+    existing = out.get("warnings")
+    out["warnings"] = ([*existing] if isinstance(existing, list) else []) + list(warnings)
+    return out
+
+
 @router.put("/config/capability-defaults/{kind}/{modality}")
 async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabilityDefaultRequest) -> Dict[str, Any]:
-    """Persist one execution-host Core/Runtime capability route default."""
+    """Persist one execution-host Core/Runtime capability route default.
+
+    A field this request does not name keeps its stored value; `""` clears one
+    field. An unrecognized provider on the TEXT route is SAVED and reported in
+    `warnings` -- see `core_config.text_route_provider_warnings` for why a
+    config store warns here instead of refusing.
+    """
     svc = get_gateway_service()
     try:
         save_gateway_capability_default(
@@ -23126,6 +23462,7 @@ async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabil
             provider=req.provider,
             model=req.model,
             base_url=req.base_url,
+            reasoning=req.reasoning,
             options=req.options,
             base_dir=Path(svc.config.data_dir),
         )
@@ -23133,7 +23470,8 @@ async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabil
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    payload = _apply_capability_defaults_to_live_runtime(svc)
+    return _with_capability_default_warnings(payload, kind, modality, provider=req.provider)
 
 
 @router.put("/config/capability-defaults/{kind}/{modality}/{task}")
@@ -23148,6 +23486,7 @@ async def capability_defaults_task_put(kind: str, modality: str, task: str, req:
             provider=req.provider,
             model=req.model,
             base_url=req.base_url,
+            reasoning=req.reasoning,
             options=req.options,
             base_dir=Path(svc.config.data_dir),
         )
@@ -23155,7 +23494,44 @@ async def capability_defaults_task_put(kind: str, modality: str, task: str, req:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    payload = _apply_capability_defaults_to_live_runtime(svc)
+    return _with_capability_default_warnings(payload, kind, modality, task=task, provider=req.provider)
+
+
+@router.post("/config/capability-defaults/apply-recommended")
+async def capability_defaults_apply_recommended(
+    req: _GatewayApplyRecommendedDefaultsRequest,
+) -> Dict[str, Any]:
+    """Apply AbstractCore's recommended capability routes to this host's store.
+
+    The console's "recommended: N of 3" banner says what SHOULD be here; this is
+    the action that makes it so. It is a POST on a ONE-segment literal path, so
+    it can never be confused with the two-segment `{kind}/{modality}` PUT/DELETE
+    whatever the registration order.
+
+    Routes the operator configured differently are kept unless `force`, and the
+    response carries `applied_recommended` -- the per-route before/after report
+    -- alongside the refreshed defaults grid.
+    """
+    svc = get_gateway_service()
+    try:
+        payload = apply_recommended_gateway_capability_defaults(
+            only=req.only,
+            force=req.force,
+            dry_run=req.dry_run,
+            base_dir=Path(svc.config.data_dir),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if req.dry_run:
+        return payload
+    report = payload.get("applied_recommended")
+    live = _apply_capability_defaults_to_live_runtime(svc)
+    live = dict(live)
+    live["applied_recommended"] = report
+    return live
 
 
 @router.delete("/config/capability-defaults/{kind}/{modality}")
@@ -23168,7 +23544,7 @@ async def capability_defaults_delete(kind: str, modality: str) -> Dict[str, Any]
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    return _apply_capability_defaults_to_live_runtime(svc)
 
 
 @router.delete("/config/capability-defaults/{kind}/{modality}/{task}")
@@ -23181,7 +23557,7 @@ async def capability_defaults_task_delete(kind: str, modality: str, task: str) -
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    return _apply_capability_defaults_to_live_runtime(svc)
 
 
 @router.post("/models/load")

@@ -82,7 +82,13 @@ SUBSTRATE_FILENAME = "substrate.yaml"
 SUBSTRATE_REFUSAL = (
     "no mind substrate chosen for this entity: set it once "
     "(PUT /{name}/substrate, or the UI's substrate picker) — "
-    "the operator decides; the gateway never falls back on its own"
+    "the operator decides; the gateway never falls back on its own. "
+    "The choice persists per entity in substrate.yaml under the entity's home "
+    "directory; ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER and "
+    "ABSTRACTGATEWAY_ENTITY_CHAT_MODEL set a host-wide fallback for every "
+    "entity that has none. AbstractCore's output.text default is deliberately "
+    "not consulted here: it answers which model this host uses for text, not "
+    "which mind this being is."
 )
 
 
@@ -184,6 +190,12 @@ def resolve_substrate(
 ) -> Tuple[str, str, Optional[str]]:
     """Request override > home substrate.yaml > operator env > refuse.
     Never a code default (NO FALLBACK).
+
+    This chain deliberately does NOT read AbstractCore's `output.text` default.
+    That route answers "what model does this host use for text"; this one
+    answers "which mind is THIS being", and the two agreeing would be a
+    coincidence rather than a contract. An entity without a chosen mind refuses
+    so the choice stays the operator's.
 
     Returns (provider, model, thinking). The reasoning effort follows the
     same chain but NEVER refuses: a mind without a declared effort is

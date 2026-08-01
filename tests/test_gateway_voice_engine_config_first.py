@@ -76,10 +76,16 @@ def test_shadowed_env_is_logged(monkeypatch: pytest.MonkeyPatch, caplog: pytest.
     import abstractgateway.routes.gateway as gw
 
     monkeypatch.setattr(gw, "_configured_voice_engine", lambda kind: "supertonic")
+    # "Once" is enforced by a process-global set (adversary fix: the warning
+    # used to fire on EVERY call, and both resolvers sit on console-POLLED
+    # routes). Start this test from an empty one so it is order-independent.
+    monkeypatch.setattr(gw, "_ENV_SHADOWED_BY_CONFIG_WARNED", set())
     monkeypatch.setenv("ABSTRACTVOICE_TTS_ENGINE", "openai")
     with caplog.at_level(logging.WARNING, logger="abstractgateway.voice"):
-        assert _resolver()("tts") == "supertonic"
-    assert any("shadowed env" in r.message.lower() or "#fallback" in r.message.lower() for r in caplog.records)
+        for _ in range(3):
+            assert _resolver()("tts") == "supertonic"
+    hits = [r for r in caplog.records if "shadowed env" in r.getMessage().lower() or "#fallback" in r.getMessage().lower()]
+    assert len(hits) == 1, f"expected exactly one #FALLBACK warning across 3 calls, got {len(hits)}"
 
 
 def test_configured_engine_reads_the_right_route(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,7 +100,7 @@ def test_configured_engine_reads_the_right_route(monkeypatch: pytest.MonkeyPatch
         ]
     }
     monkeypatch.setattr(
-        "abstractgateway.capability_defaults.gateway_capability_defaults_payload",
+        "abstractgateway.core_config.gateway_capability_defaults_payload",
         lambda *a, **k: payload,
     )
     assert gw._configured_voice_engine("tts") == "supertonic"
@@ -107,5 +113,5 @@ def test_configured_engine_never_raises_on_bad_payload(monkeypatch: pytest.Monke
     def _boom(*a, **k):
         raise RuntimeError("core server unreachable")
 
-    monkeypatch.setattr("abstractgateway.capability_defaults.gateway_capability_defaults_payload", _boom)
+    monkeypatch.setattr("abstractgateway.core_config.gateway_capability_defaults_payload", _boom)
     assert gw._configured_voice_engine("tts") is None  # degrades, never breaks discovery

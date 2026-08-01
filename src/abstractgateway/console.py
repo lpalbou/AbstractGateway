@@ -311,6 +311,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       flex: 0 0 auto;
     }
     .section-note { color: var(--muted); font-size: 12px; max-width: 620px; }
+    /* AUTHORITY LINE (one-store ruling 2026-08-01). A panel that edits a
+       store it does not own must say so PERSISTENTLY — not in a toast the
+       operator dismissed, and not only after a failure. It sits under the
+       panel note, quieter than the note (it is provenance, not
+       instruction), and names the file so the answer to "what did I just
+       change" is on screen. Wider than .section-note because a config
+       path is long and must not wrap mid-path. */
+    .authority-note { color: var(--subtle); font-size: 11px; max-width: 900px; margin-top: 4px; }
+    .authority-note code { padding: 1px 5px; font-size: 11px; }
+    .authority-note.authority-readonly { color: var(--warn); }
     label {
       display: grid;
       gap: 6px;
@@ -798,6 +808,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .capability-table td { vertical-align: middle; }
 	    .capability-route { display: grid; gap: 3px; }
 	    .capability-route code { width: fit-content; }
+	    /* Task rows are indented under their modality row so the grid reads as
+	       the hierarchy it is: `output.image` is the parent (one value for every
+	       image task), `.text_to_image` and friends override it per task. */
+	    .capability-route-task { padding-left: 18px; }
+	    .capability-route-task::before { content: "└"; position: absolute; margin-left: -14px; opacity: 0.55; }
+	    tr.capability-task-row td:first-child { position: relative; }
 	    .default-config-form, .provider-config-form { display: grid; gap: 12px; margin-top: 16px; }
 	    .provider-modal .provider-config-form {
 	      grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1590,6 +1606,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div>
 	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Available Providers</span></h2>
 	                <p class="section-note">Configured providers available to this Gateway principal. Use their provider ids in Flow nodes and Core capability defaults.</p>
+	                <p id="endpoint-profiles-authority" class="authority-note hidden"></p>
 	              </div>
 	            </div>
 	            <table>
@@ -1606,11 +1623,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <div>
 	              <h2 class="section-title"><span class="section-icon" aria-hidden="true">◆</span><span>Multimodal Capabilities</span></h2>
 	              <p id="defaults-scope" class="section-note">Sign in to edit provider/model defaults for this Gateway runtime.</p>
+	              <p id="defaults-authority" class="authority-note hidden"></p>
 	            </div>
 	            <button id="refresh-catalog" class="secondary" title="Reload providers and capability defaults" aria-label="Refresh catalog"><span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Refresh</span></button>
 	          </div>
+	          <!-- Weights banner: a fresh install has three recommended routes
+	               configured and possibly zero of their models on disk. The
+	               grid alone would read as "all set" — this line says how many
+	               of them can actually run, and offers the one action that
+	               fixes it. Hidden when there is nothing to say. -->
+	          <div id="defaults-availability" class="message hidden"></div>
 		          <table class="capability-table">
-		            <thead><tr><th>Route</th><th>Capability</th><th>Provider</th><th>Model</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
+		            <thead><tr><th>Route</th><th>Capability</th><th>Provider</th><th>Model</th><th>Weights</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
 		            <tbody id="defaults-table"></tbody>
 		          </table>
 	          <div id="defaults-message" class="message"></div>
@@ -1888,6 +1912,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label>Provider<select id="modal-default-provider"></select></label>
 	          <label>Model<select id="modal-default-model"></select></label>
 	          <label id="modal-default-voice-label" class="hidden">Voice<select id="modal-default-voice"></select></label>
+	          <label id="modal-default-reasoning-label" class="hidden" title="Default reasoning effort for reasoning-capable models on this route. 'Not set' sends no reasoning parameter. A request that names its own effort wins.">Reasoning<select id="modal-default-reasoning">
+	            <option value="">not set</option>
+	            <option value="minimal">minimal</option>
+	            <option value="low">low</option>
+	            <option value="medium">medium</option>
+	            <option value="high">high</option>
+	          </select></label>
 	          <div id="default-modal-message" class="message"></div>
 	          <div id="default-modal-test" class="default-modal-test"></div>
 	        </div>
@@ -2112,7 +2143,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, availabilitySeeded: "", downloadJobs: new Map() };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -5110,6 +5141,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const { kind, modality } = defaultRowKindModality(row || {});
 	      return kind === "output" && (modality === "voice" || modality === "audio");
 	    }
+	    function isTextGenerationDefault(row) {
+	      // The reasoning effort is a property of text generation. `output.text`
+	      // is the canonical route and `input.text` is where it is stored, so the
+	      // control belongs on both cells.
+	      const key = defaultRowKey(row || {});
+	      return key === "output.text" || key === "input.text";
+	    }
+	    function defaultReasoningValue(row) {
+	      return textValue((row || {}).reasoning);
+	    }
+	    function loadDefaultReasoning(row) {
+	      const label = $("modal-default-reasoning-label");
+	      const select = $("modal-default-reasoning");
+	      if (!isTextGenerationDefault(row)) {
+	        label.classList.add("hidden");
+	        select.value = "";
+	        return;
+	      }
+	      label.classList.remove("hidden");
+	      const want = defaultReasoningValue(row);
+	      select.value = [...select.options].some((o) => o.value === want) ? want : "";
+	    }
 	    function defaultVoiceValue(row) {
 	      const options = row && typeof row.options === "object" && !Array.isArray(row.options) ? row.options : {};
 	      return textValue(options.voice) || textValue(options.profile);
@@ -5611,6 +5664,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     async function loadEndpointProfiles() {
       const payload = await api("/api/gateway/config/provider-endpoint-profiles");
       renderEndpointProfiles(payload.profiles || []);
+      // Shared connections live in AbstractCore's store since the one-store
+      // ruling — the panel says which file, exactly as the defaults grid does.
+      renderStoreAuthority("endpoint-profiles-authority", payload);
       initEndpointProfileFormOptions();
       return payload;
     }
@@ -5767,10 +5823,58 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      return Boolean(row?.provider && row?.model);
 	    }
 	    function visibleCapabilityDefaultRow(row) {
-	      const key = defaultRowKey(row || {});
-	      if (key === "output.image" || key === "output.video") return false;
+	      // `output.image` / `output.video` used to be HIDDEN here as "broad
+	      // compatibility defaults". They are neither broad-only nor legacy:
+	      // they are the PARENT row — the one value that answers every image
+	      // task without a row of its own, the simple path for an operator who
+	      // does not want per-task routing, what the fresh-install seed writes,
+	      // and what `--only image` names. Hiding them meant the one grid that
+	      // can WRITE the store could not set the row the gateway and Core both
+	      // READ (`_resolved_vision_backend`, `_vision_route_defaults`), so a
+	      // seeded value could be stranded with no way to see or clear it.
+	      // They are shown as parents now — grouped, labeled, and benign when
+	      // the task rows below already cover them.
 	      const { modality } = defaultRowKindModality(row || {});
 	      return String(modality || "").toLowerCase() !== "scene3d";
+	    }
+	    // THE ROUTE HIERARCHY, STRAIGHT OFF THE PAYLOAD. Core derives
+	    // `broad_key` / `task_keys` / `covered_by_tasks` once
+	    // (`manager._decorate_route_hierarchy`) so no surface re-derives the
+	    // parent/child map and the four grids cannot disagree.
+	    function defaultRowParentKey(row) {
+	      return String(row?.broad_key || "").trim();
+	    }
+	    function defaultRowTaskKeys(row) {
+	      return Array.isArray(row?.task_keys) ? row.task_keys : [];
+	    }
+	    function defaultRowIsTaskParent(row) {
+	      return defaultRowTaskKeys(row).length > 0;
+	    }
+	    // Parent rows sort ABOVE their own task rows, and the task rows follow
+	    // immediately — the payload order already does this, but an explicit
+	    // group keeps the two together if a row is ever filtered out between
+	    // them.
+	    function groupDefaultRowsByHierarchy(rows) {
+	      const list = (rows || []).slice();
+	      const taken = new Set();
+	      const out = [];
+	      for (const row of list) {
+	        const key = defaultRowKey(row);
+	        if (taken.has(key) || defaultRowParentKey(row)) continue;
+	        taken.add(key);
+	        out.push(row);
+	        for (const taskKey of defaultRowTaskKeys(row)) {
+	          const child = list.find((item) => defaultRowKey(item) === taskKey);
+	          if (child && !taken.has(taskKey)) {
+	            taken.add(taskKey);
+	            out.push(child);
+	          }
+	        }
+	      }
+	      for (const row of list) {
+	        if (!taken.has(defaultRowKey(row))) out.push(row);
+	      }
+	      return out;
 	    }
 	    async function textDefaultCoversInput(row, rows) {
 	      const key = defaultRowKey(row);
@@ -5794,6 +5898,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            provider: textRow.provider,
 	            model: textRow.model,
 	            base_url: textRow.base_url,
+	            reasoning: textRow.reasoning || row.reasoning || "",
 	            options: textRow.options || {},
 	            configured: true,
 	            source: textRow.source || row.source || "abstractcore.capability_defaults",
@@ -5828,16 +5933,256 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      return Boolean(row?.read_only || row?.derived_from || (row?.covered_by && !row?.overrideable));
 	    }
 	    function defaultRowStatus(row) {
-	      if (row?.covered_by === "input.text") return { label: "covered", cls: "covered" };
-	      if (row?.derived_from === "input.text") return { label: rowHasProviderModel(row) ? "linked" : "not configured", cls: rowHasProviderModel(row) ? "covered" : "off" };
-	      return defaultRowConfigured(row)
-	        ? { label: "configured", cls: "ok" }
-	        : { label: "not configured", cls: "off" };
+	      // ONE VOCABULARY ACROSS EVERY CONSOLE (2026-08-01). Both TUIs say
+	      // "derived <- input.text" / "covered by input.text"; this surface said
+	      // "linked" / "covered", so the same row read differently depending on
+	      // which console an operator opened. The TUI wording names the ROUTE
+	      // the value comes from, which is the question the pill is asked.
+	      if (row?.covered_by === "input.text") return { label: "covered by input.text", cls: "covered" };
+	      if (row?.derived_from === "input.text") return { label: rowHasProviderModel(row) ? "derived \u2190 input.text" : "not configured", cls: rowHasProviderModel(row) ? "covered" : "off" };
+	      if (defaultRowConfigured(row)) return { label: "configured", cls: "ok" };
+	      // AN UNSET PARENT WHOSE TASK ROWS ARE ALL SET IS NOT A PROBLEM. Core
+	      // proves it (`capability_route_tasks_cover_broad`): the task rows are
+	      // exactly the keys `_OUTPUT_ROUTE_TABLE` can produce for that
+	      // modality, so nothing can reach the parent. A red "not configured"
+	      // there sent an operator hunting for dead code.
+	      if (row?.covered_by_tasks) return { label: "not needed", cls: "covered" };
+	      // ...and the MIRROR: a task row with no value of its own whose
+	      // parent IS set is answered by that parent. A fresh install is
+	      // exactly this shape (the seed writes `output.image` alone), so
+	      // three red "not configured" rows used to sit under a working
+	      // parent and read as "image editing is not set up".
+	      if (row?.inherits_broad) return { label: `inherited ← ${defaultRowParentKey(row)}`, cls: "covered" };
+	      return { label: "not configured", cls: "off" };
 	    }
 	    function defaultRowActionLabel(row) {
-	      if (row?.covered_by === "input.text") return row?.overrideable ? "Override" : "Covered";
-	      if (row?.derived_from === "input.text") return "Linked";
-	      return defaultRowConfigured(row) ? "Edit" : "Configure";
+	      if (row?.covered_by === "input.text") return row?.overrideable ? "Override" : "Covered by input.text";
+	      if (row?.derived_from === "input.text") return "Derived \u2190 input.text";
+	      if (defaultRowConfigured(row)) return "Edit";
+	      // The parent row stays editable even when it is "not needed": setting
+	      // it is the SIMPLE path (one model for every task of the modality),
+	      // which is exactly what an operator who does not want per-task routing
+	      // wants and what the fresh-install seed writes.
+	      return defaultRowIsTaskParent(row) ? "Set for all" : "Configure";
+	    }
+	    // ------------------------------------------------------------------
+	    // WEIGHTS. A route can be perfectly configured and still unrunnable
+	    // because the model is not on this machine — the single most common
+	    // fresh-install confusion. `/models/availability` answers it with the
+	    // SAME vocabulary the AbstractCore CLI and both console-TUIs print:
+	    // installed / absent / unknown / not applicable. `unknown` is a real
+	    // answer (the provider's tool could not be consulted) and is never
+	    // painted as either of its neighbours.
+	    // ------------------------------------------------------------------
+	    const WEIGHT_LABELS = {
+	      installed: { label: "installed", cls: "ok" },
+	      absent: { label: "not downloaded", cls: "off" },
+	      unknown: { label: "unknown", cls: "covered" },
+	      not_applicable: { label: "remote", cls: "covered" },
+	    };
+	    function rowAvailability(row) {
+	      return state.availability.get(defaultRowKey(row)) || null;
+	    }
+	    // The thing that gets FETCHED. Not the row's model: a served id drops
+	    // the quantization suffix, so downloading `row.model` would ask the
+	    // provider for whichever quant it prefers rather than the 4-bit build
+	    // the recommendation means.
+	    function rowDownloadArtifact(row) {
+	      const info = rowAvailability(row);
+	      return (info && info.download_artifact) || row.model || "";
+	    }
+	    function downloadJobKey(provider, artifact) {
+	      return `${provider || ""}/${artifact || ""}`;
+	    }
+	    function rowDownloadJob(row) {
+	      return state.downloadJobs.get(downloadJobKey(row.provider, rowDownloadArtifact(row))) || null;
+	    }
+	    async function refreshAvailability({ rerender = true } = {}) {
+	      let payload = null;
+	      try {
+	        payload = await api("/api/gateway/models/availability");
+	      } catch (err) {
+	        // Availability is decoration over a grid that must keep working:
+	        // a failed probe leaves the Weights column blank, never blocks.
+	        state.availability = new Map();
+	        state.availabilityPlan = null;
+	        renderAvailabilityBanner();
+	        return;
+	      }
+	      const next = new Map();
+	      for (const row of payload.routes || []) {
+	        const key = defaultRowKey(row);
+	        if (!key) continue;
+	        // An UNCONFIGURED route has no weights to be missing. The payload
+	        // reports it as `unknown` with this evidence so a machine reader can
+	        // tell the two apart; a Weights column that printed "unknown" on
+	        // every empty row would bury the rows that carry a real answer.
+	        // Both console-TUIs drop these rows for the same reason.
+	        if ((row.availability || {}).evidence === "route not configured") continue;
+	        next.set(key, {
+	          availability: row.availability || {},
+	          download_artifact: row.download_artifact || row.model || "",
+	          recommended_artifact: row.recommended_artifact || "",
+	        });
+	      }
+	      state.availability = next;
+	      state.availabilityPlan = payload.recommended || null;
+	      state.availabilitySeeded = payload.seeded || "";
+	      renderAvailabilityBanner();
+	      if (rerender && Array.isArray(state.defaults) && state.defaults.length) renderDefaultRows(state.defaults);
+	    }
+	    function renderAvailabilityBanner() {
+	      const el = $("defaults-availability");
+	      if (!el) return;
+	      const plan = state.availabilityPlan;
+	      if (!plan || !plan.total) { el.classList.add("hidden"); el.textContent = ""; return; }
+	      const missing = plan.would_download || [];
+	      const seeded = state.availabilitySeeded ? "Recommended defaults seeded" : "Recommended defaults";
+	      const unknownNote = plan.unknown ? `, ${plan.unknown} unknown` : "";
+	      el.classList.remove("hidden");
+	      el.className = missing.length ? "message error" : "message ok";
+	      el.textContent = `${seeded} — ${plan.installed} of ${plan.total} models present${unknownNote}. `;
+	      if (missing.length) {
+	        el.append(document.createTextNode(`Missing: ${missing.map((m) => `${m.provider} ${m.artifact}`).join(", ")}. `));
+	        const btn = document.createElement("button");
+	        btn.className = "secondary";
+	        btn.innerHTML = `<span class="button-icon" aria-hidden="true">⭳</span><span>Download missing</span>`;
+	        btn.onclick = () => downloadRecommended(btn);
+	        el.append(btn);
+	      }
+	      // The banner says what SHOULD be here; this is the action that makes
+	      // the ROUTES say it too. Same vocabulary as the banner and as
+	      // `abstractcore config apply-recommended`: a route the operator
+	      // configured differently is KEPT and reported, never silently
+	      // replaced -- replacing it takes a second, explicit click.
+	      const apply = document.createElement("button");
+	      apply.id = "defaults-apply-recommended";
+	      apply.className = "secondary";
+	      apply.title = "Set the recommended provider/model on the text, voice and image routes. Routes you configured differently are kept.";
+	      apply.innerHTML = `<span class="button-icon" aria-hidden="true">\u25c6</span><span>Apply recommended</span>`;
+	      apply.onclick = () => applyRecommendedDefaults(apply, false);
+	      el.append(apply);
+	    }
+	    function describeAppliedRecommended(report) {
+	      const rows = (report && report.routes) || [];
+	      const pair = (row) => `${(row || {}).provider || "-"}/${(row || {}).model || "-"}`;
+	      const changed = rows.filter((r) => r.changed);
+	      const kept = rows.filter((r) => r.action === "kept");
+	      const parts = [];
+	      if (changed.length) parts.push(changed.map((r) => `${r.key}: ${pair(r.before)} \u2192 ${pair(r.after)}`).join("; "));
+	      if (kept.length) parts.push(`kept yours on ${kept.map((r) => `${r.key} (${pair(r.before)})`).join(", ")}`);
+	      if (!parts.length) parts.push("every recommended route already matched");
+	      return parts.join(" \u00b7 ");
+	    }
+	    async function applyRecommendedDefaults(btn, force) {
+	      // Two passes by design: the first NEVER overwrites a route the operator
+	      // configured, so the console can name exactly what it would replace
+	      // before asking. A blanket apply that silently rewrote a deliberate
+	      // choice is the defect this action exists to fix, not to repeat.
+	      if (btn) btn.disabled = true;
+	      const msg = $("defaults-message");
+	      try {
+	        const res = await api("/api/gateway/config/capability-defaults/apply-recommended", {
+	          method: "POST",
+	          body: JSON.stringify({ force: !!force }),
+	        });
+	        const report = res.applied_recommended || {};
+	        msg.textContent = describeAppliedRecommended(report);
+	        msg.className = "message ok";
+	        const kept = (report.routes || []).filter((r) => r.action === "kept");
+	        if (kept.length && !force) {
+	          const again = document.createElement("button");
+	          again.className = "secondary";
+	          again.innerHTML = `<span class="button-icon" aria-hidden="true">\u267b</span><span>Replace mine too</span>`;
+	          again.onclick = () => applyRecommendedDefaults(again, true);
+	          msg.append(document.createTextNode(" "));
+	          msg.append(again);
+	        }
+	        await renderDefaults(await api("/api/gateway/config/capability-defaults"));
+	        await refreshAvailability();
+	      } catch (err) {
+	        msg.textContent = String(err.message || err);
+	        msg.className = "message error";
+	      } finally {
+	        if (btn) btn.disabled = false;
+	      }
+	    }
+	    async function downloadRecommended(btn) {
+	      // The star journey: exactly the artifacts `RECOMMENDED_MODEL_DOWNLOADS`
+	      // names, resolved server-side. Already-installed rows finish instantly
+	      // rather than being filtered here, so a model that landed a second ago
+	      // cannot be re-fetched by a stale client-side plan.
+	      if (btn) btn.disabled = true;
+	      try {
+	        const res = await api("/api/gateway/models/download", { method: "POST", body: JSON.stringify({ recommended: true }) });
+	        for (const job of res.jobs || []) if (job && job.job) trackDownloadJob(job);
+	      } catch (err) {
+	        $("defaults-message").textContent = String(err.message || err);
+	        $("defaults-message").className = "message error";
+	      } finally {
+	        if (btn) btn.disabled = false;
+	      }
+	    }
+	    async function downloadRouteModel(row) {
+	      const provider = row.provider;
+	      const artifact = rowDownloadArtifact(row);
+	      if (!provider || !artifact) return;
+	      try {
+	        const res = await api("/api/gateway/models/download", { method: "POST", body: JSON.stringify({ provider, artifact }) });
+	        trackDownloadJob(res.job);
+	      } catch (err) {
+	        $("defaults-message").textContent = String(err.message || err);
+	        $("defaults-message").className = "message error";
+	      }
+	    }
+	    function trackDownloadJob(job) {
+	      if (!job || !job.job) return;
+	      state.downloadJobs.set(downloadJobKey(job.provider, job.artifact), job);
+	      if (Array.isArray(state.defaults) && state.defaults.length) renderDefaultRows(state.defaults);
+	      pollDownloadJob(job.job);
+	    }
+	    async function pollDownloadJob(jobId) {
+	      // Poll, do not stream: a download is minutes long and a dropped SSE
+	      // would strand the row mid-bar. 1.5s is well under a human's patience
+	      // and far above the cost of a dict read on the Gateway.
+	      for (;;) {
+	        await new Promise((resolve) => setTimeout(resolve, 1500));
+	        let res;
+	        try {
+	          res = await api(`/api/gateway/models/download/${encodeURIComponent(jobId)}`);
+	        } catch (err) {
+	          // 404 after a Gateway restart: the job list is in-process. The
+	          // weights may well have landed, so re-probe rather than report a
+	          // failure we cannot substantiate.
+	          await refreshAvailability();
+	          return;
+	        }
+	        const job = res.job || {};
+	        state.downloadJobs.set(downloadJobKey(job.provider, job.artifact), job);
+	        if (Array.isArray(state.defaults) && state.defaults.length) renderDefaultRows(state.defaults);
+	        if (job.status !== "running") {
+	          if (job.status === "failed") {
+	            const result = job.result || {};
+	            $("defaults-message").textContent = `${job.provider} ${job.artifact}: ${job.message || "download failed"}${result.instruction ? " — " + result.instruction : ""}`;
+	            $("defaults-message").className = "message error";
+	          }
+	          await refreshAvailability();
+	          return;
+	        }
+	      }
+	    }
+	    function weightsCellMarkup(row) {
+	      const info = rowAvailability(row);
+	      const job = rowDownloadJob(row);
+	      if (job && job.status === "running") {
+	        const pct = typeof job.percent === "number" ? ` ${Math.round(job.percent)}%` : "";
+	        return `<span class="state-pill" title="${esc(job.message || "")}">downloading${esc(pct)}</span>`;
+	      }
+	      if (!info || !info.availability || !info.availability.status) return "-";
+	      const availability = info.availability;
+	      const view = WEIGHT_LABELS[availability.status] || { label: availability.status, cls: "covered" };
+	      const title = [availability.detail, availability.location, availability.evidence].filter(Boolean).join(" — ");
+	      return `<span class="state-pill ${esc(view.cls)}" title="${esc(title)}">${esc(view.label)}</span>`;
 	    }
 	    function defaultSourceLabel(source) {
 	      const value = String(source || "").trim();
@@ -5863,6 +6208,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("users-section").classList.add("hidden");
 	        $("runtime-reservations-section").classList.add("hidden");
 	      $("defaults-scope").textContent = "Sign in to edit provider/model defaults for this Gateway runtime.";
+	      // A signed-out console must not keep naming a store it can no longer
+	      // read — the path is evidence from a session that just ended.
+	      renderStoreAuthority("defaults-authority", null);
+	      renderStoreAuthority("endpoint-profiles-authority", null);
 	        setLoginStatus("Gateway token missing", "warn", "token: missing");
 	        setStatus(false, "Signed out");
 		        return;
@@ -5990,16 +6339,75 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tbody.append(tr);
       }
     }
+	    // ONE STORE, SAID OUT LOUD (operator ruling 2026-08-01). Capability
+	    // defaults and shared provider connections are AbstractCore's data;
+	    // the Gateway is a second entry point to it, not the owner of a copy.
+	    // A panel that renders an edit form over someone else's file and never
+	    // names that file teaches the wrong model of the system — and on the
+	    // day `abstractcore config` disagrees with this grid, the operator has
+	    // no way to know which file to open. So the line is PERSISTENT
+	    // (provenance, not a notification that can be dismissed) and quotes
+	    // the path the API says it resolved, never a path this page guessed.
+	    function renderStoreAuthority(elementId, payload) {
+	      const el = $(elementId);
+	      if (!el) return;
+	      const file = String(payload?.config_file || "").trim();
+	      const authority = String(payload?.authority || "").trim();
+	      // NO CLAIM WITHOUT EVIDENCE: a payload that does not name an
+	      // AbstractCore store gets no line at all. Gateway-owned panels must
+	      // never inherit a sentence about a file they do not touch.
+	      if (!file || !authority.startsWith("abstractcore")) {
+	        // innerHTML explicitly, not just textContent: this line is the only
+	        // place the console makes a claim about someone else's file, so
+	        // retracting it must leave nothing behind.
+	        el.innerHTML = "";
+	        el.textContent = "";
+	        el.title = "";
+	        el.classList.remove("authority-readonly");
+	        el.classList.add("hidden");
+	        return;
+	      }
+	      const writable = payload?.writable !== false;
+	      // A per-runtime overlay is an AbstractCore file too, but it is NOT
+	      // the shared one — saying "edits apply to AbstractCore directly"
+	      // over an overlay would be a lie in the one place it matters.
+	      const overlay = authority === "abstractcore.runtime";
+	      const label = overlay ? "This runtime's AbstractCore overlay" : "AbstractCore store";
+	      const claim = overlay
+	        ? "private to this runtime — routes left unset here fall back to the shared AbstractCore store"
+	        : writable
+	          ? "shared with AbstractCore — edits here apply to AbstractCore directly"
+	          : "shared with AbstractCore — read-only from this Gateway; edit it where AbstractCore runs";
+	      el.innerHTML = `${esc(label)} · <code>${esc(file)}</code> — ${esc(claim)}`;
+	      el.title = `authority: ${authority}`;
+	      el.classList.toggle("authority-readonly", !writable);
+	      el.classList.remove("hidden");
+	    }
 	    async function renderDefaults(payload) {
 	      const rawRows = (Array.isArray(payload?.routes) ? payload.routes : []).filter(visibleCapabilityDefaultRow);
 	      const rows = [];
 	      for (const rawRow of rawRows) rows.push(await displayDefaultRow(rawRow, rawRows));
 	      state.defaults = rows;
+	      state.defaultsSource = payload?.source || "";
+	      renderStoreAuthority("defaults-authority", payload);
+	      renderDefaultRows(rows);
+	      renderSandboxCapabilityOptions();
+	      // Weights are probed AFTER the grid paints: a stalled LM Studio socket
+	      // must never hold up the provider/model columns, which is the part the
+	      // operator came for.
+	      refreshAvailability({ rerender: true });
+	    }
+	    // Split out of renderDefaults so a download's progress can repaint the
+	    // grid without re-deriving the coverage/alias decorations (which cost a
+	    // model-discovery round trip per row).
+	    function renderDefaultRows(rows) {
+	      const payload = { source: state.defaultsSource || "" };
 	      const tbody = $("defaults-table");
 	      tbody.textContent = "";
-	      for (const row of rows) {
+	      for (const row of groupDefaultRowsByHierarchy(rows)) {
 	        const key = defaultRowKey(row);
 	        if (!key || key === ".") continue;
+	        const parentKey = defaultRowParentKey(row);
 	        const configured = defaultRowConfigured(row);
 	        const status = defaultRowStatus(row);
 	        const source = row.covered_by === "input.text"
@@ -6009,11 +6417,24 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            : defaultSourceLabel(row.source || (configured ? payload.source || "" : ""));
 	        const tr = document.createElement("tr");
 	        if (defaultRowReadOnly(row)) tr.classList.add("capability-derived");
+	        if (parentKey) tr.classList.add("capability-task-row");
+	        // The ROUTE cell carries the hierarchy: a task row is indented under
+	        // its parent and shows only the task segment (the full key stays in
+	        // the tooltip and in every write path), and the parent says in words
+	        // what it is FOR — "any image task" — so the grid answers "why do we
+	        // have output.image AND output.image.text_to_image" on sight.
+	        const routeCell = parentKey
+	          ? `<span class="capability-route capability-route-task" title="${esc(key)}"><code>${esc(key.slice(parentKey.length))}</code></span>`
+	          : `<span class="capability-route"><code>${esc(key)}</code></span>`;
+	        const capabilityCell = defaultRowIsTaskParent(row)
+	          ? `${esc(defaultRowCapability(row))} <span class="muted">— any ${esc(defaultRowKindModality(row).modality)} task (fallback)</span>`
+	          : esc(defaultRowCapability(row));
 	        tr.innerHTML = `
-	          <td><span class="capability-route"><code>${esc(key)}</code></span></td>
-	          <td>${esc(defaultRowCapability(row))}</td>
+	          <td>${routeCell}</td>
+	          <td>${capabilityCell}</td>
 	          <td>${row.provider ? esc(state.providerLabels.get(row.provider) || row.provider) : "-"}</td>
 	          <td>${row.model ? esc(row.model) : "-"}</td>
+	          <td>${weightsCellMarkup(row)}</td>
 	          <td>${source ? `<span class="badge">${esc(source)}</span>` : "-"}</td>
 	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span></td>
 	        `;
@@ -6041,15 +6462,43 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          clear.onclick = () => clearDefault(row);
 	          actions.append(clear);
 	        }
+	        // DOWNLOAD is offered only where it can do something: the weights
+	        // are known to be missing AND this provider has a download verb
+	        // here. `unknown` gets no button — we would be guessing with the
+	        // operator's disk — and a relay provider has nothing to fetch.
+	        const info = rowAvailability(row);
+	        const availability = (info && info.availability) || {};
+	        const job = rowDownloadJob(row);
+	        if (job && job.status === "running") {
+	          const busy = document.createElement("span");
+	          busy.className = "muted";
+	          busy.textContent = job.message || "downloading…";
+	          busy.title = (job.events || []).slice(-6).join("\\n");
+	          actions.append(busy);
+	        } else if (availability.status === "absent" && availability.downloadable) {
+	          const artifact = rowDownloadArtifact(row);
+	          const download = document.createElement("button");
+	          download.className = "secondary";
+	          download.title = `Download ${artifact} with ${row.provider}`;
+	          download.innerHTML = `<span class="button-icon" aria-hidden="true">⭳</span><span>Download</span>`;
+	          download.onclick = () => downloadRouteModel(row);
+	          actions.append(download);
+	        } else if (availability.status === "absent" && availability.instruction) {
+	          // No download verb here (no `lms` on PATH, no huggingface_hub):
+	          // the actionable line is the affordance, not a dead button.
+	          const note = document.createElement("span");
+	          note.className = "muted";
+	          note.textContent = availability.instruction;
+	          actions.append(note);
+	        }
 	        tr.append(actions);
 	        tbody.append(tr);
 	      }
 	      if (!tbody.children.length) {
 	        const tr = document.createElement("tr");
-	        tr.innerHTML = `<td colspan="7" class="empty">No capability routes were returned by Gateway.</td>`;
+	        tr.innerHTML = `<td colspan="8" class="empty">No capability routes were returned by Gateway.</td>`;
 	        tbody.append(tr);
 	      }
-	      renderSandboxCapabilityOptions();
 	    }
 	    function sandboxRouteMode(key) {
 	      const value = String(key || "").trim().toLowerCase();
@@ -6783,6 +7232,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("default-modal-message").textContent = `Configured provider "${row.provider}" is not currently discovered in the ${catalog.scope} catalog.`;
 	        $("default-modal-message").className = "message error";
 	      }
+	      loadDefaultReasoning(row);
 	      try {
 	        await loadDefaultModels($("modal-default-provider").value, row.model || "", row);
 	        await loadDefaultVoices($("modal-default-provider").value, $("modal-default-model").value, defaultVoiceValue(row), row);
@@ -7111,22 +7561,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const model = $("modal-default-model").value;
 	        if (!provider || !model) throw new Error("Select a discovered provider and model before saving.");
 	        const { kind, modality, task } = defaultRowKindModality(row);
-	        const options = row.options && typeof row.options === "object" && !Array.isArray(row.options) ? { ...row.options } : {};
+	        const taskPath = task ? `/${encodeURIComponent(task)}` : "";
+	        // THE SAVE SENDS WHAT THIS MODAL OWNS, AND NOTHING ELSE. A field with
+	        // no control here is left unset so the store keeps its value; echoing
+	        // back what the grid last rendered would let a stale row overwrite a
+	        // setting made from `abstractcore config` between render and save.
+	        const body = { provider, model };
+	        // Reasoning is sent only for text routes, and always explicitly:
+	        // "" clears the stored effort, a value sets it.
+	        if (isTextGenerationDefault(row)) body.reasoning = $("modal-default-reasoning").value || "";
+	        // The voice picker edits the options dict, so voice routes send it.
 	        if (isVoiceOutputDefault(row)) {
+	          const options = row.options && typeof row.options === "object" && !Array.isArray(row.options) ? { ...row.options } : {};
 	          delete options.voice;
 	          delete options.profile;
 	          const voice = $("modal-default-voice").value;
 	          if (voice) options.voice = voice;
+	          body.options = options;
 	        }
-	        const taskPath = task ? `/${encodeURIComponent(task)}` : "";
 	        await api(`/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}${taskPath}`, {
 	          method: "PUT",
-	          body: JSON.stringify({
-	            provider,
-	            model,
-	            base_url: row.base_url || null,
-	            options
-	          })
+	          body: JSON.stringify(body)
 	        });
 	        $("defaults-message").textContent = "Saved.";
 	        $("defaults-message").className = "message ok";

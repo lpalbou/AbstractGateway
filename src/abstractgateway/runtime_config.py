@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -357,9 +358,18 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
             path.replace(path.with_suffix(".json.bak"))
         except Exception:
             pass  # backup is best-effort; never block a valid write
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    # Unique temp per writer (see provider_endpoint_profiles for the shape of
+    # the bug a shared `.json.tmp` allows). Same directory keeps it atomic.
+    tmp = path.with_suffix(f".json.{os.getpid()}-{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        tmp.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+        raise
 
     out = read_runtime_config(data_dir)
     out["applied"] = applied

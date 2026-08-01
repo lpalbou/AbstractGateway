@@ -1,12 +1,37 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
 
 import pytest
 
 pytestmark = pytest.mark.basic
+
+
+def _core_store_path() -> Path:
+    """THE AbstractCore store for this test process.
+
+    ONE STORE (operator ruling 2026-08-01): the Gateway has no base of its own,
+    so a Gateway-wide default is a row in AbstractCore's config file -- the very
+    file `abstractcore config defaults` reads. The suite points
+    `ABSTRACTCORE_CONFIG_FILE` at a throwaway path (tests/conftest.py).
+    """
+    return Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])
+
+
+def _empty_core_store(path: Path) -> Path:
+    """An EXISTING AbstractCore store that configures nothing.
+
+    Since the operator ruling of 2026-08-01 an ABSENT store means a truly fresh
+    install and AbstractCore seeds it with the recommended stack, so "no route
+    is configured here" has to be said by materializing the file -- the same
+    pattern AbstractCore's own `tests/config` use.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}", encoding="utf-8")
+    return path
 
 
 def test_gateway_config_status_reports_boundaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -134,9 +159,12 @@ def test_gateway_config_defaults_write_gateway_and_user_scoped_core_configs(
 
     main(["set-default", "output.text", "--provider", "openrouter", "--model", "gateway-model"])
     assert "Set execution-host capability default: output.text" in capsys.readouterr().out
-    gateway_config = tmp_path / "runtime" / "config" / "abstractcore.json"
-    assert gateway_config.exists()
-    assert not (gateway_config.parent / "capability_defaults.json").exists()
+    # A Gateway-wide default is a write to THE Core store, not to a second base
+    # under the data dir: that store is retired (operator ruling 2026-08-01).
+    core_store = _core_store_path()
+    assert core_store.exists()
+    assert not (tmp_path / "runtime" / "config" / "abstractcore.json").exists()
+    assert not (tmp_path / "runtime" / "config" / "capability_defaults.json").exists()
 
     _record, _token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"], runtime_id="alice")
     main(
@@ -170,7 +198,8 @@ def test_gateway_config_defaults_write_gateway_and_user_scoped_core_configs(
     bob_text = next(item for item in bob_payload["routes"] if item["key"] == "output.text")
     assert bob_text["provider"] == "openrouter"
     assert bob_text["model"] == "gateway-model"
-    assert bob_text["source"] == "abstractcore.gateway_runtime"
+    # Bob has no overlay, so his row IS the Core row, and says so.
+    assert bob_text["source"] == "abstractcore.capability_defaults"
 
 
 def test_gateway_config_defaults_ignore_legacy_capability_defaults_file(
@@ -187,6 +216,9 @@ def test_gateway_config_defaults_ignore_legacy_capability_defaults_file(
         json.dumps({"version": 1, "routes": {"output.text": {"provider": "legacy-provider", "model": "legacy-model"}}}),
         encoding="utf-8",
     )
+    # The live store exists and carries nothing, so an unconfigured route can
+    # only mean the legacy overlay was ignored.
+    _empty_core_store(_core_store_path())
 
     from abstractgateway.config_cli import main
 
@@ -198,7 +230,7 @@ def test_gateway_config_defaults_ignore_legacy_capability_defaults_file(
 
     main(["set-default", "output.text", "--provider", "openrouter", "--model", "gateway-model"])
     assert "Set execution-host capability default: output.text" in capsys.readouterr().out
-    data = json.loads((tmp_path / "runtime" / "config" / "abstractcore.json").read_text(encoding="utf-8"))
+    data = json.loads(_core_store_path().read_text(encoding="utf-8"))
     assert data["capability_defaults"]["routes"]["input.text"]["model"] == "gateway-model"
     assert "output.text" not in data["capability_defaults"]["routes"]
     assert json.loads(legacy.read_text(encoding="utf-8"))["routes"]["output.text"]["model"] == "legacy-model"
@@ -218,6 +250,7 @@ def test_gateway_config_defaults_ignore_removed_overlay_files(
         json.dumps({"version": 1, "routes": {"output.text": {"provider": "legacy", "model": "legacy-model"}}}),
         encoding="utf-8",
     )
+    _empty_core_store(_core_store_path())
 
     from abstractgateway.config_cli import main
 

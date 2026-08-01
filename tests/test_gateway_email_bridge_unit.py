@@ -161,3 +161,65 @@ def test_email_bridge_polls_imap_stores_artifacts_and_emits_events(tmp_path, mon
         assert n2 == 0
         assert len(runner.emits) == 2
 
+
+
+def test_the_bridge_reads_the_mail_connection_abstractcore_stores(monkeypatch, tmp_path) -> None:
+    """One mailbox, one store.
+
+    AbstractCore holds the host's IMAP connection in its `email` config section
+    and its own mail tools resolve from it. This bridge polls that same mailbox,
+    so an operator who configured IMAP once through AbstractCore must not have
+    to state the same host again as a Gateway environment variable.
+    """
+    from pathlib import Path
+
+    import abstractgateway.integrations.email_bridge as bridge
+
+    for name in (
+        "ABSTRACT_EMAIL_IMAP_HOST",
+        "ABSTRACT_EMAIL_IMAP_USERNAME",
+        "ABSTRACT_EMAIL_IMAP_PORT",
+        "ABSTRACT_EMAIL_IMAP_FOLDER",
+        "ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR",
+        "ABSTRACT_EMAIL_ACCOUNT",
+        "ABSTRACT_EMAIL_FROM",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setattr(
+        bridge,
+        "_core_email_settings",
+        lambda: {
+            "imap_host": "imap.example.test",
+            "imap_port": 1993,
+            "imap_username": "agent@example.test",
+            "imap_folder": "Agents",
+            "imap_password_env_var": "AGENT_MAIL_PASSWORD",
+        },
+    )
+
+    config = bridge.EmailBridgeConfig.from_env(base_dir=Path(tmp_path))
+    assert config.imap_host == "imap.example.test"
+    assert config.imap_port == 1993
+    assert config.imap_username == "agent@example.test"
+    assert config.imap_folder == "Agents"
+    assert config.imap_password_env_var == "AGENT_MAIL_PASSWORD"
+
+
+def test_a_gateway_environment_variable_still_overrides_the_stored_connection(monkeypatch, tmp_path) -> None:
+    """The env var stays the override, exactly as it is for AbstractCore's own tools."""
+    from pathlib import Path
+
+    import abstractgateway.integrations.email_bridge as bridge
+
+    monkeypatch.setenv("ABSTRACT_EMAIL_IMAP_HOST", "imap.override.test")
+    monkeypatch.setenv("ABSTRACT_EMAIL_IMAP_PORT", "2993")
+    monkeypatch.setattr(
+        bridge,
+        "_core_email_settings",
+        lambda: {"imap_host": "imap.example.test", "imap_port": 1993},
+    )
+
+    config = bridge.EmailBridgeConfig.from_env(base_dir=Path(tmp_path))
+    assert config.imap_host == "imap.override.test"
+    assert config.imap_port == 2993

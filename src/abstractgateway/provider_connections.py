@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-# Boundary rule: Gateway imports AbstractRuntime, never AbstractCore directly.
-# AbstractCore config reads go through the Runtime config facade.
-from abstractruntime.integrations.abstractcore import config_facade
+# AbstractCore-owned configuration is reached through the one Gateway seam
+# (`core_config`), which owns the AbstractRuntime facade import.
+from . import core_config
 
 
 @dataclass(frozen=True)
@@ -278,28 +278,23 @@ def _scoped_core_config_paths(*, current_base_dir: Path, root_base_dir: Path) ->
         seen.add(resolved)
         paths.append((resolved, label))
 
-    # Per-runtime config must win over the Gateway baseline in user-auth mode.
-    add(current / "config" / "abstractcore.json", "user")
+    # ONE BASE, ONE OVERLAY (operator ruling 2026-08-01). API keys are
+    # Core-owned, so the AbstractCore store is the baseline in EVERY mode; a
+    # per-user runtime may still override it. The Gateway's own
+    # `<data_dir>/config/abstractcore.json` was a second base and is retired --
+    # consulting it here is what let a key configured through `abstractcore`
+    # be invisible to a user-auth Gateway on the same machine.
     if root != current:
-        add(root / "config" / "abstractcore.json", "gateway")
-
+        add(current / "config" / "abstractcore.json", "user")
     try:
-        from .users import gateway_user_auth_enabled
-
-        user_auth = bool(gateway_user_auth_enabled())
+        add(Path(core_config.core_config_file(apply_env=False)), "abstractcore.config")
     except Exception:
-        user_auth = False
-
-    if not user_auth:
-        try:
-            add(Path(config_facade.capability_default_config_file(apply_env=False)), "abstractcore.config")
-        except Exception:
-            pass
+        pass
     return paths
 
 
 def _api_key_from_core_config(path: Path, attr: str) -> str:
-    return config_facade.read_config_api_key(path, attr)
+    return core_config.read_core_config_api_key(path, attr)
 
 
 def _env_first(keys: Iterable[str]) -> str:

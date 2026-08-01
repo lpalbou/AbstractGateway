@@ -40,6 +40,16 @@ def _isolate_gateway_runtime_env(monkeypatch: pytest.MonkeyPatch, tmp_path_facto
     # writes its own throwaway registry file instead.
     monkeypatch.setenv("ABSTRACTFRAMEWORK_DATA_REGISTRY", str(base / "data_registry.json"))
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    # Isolate THE AbstractCore store. Since the operator's one-store ruling
+    # (2026-08-01) a Gateway write to a capability default or a provider
+    # profile lands in AbstractCore's own config file, so an unisolated suite
+    # would edit the developer's real ~/.abstractcore/config/abstractcore.json
+    # -- the very store these tests assert about. The path deliberately does
+    # NOT exist: "no file at the Core path" is what a fresh install looks like,
+    # which is what the seed contract is stated against.
+    monkeypatch.setenv("ABSTRACTCORE_CONFIG_FILE", str(base / "abstractcore" / "abstractcore.json"))
+    monkeypatch.delenv("ABSTRACTCORE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
 
 
 @pytest.fixture(autouse=True)

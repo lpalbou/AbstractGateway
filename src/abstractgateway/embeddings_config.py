@@ -28,9 +28,9 @@ def resolve_embedding_config(*, base_dir: Path) -> EmbeddingRouteConfig:
     AbstractCore server (split mode).
     """
 
-    from . import capability_defaults
+    from . import core_config
 
-    payload = capability_defaults.gateway_capability_defaults_payload(base_dir=base_dir)
+    payload = core_config.gateway_capability_defaults_payload(base_dir=base_dir)
     route = _embedding_text_route(payload)
     if route is None:
         errors = payload.get("errors") if isinstance(payload, dict) else None
@@ -47,7 +47,7 @@ def resolve_embedding_config(*, base_dir: Path) -> EmbeddingRouteConfig:
     if not provider or not model:
         raise RuntimeError("The execution-host embedding.text route must define both provider and model.")
 
-    remote_core_url = capability_defaults.core_server_base_url() or None
+    remote_core_url = core_config.core_server_base_url() or None
     return EmbeddingRouteConfig(
         provider=provider,
         model=model,
@@ -55,7 +55,7 @@ def resolve_embedding_config(*, base_dir: Path) -> EmbeddingRouteConfig:
         source=str(route.get("source") or "abstractcore.capability_defaults"),
         authority=str(payload.get("authority") or "abstractcore.local") if isinstance(payload, dict) else "abstractcore.local",
         remote_core_url=remote_core_url,
-        remote_core_token=capability_defaults.core_server_token() if remote_core_url else None,
+        remote_core_token=core_config.core_server_token() if remote_core_url else None,
     )
 
 
@@ -102,7 +102,7 @@ class RemoteCoreEmbeddingsClient:
     def embed_texts(self, texts: Sequence[str]) -> Any:
         from abstractruntime.integrations.abstractcore.embeddings_client import EmbeddingsResult
 
-        from .capability_defaults import core_server_url
+        from .core_config import core_server_url
 
         payload: Dict[str, Any] = {
             "model": f"{self._route.provider}/{self._route.model}",

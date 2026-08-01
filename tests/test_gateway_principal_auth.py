@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -41,6 +42,30 @@ def _client(tmp_path: Path, monkeypatch, *, user_auth: bool = True) -> TestClien
     app.add_middleware(GatewaySecurityMiddleware, policy=load_gateway_auth_policy_from_env())
     app.include_router(gateway_router, prefix="/api")
     return TestClient(app)
+
+
+def _core_store_path() -> Path:
+    """THE AbstractCore store this test process writes to.
+
+    ONE STORE (operator ruling 2026-08-01): the Gateway keeps no base of its
+    own, so an admin's gateway-wide default is a row in AbstractCore's config
+    file. `tests/conftest.py` points `ABSTRACTCORE_CONFIG_FILE` at a throwaway
+    path per test.
+    """
+    return Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])
+
+
+def _empty_core_store(path: Path) -> Path:
+    """An EXISTING AbstractCore store that configures nothing.
+
+    Since the operator ruling of 2026-08-01 an ABSENT store is a truly fresh
+    install and AbstractCore seeds the recommended stack into it, so a test
+    that means "this scope configures nothing" materializes the file -- the
+    same pattern AbstractCore's own `tests/config` use.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}", encoding="utf-8")
+    return path
 
 
 def _set_cookie_headers(response) -> list[str]:
@@ -923,8 +948,10 @@ def test_gateway_defaults_are_inherited_by_users_until_user_override(tmp_path: P
         json={"provider": "openrouter", "model": "gateway-model"},
     )
     assert saved_gateway.status_code == 200, saved_gateway.text
-    assert saved_gateway.json()["authority"] == "abstractcore.gateway_runtime"
-    assert (tmp_path / "runtime" / "config" / "abstractcore.json").exists()
+    # The admin's write went to THE Core store, and nowhere else.
+    assert saved_gateway.json()["authority"] == "abstractcore.local"
+    assert _core_store_path().exists()
+    assert not (tmp_path / "runtime" / "config" / "abstractcore.json").exists()
 
     alice = client.post(
         "/api/gateway/admin/users",
@@ -949,7 +976,7 @@ def test_gateway_defaults_are_inherited_by_users_until_user_override(tmp_path: P
     bob_text = [r for r in bob_inherited.json()["routes"] if r.get("key") == "output.text"][0]
     assert alice_text["provider"] == "openrouter"
     assert alice_text["model"] == "gateway-model"
-    assert alice_text["source"] == "abstractcore.gateway_runtime"
+    assert alice_text["source"] == "abstractcore.capability_defaults"
     assert bob_text["provider"] == "openrouter"
     assert bob_text["model"] == "gateway-model"
 
@@ -968,12 +995,76 @@ def test_gateway_defaults_are_inherited_by_users_until_user_override(tmp_path: P
     bob_text = [r for r in bob_still_inherits.json()["routes"] if r.get("key") == "output.text"][0]
     assert bob_text["provider"] == "openrouter"
     assert bob_text["model"] == "gateway-model"
-    assert bob_text["source"] == "abstractcore.gateway_runtime"
+    assert bob_text["source"] == "abstractcore.capability_defaults"
+
+
+def test_a_fresh_gateway_serves_the_recommended_seed_and_users_inherit_it(tmp_path: Path, monkeypatch) -> None:
+    """THE FRESH-INSTALL JOURNEY at the Gateway's own grid, and its inheritance.
+
+    Operator ruling 2026-08-01: a store that has NEVER existed is seeded with
+    the framework's recommended stack so a new install works out of the box.
+    A brand-new Gateway data dir is exactly that, so the capability-defaults
+    grid serves the three recommended routes as ordinary configured rows, with
+    the `seeded` marker carrying their provenance so a console can label them
+    "recommended" instead of implying an operator chose them.
+
+    The second half is the invariant the seed must NOT break: the seed belongs
+    to the INSTALL, not to every scope. A newly created user has no scoped
+    store, and that absence has to keep meaning "inherits", never "fresh
+    install of its own" -- otherwise every new user would silently shadow the
+    operator's gateway-wide default with the recommendation.
+    """
+    client = _client(tmp_path, monkeypatch)
+    bootstrap_headers = {"Authorization": "Bearer admin-token"}
+    assert not _core_store_path().exists()
+
+    payload = client.get("/api/gateway/config/capability-defaults", headers=bootstrap_headers)
+    assert payload.status_code == 200, payload.text
+    body = payload.json()
+    rows = {r.get("key"): r for r in body["routes"]}
+    for key, provider, model in (
+        ("output.text", "lmstudio", "qwen/qwen3.5-9b"),
+        ("output.voice", "supertonic", "supertonic-3"),
+        ("output.image", "mlx-gen", "AbstractFramework/flux.2-klein-4b-8bit"),
+    ):
+        assert rows[key]["configured"] is True, f"{key} must be an ordinary configured row"
+        assert (rows[key]["provider"], rows[key]["model"]) == (provider, model)
+    assert body.get("seeded") == "recommended-v1", "the payload must carry the seed provenance"
+
+    # The operator overrides the recommendation gateway-wide...
+    saved = client.put(
+        "/api/gateway/config/capability-defaults/output/text",
+        headers=bootstrap_headers,
+        json={"provider": "openrouter", "model": "gateway-model"},
+    )
+    assert saved.status_code == 200, saved.text
+
+    # ...and a user created afterwards inherits THAT, not the recommendation.
+    alice = client.post(
+        "/api/gateway/admin/users",
+        headers=bootstrap_headers,
+        json={"user_id": "alice", "tenant_id": "default", "roles": ["user"], "runtime_id": "alice"},
+    )
+    assert alice.status_code == 200, alice.text
+    alice_headers = {"Authorization": f"Bearer {alice.json()['token']}"}
+    assert not (
+        tmp_path / "runtime" / "users" / "default" / "alice" / "runtime" / "config" / "abstractcore.json"
+    ).exists()
+
+    inherited = client.get("/api/gateway/config/capability-defaults", headers=alice_headers)
+    assert inherited.status_code == 200
+    alice_text = [r for r in inherited.json()["routes"] if r.get("key") == "output.text"][0]
+    assert (alice_text["provider"], alice_text["model"]) == ("openrouter", "gateway-model")
+    assert alice_text["source"] == "abstractcore.capability_defaults"
 
 
 def test_user_runtime_legacy_capability_defaults_file_is_ignored(tmp_path: Path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
     admin_headers = {"Authorization": "Bearer admin-token"}
+    # Nothing is configured anywhere: the Core store exists and is empty, so
+    # an unconfigured route can only mean the legacy overlay was ignored rather
+    # than that a fresh install picked up the recommended seed.
+    _empty_core_store(_core_store_path())
 
     alice = client.post(
         "/api/gateway/admin/users",
@@ -1035,4 +1126,4 @@ def test_removed_capability_default_overlay_is_ignored(tmp_path: Path, monkeypat
     alice_text = [r for r in alice_defaults.json()["routes"] if r.get("key") == "output.text"][0]
     assert alice_text["provider"] == "openrouter"
     assert alice_text["model"] == "gateway-model"
-    assert alice_text["source"] == "abstractcore.gateway_runtime"
+    assert alice_text["source"] == "abstractcore.capability_defaults"

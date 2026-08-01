@@ -343,6 +343,9 @@ async function fetch(path, options = {{}}) {{
   if (path === "/api/gateway/embeddings/models?providers_only=true") return response(200, {{ embedding_providers: ["lmstudio"] }});
   if (path === "/api/gateway/embeddings/models?provider=lmstudio") return response(200, {{ embedding_models_by_provider: {{ lmstudio: ["bge-small-en-v1.5"] }} }});
   if (path === "/api/gateway/config/capability-defaults") return response(200, {{
+    authority: "abstractcore.local",
+    writable: true,
+    config_file: "/home/u/.abstractcore/config/abstractcore.json",
     routes: [{{ key: "input.text", kind: "input", modality: "text", label: "Text Input", provider: "openai", model: "gpt-4.1", configured: true }}]
   }});
   if (path === "/api/gateway/config/capability-defaults/input/text" && options.method === "PUT") return response(200, {{ routes: [] }});
@@ -352,6 +355,9 @@ async function fetch(path, options = {{}}) {{
     return response(200, {{ ok: true, artifact: {{ "$artifact": "upload-1", artifact_id: "upload-1", content_type: "image/png", filename: "content.png", modality: "image" }} }});
   }}
   if (path === "/api/gateway/config/provider-endpoint-profiles") return response(200, {{
+    authority: "abstractcore.local",
+    writable: true,
+    config_file: "/home/u/.abstractcore/config/abstractcore.json",
     profiles: [
       {{ id: "openai", display_name: "OpenAI Production", virtual_provider: "endpoint:openai", provider_family: "openai", enabled: true, scope: "gateway" }},
       {{ id: "anthropic", provider_id: "anthropic", display_name: "Anthropic", provider_family: "anthropic", enabled: true, scope: "environment", managed: false, api_key_set: true }}
@@ -469,6 +475,52 @@ if (!String(body.className || "").includes("signed-in")) {{
 }}
 if (String(el("login-message").textContent || "").trim()) {{
   throw new Error("unexpected login error: " + el("login-message").textContent);
+}}
+
+// ONE STORE, SAID OUT LOUD. Both core-shared panels must name the file the
+// API says they edit, and say that the edit lands in AbstractCore -- an
+// operator changing a default here is changing `abstractcore`'s own store.
+for (const id of ["defaults-authority", "endpoint-profiles-authority"]) {{
+  const note = el(id);
+  if (String(note.className || "").split(/\\s+/).includes("hidden")) {{
+    throw new Error(id + " stayed hidden even though the payload named a store");
+  }}
+  if (!String(note.innerHTML || "").includes("/home/u/.abstractcore/config/abstractcore.json")) {{
+    throw new Error(id + " did not name the store path: " + note.innerHTML);
+  }}
+  if (!String(note.innerHTML || "").includes("edits here apply to AbstractCore directly")) {{
+    throw new Error(id + " did not say the edit lands in AbstractCore: " + note.innerHTML);
+  }}
+}}
+
+// HONESTY, BOTH WAYS. A read-only store must not promise a write, and a
+// store the Gateway owns must not borrow AbstractCore's sentence at all.
+context.renderStoreAuthority("defaults-authority", {{
+  authority: "abstractcore.local", writable: false, config_file: "/ro/abstractcore.json"
+}});
+if (!String(el("defaults-authority").innerHTML || "").includes("read-only from this Gateway")) {{
+  throw new Error("a non-writable store did not say read-only: " + el("defaults-authority").innerHTML);
+}}
+if (!String(el("defaults-authority").className || "").split(/\\s+/).includes("authority-readonly")) {{
+  throw new Error("a non-writable store was not styled read-only");
+}}
+context.renderStoreAuthority("defaults-authority", {{
+  authority: "abstractgateway.local", writable: true, config_file: "/gw/provider_endpoint_profiles.json"
+}});
+if (String(el("defaults-authority").innerHTML || "").trim()) {{
+  throw new Error("a Gateway-owned store still claimed AbstractCore authority");
+}}
+if (!String(el("defaults-authority").className || "").split(/\\s+/).includes("hidden")) {{
+  throw new Error("a Gateway-owned store left the authority line visible");
+}}
+context.renderStoreAuthority("defaults-authority", {{
+  authority: "abstractcore.runtime", writable: true, config_file: "/rt/abstractcore.json"
+}});
+if (String(el("defaults-authority").innerHTML || "").includes("edits here apply to AbstractCore directly")) {{
+  throw new Error("a per-runtime overlay was passed off as the shared AbstractCore store");
+}}
+if (!String(el("defaults-authority").innerHTML || "").includes("/rt/abstractcore.json")) {{
+  throw new Error("a per-runtime overlay did not name its own file");
 }}
 
 el("endpoint-profile-id").value = "preview";
@@ -657,8 +709,18 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 const saveCall = calls.find((call) => call.path === "/api/gateway/config/capability-defaults/input/text" && call.method === "PUT");
 if (!saveCall) throw new Error("save default did not call the capability default route");
 const saveBody = JSON.parse(saveCall.body);
-if (saveBody.base_url !== "https://models.example.test/v1" || saveBody.options.temperature !== 0.3) {{
-  throw new Error("save default did not preserve hidden base_url/options");
+// The save sends what this modal controls and nothing else. `base_url` has no
+// control here and `options` has none on a text route, so both are left unset
+// and the store keeps them; echoing back the row the grid last rendered would
+// let a stale value overwrite a newer one written from `abstractcore config`.
+if ("base_url" in saveBody) {{
+  throw new Error("save default must not send a base_url it has no control for");
+}}
+if ("options" in saveBody) {{
+  throw new Error("save default must not send options on a route whose modal cannot edit them");
+}}
+if (!saveBody.provider || !saveBody.model || typeof saveBody.reasoning !== "string") {{
+  throw new Error("save default must send provider, model and the text route's reasoning");
 }}
 
 await context.openDefaultModal({{
@@ -711,13 +773,13 @@ await context.renderDefaults({{
 	    {{ key: "input.sound", kind: "input", modality: "sound", label: "Sound Input", configured: false }},
 	    {{ key: "input.music", kind: "input", modality: "music", label: "Music Input", configured: false }},
     {{ key: "output.text", kind: "output", modality: "text", label: "Text Output", configured: false, derived_from: "input.text", read_only: true }},
-    {{ key: "output.image", kind: "output", modality: "image", label: "Image Output", provider: "mflux", model: "flux-dev", configured: true }},
-    {{ key: "output.image.text_to_image", kind: "output", modality: "image", task: "text_to_image", label: "Image Generation", provider: "mflux", model: "flux-dev", configured: true }},
-    {{ key: "output.image.image_to_image", kind: "output", modality: "image", task: "image_to_image", label: "Image Edit", provider: "mlx-gen", model: "AbstractFramework/qwen-image-edit-2511-4bit", configured: true }},
-    {{ key: "output.image.image_upscale", kind: "output", modality: "image", task: "image_upscale", label: "Image Restore / Upscale", provider: "mlx-gen", model: "AbstractFramework/seedvr2-3b-8bit", configured: true }},
-    {{ key: "output.video", kind: "output", modality: "video", label: "Video Output", provider: "mlx-gen", model: "Wan-AI/Wan2.2-TI2V-5B-Diffusers", configured: true }},
-    {{ key: "output.video.text_to_video", kind: "output", modality: "video", task: "text_to_video", label: "Video Generation", provider: "mlx-gen", model: "Wan-AI/Wan2.2-TI2V-5B-Diffusers", configured: true }},
-    {{ key: "output.video.image_to_video", kind: "output", modality: "video", task: "image_to_video", label: "Image To Video", provider: "mlx-gen", model: "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit", configured: true }},
+    {{ key: "output.image", kind: "output", modality: "image", label: "Image Output", provider: "mflux", model: "flux-dev", configured: true, task_keys: ["output.image.text_to_image", "output.image.image_to_image", "output.image.image_upscale"] }},
+    {{ key: "output.image.text_to_image", kind: "output", modality: "image", task: "text_to_image", label: "Image Generation", provider: "mflux", model: "flux-dev", configured: true, broad_key: "output.image" }},
+    {{ key: "output.image.image_to_image", kind: "output", modality: "image", task: "image_to_image", label: "Image Edit", provider: "mlx-gen", model: "AbstractFramework/qwen-image-edit-2511-4bit", configured: true, broad_key: "output.image" }},
+    {{ key: "output.image.image_upscale", kind: "output", modality: "image", task: "image_upscale", label: "Image Restore / Upscale", configured: false, source: "not_configured", broad_key: "output.image", inherits_broad: true }},
+    {{ key: "output.video", kind: "output", modality: "video", label: "Video Output", configured: false, source: "not_configured", covered_by_tasks: true, task_keys: ["output.video.text_to_video", "output.video.image_to_video"] }},
+    {{ key: "output.video.text_to_video", kind: "output", modality: "video", task: "text_to_video", label: "Video Generation", provider: "mlx-gen", model: "Wan-AI/Wan2.2-TI2V-5B-Diffusers", configured: true, broad_key: "output.video" }},
+    {{ key: "output.video.image_to_video", kind: "output", modality: "video", task: "image_to_video", label: "Image To Video", provider: "mlx-gen", model: "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit", configured: true, broad_key: "output.video" }},
     {{ key: "output.voice", kind: "output", modality: "voice", label: "Voice Output", provider: "openai", model: "tts-1", configured: true, options: {{ voice: "coral" }} }},
     {{ key: "output.music", kind: "output", modality: "music", label: "Music Output", provider: "acemusic", model: "ace-step", configured: true }},
     {{ key: "output.sound", kind: "output", modality: "sound", label: "Sound Output", provider: "stable-audio", model: "stabilityai/stable-audio-open-small", configured: true }},
@@ -728,14 +790,58 @@ await context.renderDefaults({{
 if (el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("scene3d"))) {{
   throw new Error("scene3d defaults should be hidden in the Gateway Console for now");
 }}
-if (el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("output.image</code>"))) {{
-  throw new Error("broad output.image should be hidden when task-specific image defaults are present");
+// THE ROUTE HIERARCHY, NOT HIDDEN ROWS (operator question 2026-08-01:
+// "why do we have output.image and output.video? are those remnants?").
+// This grid used to HIDE both parents, which meant the one surface that
+// can WRITE the store could not set the row Gateway and Core both READ
+// (`_resolved_vision_backend`, `_vision_route_defaults`) — and it is the
+// row a fresh install seeds. They are shown as parents now: grouped,
+// labeled for what they serve, and benign when the task rows cover them.
+const defaultRowsHtml = el("defaults-table").children.map((child) => String(child.innerHTML || ""));
+const imageParentIdx = defaultRowsHtml.findIndex((html) => html.includes("<code>output.image</code>"));
+if (imageParentIdx < 0) {{
+  throw new Error("the output.image parent row must be shown — it is what a fresh install seeds and what advertising reads");
 }}
-if (el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("output.video</code>"))) {{
-  throw new Error("broad output.video should be hidden when task-specific video defaults are present");
+if (!defaultRowsHtml[imageParentIdx].includes("any image task (fallback)")) {{
+  throw new Error("the parent row must say what it is for, or it reads as a duplicate key");
 }}
-if (!el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("linked"))) {{
-  throw new Error("output.text should render as linked to input.text");
+for (const [offset, task] of [".text_to_image", ".image_to_image", ".image_upscale"].entries()) {{
+  const html = defaultRowsHtml[imageParentIdx + 1 + offset] || "";
+  if (!html.includes("capability-route-task") || !html.includes("<code>" + task + "</code>")) {{
+    throw new Error("task row " + task + " must render indented immediately under its output.image parent");
+  }}
+}}
+// THE MIRROR, and the shape a fresh install has: the seed writes
+// `output.image` alone, so a task row with no value of its own is
+// ANSWERED by the parent and must not be painted as a gap.
+const upscaleHtml = defaultRowsHtml[imageParentIdx + 3] || "";
+if (!upscaleHtml.includes("inherited ← output.image")) {{
+  throw new Error("a task row answered by its configured parent must say so, not claim to be unconfigured");
+}}
+if (upscaleHtml.includes(">not configured<")) {{
+  throw new Error("an inherited task row must not also claim to be unconfigured");
+}}
+const videoParentIdx = defaultRowsHtml.findIndex((html) => html.includes("<code>output.video</code>"));
+if (videoParentIdx < 0) {{
+  throw new Error("the output.video parent row must be shown");
+}}
+// An UNSET parent whose task rows are all set is benign, never a red
+// "not configured" — nothing can reach it in that state.
+if (!defaultRowsHtml[videoParentIdx].includes("not needed")) {{
+  throw new Error("an unset parent covered by its task rows must read 'not needed', not 'not configured'");
+}}
+if (defaultRowsHtml[videoParentIdx].includes(">not configured<")) {{
+  throw new Error("a covered parent must not also claim to be unconfigured");
+}}
+// ...and it stays SETTABLE: one value for every video task is the simple
+// path, so the row must not be dressed read-only the way a derived or
+// covered-by-input.text row is.
+const videoParentNode = el("defaults-table").children[videoParentIdx];
+if (String(videoParentNode.className || "").includes("capability-derived")) {{
+  throw new Error("a covered parent must stay editable — setting it is the one-value-for-every-task path");
+}}
+if (!el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("derived"))) {{
+  throw new Error("output.text should render as derived from input.text (one vocabulary across every console: 'derived <- input.text' / 'covered by input.text', matching both TUIs)");
 }}
 if (!el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("covered"))) {{
   throw new Error("input.image should render as covered by a vision-capable input.text model");

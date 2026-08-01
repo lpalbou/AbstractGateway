@@ -16,6 +16,27 @@ def _stderr(line: str) -> None:
     print(str(line), file=sys.stderr)
 
 
+def _migrate_legacy_core_config_store() -> None:
+    """Retire `<data_dir>/config/abstractcore.json` into the AbstractCore store.
+
+    Startup is the only moment at which this can happen before a reader sees
+    the divergence, so it runs here rather than lazily on first access. Every
+    outcome is reported on stderr, including "nothing to do" being silent.
+    """
+
+    try:
+        from .core_config_migration import (
+            format_migration_report,
+            migrate_legacy_gateway_stores,
+        )
+
+        report = migrate_legacy_gateway_stores()
+        for line in format_migration_report(report):
+            _stderr(line)
+    except Exception as exc:  # pragma: no cover - a migration must not block boot
+        _stderr(f"[WARN] legacy AbstractCore config migration skipped: {exc}")
+
+
 def _resolve_default_console_level() -> int:
     """Return Gateway's default console log level (ERROR-only by default)."""
     level_map: dict[str, int] = {
@@ -412,6 +433,14 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.cmd == "serve":
+        # ------------------------------------------------------------------
+        # ONE STORE (operator ruling 2026-08-01). A legacy Gateway-scoped
+        # AbstractCore store under the data dir is merged into THE Core store
+        # and renamed, before anything reads a capability default. Loud on
+        # stderr, idempotent, and never fatal: a Gateway must still start.
+        # ------------------------------------------------------------------
+        _migrate_legacy_core_config_store()
+
         # ------------------------------------------------------------------
         # Startup security self-checks (fail-fast on missing auth token).
         # ------------------------------------------------------------------

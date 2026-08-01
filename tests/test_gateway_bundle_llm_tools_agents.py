@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict
@@ -522,7 +523,10 @@ def test_gateway_bundle_auto_llm_runtime_prefers_gateway_capability_default_over
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
 
-    gateway_core_config = runtime_dir / "config" / "abstractcore.json"
+    # ONE STORE (operator ruling 2026-08-01): a gateway-wide capability default
+    # is a row in THE AbstractCore store, not in a second base under the data
+    # dir. tests/conftest.py points ABSTRACTCORE_CONFIG_FILE at a throwaway path.
+    gateway_core_config = Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])
     manager = ConfigurationManager(config_file=gateway_core_config, apply_env=False)
     assert manager.set_capability_default("output.text", provider="lmstudio", model="qwen/qwen3.6-35b-a3b")
 
@@ -678,12 +682,26 @@ def test_gateway_bundle_model_residency_only_uses_remote_core_runtime(
     from abstractruntime.storage.artifacts import InMemoryArtifactStore
     from abstractruntime.storage.in_memory import InMemoryLedgerStore, InMemoryRunStore
 
-    core_config = runtime_dir / "config" / "abstractcore.json"
-    manager = ConfigurationManager(config_file=core_config, apply_env=False)
-    assert manager.set_capability_default(
-        "output.image.text_to_image",
-        provider="mlx-gen",
-        model="AbstractFramework/qwen-image-2512-8bit",
+    # SPLIT POSTURE, ONE STORE: with AbstractCore split out the capability
+    # rows come from THAT host over its config route -- there is no local base
+    # to overlay them from any more (operator ruling 2026-08-01). The stub
+    # below is the AbstractCore server answering.
+    import abstractgateway.core_config as gateway_core_config_seam
+
+    monkeypatch.setattr(
+        gateway_core_config_seam,
+        "_core_server_json",
+        lambda method, path, body=None: {
+            "ok": True,
+            "routes": [
+                {
+                    "key": "output.image.text_to_image",
+                    "provider": "mlx-gen",
+                    "model": "AbstractFramework/qwen-image-2512-8bit",
+                    "configured": True,
+                }
+            ],
+        },
     )
 
     def _fake_create_remote_runtime(**kwargs: Any) -> Runtime:
@@ -752,7 +770,8 @@ def test_gateway_bundle_model_residency_only_uses_remote_core_runtime(
     assert calls
     assert calls[0]["server_base_url"] == "http://core.test/v1"
     assert calls[0]["model"] == "default"
-    assert calls[0]["core_config_file"] == runtime_dir / "config" / "abstractcore.json"
+    # The runtime reads THE Core store, never a base under the gateway data dir.
+    assert calls[0]["core_config_file"] == Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])
     image_route = next(
         row
         for row in calls[0]["capability_defaults"]["routes"]

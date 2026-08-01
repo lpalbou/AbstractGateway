@@ -194,7 +194,9 @@ def test_loop_start_resolves_attention_defaults_from_env(monkeypatch: pytest.Mon
         assert calls["shelf_size"] == 32
         assert calls["context_window"] == 131072
 
-        # Request body wins over env.
+        # Request body wins over env — and a sub-recommendation window
+        # STARTS with the labeled soft warning (operator 2026-08-01: 50k is
+        # a recommendation, not a wall).
         calls.clear()
         r3 = client.post(
             "/api/gateway/entities/Castor/loop/start",
@@ -203,6 +205,25 @@ def test_loop_start_resolves_attention_defaults_from_env(monkeypatch: pytest.Mon
         assert r3.status_code == 200, r3.text
         assert calls["shelf_size"] == 12
         assert calls["context_window"] == 20000
+        assert any(
+            w.startswith("#RECOMMENDED") and "20000" in w and "below" in w
+            for w in r3.json().get("warnings", [])
+        ), r3.json()
+
+        # Above the 200k soft ACCEPTABLE ceiling (operator 2026-08-01: "it
+        # is acceptable to go to 200k context" — beyond is guidance): the
+        # loop still starts, with the labeled warning naming 200000.
+        calls.clear()
+        r4 = client.post(
+            "/api/gateway/entities/Castor/loop/start",
+            json={"shelf_size": 12, "context_window": 262144},
+        )
+        assert r4.status_code == 200, r4.text
+        assert calls["context_window"] == 262144
+        assert any(
+            w.startswith("#RECOMMENDED") and "262144" in w and "200000-token" in w and "above" in w
+            for w in r4.json().get("warnings", [])
+        ), r4.json()
 
 
 def test_loop_start_refusals_carry_reason_code_and_live_status(monkeypatch: pytest.MonkeyPatch):

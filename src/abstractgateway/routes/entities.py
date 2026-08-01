@@ -2740,7 +2740,13 @@ class SummonEntityRequest(BaseModel):
     gradation_top_k: int = Field(default=5, description="Standing entries offered to the prelude")
     context_window_tokens: Optional[int] = Field(
         default=None,
-        description="Declared model context window; refused below the 20k floor (maintainer ruling)",
+        description=(
+            "Declared model context window; 50k is the RECOMMENDED working size and "
+            "200k the soft ACCEPTABLE ceiling (operator 2026-08-01: 'it is acceptable "
+            "to go to 200k context, but ideally, let's have a (soft) recommended "
+            "target of 50k tokens' — recommendations, not walls: smaller and larger "
+            "windows are accepted with a labeled warning, growth is never blocked)"
+        ),
     )
     # Conversation-seat plan item 2: the caller's DECLARED kind drives the
     # priority matrix (human preempts agent holders; agents never displace).
@@ -3064,32 +3070,43 @@ def _summon_core(
             },
         )
 
-    # The 20k context floor (maintainer round 8: "the minimal context should
-    # be 20 000 tokens, never less"). Checked against DECLARED values; when
-    # nothing is declared the summon proceeds with a labeled warning — the
-    # gateway cannot measure a model it cannot resolve, so the floor becomes
-    # the operator's to guarantee.
-    from ..entity_gate import SUMMON_CONTEXT_FLOOR_TOKENS
+    # The 50k context RECOMMENDATION + 200k soft ACCEPTABLE ceiling (operator
+    # re-ruling 2026-08-01: "40k: it is acceptable to go to 200k context, but
+    # ideally, let's have a (soft) recommended target of 50k tokens"; the
+    # first pass's "more a soft than a hard limit ... if it needs to grow, it
+    # needs to grow" still governs). Checked against DECLARED values; a small
+    # window is ACCEPTED with a labeled warning — never a refusal — a window
+    # above the acceptable ceiling is ALSO accepted with a labeled warning
+    # (growth is never blocked), and when nothing is declared the summon
+    # proceeds with a labeled warning too (the gateway cannot measure a model
+    # it cannot resolve, so the recommendation is the operator's to weigh).
+    from ..entity_gate import SUMMON_CONTEXT_ACCEPTABLE_TOKENS, SUMMON_CONTEXT_FLOOR_TOKENS
 
     summon_warnings: List[str] = []
     declared_window = _declared_context_window(req, dict(req.input_data or {}))
     if declared_window is not None and declared_window < SUMMON_CONTEXT_FLOOR_TOKENS:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "refused": True,
-                "reasons": [
-                    f"#REFUSED summon: declared context window {declared_window} is below the "
-                    f"{SUMMON_CONTEXT_FLOOR_TOKENS}-token floor for summoned-entity sessions "
-                    "(maintainer ruling: 'the minimal context should be 20 000 tokens, never less')"
-                ],
-                "entity_id": home.entity_id,
-            },
+        summon_warnings.append(
+            f"#RECOMMENDED declared context window {declared_window} is below the "
+            f"{SUMMON_CONTEXT_FLOOR_TOKENS}-token recommended working size for summoned-entity "
+            "sessions (operator 2026-08-01: 50k is a recommendation, not a wall — the entity "
+            "runs more efficiently near it, but small windows are accepted and growth is "
+            "never blocked); the summon proceeds"
+        )
+    if declared_window is not None and declared_window > SUMMON_CONTEXT_ACCEPTABLE_TOKENS:
+        # Soft, #RECOMMENDED-class, NEVER a block (the standing "if it needs
+        # to grow, it needs to grow" ruling): above-acceptable is guidance.
+        summon_warnings.append(
+            f"#RECOMMENDED declared context window {declared_window} is above the "
+            f"{SUMMON_CONTEXT_ACCEPTABLE_TOKENS}-token acceptable ceiling for summoned-entity "
+            "sessions (operator 2026-08-01: 'it is acceptable to go to 200k context' — beyond "
+            "that is guidance, not a wall; growth is never blocked and recall attention stays "
+            f"sized by the {SUMMON_CONTEXT_FLOOR_TOKENS}-token recommendation); the summon proceeds"
         )
     if declared_window is None:
         summon_warnings.append(
             "#FALLBACK context window undeclared (no context_window_tokens/max_in_tokens/_limits) — "
-            f"the {SUMMON_CONTEXT_FLOOR_TOKENS}-token floor is the operator's to guarantee"
+            f"the {SUMMON_CONTEXT_FLOOR_TOKENS}-token recommended working size is the operator's to weigh "
+            "(operator 2026-08-01: a recommendation, not a wall)"
         )
     if registry.embedder_warning:
         # The home opened vectorless (memory's birth-audit ask: the state
@@ -4967,7 +4984,7 @@ def get_entity_voice(name: str) -> Dict[str, Any]:
         return {**stored, "source": "entity", "effective": {**stored, "source": "entity"}}
     out: Dict[str, Any] = {"provider": None, "model": None, "voice": None, "source": "unset"}
     try:
-        from ..capability_defaults import gateway_capability_defaults_payload
+        from ..core_config import gateway_capability_defaults_payload
 
         payload = gateway_capability_defaults_payload(base_dir=registry.data_dir)
         for row in payload.get("routes", []):
@@ -5398,7 +5415,22 @@ class StartLoopRequest(BaseModel):
     # None = resolve like the chat surface: env override, then the wide
     # defaults (shelf 50, context 65536 — maintainer rulings 2026-07-08/09 + c2468).
     shelf_size: Optional[int] = Field(default=None, ge=1, le=64)
-    context_window: Optional[int] = Field(default=None, ge=20000)
+    # ge=1, not ge=50000 (operator 2026-08-01: 50k is a recommendation, not a
+    # wall — the old ge=20000 hard 422 is gone; sub-recommendation windows are
+    # accepted and the start response carries a labeled #RECOMMENDED warning.
+    # No le= either: 200k is the soft ACCEPTABLE ceiling, guidance only —
+    # above it the start proceeds with the same labeled warning class).
+    context_window: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Declared context window; 50k is the RECOMMENDED working size and 200k "
+            "the soft ACCEPTABLE ceiling (operator 2026-08-01: 'it is acceptable to "
+            "go to 200k context, but ideally, let's have a (soft) recommended target "
+            "of 50k tokens') — both soft: any positive value starts, warnings ride "
+            "the response"
+        ),
+    )
 
 
 @router.get("/{name}/loop")
@@ -5570,6 +5602,29 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
     if context_window is None:
         context_window = _env_int("ABSTRACTGATEWAY_ENTITY_CHAT_CONTEXT_WINDOW") or DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
 
+    # SOFT context recommendation + soft acceptable ceiling (operator
+    # re-ruling 2026-08-01: 50k recommended target, "acceptable to go to
+    # 200k" — and the first pass's "if it needs to grow, it needs to grow"
+    # still governs): a smaller OR larger window starts anyway, with the
+    # labeled warning riding the response. Neither bound ever refuses.
+    start_warnings: List[str] = []
+    from ..entity_gate import SUMMON_CONTEXT_ACCEPTABLE_TOKENS as _CTX_ACCEPTABLE
+    from ..entity_gate import SUMMON_CONTEXT_RECOMMENDED_TOKENS as _CTX_RECOMMENDED
+
+    if int(context_window) < int(_CTX_RECOMMENDED):
+        start_warnings.append(
+            f"#RECOMMENDED context window {int(context_window)} is below the "
+            f"{int(_CTX_RECOMMENDED)}-token recommended working size (operator 2026-08-01: "
+            "a recommendation, not a wall); the loop starts anyway"
+        )
+    if int(context_window) > int(_CTX_ACCEPTABLE):
+        start_warnings.append(
+            f"#RECOMMENDED context window {int(context_window)} is above the "
+            f"{int(_CTX_ACCEPTABLE)}-token acceptable ceiling (operator 2026-08-01: 'it is "
+            "acceptable to go to 200k context' — beyond that is guidance, not a wall; "
+            "growth is never blocked); the loop starts anyway"
+        )
+
     try:
         # No thinking here on purpose: the loop reads the reasoning dial
         # from the home's substrate file at each day-open (file is the
@@ -5606,7 +5661,10 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
     except Exception:
         pass  # a marker failure never blocks his own time
 
-    return {"started": True, **started, "status": loop_status(home_dir)}
+    out: Dict[str, Any] = {"started": True, **started, "status": loop_status(home_dir)}
+    if start_warnings:
+        out["warnings"] = start_warnings
+    return out
 
 
 class StopLoopRequest(BaseModel):

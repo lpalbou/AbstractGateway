@@ -382,7 +382,17 @@ def test_fresh_install_loads_with_no_provider_and_old_runtimes_keep_the_loud_ref
     time (runtime's blank-pair guard + factory fix, c5894/c5902). Version
     tolerance still pinned: on an older runtime that cannot build without a
     provider (simulated by a raising factory), the load keeps the original
-    actionable refusal — never a raw crash."""
+    actionable refusal — never a raw crash.
+
+    UPDATED 2026-08-01 for the recommended-seed contract. "Zero config" no
+    longer means "no provider": the seed WRITES `lmstudio/qwen/qwen3.5-9b`
+    into a brand-new install, and on a machine where LM Studio is running
+    without those weights the eager default-client build raised
+    ModelNotFoundError — reopening exactly this release gap in a new shape.
+    The ruled contract is unchanged in substance and now covers both shapes:
+    a fresh install LOADS whatever its default is, and an unusable default is
+    reported at RUN time, named and actionable. Pinned by
+    `test_fresh_install_loads_when_the_seeded_default_has_no_weights_yet`."""
     import shutil
 
     from abstractgateway.hosts.bundle_host import WorkflowBundleGatewayHost
@@ -417,7 +427,113 @@ def test_fresh_install_loads_with_no_provider_and_old_runtimes_keep_the_loud_ref
     monkeypatch.setattr(ac_factory, "create_local_runtime", _old_factory)
     with pytest.raises(WorkflowBundleError) as err:
         WorkflowBundleGatewayHost.load_from_dir(bundles_dir=flows, data_dir=data, **stores)
-    assert "no default provider/model is configured" in str(err.value)
+    # NEVER A RAW CRASH — the property this half has always pinned. Which
+    # sentence it gets depends on whether a default is configured, and since
+    # the recommended seed always writes one, this is now the configured
+    # branch: name the pair, keep the provider's own words, stay actionable.
+    message = str(err.value)
+    assert "Bundle contains LLM nodes" in message
+    assert "Unknown provider" in message, "the underlying refusal must survive"
+    assert "output.text" in message
+
+
+def test_fresh_install_loads_when_the_seeded_default_has_no_weights_yet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CONFIGURED default whose weights are absent must not stop the host booting.
+
+    This is release gap 1 in its second shape. The original guard skipped the
+    eager default-client build only when provider AND model were both blank —
+    the definition of a fresh install at the time. Then the recommended seed
+    started writing `lmstudio/qwen/qwen3.5-9b` into every new install, so the
+    guard stopped firing, and on any machine with LM Studio running but those
+    weights not downloaded the eager build raised ModelNotFoundError straight
+    out of `load_from_dir`. The shipped catalog could not register; the console
+    assistant drawer was broken on a brand-new install.
+
+    The ruled contract, pinned here:
+      - the fresh install LOADS, whatever its default is;
+      - the failure surfaces at RUN time, naming the route that configured the
+        pair and how to fix it — including how to FETCH the weights, because on
+        a fresh install the default is right and only the download is missing.
+    """
+
+    import shutil
+
+    from abstractgateway.hosts.bundle_host import WorkflowBundleGatewayHost
+    from abstractruntime.integrations.abstractcore.llm_client import default_route_provider_error
+    from abstractruntime.storage.artifacts import FileArtifactStore
+    from abstractruntime.storage.json_files import JsonFileRunStore, JsonlLedgerStore
+
+    flows = tmp_path / "flows"
+    flows.mkdir()
+    shutil.copy2(_shipped_docs_qa(), flows / _shipped_docs_qa().name)
+    data = tmp_path / "runtime"
+    data.mkdir()
+
+    # A configured default that cannot possibly build here: the exact shape of
+    # "the seed named a model whose weights are not on this machine".
+    monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "lmstudio")
+    monkeypatch.setenv("ABSTRACTGATEWAY_MODEL", "not-downloaded-yet/model-9b")
+
+    host = WorkflowBundleGatewayHost.load_from_dir(
+        bundles_dir=flows,
+        data_dir=data,
+        run_store=JsonFileRunStore(str(data / "runs")),
+        ledger_store=JsonlLedgerStore(str(data / "ledgers")),
+        artifact_store=FileArtifactStore(str(data / "artifacts")),
+    )
+    assert host.specs, "a default whose weights are missing must not stop the bundle registering"
+
+    # And the run-time refusal still says everything an operator needs: which
+    # route configured this pair, and how to change it.
+    err = str(
+        default_route_provider_error(
+            RuntimeError("Model 'not-downloaded-yet/model-9b' not found for LMStudio provider"),
+            provider="lmstudio",
+            model="not-downloaded-yet/model-9b",
+        )
+    )
+    assert "not found for LMStudio provider" in err, "the provider's own words survive"
+    assert "configured default for text generation" in err
+    assert "abstractcore config set-default" in err
+
+
+def test_the_default_route_refusal_offers_the_download_when_weights_are_what_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Telling an operator to CHANGE a default that is correct is bad advice.
+
+    On a fresh install the seeded pair is the recommended one; the only thing
+    wrong is that nobody fetched the weights. The refusal names the download —
+    with the exact ARTIFACT, which carries the quantization the served model id
+    does not.
+    """
+
+    from abstractruntime.integrations.abstractcore import llm_client
+
+    monkeypatch.setattr(
+        llm_client,
+        "_missing_weights_hint",
+        lambda p, m: "abstractcore models download lmstudio qwen/qwen3.5-9b@4bit",
+    )
+    err = str(
+        llm_client.default_route_provider_error(
+            RuntimeError("boom"), provider="lmstudio", model="qwen/qwen3.5-9b"
+        )
+    )
+    assert "Or download the weights this default needs:" in err
+    assert "abstractcore models download lmstudio qwen/qwen3.5-9b@4bit" in err
+
+    # A failure that is NOT about missing weights gets no download line: it
+    # would point away from the real cause.
+    monkeypatch.setattr(llm_client, "_missing_weights_hint", lambda p, m: "")
+    quiet = str(
+        llm_client.default_route_provider_error(
+            RuntimeError("boom"), provider="openai", model="gpt-4o"
+        )
+    )
+    assert "download the weights" not in quiet
 
 
 # ------------------------------------------------------------------ helpers

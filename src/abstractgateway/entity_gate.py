@@ -170,13 +170,24 @@ SUMMON_POSTURE_BUDGET: Dict[str, Any] = {
 # + the first-seat token guarantee), and duplicating it here was refusing
 # configurations the engine handles correctly.
 
-# The maintainer's round-8 ruling for summoned-entity sessions: "the minimal
-# context should be 20 000 tokens, never less." The summon endpoint refuses
-# when a declared context window is below this; an unverifiable window
-# proceeds with a labeled #FALLBACK warning (the gateway cannot measure a
-# model it cannot resolve — the floor is then the operator's to guarantee).
-# One source (memory's round-8 export; same discipline as the identity floor).
+# The context RECOMMENDATION for summoned-entity sessions (operator
+# re-ruling 2026-08-01, second pass — "40k: it is acceptable to go to 200k
+# context, but ideally, let's have a (soft) recommended target of 50k
+# tokens"): 50k is the recommended working size, and the first pass's
+# soft-limit language still governs ("more a soft than a hard limit ... if
+# it needs to grow, it needs to grow"). The summon endpoint no longer
+# refuses smaller declared windows: it ACCEPTS them with a labeled
+# #RECOMMENDED warning; an unverifiable window proceeds with a labeled
+# #FALLBACK warning (the gateway cannot measure a model it cannot resolve —
+# the recommendation is then the operator's to weigh). Growth above the
+# recommendation is never blocked — a window declared above the 200k
+# ACCEPTABLE ceiling gets the same #RECOMMENDED-class soft warning and
+# proceeds. One source (memory's exports; same discipline as the identity
+# floor). The legacy alias name stays so importers keep working.
+from abstractmemory import ENTITY_CONTEXT_ACCEPTABLE as SUMMON_CONTEXT_ACCEPTABLE_TOKENS  # noqa: E402
 from abstractmemory import ENTITY_CONTEXT_FLOOR as SUMMON_CONTEXT_FLOOR_TOKENS  # noqa: E402
+
+SUMMON_CONTEXT_RECOMMENDED_TOKENS = SUMMON_CONTEXT_FLOOR_TOKENS
 
 
 def summon_budget_profile(
@@ -194,10 +205,22 @@ def summon_budget_profile(
     window derives from the wide default (65536), not the 20k floor — the
     floor is a refusal line, never a target. This closed the flow-summon
     starvation Ariadne's review found (shelf 12 / 2400 tokens hardcoded
-    while the doors served shelf 24 / 65536)."""
+    while the doors served shelf 24 / 65536).
+
+    ATTENTION IS SIZED BY THE RECOMMENDATION, NOT THE WINDOW (operator
+    2026-08-01 re-ruling — the within-turn audit found the door budgeting
+    12% of its own 65,536 default while the 50k recommendation was never
+    consulted): the recall token budget derives from
+    min(declared_or_default_window, ENTITY_CONTEXT_RECOMMENDED), so the
+    decoration budget is 12% × 50k = 6,000 tokens no matter how wide the
+    context is allowed to grow. The recommendation sizes ATTENTION; the
+    window sizes GROWTH — a 200k session may still grow to 200k of
+    history, it just doesn't recall 24k of memories per turn on the way.
+    Windows BELOW the recommendation keep scaling down (min() is a ceiling
+    on the sizing input, never a raise)."""
     import dataclasses
 
-    from abstractmemory import entity_recall_budget
+    from abstractmemory import ENTITY_CONTEXT_RECOMMENDED, entity_recall_budget
 
     from .entity_chat import (
         DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW,
@@ -221,7 +244,11 @@ def summon_budget_profile(
         if shelf_size
         else (_env_int("ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE") or DEFAULT_ENTITY_CHAT_SHELF_SIZE)
     )
-    budget = dataclasses.asdict(entity_recall_budget(window, shelf_size=shelf))
+    # The recommendation sizes attention; the window sizes growth (docstring
+    # above carries the ruling). Only the recall-budget SIZING input is
+    # clamped — nothing here caps the session's actual context.
+    attention_window = min(window, int(ENTITY_CONTEXT_RECOMMENDED))
+    budget = dataclasses.asdict(entity_recall_budget(attention_window, shelf_size=shelf))
     budget["self_fraction"] = SUMMON_POSTURE_BUDGET["self_fraction"]
     return budget
 

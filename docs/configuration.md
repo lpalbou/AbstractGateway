@@ -144,6 +144,181 @@ AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
 current user/session in hosted mode. They should not share one app-server
 Gateway token for all users.
 
+## Two entry points, one store
+
+AbstractCore (low level) and AbstractGateway (high level) are the two entry
+points to the framework, and they share configuration. Where AbstractCore holds
+a value, that value is the single source of truth: the Gateway reads and writes
+it through AbstractCore, keeps no copy of it, and surfaces it alongside the
+configuration the Gateway itself owns.
+
+A fresh install starts with recommended defaults so generation works out of the
+box — text on `lmstudio/qwen/qwen3.5-9b`, voice on `supertonic/supertonic-3`,
+image on `mlx-gen/AbstractFramework/flux.2-klein-4b-8bit`. They appear in the
+capability-defaults grid like any configured route and can be changed or
+cleared from either entry point; a value supplied by an application or a run
+always wins. The seed applies only when no AbstractCore configuration file
+exists yet, so a store you already have is never modified.
+
+**Which side owns what.**
+
+| Domain | Authority | Where it is stored | Gateway surface |
+| --- | --- | --- | --- |
+| Capability route provider/model/base URL (text, image, video, voice, sound, music, 3D, embeddings) | AbstractCore | `capability_defaults.routes` in `abstractcore.json` | `GET/PUT/DELETE /api/gateway/config/capability-defaults[/{kind}/{modality}[/{task}]]`, console **Capability defaults** |
+| Reasoning effort for text generation | AbstractCore | `reasoning` on the `output.text` route (stored as `input.text`) | the same routes and console panel |
+| Plugin/provider route options (voice, profile, language) | AbstractCore | `options` on the route | the same routes and console panel |
+| Provider API keys | AbstractCore | `api_keys` in `abstractcore.json` | console **Provider connections** (values are never returned) |
+| Mail connection (IMAP/SMTP host, port, username, folder) | AbstractCore | `email` in `abstractcore.json` | the email bridge and inbox routes read it; `ABSTRACT_EMAIL_*` variables override it |
+| Maintenance-triage LLM settings | AbstractCore | `maintenance` in `abstractcore.json` | the maintenance triage assistant; `ABSTRACT_TRIAGE_LLM_*` variables override it |
+| Endpoint profiles (custom base URLs, per-profile keys, allowed models) | shared namespace | `provider_profiles` in `abstractcore.json` and `provider_endpoint_profiles` under the Gateway data dir | `/api/gateway/config/provider-endpoint-profiles` |
+| Gateway auth, users, sessions, principals | Gateway | Gateway data dir | `/api/gateway/session/*`, `/api/gateway/users/*` |
+| Bundles, workflow catalog, workspaces, run policy and retention | Gateway | Gateway data dir | the corresponding `/api/gateway/*` routes |
+| Integrations (Agora, Telegram, process manager) | Gateway | Gateway data dir and environment | the corresponding `/api/gateway/*` routes |
+
+Inside the Gateway, every read and write of an AbstractCore-owned value goes
+through one module, `abstractgateway/core_config.py`. It is the only place that
+talks to AbstractCore's configuration, which is what keeps "no Gateway copy"
+true as the code grows.
+
+Endpoint profiles are the one shared namespace: both sides can define
+`endpoint:<id>` virtual providers, AbstractCore in its `provider_profiles`
+section and the Gateway in its own store. A profile AbstractCore holds wins on
+an id collision, and a Gateway profile resolves when AbstractCore has none — so
+`abstractcore config set-default output.text --provider endpoint:<id>` and a
+Gateway-defined profile of the same name always resolve to AbstractCore's
+definition. Use distinct ids across the two unless you intend that.
+
+### Capability defaults
+
+The Gateway is a full CRUD surface over AbstractCore's per-modality
+provider/model defaults (configure, surface, live-refresh) and keeps **zero**
+local storage. Every read hits Core's manager and every write goes through
+Core's setter, so configuring a default here configures Core's default, for text
+and for every media modality: image, video, voice (TTS), voice input (STT),
+sound, music, 3D.
+
+**Where it is stored.** A JSON file under key `capability_defaults.routes`:
+`~/.abstractcore/config/abstractcore.json` normally, or the Gateway-scoped
+`<data_dir>/config/abstractcore.json` in hosted user-auth mode (the payload
+reports both as `config_file` / `gateway_config_file` / `principal_config_file`).
+`GET /api/gateway/config/capability-defaults` names the file it read.
+
+| Route | What it defaults |
+| --- | --- |
+| `output.text` (stored as `input.text`) | text generation |
+| `output.image[.text_to_image\|.image_to_image\|.image_upscale]` | image generation / edit / upscale |
+| `output.video[.text_to_video\|.image_to_video]` | video generation |
+| `output.voice` / `input.voice` | TTS **and voice cloning** / STT |
+| `output.music` / `output.sound` | music / sound-effect generation |
+| `output.scene3d[.text_to_scene3d\|.image_to_scene3d]` | 3D scene generation |
+| `input.image` / `input.video` / `input.sound` / `input.music` | understanding (covered by `input.text` when that model is multimodal) |
+
+The task→route mapping is stated once, in AbstractCore's capability-defaults
+module, and every layer reads it from there. A `.task` suffix is only valid for
+the tasks Core persists; `tts`, `stt`, `music_generation` and
+`sound_generation` resolve at the modality cell.
+
+CRUD: `GET /api/gateway/config/capability-defaults` (full grid — configured,
+derived and unset rows, each naming its source),
+`PUT`/`DELETE /api/gateway/config/capability-defaults/{kind}/{modality}` and
+`.../{kind}/{modality}/{task}`. Every write re-applies the affected default to
+the **live** runtime (`refresh_capability_defaults`), so the next run uses it
+without a restart.
+
+A `PUT` is a partial update: `provider`, `model`, `base_url`, `reasoning` and
+`options` are all optional, a field you omit keeps its stored value, and `""`
+clears a field. That is what lets the console edit a provider without discarding
+a reasoning effort set through `abstractcore config set-default`, and the other
+way round.
+
+**The reasoning effort.** The text-generation route carries an optional
+`reasoning` field beside its provider and model — the host's default reasoning
+effort for reasoning-capable models. Set it in the console's capability-defaults
+panel or through the route:
+
+```bash
+curl -X PUT "$GW/api/gateway/config/capability-defaults/output/text" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"provider":"lmstudio","model":"qwen3-30b","reasoning":"high"}'
+```
+
+It applies to any call that names no effort of its own. An explicit `thinking`
+on a run, a Flow LLM/Agent node, or an entity's substrate wins over it,
+`thinking=false` included; with no configured effort and no explicit value, no
+reasoning parameter is sent at all.
+
+**If the other entry point writes.** `abstractcore config set-default <route>
+--provider … --model …` (and AbstractCore's console-TUI, which runs that
+command) edits the same file with no way to notify a running Gateway. The host
+therefore fingerprints the config files — `(path, mtime, size)`, one `stat`, no
+parse — and re-publishes the defaults to the live runtime on the next
+`start_run` when a file has moved. So both entry points are effective on the
+next run, not at the next Gateway write or a restart. With a split AbstractCore
+server (`ABSTRACTCORE_SERVER_BASE_URL`) there is no local file to watch, and the
+write routes' push remains the freshness mechanism. Partial updates work the
+same across that boundary: the AbstractCore server's own
+`PUT /v1/config/capability-defaults/...` routes keep the fields a request omits
+and clear the ones it sends empty, so the reasoning effort survives a
+provider-only save whether AbstractCore runs in-process or as a server.
+
+Cascade, per modality (highest wins): explicit request pins (a flow node's
+`image_provider`, `tts_provider`, …) > flow defaults > this console default >
+flow-scanned bootstrap (**text only**). A media node that names a provider is
+never clobbered; a default only fills an absent/Auto one. See
+`abstractgateway/provider_defaults.py` for the full contract.
+
+Config beats env. The `output.image` default outranks `ABSTRACTVISION_BACKEND` /
+`ABSTRACTCORE_VISION_BACKEND`, exactly as `output.voice` / `input.voice` outrank
+`ABSTRACTVOICE_*`, and the voice contract's `active_model` reports the
+configured route's model before any `ABSTRACTVOICE_*_MODEL` export. An
+environment variable that loses to a configured value is logged once per
+distinct (variable, config, env) triple, so a stale export stays visible.
+Environment variables remain a labeled `#FALLBACK` for deployments that
+configure nothing.
+
+Voice-model environment variables such as `ABSTRACTGATEWAY_VOICE_TTS_MODEL` and
+`ABSTRACTVOICE_OPENAI_TTS_MODEL` add entries to the **discovery catalog** — the
+list of models a picker can offer. They do not select a default; the
+`output.voice` route does.
+
+### Model weights
+
+Capability defaults say which model each route uses. These endpoints say
+whether that model's weights are on the execution host, and fetch them when
+they are not. They report the same four states as `abstractcore models status`
+and both console-TUIs: `installed`, `not downloaded`, `unknown`, `remote`.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/gateway/models/availability` | The capability grid annotated with weight availability, plus the recommended fresh-install set ("2 of 3 present"). Read-only; never downloads. |
+| `POST /api/gateway/models/download` | `{"provider": "...", "artifact": "..."}` or `{"recommended": true}`, with optional `"dry_run": true`. Returns a job id immediately. |
+| `GET /api/gateway/models/download/{job}` | One job's progress: status, percent, byte counts and the provider tool's own recent output. |
+| `GET /api/gateway/models/downloads` | Every download job this Gateway process knows about. |
+
+The web console renders this as a **Weights** column on the capability-defaults
+table, with a per-row download button and a fresh-install banner. In both
+console-TUIs the verb is `w` on the Routes screen.
+
+**The artifact is not the model id.** A route stores the id the provider
+*serves* (`qwen/qwen3.5-9b`); the download names the exact weights,
+quantization included (`qwen/qwen3.5-9b@4bit`). The availability payload
+carries `download_artifact` on any row where these differ — post that, not the
+row's `model`.
+
+**Single-flight.** A second request for an artifact already downloading joins
+the running job instead of starting a second copy of the provider's tool; the
+returned job's `joined` counter says so.
+
+**Jobs live in the Gateway process.** A restart forgets them, and a job id
+polled across a restart returns 404. That is not a lost download — the provider
+tool owns the bytes. Re-read `/api/gateway/models/availability` to learn whether
+the weights landed.
+
+**A default whose weights are missing does not stop the Gateway.** The host
+loads, bundles register, and the failure surfaces when a run actually needs that
+model — naming the capability route that configured the pair, how to change it,
+and how to download it.
+
 ### Runtime-scoped Core capability defaults
 
 In hosted user-auth mode, `GET /api/gateway/config/capability-defaults` returns
@@ -165,10 +340,10 @@ This lets operators set a Gateway default and lets hosted users choose
 remote-provider defaults for their own runtime without mutating the operator's
 global AbstractCore config or other users. The route schema, normalization,
 task-specific generated-media suffixes, and file format come from AbstractCore
-capability-default contracts. Gateway no
-longer reads or writes `config/capability_defaults.json`; existing overlay
-files are ignored. Recreate those defaults with
-`abstractgateway-config set-default ...`. Provider API keys and raw secrets are
+capability-default contracts. Capability defaults live only in the AbstractCore
+config file; a `config/capability_defaults.json` overlay from an older Gateway is
+ignored, and its defaults are recreated with `abstractgateway-config set-default
+...`. Provider API keys and raw secrets are
 not returned by these routes. Use Gateway provider connections when a route
 default needs an API key or custom base URL.
 
@@ -198,6 +373,31 @@ abstractgateway-config set-default input.text \
 
 abstractgateway-config defaults --scope user --user alice
 ```
+
+#### Modality rows and task rows
+
+`output.image`, `output.video` and `output.scene3d` are the **parent** rows of
+their `output.<modality>.<task>` siblings, not legacy duplicates of them. The
+parent answers every task of that modality that has no row of its own, so
+setting it alone is the simple path (one image model for generate, edit and
+upscale) and is what a fresh install seeds. A task row overrides it for that
+task, wholesale — route rows are single coherent backend identities and are
+never field-merged with their parent.
+
+Resolution everywhere — execution, the Sandbox, and what `/capabilities`
+advertises — is **task row first, modality row second**. A modality-level
+question resolves through the canonical generation task
+(`output.image.text_to_image`) before falling back to `output.image`, so the
+backend Gateway advertises is always the backend it will execute.
+
+`output.voice`, `output.sound` and `output.music` have no task rows; their
+modality row is the primary key, not a fallback.
+
+In the Multimodal Capabilities grid the task rows are indented beneath their
+modality row, and a modality row that is unset while every task row beneath it
+is configured shows `not needed` rather than `not configured` — nothing can
+reach it in that state. It stays editable, because setting it is still the
+one-value-for-everything path.
 
 `input.text` is the canonical text LLM route. `output.text` is reported as a
 read-only derived view of `input.text`, and CLI/API writes to `output.text` are
@@ -262,9 +462,7 @@ routes such as `output.image.text_to_image`, `output.video.text_to_video`,
 `output.voice`, `output.sound`, and `output.music`. Image edit, image upscale,
 and image-to-video are configured separately in the Multimodal Capabilities tab
 through `output.image.image_to_image`, `output.image.image_upscale`, and
-`output.video.image_to_video`. The console presents these concrete
-generated-media routes instead of the broad `output.image` and `output.video`
-compatibility defaults. The Sandbox renders generated images, videos,
+`output.video.image_to_video`. The Sandbox renders generated images, videos,
 voice, sound, and music artifacts inline when the route completes, while keeping artifact
 links available for opening the raw content. Text chat can include uploaded
 attachments such as images, audio, video, PDFs, Markdown, or text documents.

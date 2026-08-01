@@ -77,6 +77,36 @@ def start_loop(
         "context_window": context_window,
     })
 
+    # HOST-RESOLVED ENDPOINT PROFILE (operator 2026-08-01): an endpoint:*
+    # substrate resolves in-process through the host's ambient resolver, but
+    # the spawned loop child has no such channel — it died at day-open with
+    # "Unknown provider: endpoint:airelay" (own_time.log), so his time NEVER
+    # ran on a relay substrate. Resolve the profile HERE (the gateway owns
+    # the store) and hand the child the private material through the spawn
+    # env. Resolved fresh at every (re)spawn — including the repair sweeper,
+    # which comes through this same adapter — and never recorded in
+    # loop_spawn.json (private_resolution() carries the api_key).
+    endpoint_profile: Optional[Dict[str, Any]] = None
+    if str(provider or "").strip().lower().startswith("endpoint:"):
+        try:
+            from .provider_endpoint_profiles import resolve_effective_endpoint_profile
+            from .users import gateway_data_dir_from_env
+
+            _data_dir = gateway_data_dir_from_env()
+            _profile = resolve_effective_endpoint_profile(provider, base_dir=_data_dir, root_base_dir=_data_dir)
+            if _profile is not None:
+                endpoint_profile = _profile.private_resolution()
+        except Exception:
+            endpoint_profile = None
+        if endpoint_profile is None:
+            # Refuse at the door: without the material the child boots, then
+            # dies at day-open — a silent refusal in someone else's log.
+            raise RuntimeError(
+                f"substrate {provider} names an endpoint profile this gateway cannot resolve "
+                "(no enabled profile in the endpoint store) — his own time would die at "
+                "day-open; fix the profile or the substrate first"
+            )
+
     return spawn_loop_process(
         Path(home_dir),
         provider=provider,
@@ -87,6 +117,7 @@ def start_loop(
         rest_minutes=rest_minutes,
         shelf_size=shelf_size,
         context_window=context_window,
+        endpoint_profile=endpoint_profile,
     )
 
 

@@ -35,15 +35,43 @@ def _json_from_text(text: str) -> Optional[Dict[str, Any]]:
     return obj if isinstance(obj, dict) else None
 
 
-def load_llm_assist_config() -> Dict[str, Any]:
-    """Load maintenance LLM config from environment variables."""
+def _core_maintenance_settings() -> Dict[str, Any]:
+    """AbstractCore's stored triage settings, through the one seam."""
+    try:
+        from ..core_config import core_maintenance_settings
 
-    base_url = ""
-    model = ""
-    temperature = 0.2
-    timeout_s = 30.0
-    max_tokens = 800
-    use_llm = False
+        return core_maintenance_settings()
+    except Exception:
+        return {}
+
+
+def load_llm_assist_config() -> Dict[str, Any]:
+    """The maintenance-triage LLM settings: environment over AbstractCore's store.
+
+    ONE ASSISTANT, ONE STORE. AbstractCore holds these six knobs in its
+    `maintenance` config section. An operator who set the triage model there has
+    configured this assistant, so the environment names below are the OVERRIDE
+    rung rather than the only rung -- otherwise the same assistant would have to
+    be configured twice, once per entry point.
+    """
+
+    stored = _core_maintenance_settings()
+
+    base_url = str(stored.get("triage_llm_base_url") or "")
+    model = str(stored.get("triage_llm_model") or "")
+    use_llm = bool(stored.get("triage_llm_enabled") or False)
+    try:
+        temperature = float(stored.get("triage_llm_temperature", 0.2))
+    except Exception:
+        temperature = 0.2
+    try:
+        timeout_s = float(stored.get("triage_llm_timeout_s", 30.0))
+    except Exception:
+        timeout_s = 30.0
+    try:
+        max_tokens = int(stored.get("triage_llm_max_tokens", 800))
+    except Exception:
+        max_tokens = 800
 
     enabled = str(_env("ABSTRACT_TRIAGE_LLM", "ABSTRACTGATEWAY_TRIAGE_LLM") or "").strip().lower()
     if enabled:
@@ -51,6 +79,9 @@ def load_llm_assist_config() -> Dict[str, Any]:
 
     base_url = _env("ABSTRACT_TRIAGE_LLM_BASE_URL", "ABSTRACTGATEWAY_TRIAGE_LLM_BASE_URL") or base_url
     model = _env("ABSTRACT_TRIAGE_LLM_MODEL", "ABSTRACTGATEWAY_TRIAGE_LLM_MODEL") or model
+    # The API key stays environment-only on purpose: AbstractCore's
+    # `maintenance` section carries no secret, and this module must not invent
+    # a place for one to be persisted.
     api_key = _env("ABSTRACT_TRIAGE_LLM_API_KEY", "ABSTRACTGATEWAY_TRIAGE_LLM_API_KEY") or ""
 
     temperature_raw = _env("ABSTRACT_TRIAGE_LLM_TEMPERATURE", "ABSTRACTGATEWAY_TRIAGE_LLM_TEMPERATURE")

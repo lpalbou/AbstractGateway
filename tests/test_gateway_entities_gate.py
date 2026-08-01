@@ -218,6 +218,24 @@ def test_stamp_budget_profile_wins_on_omitted_budgets(rig):
     base = summon_budget_profile(None)
     assert base["token_budget"] >= floor["token_budget"]
     assert int(base["shelf_size"]) >= 12
+    # ATTENTION SIZED BY THE RECOMMENDATION, NOT THE WINDOW (operator
+    # 2026-08-01: the within-turn audit found the door budgeting 12% of its
+    # own 65,536 default — the 50k recommendation was never consulted). Any
+    # window at/above the recommendation derives the SAME recall token
+    # budget as the recommendation itself; below it still scales down.
+    # Relational asserts only (no engine literals copied).
+    from abstractmemory import ENTITY_CONTEXT_RECOMMENDED
+
+    at_rec = summon_budget_profile(int(ENTITY_CONTEXT_RECOMMENDED))
+    assert base["token_budget"] == at_rec["token_budget"], (
+        "the wide default window must not widen recall attention past the recommendation"
+    )
+    assert summon_budget_profile(200_000)["token_budget"] == at_rec["token_budget"], (
+        "a 200k window grows history, never per-turn recall attention"
+    )
+    assert floor["token_budget"] < at_rec["token_budget"], (
+        "below the recommendation the profile still scales with the real window"
+    )
 
     stamp = _finalize(
         _mint(

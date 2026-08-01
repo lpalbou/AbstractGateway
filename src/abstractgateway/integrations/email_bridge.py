@@ -46,6 +46,16 @@ def _as_int(raw: Any, default: int) -> int:
         return default
 
 
+def _core_email_settings() -> Dict[str, Any]:
+    """AbstractCore's stored mail connection, through the one seam."""
+    try:
+        from ..core_config import core_email_settings
+
+        return core_email_settings()
+    except Exception:
+        return {}
+
+
 _MSG_ID_RE = re.compile(r"<[^>]+>")
 
 
@@ -203,14 +213,33 @@ class EmailBridgeConfig:
         event_name = str(os.getenv("ABSTRACT_EMAIL_EVENT_NAME", "") or "").strip() or "email.message"
         session_prefix = str(os.getenv("ABSTRACT_EMAIL_SESSION_PREFIX", "") or "").strip() or "email:"
 
+        # ONE MAILBOX, ONE STORE. AbstractCore holds the host's mail connection
+        # in its `email` config section, and its own mail tools resolve
+        # env-then-config. This bridge polls that same mailbox, so it reads the
+        # same store below the same env overrides: an operator who configured
+        # IMAP once through AbstractCore does not have to state it again here.
+        core_email = _core_email_settings()
+
         account = str(os.getenv("ABSTRACT_EMAIL_ACCOUNT", "") or "").strip()
-        imap_host = str(os.getenv("ABSTRACT_EMAIL_IMAP_HOST", "") or "").strip()
-        imap_username = str(os.getenv("ABSTRACT_EMAIL_IMAP_USERNAME", "") or "").strip()
-        imap_password_env_var = str(os.getenv("ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR", "") or "").strip() or "EMAIL_PASSWORD"
-        imap_folder = str(os.getenv("ABSTRACT_EMAIL_IMAP_FOLDER", "") or "").strip() or "INBOX"
+        imap_host = str(os.getenv("ABSTRACT_EMAIL_IMAP_HOST", "") or "").strip() or str(
+            core_email.get("imap_host") or ""
+        ).strip()
+        imap_username = str(os.getenv("ABSTRACT_EMAIL_IMAP_USERNAME", "") or "").strip() or str(
+            core_email.get("imap_username") or ""
+        ).strip()
+        imap_password_env_var = (
+            str(os.getenv("ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR", "") or "").strip()
+            or str(core_email.get("imap_password_env_var") or "").strip()
+            or "EMAIL_PASSWORD"
+        )
+        imap_folder = (
+            str(os.getenv("ABSTRACT_EMAIL_IMAP_FOLDER", "") or "").strip()
+            or str(core_email.get("imap_folder") or "").strip()
+            or "INBOX"
+        )
 
         poll_seconds = float(os.getenv("ABSTRACT_EMAIL_POLL_SECONDS", "60") or "60")
-        imap_port = _as_int(os.getenv("ABSTRACT_EMAIL_IMAP_PORT"), 993)
+        imap_port = _as_int(os.getenv("ABSTRACT_EMAIL_IMAP_PORT"), _as_int(core_email.get("imap_port"), 993))
         imap_timeout_s = float(os.getenv("ABSTRACT_EMAIL_IMAP_TIMEOUT_S", "30") or "30")
         max_messages_per_poll = _as_int(os.getenv("ABSTRACT_EMAIL_MAX_MESSAGES_PER_POLL"), 50)
 

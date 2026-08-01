@@ -288,7 +288,11 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 ### Limits (abuse resistance)
 
-- `ABSTRACTGATEWAY_MAX_BODY_BYTES` (default: `256000`)
+- `ABSTRACTGATEWAY_MAX_BODY_BYTES` (default: `10MB`)  
+  Applies to every mutating request. Oversized requests are **rejected** with
+  `413` naming both sizes — bodies are never truncated. The default is sized for
+  authored documents (a VisualFlow save is a whole workflow, not a small API
+  payload), not just for abuse resistance.
 - `ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES` (default: `25MB`)
 - `ABSTRACTGATEWAY_MAX_BUNDLE_BYTES` (default: `75MB`)
 - `ABSTRACTGATEWAY_MAX_CONCURRENCY` (default: `64`)

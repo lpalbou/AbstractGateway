@@ -166,7 +166,7 @@ def test_unset_entity_serves_the_resolved_effective_default(monkeypatch) -> None
     with TestClient(app, headers={"Authorization": "Bearer voice-eff-secret"}) as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark("Castor")}).status_code == 201
 
-        import abstractgateway.capability_defaults as capdef
+        import abstractgateway.core_config as capdef
 
         monkeypatch.setattr(capdef, "gateway_capability_defaults_payload", _defaults_with_voice)
         body = client.get("/api/gateway/entities/Castor/voice").json()
