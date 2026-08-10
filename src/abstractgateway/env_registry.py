@@ -254,6 +254,9 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
           note="request outcome (503) => behavior; hot path needs the cached resolver"),
     _spec("ABSTRACTGATEWAY_PROVIDER_MODELS_TIMEOUT_S", BEHAVIOR, console_path="discovery"),
     _spec("ABSTRACTGATEWAY_PROVIDER_AUTOPROBE_TIMEOUT_S", BEHAVIOR, console_path="discovery"),
+    _spec("ABSTRACTGATEWAY_DISCOVERY_MAX_CONCURRENCY", BEHAVIOR, console_path="discovery",
+          note="admission bound for discovery probes; keeps a wedged provider from "
+               "parking every shared to_thread pool thread"),
     _spec("ABSTRACTGATEWAY_DISCOVERY_TIMEOUT_S", BEHAVIOR, console_path="discovery"),
     _spec("ABSTRACTGATEWAY_DISCOVERY_MODEL_TIMEOUT_S", BEHAVIOR, console_path="discovery"),
     _spec("ABSTRACTGATEWAY_DRAFT_RUN_TTL_S", BEHAVIOR, console_path="retention"),

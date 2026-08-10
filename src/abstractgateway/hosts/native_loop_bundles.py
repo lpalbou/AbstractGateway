@@ -19,6 +19,50 @@ logger = logging.getLogger(__name__)
 NATIVE_LOOP_FACTORIES = frozenset({"react", "codeact", "memact"})
 
 
+def _allowed_tools_from_metadata(metadata: Dict[str, Any]) -> Optional[list[str]]:
+    raw = metadata.get("allowed_tools")
+    if not isinstance(raw, (list, tuple)):
+        return None
+    allowed: list[str] = []
+    for item in raw:
+        name = str(item or "").strip()
+        if name:
+            allowed.append(name)
+    return allowed or None
+
+
+def _legacy_default_react_memact_tools() -> list[Any]:
+    from abstractagent.tools import ALL_TOOLS
+
+    return list(ALL_TOOLS)
+
+
+def _legacy_default_codeact_tools() -> list[Any]:
+    from abstractagent.logic.builtins import (
+        ASK_USER_TOOL,
+        COMPACT_MEMORY_TOOL,
+        DELEGATE_AGENT_TOOL,
+        INSPECT_VARS_TOOL,
+        OPEN_ATTACHMENT_TOOL,
+        RECALL_MEMORY_TOOL,
+        REMEMBER_NOTE_TOOL,
+        REMEMBER_TOOL,
+    )
+    from abstractagent.tools.code_execution import execute_python
+
+    return [
+        ASK_USER_TOOL,
+        OPEN_ATTACHMENT_TOOL,
+        RECALL_MEMORY_TOOL,
+        INSPECT_VARS_TOOL,
+        REMEMBER_TOOL,
+        REMEMBER_NOTE_TOOL,
+        COMPACT_MEMORY_TOOL,
+        DELEGATE_AGENT_TOOL,
+        execute_python,
+    ]
+
+
 def declares_native_loop_bundle(manifest: WorkflowBundleManifest) -> bool:
     """True when the manifest opts into native-loop loading (even if invalid)."""
     meta = manifest.metadata if isinstance(manifest.metadata, dict) else {}
@@ -160,7 +204,18 @@ def _materialize_factory_spec(
     workflow_id: str,
     metadata: Dict[str, Any],
 ) -> WorkflowSpec:
-    from abstractagent.adapters.native_loop_registry import materialize_native_loop_spec
+    try:
+        from abstractagent.adapters.native_loop_registry import materialize_native_loop_spec
+    except ImportError as exc:
+        if getattr(exc, "name", None) != "abstractagent.adapters.native_loop_registry":
+            raise
+        return _materialize_factory_spec_legacy(
+            factory=factory,
+            bundle_ref=bundle_ref,
+            entrypoint=entrypoint,
+            workflow_id=workflow_id,
+            metadata=metadata,
+        )
 
     spec = materialize_native_loop_spec(
         factory,
@@ -171,3 +226,62 @@ def _materialize_factory_spec(
     if str(spec.workflow_id) != str(workflow_id):
         spec = replace(spec, workflow_id=str(workflow_id))
     return spec
+
+
+def _materialize_factory_spec_legacy(
+    *,
+    factory: str,
+    bundle_ref: str,
+    entrypoint: str,
+    workflow_id: str,
+    metadata: Dict[str, Any],
+) -> WorkflowSpec:
+    """Compat path for abstractagent builds older than native_loop_registry."""
+    allowed_tools = _allowed_tools_from_metadata(metadata)
+    logger.info(
+        "Falling back to legacy native-loop materialization for %s because "
+        "abstractagent.adapters.native_loop_registry is unavailable",
+        bundle_ref,
+    )
+
+    if factory == "react":
+        from abstractagent.adapters.react_runtime import create_react_workflow
+        from abstractagent.logic.react import ReActLogic
+
+        kwargs: Dict[str, Any] = {
+            "logic": ReActLogic(tools=_legacy_default_react_memact_tools()),
+            "workflow_id": str(workflow_id),
+        }
+        if allowed_tools is not None:
+            kwargs["allowed_tools"] = allowed_tools
+        try:
+            return create_react_workflow(**kwargs)
+        except TypeError:
+            kwargs.pop("allowed_tools", None)
+            return create_react_workflow(**kwargs)
+
+    if factory == "codeact":
+        from abstractagent.adapters.codeact_runtime import create_codeact_workflow
+        from abstractagent.logic.codeact import CodeActLogic
+
+        spec = create_codeact_workflow(
+            logic=CodeActLogic(tools=_legacy_default_codeact_tools())
+        )
+        if str(spec.workflow_id) != str(workflow_id):
+            spec = replace(spec, workflow_id=str(workflow_id))
+        return spec
+
+    from abstractagent.adapters.memact_runtime import create_memact_workflow
+    from abstractagent.logic.memact import MemActLogic
+
+    kwargs = {
+        "logic": MemActLogic(tools=_legacy_default_react_memact_tools()),
+        "workflow_id": str(workflow_id),
+    }
+    if allowed_tools is not None:
+        kwargs["allowed_tools"] = allowed_tools
+    try:
+        return create_memact_workflow(**kwargs)
+    except TypeError:
+        kwargs.pop("allowed_tools", None)
+        return create_memact_workflow(**kwargs)

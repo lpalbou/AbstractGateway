@@ -8,6 +8,12 @@ import urllib.request
 from typing import Any, Dict, Optional, Tuple
 
 
+# #[WARNING:TIMEOUT] High safeguard, not a performance knob (ADR-0027 §2/§3):
+# 2h, the ADR's recommended global default. Set the store key or the env
+# override to `0` for no client timeout at all.
+DEFAULT_TRIAGE_LLM_TIMEOUT_S = 7200.0
+
+
 def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
     v = os.getenv(name)
     if v is not None and str(v).strip():
@@ -64,14 +70,32 @@ def load_llm_assist_config() -> Dict[str, Any]:
         temperature = float(stored.get("triage_llm_temperature", 0.2))
     except Exception:
         temperature = 0.2
+    # #[WARNING:TIMEOUT] Triage LLM client timeout. ADR-0027 §2: LLM calls are
+    # a correctness-critical path and must NOT carry a low default. The former
+    # 30.0s code default aborted local LM Studio calls during prompt
+    # processing alone and surfaced as "LLM assist failed", never as "we cut
+    # it off". `0` (or any non-positive value) means NO client timeout.
+    # Source of the effective value: AbstractCore `maintenance.
+    # triage_llm_timeout_s`, overridden by ABSTRACT_TRIAGE_LLM_TIMEOUT_S /
+    # ABSTRACTGATEWAY_TRIAGE_LLM_TIMEOUT_S.
     try:
-        timeout_s = float(stored.get("triage_llm_timeout_s", 30.0))
+        timeout_s = float(stored.get("triage_llm_timeout_s", DEFAULT_TRIAGE_LLM_TIMEOUT_S))
     except Exception:
-        timeout_s = 30.0
-    try:
-        max_tokens = int(stored.get("triage_llm_max_tokens", 800))
-    except Exception:
-        max_tokens = 800
+        timeout_s = DEFAULT_TRIAGE_LLM_TIMEOUT_S
+    # Output budget: NO code default. The former 800 was an arbitrary literal
+    # nobody asked for on a STRUCTURED-output call (a backlog draft carrying a
+    # markdown acceptance-criteria checklist) — precisely the shape ADR-0026 §2
+    # forbids ("do not set arbitrary output caps by default" on structured
+    # output paths). None = the key never rides the wire, so the provider uses
+    # the model's own ceiling. An operator who wants a bound sets
+    # `maintenance.triage_llm_max_tokens` or ABSTRACT_TRIAGE_LLM_MAX_TOKENS.
+    max_tokens: Optional[int] = None
+    raw_stored_max = stored.get("triage_llm_max_tokens")
+    if raw_stored_max is not None:
+        try:
+            max_tokens = int(raw_stored_max)
+        except Exception:
+            max_tokens = None
 
     enabled = str(_env("ABSTRACT_TRIAGE_LLM", "ABSTRACTGATEWAY_TRIAGE_LLM") or "").strip().lower()
     if enabled:
@@ -123,8 +147,11 @@ def llm_assist(
     model: str,
     api_key: str = "",
     temperature: float = 0.2,
-    timeout_s: float = 30.0,
-    max_tokens: int = 800,
+    # #[WARNING:TIMEOUT] High safeguard (ADR-0027 §2); 0/None = no client timeout.
+    timeout_s: Optional[float] = DEFAULT_TRIAGE_LLM_TIMEOUT_S,
+    # None = no output cap on the wire (ADR-0026 §2 — this is a structured
+    # output call). An explicit operator value is honored verbatim.
+    max_tokens: Optional[int] = None,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     if not str(base_url or "").strip():
         return None, "LLM assist base_url is missing"
@@ -149,9 +176,12 @@ def llm_assist(
         "Do not include code fences.\n"
     )
     user = json.dumps(normalized_input, ensure_ascii=False, indent=2, sort_keys=True)
-    # Bound payload size to avoid accidental huge requests.
+    # #[WARNING:TRUNCATION] Input guard on the normalized report payload.
+    # Lossy and explicitly marked in-band (ADR-0026 §1) so the model — and any
+    # human reading the draft — can see the report was cut here, in
+    # abstractgateway.maintenance.llm_assist, and not upstream.
     if len(user) > 25_000:
-        user = user[:25_000] + "\n…(truncated)…\n"
+        user = user[:25_000] + "\n…(truncated by abstractgateway.maintenance.llm_assist at 25000 chars)…\n"
 
     payload: Dict[str, Any] = {
         "model": model,
@@ -160,8 +190,11 @@ def llm_assist(
             {"role": "user", "content": user},
         ],
         "temperature": float(temperature),
-        "max_tokens": int(max_tokens),
     }
+    # Only an ASKED-FOR output cap rides the wire (ADR-0026 §2). Absent =>
+    # the provider uses the model's own ceiling instead of an invented 800.
+    if max_tokens is not None and int(max_tokens) > 0:
+        payload["max_tokens"] = int(max_tokens)
 
     req = urllib.request.Request(
         endpoint,
@@ -173,8 +206,16 @@ def llm_assist(
         method="POST",
     )
 
+    # #[WARNING:TIMEOUT] `None`/`<=0` means NO client timeout (ADR-0027 §2 for
+    # local providers). A timeout that DOES fire is reported with its duration
+    # and this module's name — never as an opaque failure (ADR-0027 §1).
     try:
-        with urllib.request.urlopen(req, timeout=float(timeout_s)) as resp:
+        eff_timeout = None if timeout_s is None or float(timeout_s) <= 0 else float(timeout_s)
+    except (TypeError, ValueError):
+        eff_timeout = DEFAULT_TRIAGE_LLM_TIMEOUT_S
+
+    try:
+        with urllib.request.urlopen(req, timeout=eff_timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         try:
@@ -182,7 +223,19 @@ def llm_assist(
         except Exception:
             detail = str(e)
         return None, f"HTTP error from LLM endpoint: {e.code} {detail}"
+    except TimeoutError as e:
+        return None, (
+            f"#[WARNING:TIMEOUT] abstractgateway.maintenance.llm_assist timed out after "
+            f"{eff_timeout}s calling {endpoint} (configure via maintenance.triage_llm_timeout_s "
+            f"or ABSTRACT_TRIAGE_LLM_TIMEOUT_S; 0 = no client timeout): {e}"
+        )
     except Exception as e:
+        if isinstance(getattr(e, "reason", None), TimeoutError) or "timed out" in str(e).lower():
+            return None, (
+                f"#[WARNING:TIMEOUT] abstractgateway.maintenance.llm_assist timed out after "
+                f"{eff_timeout}s calling {endpoint} (configure via maintenance.triage_llm_timeout_s "
+                f"or ABSTRACT_TRIAGE_LLM_TIMEOUT_S; 0 = no client timeout): {e}"
+            )
         return None, str(e)
 
     try:
@@ -194,14 +247,37 @@ def llm_assist(
 
     # OpenAI-compatible response shape.
     content = ""
+    finish_reason = ""
     try:
         choices = obj.get("choices") or []
         if isinstance(choices, list) and choices:
+            finish_reason = str((choices[0] or {}).get("finish_reason") or "") if isinstance(choices[0], dict) else ""
             msg = choices[0].get("message") if isinstance(choices[0], dict) else None
             if isinstance(msg, dict):
                 content = str(msg.get("content") or "")
     except Exception:
         content = ""
+
+    # #[WARNING:TRUNCATION] Provider-side truncation is a CONTRACT VIOLATION on
+    # a structured-output call (ADR-0026 §2) and must never be reported as a
+    # parse failure. Before this, a `finish_reason=length` response produced
+    # "LLM did not return parseable JSON" — the debugging dead-end §1 names,
+    # because the JSON was fine until the cap cut it. The message names the
+    # responsible component AND the configured source of the cap (§1
+    # attribution requirement).
+    if str(finish_reason).strip().lower() == "length":
+        cap_txt = (
+            f"max_tokens={int(max_tokens)} (set via maintenance.triage_llm_max_tokens "
+            f"or ABSTRACT_TRIAGE_LLM_MAX_TOKENS)"
+            if max_tokens is not None and int(max_tokens) > 0
+            else "no max_tokens was sent, so the MODEL's own output ceiling was reached"
+        )
+        return None, (
+            "#[WARNING:TRUNCATION] abstractgateway.maintenance.llm_assist: the model "
+            f"stopped at the output budget (finish_reason=length) — {cap_txt}. The draft "
+            f"is INCOMPLETE ({len(content)} chars received); raise the budget rather than "
+            "trusting this output."
+        )
 
     parsed = _json_from_text(content) if content else None
     if parsed is None:

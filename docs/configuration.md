@@ -62,10 +62,12 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
 
 - `ABSTRACTGATEWAY_DATA_DIR`: durable data directory (default: `./runtime`)  
   Evidence: `src/abstractgateway/config.py` (`GatewayHostConfig.from_env`)
-- `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway first
-  uses the packaged shipped bundle directory containing `basic-agent`. If the
-  shipped bundle is unavailable, Gateway fails clearly instead of starting with
-  an empty default registry.
+- `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway uses the
+  packaged shipped bundle directory, which carries `basic-agent`,
+  `coding-agent`, `deep-research`, `co-scientist`, and more
+  ([shipped-workflows.md](./shipped-workflows.md)). If the shipped bundles are
+  unavailable, Gateway fails clearly instead of starting with an empty default
+  registry. Setting this replaces the shipped registry with your own directory.
   Evidence: `src/abstractgateway/config.py`
 - `ABSTRACTGATEWAY_WORKFLOW_SOURCE`: `bundle` (default) or `visualflow`  
   Evidence: `src/abstractgateway/service.py` (`create_default_gateway_service`)

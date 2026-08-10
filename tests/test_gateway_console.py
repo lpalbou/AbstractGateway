@@ -58,7 +58,14 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert "--bg: var(--bg-primary)" in console.text
     assert "--accent: #e94560" in console.text
     assert 'class="shell_sidebar' in console.text  # the family shell
-    assert 'id="modal-default-base-url"' not in console.text
+    # REVERSED (operator 2026-08-02): the base URL field was absent since
+    # 0.2.26 and this line locked that in. It is a parity gap — the console-TUI
+    # route editor has always carried base URL and options and sends both on
+    # every save, and PUT /config/capability-defaults/{kind}/{modality} accepts
+    # them. Offline it is load-bearing: base_url is how a single route is
+    # pointed at a local inference server on a non-default port.
+    assert 'id="modal-default-base-url"' in console.text
+    assert 'id="modal-default-options"' in console.text
     assert 'id="refresh-default-models"' not in console.text
     assert "Available Providers" in console.text
     assert "Multimodal Capabilities" in console.text
@@ -238,6 +245,13 @@ class Element {{
         else set.delete(name);
         this.className = [...set].join(" ");
       }},
+      // The real DOM has `contains`, and page code reads it to decide whether a
+      // conditionally-shown control is live — the offline free-text model lane
+      // does exactly that. A stub missing it does not fail honestly; it throws
+      // inside the handler under test and looks like a page bug.
+      contains: (name) => new Set(
+        String(this.className || "").split(/\\s+/).filter(Boolean)
+      ).has(name),
     }};
   }}
   get textContent() {{ return this._textContent; }}
@@ -709,18 +723,46 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 const saveCall = calls.find((call) => call.path === "/api/gateway/config/capability-defaults/input/text" && call.method === "PUT");
 if (!saveCall) throw new Error("save default did not call the capability default route");
 const saveBody = JSON.parse(saveCall.body);
-// The save sends what this modal controls and nothing else. `base_url` has no
-// control here and `options` has none on a text route, so both are left unset
-// and the store keeps them; echoing back the row the grid last rendered would
-// let a stale value overwrite a newer one written from `abstractcore config`.
+// The save sends what this modal controls, and of that only what the operator
+// EDITED. base_url and options gained controls on 2026-08-02, but they are
+// prefilled from the row the grid last rendered and the modal never re-reads
+// it -- so naming an untouched one lets a minutes-old render overwrite a value
+// set through `abstractcore config` in between. Nothing was touched here.
 if ("base_url" in saveBody) {{
-  throw new Error("save default must not send a base_url it has no control for");
+  throw new Error("save default echoed back a base_url the operator never edited");
 }}
 if ("options" in saveBody) {{
-  throw new Error("save default must not send options on a route whose modal cannot edit them");
+  throw new Error("save default echoed back options the operator never edited");
 }}
 if (!saveBody.provider || !saveBody.model || typeof saveBody.reasoning !== "string") {{
   throw new Error("save default must send provider, model and the text route's reasoning");
+}}
+
+// ...and the other half of the rule: an EDIT travels, including an emptying
+// edit, which is the only way an operator can clear an override. (A save
+// closes the modal, so the row is opened again first -- which is also what
+// re-arms the prefill the edit is measured against.)
+await context.openDefaultModal({{
+  key: "input.text",
+  kind: "input",
+  modality: "text",
+  label: "Text Input",
+  provider: "endpoint:openai",
+  model: "gpt-4.1",
+  base_url: "https://models.example.test/v1",
+  options: {{ temperature: 0.3 }},
+}});
+el("modal-default-base-url").value = "http://localhost:1234/v1";
+el("modal-default-options").value = "";
+el("save-default").onclick();
+await new Promise((resolve) => setTimeout(resolve, 0));
+await new Promise((resolve) => setTimeout(resolve, 0));
+const editedSave = JSON.parse(calls.filter((call) => call.path === "/api/gateway/config/capability-defaults/input/text" && call.method === "PUT").pop().body);
+if (editedSave.base_url !== "http://localhost:1234/v1") {{
+  throw new Error("an edited base_url must travel: " + JSON.stringify(editedSave));
+}}
+if (JSON.stringify(editedSave.options) !== "{{}}") {{
+  throw new Error("emptying the options box must clear the stored dict: " + JSON.stringify(editedSave));
 }}
 
 await context.openDefaultModal({{
@@ -787,8 +829,14 @@ await context.renderDefaults({{
     {{ key: "output.scene3d", kind: "output", modality: "scene3d", label: "3D Scene Output", provider: "abstract3d", model: "scene", configured: true }},
   ]
 }});
-if (el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("scene3d"))) {{
-  throw new Error("scene3d defaults should be hidden in the Gateway Console for now");
+// REVERSED (operator 2026-08-02): scene3d was hidden "for now" because the
+// modal could not configure it -- there is no scene3d discovery endpoint. With
+// the free-text provider and model lanes, "nothing to discover" is a supported
+// state rather than a dead end, so the row is shown and savable. Hiding it let
+// the store hold a scene3d route (the TUI writes all 24) that this grid could
+// neither show nor clear.
+if (!el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("scene3d"))) {{
+  throw new Error("scene3d defaults must be visible in the Gateway Console");
 }}
 // THE ROUTE HIERARCHY, NOT HIDDEN ROWS (operator question 2026-08-01:
 // "why do we have output.image and output.video? are those remnants?").
@@ -992,3 +1040,37 @@ if (!treeHas(el("sandbox-transcript"), (node) => node.id === "audio" && String(n
         harness_path.write_text(harness, encoding="utf-8")
         result = subprocess.run(["node", str(harness_path)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_console_surfaces_core_store_authority_on_shared_panels() -> None:
+    """The web console must obey the same passthrough principle as both TUIs:
+    a panel that edits AbstractCore-owned data has to NAME the store it writes
+    to. Without this the operator edits AbstractCore's file believing it is a
+    Gateway-local setting — and has no way to know which file `abstractcore
+    config` disagrees with."""
+    html = gateway_console_html()
+
+    # Both core-shared panels carry a persistent authority line...
+    for anchor in ("defaults-authority", "endpoint-profiles-authority"):
+        assert anchor in html, f"missing authority line anchor: {anchor}"
+        assert f'renderStoreAuthority("{anchor}"' in html, f"{anchor} is never rendered"
+
+    # ...and the claim is driven by the API payload, never guessed by the page.
+    assert "payload?.config_file" in html
+    assert 'authority.startsWith("abstractcore")' in html
+    assert "edits here apply to AbstractCore directly" in html
+    # A non-writable store must not claim edits apply.
+    assert "read-only from this Gateway" in html
+
+
+def test_console_authority_line_requires_evidence() -> None:
+    """No claim without evidence: a payload that does not name an AbstractCore
+    store must leave the line empty, so gateway-owned panels can never inherit
+    a sentence about a file they do not touch."""
+    html = gateway_console_html()
+    start = html.index("function renderStoreAuthority")
+    body = html[start:start + 2200]
+    assert 'el.innerHTML = "";' in body
+    assert "classList.add(\"hidden\")" in body
+    # A per-runtime overlay is an AbstractCore file, but NOT the shared one.
+    assert "abstractcore.runtime" in body

@@ -1141,7 +1141,12 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
 
 
 def _summarize_run_output(value: Any, *, max_string: int = 50_000, max_items: int = 80, max_depth: int = 8) -> Any:
-    """Return an HTTP-safe, bounded projection of a run's final output."""
+    """Return an HTTP-safe, bounded projection of a run's final output.
+
+    #[WARNING:TRUNCATION] (ADR-0026 §4). Lossy, but never silent: every cut
+    emits an in-band `#TRUNCATION:` marker naming what was dropped and the
+    original size. This is a PROJECTION for the HTTP summary — the full
+    output stays in the run store, so nothing downstream reads this copy."""
 
     def _trunc(text: str) -> str:
         if len(text) <= max_string:

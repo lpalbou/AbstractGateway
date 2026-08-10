@@ -352,3 +352,27 @@ def test_f3_starter_declares_the_mailbox_at_start_not_first_tick(tmp_path: Path)
     assert run.vars.get("events_mailbox") == "a-inbox"
     # And therefore the liveness scan sees it immediately: no double-start.
     assert bridge.ensure_resident_runs() == []
+
+
+def test_resident_config_has_no_thinking_knob(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operator ruling 2026-08-04: agora is a standalone library — LLM
+    parameters are NOT resident config. The reasoning default lives in the
+    gateway capability-defaults store (`output.text` route `reasoning`) and
+    reaches resident LLM calls through the runtime's capability cascade. A
+    `thinking` key in the residents env must not silently become config."""
+    import dataclasses
+
+    assert "thinking" not in {f.name for f in dataclasses.fields(AgoraResidentConfig)}
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_AGORA_BRIDGE", "1")
+    monkeypatch.setenv(
+        "ABSTRACTGATEWAY_AGORA_RESIDENTS",
+        json.dumps([{"alias": "resident-a", "mailbox": "a-inbox", "flow_id": "f", "thinking": "medium"}]),
+    )
+    cfg = AgoraBridgeConfig.from_env(tmp_path)
+    assert not hasattr(cfg.residents[0], "thinking")
+
+    # And the starter sends no `_runtime` of its own.
+    bridge = _bridge(tmp_path, [AgoraResidentConfig(alias="resident-a", mailbox="a-inbox", flow_id="f")])
+    bridge.ensure_resident_runs()
+    assert "_runtime" not in bridge.host.started[0]["input_data"]

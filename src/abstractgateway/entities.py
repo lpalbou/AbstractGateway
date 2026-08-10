@@ -1660,13 +1660,17 @@ class EntityRegistry:
             except _ec.ChatOpenRefused as e:
                 return EffectOutcome.failed(f"LLM_CALL refused: {e.detail}")
 
-            # Output headroom (agency-caps audit, maintainer 2026-07-11): a
-            # summoned entity writing a report or a rich final answer must not
-            # be cut mid-thought. 4096 is generous-but-bounded (caps bound
-            # runaway, not ambition); the fuller fix — operator-configurable
-            # per entity beside substrate.yaml — is queued for the creation
-            # modal (substrate config is already surfaced there).
-            llm_kwargs: Dict[str, Any] = {"model": model, "max_output_tokens": 4096}
+            # Output headroom: no code default (ADR-0026 §2 + the standing
+            # rule — never cap a budget unless the operator asked). The old
+            # hardcoded 4096 was a silent 20x shrink of the model's advertised
+            # ceiling (verified 2026-08-02 on qwen/qwen3.6-35b-a3b: uncapped
+            # sends max_tokens 81920, the 4096 constant sent 4096). Unset =>
+            # AbstractCore derives the bound from the model's registry
+            # capability, or omits it where the API allows.
+            llm_kwargs: Dict[str, Any] = {"model": model}
+            output_cap = _ec.resolve_entity_output_cap(None)
+            if output_cap is not None:
+                llm_kwargs["max_output_tokens"] = output_cap
             if thinking:
                 # The substrate's reasoning effort applies to the resident
                 # lane too — one mind, one triple, every lane.

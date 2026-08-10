@@ -135,7 +135,11 @@ def test_a_section_the_gateway_left_at_its_default_never_wins(stores) -> None:
         {
             "capability_defaults": {"routes": {}},
             "default_models": {"global_provider": None, "global_model": None, "chat_model": None, "code_model": None},
-            "timeouts": {"default_timeout": 7200.0, "tool_timeout": 600.0},
+            # The gateway's UNTOUCHED default document. Must track
+            # abstractcore TimeoutConfig's defaults or the fixture stops
+            # testing "left at its default" (tool_timeout became 7200.0 per
+            # ADR-0014 §2; it was 600.0).
+            "timeouts": {"default_timeout": 7200.0, "tool_timeout": 7200.0},
             "provider_profiles": {"profiles": {}},
             "audio_strategy_explicit": False,
         },
@@ -145,7 +149,7 @@ def test_a_section_the_gateway_left_at_its_default_never_wins(stores) -> None:
         {
             "capability_defaults": {"routes": {"input.text": {"provider": "lmstudio", "model": "qwen"}}},
             "default_models": {"global_provider": "lmstudio", "global_model": "qwen3.6", "chat_model": None, "code_model": None},
-            "timeouts": {"default_timeout": 7200.0, "tool_timeout": 7200.0},
+            "timeouts": {"default_timeout": 7200.0, "tool_timeout": 9000.0},  # operator-set, longer
             "provider_profiles": {"profiles": {"ovh": {"id": "ovh", "base_url": "https://x/v1"}}},
             "audio_strategy_explicit": True,
         },
@@ -155,7 +159,7 @@ def test_a_section_the_gateway_left_at_its_default_never_wins(stores) -> None:
 
     merged = json.loads(core.read_text(encoding="utf-8"))
     assert merged["default_models"]["global_provider"] == "lmstudio"
-    assert merged["timeouts"]["tool_timeout"] == 7200.0
+    assert merged["timeouts"]["tool_timeout"] == 9000.0
     assert merged["provider_profiles"]["profiles"]["ovh"]["base_url"] == "https://x/v1"
     assert merged["audio_strategy_explicit"] is True
 

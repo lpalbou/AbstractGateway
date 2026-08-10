@@ -30,7 +30,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, NoReturn, Optional, Tuple, Union
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
@@ -892,7 +892,7 @@ def gateway_admin_runtime_runs(
     kind: str,
     tenant_id: str,
     runtime_id: str,
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1),  # no ceiling: an over-large ask is served, not 422'd to EMPTY
 ) -> Dict[str, Any]:
     """Drill-in run summaries for ONE runtime plane (lazy — the inventory
     list never pays this). Entity maintenance holds propagate as 409."""
@@ -1406,7 +1406,13 @@ def _discovery_timeout_s(default: float = 1.5) -> float:
     return max(0.2, min(value, 10.0))
 
 
-def _provider_models_timeout_s(default: float = 30.0) -> float:
+def _provider_models_timeout_s(default: float = 5.0) -> float:
+    # DISCOVERY BUDGET, 5s (operator ruling 2026-08-03). This answers "which
+    # providers are up and what models do they have" — it fills pickers, so it
+    # must answer fast or say nothing. The old 30s default meant one unreachable
+    # host stalled a whole catalog, and measurably made things WORSE than the
+    # client's own budget when passed down per-provider across the fleet.
+    # Discovery only: inference and generation keep their own long budgets.
     raw = _env_float(
         "ABSTRACTGATEWAY_PROVIDER_MODELS_TIMEOUT_S",
         "ABSTRACTCORE_PROVIDER_MODELS_TIMEOUT_S",
@@ -1593,7 +1599,7 @@ class PurgeDraftRunsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dry_run: bool = Field(default=True, description="When true, report what would be purged without deleting data.")
-    limit: int = Field(default=200, ge=1, le=5000, description="Maximum root runs to scan or purge.")
+    limit: int = Field(default=200, ge=1, description="Maximum root runs to scan or purge. No ceiling — a retention sweep that silently scanned fewer roots than asked would under-report what it did.")
     session_id: Optional[str] = Field(default=None, description="Optional session id filter.")
     workflow_id: Optional[str] = Field(default=None, description="Optional workflow id filter.")
     run_ids: Optional[List[str]] = Field(default=None, description="Optional exact root run ids to consider.")
@@ -1902,6 +1908,13 @@ class ScheduleRunRequest(BaseModel):
     )
     flow_id: str = Field(..., description="Target entry flow id (or namespaced bundle:flow).")
     input_data: Dict[str, Any] = Field(default_factory=dict, description="Target flow input payload.")
+    thinking: Optional[Union[bool, str]] = Field(
+        default=None,
+        description=(
+            "Optional run-scoped reasoning/thinking control applied to every scheduled execution "
+            "(same semantics as /runs/start: folded into input_data._runtime.thinking)."
+        ),
+    )
 
     start_at: Optional[str] = Field(
         default=None,
@@ -2044,7 +2057,10 @@ class LedgerBatchRun(BaseModel):
 
 class LedgerBatchRequest(BaseModel):
     runs: list[LedgerBatchRun] = Field(default_factory=list)
-    limit: int = Field(default=200, ge=1, le=2000)
+    # No upper bound — same reason as GET /runs/{id}/ledger: each run's ledger
+    # is fully materialized before the slice, so a ceiling bought nothing and
+    # turned an over-large ask into a 422 with no `runs` key (fail-to-EMPTY).
+    limit: int = Field(default=200, ge=1)
 
 
 class RunChatResponse(BaseModel):
@@ -2113,7 +2129,10 @@ class KGQueryRequest(BaseModel):
         description="If true, query across all owner_ids within the selected scope(s) (debug/audit).",
     )
 
-    limit: int = Field(default=500, ge=-1, le=10_000, description="Max results; 0 or -1 means unlimited (debug/audit).")
+    # No `le=`: the field already advertises "0 or -1 means unlimited", so a
+    # ceiling that 422'd `limit=20000` while accepting `limit=-1` was pure
+    # contradiction — the caller could have everything but not a lot.
+    limit: int = Field(default=500, ge=-1, description="Max results; 0 or -1 means unlimited (debug/audit). No upper bound.")
     order: str = Field(default="desc", description="asc|desc (observed_at for non-semantic queries)")
 
 
@@ -3427,6 +3446,19 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
     """Clamp client-provided run workspace knobs to the operator policy.
 
     Goal: prevent thin clients from expanding server filesystem access via run vars.
+
+    Out-of-scope values REFUSE (400); they are never silently dropped
+    (backlog 0232 §1, implemented 2026-08-02). The old body did a bare
+    `input_data.pop("workspace_root", None)`: the run then minted a fresh
+    `data_dir/workspaces/<uuid4>`, the agent's writes to the root the
+    operator declared were refused by the path resolver, and the agent
+    either escaped through `execute_command` or grafted the deliverable
+    under the wrong tree — both observed live on 2026-07-30. Every
+    downstream symptom in 0232 is a consequence of a run believing it has
+    a workspace it does not have. Dropping an operator-declared value
+    without saying so is the same dishonesty class ADR-0026 forbids for
+    truncation: if we will not honor it, we must say so, loudly, naming
+    what was rejected and what is allowed.
     """
     allow_overrides = _client_workspace_scope_overrides_enabled()
     base = _workspace_root()
@@ -3443,6 +3475,21 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
         pass
     root_for_rel = base
 
+    def _refuse_out_of_scope(field: str, rejected: Any) -> "NoReturn":
+        """400 naming the rejected value AND the allowed roots (backlog 0232 §1)."""
+        allowed_txt = ", ".join(sorted({str(p) for p in allowed_roots})) or "(none configured)"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{field} {str(rejected)!r} is outside the operator workspace scope. "
+                f"Allowed roots: {allowed_txt}. "
+                "The run was NOT started: honoring this value would silently relocate "
+                "the run's workspace, so it is refused instead of dropped. Fix the path, "
+                "add a workspace mount (ABSTRACTGATEWAY_WORKSPACE_MOUNTS), or set "
+                "ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1 to accept client-declared scope."
+            ),
+        )
+
     # workspace_root: allow only under operator roots (workspace root + mounts).
     raw_wr = input_data.get("workspace_root")
     if isinstance(raw_wr, str) and raw_wr.strip():
@@ -3451,7 +3498,7 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
             input_data["workspace_root"] = str(resolved)
             root_for_rel = resolved
         else:
-            input_data.pop("workspace_root", None)
+            _refuse_out_of_scope("workspace_root", resolved)
 
     # workspace_access_mode: forbid "all_except_ignored" (can escape to arbitrary abs paths).
     raw_mode = input_data.get("workspace_access_mode")
@@ -3479,8 +3526,13 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
             if not s:
                 continue
             resolved = _resolve_user_path(s, base=root_for_rel)
-            if allow_overrides or _is_under_allowed_roots(resolved, allowed_roots):
-                kept.append(str(resolved))
+            if not (allow_overrides or _is_under_allowed_roots(resolved, allowed_roots)):
+                # Same honesty rule as workspace_root above (0232 §1): an
+                # out-of-scope entry used to vanish from the list — the run
+                # started with a NARROWER grant than the operator declared and
+                # nothing said so. Refuse the whole start instead.
+                _refuse_out_of_scope("workspace_allowed_paths entry", resolved)
+            kept.append(str(resolved))
         if kept:
             # Preserve shape (list vs newline string) for UI friendliness.
             input_data["workspace_allowed_paths"] = kept if isinstance(raw_allowed, list) else "\n".join(kept)
@@ -5248,8 +5300,16 @@ def _artifact_page(
 def _artifact_effective_limit(limit: int, *, debug_unlimited: bool = False) -> int:
     lim = int(limit)
     if lim <= 0:
-        return 0 if debug_unlimited else 500
-    return min(lim, 10_000)
+        # `0`/`-1` is the caller SAYING "no bound" — honor it (0 == unbounded
+        # downstream). It used to silently become 500, so an explicit
+        # "give me everything" was answered with a 500-row page and no
+        # warning: the silent shrink ADR-0026 forbids. Where unlimited is
+        # privileged (global /artifacts/search), the CALLER is refused loudly
+        # by the route's admin gate — never quietly downgraded here.
+        return 0
+    # No `min(lim, 10_000)` re-clamp: an explicit caller value is honored
+    # verbatim. These are metadata rows and the store paginates them anyway.
+    return lim
 
 
 def _artifact_store_or_500(svc: Any) -> Any:
@@ -7043,6 +7103,11 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         raise HTTPException(status_code=500, detail=f"Failed to register schedule wrapper workflow: {e}")
 
     input_data = catalog_input_data if catalog_selection is not None and catalog_input_data is not None else dict(schedule_input_data)
+    # Reasoning lane (2026-08-04): same fold and precedence as /runs/start —
+    # the explicit top-level field beats an embedded input_data._runtime value.
+    schedule_thinking = _normalize_gateway_thinking(req.thinking)
+    if schedule_thinking is not None:
+        _ensure_input_runtime_namespace(input_data)["thinking"] = schedule_thinking
     schedule_meta: Dict[str, Any] = {
         "kind": "scheduled_run",
         "target_workflow_id": target_workflow_id,
@@ -7071,6 +7136,19 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
     }
     if catalog_selection is not None and isinstance(input_data.get("_runtime"), dict):
         wrapper_vars["_runtime"] = dict(input_data["_runtime"])
+    # Reasoning lane (2026-08-04): lift `thinking` to the WRAPPER root for every
+    # scope (the catalog lift above already covers catalog runs wholesale). The
+    # target child gets it twice over — explicitly via the vars pin payload, and
+    # via the runtime's `_runtime.thinking` child-spawn rider from this root —
+    # so descendants spawned outside the vars-pin payload inherit it too.
+    _sched_rt = input_data.get("_runtime")
+    _sched_thinking = _sched_rt.get("thinking") if isinstance(_sched_rt, dict) else None
+    if isinstance(_sched_thinking, bool) or (isinstance(_sched_thinking, str) and _sched_thinking.strip()):
+        _wrapper_rt = wrapper_vars.get("_runtime")
+        if not isinstance(_wrapper_rt, dict):
+            _wrapper_rt = {}
+            wrapper_vars["_runtime"] = _wrapper_rt
+        _wrapper_rt.setdefault("thinking", _sched_thinking)
     # Best-effort: lift a common prompt string to the parent run for UX/digest.
     prompt_text = input_data.get("prompt")
     if isinstance(prompt_text, str) and prompt_text.strip():
@@ -7137,7 +7215,7 @@ async def get_run(run_id: str) -> Dict[str, Any]:
 @router.get("/runs")
 async def list_runs(
     request: Request,
-    limit: int = Query(50, ge=1, le=500, description="Maximum number of runs (most recent first)."),
+    limit: int = Query(50, ge=1, description="Maximum number of runs (most recent first). No server ceiling — an explicit larger ask is served; a ceiling here 422'd the whole response, which reads as ZERO runs to a client parsing `runs`."),
     status: Optional[str] = Query(None, description="Optional status filter: running|waiting|completed|failed|cancelled"),
     workflow_id: Optional[str] = Query(None, description="Optional workflow id filter (e.g. bundle:flow)"),
     session_id: Optional[str] = Query(None, description="Optional session id filter (durable run.session_id)."),
@@ -7731,9 +7809,9 @@ async def get_run_history_bundle(
     run_id: str,
     include_subruns: bool = Query(True, description="Include descendant runs (subworkflows) in the bundle."),
     include_session: bool = Query(False, description="Include a best-effort session turn list (root runs)."),
-    session_turn_limit: int = Query(200, ge=1, le=500, description="Max session turns to include when include_session=true."),
+    session_turn_limit: int = Query(200, ge=1, description="Max session turns to include when include_session=true. No ceiling."),
     ledger_mode: str = Query("tail", description="Ledger export mode: tail|full."),
-    ledger_max_items: int = Query(2000, ge=0, le=20000, description="Max ledger items per run when ledger_mode=tail (0 disables tailing)."),
+    ledger_max_items: int = Query(2000, ge=0, description="Max ledger items per run when ledger_mode=tail (0 disables tailing, i.e. full). No ceiling — asking for MORE history must never 422 the bundle away."),
     detail: str = Query(
         "full",
         description="Bundle detail: full | replay. 'replay' is a labeled transcript-fold "
@@ -7809,14 +7887,14 @@ async def get_session_history_bloc(
         None,
         description="ISO-8601 created_at cursor — return root turns strictly before this timestamp.",
     ),
-    limit: int = Query(5, ge=1, le=50, description="Max root turns in this bloc."),
+    limit: int = Query(5, ge=1, description="Max root turns in this bloc. No ceiling."),
     detail: str = Query(
         "replay",
         description="Bundle detail forwarded to each turn export: full | replay.",
     ),
     include_subruns: bool = Query(True, description="Include descendant runs in each turn bundle."),
     ledger_mode: str = Query("tail", description="Ledger export mode: tail|full."),
-    ledger_max_items: int = Query(2000, ge=0, le=20000, description="Max ledger items per turn when ledger_mode=tail."),
+    ledger_max_items: int = Query(2000, ge=0, description="Max ledger items per turn when ledger_mode=tail (0 = full). No ceiling."),
     include_drafts: bool = Query(False, description="Include draft-test root runs."),
 ) -> Dict[str, Any]:
     """Return one cursor-bounded bloc of session turns with inline history bundles."""
@@ -7909,7 +7987,7 @@ async def search_artifacts(
     content_type: Optional[str] = Query(None, description="Optional exact content type or prefix like image/*."),
     query: Optional[str] = Query(None, description="Case-insensitive metadata text search."),
     tags: Optional[str] = Query(None, description="Optional tag filters as JSON object or key=value list."),
-    limit: int = Query(500, ge=-1, le=10_000, description="Maximum number of artifacts (most recent first); 0 or -1 is bounded to 500 unless debug_unlimited=true."),
+    limit: int = Query(500, ge=-1, description="Maximum number of artifacts (most recent first); 0 or -1 means unlimited. No server ceiling — an explicit larger ask is served, not 422'd."),
     offset: int = Query(0, ge=0, description="Result offset for pagination."),
     cursor: Optional[str] = Query(None, description="Optional stable cursor returned by a previous page."),
     order_by: str = Query("created_at", description="Sort key: created_at|size_bytes|last_accessed_at|semantic_kind|render_kind|workflow|run|turn."),
@@ -7924,7 +8002,11 @@ async def search_artifacts(
     store = _artifact_store_or_500(svc)
     scope0 = str(scope or "all").strip().lower() or "all"
     tag_filter = _parse_artifact_tag_filter(tags)
-    if bool(debug_unlimited):
+    if bool(debug_unlimited) or int(limit) <= 0:
+        # Unlimited on the GLOBAL artifact scope stays admin-only. It is now
+        # refused LOUDLY: `limit=-1` from a non-admin used to be silently
+        # rewritten to 500 rows, so the caller believed it had everything.
+        # An authorization answer is honest; a quiet downgrade is not.
         _require_admin_principal(request)
     effective_limit = _artifact_effective_limit(int(limit), debug_unlimited=bool(debug_unlimited))
     rows, total, stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
@@ -8055,7 +8137,7 @@ async def artifact_stats(
 @router.get("/runs/{run_id}/artifacts", response_model=ArtifactListResponse)
 async def list_run_artifacts(
     run_id: str,
-    limit: int = Query(500, ge=-1, le=10_000, description="Maximum number of artifacts (most recent first); 0 or -1 is bounded to 500."),
+    limit: int = Query(500, ge=-1, description="Maximum number of artifacts (most recent first); 0 or -1 means unlimited (no server ceiling)."),
     offset: int = Query(0, ge=0, description="Result offset for pagination."),
 ) -> ArtifactListResponse:
     """List artifacts associated with a run."""
@@ -8095,7 +8177,7 @@ async def list_run_artifacts(
 @router.get("/sessions/{session_id}/artifacts", response_model=ArtifactListResponse)
 async def list_session_artifacts(
     session_id: str,
-    limit: int = Query(500, ge=-1, le=10_000, description="Maximum number of artifacts (most recent first); 0 or -1 is bounded to 500."),
+    limit: int = Query(500, ge=-1, description="Maximum number of artifacts (most recent first); 0 or -1 means unlimited (no server ceiling)."),
     offset: int = Query(0, ge=0, description="Result offset for pagination."),
 ) -> ArtifactListResponse:
     """List artifacts visible to a session for run-start input selection."""
@@ -8352,7 +8434,19 @@ async def export_run_artifact_content(run_id: str, artifact_id: str, req: Artifa
 async def get_ledger(
     run_id: str,
     after: int = Query(0, ge=0, description="Cursor: number of records already consumed."),
-    limit: int = Query(200, ge=1, le=2000),
+    limit: int = Query(
+        200,
+        ge=1,
+        description=(
+            "Max records to return from the cursor. NO upper bound: the store read "
+            "below already materializes the WHOLE ledger, so a server-side ceiling "
+            "saved nothing and only shrank what the caller received. The former "
+            "le=2000 made `?limit=5000` a 422 with no `items` key at all — a client "
+            "reading `items` saw ZERO records for a run that had thousands "
+            "(campaign finding, reproduced 2026-08-02). Failing to EMPTY on an "
+            "over-large budget is silent data loss; ADR-0026 forbids it."
+        ),
+    ),
 ) -> Dict[str, Any]:
     svc = get_gateway_service()
     try:
@@ -8839,14 +8933,32 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
         return out
 
     def _ledger_excerpt(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+        # #[WARNING:TRUNCATION] head+tail selection for the chat grounding
+        # context. This is a SELECTION strategy (whole records kept intact),
+        # but the seam used to be invisible: the model read record 29 and
+        # record N-90 as adjacent and could reason about a gap that was never
+        # there. ADR-0026 §1 — no truncation may occur quietly — so the drop
+        # is now an explicit in-band record naming how many were omitted.
         if not items:
             return []
         if len(items) <= 120:
             return [_slim_ledger_record(x) for x in items if isinstance(x, dict)]
         head = items[:30]
         tail = items[-90:]
-        merged = head + tail
-        return [_slim_ledger_record(x) for x in merged if isinstance(x, dict)]
+        omitted = len(items) - len(head) - len(tail)
+        seam: Dict[str, Any] = {
+            "#TRUNCATION": (
+                f"{omitted} ledger record(s) omitted here by the run-chat excerpt "
+                f"(abstractgateway routes.gateway._ledger_excerpt keeps the first 30 and "
+                f"last 90 of {len(items)}). These records are NOT adjacent; fetch "
+                f"GET /runs/{{run_id}}/ledger for the full sequence."
+            )
+        }
+        return (
+            [_slim_ledger_record(x) for x in head if isinstance(x, dict)]
+            + [seam]
+            + [_slim_ledger_record(x) for x in tail if isinstance(x, dict)]
+        )
 
     ledger_excerpt_by_run: Dict[str, Any] = {k: _ledger_excerpt(v or []) for k, v in ledgers.items()}
 
@@ -9257,6 +9369,52 @@ def _voice_tts_timeout_s() -> float:
     except Exception:
         pass
     return 300.0
+
+
+def _discovery_max_concurrency() -> int:
+    """Concurrent DISCOVERY admission ceiling.
+
+    Same hazard as `_voice_synth_max_concurrency` below, same July incident:
+    `asyncio.to_thread` rides the loop's DEFAULT executor (min(32, cpu+4), 22
+    threads on this host). Moving the discovery probes off the event loop cured
+    the 816x stall of unrelated routes, but it parked a shared-pool thread per
+    in-flight probe -- so at exactly N=22 concurrent slow probes EVERY other
+    to_thread route stalled ~18-20s while `/api/health` stayed green at 38ms.
+    A liveness check literally cannot see that outage (measured 2026-08-03).
+
+    Discovery is a picker-filler, not a workload: bounding admission well below
+    the pool keeps a wedged provider from consuming the process. Callers past
+    the bound QUEUE briefly rather than joining a pile-up.
+    """
+    raw = os.getenv("ABSTRACTGATEWAY_DISCOVERY_MAX_CONCURRENCY")
+    try:
+        if raw is not None and str(raw).strip():
+            return max(1, int(str(raw).strip()))
+    except Exception:
+        pass
+    return 8
+
+
+_discovery_semaphores: "weakref.WeakKeyDictionary[Any, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+_discovery_semaphore_lock = threading.Lock()
+
+
+def _get_discovery_semaphore() -> asyncio.Semaphore:
+    # Per-event-loop, for the same reason as the synthesis semaphore.
+    loop = asyncio.get_running_loop()
+    with _discovery_semaphore_lock:
+        sem = _discovery_semaphores.get(loop)
+        if sem is None:
+            sem = asyncio.Semaphore(_discovery_max_concurrency())
+            _discovery_semaphores[loop] = sem
+        return sem
+
+
+async def _discovery_to_thread(func, *args, **kwargs):
+    """Run one blocking discovery probe off the loop, under admission control."""
+    sem = _get_discovery_semaphore()
+    async with sem:
+        return await asyncio.to_thread(func, *args, **kwargs)
 
 
 def _voice_synth_max_concurrency() -> int:
@@ -15381,7 +15539,10 @@ async def discovery_capabilities() -> Dict[str, Any]:
     host_facade, host_err = _gateway_abstractcore_host_facade()
     discovery_facade, discovery_err = _gateway_abstractcore_discovery_facade()
     run_facade, run_err = _gateway_abstractcore_run_facade()
-    music_probe = _gateway_music_capability_probe()
+    # Blocking probe, off the event loop: it imports torch/transformers to list
+    # model names and has been measured at 30s. On the loop it stalls EVERY other
+    # request in the process (measured: a 0.02s route took 16.2s behind one).
+    music_probe = await _discovery_to_thread(_gateway_music_capability_probe)
     music_route_available = bool(run_facade is not None and not run_err)
     music_configured = bool(
         music_probe.get("available")
@@ -15505,7 +15666,8 @@ async def voice_voices_catalog(
             metadata={"providers_only": providers_only, "model": model, "compact": True if compact else None},
         )
     try:
-        payload = discovery.get_voice_catalog(
+        payload = await _discovery_to_thread(
+            discovery.get_voice_catalog,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
             provider=provider,
@@ -15557,15 +15719,19 @@ async def audio_speech_models_catalog(
             )
         else:
             try:
+                # Hoisted out of the expression so the blocking probe can go
+                # off the event loop like every other discovery call.
+                _voice_providers_payload = await _discovery_to_thread(
+                    discovery.get_voice_catalog,
+                    base_url=base_url,
+                    provider_api_key=_request_provider_api_key(request),
+                    provider=provider,
+                    model=None,
+                    providers_only=True,
+                )
                 out = _filter_voice_catalog_response(
                     _runtime_discovery_payload(
-                        discovery.get_voice_catalog(
-                            base_url=base_url,
-                            provider_api_key=_request_provider_api_key(request),
-                            provider=provider,
-                            model=None,
-                            providers_only=True,
-                        )
+                        _voice_providers_payload
                     ),
                     provider=provider,
                     model=None,
@@ -15616,7 +15782,8 @@ async def audio_speech_models_catalog(
             provider=provider,
         )
     try:
-        payload = discovery.list_tts_models(
+        payload = await _discovery_to_thread(
+            discovery.list_tts_models,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
             provider=provider,
@@ -15660,15 +15827,19 @@ async def audio_transcription_models_catalog(
             out = _static_transcription_providers_only_response(provider)
         else:
             try:
+                # Hoisted out of the expression so the blocking probe can go
+                # off the event loop like every other discovery call.
+                _voice_providers_payload = await _discovery_to_thread(
+                    discovery.get_voice_catalog,
+                    base_url=base_url,
+                    provider_api_key=_request_provider_api_key(request),
+                    provider=provider,
+                    model=None,
+                    providers_only=True,
+                )
                 voice_out = _filter_voice_catalog_response(
                     _runtime_discovery_payload(
-                        discovery.get_voice_catalog(
-                            base_url=base_url,
-                            provider_api_key=_request_provider_api_key(request),
-                            provider=provider,
-                            model=None,
-                            providers_only=True,
-                        )
+                        _voice_providers_payload
                     ),
                     provider=provider,
                     model=None,
@@ -15730,7 +15901,8 @@ async def audio_transcription_models_catalog(
             provider=provider,
         )
     try:
-        payload = discovery.list_stt_models(
+        payload = await _discovery_to_thread(
+            discovery.list_stt_models,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
             provider=provider,
@@ -15788,7 +15960,8 @@ async def audio_music_providers_catalog(
             task=task_value,
         )
     try:
-        payload = discovery.list_music_providers(
+        payload = await _discovery_to_thread(
+            discovery.list_music_providers,
             task=task_value,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
@@ -15856,7 +16029,8 @@ async def audio_music_models_catalog(
             provider=provider,
         )
     try:
-        payload = discovery.list_music_models(
+        payload = await _discovery_to_thread(
+            discovery.list_music_models,
             task=task_value,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
@@ -15945,7 +16119,8 @@ async def vision_provider_models_catalog(
             metadata={"providers_only": providers_only},
         )
     try:
-        payload = discovery.list_vision_provider_models(
+        payload = await _discovery_to_thread(
+            discovery.list_vision_provider_models,
             task=task_value,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
@@ -15999,7 +16174,8 @@ async def vision_models_catalog(request: Request) -> Dict[str, Any]:
             items=_gateway_catalog_model_items(out, detail_keys=("models",), value_keys=("models",)),
         )
     try:
-        payload = discovery.list_cached_vision_models(
+        payload = await _discovery_to_thread(
+            discovery.list_cached_vision_models,
             provider_api_key=_request_provider_api_key(request),
         )
     except Exception as e:
@@ -16059,7 +16235,8 @@ async def vision_adapters_catalog(
             metadata={"model": model_value},
         )
     try:
-        payload = discovery.list_vision_adapters(
+        payload = await _discovery_to_thread(
+            discovery.list_vision_adapters,
             model=model_value,
             task=task_value,
             base_url=base_url,
@@ -16144,7 +16321,8 @@ async def embedding_models_catalog(
             metadata={"providers_only": providers_only},
         )
     try:
-        payload = discovery.list_embedding_models(
+        payload = await _discovery_to_thread(
+            discovery.list_embedding_models,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
             provider=provider,
@@ -16209,7 +16387,8 @@ async def discovery_providers(
         )
 
     try:
-        payload = discovery.list_providers(
+        payload = await _discovery_to_thread(
+            discovery.list_providers,
             include_models=bool(include_models),
             provider_api_key=_request_provider_api_key(request),
         )
@@ -16378,7 +16557,8 @@ async def discovery_provider_models(
                     models = []
                 else:
                     try:
-                        payload = discovery.list_provider_models(
+                        payload = await asyncio.to_thread(
+                            discovery.list_provider_models,
                             profile.provider_family,
                             base_url=profile.base_url or None,
                             provider_api_key=profile.api_key or _request_provider_api_key(request),
@@ -16434,7 +16614,8 @@ async def discovery_provider_models(
                 provider=profile.virtual_provider_id,
             )
         try:
-            payload = discovery.list_provider_models(
+            payload = await _discovery_to_thread(
+                discovery.list_provider_models,
                 profile.provider_family,
                 base_url=profile.base_url or None,
                 provider_api_key=profile.api_key or _request_provider_api_key(request),
@@ -16491,7 +16672,8 @@ async def discovery_provider_models(
             current_base_dir=current_base,
             root_base_dir=root_base,
         )
-        payload = discovery.list_provider_models(
+        payload = await _discovery_to_thread(
+            discovery.list_provider_models,
             prov,
             base_url=base_url or direct_kwargs.get("base_url"),
             provider_api_key=_request_provider_api_key(request) or direct_kwargs.get("api_key"),
@@ -16536,7 +16718,7 @@ async def discovery_model_capabilities(model_name: str = Query(..., description=
     if err or discovery is None:
         return {"model": name, "capabilities": {}, "error": err or "Gateway runtime does not expose AbstractCore discovery helpers."}
     try:
-        payload = discovery.get_model_capabilities(name)
+        payload = await _discovery_to_thread(discovery.get_model_capabilities, name)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     out = dict(payload) if isinstance(payload, dict) else {"model": name, "capabilities": {}}
@@ -17818,6 +18000,15 @@ class BacklogMaintainRequest(BaseModel):
     messages: List[Dict[str, Any]] = Field(default_factory=list, description="Chat messages: {role, content}.")
     provider: Optional[str] = Field(default=None, description="Optional provider override (default: gateway provider).")
     model: Optional[str] = Field(default=None, description="Optional model override (default: gateway model).")
+    max_iterations: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Agent iteration budget for this maintenance turn. None = the route's "
+            "documented default (12). No upper bound: a caller who needs more "
+            "reads to finish the draft gets them."
+        ),
+    )
 
 
 class BacklogAdvisorRequest(BaseModel):
@@ -17838,6 +18029,14 @@ class BacklogAdvisorRequest(BaseModel):
         description="Optional current backlog tab (processing|planned|proposed|recurrent|completed|failed|deprecated|trash).",
     )
     focus_type: Optional[str] = Field(default=None, description="Optional current type filter (bug|feature|improvement|task|all).")
+    max_iterations: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Agent iteration budget for this advisor turn. None = the route's "
+            "documented default (10). No upper bound."
+        ),
+    )
 
 
 class BacklogAdvisorResponse(BaseModel):
@@ -17859,6 +18058,12 @@ class BacklogExecConfigResponse(BaseModel):
     codex_model: Optional[str] = None
     codex_reasoning_effort: Optional[str] = None
     codex_available: Optional[bool] = None
+
+
+# The summary's last_message bound. Kept (a listing row is not a log dump)
+# but never silent — ADR-0026 §1; the request record on disk holds the whole
+# message.
+_BACKLOG_LAST_MESSAGE_CHARS = 1200
 
 
 class BacklogExecRequestSummary(BaseModel):
@@ -18511,7 +18716,7 @@ async def email_list_messages(
     mailbox: str = Query(default="", description="Optional mailbox override (default: account config or INBOX)."),
     since: str = Query(default="", description="Optional since filter (e.g. '7d' or ISO8601)."),
     status: str = Query(default="all", description="all|unread|read"),
-    limit: int = Query(default=20, ge=1, le=200),
+    limit: int = Query(default=20, ge=1),  # no ceiling (over-large asks are served, not 422'd)
 ) -> EmailListResponse:
     _list_email_accounts, list_emails, _read_email, _send_email = _require_runtime_email_helpers()
     payload = _email_tool_payload_or_error(
@@ -18567,7 +18772,7 @@ async def email_read_message(
     uid: str,
     account: str = Query(default="", description="Optional account name (required if multiple configured)."),
     mailbox: str = Query(default="", description="Optional mailbox override (default: account config or INBOX)."),
-    max_body_chars: int = Query(default=20000, ge=1000, le=200000),
+    max_body_chars: int = Query(default=20000, ge=1000, description="Max body chars to return. No ceiling — a caller asking for the WHOLE mail body must get it, not a 422."),
 ) -> EmailReadResponse:
     _list_email_accounts, _list_emails, read_email, _send_email = _require_runtime_email_helpers()
     payload = _email_tool_payload_or_error(
@@ -18669,7 +18874,7 @@ async def triage_run(req: TriageRunRequest) -> TriageRunResponse:
 @router.get("/triage/decisions", response_model=TriageDecisionListResponse)
 async def triage_list_decisions(
     status: str = Query(default="", description="Optional filter: pending|approved|deferred|rejected"),
-    limit: int = Query(default=200, ge=1, le=1000),
+    limit: int = Query(default=200, ge=1),  # no ceiling (over-large asks are served, not 422'd)
 ) -> TriageDecisionListResponse:
     try:
         from ..maintenance.triage_queue import decisions_dir, iter_decisions  # type: ignore
@@ -18839,7 +19044,17 @@ def _exec_request_summary(req: Dict[str, Any], *, request_id: str) -> BacklogExe
     error = str(result.get("error") or "").strip() or None
     run_dir_relpath = str(req.get("run_dir_relpath") or "").strip() or None
     last_msg = str(result.get("last_message") or "").strip()
-    last_msg = last_msg[:1200] if last_msg else ""
+    if len(last_msg) > _BACKLOG_LAST_MESSAGE_CHARS:
+        #[WARNING:TRUNCATION] backlog-exec summary last_message bounded
+        # (ADR-0026 §1: this string is the operator's ONLY in-API view of
+        # how the run ended — a silent cut reads as "that is all it said").
+        # The full message stays in the request record on disk.
+        last_msg = (
+            last_msg[:_BACKLOG_LAST_MESSAGE_CHARS]
+            + f"\n… [#TRUNCATION: {_BACKLOG_LAST_MESSAGE_CHARS} of "
+              f"{len(last_msg)} chars; the full last_message is in the "
+              "request record]"
+        )
 
     return BacklogExecRequestSummary(
         request_id=request_id,
@@ -18945,7 +19160,7 @@ async def backlog_exec_requests(
         default="",
         description="Optional comma-separated statuses (queued|running|awaiting_qa|completed|failed|promoted).",
     ),
-    limit: int = Query(default=200, ge=1, le=1000),
+    limit: int = Query(default=200, ge=1),  # no ceiling (over-large asks are served, not 422'd)
 ) -> BacklogExecRequestListResponse:
     repo_root = _triage_repo_root_from_env()
     if repo_root is None:
@@ -19000,7 +19215,7 @@ async def backlog_exec_active_items(
         default="queued,running,awaiting_qa",
         description="Optional comma-separated statuses (queued|running|awaiting_qa).",
     ),
-    limit: int = Query(default=600, ge=1, le=2000),
+    limit: int = Query(default=600, ge=1),  # no ceiling (over-large asks are served, not 422'd)
 ) -> BacklogExecActiveItemsResponse:
     """Return backlog item relpaths currently queued/running in the backlog exec queue.
 
@@ -19705,7 +19920,7 @@ async def backlog_exec_request_deploy_uat(request_id: str) -> BacklogExecRequest
 async def backlog_exec_log_tail(
     request_id: str,
     name: str = Query(default="events", description="Log name: events|stderr|last_message"),
-    max_bytes: int = Query(default=80_000, ge=1024, le=400_000, description="Tail size in bytes (bounded)."),
+    max_bytes: int = Query(default=80_000, ge=1024, description="Tail size in bytes. No ceiling — asking for a bigger tail must never 422 the log away."),
     after_bytes: Optional[int] = Query(
         default=None,
         ge=0,
@@ -19798,7 +20013,7 @@ async def backlog_exec_log_tail(
 
 @router.get("/audit/tail", response_model=AuditLogTailResponse)
 async def audit_log_tail(
-    max_bytes: int = Query(default=80_000, ge=1024, le=400_000, description="Tail size in bytes (bounded)."),
+    max_bytes: int = Query(default=80_000, ge=1024, description="Tail size in bytes. No ceiling — asking for a bigger tail must never 422 the log away."),
 ) -> AuditLogTailResponse:
     base = _gateway_base_dir()
     path = (base / "audit_log.jsonl").resolve()
@@ -19980,7 +20195,7 @@ async def processes_redeploy(process_id: str) -> ProcessActionResponse:
 @router.get("/processes/{process_id}/logs/tail", response_model=ProcessLogTailResponse)
 async def processes_log_tail(
     process_id: str,
-    max_bytes: int = Query(default=80_000, ge=1024, le=400_000, description="Tail size in bytes (bounded)."),
+    max_bytes: int = Query(default=80_000, ge=1024, description="Tail size in bytes. No ceiling — asking for a bigger tail must never 422 the log away."),
 ) -> ProcessLogTailResponse:
     mgr = _require_process_manager()
     pid = str(process_id or "").strip()
@@ -21847,7 +22062,9 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
                 "model": model,
                 "prompt": prompt,
                 "resp_schema": schema,
-                "max_iterations": 12,
+                # Documented, operator-overridable default (was a bare literal
+                # with no way to raise it — a round budget nobody asked for).
+                "max_iterations": int(req.max_iterations) if req.max_iterations else 12,
                 # Defense-in-depth: allow only read/search/network tools.
                 "tools": [
                     "read_file",
@@ -22000,7 +22217,8 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
                 **({"_runtime": {"thinking": str(req.thinking).strip()}} if str(req.thinking or "").strip() else {}),
                 "prompt": prompt,
                 "resp_schema": schema,
-                "max_iterations": 10,
+                # Documented, operator-overridable default (see BacklogAdvisorRequest).
+                "max_iterations": int(req.max_iterations) if req.max_iterations else 10,
                 # Read-only advisor: allow only read/search/list/skim (+ optional web tools).
                 "tools": tools,
                 "system": (
@@ -23008,7 +23226,17 @@ async def provider_endpoint_profiles_get(request: Request) -> Dict[str, Any]:
     current_base, root_base = _gateway_profile_dirs()
     payload: Dict[str, Any] = {
         "ok": True,
-        "profiles": _effective_endpoint_profile_public_rows(current_base_dir=current_base, root_base_dir=root_base),
+        # OFF THE LOOP: this probes every local provider spec (lmstudio, ollama,
+        # mlx, huggingface) in turn. Its stated 1.5s budget is fiction -- the
+        # underlying probe ignores timeout_s and blocks a hard ~5s per spec, so
+        # a routable-but-silent host (VPN down, firewalled, remote LM Studio)
+        # costs ~20s. On the loop that froze every other request; measured
+        # 2026-08-03. Cheap today only because LM Studio and ollama answer.
+        "profiles": await _discovery_to_thread(
+            _effective_endpoint_profile_public_rows,
+            current_base_dir=current_base,
+            root_base_dir=root_base,
+        ),
         "can_create_gateway_scope": principal.is_admin(),
         "source": "abstractgateway.provider_endpoint_profiles",
     }
@@ -23052,7 +23280,17 @@ async def provider_endpoint_profiles_create(request: Request, req: _GatewayProvi
     return {
         "ok": True,
         "profile": profile.public_dict(),
-        "profiles": _effective_endpoint_profile_public_rows(current_base_dir=current_base, root_base_dir=root_base),
+        # OFF THE LOOP: this probes every local provider spec (lmstudio, ollama,
+        # mlx, huggingface) in turn. Its stated 1.5s budget is fiction -- the
+        # underlying probe ignores timeout_s and blocks a hard ~5s per spec, so
+        # a routable-but-silent host (VPN down, firewalled, remote LM Studio)
+        # costs ~20s. On the loop that froze every other request; measured
+        # 2026-08-03. Cheap today only because LM Studio and ollama answer.
+        "profiles": await _discovery_to_thread(
+            _effective_endpoint_profile_public_rows,
+            current_base_dir=current_base,
+            root_base_dir=root_base,
+        ),
     }
 
 
@@ -23102,7 +23340,8 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
         return body
 
     try:
-        payload = discovery.list_provider_models(
+        payload = await _discovery_to_thread(
+            discovery.list_provider_models,
             provider_family,
             base_url=base_url or None,
             provider_api_key=provider_api_key,
@@ -23370,7 +23609,17 @@ async def provider_endpoint_profiles_update(request: Request, profile_id: str, r
     return {
         "ok": True,
         "profile": profile.public_dict(),
-        "profiles": _effective_endpoint_profile_public_rows(current_base_dir=current_base, root_base_dir=root_base),
+        # OFF THE LOOP: this probes every local provider spec (lmstudio, ollama,
+        # mlx, huggingface) in turn. Its stated 1.5s budget is fiction -- the
+        # underlying probe ignores timeout_s and blocks a hard ~5s per spec, so
+        # a routable-but-silent host (VPN down, firewalled, remote LM Studio)
+        # costs ~20s. On the loop that froze every other request; measured
+        # 2026-08-03. Cheap today only because LM Studio and ollama answer.
+        "profiles": await _discovery_to_thread(
+            _effective_endpoint_profile_public_rows,
+            current_base_dir=current_base,
+            root_base_dir=root_base,
+        ),
     }
 
 
@@ -23391,7 +23640,17 @@ async def provider_endpoint_profiles_delete(request: Request, profile_id: str) -
     return {
         "ok": True,
         "deleted": True,
-        "profiles": _effective_endpoint_profile_public_rows(current_base_dir=current_base, root_base_dir=root_base),
+        # OFF THE LOOP: this probes every local provider spec (lmstudio, ollama,
+        # mlx, huggingface) in turn. Its stated 1.5s budget is fiction -- the
+        # underlying probe ignores timeout_s and blocks a hard ~5s per spec, so
+        # a routable-but-silent host (VPN down, firewalled, remote LM Studio)
+        # costs ~20s. On the loop that froze every other request; measured
+        # 2026-08-03. Cheap today only because LM Studio and ollama answer.
+        "profiles": await _discovery_to_thread(
+            _effective_endpoint_profile_public_rows,
+            current_base_dir=current_base,
+            root_base_dir=root_base,
+        ),
     }
 
 
@@ -24411,8 +24670,8 @@ async def files_list(
     family: str = Query("any", description="Optional file family filter: any|image|video|audio|document|text|code|json|archive|other."),
     extensions: Optional[str] = Query(None, description="Optional comma/newline-separated extension filter without dots."),
     query: str = Query("", description="Optional case-insensitive substring filter on path/name."),
-    limit: int = Query(200, ge=1, le=5000),
-    max_depth: int = Query(0, ge=0, le=50, description="Optional recursive depth limit; 0 means unlimited."),
+    limit: int = Query(200, ge=1),  # no ceiling (over-large asks are served, not 422'd)
+    max_depth: int = Query(0, ge=0, description="Optional recursive depth limit; 0 means unlimited. No ceiling."),
     workspace_root: Optional[str] = Query(None, description="Optional workspace root override for this listing."),
     workspace_access_mode: Optional[str] = Query(None, description="Workspace access mode (workspace_only|workspace_or_allowed)."),
     workspace_allowed_paths: Optional[str] = Query(None, description="Newline-separated allowed root directories (mounted for browse)."),
@@ -24464,7 +24723,7 @@ async def files_list(
 @router.get("/files/search")
 async def files_search(
     query: str = Query(..., description="Case-insensitive substring match on file path/name."),
-    limit: int = Query(20, ge=1, le=200),
+    limit: int = Query(20, ge=1),  # no ceiling (over-large asks are served, not 422'd)
     workspace_root: Optional[str] = Query(None, description="Optional workspace root override for this search."),
     workspace_access_mode: Optional[str] = Query(None, description="Workspace access mode (workspace_only|workspace_or_allowed)."),
     workspace_allowed_paths: Optional[str] = Query(None, description="Newline-separated allowed root directories (mounted for search)."),
@@ -24594,8 +24853,8 @@ async def files_read(
 async def files_skim(
     path: str = Query(..., description="Workspace-relative path (preferred) or absolute path under workspace root."),
     target_percent: float = Query(8.0, ge=1.0, le=25.0, description="Percent of lines to sample (default 8)."),
-    head_lines: int = Query(25, ge=0, le=500, description="Max lines sampled from the start (default 25)."),
-    tail_lines: int = Query(25, ge=0, le=500, description="Max lines sampled from the end (default 25)."),
+    head_lines: int = Query(25, ge=0, description="Max lines sampled from the start (default 25). No ceiling."),
+    tail_lines: int = Query(25, ge=0, description="Max lines sampled from the end (default 25). No ceiling."),
     workspace_root: Optional[str] = Query(None, description="Optional workspace root override for this skim."),
     workspace_access_mode: Optional[str] = Query(None, description="Workspace access mode (workspace_only|workspace_or_allowed)."),
     workspace_allowed_paths: Optional[str] = Query(None, description="Newline-separated allowed root directories (mounted for reads)."),

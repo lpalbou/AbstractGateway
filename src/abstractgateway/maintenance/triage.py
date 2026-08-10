@@ -283,8 +283,13 @@ def triage_reports(
                 model=str(llm_cfg.get("model") or ""),
                 api_key=str(llm_cfg.get("api_key") or ""),
                 temperature=float(llm_cfg.get("temperature") or 0.2),
-                timeout_s=float(llm_cfg.get("timeout_s") or 30.0),
-                max_tokens=int(llm_cfg.get("max_tokens") or 800),
+                # Pass the resolved config THROUGH. The `or 30.0` / `or 800`
+                # re-defaults here were a second, hidden budget floor that
+                # overrode the resolver even after it stopped inventing one:
+                # `timeout_s=0` ("no client timeout") became 30s, and
+                # `max_tokens=None` ("no cap asked for") became 800.
+                timeout_s=llm_cfg.get("timeout_s"),
+                max_tokens=llm_cfg.get("max_tokens"),
             )
             if suggestion is not None:
                 llm_suggestion = suggestion

@@ -1,6 +1,6 @@
 # `deep-research` Shipped Workflow
 
-Gateway packages `deep-research@0.1.6.flow` as a supported shipped bundle. It
+Gateway packages `deep-research@0.1.7.flow` as a supported shipped bundle. It
 is available from the normal bundle registry alongside `basic-agent` when the
 packaged bundle directory is used. (Formerly `dp-research` — the `dp-*` names
 were retired by operator ruling 2026-07-16; version lineage continues from
@@ -10,7 +10,7 @@ were retired by operator ruling 2026-07-16; version lineage continues from
 ## Contract
 
 - Bundle id: `deep-research`
-- Version: `0.1.6`
+- Version: `0.1.7`
 - Entrypoint flow id: `deep-research`
 - Interfaces: `abstractcode.agent.v1`, `abstractresearch.deep.v1`
 - Editable source flows: `abstractflow/examples/flows/deep-*.json`

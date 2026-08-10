@@ -205,7 +205,7 @@ def test_discovery_proxies_configured_core_provider_catalogs(tmp_path: Path, mon
             "input_type": None,
             "output_type": None,
             "capability_route": None,
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         },
     ]
 
@@ -238,7 +238,7 @@ def test_discovery_provider_models_accepts_base_url_override(tmp_path: Path, mon
             "input_type": None,
             "output_type": None,
             "capability_route": None,
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 
@@ -270,7 +270,7 @@ def test_discovery_provider_models_accepts_capability_filters(tmp_path: Path, mo
             "input_type": None,
             "output_type": None,
             "capability_route": ["input.image,output.text"],
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 

@@ -363,6 +363,8 @@ def read_skill_body(name: str, *, data_dir: Path, max_chars: int = 16000) -> Dic
         body = str(loaded.document.body or "")
     except Exception as e:
         return {"success": False, "error": f"failed to load skill {clean!r}: {e}"}
+    # #[WARNING:TRUNCATION] (ADR-0026 §4). Caller-overridable via max_chars,
+    # marked in-band, and the marker tells the reader how to get the rest.
     cap = max(1000, int(max_chars or 16000))
     truncated = len(body) > cap
     if truncated:

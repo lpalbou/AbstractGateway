@@ -513,3 +513,71 @@ def test_gateway_run_chat_can_persist_to_ledger(tmp_path: Path, monkeypatch: pyt
         payload = chats[-1]["effect"]["payload"].get("payload")
         assert isinstance(payload, dict)
         assert str(payload.get("answer") or "").startswith("answer")
+
+
+def test_ledger_over_large_limit_serves_records_instead_of_failing_to_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression pin (caps audit 2026-08-02).
+
+    `GET /runs/{id}/ledger?limit=5000` used to answer 422 (`le=2000`) with no
+    `items` key at all, so every client reading `items` saw ZERO records for a
+    run that had plenty. A server ceiling that fails to EMPTY on an over-large
+    budget is silent data loss (ADR-0026), and it protected nothing: the store
+    read below it already materializes the WHOLE ledger before the slice.
+    """
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    from abstractcore.config.manager import ConfigurationManager
+
+    assert ConfigurationManager().set_capability_default("output.text", provider="stub", model="stub-model")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        run_id = r.json()["run_id"]
+
+        def _has_wait() -> bool:
+            rr = client.get(f"/api/gateway/runs/{run_id}", headers=headers)
+            assert rr.status_code == 200, rr.text
+            w = rr.json().get("waiting")
+            return isinstance(w, dict) and bool(w.get("wait_key"))
+
+        _wait_until(_has_wait, timeout_s=10.0, poll_s=0.1)
+
+        baseline = client.get(f"/api/gateway/runs/{run_id}/ledger?after=0&limit=200", headers=headers)
+        assert baseline.status_code == 200, baseline.text
+        expected = baseline.json().get("items") or []
+        assert expected, "precondition: the run must have ledger records"
+
+        for over_large in (2001, 5000, 1_000_000):
+            wide = client.get(
+                f"/api/gateway/runs/{run_id}/ledger?after=0&limit={over_large}", headers=headers
+            )
+            assert wide.status_code == 200, f"limit={over_large} must be served, got {wide.text}"
+            assert (wide.json().get("items") or []) == expected
+
+        batch = client.post(
+            "/api/gateway/runs/ledger/batch",
+            json={"limit": 5000, "runs": [{"run_id": run_id, "after": 0}]},
+            headers=headers,
+        )
+        assert batch.status_code == 200, batch.text
+        assert ((batch.json().get("runs") or {}).get(run_id, {}).get("items") or []) == expected

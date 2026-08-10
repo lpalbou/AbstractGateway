@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import builtins
 import json
+import sys
 import zipfile
 from pathlib import Path
 
@@ -199,6 +201,30 @@ def test_shipped_react_agent_bundle_file_loads(tmp_path: Path) -> None:
     bundles_dir = tmp_path / "bundles"
     bundles_dir.mkdir(parents=True)
     bundles_dir.joinpath("react-agent@0.1.0.flow").write_bytes(shipped.read_bytes())
+
+    host = _load_host(tmp_path)
+
+    assert "react-agent" in host.bundles
+    assert "react-agent@0.1.0:react" in host.specs
+
+
+def test_native_loop_loader_falls_back_without_registry_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Older abstractagent builds (for example 0.3.12) still need to load shipped native bundles."""
+    original_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "abstractagent.adapters.native_loop_registry":
+            err = ModuleNotFoundError("No module named 'abstractagent.adapters.native_loop_registry'")
+            err.name = "abstractagent.adapters.native_loop_registry"
+            raise err
+        return original_import(name, globals, locals, fromlist, level)
+
+    bundles_dir = tmp_path / "bundles"
+    bundles_dir.mkdir(parents=True)
+    _write_native_react_bundle(bundles_dir / "react-agent.flow")
+
+    sys.modules.pop("abstractagent.adapters.native_loop_registry", None)
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
 
     host = _load_host(tmp_path)
 

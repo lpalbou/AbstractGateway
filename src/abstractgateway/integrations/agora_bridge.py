@@ -93,6 +93,14 @@ class AgoraResidentConfig:
     flow_id/bundle_id: optional resident STARTER — when set, the bridge
         ensures a non-terminal run declaring the mailbox exists at start.
     task: standing instruction for a starter-launched resident.
+
+    Reasoning effort is DELIBERATELY not a resident knob (operator ruling
+    2026-08-04): agora is a standalone library, and LLM parameters belong to
+    the gateway's capability-defaults store (core_config, `output.text`
+    route `reasoning` field — editable from the gateway web console and the
+    console TUI). Resident LLM calls pick that default up through the
+    runtime's `_with_capability_default_reasoning` cascade like every other
+    unpinned call.
     """
 
     alias: str

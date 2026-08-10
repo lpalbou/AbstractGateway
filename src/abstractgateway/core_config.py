@@ -395,8 +395,19 @@ def _stored_route_row(
             rows = rows if isinstance(rows, list) else []
         else:
             rows = config_facade.list_capability_defaults()
-    except Exception:
-        return {}
+    except Exception as exc:
+        # `{}` MEANS "no such row", NOT "could not look". The caller merges the
+        # save over whatever comes back, so answering `{}` to a failed READ makes
+        # every field the save does not name look absent — and the merge then
+        # clears settings nobody touched. A full disk is enough to trigger it
+        # (AbstractCore now raises OSError rather than degrading to defaults, and
+        # this handler used to swallow that too).
+        #
+        # There is no safe merge over an unknown baseline, so refuse.
+        raise RuntimeError(
+            f"could not read the stored route {wanted} before saving it: {exc}. "
+            "Refusing to merge over an unknown baseline — nothing was written."
+        ) from exc
     for row in rows:
         if not isinstance(row, dict):
             continue

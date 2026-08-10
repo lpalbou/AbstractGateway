@@ -14,15 +14,19 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 
 ## The shipped set
 
-| Bundle | Version | Entrypoints (interfaces) | What it does |
+`flow_id` values below are what you pass to the API — an entrypoint's display
+name is not resolvable. A `*` marks the bundle's default entrypoint, used when
+you omit `flow_id`.
+
+| Bundle | Version | `flow_id` (interfaces) | What it does |
 | --- | --- | --- | --- |
-| `basic-agent` | 0.0.4 | `basic-agent` (`abstractcode.agent.v1`) | The framework default chat agent: one Agent node with tools, memory, and status updates. Serves entity phases and chat hosts. |
-| `coding-agent` | 0.2.6 | `coder` (`abstractcode.agent.v1`), `coding-agent` (`abstractcode.coding.v1`) | Verify-gated coding: a builder agent writes code, an independent verifier runs build/execute/match gates each round, and failures feed back as reprompts until gates pass. `coder` is the chat entrypoint; `coding-agent` is the structured pipeline. |
-| `deep-research` | 0.1.7 | `deep-research` (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Production research with adversarial review, a verified source ledger, and Markdown/PDF/DOCX export. See [deep-research.md](./deep-research.md). |
-| `co-scientist` | 0.2.0 | `co-scientist` (`abstractresearch.coscientist.v1`) | Multi-agent hypothesis engine: literature grounding through the deep-research investigation flows, then cycles of generation, reflection, Elo-ranked pairwise debate, and evolution into a final reviewed research overview. |
-| `abstractassistant-orchestrator` | 0.0.0 | AbstractAssistant Orchestrator (`abstractassistant.agent.v1`) | Orchestrator for the compact AbstractAssistant tray surface. |
-| `docs-qa` | 0.1.0 | `docs-qa` | Documentation Q&A grounded on the asking app's `llms.txt` corpus; also auto-published into the tenant workflow catalog at boot. |
-| `react-agent` / `codeact-agent` / `memact-agent` | 0.1.0 | `react` / `codeact` / `memact` (`abstractcode.agent.v1`) | Native ReAct / CodeAct / MemAct agent loops (abstractagent). |
+| `basic-agent` | 0.0.4 | `81795ea9`* (`abstractcode.agent.v1`) | The framework default chat agent: one Agent node with tools, memory, and status updates. Serves entity phases and chat hosts. |
+| `coding-agent` | 0.2.6 | `coder` (`abstractcode.agent.v1`), `coding-agent`* (`abstractcode.coding.v1`) | Verify-gated coding: a builder agent writes code, an independent verifier runs build/execute/match gates each round, and failures feed back as reprompts until gates pass. `coder` is the chat entrypoint; `coding-agent` is the structured pipeline. |
+| `deep-research` | 0.1.7 | `deep-research`* (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Production research with adversarial review, a verified source ledger, and Markdown/PDF/DOCX export. See [deep-research.md](./deep-research.md). |
+| `co-scientist` | 0.2.0 | `co-scientist`* (`abstractresearch.coscientist.v1`) | Multi-agent hypothesis engine: literature grounding through the deep-research investigation flows, then cycles of generation, reflection, Elo-ranked pairwise debate, and evolution into a final reviewed research overview. |
+| `abstractassistant-orchestrator` | 0.0.0 | `d5d4e5a1`* (`abstractassistant.agent.v1`) | Orchestrator for the compact AbstractAssistant tray surface. |
+| `docs-qa` | 0.1.0 | `docsqa001`* | Documentation Q&A grounded on the asking app's `llms.txt` corpus; also auto-published into the tenant workflow catalog at boot. |
+| `react-agent` / `codeact-agent` / `memact-agent` | 0.1.0 | `react`* / `codeact`* / `memact`* (`abstractcode.agent.v1`) | Native ReAct / CodeAct / MemAct agent loops (abstractagent). |
 
 Interfaces are how clients pick workflows without knowing bundle internals:
 anything declaring `abstractcode.agent.v1` can serve a plain chat prompt.
@@ -38,14 +42,24 @@ contract and streaming). `flow_id` selects an entrypoint; omit it to run the
 bundle's default entrypoint:
 
 ```bash
-curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"bundle_id":"coding-agent","flow_id":"coder","input_data":{"prompt":"Write a CLI that ..."}}' \
-  "http://127.0.0.1:8080/api/gateway/runs"
+  "http://127.0.0.1:8080/api/gateway/runs/start"
 ```
 
 `deep-research` takes `request`, `viewpoint`, and `effort` inputs
-([deep-research.md](./deep-research.md)); `co-scientist` takes a research
-goal and scales its effort with the cycle budget.
+([deep-research.md](./deep-research.md)); `co-scientist` takes a `research_goal`
+and scales its effort with `max_cycles`.
+
+Markdown, PDF, and DOCX export work on a base install. `co-scientist` also
+draws two figures (an architecture diagram and an Elo trajectory) through the
+`write_chart` node, which needs `matplotlib`. That package is not part of the
+base install: without it the run still completes and reports its findings, and
+only the figures are skipped. Install it if you want them:
+
+```bash
+pip install matplotlib
+```
 
 ## Customizing the registry
 
@@ -54,6 +68,10 @@ goal and scales its effort with the cycle budget.
   ([configuration.md](./configuration.md)).
 - Shipped bundle versions are immutable pins; newer versions install alongside
   them through the normal bundle upload or workflow catalog routes.
+- Changing the shipped set is a deliberate act in two places: the force-include
+  pins in `pyproject.toml` and the matching `!flows/bundles/<name>` negation in
+  `.gitignore`. `tests/test_gateway_shipped_default_workflows.py` fails if a
+  pinned artifact is untracked or does not load.
 - The editable sources for the shipped workflows are VisualFlow JSON files in
   the AbstractFlow repository (`abstractflow/examples/flows/`), packed with
   `abstractflow bundle pack`.

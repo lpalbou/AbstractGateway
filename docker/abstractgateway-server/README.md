@@ -155,7 +155,11 @@ docker compose --env-file docker/abstractgateway-server/.env \
 Useful compose variables:
 
 - `ABSTRACTGATEWAY_PORT`: host port, default `8080`
-- `ABSTRACTGATEWAY_HOST_FLOWS_DIR`: host directory containing `*.flow` bundles
+- `ABSTRACTGATEWAY_HOST_FLOWS_DIR`: host directory containing `*.flow` bundles,
+  mounted read-only at `/data/flows`. It is served only when you also set
+  `ABSTRACTGATEWAY_FLOWS_DIR=/data/flows`; leave both unset to serve the
+  workflows the image ships with (`basic-agent`, `coding-agent`,
+  `deep-research`, `co-scientist`, and more)
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` or `sqlite`
 - `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND`: `lancedb` or `memory`; `sqlite` works when the installed AbstractMemory build exposes `SQLiteTripleStore`
 - `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: transitional text fallback; prefer execution-host `output.text`

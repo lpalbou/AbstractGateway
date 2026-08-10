@@ -1909,8 +1909,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	      <div class="modal-body">
 	        <div class="default-config-form">
-	          <label>Provider<select id="modal-default-provider"></select></label>
-	          <label>Model<select id="modal-default-model"></select></label>
+	          <label>Provider<select id="modal-default-provider"></select>
+	            <input id="modal-default-provider-custom" class="hidden" type="text" autocomplete="off"
+	                   placeholder="type the provider id — none were discovered"></label>
+	          <label>Model<select id="modal-default-model"></select>
+	            <input id="modal-default-model-custom" class="hidden" type="text" autocomplete="off"
+	                   placeholder="type the model id — discovery could not reach this provider"></label>
 	          <label id="modal-default-voice-label" class="hidden">Voice<select id="modal-default-voice"></select></label>
 	          <label id="modal-default-reasoning-label" class="hidden" title="Default reasoning effort for reasoning-capable models on this route. 'Not set' sends no reasoning parameter. A request that names its own effort wins.">Reasoning<select id="modal-default-reasoning">
 	            <option value="">not set</option>
@@ -1919,6 +1923,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <option value="medium">medium</option>
 	            <option value="high">high</option>
 	          </select></label>
+	          <label title="Point this ONE route at a specific server — a local inference server on a non-default port, say. Blank inherits the provider's own base URL.">Base URL <span class="subtle">(optional)</span>
+	            <input id="modal-default-base-url" type="text" autocomplete="off" spellcheck="false"
+	                   placeholder="inherit from the provider — e.g. http://localhost:1234/v1"></label>
+	          <label title="Raw provider options for this route, as a JSON object. The voice picker above writes into this same dict.">Options <span class="subtle">(JSON, optional)</span>
+	            <textarea id="modal-default-options" rows="3" autocomplete="off" spellcheck="false"
+	                      placeholder='{"temperature": 0.7}'></textarea></label>
 	          <div id="default-modal-message" class="message"></div>
 	          <div id="default-modal-test" class="default-modal-test"></div>
 	        </div>
@@ -3392,7 +3402,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          timeout_s: 25,
 	        };
 	        if (voice) body.voice = voice;
-	        const res = await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice/tts`, { method: "POST", body: JSON.stringify(body) });
+	        const res = await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body) });
 	        const sec = ((Date.now() - started) / 1000).toFixed(1);
 	        out.textContent = "";
 	        const line = document.createElement("div");
@@ -4061,6 +4071,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      _entOut("entity-chat-status", "thinking…");
 	      try {
 	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(state.chatId)}/turn`, {
+	          slow: true,  // a real LLM round trip, not a discovery probe
 	          method: "POST", body: JSON.stringify({ text }),
 	        });
 	        chatLine(name, String(r.reply || ""));
@@ -4081,7 +4092,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("entity-chat-close").disabled = true;
 	      _entOut("entity-chat-status", "closing (reflection pass)…");
 	      try {
-	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(state.chatId)}/close`, { method: "POST", body: JSON.stringify({ reflect: true }) });
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(state.chatId)}/close`, { slow: true, method: "POST", body: JSON.stringify({ reflect: true }) });
 	        _entOut("entity-chat-status", "visit closed — reflection ran, the loop (if yielded) wakes.");
 	        state.chatId = "";
 	        state.chatEntity = "";
@@ -4726,16 +4737,68 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function csrf() {
 	      return document.cookie.split(";").map((p) => p.trim()).find((p) => p.startsWith("abstractgateway_csrf="))?.slice("abstractgateway_csrf=".length) || "";
 	    }
+    // EVERY gateway call is BOUNDED. fetch() has no default timeout, so a
+    // blackholed upstream (packets dropped, no RST — the shape of a stale
+    // remote endpoint on a disconnected laptop) leaves the promise pending
+    // FOREVER and whatever "Loading..." label the caller set becomes
+    // permanent. That is the offline console incident (2026-08-02: the
+    // operator could configure the gateway offline through the TUI but not
+    // the web console, "stuck on loading models"). The console-tui never
+    // had this asymmetry — its ureq agents carry timeout_connect(5s) with
+    // timeout_read(60s), plus a second slow_agent at 300s for the calls
+    // that legitimately run for minutes. Mirror that split here so the
+    // browser degrades exactly like the TUI: 60s default, `slow: true` for
+    // LLM turns / media generation / TTS / model downloads.
+    const API_TIMEOUT_MS = 60000;
+    const API_SLOW_TIMEOUT_MS = 300000;
     async function api(path, options = {}) {
-      const headers = new Headers(options.headers || {});
+      // `slow` and `timeoutMs` are ours, not fetch's — strip them so they
+      // never reach the request init. timeoutMs: 0 opts out entirely.
+      const { slow = false, timeoutMs, ...init } = options;
+      const headers = new Headers(init.headers || {});
       headers.set("Accept", "application/json");
-      if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
       const token = csrf();
-      if (token && ["POST", "PUT", "PATCH", "DELETE"].includes(String(options.method || "GET").toUpperCase())) {
+      if (token && ["POST", "PUT", "PATCH", "DELETE"].includes(String(init.method || "GET").toUpperCase())) {
         headers.set("X-AbstractGateway-CSRF", decodeURIComponent(token));
       }
-      const res = await fetch(path, { ...options, headers, credentials: "same-origin" });
-      const text = await res.text();
+      const budget = Number.isFinite(timeoutMs) ? Number(timeoutMs) : (slow ? API_SLOW_TIMEOUT_MS : API_TIMEOUT_MS);
+      // The BOUND is a raced deadline, not merely an abort: rejecting is what
+      // unsticks the UI, and it must happen even where AbortController is
+      // absent. Where it exists we also abort, so the socket is released
+      // instead of leaking until the OS gives up.
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      const timedOut = `Request timed out after ${Math.round(budget / 1000)}s (gateway did not answer ${path}).`;
+      let timer = null;
+      // The deadline spans the body read too: a gateway that sends headers
+      // and then stalls mid-body is as stuck as one that never answers.
+      const deadline = budget > 0
+        ? new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              if (controller) { try { controller.abort(); } catch {} }
+              reject(new Error(timedOut));
+            }, budget);
+          })
+        : null;
+      let res;
+      let text;
+      try {
+        const call = (async () => {
+          const r = await fetch(path, { ...init, headers, credentials: "same-origin", ...(controller ? { signal: controller.signal } : {}) });
+          return [r, await r.text()];
+        })();
+        [res, text] = deadline ? await Promise.race([call, deadline]) : await call;
+      } catch (e) {
+        // Every branch here means the gateway was never reached — what the
+        // TUI types as ApiErrorKind::Unreachable and renders as an honest
+        // terminal state. Name WHICH one so the operator can tell a wedged
+        // gateway (timeout) from a down one (refused/offline); the browser's
+        // bare "Failed to fetch" teaches nothing.
+        if (e && (e.name === "AbortError" || e.message === timedOut)) throw new Error(timedOut);
+        throw new Error(`Gateway unreachable: ${(e && e.message) || e}`);
+      } finally {
+        if (timer !== null) clearTimeout(timer);
+      }
       let data = {};
       try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
       if (!res.ok) {
@@ -5086,6 +5149,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           emptyModels: "No sound effects models discovered",
         };
       }
+      // Keyed on MODALITY, not the full key, so the parent row and every
+      // `output.scene3d.<task>` row answer the same way.
+      if (String(modality || "").toLowerCase() === "scene3d") {
+        // NOTHING TO DISCOVER IS A DECLARED STATE, NOT A FALLTHROUGH. There is
+        // no scene3d discovery endpoint, and the text catalog is not a stand-in
+        // for one: falling through to it offered TEXT providers and TEXT models
+        // for a 3D route, and — because the free-text lanes open only when
+        // discovery comes back empty — held both lanes SHUT precisely when some
+        // text provider happened to be reachable. Saying so outright is what
+        // makes the row this console just stopped hiding actually configurable.
+        return {
+          scope: "3D scene generation",
+          discovery: false,
+          providerPath: () => "",
+          modelPath: () => "",
+          providerKeys: [],
+          modelKeys: [],
+          mapKeys: [],
+          emptyProviders: "No 3D scene discovery — type the provider id",
+          emptyModels: "No 3D scene discovery — type the model id",
+        };
+      }
       if (key === "output.music") {
         return {
           scope: "music generation",
@@ -5272,6 +5357,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    async function fetchDefaultProviders(row) {
 	      const catalog = defaultCatalogForRow(row || {});
+	      // A catalog that declares it has no discovery is answered here, not by
+	      // a request to "" — the empty result is what opens the free-text lanes.
+	      if (catalog.discovery === false) return [];
 	      const path = catalog.providerPath();
 	      const cacheKey = `providers::${catalog.scope}::${path}`;
 	      if (!state.providerModels.has(cacheKey)) {
@@ -5285,13 +5373,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function fetchDefaultModels(provider, row) {
 	      if (!provider) return [];
 	      const catalog = defaultCatalogForRow(row || {});
+	      if (catalog.discovery === false) return [];  // see fetchDefaultProviders
 	      const path = catalog.modelPath(provider);
 	      const cacheKey = `models::${catalog.scope}::${provider}::${path}`;
-	      if (!state.providerModels.has(cacheKey)) {
+	      // The in-flight PROMISE is cached so two openers share one request.
+	      // A REJECTED promise must never survive that: cached, it re-throws
+	      // forever WITHOUT touching the network, so the select stays stuck
+	      // even after the provider comes back — measured in the offline repro
+	      // (2026-08-02): the retry issued no request at all, and restoring the
+	      // network did not heal it; only a full page reload did. Evict on
+	      // failure so the next attempt is a REAL retry.
+	      let entry = state.providerModels.get(cacheKey);
+	      if (entry === undefined) {
 	        const promise = api(path).then((payload) => modelOptionsFromCatalog(payload, provider, catalog.modelKeys, catalog.mapKeys));
+	        promise.catch(() => { if (state.providerModels.get(cacheKey) === promise) state.providerModels.delete(cacheKey); });
 	        state.providerModels.set(cacheKey, promise);
+	        entry = promise;
 	      }
-	      const cached = await state.providerModels.get(cacheKey);
+	      // Awaited through the LOCAL handle, never a fresh cache read: the
+	      // eviction above may already have dropped the key, and awaiting the
+	      // resulting undefined would swallow the failure as "no models".
+	      const cached = await entry;
 	      const models = Array.isArray(cached) ? cached : [];
 	      state.providerModels.set(cacheKey, models);
 	      return models;
@@ -5306,19 +5408,102 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      return state.providerModels.get(cacheKey) || [];
 	    }
+	    // OFFLINE IS A SUPPORTED MODE, NOT A DEGRADED ONE. A provider or model
+	    // field that can only offer *discovered* values is a dead end the moment
+	    // discovery cannot reach anything — which is the normal case on a
+	    // disconnected machine. The console-TUI has always degraded to a
+	    // free-text lane here (console-tui/src/ui/routes.rs:1163-1213, CUSTOM
+	    // provider row at :822) and stays savable; the web console refused to
+	    // save at all. These two functions ARE that lane, for both fields: it
+	    // opens ONLY when discovery has nothing to offer, so a healthy catalog
+	    // still steers the operator to real values instead of inviting typos.
+	    // One helper rather than one per field on purpose — as two copies the
+	    // provider and model lanes had already drifted on the prefill rule.
+	    function setCustomLane(id, open, value = "") {
+	      const el = $(id);
+	      if (!el) return;
+	      el.classList.toggle("hidden", !open);
+	      // Prefilled from the row, so an offline operator editing an existing
+	      // route saves it back untouched instead of retyping it — and cleared
+	      // when shut, so a value typed for the PREVIOUS provider cannot linger.
+	      el.value = open ? value : "";
+	    }
+	    // Visibility IS the contract, not a proxy for one: the lane is open only
+	    // while the select beside it has nothing real to offer, so an open lane
+	    // outranks the select and a shut one is not a control at all. Reading a
+	    // hidden input would let a value typed before a successful retry silently
+	    // outrank the discovered pick the operator made after it. The same helper
+	    // owns both the write and the read, so the two cannot disagree.
+	    function customLaneValue(id) {
+	      const el = $(id);
+	      return el && !el.classList.contains("hidden") ? el.value.trim() : "";
+	    }
+	    // WHAT THE MODAL CURRENTLY MEANS, from whichever control is live. Every
+	    // loader and the save must ask the same question, or the lane becomes a
+	    // field that accepts typing and changes nothing: only saveDefault read
+	    // it, while all four loader call sites read the <select> — so on an
+	    // unconfigured row a typed provider triggered no model discovery, the
+	    // model lane never opened, and the save then refused for want of a model
+	    // the operator had no field to type. One accessor, no fifth spelling.
+	    function activeDefaultProvider() {
+	      return customLaneValue("modal-default-provider-custom") || $("modal-default-provider").value;
+	    }
+	    function activeDefaultModel() {
+	      return customLaneValue("modal-default-model-custom") || $("modal-default-model").value;
+	    }
+	    // A LATE RESOLVE MUST NOT PAINT A MODAL THAT HAS MOVED ON. Every load
+	    // below carries a 60s budget offline, and one click closes the modal
+	    // while another opens a different route long before that elapses. This
+	    // is not cosmetic: `state.activeDefaultRow` is what saveDefault writes
+	    // THROUGH, so a stale paint would put one route's provider and model
+	    // into another route's save. Row identity is the whole test — a closed
+	    // modal is `null`, which no live row can equal.
+	    function defaultModalMoved(row) {
+	      return state.activeDefaultRow !== row;
+	    }
 	    async function loadDefaultModels(provider, selected = "", row = null) {
 	      if (!provider) {
 	        setSelectOptions($("modal-default-model"), [], { emptyLabel: "Select provider first", disabled: true });
+	        setCustomLane("modal-default-model-custom", false);
 	        return;
 	      }
 	      setSelectOptions($("modal-default-model"), [], { emptyLabel: "Loading models...", disabled: true });
+	      setCustomLane("modal-default-model-custom", false);
 	      const catalog = defaultCatalogForRow(row || {});
-	      const models = await fetchDefaultModels(provider, row || {});
+	      // The "Loading models..." label above belongs to THIS function, so
+	      // its terminal state does too. openDefaultModal wrapped its own call
+	      // (adversary F8), but the provider-change handler did not — switching
+	      // provider while offline left the select spinning forever. Degrade at
+	      // the label's owner so every caller inherits an honest end state, then
+	      // RETHROW so a caller that sequences further loads can react.
+	      let models;
+	      try {
+	        models = await fetchDefaultModels(provider, row || {});
+	      } catch (e) {
+	        if (defaultModalMoved(row)) throw e;
+	        setSelectOptions($("modal-default-model"), selected ? [selected] : [], {
+	          emptyLabel: "Model discovery failed",
+	          disabled: !selected,
+	          selected,
+	        });
+	        // Discovery failed — open the free-text lane so the route is still
+	        // configurable. Without this the honest error message is all the
+	        // operator gets, and the modal becomes a dead end.
+	        setCustomLane("modal-default-model-custom", true, selected);
+	        $("default-modal-message").textContent = `${catalog.scope} model discovery failed: ${e.message || e} — type the model id to save it anyway.`;
+	        $("default-modal-message").className = "message error";
+	        throw e;
+	      }
+	      if (defaultModalMoved(row)) return;
 	      setSelectOptions($("modal-default-model"), models, {
 	        emptyLabel: models.length ? "Select model..." : catalog.emptyModels,
 	        disabled: !models.length,
 	        selected,
 	      });
+	      // An EMPTY catalog is the fresh-install-offline case: the probe
+	      // succeeded but the provider offered nothing, so there is no value to
+	      // pick and the operator must be able to type one.
+	      setCustomLane("modal-default-model-custom", !models.length, selected);
 	      if (selected && !models.includes(selected)) {
 	        $("default-modal-message").textContent = `Configured model "${selected}" is not currently in the discovered ${catalog.scope} catalog for ${provider}.`;
 	        $("default-modal-message").className = "message error";
@@ -5342,7 +5527,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        return;
 	      }
 	      setSelectOptions(select, [], { emptyLabel: "Loading voices...", disabled: true, labelMap: state.voiceLabels });
-	      const voices = await fetchDefaultVoices(provider, model, row || {});
+	      // Same contract as the model select: the "Loading voices..." label
+	      // never outlives the request that set it.
+	      let voices;
+	      try {
+	        voices = await fetchDefaultVoices(provider, model, row || {});
+	      } catch (e) {
+	        if (defaultModalMoved(row)) throw e;
+	        setSelectOptions(select, [], { emptyLabel: "Voice discovery failed", disabled: true, labelMap: state.voiceLabels });
+	        $("default-modal-message").textContent = `voice discovery failed: ${e.message || e}`;
+	        $("default-modal-message").className = "message error";
+	        throw e;
+	      }
+	      if (defaultModalMoved(row)) return;
 	      setSelectOptions(select, voices, {
 	        emptyLabel: voices.length ? "Use provider default voice" : "No voices discovered",
 	        disabled: !voices.length,
@@ -5834,8 +6031,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // seeded value could be stranded with no way to see or clear it.
 	      // They are shown as parents now — grouped, labeled, and benign when
 	      // the task rows below already cover them.
-	      const { modality } = defaultRowKindModality(row || {});
-	      return String(modality || "").toLowerCase() !== "scene3d";
+	      // scene3d used to be filtered here for the same reason output.image and
+	      // output.video once were: the modal could not configure it. There is no
+	      // scene3d DISCOVERY endpoint, so provider/model probing returns nothing
+	      // — but "nothing to discover" is now a supported state, not a dead end:
+	      // the free-text provider and model lanes open automatically and the row
+	      // saves. Hiding it meant the store could hold a scene3d route (the TUI
+	      // writes all 24) that this grid could neither show nor clear.
+	      return true;
 	    }
 	    // THE ROUTE HIERARCHY, STRAIGHT OFF THE PAYLOAD. Core derives
 	    // `broad_key` / `task_keys` / `covered_by_tasks` once
@@ -6082,7 +6285,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (btn) btn.disabled = true;
 	      const msg = $("defaults-message");
 	      try {
+	        // Slow lane: a write that aborts mid-flight leaves the operator unable
+	        // to tell whether the Core store changed. apply-recommended probes the
+	        // whole provider fleet before writing, so offline it is the slowest
+	        // write there is — exactly the one that must not be cut in half.
 	        const res = await api("/api/gateway/config/capability-defaults/apply-recommended", {
+	          slow: true,
 	          method: "POST",
 	          body: JSON.stringify({ force: !!force }),
 	        });
@@ -6114,7 +6322,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // cannot be re-fetched by a stale client-side plan.
 	      if (btn) btn.disabled = true;
 	      try {
-	        const res = await api("/api/gateway/models/download", { method: "POST", body: JSON.stringify({ recommended: true }) });
+	        const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ recommended: true }) });
 	        for (const job of res.jobs || []) if (job && job.job) trackDownloadJob(job);
 	      } catch (err) {
 	        $("defaults-message").textContent = String(err.message || err);
@@ -6128,7 +6336,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const artifact = rowDownloadArtifact(row);
 	      if (!provider || !artifact) return;
 	      try {
-	        const res = await api("/api/gateway/models/download", { method: "POST", body: JSON.stringify({ provider, artifact }) });
+	        const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ provider, artifact }) });
 	        trackDownloadJob(res.job);
 	      } catch (err) {
 	        $("defaults-message").textContent = String(err.message || err);
@@ -6429,11 +6637,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const capabilityCell = defaultRowIsTaskParent(row)
 	          ? `${esc(defaultRowCapability(row))} <span class="muted">— any ${esc(defaultRowKindModality(row).modality)} task (fallback)</span>`
 	          : esc(defaultRowCapability(row));
+	        // The stored reasoning effort is VISIBLE on the grid, not only inside
+	        // the edit modal (console-TUI parity: its route row says
+	        // "· reasoning high"). Text routes only — the field exists nowhere
+	        // else — and only when set, so non-reasoning setups see no noise.
+	        const reasoningBadge =
+	          isTextGenerationDefault(row) && defaultReasoningValue(row)
+	            ? ` <span class="badge" title="Default reasoning effort for this route (edit via Configure)">reasoning ${esc(defaultReasoningValue(row))}</span>`
+	            : "";
 	        tr.innerHTML = `
 	          <td>${routeCell}</td>
 	          <td>${capabilityCell}</td>
 	          <td>${row.provider ? esc(state.providerLabels.get(row.provider) || row.provider) : "-"}</td>
-	          <td>${row.model ? esc(row.model) : "-"}</td>
+	          <td>${row.model ? esc(row.model) + reasoningBadge : "-"}</td>
 	          <td>${weightsCellMarkup(row)}</td>
 	          <td>${source ? `<span class="badge">${esc(source)}</span>` : "-"}</td>
 	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span></td>
@@ -7075,7 +7291,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const body = { text, provider: row.provider, model: row.model, request_id: sandboxRequestId() };
 	        const voice = textValue(objectValue(row.options)?.voice || objectValue(row.options)?.profile);
 	        if (voice) body.voice = voice;
-	        const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { method: "POST", body: JSON.stringify(body) });
+	        const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body) });
 	        const audio = document.createElement("audio");
 	        audio.preload = "auto";
 	        audio.className = "hidden";
@@ -7132,7 +7348,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const reasoningChoice = ($("sandbox-reasoning")?.value || "").trim();
 	          if (reasoningChoice) payload.reasoning = reasoningChoice;
 	          pendingMessage = appendSandboxMessage(`${state.providerLabels.get(provider) || provider} / ${model}`, "Thinking...", { pending: true, pendingLabel: "Generating answer", kind: "assistant" });
-	          const res = await api("/api/gateway/sandbox/generate", { method: "POST", body: JSON.stringify(payload) });
+	          const res = await api("/api/gateway/sandbox/generate", { slow: true, method: "POST", body: JSON.stringify(payload) });
 	          const text = res.response || "(empty response)";
 	          state.sandboxMessages.push({ role: "user", content: promptText }, { role: "assistant", content: text });
 	          finalizeSandboxMessage(pendingMessage, { content: text, usage: res.usage, elapsedMs: Date.now() - started, speakable: true, reasoning: res.reasoning || "" });
@@ -7157,7 +7373,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            body = { prompt: promptText, video_provider: row.provider, video_model: row.model, request_id: sandboxRequestId() };
 	          }
 	          pendingMessage = appendSandboxMessage(sandboxRouteShortLabel(row), "Starting generation...", { pending: true, pendingLabel: mode === "image" || mode === "video" ? "Generating media" : "Generating artifact", kind: "assistant" });
-	          const res = await api(endpoint, { method: "POST", body: JSON.stringify(body) });
+	          // The slow lane, like every other media route: local diffusion on
+	          // Apple silicon runs for MINUTES (the seeded flux/wan defaults), so
+	          // the 60s budget would abort the socket while the gateway kept
+	          // generating — orphaning the artifact, whose ref only comes back in
+	          // THIS response. `endpoint` is computed, which is exactly why it was
+	          // missed when the literal-path siblings were marked.
+	          const res = await api(endpoint, { slow: true, method: "POST", body: JSON.stringify(body) });
 	          if (res.ok === false) throw new Error(res.error || res.code || "Generation failed.");
 	          const ref = res.image_artifact || res.audio_artifact || res.music_artifact || res.video_artifact || null;
 	          finalizeSandboxMessage(pendingMessage, {
@@ -7211,6 +7433,35 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("default-modal-message").textContent = "";
 	      $("default-modal-message").className = "message";
 	      clearDefaultTest();
+	      // Per-route base URL and raw options, mirroring the console-TUI's route
+	      // editor. Offline, base_url is how a route is pointed at a local
+	      // inference server on a non-default port — which is why the web console
+	      // not having it was a real gap, not a cosmetic one.
+	      $("modal-default-base-url").value = typeof row.base_url === "string" ? row.base_url : "";
+	      const storedOptions = row.options && typeof row.options === "object" && !Array.isArray(row.options)
+	        ? row.options
+	        : null;
+	      // The voice picker owns `voice`/`profile`; showing them here too would
+	      // invite the two controls to disagree in front of the operator.
+	      let shownOptions = storedOptions ? { ...storedOptions } : null;
+	      if (shownOptions && isVoiceOutputDefault(row)) { delete shownOptions.voice; delete shownOptions.profile; }
+	      $("modal-default-options").value = shownOptions && Object.keys(shownOptions).length
+	        ? JSON.stringify(shownOptions, null, 2)
+	        : "";
+	      // WHAT THE OPERATOR WAS SHOWN, kept so the save can tell an EDIT from
+	      // an echo. These two fields are prefilled from the row the GRID last
+	      // rendered and the grid is never re-read on open, so a save that named
+	      // them unconditionally would let a minutes-old render overwrite a value
+	      // changed through `abstractcore config` in between — the rollback the
+	      // send-only-what-you-own rule exists to prevent, and it also froze
+	      // input.text's inherited base_url/options onto a covered input.video
+	      // row that AbstractCore deliberately refuses to persist server-side
+	      // (core_config.py `_stored_route_row`). Compared, not echoed.
+	      state.defaultModalPrefill = {
+	        base_url: $("modal-default-base-url").value,
+	        options: $("modal-default-options").value,
+	        voice: defaultVoiceValue(row),
+	      };
 	      $("test-default").classList.toggle("hidden", !defaultRowTestable(row));
 	      $("default-modal-backdrop").classList.remove("hidden");
 	      let discoveredProviders = [];
@@ -7220,6 +7471,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("default-modal-message").textContent = String(err.message || err);
 	        $("default-modal-message").className = "message error";
 	      }
+	      if (defaultModalMoved(row)) return;
 	      const providers = row.provider && !discoveredProviders.includes(row.provider)
 	        ? [row.provider, ...discoveredProviders]
 	        : discoveredProviders;
@@ -7228,37 +7480,53 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        disabled: !providers.length,
 	        selected: row.provider || "",
 	      });
+	      // Same rule as the model lane: a provider field that can only offer
+	      // DISCOVERED values is a dead end when nothing can be reached — and a
+	      // modality with no discovery endpoint at all (scene3d) would never be
+	      // configurable from this console. The console-TUI has a CUSTOM row for
+	      // exactly this (ui/routes.rs:822, 1114-1126).
+	      //
+	      // Keyed off what DISCOVERY returned, never off the list above: that one
+	      // carries the row's own provider injected in front, so an already
+	      // configured route reached the offline case with a one-entry select and
+	      // a shut lane — the one provider it could not change was its own.
+	      setCustomLane("modal-default-provider-custom", !discoveredProviders.length, row.provider || "");
 	      if (row.provider && !discoveredProviders.includes(row.provider)) {
 	        $("default-modal-message").textContent = `Configured provider "${row.provider}" is not currently discovered in the ${catalog.scope} catalog.`;
 	        $("default-modal-message").className = "message error";
 	      }
 	      loadDefaultReasoning(row);
-	      try {
-	        await loadDefaultModels($("modal-default-provider").value, row.model || "", row);
-	        await loadDefaultVoices($("modal-default-provider").value, $("modal-default-model").value, defaultVoiceValue(row), row);
-	      } catch (err) {
-	        if (row.model) {
-	          setSelectOptions($("modal-default-model"), [row.model], {
-	            emptyLabel: "Discovery failed",
-	            disabled: false,
-	            selected: row.model,
-	          });
-	        } else {
-	          setSelectOptions($("modal-default-model"), [], { emptyLabel: "Model discovery failed", disabled: true });
-	        }
-	        // A swallowed voices failure left the select at "Loading voices..."
-        // forever (adversary F8) — degrade to an HONEST empty label instead.
-        await loadDefaultVoices($("modal-default-provider").value, $("modal-default-model").value, defaultVoiceValue(row), row).catch(() => {
-          setSelectOptions($("modal-default-voice"), [], { emptyLabel: "Voice discovery failed", disabled: true });
-        });
-	        $("default-modal-message").textContent = String(err.message || err);
-	        $("default-modal-message").className = "message error";
-	      }
+	      // Each loader owns its own terminal state, message and free-text lane
+	      // (see loadDefaultModels). All this sequencing still has to guarantee
+	      // is that a failed MODEL load does not SKIP the voice load, or the
+	      // voice select keeps the previous route's list. It must not repaint
+	      // either select itself: the model fallback here rebuilt the select
+	      // from row.model alone and ran on ANY rejection, so a voice-only
+	      // failure erased a perfectly good discovered model list, and the bare
+	      // error string overwrote the loader's "type the model id" guidance.
+	      await loadDefaultModels(activeDefaultProvider(), row.model || "", row).catch(() => {});
+	      await loadDefaultVoices(activeDefaultProvider(), activeDefaultModel(), defaultVoiceValue(row), row).catch(() => {});
+	      if (defaultModalMoved(row)) return;
 	      $("clear-default").classList.toggle("hidden", !defaultRowConfigured(row));
 	    }
 	    function closeDefaultModal() {
 	      $("default-modal-backdrop").classList.add("hidden");
 	      state.activeDefaultRow = null;
+	      state.defaultModalPrefill = null;
+	    }
+	    // Shared by the provider <select> and the free-text provider lane, so the
+	    // two cannot drift into meaning different things.
+	    async function reloadDefaultModalCatalogs() {
+	      const row = state.activeDefaultRow || null;
+	      clearDefaultTest();  // a stale audition must not survive a provider change
+	      // Both loaders paint their own terminal state and rethrow. Catch here
+	      // so a failed MODEL lookup still lets the voice select reach an end
+	      // state instead of being skipped by the propagating rejection.
+	      try {
+	        await loadDefaultModels(activeDefaultProvider(), "", row);
+	      } catch { /* terminal state + modal message already set by the loader */ }
+	      await loadDefaultVoices(activeDefaultProvider(), activeDefaultModel(), "", row)
+	        .catch(() => { /* ditto */ });
 	    }
     async function refresh() {
       let me;
@@ -7522,7 +7790,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const voice = $("modal-default-voice").value;
 	          if (voice) body.voice = voice;
 	          const runId = voiceTestRunId();
-	          const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { method: "POST", body: JSON.stringify(body) });
+	          const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body) });
 	          const sec = ((Date.now() - started) / 1000).toFixed(1);
 	          target.textContent = "";
 	          const line = document.createElement("div");
@@ -7532,8 +7800,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          renderSandboxArtifact(target, { runId, ref: res.audio_artifact, mode: "audio", label: "Test audio" });
 	        } else {
 	          const res = await api("/api/gateway/sandbox/generate", {
+	            slow: true,
 	            method: "POST",
-	            body: JSON.stringify({ capability: key, provider, model, prompt: "Reply with the single word: ready.", max_tokens: 16 }),
+	            // No max_tokens: the PROMPT bounds this probe, not a cap. The old
+	            // max_tokens:16 truncated any model that emits a preamble or
+	            // reasoning tokens, so a healthy capability reported "(empty
+	            // response)" — a cap manufacturing a false failure on the very
+	            // screen an operator uses to decide whether a model works.
+	            body: JSON.stringify({ capability: key, provider, model, prompt: "Reply with the single word: ready." }),
 	          });
 	          const sec = ((Date.now() - started) / 1000).toFixed(1);
 	          target.textContent = "";
@@ -7557,9 +7831,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const row = state.activeDefaultRow;
 	        if (!row) throw new Error("No capability route selected.");
-	        const provider = $("modal-default-provider").value;
-	        const model = $("modal-default-model").value;
-	        if (!provider || !model) throw new Error("Select a discovered provider and model before saving.");
+	        const provider = activeDefaultProvider();
+	        const model = activeDefaultModel();
+	        if (!provider || !model) throw new Error("Pick a provider and a model — type the model id if discovery could not reach the provider.");
 	        const { kind, modality, task } = defaultRowKindModality(row);
 	        const taskPath = task ? `/${encodeURIComponent(task)}` : "";
 	        // THE SAVE SENDS WHAT THIS MODAL OWNS, AND NOTHING ELSE. A field with
@@ -7570,16 +7844,62 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // Reasoning is sent only for text routes, and always explicitly:
 	        // "" clears the stored effort, a value sets it.
 	        if (isTextGenerationDefault(row)) body.reasoning = $("modal-default-reasoning").value || "";
-	        // The voice picker edits the options dict, so voice routes send it.
-	        if (isVoiceOutputDefault(row)) {
-	          const options = row.options && typeof row.options === "object" && !Array.isArray(row.options) ? { ...row.options } : {};
-	          delete options.voice;
-	          delete options.profile;
-	          const voice = $("modal-default-voice").value;
-	          if (voice) options.voice = voice;
-	          body.options = options;
+	        // BASE URL AND OPTIONS TRAVEL ONLY WHEN THE OPERATOR EDITED THEM.
+	        // Both are prefilled from a possibly-minutes-old grid render, so
+	        // naming them unconditionally re-created the rollback this doctrine
+	        // forbids (see openDefaultModal's prefill note). Comparing against
+	        // what was shown keeps BOTH halves: an untouched field is not named,
+	        // so the store keeps it; a field the operator emptied IS named, as
+	        // "", because "" differs from what they were shown — which is how an
+	        // override gets cleared.
+	        const prefill = state.defaultModalPrefill || {};
+	        const baseUrlText = $("modal-default-base-url").value.trim();
+	        if (baseUrlText !== String(prefill.base_url || "").trim()) body.base_url = baseUrlText;
+	        // Raw options. A typo must NOT be swallowed — silently dropping an
+	        // unparseable object would look like a successful save that quietly
+	        // discarded the operator's settings. Validated whenever there is
+	        // text, edited or not, so a save can never carry one downstream.
+	        const optionsText = $("modal-default-options").value.trim();
+	        let options = {};
+	        if (optionsText) {
+	          try {
+	            options = JSON.parse(optionsText);
+	          } catch (parseErr) {
+	            throw new Error(`Options is not valid JSON: ${parseErr.message}`);
+	          }
+	          if (!options || typeof options !== "object" || Array.isArray(options)) {
+	            throw new Error('Options must be a JSON object, e.g. {"temperature": 0.7}.');
+	          }
 	        }
+	        let optionsEdited = optionsText !== String(prefill.options || "").trim();
+	        // The voice picker edits the same dict, and it is the more specific
+	        // control, so it wins for the keys it owns — but only WHILE IT IS
+	        // ONE. It is disabled whenever the catalog is empty or the probe
+	        // failed, and a disabled control expresses no operator intent:
+	        // reading "" off it then deleted a voice nobody cleared, so an
+	        // offline save that only meant to set a base URL silently unset a
+	        // working route's voice. Those keys are hidden from the JSON box
+	        // above, so nothing else would have carried them.
+	        if (isVoiceOutputDefault(row)) {
+	          const voiceSelect = $("modal-default-voice");
+	          if (voiceSelect.disabled) {
+	            const stored = defaultVoiceValue(row);
+	            if (stored) options.voice = stored;
+	          } else {
+	            delete options.voice;
+	            delete options.profile;
+	            const voice = voiceSelect.value;
+	            if (voice) options.voice = voice;
+	            // The picker writes INTO this dict, so a changed pick makes the
+	            // dict dirty even when the JSON box was never touched.
+	            if (voice !== String(prefill.voice || "")) optionsEdited = true;
+	          }
+	        }
+	        if (optionsEdited) body.options = options;
+	        // Slow lane: see apply-recommended. A 60s abort on a PUT is
+	        // write-ambiguity — the save may already have landed in the Core store.
 	        await api(`/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}${taskPath}`, {
+	          slow: true,
 	          method: "PUT",
 	          body: JSON.stringify(body)
 	        });
@@ -7597,7 +7917,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!target) return;
 	      const { kind, modality, task } = defaultRowKindModality(target);
 	      const taskPath = task ? `/${encodeURIComponent(task)}` : "";
-	      await api(`/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}${taskPath}`, { method: "DELETE" });
+	      // Slow lane: a clear is a write too — same ambiguity on abort.
+	      await api(`/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}${taskPath}`, { slow: true, method: "DELETE" });
 	      if (!row) closeDefaultModal();
 	      await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	    }
@@ -7726,21 +8047,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    };
 	    $("close-default-modal").onclick = closeDefaultModal;
 	    $("default-modal-backdrop").onclick = (event) => { if (event.target === $("default-modal-backdrop")) closeDefaultModal(); };
-	    $("modal-default-provider").onchange = async () => {
-	      const row = state.activeDefaultRow || null;
-	      clearDefaultTest();  // a stale audition must not survive a provider change
-	      await loadDefaultModels($("modal-default-provider").value, "", row);
-	      await loadDefaultVoices($("modal-default-provider").value, $("modal-default-model").value, "", row);
-	    };
+	    // ONE handler for BOTH provider controls. The free-text lane is a real
+	    // provider control, not a note to the save: typing into it has to reload
+	    // the model and voice catalogs exactly as picking from the select does,
+	    // or the lane silently does nothing until Save. `onchange` rather than
+	    // `oninput` — it commits on blur/Enter, so an unreachable provider is
+	    // probed once instead of once per keystroke.
+	    $("modal-default-provider").onchange = reloadDefaultModalCatalogs;
+	    $("modal-default-provider-custom").onchange = reloadDefaultModalCatalogs;
 	    $("modal-default-model").onchange = () => {
 	      clearDefaultTest();
 	      return loadDefaultVoices(
-	        $("modal-default-provider").value,
-	        $("modal-default-model").value,
+	        activeDefaultProvider(),
+	        activeDefaultModel(),
 	        "",
 	        state.activeDefaultRow || null
 	      );
 	    };
+	    // The typed model is a model choice too, so the voice catalog follows it.
+	    $("modal-default-model-custom").onchange = $("modal-default-model").onchange;
 	    $("modal-default-voice").onchange = () => clearDefaultTest();
 	    $("save-default").onclick = saveDefault;
 	    $("test-default").onclick = testDefault;

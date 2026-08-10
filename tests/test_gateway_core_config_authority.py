@@ -244,10 +244,27 @@ def test_the_console_save_sends_only_the_fields_it_controls() -> None:
     handler = source[start:end]
 
     assert "const body = { provider, model };" in handler
-    assert "base_url" not in handler, "the modal has no base_url control, so a save must not send one"
-    options_line = handler.index("body.options = options;")
+    # base_url and options gained real controls on 2026-08-02 (parity with the
+    # console-TUI route editor, which has always sent both), so the set this
+    # modal OWNS grew. The doctrine did not: an editable field must be able to
+    # travel -- including as "", the only way an operator can clear an override
+    # -- but an UNTOUCHED one still must not be named.
+    #
+    # Prefilling is not the safeguard it was first argued to be: both fields are
+    # filled from the row the GRID last rendered, and the modal never re-reads
+    # it, so an unconditional send let a minutes-old render overwrite a value
+    # set through `abstractcore config` in between. Worse, `displayDefaultRow`
+    # copies input.text's base_url/options onto a COVERED input.video row, and
+    # `_stored_route_row` below deliberately refuses to persist a derivation --
+    # an unconditional client send froze it anyway. So the test is: named only
+    # when it differs from what the operator was shown.
+    assert "state.defaultModalPrefill" in handler, "nothing records what was shown"
+    assert "if (baseUrlText !== String(prefill.base_url" in handler
+    assert "if (optionsEdited) body.options = options;" in handler
+    # The voice picker still wins for the keys it owns, so the two controls
+    # cannot disagree in front of the operator.
     voice_branch = handler.index("if (isVoiceOutputDefault(row)) {")
-    assert voice_branch < options_line, "options travel only on the routes whose picker edits them"
+    assert handler.index("if (optionsEdited) body.options = options;") > voice_branch
 
 
 def test_route_options_survive_a_provider_only_save(scoped_store: Path) -> None:
@@ -536,3 +553,41 @@ def test_a_split_core_server_refuses_instead_of_writing_the_wrong_machine(
     with pytest.raises(RuntimeError) as exc:
         core_config.apply_recommended_gateway_capability_defaults()
     assert "abstractcore config apply-recommended" in str(exc.value)
+
+
+def test_a_failed_baseline_read_refuses_the_save_instead_of_clearing_fields() -> None:
+    """`{}` means "no such row", never "could not look".
+
+    `_merge_over_stored_route` merges the save over whatever `_stored_route_row`
+    returns, so answering `{}` to a FAILED read makes every field the save does
+    not name look absent -- and the merge then clears settings nobody touched.
+    A full disk was enough to reach this: AbstractCore raises OSError on an
+    unreadable config rather than degrading to defaults, and this path used to
+    swallow it. There is no safe merge over an unknown baseline.
+    """
+    import abstractgateway.core_config as cc
+
+    original = cc.config_facade.list_capability_defaults
+    try:
+        def _boom(*args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        cc.config_facade.list_capability_defaults = _boom
+        with pytest.raises(RuntimeError) as excinfo:
+            cc._stored_route_row("input", "text", task=None, config_file=None)
+        assert "Refusing to merge over an unknown baseline" in str(excinfo.value)
+        assert "nothing was written" in str(excinfo.value)
+    finally:
+        cc.config_facade.list_capability_defaults = original
+
+
+def test_a_missing_row_still_reads_as_empty() -> None:
+    """The narrowing must not turn "this route has no override" into an error."""
+    import abstractgateway.core_config as cc
+
+    original = cc.config_facade.list_capability_defaults
+    try:
+        cc.config_facade.list_capability_defaults = lambda *a, **k: []
+        assert cc._stored_route_row("input", "text", task=None, config_file=None) == {}
+    finally:
+        cc.config_facade.list_capability_defaults = original

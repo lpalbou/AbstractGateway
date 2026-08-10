@@ -150,18 +150,44 @@ def test_sanitize_run_workspace_policy_rejects_outside_root(tmp_path: Path, monk
     monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_TOOL_MODE", "passthrough")
 
+    from fastapi import HTTPException
+
     from abstractgateway.routes.gateway import _sanitize_run_workspace_policy
 
+    # backlog 0232 §1: an out-of-scope workspace_root REFUSES (400) naming the
+    # rejected root and the allowed roots. It is never silently popped — the
+    # bare `pop()` let the run start believing it had a workspace it did not
+    # have, which is the root cause of every symptom in that item.
+    with pytest.raises(HTTPException) as excinfo:
+        _sanitize_run_workspace_policy(
+            {
+                "workspace_root": str(outside),
+                "workspace_access_mode": "all_except_ignored",
+                "workspace_allowed_paths": [str(outside)],
+            }
+        )
+    assert excinfo.value.status_code == 400
+    detail = str(excinfo.value.detail)
+    assert str(outside) in detail, "the refusal must name the rejected root"
+    assert str(ws) in detail, "the refusal must name the allowed roots"
+
+    # An out-of-scope allowed-path entry refuses on the same grounds, even when
+    # workspace_root itself is fine (it used to vanish from the list silently,
+    # narrowing the grant the operator declared with nothing said about it).
+    with pytest.raises(HTTPException) as excinfo2:
+        _sanitize_run_workspace_policy({"workspace_allowed_paths": [str(outside)]})
+    assert excinfo2.value.status_code == 400
+    assert str(outside) in str(excinfo2.value.detail)
+
+    # In-scope values still pass through, and the access-mode downgrade stands.
     sanitized = _sanitize_run_workspace_policy(
         {
-            "workspace_root": str(outside),
+            "workspace_root": str(ws),
             "workspace_access_mode": "all_except_ignored",
-            "workspace_allowed_paths": [str(outside)],
         }
     )
-    assert "workspace_root" not in sanitized
+    assert sanitized.get("workspace_root") == str(ws)
     assert sanitized.get("workspace_access_mode") == "workspace_only"
-    assert "workspace_allowed_paths" not in sanitized
 
 
 def test_server_file_endpoints_honor_client_scope_overrides_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

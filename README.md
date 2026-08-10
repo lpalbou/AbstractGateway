@@ -53,6 +53,11 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
   "http://127.0.0.1:8080/api/gateway/bundles"
 ```
 
+That last call lists the workflows a fresh install already serves — including a
+verify-gated coding agent (`coding-agent`), `deep-research`, and
+`co-scientist`, alongside the default `basic-agent`. See
+[docs/shipped-workflows.md](docs/shipped-workflows.md).
+
 ## Hosted user auth
 
 `ABSTRACTGATEWAY_AUTH_TOKEN` is a legacy Gateway-level bearer token for

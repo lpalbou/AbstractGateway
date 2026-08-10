@@ -22,7 +22,12 @@ services:
       ABSTRACTGATEWAY_AUTH_TOKEN: ${ABSTRACTGATEWAY_AUTH_TOKEN:-}
       ABSTRACTGATEWAY_ALLOWED_ORIGINS: ${ABSTRACTGATEWAY_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}
       ABSTRACTGATEWAY_DATA_DIR: /data
-      ABSTRACTGATEWAY_FLOWS_DIR: /data/flows
+      # Unset by default so the container serves the workflows the image ships
+      # with (basic-agent, coding-agent, deep-research, co-scientist, and the
+      # rest). To serve your own bundles instead, set this to /data/flows and
+      # point ABSTRACTGATEWAY_HOST_FLOWS_DIR at your bundle directory — it is
+      # mounted there read-only below.
+      ABSTRACTGATEWAY_FLOWS_DIR: ${ABSTRACTGATEWAY_FLOWS_DIR:-}
       ABSTRACTGATEWAY_WORKFLOW_SOURCE: ${ABSTRACTGATEWAY_WORKFLOW_SOURCE:-bundle}
       ABSTRACTGATEWAY_STORE_BACKEND: ${ABSTRACTGATEWAY_STORE_BACKEND:-file}
       ABSTRACTGATEWAY_DB_PATH: ${ABSTRACTGATEWAY_DB_PATH:-}

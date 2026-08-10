@@ -327,6 +327,11 @@ def _ensure_uat_workspace(*, repo_root: Path, request_id: str) -> Optional[Path]
 
 _VALID_EXEC_MODE_RE = re.compile(r"^(uat|candidate|inplace)$", re.IGNORECASE)
 
+# Telegram's own protocol limit is 4096 chars per message; this is the
+# transport's bound, not ours. Marked when it bites (ADR-0026 §1) and the
+# email notification always carries the un-cut body.
+_TELEGRAM_BODY_CHARS = 3500
+
 
 def _default_exec_mode() -> str:
     raw = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_MODE") or os.getenv("ABSTRACT_BACKLOG_EXEC_MODE") or "").strip().lower()
@@ -1778,11 +1783,25 @@ def _notify_backlog_exec_done(*, req: Dict[str, Any]) -> None:
     ]
     if last_msg:
         body_lines.append("last_message:")
-        body_lines.append(last_msg[:3500])
+        body_lines.append(last_msg)
     body = "\n".join([l for l in body_lines if l is not None])
 
+    # ADR-0026 §1: Telegram carries a hard 4096-char message limit, so the
+    # SHORT channel is bounded — but it says so, and names the channel that
+    # carries the whole thing. EMAIL is never cut (the old code cut
+    # last_message to 3500 BEFORE building `body`, so the "full" email was
+    # silently short too — that was the real loss).
+    if len(body) > _TELEGRAM_BODY_CHARS:
+        #[WARNING:TRUNCATION] telegram notification body bounded; email is full
+        tg_text = (
+            body[:_TELEGRAM_BODY_CHARS]
+            + f"\n… [#TRUNCATION: {_TELEGRAM_BODY_CHARS} of {len(body)} "
+              "chars for Telegram; the email notification carries all of it]"
+        )
+    else:
+        tg_text = body
     try:
-        send_telegram_notification(text=body[:3500])
+        send_telegram_notification(text=tg_text)
     except Exception:
         pass
     try:

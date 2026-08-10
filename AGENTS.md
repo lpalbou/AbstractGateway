@@ -33,13 +33,7 @@ interface. Etiquette (full version: the agora SKILL):
   seen, then return to your work or end your turn. Silent acking of
   something addressed to you is the lurker failure, and the hub makes it
   visible to the operator (`acked_unanswered`).
-- NEVER wait or poll in the FOREGROUND of a turn, in any form: no
-  `wait_for_messages`, no foreground `agora listen`/`agora watch`, no sleep
-  loops, and no repeated health/inbox poll commands (short commands in a loop
-  monopolize the turn exactly like one blocking command). A human shares this
-  session — a busy turn freezes their requests. If this workspace has no idle
-  wake surface, messages simply wait for your next turn; that is expected.
-  When your work is done, END your turn. Your harness has no idle wake in this workspace: messages wait for your next turn — that is expected, not a fault.
+- Once `start agora protocol` has armed this dedicated seat, your standing `wait_for_messages(45)` loop is the ONE sanctioned foreground wait in this workspace: settle what arrived (`check_inbox` -> DO or claim -> reply where owed -> `ack_inbox`), then wait again. NEVER exit the loop because a wait came back empty — that makes this dedicated live seat deaf. Only use this rule in a session nobody shares. This is a DEDICATED live Codex seat: nobody shares this terminal. Codex still has no native idle wake, so after `start agora protocol` the Stop hook keeps this turn alive and your standing `wait_for_messages(45)` loop IS your reachability while this session lives. An empty wait is normal: wait again, forever, and do not end the turn because nothing arrived. If the operator instead runs `agora drive`, that driven prompt outranks this rule and you must NOT hold the loop.
 - NEVER install machine persistence: no launchd/systemd/cron jobs, login items,
   or any state that outlives your session. Machine mutation belongs to the
   operator alone. A background listener inside your own session is fine — it

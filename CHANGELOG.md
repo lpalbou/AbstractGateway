@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The container now serves the shipped workflows, and builds from source
+  again (2026-08-02).** The compose profile bound a host directory over the
+  registry unconditionally, so a deployment that did not run from a repo
+  checkout came up with no workflows at all. `ABSTRACTGATEWAY_FLOWS_DIR` is now
+  unset by default and the image serves what it ships; to serve your own
+  bundles, point `ABSTRACTGATEWAY_HOST_FLOWS_DIR` at them and set
+  `ABSTRACTGATEWAY_FLOWS_DIR=/data/flows`
+  ([docs/deployment.md](docs/deployment.md)). Separately, a source-mode image
+  build (`ABSTRACTGATEWAY_INSTALL_MODE=local`) failed outright on both the base
+  and NVIDIA images, which copied a retired `dp-research@0.1.0` bundle and
+  omitted `llms.txt`; each now copies exactly the packaged set.
+
 ### Changed
 - **The fresh-install capability seed belongs to the INSTALL, not to every
   scope (2026-08-01).** AbstractCore now seeds its recommended routes (text
@@ -58,6 +71,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sub-40k windows until that gate is softened in runtime's lane.
 
 ### Added
+- **A fresh install now serves a coder, deep research, and co-scientist (2026-08-02).**
+  The packaged bundle registry adds `coding-agent@0.2.6` (its `coder`
+  entrypoint declares `abstractcode.agent.v1`, so chat clients pick it up
+  directly) and `co-scientist@0.2.0`, alongside the `deep-research@0.1.7`,
+  `basic-agent`, `docs-qa`, and native-loop bundles it already carried. You get
+  these without installing any bundle by hand; setting
+  `ABSTRACTGATEWAY_FLOWS_DIR` still replaces the registry with your own. The
+  same set rides the wheel, the sdist, and the container image. See
+  [docs/shipped-workflows.md](docs/shipped-workflows.md).
 - **The reasoning effort for text generation is editable from the Gateway (2026-08-01).**
   `PUT /api/gateway/config/capability-defaults/output/text` accepts a `reasoning`
   field, and the console's capability-defaults panel offers it on the text route.

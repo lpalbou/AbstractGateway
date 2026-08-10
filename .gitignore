@@ -182,12 +182,20 @@ runtime/
 
 # Only the shipped Gateway bundles are tracked. Draft/dev bundles stay local
 # unless explicitly force-added for a deliberate release.
+#
+# The entries below MUST cover every artifact in the pyproject force-include
+# list, or a clean clone cannot build the wheel. When you bump a shipped
+# bundle version, update the pin in pyproject.toml AND the negation here.
 flows/bundles/*
 !flows/bundles/basic-agent.flow
 !flows/bundles/abstractassistant-orchestrator@0.0.0.flow
 !flows/bundles/docs-qa@0.1.0.flow
 !flows/bundles/react-agent@0.1.0.flow
-!flows/bundles/deep-research@0.1.6.flow
+!flows/bundles/codeact-agent@0.1.0.flow
+!flows/bundles/memact-agent@0.1.0.flow
+!flows/bundles/deep-research@0.1.7.flow
+!flows/bundles/coding-agent@0.2.6.flow
+!flows/bundles/co-scientist@0.2.0.flow
 !flows/bundles/coding-agent@0.1.0.flow
 !flows/bundles/coding-agent@0.1.1.flow
 !flows/bundles/coding-agent@0.1.2.flow

@@ -85,8 +85,7 @@ def _publish_is_boot_neutral(flows_dir: Optional[Path]) -> bool:
     already have. The bundle host builds ONE LLM runtime at load whenever
     ANY loaded flow carries LLM/agent nodes — on the shipped default
     registry that requirement already exists (basic-agent carries an agent
-    node AND an embedded provider/model pair, so resolution always
-    succeeds), which makes docs-qa ride for free. A deployment whose
+    node), which makes docs-qa ride for free. A deployment whose
     private registry carries NO LLM-bearing flow may run with no provider
     at all and boots fine today; publishing an llm_call-bearing bundle
     into its catalog would turn its next boot into a refusal (found by the

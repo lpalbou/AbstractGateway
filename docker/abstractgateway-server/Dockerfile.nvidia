@@ -31,9 +31,21 @@ RUN apt-get update \
     && mkdir -p /data /data/flows /workspace \
     && chown -R abstractgateway:abstractgateway /data /workspace /home/abstractgateway
 
-COPY pyproject.toml README.md CHANGELOG.md /tmp/abstractgateway-src/
+COPY pyproject.toml README.md CHANGELOG.md llms.txt /tmp/abstractgateway-src/
 COPY src /tmp/abstractgateway-src/src
-COPY flows/bundles/basic-agent.flow flows/bundles/abstractassistant-orchestrator@0.0.0.flow flows/bundles/dp-research@0.1.0.flow /tmp/abstractgateway-src/flows/bundles/
+# The shipped workflow registry. Every artifact in the pyproject force-include
+# list must be present or the local-mode wheel build below fails; keep the two
+# lists in step (tests/test_gateway_install_profiles.py enforces it).
+COPY flows/bundles/basic-agent.flow \
+     flows/bundles/abstractassistant-orchestrator@0.0.0.flow \
+     flows/bundles/deep-research@0.1.7.flow \
+     flows/bundles/coding-agent@0.2.6.flow \
+     flows/bundles/co-scientist@0.2.0.flow \
+     flows/bundles/docs-qa@0.1.0.flow \
+     flows/bundles/react-agent@0.1.0.flow \
+     flows/bundles/codeact-agent@0.1.0.flow \
+     flows/bundles/memact-agent@0.1.0.flow \
+     /tmp/abstractgateway-src/flows/bundles/
 COPY docker/abstractgateway-server/entrypoint.sh /usr/local/bin/abstractgateway-docker-entrypoint
 
 RUN python -m pip install --upgrade pip \

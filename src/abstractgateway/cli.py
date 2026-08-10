@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import threading
+import warnings
 import json
 import sys
 import copy
@@ -321,9 +322,59 @@ def _default_data_dir() -> Path:
     return Path(_os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser()
 
 
+def _reserve_gguf_metal() -> None:
+    """Reserve GPU offload for GGUF models before anything imports torch.
+
+    Measured 2026-08-07: every GGUF model served by this gateway ran entirely on
+    CPU — ~31 tokens/sec against ~1900 for the same box on the GPU, a 60x
+    slowdown, with GPU utilisation at 0%. Cause: llama.cpp only takes the GPU
+    when it is loaded before PyTorch, and the memory store's embedder imports
+    PyTorch during boot. By the time a model is requested it is already too late,
+    every time. Not a race — it happened on every single run.
+
+    This must stay the FIRST thing `main` does. Anything that imports torch
+    above this line silently restores the 60x slowdown.
+
+    Logged, never fatal: a False return means GGUF will be slow, which the
+    operator deserves to see, but it is not a reason to refuse to start.
+    """
+    try:
+        import abstractcore
+
+        reserve = getattr(abstractcore, "enable_gguf_metal", None)
+        if reserve is None:
+            return  # older abstractcore; nothing to reserve
+        if reserve():
+            logging.getLogger(__name__).debug("GGUF GPU offload reserved")
+        else:
+            # `logger.warning` ALONE IS INVISIBLE HERE, twice over: abstractcore
+            # sets the root logger to ERROR on import, and `main()` has already
+            # called `_configure_console_logging(_resolve_default_console_level())`
+            # — default ERROR — on the line above. So the first version of this
+            # branch reproduced the exact bug it was written to report: silent
+            # CPU-only GGUF, roughly 60x slower, with nothing on the console.
+            # `warnings.warn` is on by default and is what actually reaches the
+            # operator.
+            msg = (
+                "GGUF GPU offload could NOT be reserved: GGUF models served by "
+                "this gateway will run on CPU (roughly 60x slower — measured "
+                "~31 tok/s against ~1900). Cause: PyTorch was imported before "
+                "this gateway started. Note `serve --reload` re-imports the app "
+                "in a child process that never runs main(), which also loses the "
+                "reservation."
+            )
+            logging.getLogger(__name__).warning(msg)
+            warnings.warn(msg, RuntimeWarning, stacklevel=2)
+    except Exception as exc:  # noqa: BLE001
+        msg = f"GGUF GPU offload reservation failed ({exc}); GGUF models will run on CPU."
+        logging.getLogger(__name__).warning(msg)
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
+
+
 def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
+    _reserve_gguf_metal()
     parser = argparse.ArgumentParser(prog="abstractgateway", description="AbstractGateway (Run Gateway host)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -721,8 +772,20 @@ def main(argv: list[str] | None = None) -> None:
                     lines.append(f"  reject: abstractgateway triage-apply {d.decision_id} reject")
                     lines.append(f"  defer:  ABSTRACT_TRIAGE_DEFER_DAYS=7 abstractgateway triage-apply {d.decision_id} defer")
             body = "\n".join(lines).strip() + "\n"
-            # Telegram first (short), then email (full).
-            ok_tg, err_tg = send_telegram_notification(text=body[:3500])
+            # Telegram first (short), then email (full). The short channel is
+            # bounded by Telegram's own 4096-char protocol limit — but a
+            # silent cut would hide pending triage items from the operator
+            # entirely (ADR-0026 §1), so it names the cut and the full channel.
+            if len(body) > 3500:
+                #[WARNING:TRUNCATION] telegram triage digest bounded; email is full
+                tg_text = (
+                    body[:3500]
+                    + f"\n… [#TRUNCATION: 3500 of {len(body)} chars for "
+                      "Telegram; the email lists every pending decision]"
+                )
+            else:
+                tg_text = body
+            ok_tg, err_tg = send_telegram_notification(text=tg_text)
             ok_em, err_em = send_email_notification(subject=f"[AbstractFramework] Triage pending ({len(pending)})", body_text=body)
             out["notify"] = {
                 "telegram": {"ok": ok_tg, "error": err_tg},

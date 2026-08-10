@@ -106,8 +106,20 @@ docker compose --env-file docker/abstractgateway-server/.env \
 ```
 
 The default compose profile binds to `127.0.0.1:8080`, mounts a durable Gateway
-data volume at `/data`, mounts bundles from `flows/bundles` at `/data/flows`,
-and exposes a container workspace at `/workspace`.
+data volume at `/data`, and exposes a container workspace at `/workspace`. It
+serves the workflows the image ships with — `basic-agent`, `coding-agent`,
+`deep-research`, `co-scientist`, and more
+([shipped-workflows.md](./shipped-workflows.md)).
+
+To serve your own bundles instead, point `ABSTRACTGATEWAY_HOST_FLOWS_DIR` at
+your bundle directory (mounted read-only at `/data/flows`) and set
+`ABSTRACTGATEWAY_FLOWS_DIR=/data/flows`:
+
+```bash
+ABSTRACTGATEWAY_HOST_FLOWS_DIR=/path/to/bundles \
+ABSTRACTGATEWAY_FLOWS_DIR=/data/flows \
+  docker compose -f docker/abstractgateway-server/compose.yml up -d
+```
 
 Smoke checks:
 

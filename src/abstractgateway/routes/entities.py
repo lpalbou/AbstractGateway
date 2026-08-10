@@ -2541,7 +2541,14 @@ class OpenChatRequest(BaseModel):
         description="Recall shelf seats (None = env override or the wide default 50 — "
         "maintainer 2026-07-09: widened so the entity retrieves enough memories to function)",
     )
-    max_output_tokens: int = Field(default=2048)
+    max_output_tokens: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Output-token cap for this session (None = no cap asked for, so the "
+        "model's full advertised output budget is used; ABSTRACTGATEWAY_ENTITY_MAX_OUTPUT_TOKENS "
+        "sets a host-wide operator safeguard). The former 2048 default silently shrank the wire "
+        "cap by ~40x on a 81,920-token model — ADR-0026 forbids that.",
+    )
     enable_tools: bool = Field(default=True, description="Entity tools per the home's tool_policy.yaml (ruled defaults: the full set)")
     enable_workspace: bool = Field(
         default=False,
@@ -5406,15 +5413,22 @@ class StartLoopRequest(BaseModel):
     provider: Optional[str] = Field(default=None, description="abstractcore provider (None = stored substrate.yaml, then operator env, else refuse)")
     model: Optional[str] = Field(default=None, description="Model (None = stored substrate.yaml, then operator env, else refuse)")
     base_url: Optional[str] = Field(default=None, description="LMStudio-compatible endpoint (lmstudio-class providers)")
-    tick_seconds: float = Field(default=20.0, ge=1.0, le=3600.0)
-    ticks_per_day: int = Field(default=8, ge=1, le=500)
+    # No `le=` on any of these four (2026-08-02 caps audit, same reasoning the
+    # context_window note below already records): each is an OPERATOR-declared
+    # budget for this entity's own time, and an upper bound here does not
+    # protect anything — it just 422s the start, so the operator's stated
+    # intent produces no loop at all rather than the loop they asked for.
+    tick_seconds: float = Field(default=20.0, ge=1.0)
+    ticks_per_day: int = Field(default=8, ge=1)
     rest_minutes: float = Field(
-        default=30.0, ge=0.0, le=1440.0,
+        default=30.0, ge=0.0,
         description="24/7 mode: elected rest becomes a nap of this length (0 = rest ends the loop)",
     )
     # None = resolve like the chat surface: env override, then the wide
     # defaults (shelf 50, context 65536 — maintainer rulings 2026-07-08/09 + c2468).
-    shelf_size: Optional[int] = Field(default=None, ge=1, le=64)
+    # `le=64` removed: the chat door (OpenChatRequest.shelf_size) has never had a
+    # ceiling, so the SAME knob refused at one door and accepted at the other.
+    shelf_size: Optional[int] = Field(default=None, ge=1)
     # ge=1, not ge=50000 (operator 2026-08-01: 50k is a recommendation, not a
     # wall — the old ge=20000 hard 422 is gone; sub-recommendation windows are
     # accepted and the start response carries a labeled #RECOMMENDED warning.

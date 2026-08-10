@@ -197,7 +197,7 @@ def test_endpoint_profile_model_discovery_uses_profile_url_and_key(tmp_path: Pat
             "input_type": None,
             "output_type": None,
             "capability_route": None,
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 
@@ -307,7 +307,7 @@ def test_endpoint_profile_allowed_models_are_intersected_with_capability_filters
             "input_type": "image",
             "output_type": "text",
             "capability_route": None,
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 
@@ -362,7 +362,7 @@ def test_endpoint_profile_allowed_models_are_intersected_with_capability_routes(
             "input_type": None,
             "output_type": None,
             "capability_route": ["input.image,output.text"],
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 
@@ -418,7 +418,7 @@ def test_named_provider_connection_discovery_uses_profile_url_and_key(
             "input_type": None,
             "output_type": None,
             "capability_route": None,
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 
@@ -457,7 +457,7 @@ def test_endpoint_profile_console_model_preview_uses_entered_endpoint_without_ec
             "provider_name": "openai-compatible",
             "base_url": "https://preview.example.test/v1",
             "provider_api_key": "preview-key",
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 
@@ -504,7 +504,7 @@ def test_endpoint_profile_console_model_preview_can_use_saved_profile_key(tmp_pa
             "provider_name": "openai-compatible",
             "base_url": "https://saved.example.test/v1",
             "provider_api_key": "saved-key",
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 
@@ -557,7 +557,7 @@ def test_configured_builtin_provider_surfaces_without_manual_endpoint_profile(tm
             "input_type": None,
             "output_type": None,
             "capability_route": None,
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 
@@ -612,7 +612,7 @@ def test_configured_builtin_provider_can_use_the_core_config_key(tmp_path: Path,
             "input_type": None,
             "output_type": None,
             "capability_route": None,
-            "timeout_s": 30.0,
+            "timeout_s": 5.0,
         }
     ]
 
