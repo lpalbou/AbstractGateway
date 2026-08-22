@@ -89,7 +89,27 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     GatewayRoutePolicy(
         resource="models",
         reason_code="admin_required",
-        exact=("/api/gateway/models/loaded", "/api/gateway/models/load", "/api/gateway/models/unload"),
+        # `/models/download` STARTS a multi-gigabyte pull onto the shared host
+        # — the same class of act as load/unload, and the only route here that
+        # spends disk on someone else's behalf. Exact paths only: the progress
+        # poll `GET /models/download/{job}` stays user-level so a caller can
+        # watch a job it was allowed to start.
+        exact=(
+            "/api/gateway/models/loaded",
+            "/api/gateway/models/load",
+            "/api/gateway/models/unload",
+            "/api/gateway/models/download",
+        ),
+    ),
+    # The HOST's capability-defaults store: which provider/model serves each
+    # modality for everyone on this gateway. `apply-recommended` writes that
+    # store wholesale, so it belongs with the operator surfaces even though the
+    # two-segment {kind}/{modality} writes are separately gated.
+    GatewayRoutePolicy(
+        resource="settings",
+        reason_code="admin_required",
+        exact=("/api/gateway/config/capability-defaults/apply-recommended",),
+        methods=("POST",),
     ),
     # Server filesystem helpers are not an OS sandbox. Browser uploads remain available.
     GatewayRoutePolicy(resource="workspace", reason_code="admin_required", prefixes=("/api/gateway/files",)),

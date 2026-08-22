@@ -625,3 +625,69 @@ def test_gateway_artifact_import_session_list_export_and_run_start_validation(
             headers=headers,
         )
         assert blocked_overwrite.status_code == 409, blocked_overwrite.text
+
+
+def test_artifact_search_matches_dates_and_stamps_path_for_admins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Operator 2026-08-19: searching a DATE ("06-13") found nothing, and
+    neither console showed where the bytes live.
+
+    `created_at` now joins the search haystack, and `content_path` is
+    stamped on served rows for ADMIN principals only (absolute host paths
+    are admin-classed — the path-leak rule the runtime-config surface
+    already follows)."""
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        start = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {}},
+            headers=headers,
+        )
+        assert start.status_code == 200, start.text
+
+        listing = client.get("/api/gateway/artifacts/search?scope=all&limit=50", headers=headers)
+        assert listing.status_code == 200, listing.text
+        items = listing.json()["items"]
+        assert items, "the run produced at least one artifact"
+        row = items[0]
+        artifact_id = row["artifact_id"]
+
+        # ADMIN sees where the bytes live, and it is a real path on disk.
+        assert row.get("content_path"), "admins get the on-disk path"
+        assert Path(row["content_path"]).exists(), "the stamped path is real"
+
+        # DATE SEARCH: both the full day and the month-day slice find it.
+        created = str(row.get("created_at") or "")
+        assert created, "the row carries a created_at"
+        for needle in (created[:10], created[5:10]):
+            found = client.get(
+                f"/api/gateway/artifacts/search?scope=all&limit=50&query={needle}",
+                headers=headers,
+            )
+            assert found.status_code == 200, found.text
+            ids = [it["artifact_id"] for it in found.json()["items"]]
+            assert artifact_id in ids, f"searching {needle!r} must find the artifact"
+
+        # A date that matches nothing stays empty (no accidental match-all).
+        empty = client.get(
+            "/api/gateway/artifacts/search?scope=all&limit=50&query=1999-01-01",
+            headers=headers,
+        )
+        assert empty.status_code == 200, empty.text
+        assert artifact_id not in [it["artifact_id"] for it in empty.json()["items"]]

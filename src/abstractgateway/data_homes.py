@@ -163,8 +163,11 @@ def register_entity_home_on_create(data_dir: Path, slug: str) -> None:
     )
 
 
-def list_homes_with_sizes() -> Tuple[List[Dict[str, Any]], List[str]]:
-    """All registered rows with live sizes, via the facade. (rows, warnings)."""
+def list_homes(*, include_sizes: bool = True) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """All registered rows via the facade, (rows, warnings). With
+    `include_sizes=False` the registry answers WITHOUT walking any tree —
+    the fast first paint for consoles (the full walk over large stores can
+    take tens of seconds; sizes then arrive in a second, sized call)."""
     facade, reason = _facade()
     if facade is None:
         return [], [reason or FACADE_MISSING_NOTE]
@@ -172,10 +175,39 @@ def list_homes_with_sizes() -> Tuple[List[Dict[str, Any]], List[str]]:
     if not callable(fn):
         return [], [FACADE_MISSING_NOTE]
     try:
-        rows = fn(include_sizes=True)
-        return list(rows or []), []
+        rows = list(fn(include_sizes=include_sizes) or [])
+        # Core stamps `exists` only on sized rows; the fast pass needs the
+        # same honesty (a console must say "missing", never "?"). Cheap:
+        # one is_dir per row, no walk.
+        for row in rows:
+            if isinstance(row, dict) and "exists" not in row:
+                try:
+                    row["exists"] = Path(str(row.get("path") or "")).is_dir()
+                except Exception:
+                    row["exists"] = False
+        return rows, []
     except Exception as e:  # noqa: BLE001 - a broken registry degrades labeled
         return [], [f"#FALLBACK data registry unreadable: {e}"]
+
+
+def list_homes_with_sizes() -> Tuple[List[Dict[str, Any]], List[str]]:
+    """All registered rows with live sizes, via the facade. (rows, warnings)."""
+    return list_homes(include_sizes=True)
+
+
+def forget_home(name: str) -> bool:
+    """Remove ONE registry ROW (disk untouched) — the stale-registration
+    cleanup. Raises RuntimeError when the facade predates unregister (older
+    abstractruntime): callers degrade to label-only UI."""
+    facade, reason = _facade()
+    if facade is None:
+        raise RuntimeError(reason or FACADE_MISSING_NOTE)
+    fn = getattr(facade, "unregister_data_home", None)
+    if not callable(fn):
+        raise RuntimeError(
+            "this abstractruntime predates unregister_data_home — update it to forget stale rows"
+        )
+    return bool(fn(name))
 
 
 def purge_home(name: str, *, dry_run: bool = False) -> Dict[str, Any]:

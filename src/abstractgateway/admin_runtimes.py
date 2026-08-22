@@ -232,6 +232,7 @@ def runtime_runs(
     tenant_id: str,
     runtime_id: str,
     limit: int = 50,
+    offset: int = 0,
     default_run_store: Optional[Any] = None,
     entity_registry: Optional[Any] = None,
 ) -> Dict[str, Any]:
@@ -240,14 +241,23 @@ def runtime_runs(
     unknown plane (the route maps it to 404); entity maintenance holds
     propagate (409 at the route, same as every other held door)."""
     kind = str(kind or "").strip().lower()
+    # Page size stays bounded; OFFSET is unbounded (operator ruling
+    # 2026-08-19: every list must reach every item, pages of <=200).
     limit = max(1, min(int(limit or 50), 200))
+    offset = max(0, int(offset or 0))
+    want = offset + limit + 1  # +1 = honest has_more
+
+    def _page(runs_list):
+        rows = list(runs_list or [])
+        more = len(rows) > offset + limit
+        return [_run_summary(r) for r in rows[offset: offset + limit]], more
 
     if kind == "default":
         store = default_run_store
         if store is None:
             store = _stores_for_dir(Path(data_dir)).run_store
-        runs = store.list_runs(limit=limit) or []
-        return {"kind": kind, "runtime_id": "default", "items": [_run_summary(r) for r in runs]}
+        items, more = _page(store.list_runs(limit=want))
+        return {"kind": kind, "runtime_id": "default", "items": items, "offset": offset, "has_more": more}
 
     if kind == "user":
         from .service import safe_principal_component
@@ -259,8 +269,8 @@ def runtime_runs(
         if not rid or not runtime_dir.exists():
             raise KeyError(f"user runtime {tenant}/{runtime_id} has no materialized data plane")
         stores = _stores_for_dir(runtime_dir)
-        runs = stores.run_store.list_runs(limit=limit) or []
-        return {"kind": kind, "tenant_id": tenant, "runtime_id": rid, "items": [_run_summary(r) for r in runs]}
+        items, more = _page(stores.run_store.list_runs(limit=want))
+        return {"kind": kind, "tenant_id": tenant, "runtime_id": rid, "items": items, "offset": offset, "has_more": more}
 
     if kind == "entity":
         if entity_registry is None:
@@ -270,7 +280,7 @@ def runtime_runs(
         slug = str(runtime_id or "").strip().lower()
         slug = slug[len("runtime_"):] if slug.startswith("runtime_") else slug
         er = entity_registry.get_entity_runtime(slug)  # KeyError -> 404; hold -> 409 at the route
-        runs = er.run_store.list_runs(limit=limit) or []
-        return {"kind": kind, "runtime_id": f"runtime_{slug}", "entity": slug, "items": [_run_summary(r) for r in runs]}
+        items, more = _page(er.run_store.list_runs(limit=want))
+        return {"kind": kind, "runtime_id": f"runtime_{slug}", "entity": slug, "items": items, "offset": offset, "has_more": more}
 
     raise KeyError(f"unknown runtime kind {kind!r} (default|user|entity)")

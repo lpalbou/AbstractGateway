@@ -28,6 +28,9 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert "AbstractGateway Console" in console.text
     assert "/api/gateway/session/login" in console.text
     assert "/api/gateway/admin/users" in console.text
+    assert "function principalKind(u)" in console.text
+    assert "u.principal_kind" in console.text
+    assert 'principalKind(u) !== "entity"' in console.text
     assert "/api/gateway/admin/runtime-reservations" in console.text
     assert "/api/gateway/config/provider-endpoint-profiles" in console.text
     assert "/api/gateway/config/provider-endpoint-profiles/discover-models" in console.text
@@ -164,14 +167,58 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="runtime-subtab-runs"' not in console.text  # no Runs tab (dm#35)
     assert 'id="runtime-subtab-sessions"' in console.text
     assert 'id="runtime-subtab-caches"' in console.text
+    # Workspace access policy (operator redesign 2026-08-19): NO standing
+    # card/form — ONE modal edits both the gateway defaults (default-row
+    # button) and a single user's policy (per-row button, Users-table
+    # Workspace action). Posture = radio cards; trust first.
+    assert 'id="runtime-settings-section"' not in console.text
+    assert 'id="workspace-policy-modal-backdrop"' in console.text
+    assert 'id="wsp-mode-cards"' in console.text
+    assert 'id="wsp-trust"' in console.text
+    assert 'id="wsp-allowed"' in console.text
+    assert 'id="wsp-blocked"' in console.text
+    assert 'id="wsp-root-field"' in console.text
+    assert 'id="runtime-workspace-root"' not in console.text  # inline form gone
+    assert 'id="runtime-config-save"' not in console.text
     assert 'id="runtime-runs-default"' in console.text
     assert 'id="runtime-runs-readonly"' in console.text
     assert 'id="runtime-sessions-table"' not in console.text  # fold table gone (dm#35)
     assert 'id="runtime-caches-table"' in console.text
-    assert '<details id="data-homes-section"' in console.text
+    # The Runtimes tab is the TABLE + the tabbed panel (Runs | Cache),
+    # nothing else (operator 2026-08-19): no machine-wide section — the
+    # default runtime's Cache tab lists machine-wide stores (TUI parity);
+    # retained runtimes appears only when reservations exist.
+    assert 'id="data-homes-section"' not in console.text
+    assert '<section id="runtime-reservations-section"' in console.text
+    # Tab order (operator): Runs | Artifacts | Cache | Logs. The Cache tab
+    # lists ONLY disposable stores; deliverables live in the Artifacts tab;
+    # logs are their own readable category.
+    assert ">Runs</button>" in console.text
+    assert ">Artifacts</button>" in console.text
+    assert ">Cache</button>" in console.text
+    assert ">Logs</button>" in console.text
+    assert console.text.index(">Runs</button>") < console.text.index(">Artifacts</button>") < console.text.index(">Cache</button>") < console.text.index(">Logs</button>")
+    assert 'id="runtime-artifacts-table"' in console.text
+    assert 'id="runtime-logs-table"' in console.text
+    assert 'id="log-modal-backdrop"' in console.text  # log tail opens in a MODAL
+    # Artifacts preview + run inspect are MODALS too (operator 2026-08-19);
+    # rows are the controls — no per-row Open buttons, no per-tab refresh.
+    assert 'id="artifact-modal-backdrop"' in console.text
+    assert 'id="run-modal-backdrop"' in console.text
+    assert 'id="runtime-artifacts-search"' in console.text
+    assert 'id="runtime-artifacts-refresh"' not in console.text
+    # ONE toolbar shape on every list tab: compact select + search bar.
+    # 5 = the four runtime-tab lists + the Workflows registry list.
+    assert console.text.count('class="list-toolbar"') == 5
+    assert 'id="runs-search"' in console.text
+    assert 'id="runtime-caches-search"' in console.text
+    assert 'id="runtime-logs-search"' in console.text
+    assert 'class="artifacts-toolbar"' not in console.text
+    assert 'id="runs-session-chip"' not in console.text  # dead chip removed
+    assert 'id="run-inspect"' not in console.text
     assert 'class="table-scroll"' in console.text  # bounded master (load-bearing)
     assert 'id="runs-table"' in console.text
-    assert 'id="runs-refresh"' in console.text
+    assert 'id="runs-refresh"' not in console.text  # no per-tab refresh (pane ↻ owns it)
     assert "/api/gateway/runs?" in console.text
     assert '"/api/gateway/commands"' in console.text
     assert 'id="sandbox-capability"' in console.text

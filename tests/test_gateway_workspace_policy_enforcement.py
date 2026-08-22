@@ -139,6 +139,57 @@ def test_workspace_policy_endpoint_exposes_mount_names_only(tmp_path: Path, monk
         assert str(notes) not in json.dumps(body)
 
 
+def test_stored_workspace_policy_overrides_env_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_ws = tmp_path / "env-workspace"
+    env_ws.mkdir(parents=True, exist_ok=True)
+    stored_ws = tmp_path / "stored-workspace"
+    stored_ws.mkdir(parents=True, exist_ok=True)
+    notes = tmp_path / "notes"
+    notes.mkdir(parents=True, exist_ok=True)
+    stored_file = stored_ws / "inside.txt"
+    stored_file.write_text("stored\n", encoding="utf-8")
+    env_file = env_ws / "env-only.txt"
+    env_file.write_text("env\n", encoding="utf-8")
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(env_ws))
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TOOL_MODE", "passthrough")
+
+    from abstractgateway.runtime_config import write_runtime_config
+
+    runtime_dir = tmp_path / "runtime"
+    write_runtime_config(
+        runtime_dir,
+        {
+            "workspace_root": str(stored_ws),
+            "workspace_mounts": f"notes={notes}",
+        },
+        actor="person:admin",
+    )
+
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        policy = client.get("/api/gateway/workspace/policy", headers=headers)
+        assert policy.status_code == 200, policy.text
+        assert {"name": "notes"} in (policy.json().get("policy", {}).get("mounts") or [])
+        assert str(notes) not in json.dumps(policy.json())
+
+        stored_ok = client.get(
+            "/api/gateway/files/read",
+            params={"path": str(stored_file)},
+            headers=headers,
+        )
+        assert stored_ok.status_code == 200, stored_ok.text
+
+        env_denied = client.get(
+            "/api/gateway/files/read",
+            params={"path": str(env_file)},
+            headers=headers,
+        )
+        assert env_denied.status_code == 403, env_denied.text
+
+
 def test_sanitize_run_workspace_policy_rejects_outside_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ws = tmp_path / "workspace"
     ws.mkdir(parents=True, exist_ok=True)
@@ -153,6 +204,14 @@ def test_sanitize_run_workspace_policy_rejects_outside_root(tmp_path: Path, monk
     from fastapi import HTTPException
 
     from abstractgateway.routes.gateway import _sanitize_run_workspace_policy
+    from abstractgateway.runtime_config import write_runtime_config
+
+    # Launch-folder trust defaults ON since the 2026-08-19 ruling; this test
+    # pins the LOCKED-DOWN posture, so switch it off through the settings
+    # store (the one lane — deliberately no env for this knob).
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    write_runtime_config(runtime_dir, {"trust_client_launch_folder": False}, actor="person:admin")
 
     # backlog 0232 §1: an out-of-scope workspace_root REFUSES (400) naming the
     # rejected root and the allowed roots. It is never silently popped — the
@@ -188,6 +247,37 @@ def test_sanitize_run_workspace_policy_rejects_outside_root(tmp_path: Path, monk
     )
     assert sanitized.get("workspace_root") == str(ws)
     assert sanitized.get("workspace_access_mode") == "workspace_only"
+
+
+def test_sanitize_run_workspace_policy_rejects_blocked_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = tmp_path / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    blocked = tmp_path / "blocked"
+    blocked.mkdir(parents=True, exist_ok=True)
+    blocked_child = blocked / "nested"
+    blocked_child.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "1")
+
+    from abstractgateway.runtime_config import write_runtime_config
+    from fastapi import HTTPException
+    from abstractgateway.routes.gateway import _sanitize_run_workspace_policy
+
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    write_runtime_config(
+        runtime_dir,
+        {"workspace_blocked_paths": str(blocked)},
+        actor="person:admin",
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        _sanitize_run_workspace_policy({"workspace_root": str(blocked_child)})
+    assert excinfo.value.status_code == 400
+    detail = str(excinfo.value.detail)
+    assert "blocked by the gateway workspace deny list" in detail
+    assert str(blocked) in detail
 
 
 def test_server_file_endpoints_honor_client_scope_overrides_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -255,6 +345,38 @@ def test_sanitize_run_workspace_policy_accepts_outside_root_when_enabled(tmp_pat
     assert sanitized.get("workspace_root") == str(outside)
     assert sanitized.get("workspace_access_mode") == "all_except_ignored"
     assert str(outside) in str(sanitized.get("workspace_allowed_paths") or "")
+
+
+def test_stored_client_scope_override_beats_env_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = tmp_path / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True, exist_ok=True)
+    secret = outside / "secret.txt"
+    secret.write_text("secret\n", encoding="utf-8")
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE", "0")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TOOL_MODE", "passthrough")
+
+    from abstractgateway.runtime_config import write_runtime_config
+
+    runtime_dir = tmp_path / "runtime"
+    write_runtime_config(
+        runtime_dir,
+        {"client_workspace_scope_overrides": True},
+        actor="person:admin",
+    )
+
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        r = client.get(
+            "/api/gateway/files/read",
+            params={"path": str(secret), "workspace_root": str(outside)},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
 
 
 def test_open_run_workspace_uses_stored_workspace_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

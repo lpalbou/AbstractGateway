@@ -725,6 +725,15 @@ class WorkflowBundleGatewayHost:
     specs: Dict[str, WorkflowSpec]
     event_listener_specs_by_root: Dict[str, list[str]]
     _default_bundle_id: Optional[str]
+    # bundle_id -> bundle_version -> why this version did NOT load (min_runtime
+    # floor, compile failure, native-loop failure). A skipped version is ABSENT
+    # from `bundles`/`specs` BY DESIGN — that part is correct. What was missing
+    # is the RECORD: the reason died with a log line, so a version silently
+    # stopped existing at every reload and `/bundles/upload` still answered
+    # `{"ok": true}` for a bundle nothing could run. Keeping the reason here is
+    # what makes the absence honest: the console can show a row that says WHY,
+    # and an install can refuse to claim a success it did not achieve.
+    skipped_bundles: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
     memory_store: Optional[Any] = None
     memory_store_info: Optional[Dict[str, Any]] = None
     # The flow-scanned provider/model bootstrap pair used at load time. Kept so
@@ -1058,14 +1067,33 @@ class WorkflowBundleGatewayHost:
         specs: Dict[str, WorkflowSpec] = {}
         flows_by_namespaced_id: Dict[str, Dict[str, Any]] = {}
 
-        skipped_bundles: list[str] = []
+        skipped_bundles: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
-        def _drop_skipped(bid: str, bver: str) -> None:
+        def _drop_skipped(bid: str, bver: str, *, reason: str, kind: str) -> None:
             # A skipped bundle must be ABSENT everywhere, not just spec-less
             # (flow's live min_runtime probe read the CATALOG LISTING as the
             # gate's verdict — the specs had correctly never registered, but
             # bundles_by_id still listed the bundle, so the skip looked like
             # a load). Same law for compile-skips.
+            #
+            # ABSENT, BUT NOT UNACCOUNTED FOR: the reason and the on-disk path
+            # are lifted out of `bundle_sources` BEFORE the drop, so a version
+            # that stops serving still has a row to show. Without this the file
+            # sits on disk forever while every surface reports it as if it had
+            # never existed.
+            try:
+                src0 = ((bundle_sources.get(bid) or {}).get(bver) or {})
+                skipped_bundles.setdefault(bid, {})[bver] = {
+                    "bundle_id": str(src0.get("bundle_id") or bid),
+                    "bundle_version": bver,
+                    "path": str(src0.get("path") or ""),
+                    "registry_scope": str(src0.get("registry_scope") or "private"),
+                    "source_kind": str(src0.get("source_kind") or ""),
+                    "skip_kind": str(kind or "unknown"),
+                    "reason": str(reason or "").strip(),
+                }
+            except Exception:
+                pass
             try:
                 versions0 = bundles_by_id.get(bid) or {}
                 versions0.pop(bver, None)
@@ -1089,12 +1117,11 @@ class WorkflowBundleGatewayHost:
                 # the compiles-but-inverts-signals class).
                 _gap = WorkflowBundleGatewayHost._min_runtime_gap(man)
                 if _gap is not None:
-                    skipped_bundles.append(f"{bid}@{bver}")
                     logger.warning(
                         "WorkflowBundleGatewayHost: SKIPPING bundle '%s@%s' — %s",
                         bid, bver, _gap,
                     )
-                    _drop_skipped(bid, bver)
+                    _drop_skipped(bid, bver, reason=str(_gap), kind="min_runtime")
                     continue
 
                 _factory = declares_native_loop_bundle(man)
@@ -1105,7 +1132,6 @@ class WorkflowBundleGatewayHost:
                         namespace=_namespace,
                     )
                     if native_error is not None:
-                        skipped_bundles.append(f"{bid}@{bver}")
                         logger.warning(
                             "WorkflowBundleGatewayHost: SKIPPING native-loop bundle '%s@%s' — %s "
                             "(the bundle is absent until fixed; other bundles keep serving)",
@@ -1113,7 +1139,7 @@ class WorkflowBundleGatewayHost:
                             bver,
                             native_error,
                         )
-                        _drop_skipped(bid, bver)
+                        _drop_skipped(bid, bver, reason=str(native_error), kind="native_loop")
                         continue
                     for wfid, spec in native_specs.items():
                         wf_reg.register(spec)
@@ -1159,13 +1185,13 @@ class WorkflowBundleGatewayHost:
                         break
                     staged_specs[str(spec.workflow_id)] = spec
                 if bundle_error is not None:
-                    skipped_bundles.append(f"{bid}@{bver}")
                     logger.warning(
                         "WorkflowBundleGatewayHost: SKIPPING bundle '%s@%s' — %s "
                         "(the bundle is absent until fixed; other bundles keep serving)",
                         bid, bver, bundle_error,
                     )
-                    _drop_skipped(bid, bver)  # absent means absent — listings included
+                    # absent means absent — listings included
+                    _drop_skipped(bid, bver, reason=str(bundle_error), kind="compile")
                     continue
                 # Bundle compiled whole — commit it.
                 for wfid, spec in staged_specs.items():
@@ -1658,6 +1684,7 @@ class WorkflowBundleGatewayHost:
             bundles=bundles_by_id,
             bundle_sources=bundle_sources,
             latest_bundle_versions=latest_versions,
+            skipped_bundles=skipped_bundles,
             runtime=runtime,
             workflow_registry=wf_reg,
             specs=specs,
@@ -1901,6 +1928,12 @@ class WorkflowBundleGatewayHost:
             self.bundles = new_host.bundles
             self.bundle_sources = new_host.bundle_sources
             self.latest_bundle_versions = new_host.latest_bundle_versions
+            # Skips are recomputed by the rebuild, so the swap must publish the
+            # NEW verdict: a version fixed on disk stops being listed as
+            # skipped, and a version that newly fails starts being listed.
+            # Keeping the old dict here would make the reason drift from the
+            # bundles it explains.
+            self.skipped_bundles = new_host.skipped_bundles
             self.runtime = new_host.runtime
             self.workflow_registry = new_host.workflow_registry
             self.specs = new_host.specs
@@ -1925,9 +1958,38 @@ class WorkflowBundleGatewayHost:
             pass
         bundle_ids = sorted([str(k) for k in (self.bundles or {}).keys() if isinstance(k, str)])
         out: Dict[str, Any] = {"ok": True, "bundle_ids": bundle_ids, "count": len(bundle_ids)}
+        # A reload that silently drops versions is how a workflow stops
+        # existing without anyone being told. Report the skips with the
+        # reload's own result so every caller — including publish/upload —
+        # can see what did NOT survive the rebuild it just triggered.
+        skipped = self.skipped_bundle_rows()
+        if skipped:
+            out["skipped"] = skipped
+            out["skipped_count"] = len(skipped)
         if rearm_warnings:
             out["warnings"] = rearm_warnings
         return out
+
+    def skipped_bundle_rows(self) -> list[Dict[str, Any]]:
+        """Flat, sorted view of the versions this host refused to serve.
+
+        One row per (bundle_id, bundle_version) with the reason. Callers use it
+        to explain an absence instead of showing nothing.
+        """
+        rows: list[Dict[str, Any]] = []
+        for _bid, versions in (self.skipped_bundles or {}).items():
+            if not isinstance(versions, dict):
+                continue
+            for _bver, rec in versions.items():
+                if isinstance(rec, dict):
+                    rows.append(dict(rec))
+        rows.sort(key=lambda r: (str(r.get("bundle_id") or ""), str(r.get("bundle_version") or "")))
+        return rows
+
+    def bundle_version_skip_reason(self, bundle_id: str, bundle_version: str) -> Optional[Dict[str, Any]]:
+        """The skip record for one exact version, or None when it loaded."""
+        rec = ((self.skipped_bundles or {}).get(str(bundle_id or "")) or {}).get(str(bundle_version or ""))
+        return dict(rec) if isinstance(rec, dict) else None
 
     def _seed_session_history(
         self,

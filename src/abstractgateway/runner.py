@@ -1384,7 +1384,7 @@ class GatewayRunner:
 
     def _apply_command(self, rec: CommandRecord) -> None:
         typ = str(rec.type or "").strip().lower()
-        if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory", "inject_guidance"}:
+        if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory", "inject_guidance", "conclude"}:
             raise ValueError(f"Unknown command type '{typ}'")
 
         payload = dict(rec.payload or {})
@@ -1400,7 +1400,7 @@ class GatewayRunner:
         # promoter); its resumed runs ride the forced general scan. The drain
         # in _schedule_ticks load-verifies before submitting, so a stale/bogus
         # id here is a harmless no-op, never a false FAILED.
-        if typ in {"resume", "cancel", "inject_guidance", "update_schedule"}:
+        if typ in {"resume", "cancel", "inject_guidance", "conclude", "update_schedule"}:
             with self._inflight_lock:
                 self._priority_tick_ids.add(run_id)
 
@@ -1432,6 +1432,10 @@ class GatewayRunner:
 
         if typ == "inject_guidance":
             self._apply_inject_guidance(payload, run_id=run_id)
+            return
+
+        if typ == "conclude":
+            self._apply_conclude(payload, run_id=run_id)
             return
 
     def _apply_inject_guidance(self, payload: Dict[str, Any], *, run_id: str) -> None:
@@ -1528,6 +1532,100 @@ class GatewayRunner:
             return
         if applied == 0:
             raise KeyError(f"No inbox-bearing run found for '{run_id}' to inject guidance into")
+
+    # The wording the model reads is authored HERE, once, for every client.
+    # A host that composed its own "please wrap up" would make the SAME
+    # command mean different things depending on which app sent it — the
+    # class of divergence the `stop_reason` wave closed on the way out.
+    _CONCLUDE_DIRECTIVE = (
+        "The operator asked you to conclude now. Stop working and give your best answer "
+        "from everything you have done so far."
+    )
+
+    def _apply_conclude(self, payload: Dict[str, Any], *, run_id: str) -> None:
+        """Ask a live agent run to WRAP UP now (operator ruling 2026-08-21).
+
+        Between `pause` (freeze) and `cancel` (throw away) there was nothing
+        that ends a long run WELL: an operator who could see the agent had
+        enough evidence had to kill the turn and lose the answer. `conclude`
+        is that missing verb — the loop stops reasoning at its next boundary
+        and runs the tool-free conclusion it already owns, so the turn ends
+        with a real answer plus an honest list of what is left.
+
+        It rides the STEER lane deliberately: same durable sidecar, same
+        exactly-once watermark, same `abstract.steer_seen` ack, same
+        descendant targeting (the agent is a child run of the wrapper), same
+        entity-visit refusal. The only difference is `kind: "conclude"` on the
+        message, which the sidecar preserves verbatim and the ReAct loop reads
+        (`_take_conclude_request`). Nothing new is durable, so nothing new can
+        be lost.
+
+        `payload.note` (optional) is quoted to the model verbatim — an
+        operator saying "just the table, skip the analysis" should reach it.
+        """
+        note = payload.get("note")
+        note = note.strip() if isinstance(note, str) else ""
+        message = {
+            "role": "system",
+            "kind": "conclude",
+            "content": self._CONCLUDE_DIRECTIVE if not note else f"{self._CONCLUDE_DIRECTIVE}\n\n{note}",
+            "note": note,
+        }
+
+        from .steering import gateway_steer_sidecar
+
+        sidecar = gateway_steer_sidecar(self._base_dir)
+        if sidecar is None:
+            # No silent degradation: the legacy direct-write path carries no
+            # message kind, so a conclude would land as ordinary guidance the
+            # loop cannot distinguish from a steer.
+            raise RuntimeError(
+                "conclude requires the durable steer sidecar (abstractruntime with steer support); "
+                "this gateway's runtime predates it — upgrade, or use pause/cancel"
+            )
+        runtime = Runtime(
+            run_store=self.run_store,
+            ledger_store=self.ledger_store,
+            artifact_store=self.artifact_store,
+            steer_store=sidecar,
+        )
+        targets = self._list_descendant_run_ids(runtime, run_id)
+        _TERMINAL = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
+
+        applied = 0
+        found = False
+        refusals: list[str] = []
+        for rid in targets:
+            run = self.run_store.load(rid)
+            if run is None or getattr(run, "status", None) in _TERMINAL:
+                continue
+            vars_obj = getattr(run, "vars", None)
+            if not isinstance(vars_obj, dict) or not isinstance(vars_obj.get("_runtime"), dict):
+                continue
+            found = True
+            try:
+                runtime.steer(rid, dict(message))
+                applied += 1
+            except PermissionError as e:
+                refusals.append(str(e))
+            except ValueError:
+                # Went terminal between load and append — not an error.
+                continue
+        if refusals and applied == 0:
+            raise PermissionError("; ".join(refusals))
+        if refusals:
+            logger.warning(
+                "conclude partial refusal for '%s': %d asked, %d refused (%s)",
+                run_id,
+                applied,
+                len(refusals),
+                "; ".join(refusals),
+            )
+        if applied == 0 and found:
+            # All of them finished first — the turn is already over.
+            return
+        if applied == 0:
+            raise KeyError(f"No live agent run found for '{run_id}' to conclude")
 
     def _apply_inject_guidance_legacy(self, guidance: str, *, targets: list, run_id: str) -> None:
         """Pre-sidecar direct-write path (#FALLBACK, version-skew only): the

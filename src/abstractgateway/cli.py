@@ -298,7 +298,9 @@ def _run_data_command(args: Any) -> None:
             return
         for r in rows:
             size = r.get("size_bytes")
-            size_h = f"{size/1e6:,.1f} MB" if isinstance(size, (int, float)) else "?"
+            # size_bytes=None ⇔ the path no longer exists (stale row) — say
+            # so, never a "?" (operator honesty rule 2026-08-19).
+            size_h = f"{size/1e6:,.1f} MB" if isinstance(size, (int, float)) else "missing"
             safe = "purgeable" if r.get("safe_to_purge") else "PROTECTED"
             print(f"{r.get('name')}  [{r.get('kind')}] {size_h}  {safe}  owner={r.get('owner')}  {r.get('path')}")
         return

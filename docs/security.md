@@ -159,6 +159,27 @@ Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.
 
+### Workflow registry ownership
+
+Writing a workflow registry requires owning it. Under hosted user auth the
+`/api/gateway/bundles` routes resolve to the calling principal's own bundle
+directory, which that user may change freely. The gateway's own directory is
+the shared set every user can see and run, so changing it requires an admin
+principal.
+
+One check covers every route that writes a registry — `POST /bundles/upload`,
+`DELETE /bundles/{bundle_id}`, `POST /bundles/reload`,
+`POST /bundles/{bundle_id}/deprecate` and `POST /visualflows/{flow_id}/publish`
+— so a shared workflow cannot be replaced through one route while another is
+restricted. `POST /visualflows/{flow_id}/publish` accepts a caller-supplied
+`bundle_id`, `bundle_version` and `overwrite`, and installs into the same
+registry as `upload`; it is gated on the same rule. Non-admin requests against
+the shared registry return `403`. Read routes are unchanged.
+
+`DELETE /bundles/{bundle_id}` returns `409` for the `basic-agent.flow` the
+gateway verifies at startup: removal has no undo and would prevent the next
+start. Install a replacement bundle first, then remove the old file.
+
 ### Shared workflow catalog
 
 Do not share workflows by pointing multiple users at another user's private

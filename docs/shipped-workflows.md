@@ -61,6 +61,48 @@ only the figures are skipped. Install it if you want them:
 pip install matplotlib
 ```
 
+## Managing workflows from the console
+
+Both consoles carry a **Workflows** surface — a tab in the web console, step 6
+in the console-TUI — listing every workflow registered on this gateway with how
+many published and draft versions each has. Select a workflow to see its
+versions and its entrypoints with their declared interfaces.
+
+From there you can:
+
+- **Import** one or more `.flow` bundles. Each file reports whether the gateway
+  is serving the result, not merely that the upload succeeded.
+- **Export** a version as its original `.flow` bytes, byte-identical to what is
+  installed, so it can be archived or re-installed elsewhere. In the TUI, `e`
+  writes the file next to your working directory.
+- **Delete** a single version or every version of a workflow, behind a
+  confirmation that states what is irreversible. In the TUI, `d` removes the
+  selected version and `D` the whole workflow.
+
+Versions the gateway is not serving are listed separately under **Not loaded**,
+with the reason and the file path. They stay on disk until you remove them.
+
+## Who can change the registry
+
+The gateway's own bundle directory is the shared set: every user sees it and can
+run what it contains. Changing it is an operator act, so installing, replacing,
+removing, deprecating and reloading workflows there require an admin principal.
+Listing and running remain available to every user.
+
+Under hosted user auth each principal also gets its own workflow registry, and
+you can install and remove workflows there without admin rights — the shared
+directory stays visible and read-only alongside it. The rule is ownership: you
+may change the registry you own.
+
+The same check covers every route that writes the registry, including
+`POST /bundles/upload`, `DELETE /bundles/{bundle_id}`, `POST /bundles/reload`
+and `POST /visualflows/{flow_id}/publish`. A non-admin request against the
+shared registry returns `403`.
+
+`basic-agent.flow` is the default framework agent and the gateway verifies it at
+startup, so `DELETE` refuses to remove it and answers `409`. To replace the
+default agent, install the replacement bundle first, then remove the old file.
+
 ## Customizing the registry
 
 - The shipped registry is used when `ABSTRACTGATEWAY_FLOWS_DIR` is unset;

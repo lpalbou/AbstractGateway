@@ -538,6 +538,91 @@ async def gateway_admin_write_runtime_config(request: Request, payload: Dict[str
     return out
 
 
+def _resolve_policy_target_user(tenant_id: str, user_id: str) -> tuple[str, str]:
+    """Validate the admin per-user policy target against the user registry
+    (design adversary S2: a typoed query param must not mint a dead entry).
+    Returns the normalized (tenant, user)."""
+    tenant = str(tenant_id or "default").strip() or "default"
+    user = str(user_id or "").strip()
+    if not user:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    try:
+        from ..users import GatewayUserRegistry
+
+        rec = GatewayUserRegistry().get_user(user, tenant_id=tenant)
+    except Exception:
+        rec = None
+    if rec is None and not (tenant == "default" and user == "admin"):
+        # default:admin is the static-token operator and may predate any
+        # registry record — every other target must exist.
+        raise HTTPException(
+            status_code=404,
+            detail=f"no user {tenant}:{user} in the registry — the policy target must be an existing account",
+        )
+    return tenant, user
+
+
+@router.get("/admin/user-workspace-policy")
+async def gateway_admin_read_user_workspace_policy(
+    request: Request,
+    tenant_id: str = Query("default"),
+    user_id: str = Query(...),
+) -> Dict[str, Any]:
+    """ONE user's workspace policy for the per-runtime settings modal:
+    stored entry + effective posture. Admin-gated by the /admin prefix."""
+    _principal_from_request(request)
+    tenant, user = _resolve_policy_target_user(tenant_id, user_id)
+    from ..runtime_config import read_user_workspace_policy
+
+    out = read_user_workspace_policy(gateway_data_dir_from_env(), tenant_id=tenant, user_id=user)
+    out["ok"] = True
+    return out
+
+
+@router.put("/admin/user-workspace-policy")
+async def gateway_admin_write_user_workspace_policy(
+    request: Request,
+    payload: Dict[str, Any],
+    tenant_id: str = Query("default"),
+    user_id: str = Query(...),
+) -> Dict[str, Any]:
+    """Write ONE user's policy entry (the per-runtime modal's save). Body:
+    {policy: {...}} or the bare entry; {policy: null} / {} clears to
+    inherited. Single-entry semantics — never a map replace, so it cannot
+    clobber other users' entries (design adversary B2)."""
+    principal = _require_admin_principal(request)
+    tenant, user = _resolve_policy_target_user(tenant_id, user_id)
+    from ..runtime_config import (
+        RuntimeConfigError,
+        RuntimeConfigStoreCorrupt,
+        write_user_workspace_policy,
+    )
+
+    # {"policy": {...}} wraps the entry; {"policy": null} clears it; a bare
+    # body IS the entry (and a bare {} also clears).
+    if "policy" in (payload or {}):
+        raw_policy = payload.get("policy")
+        policy = dict(raw_policy) if isinstance(raw_policy, dict) else None
+    else:
+        policy = dict(payload or {})
+    if policy is not None:
+        policy.pop("ok", None)
+    try:
+        out = write_user_workspace_policy(
+            gateway_data_dir_from_env(),
+            tenant_id=tenant,
+            user_id=user,
+            policy=policy or None,
+            actor=f"person:{principal.user_id}" if getattr(principal, "user_id", None) else "person:operator",
+        )
+    except RuntimeConfigStoreCorrupt as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except RuntimeConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    out["ok"] = True
+    return out
+
+
 @router.get("/admin/executors")
 async def gateway_admin_list_executors(request: Request) -> Dict[str, Any]:
     """The pluggable execution-agent registry (operator ruling 2026-07-14):
@@ -552,23 +637,185 @@ async def gateway_admin_list_executors(request: Request) -> Dict[str, Any]:
 
 
 @router.get("/admin/data-homes")
-def gateway_admin_list_data_homes(request: Request) -> Dict[str, Any]:
+def gateway_admin_list_data_homes(request: Request, sizes: bool = Query(True)) -> Dict[str, Any]:
     """Data & Caches (operator priority 18:19, c1580 1b): every registered
-    data home on this machine with LIVE sizes — the one management view over
-    core's registry. Registration happens at boot/first-write (writer wave);
-    this read re-registers this data root's homes first so a console load
-    always sees current truth (idempotent). Admin-gated: the rows expose
-    host paths. Plain `def` — sizes walk trees (H7c: never on the loop)."""
+    data home on this machine — the one management view over core's
+    registry. Registration happens at boot/first-write (writer wave); this
+    read re-registers this data root's homes first so a console load always
+    sees current truth (idempotent). Admin-gated: the rows expose host
+    paths. Plain `def` — sizes walk trees (H7c: never on the loop).
+
+    `sizes=0` answers WITHOUT walking (rows only, size_bytes absent) — the
+    fast first paint; the full walk over large stores takes tens of
+    seconds and rides a second, sized call (operator 2026-08-19: a 30s
+    blank 'measuring' pane is not acceptable)."""
     _require_admin_principal(request)
-    from ..data_homes import list_homes_with_sizes, register_gateway_data_homes
+    from ..data_homes import list_homes, register_gateway_data_homes
 
     warnings: list[str] = []
     try:
         register_gateway_data_homes(gateway_data_dir_from_env())
     except Exception as e:  # noqa: BLE001
         warnings.append(f"#FALLBACK boot-time registration retry failed: {e}")
-    rows, list_warnings = list_homes_with_sizes()
+    rows, list_warnings = list_homes(include_sizes=bool(sizes))
     return {"homes": rows, "warnings": warnings + list_warnings}
+
+
+class DataHomeForgetRequest(BaseModel):
+    name: str = Field(default="", description="One registered row to forget (row only, disk untouched)")
+    all_stale: bool = Field(default=False, description="Forget EVERY row whose path no longer exists")
+
+
+@router.post("/admin/data-homes/forget")
+def gateway_admin_forget_data_home(request: Request, payload: DataHomeForgetRequest) -> Dict[str, Any]:
+    """Remove registry ROWS whose backing path is gone (stale registrations
+    — deleted stores, moved data roots). Disk is never touched. A row whose
+    path still EXISTS refuses: it would silently re-register at the owner's
+    next boot (zombie UX, design adversary B3) — purge or delete the store
+    itself instead."""
+    _require_admin_principal(request)
+    from ..data_homes import forget_home, list_homes
+
+    rows, warnings = list_homes(include_sizes=False)
+    by_name = {str(r.get("name") or ""): r for r in rows if isinstance(r, dict)}
+    targets: list[str] = []
+    if payload.all_stale:
+        targets = [n for n, r in by_name.items() if r.get("exists") is False]
+    elif payload.name.strip():
+        n = payload.name.strip()
+        row = by_name.get(n)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no registered data home named {n!r}")
+        if row.get("exists") is not False:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{n!r} still exists on disk — forgetting it would only last until the owner's "
+                    "next boot re-registers it. Purge its contents (if it is a cache) or delete the "
+                    "store itself; Forget is for rows whose path is gone."
+                ),
+            )
+        targets = [n]
+    else:
+        raise HTTPException(status_code=400, detail="pass name=<row> or all_stale=true")
+
+    forgotten: list[str] = []
+    errors: list[str] = []
+    for n in targets:
+        try:
+            if forget_home(n):
+                forgotten.append(n)
+        except RuntimeError as e:
+            raise HTTPException(status_code=501, detail=str(e)) from e
+        except Exception as e:  # noqa: BLE001 - registry refusals render verbatim
+            errors.append(f"{n}: {e}")
+    return {"forgotten": forgotten, "errors": errors, "warnings": warnings}
+
+
+def _log_home_rows() -> list[Dict[str, Any]]:
+    from ..data_homes import list_homes
+
+    rows, _ = list_homes(include_sizes=False)
+    return [r for r in rows if isinstance(r, dict) and str(r.get("kind") or "") == "logs"]
+
+
+@router.get("/admin/logs")
+def gateway_admin_list_logs(request: Request) -> Dict[str, Any]:
+    """Every registered LOG home with its readable files (name, size,
+    modified) — the Logs tab's list. Stale log rows (path gone) are listed
+    as missing so the console can offer Forget. Plain `def` (H7c: stat
+    walks never ride the loop); symlinks never list (adversary B6)."""
+    _require_admin_principal(request)
+    homes: list[Dict[str, Any]] = []
+    for r in _log_home_rows():
+        name = str(r.get("name") or "")
+        path = Path(str(r.get("path") or ""))
+        data_root = str(((r.get("meta") or {}) if isinstance(r.get("meta"), dict) else {}).get("data_root") or "")
+        if r.get("exists") is False or not path.is_dir():
+            homes.append({"home": name, "path": str(path), "data_root": data_root, "missing": True, "files": []})
+            continue
+        files: list[Dict[str, Any]] = []
+        try:
+            for p in path.iterdir():
+                try:
+                    if p.is_symlink() or not p.is_file():
+                        continue
+                    st = p.stat()
+                    files.append({
+                        "name": p.name,
+                        "size_bytes": int(st.st_size),
+                        "modified_at": datetime.datetime.fromtimestamp(st.st_mtime, tz=datetime.timezone.utc).isoformat(),
+                    })
+                except OSError:
+                    continue
+        except OSError as e:
+            homes.append({"home": name, "path": str(path), "data_root": data_root, "missing": False, "files": [], "error": str(e)})
+            continue
+        files.sort(key=lambda f: str(f.get("modified_at") or ""), reverse=True)
+        homes.append({"home": name, "path": str(path), "data_root": data_root, "missing": False, "files": files})
+    return {"homes": homes}
+
+
+@router.get("/admin/logs/read")
+def gateway_admin_read_log(
+    request: Request,
+    home: str = Query(..., description="Registered log-home row name"),
+    file: str = Query(..., description="File basename inside the home (no paths)"),
+    max_bytes: int = Query(default=80_000, ge=1024, description="Tail size in bytes. No ceiling — asking for a bigger tail must never 422 the log away."),
+    after_bytes: Optional[int] = Query(default=None, ge=0, description="Offset-follow cursor: return only the delta from this byte offset (bounded by max_bytes); past-EOF resets to the trailing window with reset=true."),
+) -> Dict[str, Any]:
+    """Tail ONE log file (the backlog exec-log contract: trailing window or
+    offset-follow, utf-8 errors=replace). HARD SCOPE (adversary B1): only
+    kind=logs homes are readable — this must never become an arbitrary-file
+    reader over artifact stores or entity homes. Basename-only + realpath
+    parent check + symlink refusal (B6)."""
+    _require_admin_principal(request)
+    row = next((r for r in _log_home_rows() if str(r.get("name") or "") == str(home or "").strip()), None)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"no registered LOG home named {home!r} (kind=logs only)")
+    fname = str(file or "").strip()
+    if not fname or fname != os.path.basename(fname) or fname in {".", ".."} or "\x00" in fname:
+        raise HTTPException(status_code=400, detail="file must be a bare file name inside the log home")
+    home_real = Path(os.path.realpath(str(row.get("path") or "")))
+    if not home_real.is_dir():
+        raise HTTPException(status_code=404, detail=f"log home {home!r} no longer exists on disk")
+    candidate = home_real / fname
+    if candidate.is_symlink():
+        raise HTTPException(status_code=400, detail="symlinked log files are not served")
+    resolved = Path(os.path.realpath(candidate))
+    if resolved.parent != home_real:
+        raise HTTPException(status_code=400, detail="file resolves outside the log home")
+    if not resolved.is_file():
+        # 404, not 500: the file can rotate away between list and read.
+        raise HTTPException(status_code=404, detail=f"{fname!r} is not a file in this log home")
+
+    data = b""
+    truncated = False
+    reset = False
+    next_offset = 0
+    try:
+        with open(resolved, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = int(f.tell() or 0)
+            start = int(after_bytes) if after_bytes is not None else max(0, size - int(max_bytes))
+            if after_bytes is not None and start > size:
+                reset = True
+                start = max(0, size - int(max_bytes))
+            truncated = start > 0
+            f.seek(start, os.SEEK_SET)
+            data = f.read(int(max_bytes))
+            next_offset = start + len(data)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read log: {e}") from e
+    return {
+        "home": str(home),
+        "file": fname,
+        "bytes": len(data),
+        "truncated": bool(truncated),
+        "content": data.decode("utf-8", errors="replace"),
+        "next_offset": int(next_offset),
+        "reset": bool(reset),
+    }
 
 
 class DataHomePurgeRequest(BaseModel):
@@ -892,7 +1139,8 @@ def gateway_admin_runtime_runs(
     kind: str,
     tenant_id: str,
     runtime_id: str,
-    limit: int = Query(default=50, ge=1),  # no ceiling: an over-large ask is served, not 422'd to EMPTY
+    limit: int = Query(default=50, ge=1),  # page size (clamped to 200 in admin_runtimes)
+    offset: int = Query(default=0, ge=0, description="Result offset — every list must reach every item (pages of `limit`)."),
 ) -> Dict[str, Any]:
     """Drill-in run summaries for ONE runtime plane (lazy — the inventory
     list never pays this). Entity maintenance holds propagate as 409."""
@@ -911,6 +1159,7 @@ def gateway_admin_runtime_runs(
             tenant_id=tenant_id,
             runtime_id=runtime_id,
             limit=limit,
+            offset=offset,
             default_run_store=getattr(getattr(svc, "host", None), "run_store", None),
             entity_registry=registry,
         )
@@ -1701,6 +1950,14 @@ class PublishVisualFlowResponse(BaseModel):
     bundle_path: str
     gateway_reloaded: bool = False
     gateway_reload_error: Optional[str] = None
+    # `loaded` answers the question the author actually asked ("can I run it
+    # now?"), which is NOT the same as "the file was written". When the host
+    # refused the bundle, `skipped` carries the reason so the authoring UI can
+    # show it instead of reporting a publish that produced nothing runnable.
+    #: True = the host is serving it, False = proven not served,
+    #: None = unverified (the gateway was not reloaded).
+    loaded: Optional[bool] = None
+    skipped: Optional[Dict[str, Any]] = None
 
 
 _VISUALFLOW_ID_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
@@ -1949,7 +2206,10 @@ class ScheduleRunRequest(BaseModel):
 class SubmitCommandRequest(BaseModel):
     command_id: str = Field(..., description="Client-supplied idempotency key (UUID recommended).")
     run_id: str = Field(..., description="Target run id (or session id for emit_event).")
-    type: str = Field(..., description="pause|resume|cancel|emit_event|update_schedule|compact_memory|inject_guidance")
+    type: str = Field(
+        ...,
+        description="pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance",
+    )
     payload: Dict[str, Any] = Field(default_factory=dict)
     ts: Optional[str] = Field(default=None, description="ISO timestamp (optional).")
     client_id: Optional[str] = None
@@ -2149,6 +2409,10 @@ class KGQueryResponse(BaseModel):
 class ArtifactListItem(BaseModel):
     artifact_id: str
     run_id: Optional[str] = None
+    # The bytes' location on THIS host. Absolute host paths are
+    # admin-classed (the path-leak rule the runtime-config surface
+    # already follows), so it is stamped only for admin principals.
+    content_path: Optional[str] = None
     content_type: Optional[str] = None
     size_bytes: Optional[int] = None
     created_at: Optional[str] = None
@@ -3242,87 +3506,21 @@ def _maybe_resolve_catalog_start(
 
 
 def _workspace_root() -> Path:
-    raw = str(os.getenv("ABSTRACTGATEWAY_WORKSPACE_DIR", "") or "").strip()
-    if not raw:
-        # Default to a stable repo root instead of whatever directory the server was launched from.
-        # This improves @file search latency and keeps gateway behavior consistent across clients.
-        try:
-            from abstractruntime.integrations.abstractcore.workspace_scoped_tools import resolve_workspace_base_dir
+    from ..runtime_config import resolve_workspace_root
 
-            base = resolve_workspace_base_dir()
-        except Exception:
-            base = Path.cwd()
-    else:
-        base = Path(raw).expanduser()
-    try:
-        return base.resolve()
-    except Exception:
-        return base
-
-
-_MOUNT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
-_WORKSPACE_MOUNTS_CACHE: dict[str, Any] = {"raw": None, "mounts": {}}
+    return resolve_workspace_root(gateway_data_dir_from_env())
 
 
 def _workspace_mounts() -> Dict[str, Path]:
-    """Return configured workspace mounts (best-effort).
+    from ..runtime_config import resolve_workspace_mounts
 
-    Env:
-      ABSTRACTGATEWAY_WORKSPACE_MOUNTS
+    return resolve_workspace_mounts(gateway_data_dir_from_env())
 
-    Format (v0): newline-separated `name=/abs/path` entries.
-    """
-    global _WORKSPACE_MOUNTS_CACHE
-    raw = str(os.getenv("ABSTRACTGATEWAY_WORKSPACE_MOUNTS", "") or "")
-    cached_raw = _WORKSPACE_MOUNTS_CACHE.get("raw")
-    cached_mounts = _WORKSPACE_MOUNTS_CACHE.get("mounts")
-    if raw == cached_raw and isinstance(cached_mounts, dict):
-        out0: Dict[str, Path] = {}
-        for k, v in cached_mounts.items():
-            if isinstance(k, str) and k and isinstance(v, Path):
-                out0[k] = v
-        return out0
 
-    out: Dict[str, Path] = {}
-    for ln in raw.splitlines():
-        line = str(ln or "").strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            logger.warning("workspace_mounts: invalid line (expected name=/abs/path): %s", line)
-            continue
-        name, path = line.split("=", 1)
-        name = name.strip()
-        path = path.strip()
-        if not name or not _MOUNT_NAME_RE.match(name):
-            logger.warning("workspace_mounts: invalid mount name: %s", name)
-            continue
-        if not path:
-            logger.warning("workspace_mounts: missing path for mount '%s'", name)
-            continue
-        try:
-            p = Path(path).expanduser()
-            if not p.is_absolute():
-                logger.warning("workspace_mounts: mount '%s' path must be absolute: %s", name, path)
-                continue
-            resolved = p.resolve()
-        except Exception:
-            logger.warning("workspace_mounts: mount '%s' path invalid: %s", name, path)
-            continue
-        try:
-            if not resolved.exists():
-                logger.warning("workspace_mounts: mount '%s' path does not exist: %s", name, str(resolved))
-                continue
-            if not resolved.is_dir():
-                logger.warning("workspace_mounts: mount '%s' path is not a directory: %s", name, str(resolved))
-                continue
-        except Exception:
-            logger.warning("workspace_mounts: mount '%s' path not accessible: %s", name, str(resolved))
-            continue
-        out[name] = resolved
+def _workspace_blocked_roots() -> tuple[Path, ...]:
+    from ..runtime_config import resolve_workspace_blocked_paths
 
-    _WORKSPACE_MOUNTS_CACHE = {"raw": raw, "mounts": dict(out)}
-    return dict(out)
+    return resolve_workspace_blocked_paths(gateway_data_dir_from_env())
 
 
 def _parse_lines_or_json_list(raw: Optional[str]) -> list[str]:
@@ -3345,6 +3543,7 @@ def _parse_lines_or_json_list(raw: Optional[str]) -> list[str]:
 
 def _server_workspace_policy_public() -> Dict[str, Any]:
     mounts = _workspace_mounts()
+    blocked = _workspace_blocked_roots()
     try:
         max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip()
         max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
@@ -3359,14 +3558,12 @@ def _server_workspace_policy_public() -> Dict[str, Any]:
         "mounts": sorted([{"name": name} for name in mounts.keys()], key=lambda x: x["name"]),
         "max_attachment_bytes": int(max_bytes),
         "client_workspace_scope_overrides": bool(_client_workspace_scope_overrides_enabled()),
+        "trust_client_launch_folder": bool(_trust_client_launch_folder_enabled()),
+        "extra_allowed_workspaces": len(mounts),
+        "blocked_workspace_roots": len(blocked),
         "allowed_access_modes": ["workspace_only", "workspace_or_allowed"]
         + (["all_except_ignored"] if _client_workspace_scope_overrides_enabled() else []),
     }
-
-
-def _flag_enabled(value: Any) -> bool:
-    s = str(value or "").strip().lower()
-    return s in {"1", "true", "yes", "on"}
 
 
 def _client_workspace_scope_overrides_enabled() -> bool:
@@ -3377,12 +3574,17 @@ def _client_workspace_scope_overrides_enabled() -> bool:
     workspace scope to operator-controlled roots. When running tools locally (dev mode),
     it is useful to allow the UI to drive workspace scoping directly.
     """
-    if _flag_enabled(os.getenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE")):
-        return True
-    if _flag_enabled(os.getenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE")):
-        return True
-    tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "").strip().lower()
-    return tool_mode == "local"
+    from ..runtime_config import resolve_client_workspace_scope_overrides_enabled
+
+    return resolve_client_workspace_scope_overrides_enabled(gateway_data_dir_from_env())
+
+
+def _trust_client_launch_folder_enabled() -> bool:
+    """Gateway-wide launch-folder trust (default ON; per-user overrides are
+    applied at the run-start sanitize, where the principal is known)."""
+    from ..runtime_config import resolve_trust_client_launch_folder
+
+    return resolve_trust_client_launch_folder(gateway_data_dir_from_env())
 
 
 _VALID_WORKSPACE_ACCESS_MODES: set[str] = {"workspace_only", "workspace_or_allowed", "all_except_ignored"}
@@ -3442,7 +3644,15 @@ def _is_under_allowed_roots(p: Path, allowed_roots: list[Path]) -> bool:
     return False
 
 
-def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]:
+def _is_under_blocked_roots(p: Path, blocked_roots: list[Path]) -> bool:
+    return _is_under_allowed_roots(p, blocked_roots)
+
+
+def _sanitize_run_workspace_policy(
+    input_data: Dict[str, Any],
+    *,
+    principal: Optional["GatewayPrincipal"] = None,
+) -> Dict[str, Any]:
     """Clamp client-provided run workspace knobs to the operator policy.
 
     Goal: prevent thin clients from expanding server filesystem access via run vars.
@@ -3459,11 +3669,44 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
     without saying so is the same dishonesty class ADR-0026 forbids for
     truncation: if we will not honor it, we must say so, loudly, naming
     what was rejected and what is allowed.
+
+    Policy is PER-PRINCIPAL (operator ruling 2026-08-19): admin-set
+    per-user entries in the settings store extend/narrow the gateway-wide
+    posture. Launch-folder trust (default ON) accepts the client-named
+    workspace_root — the folder the agent was started from — as a writable
+    root; the deny list still refuses, and trust never widens the separate
+    allowed-paths clamp beyond the accepted root's subtree.
     """
-    allow_overrides = _client_workspace_scope_overrides_enabled()
+    from ..runtime_config import (
+        resolve_client_workspace_scope_overrides_enabled,
+        resolve_trust_client_launch_folder,
+        resolve_user_workspace_mode,
+        resolve_user_workspace_paths,
+    )
+
+    data_dir = gateway_data_dir_from_env()
+    tenant_id = str(getattr(principal, "tenant_id", "") or "") or None
+    user_id = str(getattr(principal, "user_id", "") or "") or None
+    allow_overrides = resolve_client_workspace_scope_overrides_enabled(
+        data_dir, tenant_id=tenant_id, user_id=user_id
+    )
+    trust_launch_folder = allow_overrides or resolve_trust_client_launch_folder(
+        data_dir, tenant_id=tenant_id, user_id=user_id
+    )
+    user_allowed, user_blocked = resolve_user_workspace_paths(
+        data_dir, tenant_id=tenant_id, user_id=user_id
+    )
+    # The user's chosen posture (2026-08-19 clarification): "whitelist" =
+    # deny everything, allow the configured roots (+ trusted launch folder);
+    # "blacklist" = allow everything, refuse the deny lists. Blacklist-mode
+    # acceptance is deny-list-only; the deny lists themselves still always
+    # apply, in every mode.
+    user_mode = resolve_user_workspace_mode(data_dir, tenant_id=tenant_id, user_id=user_id)
+    blacklist_mode = user_mode == "blacklist"
     base = _workspace_root()
     mounts = _workspace_mounts()
-    allowed_roots = [base] + list(mounts.values())
+    blocked_roots = list(_workspace_blocked_roots()) + list(user_blocked)
+    allowed_roots = [base] + list(mounts.values()) + list(user_allowed)
     # Always allow gateway-owned per-run workspaces (even when the data_dir is outside the
     # operator workspace root). This enables safe follow-ups to reuse the same workspace.
     try:
@@ -3476,7 +3719,12 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
     root_for_rel = base
 
     def _refuse_out_of_scope(field: str, rejected: Any) -> "NoReturn":
-        """400 naming the rejected value AND the allowed roots (backlog 0232 §1)."""
+        """400 naming the rejected value AND the allowed roots (backlog 0232 §1).
+
+        The remedy names the SETTINGS surface, not env vars (operator ruling
+        2026-08-19: this class of knob is configured in the console, per
+        user, by the admin — the env rungs are legacy fallback, never the
+        thing an error teaches)."""
         allowed_txt = ", ".join(sorted({str(p) for p in allowed_roots})) or "(none configured)"
         raise HTTPException(
             status_code=400,
@@ -3485,34 +3733,72 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
                 f"Allowed roots: {allowed_txt}. "
                 "The run was NOT started: honoring this value would silently relocate "
                 "the run's workspace, so it is refused instead of dropped. Fix the path, "
-                "add a workspace mount (ABSTRACTGATEWAY_WORKSPACE_MOUNTS), or set "
-                "ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1 to accept client-declared scope."
+                "or have a gateway admin update the workspace access policy in the "
+                "console settings (web console or console TUI): add an allowed "
+                "workspace, enable launch-folder trust, or set a per-user policy "
+                "for this account."
             ),
         )
 
-    # workspace_root: allow only under operator roots (workspace root + mounts).
+    def _refuse_blocked_workspace(field: str, rejected: Any) -> "NoReturn":
+        blocked_txt = ", ".join(sorted({str(p) for p in blocked_roots})) or "(none configured)"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{field} {str(rejected)!r} is blocked by the gateway workspace deny list. "
+                f"Blocked roots: {blocked_txt}. "
+                "The run was NOT started: pick a different path, or have a gateway admin "
+                "edit the blocked workspaces (gateway-wide or per-user) in the console settings."
+            ),
+        )
+
+    # workspace_root: operator roots (workspace root + mounts + per-user
+    # allowed), OR — with launch-folder trust (default ON) — the folder the
+    # client was started from. A trusted launch folder joins allowed_roots so
+    # relative allowed-path entries under it clamp correctly; trust never
+    # legitimizes OTHER absolute paths, only the root the run will live in.
     raw_wr = input_data.get("workspace_root")
     if isinstance(raw_wr, str) and raw_wr.strip():
         resolved = _resolve_user_path(raw_wr, base=base)
-        if allow_overrides or _is_under_allowed_roots(resolved, allowed_roots):
+        if blocked_roots and _is_under_blocked_roots(resolved, blocked_roots):
+            _refuse_blocked_workspace("workspace_root", resolved)
+        if allow_overrides or blacklist_mode or trust_launch_folder or _is_under_allowed_roots(resolved, allowed_roots):
             input_data["workspace_root"] = str(resolved)
             root_for_rel = resolved
+            if resolved not in allowed_roots:
+                allowed_roots.append(resolved)
         else:
             _refuse_out_of_scope("workspace_root", resolved)
 
-    # workspace_access_mode: forbid "all_except_ignored" (can escape to arbitrary abs paths).
+    # workspace_access_mode: forbid "all_except_ignored" (can escape to
+    # arbitrary abs paths) — unless this PRINCIPAL's posture is blacklist
+    # (allow everything, refuse the deny lists), where it is the meaning.
     raw_mode = input_data.get("workspace_access_mode")
     if raw_mode is None:
         raw_mode = input_data.get("workspaceAccessMode")
     if raw_mode is not None:
         mode = _normalize_workspace_access_mode(raw_mode)
-        if not allow_overrides and mode == "all_except_ignored":
+        if not (allow_overrides or blacklist_mode) and mode == "all_except_ignored":
             mode = "workspace_only"
         if mode in _VALID_WORKSPACE_ACCESS_MODES:
             input_data["workspace_access_mode"] = mode
         else:
             input_data.pop("workspace_access_mode", None)
         input_data.pop("workspaceAccessMode", None)
+    elif blacklist_mode:
+        # Blacklist posture with no client-stated mode: the run's tool
+        # sandbox mirrors the posture — everything except the deny lists.
+        input_data["workspace_access_mode"] = "all_except_ignored"
+
+    if blacklist_mode and blocked_roots:
+        # The deny lists must bind the RUN's own tool sandbox too, not just
+        # this start-time check — merge them into workspace_ignored_paths.
+        existing_ignored = _parse_any_string_list(
+            input_data.get("workspace_ignored_paths") or input_data.get("workspaceIgnoredPaths")
+        )
+        merged = list(dict.fromkeys(existing_ignored + [str(p) for p in blocked_roots]))
+        input_data["workspace_ignored_paths"] = "\n".join(merged)
+        input_data.pop("workspaceIgnoredPaths", None)
 
     # workspace_allowed_paths: allow only operator roots (workspace root + mounts).
     raw_allowed = input_data.get("workspace_allowed_paths")
@@ -3526,7 +3812,9 @@ def _sanitize_run_workspace_policy(input_data: Dict[str, Any]) -> Dict[str, Any]
             if not s:
                 continue
             resolved = _resolve_user_path(s, base=root_for_rel)
-            if not (allow_overrides or _is_under_allowed_roots(resolved, allowed_roots)):
+            if blocked_roots and _is_under_blocked_roots(resolved, blocked_roots):
+                _refuse_blocked_workspace("workspace_allowed_paths entry", resolved)
+            if not (allow_overrides or blacklist_mode or _is_under_allowed_roots(resolved, allowed_roots)):
                 # Same honesty rule as workspace_root above (0232 §1): an
                 # out-of-scope entry used to vanish from the list — the run
                 # started with a NARROWER grant than the operator declared and
@@ -4246,8 +4534,9 @@ def _max_attachment_bytes() -> int:
 def _request_workspace_scope(req: Any) -> tuple[Path, Dict[str, Path], tuple[Path, ...], str]:
     base_default = _workspace_root()
     mounts_default = _workspace_mounts()
+    blocked_default = _workspace_blocked_roots()
     if not _client_workspace_scope_overrides_enabled():
-        return base_default, mounts_default, (), "workspace_only"
+        return base_default, mounts_default, blocked_default, "workspace_only"
 
     has_scope = bool(
         str(getattr(req, "workspace_root", "") or "").strip()
@@ -4256,14 +4545,15 @@ def _request_workspace_scope(req: Any) -> tuple[Path, Dict[str, Path], tuple[Pat
         or str(getattr(req, "workspace_ignored_paths", "") or "").strip()
     )
     if not has_scope:
-        return base_default, mounts_default, (), "workspace_only"
-    return _effective_workspace_scope(
+        return base_default, mounts_default, blocked_default, "workspace_only"
+    base, mounts, blocked, mode = _effective_workspace_scope(
         default_base=base_default,
         workspace_root=getattr(req, "workspace_root", None),
         workspace_access_mode=getattr(req, "workspace_access_mode", None),
         workspace_allowed_paths=getattr(req, "workspace_allowed_paths", None),
         workspace_ignored_paths=getattr(req, "workspace_ignored_paths", None),
     )
+    return base, mounts, tuple(list(blocked_default) + list(blocked)), mode
 
 
 def _resolve_request_workspace_path(
@@ -4716,6 +5006,108 @@ def _parse_artifact_tag_filter(raw: Optional[str]) -> Dict[str, str]:
     return out
 
 
+def _stamp_artifact_paths(store: Any, items: list[Any], request: Request) -> None:
+    """Fill `content_path` on served rows when the caller is an admin.
+
+    The store answers where the bytes live (`content_path`); non-admins
+    never see absolute host paths (path-leak class, closed on the
+    runtime-config surface and kept closed here).
+    """
+    try:
+        principal = _principal_from_request(request)
+        if not principal.is_admin():
+            return
+    except Exception:
+        return
+    path_fn = getattr(store, "content_path", None)
+    if not callable(path_fn):
+        return
+    for item in items:
+        artifact_id = getattr(item, "artifact_id", None)
+        if not artifact_id:
+            continue
+        try:
+            path = path_fn(str(artifact_id))
+        except Exception:
+            continue
+        if path:
+            try:
+                item.content_path = str(path)
+            except Exception:
+                continue
+
+
+# ---------------------------------------------------------------------------
+# THE CONSOLE QUERY LANGUAGE — one rule, every search box.
+#
+# Operator 2026-08-20: typing `*.jpg` in the runtime Artifacts box found
+# nothing, because every console filter was a plain substring and the `*`
+# was matched literally. The rule is now:
+#
+#   * no `*` and no `?`  -> case-insensitive SUBSTRING (unchanged; `06-13`
+#     still finds a June 13th run, `abc` still finds `xabcx`)
+#   * any `*` or `?`     -> case-insensitive GLOB anchored to the WHOLE
+#     value, and also tried against the value's basename
+#
+# `*` crosses `/` on purpose: these boxes filter a FLAT list of rows, they
+# do not walk a tree, so `*.jpg` must find `/data/runs/r1/out/photo.jpg`.
+# The basename pass is what makes an anchored pattern usable against a
+# stored absolute path — `photo?.jpg` finds `/data/runs/r1/photo7.jpg`.
+#
+# `[` is LITERAL. Deliberately not fnmatch: this matcher is transcribed
+# character-for-character into the web console's JS and the console-TUI's
+# Rust (`console-tui/src/query.rs`), and three implementations agree only
+# on a language small enough to hold in one head. Character classes are
+# not worth a three-way drift bug in a filename filter.
+# ---------------------------------------------------------------------------
+
+_QUERY_WILDCARDS = ("*", "?")
+
+
+def _query_is_glob(needle: str) -> bool:
+    """True when this query should be read as a glob rather than a substring."""
+    return any(ch in needle for ch in _QUERY_WILDCARDS)
+
+
+def _glob_matches(value: str, pattern: str) -> bool:
+    """Anchored `*`/`?` glob. Linear scan with one backtrack point."""
+    v = p = 0
+    star = -1
+    mark = 0
+    while v < len(value):
+        if p < len(pattern) and (pattern[p] == "?" or pattern[p] == value[v]):
+            v += 1
+            p += 1
+        elif p < len(pattern) and pattern[p] == "*":
+            star = p
+            p += 1
+            mark = v
+        elif star >= 0:
+            # The last `*` swallows one more character and we retry.
+            p = star + 1
+            mark += 1
+            v = mark
+        else:
+            return False
+    while p < len(pattern) and pattern[p] == "*":
+        p += 1
+    return p == len(pattern)
+
+
+def _query_value_matches(value: Any, needle: str, *, is_glob: bool) -> bool:
+    """One candidate field against an already-lowercased query."""
+    text = str(value or "").lower()
+    if not text:
+        # An ABSENT field never matches — not even `*`.
+        return False
+    if not is_glob:
+        return needle in text
+    if _glob_matches(text, needle):
+        return True
+    base = text.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return base != text and _glob_matches(base, needle)
+
+
 def _artifact_text_matches(item: ArtifactListItem, query: str) -> bool:
     needle = str(query or "").strip().lower()
     if not needle:
@@ -4723,6 +5115,11 @@ def _artifact_text_matches(item: ArtifactListItem, query: str) -> bool:
     haystack: list[str] = [
         item.artifact_id,
         item.run_id or "",
+        # Dates are searchable (operator 2026-08-19: typing "06-13" found
+        # nothing). ISO created_at matches "2026-06-13", "06-13", "13T09".
+        item.created_at or "",
+        item.session_id or "",
+        item.content_path or "",
         item.content_type or "",
         item.filename or "",
         item.source_path or "",
@@ -4748,7 +5145,8 @@ def _artifact_text_matches(item: ArtifactListItem, query: str) -> bool:
     for k, v in (item.tags or {}).items():
         haystack.append(str(k))
         haystack.append(str(v))
-    return any(needle in str(value or "").lower() for value in haystack)
+    is_glob = _query_is_glob(needle)
+    return any(_query_value_matches(value, needle, is_glob=is_glob) for value in haystack)
 
 
 def _artifact_matches_filters(
@@ -6045,10 +6443,11 @@ async def delete_visualflow(flow_id: str) -> Dict[str, Any]:
 
 
 @router.post("/visualflows/{flow_id}/publish", response_model=PublishVisualFlowResponse)
-async def publish_visualflow(flow_id: str, req: PublishVisualFlowRequest) -> PublishVisualFlowResponse:
+async def publish_visualflow(request: Request, flow_id: str, req: PublishVisualFlowRequest) -> PublishVisualFlowResponse:
     """Compile a VisualFlow into a WorkflowBundle and install it into the gateway."""
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    _require_workflow_registry_write(request, host)
     path = _visualflow_path(svc=svc, flow_id=flow_id)
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
@@ -6149,15 +6548,181 @@ async def publish_visualflow(flow_id: str, req: PublishVisualFlowRequest) -> Pub
     else:
         gateway_reloaded = False
 
+    loaded, skip_reason = _installed_bundle_load_state(host, installed, reloaded=bool(gateway_reloaded))
     return PublishVisualFlowResponse(
-        ok=True,
+        ok=loaded is not False,
         bundle_id=str(installed.bundle_id),
         bundle_version=str(installed.bundle_version),
         bundle_ref=f"{installed.bundle_id}@{installed.bundle_version}",
         bundle_path=str(installed.path),
         gateway_reloaded=bool(gateway_reloaded),
         gateway_reload_error=None,
+        loaded=loaded,
+        skipped=skip_reason,
     )
+
+
+#: The file `_default_flows_dir()` looks for, and `verify_basic_agent_loadable`
+#: loads, to decide whether a gateway may boot at all.
+_BOOT_CRITICAL_BUNDLE_FILENAME = "basic-agent.flow"
+
+
+def _is_shared_workflow_registry(host: Any) -> bool:
+    """Is this host writing the ADMIN-OWNED registry that every user shares?
+
+    The shared set is the process-level `flows_dir`. Under hosted user auth a
+    principal's host points at its own `data/users/<tenant>/<user>/flows`
+    instead, with the shared dir mounted read-only as `framework_flows_dir`;
+    that directory is the user's own and they may write it freely.
+    """
+    bundles_dir = getattr(host, "bundles_dir", None)
+    if bundles_dir is None:
+        return False
+    try:
+        from ..config import GatewayHostConfig
+
+        shared = Path(GatewayHostConfig.from_env().flows_dir).expanduser().resolve()
+        return Path(bundles_dir).expanduser().resolve() == shared
+    except Exception:
+        # Unresolvable configuration is treated as SHARED: the fail-safe
+        # direction is to require admin, never to hand out write access.
+        return True
+
+
+def _require_workflow_registry_write(request: Request, host: Any) -> GatewayPrincipal:
+    """The ONE gate every workflow-registry mutation passes through.
+
+    THE PROBLEM THIS SOLVES: `/bundles/upload`, `/bundles/{id}` (DELETE),
+    `/bundles/reload`, the deprecation routes and `/visualflows/{id}/publish`
+    each construct `WorkflowBundleRegistry(host.bundles_dir)` themselves. They
+    are deliberately user-level writes, justified by each principal owning its
+    own bundles dir — but when hosted user auth is OFF there is only ONE dir,
+    the operator's, and every authenticated principal was handed write access
+    to it. `/session/login` authenticates registry users regardless of auth
+    mode, so a non-admin could delete or overwrite the shared workflows.
+
+    The rule is ownership, not role: you may write the registry you own. The
+    shared, admin-owned set is writable by admins only; a per-user registry is
+    writable by the user it belongs to. Gating each door separately is what
+    allowed `/visualflows/publish` to remain open while `/bundles` was
+    considered; every door now calls THIS.
+    """
+    principal = _principal_from_request(request)
+    if not _is_shared_workflow_registry(host):
+        return principal
+    if principal.is_admin():
+        return principal
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "The shared workflow registry is administered by the gateway operator. "
+            "Ask an admin to publish this workflow for everyone, or run with hosted "
+            "user auth enabled so you get your own workflow registry."
+        ),
+    )
+
+
+def _guard_boot_critical_removal(host: Any, *, bundle_id: str, bundle_version: Optional[str]) -> None:
+    """Refuse a removal that would leave this gateway unable to boot.
+
+    `_default_flows_dir()` raises at import time when `basic-agent.flow` is
+    missing from the packaged flows dir, so deleting that one file does not
+    degrade the gateway — it prevents the next start entirely, with an error
+    that names a directory rather than the delete that emptied it. There is no
+    trash and no undo: `WorkflowBundleRegistry.remove` is `path.unlink()`.
+
+    This is deliberately anchored on the FILE the boot check reads, not on a
+    `source_kind` tag: on a default install the shipped dir and the user dir
+    are one and the same path, so every bundle is tagged `user` and a tag-based
+    guard would never fire. It is also NOT admin-overridable — an operator may
+    legitimately replace the default agent, but the safe order is install the
+    replacement first, then remove the old file, which this still permits
+    because the guard only refuses when the boot file itself is the target.
+    """
+    bundles_dir = getattr(host, "bundles_dir", None)
+    if bundles_dir is None:
+        return
+    boot_file = Path(bundles_dir) / _BOOT_CRITICAL_BUNDLE_FILENAME
+    if not boot_file.is_file():
+        # This dir does not carry the boot agent (a per-user workspace, or a
+        # custom-bundles-only dir): nothing here can brick boot.
+        return
+    try:
+        from abstractruntime.workflow_bundle import WorkflowBundleRegistry
+
+        reg = WorkflowBundleRegistry(bundles_dir)
+        versions = reg.bundles_by_id().get(str(bundle_id or "").strip()) or {}
+    except Exception:
+        return
+    targets = (
+        [versions.get(str(bundle_version).strip())]
+        if bundle_version and str(bundle_version).strip()
+        else list(versions.values())
+    )
+    for target in targets:
+        path = getattr(target, "path", None) if target is not None else None
+        if path is None:
+            continue
+        try:
+            same = Path(path).resolve() == boot_file.resolve()
+        except Exception:
+            same = False
+        if same:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Refusing to remove {_BOOT_CRITICAL_BUNDLE_FILENAME}: it is the default framework "
+                    "agent this gateway verifies at boot, and deleting it stops the gateway from "
+                    "starting (there is no undo). To replace it, install the new basic-agent bundle "
+                    "first, then remove the old file."
+                ),
+            )
+
+
+def _installed_bundle_load_state(host: Any, installed: Any, *, reloaded: bool) -> tuple[Optional[bool], Optional[Dict[str, Any]]]:
+    """Is the version we just installed actually being SERVED?
+
+    Returns `(loaded, detail)`:
+      - `(None, None)`  the host was not reloaded, so loadability is UNVERIFIED.
+                        Claiming either answer here would be a guess.
+      - `(False, why)`  the host is not serving this exact version.
+      - `(True,  None)` the host is serving it.
+
+    Asking the host what it SERVES — rather than only reading the skip list —
+    catches a second way an install disappears: the registry resolves a
+    duplicate bundle id to the LAST matching file while the host keeps the
+    FIRST, and `<id>.flow` sorts before `<id>@<version>.flow`. Uploading
+    `x@1.0.0.flow` next to an existing `x.flow` therefore leaves the host
+    serving the old file with no skip record at all.
+    """
+    if not reloaded:
+        return None, None
+    bid = str(getattr(installed, "bundle_id", "") or "")
+    ver = str(getattr(installed, "bundle_version", "") or "")
+
+    reader = getattr(host, "bundle_version_skip_reason", None)
+    if callable(reader):
+        try:
+            skipped = reader(bid, ver)
+        except Exception:
+            skipped = None
+        if skipped:
+            return False, skipped
+
+    versions = (getattr(host, "bundles", None) or {}).get(bid) or {}
+    if ver and ver not in versions:
+        serving = sorted(str(v) for v in versions.keys())
+        return False, {
+            "bundle_id": bid,
+            "bundle_version": ver,
+            "skip_kind": "shadowed",
+            "reason": (
+                f"the host is not serving {bid}@{ver}"
+                + (f"; it resolves {bid} to {', '.join(serving)} instead" if serving else "")
+                + ". Another file in the bundles directory claims the same bundle id."
+            ),
+        }
+    return True, None
 
 
 @router.get("/bundles")
@@ -6284,14 +6849,95 @@ async def list_bundles(
         visible = {str(it.get("bundle_id") or "").strip() for it in items}
         if default_bundle_id.strip() not in visible:
             default_bundle_id = None
-    return {"items": items, "default_bundle_id": default_bundle_id}
+    # Versions the host refused to serve ride ALONGSIDE the served ones rather
+    # than vanishing. They are deliberately not in `items` (they cannot be run,
+    # so listing them as runnable would be the opposite lie), but a caller that
+    # shows "your workflows" can now show a row with a reason instead of
+    # silently losing a bundle that is sitting right there on disk.
+    skipped_rows: list[Dict[str, Any]] = []
+    reader = getattr(host, "skipped_bundle_rows", None)
+    if callable(reader):
+        try:
+            skipped_rows = [r for r in (reader() or []) if str(r.get("registry_scope") or "private") == "private"]
+        except Exception:
+            skipped_rows = []
+    return {
+        "items": items,
+        "default_bundle_id": default_bundle_id,
+        "skipped": skipped_rows,
+        "skipped_count": len(skipped_rows),
+    }
+
+
+@router.get("/bundles/{bundle_id}/download")
+async def download_bundle(
+    request: Request,
+    bundle_id: str,
+    bundle_version: Optional[str] = Query(default=None, description="Bundle version (defaults to the latest published version)."),
+) -> StreamingResponse:
+    """Export one bundle version as its ORIGINAL `.flow` bytes.
+
+    Byte-identical to what is on disk: re-packing would change the sha256 and
+    defeat the point of an export, which is to be able to re-install exactly
+    what was running. The sha is returned in a header so a caller can verify
+    the transfer without opening the archive.
+    """
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+    _principal_from_request(request)
+
+    bid_base, bid_ver = _split_bundle_ref(str(bundle_id or "").strip())
+    if not bid_base:
+        raise HTTPException(status_code=400, detail="bundle_id is required")
+    want = str(bundle_version or "").strip() or bid_ver
+
+    try:
+        from abstractruntime.workflow_bundle import WorkflowBundleRegistry
+
+        reg = WorkflowBundleRegistry(getattr(host, "bundles_dir", None))
+        versions = reg.bundles_by_id().get(bid_base) or {}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed reading bundle registry: {e}")
+
+    if not versions:
+        raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}' not found")
+    if not want:
+        want = _latest_version([{"bundle_version": v} for v in versions.keys()]) or ""
+    installed = versions.get(want)
+    if installed is None:
+        available = ", ".join(sorted(str(v) for v in versions.keys()))
+        raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}@{want}' not found (have: {available})")
+
+    path = Path(getattr(installed, "path", "") or "")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Bundle file for '{bid_base}@{want}' is missing from disk")
+
+    data = path.read_bytes()
+    filename = f"{bid_base}@{want}.flow"
+    # The registry does not always carry a sha on a scanned entry, and an empty
+    # integrity header is worse than none — it looks like a checksum. Fall back
+    # to hashing the bytes actually being sent, which is the stronger claim.
+    sha = str(getattr(installed, "sha256", "") or "").strip() or hashlib.sha256(data).hexdigest()
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(data)),
+            "X-AbstractGateway-Bundle-Sha256": sha,
+            # Agent-authored bytes served from the console origin.
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+        },
+    )
 
 
 @router.post("/bundles/reload")
-async def reload_bundles() -> Dict[str, Any]:
+async def reload_bundles(request: Request) -> Dict[str, Any]:
     """Reload bundle directory (best-effort; intended for local dev)."""
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    _require_workflow_registry_write(request, host)
 
     reload_fn = getattr(host, "reload_bundles_from_disk", None)
     if not callable(reload_fn):
@@ -6306,6 +6952,7 @@ async def reload_bundles() -> Dict[str, Any]:
 
 @router.post("/bundles/upload")
 async def upload_bundle(
+    request: Request,
     file: UploadFile = File(..., description="WorkflowBundle (.flow) to install."),
     overwrite: bool = Form(False, description="If true, overwrite an existing bundle_id@version."),
     reload: bool = Form(True, description="If true, reload bundles after install (best-effort; dev-friendly)."),
@@ -6316,6 +6963,7 @@ async def upload_bundle(
     """
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    _require_workflow_registry_write(request, host)
 
     try:
         max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_BUNDLE_BYTES", "") or "").strip()
@@ -6375,8 +7023,18 @@ async def upload_bundle(
             }
         )
 
+    # HONESTY GATE: the file landed on disk, but landing is not serving. A
+    # bundle that misses the runtime floor or fails to compile is dropped by
+    # the reload, and this response used to answer `{"ok": true}` with a full
+    # entrypoint list for a workflow nothing could ever start — the operator
+    # only found out when it was missing from the list. `ok` now means LOADED.
+    loaded, skip_reason = _installed_bundle_load_state(host, installed, reloaded=bool(gateway_reloaded))
     return {
-        "ok": True,
+        # `ok` stays True when loadability is UNVERIFIED (reload not requested
+        # or it failed): the install itself succeeded and `gateway_reload_error`
+        # already reports the rest. It is False only when the host is PROVEN
+        # not to be serving what we just wrote.
+        "ok": loaded is not False,
         "bundle_id": str(installed.bundle_id),
         "bundle_version": str(installed.bundle_version),
         "bundle_ref": str(installed.bundle_ref),
@@ -6385,17 +7043,21 @@ async def upload_bundle(
         "entrypoints": eps,
         "gateway_reloaded": bool(gateway_reloaded),
         "gateway_reload_error": gateway_reload_error,
+        "loaded": loaded,
+        "skipped": skip_reason,
     }
 
 
 @router.delete("/bundles/{bundle_id}")
 async def remove_bundle(
+    request: Request,
     bundle_id: str,
     bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to removing all versions)."),
     reload: bool = Query(default=True, description="If true, reload bundles after removal (best-effort; dev-friendly)."),
 ) -> Dict[str, Any]:
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    _require_workflow_registry_write(request, host)
 
     bid_raw = str(bundle_id or "").strip()
     if not bid_raw:
@@ -6406,6 +7068,9 @@ async def remove_bundle(
 
     target_ver = str(bundle_version or "").strip() if isinstance(bundle_version, str) and str(bundle_version).strip() else bid_ver
     bundle_ref = f"{bid_base}@{target_ver}" if target_ver else bid_base
+
+    # Checked BEFORE the unlink, because there is nothing to undo afterwards.
+    _guard_boot_critical_removal(host, bundle_id=bid_base, bundle_version=target_ver or None)
 
     try:
         from abstractruntime.workflow_bundle import WorkflowBundleRegistry, WorkflowBundleRegistryError
@@ -6815,7 +7480,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
-        input_data = _sanitize_run_workspace_policy(input_data)
+        input_data = _sanitize_run_workspace_policy(input_data, principal=principal)
         input_data = _normalize_run_context_media(input_data)
         thinking = _normalize_gateway_thinking(req.thinking)
         if thinking is not None:
@@ -7212,10 +7877,19 @@ async def get_run(run_id: str) -> Dict[str, Any]:
     return run_summary(run)
 
 
+# Cost cap for the escalating run scan (2026-08-19). Generous on purpose:
+# the operator's file store is ~3k runs, so realistic listings EXHAUST the
+# store long before this — the cap only bounds pathological stores, and when
+# it stops us the response says so instead of pretending the list ended.
+_RUNS_SCAN_CAP = 50_000
+
+
 @router.get("/runs")
 async def list_runs(
     request: Request,
     limit: int = Query(50, ge=1, description="Maximum number of runs (most recent first). No server ceiling — an explicit larger ask is served; a ceiling here 422'd the whole response, which reads as ZERO runs to a client parsing `runs`."),
+    offset: int = Query(0, ge=0, description="Result offset for pagination (operator ruling 2026-08-19: every list must reach every item — pages of `limit`, `has_more` says whether a next page exists)."),
+    query: Optional[str] = Query(None, description="Case-insensitive search over run_id / workflow_id / session_id (the console's search box): a substring, or an anchored `*`/`?` glob when the query carries either wildcard. Status has its own filter — never folded in here."),
     status: Optional[str] = Query(None, description="Optional status filter: running|waiting|completed|failed|cancelled"),
     workflow_id: Optional[str] = Query(None, description="Optional workflow id filter (e.g. bundle:flow)"),
     session_id: Optional[str] = Query(None, description="Optional session id filter (durable run.session_id)."),
@@ -7231,7 +7905,7 @@ async def list_runs(
     # filtered — their adversary got burned live by exactly that. Naming the
     # known set makes the refusal self-correcting.
     _known_params = {
-        "limit", "status", "workflow_id", "session_id", "parent_run_id",
+        "limit", "offset", "query", "status", "workflow_id", "session_id", "parent_run_id",
         "root_only", "include_ledger_len", "include_metrics", "include_drafts",
     }
     _unknown = [k for k in request.query_params.keys() if k not in _known_params]
@@ -7253,6 +7927,19 @@ async def list_runs(
     # Children listing (P1-2's constructive half): a direct-children filter
     # backed by the store's list_children — the capability existed
     # server-side with no HTTP surface.
+    qtext = str(query).strip().lower() if isinstance(query, str) and query.strip() else None
+    qglob = _query_is_glob(qtext) if qtext is not None else False
+
+    def _matches_query(summary: Dict[str, Any]) -> bool:
+        """The console query language over the three identity fields shown."""
+        if qtext is None:
+            return True
+        for field in ("run_id", "workflow_id", "session_id"):
+            value = summary.get(field)
+            if isinstance(value, str) and _query_value_matches(value, qtext, is_glob=qglob):
+                return True
+        return False
+
     prid = str(parent_run_id).strip() if isinstance(parent_run_id, str) and parent_run_id.strip() else None
     if prid is not None:
         list_children = getattr(rs, "list_children", None)
@@ -7269,18 +7956,23 @@ async def list_runs(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to list children: {e}")
         child_items: list[Dict[str, Any]] = []
+        _child_want = int(offset) + int(limit) + 1  # +1 = honest has_more
         for r in children:
             if status_enum0 is not None and getattr(r, "status", None) != status_enum0:
                 continue
             summary = run_summary(r)
             if not include_drafts and bool(summary.get("is_draft") is True):
                 continue
+            if not _matches_query(summary):
+                continue
             child_items.append(summary)
-            if len(child_items) >= int(limit):
+            if len(child_items) >= _child_want:
                 break
+        child_more = len(child_items) > int(offset) + int(limit)
+        child_items = child_items[int(offset): int(offset) + int(limit)]
         # Same envelope as the normal listing ("items") so consumers never
         # branch on which filter produced the page.
-        return {"items": child_items, "count": len(child_items), "parent_run_id": prid}
+        return {"items": child_items, "count": len(child_items), "parent_run_id": prid, "offset": int(offset), "has_more": child_more}
 
     status_enum: Optional[RunStatus] = None
     if isinstance(status, str) and status.strip():
@@ -7337,6 +8029,7 @@ async def list_runs(
     def _collect_items() -> Dict[str, Any]:
         items: list[Dict[str, Any]] = []
         used_index = False
+        scan_truncated = False
         runs_all_for_metrics: Optional[List[Any]] = None
         if isinstance(rs, QueryableRunIndexStore):
             try:
@@ -7349,31 +8042,83 @@ async def list_runs(
                 # pass with a deep retry was MEASURED SLOWER (two scans, 2.9s), not
                 # faster. The honest fix is store-level (mtime-keyed index cache /
                 # sqlite run store), runtime's lane — not a cleverer overfetch here.
-                internal_limit = max(200, int(limit) * 5) if (bool(root_only) or sid or filter_internal or not include_drafts) else int(limit)
-                rows = rs.list_run_index(status=status_enum, workflow_id=wid, session_id=sid, root_only=bool(root_only), limit=internal_limit)
-                for row in rows or []:
-                    wf_id = str(row.get("workflow_id") or "").strip()
-                    if filter_internal and wf_id.startswith("__"):
-                        continue
-                    if bool(root_only) and str(row.get("parent_run_id") or "").strip():
-                        continue
-                    summary = _summary_from_index_row(row)
-                    if not include_drafts and bool(summary.get("is_draft") is True):
-                        continue
-                    items.append(summary)
-                    if len(items) >= int(limit):
+                _want = int(offset) + int(limit) + 1  # +1 = honest has_more
+                # ESCALATING SCAN (2026-08-19): post-filtering discards most
+                # candidates (the SCALE NOTE's own numbers: 2500 fetched ->
+                # 277 visible), so a single bounded fetch used to return a
+                # SHORT page with has_more=False — the console then drew no
+                # pager and the rest of the store was unreachable, breaking
+                # the every-list-reaches-every-item ruling. Widen until the
+                # page is filled or the store is exhausted (a short read IS
+                # exhaustion); only a cost-cap stop is truncation, and that
+                # is reported, never silently swallowed.
+                scan_limit = max(200, _want * 5) if (bool(root_only) or sid or filter_internal or not include_drafts or qtext) else _want
+                while True:
+                    items = []
+                    rows = rs.list_run_index(status=status_enum, workflow_id=wid, session_id=sid, root_only=bool(root_only), limit=scan_limit)
+                    row_count = len(rows or [])
+                    for row in rows or []:
+                        wf_id = str(row.get("workflow_id") or "").strip()
+                        if filter_internal and wf_id.startswith("__"):
+                            continue
+                        if bool(root_only) and str(row.get("parent_run_id") or "").strip():
+                            continue
+                        summary = _summary_from_index_row(row)
+                        if not include_drafts and bool(summary.get("is_draft") is True):
+                            continue
+                        if not _matches_query(summary):
+                            continue
+                        items.append(summary)
+                        if len(items) >= _want:
+                            break
+                    if len(items) >= _want or row_count < scan_limit:
+                        break  # page filled, or the store gave everything it has
+                    if scan_limit >= _RUNS_SCAN_CAP:
+                        scan_truncated = True
                         break
+                    scan_limit = min(_RUNS_SCAN_CAP, scan_limit * 4)
                 used_index = True
             except Exception:
                 items = []
                 used_index = False
 
         if not used_index:
-            try:
-                internal_limit = max(200, int(limit) * 5) if (sid or bool(root_only)) else int(limit)
-                runs = rs.list_runs(status=status_enum, workflow_id=wid, limit=internal_limit)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
+            _want = int(offset) + int(limit) + 1
+            scan_limit = max(200, _want * 5) if (sid or bool(root_only) or qtext) else _want
+            runs = []
+            while True:
+                try:
+                    runs = rs.list_runs(status=status_enum, workflow_id=wid, limit=scan_limit)
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
+                run_count = len(list(runs or []))
+                # A short read is exhaustion; otherwise widen (same law as the
+                # index branch above) until the page fills or the cap stops us.
+                if run_count < scan_limit or scan_limit >= _RUNS_SCAN_CAP:
+                    if run_count >= scan_limit and scan_limit >= _RUNS_SCAN_CAP:
+                        scan_truncated = True
+                    break
+                probe = 0
+                for r in list(runs or []):
+                    if filter_internal:
+                        wf_id0 = getattr(r, "workflow_id", None)
+                        if isinstance(wf_id0, str) and wf_id0.startswith("__"):
+                            continue
+                    s0 = run_summary(r)
+                    if not include_drafts and bool(s0.get("is_draft") is True):
+                        continue
+                    if sid and str(getattr(r, "session_id", "") or "").strip() != sid:
+                        continue
+                    if bool(root_only) and str(getattr(r, "parent_run_id", "") or "").strip():
+                        continue
+                    if not _matches_query(s0):
+                        continue
+                    probe += 1
+                    if probe >= _want:
+                        break
+                if probe >= _want:
+                    break
+                scan_limit = min(_RUNS_SCAN_CAP, scan_limit * 4)
 
             runs_all = list(runs or [])
             runs_all_for_metrics = runs_all
@@ -7393,9 +8138,21 @@ async def list_runs(
                 summary = run_summary(r)
                 if not include_drafts and bool(summary.get("is_draft") is True):
                     continue
+                if not _matches_query(summary):
+                    continue
                 items.append(summary)
-                if len(items) >= int(limit):
+                if len(items) >= int(offset) + int(limit) + 1:
                     break
+
+        # Page slice BEFORE the metrics/ledger enrichment below — those cost
+        # per-item work and must only ever run on the served page.
+        has_more = len(items) > int(offset) + int(limit)
+        # A cost-capped scan may hide matches BEYOND what it read: offer the
+        # next page rather than claim the list ended (silently ending is the
+        # lie the escalating scan exists to prevent).
+        if scan_truncated:
+            has_more = True
+        items = items[int(offset): int(offset) + int(limit)]
 
         if bool(include_metrics):
             run_ids = [str(it.get("run_id") or "").strip() for it in items if str(it.get("run_id") or "").strip()]
@@ -7557,7 +8314,12 @@ async def list_runs(
                         pass
                 item["ledger_len"] = ledger_len
 
-        return {"items": items}
+        out_page: Dict[str, Any] = {"items": items, "count": len(items), "offset": int(offset), "has_more": has_more}
+        if scan_truncated:
+            out_page["warnings"] = [
+                "#TRUNCATION the run scan hit its cost cap — deeper matches may exist beyond this page"
+            ]
+        return out_page
 
     return await asyncio.to_thread(_collect_items)
 
@@ -7985,7 +8747,7 @@ async def search_artifacts(
     workflow_id: Optional[str] = Query(None, description="Optional workflow id filter when indexed by Runtime."),
     node_id: Optional[str] = Query(None, description="Optional node id filter when indexed by Runtime."),
     content_type: Optional[str] = Query(None, description="Optional exact content type or prefix like image/*."),
-    query: Optional[str] = Query(None, description="Case-insensitive metadata text search."),
+    query: Optional[str] = Query(None, description="Case-insensitive metadata text search: a substring, or an anchored `*`/`?` glob (e.g. `*.jpg`) when the query carries either wildcard. A glob is tried against each whole metadata value and against its basename."),
     tags: Optional[str] = Query(None, description="Optional tag filters as JSON object or key=value list."),
     limit: int = Query(500, ge=-1, description="Maximum number of artifacts (most recent first); 0 or -1 means unlimited. No server ceiling — an explicit larger ask is served, not 422'd."),
     offset: int = Query(0, ge=0, description="Result offset for pagination."),
@@ -8043,6 +8805,10 @@ async def search_artifacts(
         stats=stats,
         warnings=warnings,
     )
+    # Stamp the on-disk location for ADMINS only (absolute host paths are
+    # admin-classed — the same rule the runtime-config surface follows).
+    # Costs one store lookup per SERVED row, never per candidate.
+    _stamp_artifact_paths(store, list(getattr(paged, "items", None) or []), request)
     return ArtifactSearchResponse(
         scope=scope0,
         query=str(query or "").strip() or None,
@@ -8078,7 +8844,7 @@ async def artifact_stats(
     workflow_id: Optional[str] = Query(None, description="Optional workflow id filter."),
     node_id: Optional[str] = Query(None, description="Optional node id filter."),
     content_type: Optional[str] = Query(None, description="Optional exact content type or prefix like image/*."),
-    query: Optional[str] = Query(None, description="Case-insensitive metadata text search."),
+    query: Optional[str] = Query(None, description="Case-insensitive metadata text search: a substring, or an anchored `*`/`?` glob (e.g. `*.jpg`) when the query carries either wildcard. A glob is tried against each whole metadata value and against its basename."),
     tags: Optional[str] = Query(None, description="Optional tag filters as JSON object or key=value list."),
     created_after: Optional[str] = Query(None, description="created_at >= value, ISO string compare."),
     created_before: Optional[str] = Query(None, description="created_at <= value, ISO string compare."),
@@ -8279,6 +9045,20 @@ async def download_run_artifact_content(
 
     content_type = str(getattr(meta, "content_type", None) or "application/octet-stream")
 
+    # Agent-authored bytes served on the CONSOLE ORIGIN (design adversary
+    # BLOCKER-1, 2026-08-19): a text/html or svg artifact opened as a
+    # document would run its scripts with the console session cookie —
+    # stored XSS. `CSP: sandbox` neuters document loads (subresource use —
+    # <img>/<video>/fetch previews — is unaffected); nosniff kills type
+    # sniffing; Content-Disposition names raw-tab downloads honestly.
+    _fname = str(getattr(meta, "filename", None) or "").replace('"', "")
+    _headers = {
+        "Content-Security-Policy": "sandbox",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if _fname:
+        _headers["Content-Disposition"] = f'inline; filename="{_fname}"'
+
     # Best-effort streaming for file-backed stores.
     content_path = None
     try:
@@ -8306,7 +9086,7 @@ async def download_run_artifact_content(
                         break
                     yield chunk
 
-        return StreamingResponse(_iterfile(), media_type=content_type)
+        return StreamingResponse(_iterfile(), media_type=content_type, headers=_headers)
 
     # Fallback: load into memory (portable but not streaming).
     load_fn = getattr(store, "load", None)
@@ -8319,7 +9099,7 @@ async def download_run_artifact_content(
     def _single_chunk():
         yield getattr(artifact, "content", b"") or b""
 
-    return StreamingResponse(_single_chunk(), media_type=content_type)
+    return StreamingResponse(_single_chunk(), media_type=content_type, headers=_headers)
 
 
 @router.post("/runs/{run_id}/artifacts/{artifact_id}/export")
@@ -15245,7 +16025,16 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "commands": {
                 "available": True,
                 "endpoint": _api_gateway_path("/commands"),
-                "types": ["pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory", "inject_guidance"],
+                "types": [
+                    "pause",
+                    "resume",
+                    "cancel",
+                    "conclude",
+                    "emit_event",
+                    "update_schedule",
+                    "compact_memory",
+                    "inject_guidance",
+                ],
             },
         },
         "ledger": {
@@ -24662,6 +25451,78 @@ async def workspace_policy() -> Dict[str, Any]:
     return {"ok": True, "policy": _server_workspace_policy_public()}
 
 
+@router.get("/workspace/policy/self")
+async def workspace_policy_self(request: Request) -> Dict[str, Any]:
+    """The CALLER's own workspace policy: their stored per-user entry plus
+    the effective posture after inheritance. User-level by design — every
+    principal may read their own policy."""
+    principal = _principal_from_request(request)
+    from ..runtime_config import read_user_workspace_policy
+
+    out = read_user_workspace_policy(
+        gateway_data_dir_from_env(),
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+    )
+    out["ok"] = True
+    return out
+
+
+@router.put("/workspace/policy/self")
+async def workspace_policy_self_write(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Self-service write of the caller's OWN policy (operator clarification
+    2026-08-19: each user decides their posture — mode whitelist/blacklist,
+    launch-folder trust, and their allow/deny lists). This route can only
+    ever touch the caller's own entry; the gateway-wide posture and other
+    users' entries stay behind the admin-gated runtime-config route.
+
+    Body: any of {mode, trust_client_launch_folder, workspace_allowed_paths,
+    workspace_blocked_paths}; null/{} clears the entry back to inherited."""
+    principal = _principal_from_request(request)
+    from ..runtime_config import (
+        RuntimeConfigError,
+        RuntimeConfigStoreCorrupt,
+        write_user_workspace_policy,
+    )
+
+    # Tolerate the wrapper AND the bare-entry shape ({"policy": null} and
+    # bare {} both clear); strip non-entry keys.
+    if "policy" in (payload or {}):
+        raw_policy = payload.get("policy")
+        policy = dict(raw_policy) if isinstance(raw_policy, dict) else {}
+    else:
+        policy = dict(payload or {})
+    policy.pop("ok", None)
+    if "client_workspace_scope_overrides" in policy:
+        # The full-scoping grant is operator-classed — self-service refuses
+        # it loudly (never silently drops it); the admin lane can set it.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "client_workspace_scope_overrides is an admin-only grant — ask a gateway "
+                "admin to set it in the console settings. Self-service accepts: mode, "
+                "trust_client_launch_folder, workspace_allowed_paths, workspace_blocked_paths."
+            ),
+        )
+    try:
+        out = write_user_workspace_policy(
+            gateway_data_dir_from_env(),
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            policy=policy or None,
+            actor=f"person:{principal.user_id}",
+            # A self-save must never erase the admin-classed grant on the
+            # same entry (the write replaces the whole entry otherwise).
+            preserve_fields=("client_workspace_scope_overrides",),
+        )
+    except RuntimeConfigStoreCorrupt as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    out["ok"] = True
+    return out
+
+
 @router.get("/files/list")
 async def files_list(
     path: str = Query("", description="Workspace-relative folder path (or mounted folder path). Leave empty to browse the workspace root."),
@@ -24682,19 +25543,20 @@ async def files_list(
     mounts_default = _workspace_mounts()
     base = base_default
     mounts = mounts_default
-    blocked: tuple[Path, ...] = ()
+    blocked: tuple[Path, ...] = _workspace_blocked_roots()
     mode = "workspace_only"
 
     if _client_workspace_scope_overrides_enabled():
         has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
         if has_scope:
-            base, mounts, blocked, mode = _effective_workspace_scope(
+            base, mounts, scoped_blocked, mode = _effective_workspace_scope(
                 default_base=base_default,
                 workspace_root=workspace_root,
                 workspace_access_mode=workspace_access_mode,
                 workspace_allowed_paths=workspace_allowed_paths,
                 workspace_ignored_paths=workspace_ignored_paths,
             )
+            blocked = tuple(list(blocked) + list(scoped_blocked))
 
     try:
         folder_path, items, truncated = await asyncio.to_thread(
@@ -24744,19 +25606,20 @@ async def files_search(
     mounts_default = _workspace_mounts()
     base = base_default
     mounts = mounts_default
-    blocked: tuple[Path, ...] = ()
+    blocked: tuple[Path, ...] = _workspace_blocked_roots()
 
     if _client_workspace_scope_overrides_enabled():
         # Opt-in scoped search: allow the UI to drive workspace_* for local/dev flows.
         has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
         if has_scope:
-            base, mounts, blocked, _mode = _effective_workspace_scope(
+            base, mounts, scoped_blocked, _mode = _effective_workspace_scope(
                 default_base=base_default,
                 workspace_root=workspace_root,
                 workspace_access_mode=workspace_access_mode,
                 workspace_allowed_paths=workspace_allowed_paths,
                 workspace_ignored_paths=workspace_ignored_paths,
             )
+            blocked = tuple(list(blocked) + list(scoped_blocked))
 
     try:
         # Index build can be slow on large workspaces; keep async endpoints responsive.
@@ -24817,19 +25680,20 @@ async def files_read(
     mounts_default = _workspace_mounts()
     base = base_default
     mounts = mounts_default
-    blocked: tuple[Path, ...] = ()
+    blocked: tuple[Path, ...] = _workspace_blocked_roots()
     mode = "workspace_only"
 
     if _client_workspace_scope_overrides_enabled():
         has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
         if has_scope:
-            base, mounts, blocked, mode = _effective_workspace_scope(
+            base, mounts, scoped_blocked, mode = _effective_workspace_scope(
                 default_base=base_default,
                 workspace_root=workspace_root,
                 workspace_access_mode=workspace_access_mode,
                 workspace_allowed_paths=workspace_allowed_paths,
                 workspace_ignored_paths=workspace_ignored_paths,
             )
+            blocked = tuple(list(blocked) + list(scoped_blocked))
 
     resolved, virt, root = _resolve_request_workspace_path(
         raw_path=path,
@@ -24868,19 +25732,20 @@ async def files_skim(
     mounts_default = _workspace_mounts()
     base = base_default
     mounts = mounts_default
-    blocked: tuple[Path, ...] = ()
+    blocked: tuple[Path, ...] = _workspace_blocked_roots()
     mode = "workspace_only"
 
     if _client_workspace_scope_overrides_enabled():
         has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
         if has_scope:
-            base, mounts, blocked, mode = _effective_workspace_scope(
+            base, mounts, scoped_blocked, mode = _effective_workspace_scope(
                 default_base=base_default,
                 workspace_root=workspace_root,
                 workspace_access_mode=workspace_access_mode,
                 workspace_allowed_paths=workspace_allowed_paths,
                 workspace_ignored_paths=workspace_ignored_paths,
             )
+            blocked = tuple(list(blocked) + list(scoped_blocked))
 
     resolved, virt, root = _resolve_request_workspace_path(
         raw_path=path,
@@ -25110,10 +25975,27 @@ async def attachments_upload(
 async def submit_command(req: SubmitCommandRequest) -> SubmitCommandResponse:
     svc = get_gateway_service()
     typ = str(req.type or "").strip()
-    if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory", "inject_guidance"}:
+    if typ not in {
+        "pause",
+        "resume",
+        "cancel",
+        "emit_event",
+        "update_schedule",
+        "compact_memory",
+        "inject_guidance",
+        # `conclude` (2026-08-21): between pause (freeze) and cancel (throw
+        # away) there was no way to end a long turn WELL. This asks the agent
+        # to stop and answer from what it already has. Same door, same
+        # durable command store, so every client gets the verb — the TUI,
+        # AbstractObserver, the console, a chat bridge.
+        "conclude",
+    }:
         raise HTTPException(
             status_code=400,
-            detail="type must be one of pause|resume|cancel|emit_event|update_schedule|compact_memory|inject_guidance",
+            detail=(
+                "type must be one of pause|resume|cancel|conclude|emit_event|"
+                "update_schedule|compact_memory|inject_guidance"
+            ),
         )
 
     # H4 steer door: entity visit runs refuse raw steers SYNCHRONOUSLY (the
@@ -25127,7 +26009,11 @@ async def submit_command(req: SubmitCommandRequest) -> SubmitCommandResponse:
     # host's served-run cache for the rite 403, and an entirely unknown run
     # refuses 404 NOW (the runner could only KeyError it into a log the
     # caller never sees — accepted-then-silently-dead is the dishonest shape).
-    if typ == "inject_guidance":
+    if typ in {"inject_guidance", "conclude"}:
+        # `conclude` rides the STEER lane (durable sidecar), so it inherits
+        # the same entity-visit rite refusal — refusing at the door keeps the
+        # caller's answer honest instead of queueing a command that dies in a
+        # log they never read.
         try:
             run = svc.runner.run_store.load(str(req.run_id))
         except Exception:

@@ -362,7 +362,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       background-repeat: no-repeat;
     }
     textarea { min-height: 76px; resize: vertical; }
-    input[type="checkbox"] { width: auto; min-height: auto; }
+    input[type="checkbox"], input[type="radio"] { width: auto; min-height: auto; }
     /* Theme-aware focus ring (aesthetics adversary P0-2: the old ring was
        hardcoded cyan and stayed cyan in every theme). */
     input:focus, select:focus, textarea:focus {
@@ -505,8 +505,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .table-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 	    tr.row-selectable { cursor: pointer; }
 	    tr.row-selected td { background: rgba(148, 163, 184, 0.12); }
-	    .runs-filter-chip { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; padding: 2px 8px; border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--info-subtle); color: var(--text); font-size: 12px; }
-	    .runs-filter-chip button { background: transparent; border: none; color: var(--muted); padding: 0 2px; font-size: 12px; cursor: pointer; }
 	    .entity-subpanel { padding: 4px 0 8px; }
 	    .entity-overview { display: grid; gap: 4px; margin-bottom: 10px; }
 	    .entity-kv { display: flex; gap: 10px; font-size: 13px; }
@@ -787,6 +785,50 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      width: min(500px, calc(100vw - 48px));
 	      max-width: min(500px, calc(100vw - 48px));
 	    }
+	    .modal.wsp-modal { width: min(860px, calc(100vw - 48px)); max-width: min(860px, calc(100vw - 48px)); }
+	    .modal.log-modal { width: min(1100px, calc(100vw - 48px)); max-width: min(1100px, calc(100vw - 48px)); }
+	    .list-pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 8px; }
+	    /* ONE toolbar shape for every list tab (operator 2026-08-19): compact
+	       dropdown, then the search bar, then any tab-specific extra. The
+	       `input[type=search]` selector is deliberate — a bare `input` rule
+	       would stretch checkboxes that share the row. */
+	    .list-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+	    .list-toolbar select { width: auto; min-width: 150px; flex: 0 0 auto; }
+	    .list-toolbar input[type="search"] { flex: 1 1 220px; min-width: 160px; }
+	    .list-toolbar .entity-checkbox { flex: 0 0 auto; white-space: nowrap; margin-bottom: 0; }
+	    #artifact-modal-content img { max-width: 100%; max-height: 58vh; object-fit: contain; display: block; margin: 0 auto; border-radius: 8px; }
+	    #artifact-modal-content video { max-width: 100%; max-height: 58vh; display: block; margin: 0 auto; border-radius: 8px; background: #000; }
+	    #artifact-modal-content audio { width: 100%; }
+	    #artifact-modal-content pre, #artifact-modal-content .artifact-md {
+	      max-height: 58vh; overflow: auto; margin: 0;
+	      white-space: pre-wrap; overflow-wrap: anywhere;
+	      background: var(--ui-surface-3); border: 1px solid var(--ui-border-1);
+	      border-radius: 10px; padding: 12px 14px; font-size: 12px; line-height: 1.5;
+	    }
+	    #artifact-modal-content .artifact-md { white-space: normal; font-size: 13px; }
+	    .log-modal #log-modal-pre {
+	      height: min(58vh, 640px); overflow: auto; margin: 0;
+	      white-space: pre-wrap; overflow-wrap: anywhere;
+	      background: var(--ui-surface-3); border: 1px solid var(--ui-border-1);
+	      border-radius: 10px; padding: 12px 14px;
+	      font-size: 12px; line-height: 1.5;
+	      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	    }
+	    .wsp-mode-cards { display: grid; gap: 8px; margin: 2px 0 10px; }
+	    .wsp-card { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--ui-border-1); border-radius: 10px; padding: 10px 12px; cursor: pointer; text-transform: none; letter-spacing: normal; }
+	    .wsp-card:hover { border-color: var(--ui-border-2); }
+	    .wsp-card.selected { border-color: var(--accent); background: var(--accent-subtle); }
+	    .wsp-card input[type="radio"] { width: auto; min-height: auto; flex: 0 0 auto; margin-top: 3px; padding: 0; border: none; background: transparent; accent-color: var(--accent); }
+	    .wsp-card > span { flex: 1 1 auto; min-width: 0; }
+	    .wsp-card b { display: block; margin-bottom: 2px; }
+	    .wsp-card .wsp-card-sub { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
+	    .wsp-field { display: block; margin-bottom: 10px; }
+	    .wsp-field .wsp-hint { color: var(--text-secondary); font-size: 12px; display: block; margin: 2px 0 4px; text-transform: none; letter-spacing: normal; font-weight: normal; }
+	    .wsp-field textarea, .wsp-field select { width: 100%; }
+	    .wsp-badge { font-size: 11px; border: 1px solid var(--ui-border-1); border-radius: 999px; padding: 1px 8px; color: var(--text-secondary); white-space: nowrap; }
+	    .spin-inline { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--ui-border-2); border-top-color: var(--accent); border-radius: 50%; animation: afspin .8s linear infinite; vertical-align: -2px; margin-right: 7px; }
+	    @keyframes afspin { to { transform: rotate(360deg); } }
+	    .wsp-badge.custom { border-color: var(--accent); color: var(--accent); }
 	    .modal.provider-modal {
 	      width: min(720px, 100%);
 	      padding: 14px 14px 0;
@@ -1411,6 +1453,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    <nav class="shell_nav">
 	      <button id="tab-button-users" class="tab-button shell_nav_item" type="button" title="People, tokens, and summoned entities"><span class="shell_nav_icon" aria-hidden="true">☾</span><span class="shell_nav_label">Users &amp; Entities</span></button>
 	      <button id="tab-button-runtimes" class="tab-button shell_nav_item" type="button" title="Execution planes: runs, sessions, data and caches"><span class="shell_nav_icon" aria-hidden="true">◎</span><span class="shell_nav_label">Runtimes</span></button>
+	      <button id="tab-button-workflows" class="tab-button shell_nav_item" type="button" title="Registered workflows: versions, import, export, delete"><span class="shell_nav_icon" aria-hidden="true">⑂</span><span class="shell_nav_label">Workflows</span></button>
 	      <button id="tab-button-providers" class="tab-button shell_nav_item" type="button" title="LLM provider connections and endpoint profiles"><span class="shell_nav_icon" aria-hidden="true">◇</span><span class="shell_nav_label">Providers</span></button>
 	      <button id="tab-button-defaults" class="tab-button shell_nav_item" type="button" title="Which provider/model serves each capability (vision, audio, image...)"><span class="shell_nav_icon" aria-hidden="true">◆</span><span class="shell_nav_label">Multimodal</span></button>
 	      <button id="tab-button-sandbox" class="tab-button shell_nav_item" type="button" title="Try any provider/model directly — text, image, audio, video"><span class="shell_nav_icon" aria-hidden="true">▶</span><span class="shell_nav_label">Sandbox</span></button>
@@ -1470,6 +1513,88 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    </section>
 
 	    <div id="workspace-shell" class="workspace-shell session-only">
+	      <!-- WORKFLOWS: the registry surface. A row is a BUNDLE, not a version —
+	           "how many versions" is an explicit goal and a count has to be a
+	           COLUMN, which forces bundle-as-row. The version cell carries TWO
+	           numbers (published / draft) because one total misrepresents a
+	           registry that is majority drafts. Versions that failed to load are
+	           listed SEPARATELY with their reason rather than omitted: the file
+	           is still on disk and still needs a decision. -->
+	      <div id="tab-workflows" class="tab-panel">
+	        <div class="tab-grid tab-grid-wide">
+	          <div class="tab-stack">
+	            <section id="workflows-section" class="session-only">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⑂</span><span>Workflows</span></h2>
+	                  <p class="section-note">Every workflow registered on this gateway. Click a row to see its versions and entrypoints. Import installs a <code>.flow</code> bundle; export downloads one back, byte-identical.</p>
+	                </div>
+	                <button id="workflows-refresh" class="secondary icon-only" title="Reload the workflow registry" aria-label="Refresh workflows"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	              </div>
+	              <div class="list-toolbar">
+	                <input id="workflows-search" type="search" placeholder="Search workflows — id, entrypoint, description">
+	                <label class="entity-checkbox"><input id="workflows-show-drafts" type="checkbox"> show draft versions</label>
+	                <button id="workflows-import" class="secondary" type="button" title="Install a .flow bundle">Import…</button>
+	                <input id="workflows-import-file" type="file" accept=".flow" class="hidden" multiple>
+	              </div>
+	              <div id="workflows-message" class="message"></div>
+	              <div class="table-scroll" id="workflows-scroll">
+	                <table>
+	                  <thead><tr><th>Workflow</th><th>Scope</th><th>Versions</th><th>Latest</th><th>Entrypoints</th><th>Status</th><th>Actions</th></tr></thead>
+	                  <tbody id="workflows-table"></tbody>
+	                </table>
+	              </div>
+	            </section>
+
+	            <section id="workflows-skipped-section" class="session-only hidden">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⚠</span><span>Broken workflows</span></h2>
+	                  <p id="workflows-skipped-count" class="section-note"></p>
+	                  <p class="section-note">These bundle files are on disk but the gateway cannot run them, so they do not appear above. Nothing was deleted — fix the cause and reload, or remove them deliberately.</p>
+	                </div>
+	              </div>
+	              <div class="table-scroll">
+	                <table>
+	                  <thead><tr><th>Workflow</th><th>Affected</th><th>Why the gateway cannot run it</th><th>Actions</th></tr></thead>
+	                  <tbody id="workflows-skipped-table"></tbody>
+	                </table>
+	              </div>
+	            </section>
+
+	            <section id="workflow-detail-section" class="session-only hidden">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▷</span><span>Workflow <span id="workflow-detail-name"></span></span></h2>
+	                  <p id="workflow-detail-sub" class="section-note">Versions and entrypoints.</p>
+	                </div>
+	                <button id="workflow-detail-refresh" class="secondary icon-only" title="Reload this workflow" aria-label="Refresh workflow detail"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	              </div>
+	              <nav class="entity-subtabs" id="workflow-detail-tabs">
+	                <button id="workflow-subtab-versions" class="entity-subtab active" type="button">Versions</button>
+	                <button id="workflow-subtab-entrypoints" class="entity-subtab" type="button">Entrypoints</button>
+	              </nav>
+	              <div id="workflow-pane-versions">
+	                <div class="table-scroll">
+	                  <table>
+	                    <thead><tr><th>Version</th><th>Channel</th><th>Created</th><th>Entrypoints</th><th>Actions</th></tr></thead>
+	                    <tbody id="workflow-versions-table"></tbody>
+	                  </table>
+	                </div>
+	              </div>
+	              <div id="workflow-pane-entrypoints" class="hidden">
+	                <div class="table-scroll">
+	                  <table>
+	                    <thead><tr><th>Entrypoint</th><th>Workflow id</th><th>Interfaces</th><th>Description</th></tr></thead>
+	                    <tbody id="workflow-entrypoints-table"></tbody>
+	                  </table>
+	                </div>
+	              </div>
+	            </section>
+	          </div>
+	        </div>
+	      </div>
+
 	      <div id="tab-runtimes" class="tab-panel">
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
@@ -1489,14 +1614,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div class="section-head">
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◎</span><span>Runtimes</span></h2>
-	                  <p class="section-note">Every execution plane on this gateway: the default runtime, each user's own runtime, and each entity's own runtime. Click a runtime to open its runs, sessions, and caches below.</p>
+	                  <p class="section-note">Every execution plane on this gateway: the default runtime, each user's own runtime, and each entity's own runtime. Click a runtime to open its runs and cache below; the default runtime's cache also lists every machine-wide store.</p>
 	                </div>
 	                <button id="runtimes-refresh" class="secondary icon-only" title="Reload the runtime inventory" aria-label="Refresh runtimes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
 	              <div id="runtimes-message" class="message"></div>
 	              <div class="table-scroll" id="runtimes-scroll">
 	                <table>
-	                  <thead><tr><th>Runtime</th><th>Kind</th><th>Owner</th><th>State</th><th>Size</th></tr></thead>
+	                  <thead><tr><th>Runtime</th><th>Kind</th><th>Owner</th><th>State</th><th>Size</th><th>Workspace policy</th></tr></thead>
 	                  <tbody id="runtimes-table"></tbody>
 	                </table>
 	              </div>
@@ -1514,10 +1639,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                   chosen. The Sessions tab lists the chosen runtime's runs
 	                   (session ids on every row), exactly like the TUI's
 	                   sessions panel. -->
-	              <p id="runtime-detail-teach" class="section-note">Select a runtime above — click a row — to load its sessions and data.</p>
+	              <p id="runtime-detail-teach" class="section-note">Select a runtime above — click a row — to load its runs and cache.</p>
 	              <nav class="entity-subtabs hidden" id="runtime-detail-tabs">
-	                <button id="runtime-subtab-sessions" class="entity-subtab active" type="button">Sessions</button>
-	                <button id="runtime-subtab-caches" class="entity-subtab" type="button">Data &amp; cache</button>
+	                <button id="runtime-subtab-sessions" class="entity-subtab active" type="button">Runs</button>
+	                <button id="runtime-subtab-artifacts" class="entity-subtab" type="button">Artifacts</button>
+	                <button id="runtime-subtab-caches" class="entity-subtab" type="button">Cache</button>
+	                <button id="runtime-subtab-logs" class="entity-subtab" type="button">Logs</button>
 	              </nav>
 	              <div id="runtime-panel-sessions" class="hidden">
 	                <!-- Default-plane block: the actionable runs machinery
@@ -1528,18 +1655,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                     commands at the DEFAULT runtime — adversary B's misfire
 	                     class, killed structurally). -->
 	                <div id="runtime-runs-default" class="hidden">
-	                  <div class="inline" style="margin-bottom: 8px;">
-	                    <label>Status<select id="runs-status" title="Filter runs by their durable status"><option value="">all</option><option value="running">running</option><option value="waiting">waiting</option><option value="completed">completed</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select></label>
+	                  <div class="list-toolbar">
+	                    <select id="runs-status" title="Filter runs by their durable status" aria-label="Run status filter"><option value="">all statuses</option><option value="running">running</option><option value="waiting">waiting</option><option value="completed">completed</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select>
+	                    <input id="runs-search" type="search" spellcheck="false" placeholder="Search runs — run id, workflow, session…" aria-label="Search runs">
 	                    <label class="entity-checkbox" title="Hide child runs — one row per top-level run"><input id="runs-root-only" type="checkbox" checked> root runs only</label>
-	                    <span id="runs-session-chip"></span>
-	                    <button id="runs-refresh" class="secondary icon-only" title="Reload the run list" aria-label="Refresh runs"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	                  </div>
 	                  <div id="runs-message" class="message"></div>
 	                  <table>
 	                    <thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Node</th><th>Session</th><th>Updated</th><th>Actions</th></tr></thead>
 	                    <tbody id="runs-table"></tbody>
 	                  </table>
-	                  <div id="run-inspect" class="entity-overview"></div>
+	                  <div id="runs-pager" class="list-pager"></div>
 	                </div>
 	                <div id="runtime-runs-readonly" class="hidden">
 	                  <p class="section-note">Read-only view — newest runs on this plane. Inspect/steer/cancel run through the default runtime's command lane and are not available here.</p>
@@ -1548,43 +1674,65 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                    <thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Session</th><th>Updated</th></tr></thead>
 	                    <tbody id="runtime-detail-runs"></tbody>
 	                  </table>
+	                  <div id="runtime-runs-pager" class="list-pager"></div>
 	                </div>
 	              </div>
+	              <div id="runtime-panel-artifacts" class="hidden">
+	                <div class="list-toolbar">
+	                  <select id="runtime-artifacts-modality" title="Filter artifacts by type" aria-label="Artifact type filter"><option value="">all types</option><option value="image">image</option><option value="video">video</option><option value="audio,voice,music,sound">audio</option><option value="text,markdown,json,code,html">text</option><option value="binary,document">other</option></select>
+	                  <input id="runtime-artifacts-search" type="search" spellcheck="false" placeholder="Search artifacts — name, kind, tags, date (2026-06-13)…" aria-label="Search artifacts" title="Search artifact metadata">
+	                </div>
+	                <div id="runtime-artifacts-message" class="message"></div>
+	                <div class="table-scroll">
+	                  <table>
+	                    <thead><tr><th>Artifact</th><th>Type</th><th>Size</th><th>Workflow</th><th>Run</th><th>Created</th></tr></thead>
+	                    <tbody id="runtime-artifacts-table"></tbody>
+	                  </table>
+	                </div>
+	                <div id="runtime-artifacts-pager" class="list-pager"></div>
+	                <p id="runtime-artifacts-note" class="section-note"></p>
+	              </div>
 	              <div id="runtime-panel-caches" class="hidden">
+	                <div class="list-toolbar">
+	                  <select id="runtime-caches-kind" title="Filter caches by kind" aria-label="Cache kind filter"><option value="">all kinds</option></select>
+	                  <input id="runtime-caches-search" type="search" spellcheck="false" placeholder="Search caches — name, kind, path…" aria-label="Search caches" title="Search the caches on this plane">
+	                </div>
+	                <p class="section-note">Disposable caches only — purging one just costs recomputation (re-download for model weights, re-encode for prompt KV). Durable stores are never listed here: deliverables live in the Artifacts tab, logs in the Logs tab.</p>
 	                <div id="runtime-caches-message" class="message"></div>
 	                <table>
-	                  <thead><tr><th>Name</th><th>Kind</th><th>Size</th><th>Owner</th><th>Policy</th><th>Actions</th></tr></thead>
+	                  <thead><tr><th>Cache</th><th>Kind</th><th>Size</th><th>Path</th><th>Actions</th></tr></thead>
 	                  <tbody id="runtime-caches-table"></tbody>
 	                </table>
 	                <p id="runtime-caches-remainder" class="section-note"></p>
 	              </div>
-	            </section>
-	            <details id="data-homes-section" class="entity-advanced session-only hidden">
-	              <summary>Machine-wide data &amp; caches <span id="data-homes-summary" class="entity-config-hint">every registered home on this machine, including rows tied to no runtime (model caches, foreign owners)</span></summary>
-	              <div class="entity-config-block">
-	                <div class="section-head">
-	                  <div>
-	                    <p class="section-note">Every data home registered on this machine (model caches, artifact stores, entity homes, logs) with live sizes. Protected rows refuse purging by their owner's rule — entity homes are never purgeable here.</p>
-	                  </div>
-	                  <button id="data-homes-refresh" class="secondary icon-only" title="Reload data homes with live sizes" aria-label="Refresh data homes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	              <div id="runtime-panel-logs" class="hidden">
+	                <div class="list-toolbar">
+	                  <select id="runtime-logs-home" title="Filter by log home" aria-label="Log home filter"><option value="">all log homes</option></select>
+	                  <input id="runtime-logs-search" type="search" spellcheck="false" placeholder="Search log files — file name…" aria-label="Search log files" title="Search this plane's log files">
 	                </div>
-	                <div id="data-homes-message" class="message"></div>
-	                <table>
-	                  <thead><tr><th>Name</th><th>Kind</th><th>Size</th><th>Owner</th><th>Policy</th><th>Actions</th></tr></thead>
-	                  <tbody id="data-homes-table"></tbody>
-	                </table>
+	                <div id="runtime-logs-message" class="message"></div>
+	                <div class="table-scroll">
+	                  <table>
+	                    <thead><tr><th>File</th><th>Log home</th><th>Size</th><th>Modified</th></tr></thead>
+	                    <tbody id="runtime-logs-table"></tbody>
+	                  </table>
+	                </div>
+	                <p id="runtime-logs-note" class="section-note"></p>
 	              </div>
-	            </details>
-	            <details id="runtime-reservations-section" class="entity-advanced session-only hidden">
-	              <summary>Retained runtimes (advanced) <span class="entity-config-hint">deleted or reassigned users leave their runtime data retained here — transfer it to a new owner or purge it permanently. Rarely needed.</span></summary>
-	              <div class="entity-config-block">
-	                <div id="reservations-message" class="message"></div>
-	                <table>
-	                  <thead><tr><th>Tenant</th><th>Runtime</th><th>Owner</th><th>Reason</th><th>Data</th><th>Actions</th></tr></thead>
-	                  <tbody id="runtime-reservations-table"></tbody>
-	                </table>
+	            </section>
+		            <section id="runtime-reservations-section" class="session-only hidden">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◫</span><span>Retained runtimes</span></h2>
+	                  <p class="section-note">Deleted or reassigned users leave their runtime data retained here — transfer it to a new owner or purge it permanently.</p>
+	                </div>
 	              </div>
-	            </details>
+	              <div id="reservations-message" class="message"></div>
+	              <table>
+	                <thead><tr><th>Tenant</th><th>Runtime</th><th>Owner</th><th>Reason</th><th>Data</th><th>Actions</th></tr></thead>
+	                <tbody id="runtime-reservations-table"></tbody>
+	              </table>
+	            </section>
 	          </div>
 	        </div>
 	      </div>
@@ -1707,6 +1855,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </table>
 	              <div id="users-entity-note" class="section-note hidden"></div>
 	            </section>
+	            <details id="my-workspace-policy-section" class="entity-advanced session-only">
+	              <summary>My workspace policy <span id="my-workspace-policy-summary" class="entity-config-hint">where your agents may write — mode, launch-folder trust, allow/deny lists</span></summary>
+	              <div class="entity-config-block">
+	                <div class="section-head">
+	                  <div>
+	                    <p class="section-note">How your agents' filesystem access is decided. Whitelist (default): deny everything, allow your listed folders — plus the folder an agent is started from while launch-folder trust is on. Blacklist: allow everything except your refused folders. The gateway-wide deny list always applies on top.</p>
+	                  </div>
+	                  <button id="my-workspace-policy-refresh" class="secondary icon-only" title="Reload my workspace policy" aria-label="Refresh my workspace policy"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	                </div>
+	                <div id="my-workspace-policy-message" class="message"></div>
+	                <div class="provider-config-form">
+	                  <label>Launch-folder trust <select id="my-workspace-trust"><option value="">inherit gateway default</option><option value="on">on — agents may write where they start</option><option value="off">off — launch folders are not trusted</option></select></label>
+	                  <label>Access mode <select id="my-workspace-mode"><option value="">whitelist (default) — deny everything, allow my list</option><option value="whitelist">whitelist — deny everything, allow my list</option><option value="blacklist">blacklist — allow everything, refuse my list</option></select></label>
+	                  <label class="field-span-2">Extra allowed folders (added to the gateway-wide roots) <textarea id="my-workspace-allowed" rows="3" spellcheck="false" placeholder="/abs/path/to/project&#10;/abs/path/to/notes"></textarea></label>
+	                  <label class="field-span-2">Refused folders (always denied, in every posture) <textarea id="my-workspace-blocked" rows="3" spellcheck="false" placeholder="/abs/path/to/private"></textarea></label>
+	                </div>
+	                <div class="inline">
+	                  <button id="my-workspace-policy-save" type="button">Save my workspace policy</button>
+	                  <button id="my-workspace-policy-clear" class="secondary" type="button">Reset to inherited</button>
+	                </div>
+	                <div id="my-workspace-policy-current" class="section-note"></div>
+	              </div>
+	            </details>
 	            <section id="entities-list-section" class="session-only">
 	              <div class="section-head">
 	                <div>
@@ -1941,6 +2112,122 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	    </div>
 	  </div>
+	  <div id="log-modal-backdrop" class="modal-backdrop hidden" role="presentation">
+	    <div class="modal flow-modal log-modal" role="dialog" aria-modal="true" aria-labelledby="log-modal-title">
+	      <div class="modal-header">
+	        <h2 id="log-modal-title">Log</h2>
+	        <p id="log-modal-sub" class="muted"></p>
+	      </div>
+	      <div class="modal-body">
+	        <div class="inline" style="margin-bottom: 8px; align-items: center;">
+	          <label>Show<select id="log-modal-tail-size"><option value="65536">last 64 KB</option><option value="262144">last 256 KB</option><option value="1048576">last 1 MB</option></select></label>
+	          <button id="log-modal-refresh" class="secondary icon-only" title="Re-read the tail" aria-label="Refresh log tail"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	          <span id="log-modal-status" class="muted" style="font-size: 12px;"></span>
+	        </div>
+	        <pre id="log-modal-pre"></pre>
+	      </div>
+	      <div class="modal-actions">
+	        <button id="log-modal-close" class="secondary" type="button">Close</button>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="artifact-modal-backdrop" class="modal-backdrop hidden" role="presentation">
+	    <div class="modal flow-modal log-modal" role="dialog" aria-modal="true" aria-labelledby="artifact-modal-title">
+	      <div class="modal-header">
+	        <h2 id="artifact-modal-title">Artifact</h2>
+	        <p id="artifact-modal-sub" class="muted"></p>
+	      </div>
+	      <div class="modal-body">
+	        <div id="artifact-modal-content"></div>
+	        <div id="artifact-modal-meta" class="section-note" style="margin-top: 10px;"></div>
+	      </div>
+	      <div class="modal-actions">
+	        <a id="artifact-modal-raw" class="hidden" target="_blank" rel="noopener"><button class="secondary" type="button">Open raw</button></a>
+	        <button id="artifact-modal-close" class="secondary" type="button">Close</button>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="run-modal-backdrop" class="modal-backdrop hidden" role="presentation">
+	    <div class="modal flow-modal default-modal" role="dialog" aria-modal="true" aria-labelledby="run-modal-title">
+	      <div class="modal-header">
+	        <h2 id="run-modal-title">Run</h2>
+	        <p id="run-modal-sub" class="muted"></p>
+	      </div>
+	      <div class="modal-body">
+	        <div id="run-modal-kv" class="entity-overview"></div>
+	        <details style="margin-top: 10px;"><summary>Raw JSON</summary>
+	          <pre id="run-modal-raw" style="max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px;"></pre>
+	        </details>
+	      </div>
+	      <div class="modal-actions">
+	        <button id="run-modal-close" class="secondary" type="button">Close</button>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="workspace-policy-modal-backdrop" class="modal-backdrop hidden" role="presentation">
+	    <div class="modal flow-modal wsp-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-policy-modal-title">
+	      <div class="modal-header">
+	        <h2 id="workspace-policy-modal-title">Workspace policy</h2>
+	        <p id="workspace-policy-modal-user"></p>
+	      </div>
+	      <div class="modal-body">
+	        <label class="wsp-field">Launch-folder trust
+	          <span class="wsp-hint">Whether an agent may write in the folder it was started from.</span>
+	          <select id="wsp-trust">
+	            <option value="">Inherit gateway default</option>
+	            <option value="on">On — the launch folder is writable</option>
+	            <option value="off">Off — launch folders get no special treatment</option>
+	          </select>
+	        </label>
+	        <div class="wsp-mode-cards" id="wsp-mode-cards">
+	          <label class="wsp-card" data-mode="" id="wsp-card-inherit">
+	            <input type="radio" name="wsp-mode" value="">
+	            <span><b>Inherit the gateway default</b>
+	            <span class="wsp-card-sub" id="wsp-inherit-sub">Deny everything except the allowed folders — plus the folder an agent is launched from, while launch-folder trust is on.</span></span>
+	          </label>
+	          <label class="wsp-card" data-mode="whitelist">
+	            <input type="radio" name="wsp-mode" value="whitelist">
+	            <span><b>Deny everything, allow listed folders</b>
+	            <span class="wsp-card-sub" id="wsp-whitelist-sub">Agents may only work under the gateway roots plus this user's allowed folders — and the launch folder while trust is on.</span></span>
+	          </label>
+	          <label class="wsp-card" data-mode="blacklist">
+	            <input type="radio" name="wsp-mode" value="blacklist">
+	            <span><b>Allow everything, refuse listed folders</b>
+	            <span class="wsp-card-sub" id="wsp-blacklist-sub">Agents may work anywhere on the gateway host except the refused folders. The gateway-wide deny list still applies.</span></span>
+	          </label>
+	        </div>
+	        <label class="wsp-field">Allowed folders
+	          <span class="wsp-hint" id="wsp-allowed-hint">Extra folders this user's agents may use, one per line — added on top of the gateway-wide roots.</span>
+	          <textarea id="wsp-allowed" rows="3" spellcheck="false" placeholder="/abs/path/to/project"></textarea>
+	        </label>
+	        <label class="wsp-field">Refused folders
+	          <span class="wsp-hint" id="wsp-blocked-hint">Folders this user's agents may never touch, one per line — enforced in every posture.</span>
+	          <textarea id="wsp-blocked" rows="3" spellcheck="false" placeholder="/abs/path/to/private"></textarea>
+	        </label>
+	        <details class="advanced-panel">
+	          <summary>Advanced</summary>
+	          <label class="wsp-field hidden" id="wsp-root-field">Default workspace folder
+	            <span class="wsp-hint">Where a run lands when the client names no folder. Blank keeps the gateway's built-in default.</span>
+	            <input id="wsp-root" type="text" spellcheck="false" placeholder="/abs/path/to/default/workspace">
+	          </label>
+	          <label class="wsp-field">Full filesystem bypass (legacy)
+	            <span class="wsp-hint" id="wsp-overrides-hint">Not the same as launch-folder trust: trust only covers the one folder an agent is started from. This legacy switch lets this user's clients name ANY folder as a workspace and browse server files anywhere — the posture and folder lists above stop applying. Leave inherited unless an old client depends on it.</span>
+	            <select id="wsp-overrides">
+	              <option value="">Inherit gateway default</option>
+	              <option value="on">Granted</option>
+	              <option value="off">Refused</option>
+	            </select>
+	          </label>
+	        </details>
+	        <div id="wsp-message" class="message"></div>
+	      </div>
+	      <div class="modal-actions">
+	        <button id="wsp-cancel" class="secondary">Cancel</button>
+	        <button id="wsp-reset" class="secondary" title="Drop every override for this user — they fall back to the gateway defaults"><span class="button-icon" aria-hidden="true">×</span><span>Reset to inherited</span></button>
+	        <button id="wsp-save" title="Save this user's workspace policy"><span class="button-icon" aria-hidden="true">✓</span><span>Save</span></button>
+	      </div>
+	    </div>
+	  </div>
 	  <div id="provider-modal-backdrop" class="modal-backdrop hidden" role="presentation">
 	    <div class="modal wide provider-modal" role="dialog" aria-modal="true" aria-labelledby="provider-modal-title">
 	      <h2 id="provider-modal-title">Configure provider</h2>
@@ -2153,7 +2440,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, availabilitySeeded: "", downloadJobs: new Map() };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, availabilitySeeded: "", downloadJobs: new Map(), runtimeConfig: null };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -2173,6 +2460,117 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
 	    // BROKEN while its fetch runs — every table loader says what is
 	    // happening. One recipe, per-table colspan.
+	    function renderPager(el, opts) {
+	      // EVERY gateway list reaches EVERY item (operator ruling
+	      // 2026-08-19): pages of `pageSize` with honest position text.
+	      // Single-page lists render no chrome.
+	      if (!el) return;
+	      const { offset, pageSize, shown, hasMore, total, onPage } = opts;
+	      el.textContent = "";
+	      if (offset === 0 && !hasMore) return;
+	      const mk = (label, disabled, nextOffset) => {
+	        const b = document.createElement("button");
+	        b.className = "secondary";
+	        b.type = "button";
+	        b.textContent = label;
+	        b.disabled = !!disabled;
+	        b.onclick = () => onPage(nextOffset);
+	        return b;
+	      };
+	      const info = document.createElement("span");
+	      info.className = "muted";
+	      const from = shown ? offset + 1 : offset;
+	      const to = offset + shown;
+	      info.textContent = (typeof total === "number" && total >= to)
+	        ? `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`
+	        : `${from.toLocaleString()}–${to.toLocaleString()}${hasMore ? " · more" : ""}`;
+	      el.append(
+	        mk("‹ Prev", offset === 0, Math.max(0, offset - pageSize)),
+	        info,
+	        mk("Next ›", !hasMore, offset + pageSize),
+	      );
+	    }
+	    // THE CONSOLE QUERY LANGUAGE — one rule, every search box.
+	    //
+	    // Transcribed character-for-character from the gateway's
+	    // `_glob_matches` / `_query_value_matches` (routes/gateway.py) and the
+	    // console-TUI's `src/query.rs`. The Runs and Artifacts tabs filter
+	    // SERVER-side and the Cache and Logs tabs filter here, so the same
+	    // typed query has to mean the same thing in three languages.
+	    //
+	    // Operator 2026-08-20: `*.jpg` in a runtime tab's box found nothing —
+	    // every filter was a plain substring, so the `*` matched literally.
+	    //   * no `*` and no `?` -> case-insensitive SUBSTRING (unchanged)
+	    //   * any `*` or `?`    -> case-insensitive GLOB anchored to the WHOLE
+	    //     value, then retried against its basename
+	    // `*` crosses `/` on purpose (these boxes filter a FLAT row list, they
+	    // do not walk a tree). `[` is LITERAL — three implementations agree
+	    // only on a language small enough to hold in one head.
+	    function globMatches(value, pattern) {
+	      // Anchored `*`/`?` glob. Linear scan with one backtrack point.
+	      // Array.from, not indexing: one `?` must consume one CHARACTER.
+	      const v = Array.from(value), p = Array.from(pattern);
+	      let vi = 0, pi = 0, star = -1, mark = 0;
+	      while (vi < v.length) {
+	        if (pi < p.length && (p[pi] === "?" || p[pi] === v[vi])) { vi++; pi++; }
+	        else if (pi < p.length && p[pi] === "*") { star = pi; pi++; mark = vi; }
+	        else if (star >= 0) { pi = star + 1; mark++; vi = mark; }
+	        else return false;
+	      }
+	      while (pi < p.length && p[pi] === "*") pi++;
+	      return pi === p.length;
+	    }
+	    function makeNeedle(query) {
+	      // Folded and classified ONCE per filter call, never per row.
+	      const text = String(query || "").trim().toLowerCase();
+	      const glob = text.includes("*") || text.includes("?");
+	      const one = (value) => {
+	        if (!text) return true;
+	        const t = String(value || "").toLowerCase();
+	        if (!t) return false;  // an ABSENT field never matches, not even `*`
+	        if (!glob) return t.includes(text);
+	        if (globMatches(t, text)) return true;
+	        const base = t.split(/[/\\\\]/).pop();
+	        return base !== t && globMatches(base, text);
+	      };
+	      return {
+	        text, glob,
+	        empty: !text,
+	        matches: one,
+	        matchesAny: (values) => !text || values.some(one),
+	      };
+	    }
+	    function syncDerivedOptions(sel, values, allLabel) {
+	      // Options derived from the RENDERED rows. Rebuild only when the set
+	      // actually changes (the cache tab re-renders twice per load — fast
+	      // pass then sized pass — and a naive rebuild would drop the
+	      // operator's selection mid-walk). A vanished selection falls back
+	      // to "all" and RETURNS that fact so the caller can say so.
+	      if (!sel) return { reset: false };
+	      const sorted = Array.from(new Set(values.filter(Boolean))).sort();
+	      const signature = sorted.join("\u0001");
+	      const prev = sel.value;
+	      if (sel.dataset.optsig !== signature) {
+	        sel.dataset.optsig = signature;
+	        sel.textContent = "";
+	        const all = document.createElement("option");
+	        all.value = "";
+	        all.textContent = allLabel;
+	        sel.append(all);
+	        for (const v of sorted) {
+	          const opt = document.createElement("option");
+	          opt.value = v;
+	          opt.textContent = v;
+	          sel.append(opt);
+	        }
+	      }
+	      if (prev && !sorted.includes(prev)) {
+	        sel.value = "";
+	        return { reset: true, lost: prev };
+	      }
+	      sel.value = prev;
+	      return { reset: false };
+	    }
 	    function tableLoadingRow(body, colSpan, text) {
 	      if (!body) return;
 	      body.textContent = "";
@@ -2180,7 +2578,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const td = document.createElement("td");
 	      td.colSpan = colSpan;
 	      td.className = "empty";
-	      td.textContent = text || "Loading…";
+	      const spin = document.createElement("span");
+	      spin.className = "spin-inline";
+	      spin.setAttribute("aria-hidden", "true");
+	      td.append(spin, document.createTextNode(text || "Loading…"));
 	      tr.append(td);
 	      body.append(tr);
 	    }
@@ -2314,7 +2715,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "providers", "defaults", "sandbox"];
+	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox"];
 	    // The kit's THEME_SPECS (abstractuic theme.ts), generated by
 	    // console_theme_sync — the console offers exactly the framework's
 	    // themes, never a hand-copied subset (operator catch 2026-07-15).
@@ -2510,6 +2911,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    const TAB_TITLES = {
 	      users: ["Users & Entities", "People, tokens, and the summoned entities living on this gateway"],
 	      runtimes: ["Runtimes", "Execution planes: runs, sessions, data and caches"],
+      workflows: ["Workflows", "Registered workflows: versions, import, export, delete"],
 	      providers: ["Providers", "LLM provider connections and endpoint profiles"],
 	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
 	      sandbox: ["Sandbox", "Try any provider/model directly — text, image, audio, video"],
@@ -2535,6 +2937,386 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
 	    }
+	    // ---- Workflows: the registered workflow registry ----
+	    // Server truth only: /bundles gives the served set AND the versions it
+	    // refused to serve. Nothing is re-derived client-side, every user value
+	    // goes through textContent, every write through api().
+	    state.workflows = [];
+	    state.workflowsSkipped = [];
+	    state.selectedWorkflow = "";
+
+	    function workflowRows() {
+	      // One row per bundle_id. /bundles returns one item per (bundle,
+	      // version) when all_versions is on, so the fold happens here and the
+	      // published/draft split is counted, never guessed.
+	      const byId = new Map();
+	      for (const it of state.workflows) {
+	        const id = String(it.bundle_id || "");
+	        if (!id) continue;
+	        let row = byId.get(id);
+	        if (!row) {
+	          row = {
+	            bundle_id: id, scope: String(it.registry_scope || "private"),
+	            published: 0, draft: 0, versions: [], entrypoints: 0,
+	            latest: String(it.latest_published_version || ""),
+	            deprecated: false, is_default: false,
+	          };
+	          byId.set(id, row);
+	        }
+	        if (it.is_draft) row.draft += 1; else row.published += 1;
+	        row.versions.push(it);
+	        row.entrypoints = Math.max(row.entrypoints, (it.entrypoints || []).length);
+	        if ((it.entrypoints || []).some((e) => e && e.deprecated)) row.deprecated = true;
+	        if (!row.latest && it.latest_published_version) row.latest = String(it.latest_published_version);
+	      }
+	      const needle = String($("workflows-search").value || "").trim().toLowerCase();
+	      let rows = [...byId.values()];
+	      if (needle) {
+	        rows = rows.filter((r) => {
+	          if (r.bundle_id.toLowerCase().includes(needle)) return true;
+	          return r.versions.some((v) => (v.entrypoints || []).some((e) =>
+	            String(e.flow_id || "").toLowerCase().includes(needle)
+	            || String(e.name || "").toLowerCase().includes(needle)
+	            || String(e.description || "").toLowerCase().includes(needle)));
+	        });
+	      }
+	      rows.sort((a, b) => a.bundle_id.localeCompare(b.bundle_id));
+	      return rows;
+	    }
+
+	    function renderWorkflows() {
+	      const tbody = $("workflows-table");
+	      tbody.textContent = "";
+	      const rows = workflowRows();
+	      const defaultId = String(state.workflowsDefaultId || "");
+	      if (!rows.length) {
+	        const tr = document.createElement("tr");
+	        const td = document.createElement("td");
+	        td.colSpan = 7; td.className = "message";
+	        td.textContent = state.workflows.length ? "No workflow matches this search." : "No workflows registered.";
+	        tr.appendChild(td); tbody.appendChild(tr);
+	      }
+	      for (const row of rows) {
+	        const tr = document.createElement("tr");
+	        tr.className = "row-selectable";
+	        tr.onclick = () => selectWorkflow(row.bundle_id);
+
+	        const name = document.createElement("td");
+	        const strong = document.createElement("div");
+	        strong.textContent = row.bundle_id;
+	        name.appendChild(strong);
+	        tr.appendChild(name);
+
+	        const scope = document.createElement("td");
+	        scope.textContent = row.scope === "private" ? "Registry" : row.scope;
+	        tr.appendChild(scope);
+
+	        // TWO numbers, always. A single total lies when most of a registry
+	        // is drafts minted one-per-authoring-run.
+	        const versions = document.createElement("td");
+	        versions.textContent = row.draft
+	          ? `${row.published} pub · ${row.draft} draft`
+	          : `${row.published} pub`;
+	        tr.appendChild(versions);
+
+	        const latest = document.createElement("td");
+	        latest.textContent = row.latest || "— (draft only)";
+	        tr.appendChild(latest);
+
+	        const eps = document.createElement("td");
+	        eps.textContent = String(row.entrypoints || 0);
+	        tr.appendChild(eps);
+
+	        const status = document.createElement("td");
+	        const bits = [];
+	        if (row.bundle_id === defaultId) bits.push("default");
+	        if (row.deprecated) bits.push("deprecated");
+	        status.textContent = bits.join(" · ") || "—";
+	        tr.appendChild(status);
+
+	        const actions = document.createElement("td");
+	        const wrap = document.createElement("div");
+	        wrap.className = "actions";
+	        const exportBtn = document.createElement("button");
+	        exportBtn.className = "secondary";
+	        exportBtn.textContent = "Export";
+	        exportBtn.title = "Download the latest version as a .flow file";
+	        exportBtn.onclick = (ev) => { ev.stopPropagation(); exportWorkflow(row.bundle_id, row.latest || (row.versions[0] || {}).bundle_version); };
+	        wrap.appendChild(exportBtn);
+	        if (state.principal && state.principal.admin) {
+	          const del = document.createElement("button");
+	          del.className = "secondary danger";
+	          del.textContent = "Delete";
+	          del.title = "Remove every version of this workflow";
+	          del.onclick = (ev) => { ev.stopPropagation(); deleteWorkflow(row.bundle_id, null, row); };
+	          wrap.appendChild(del);
+	        }
+	        actions.appendChild(wrap);
+	        tr.appendChild(actions);
+	        tbody.appendChild(tr);
+	      }
+	      renderWorkflowsSkipped();
+	    }
+
+	    function renderWorkflowsSkipped() {
+	      // GROUP BY (workflow, reason). Nine versions of one bundle failing for
+	      // one reason is ONE problem; printing it nine times buries that fact
+	      // and reads as a wall of unexplained errors.
+	      const rows = state.workflowsSkipped || [];
+	      $("workflows-skipped-section").classList.toggle("hidden", !rows.length);
+	      const groups = new Map();
+	      for (const rec of rows) {
+	        const key = `${rec.bundle_id}\\u0000${rec.reason}`;
+	        const g = groups.get(key);
+	        if (g) { g.count += 1; g.paths.push(rec.path); }
+	        else groups.set(key, { bundle_id: rec.bundle_id, reason: rec.reason, count: 1, paths: [rec.path] });
+	      }
+	      const workflows = new Set(rows.map((r) => r.bundle_id)).size;
+	      $("workflows-skipped-count").textContent = rows.length
+	        ? `${workflows} workflow${workflows === 1 ? "" : "s"}, ${rows.length} version${rows.length === 1 ? "" : "s"} the gateway could not load.`
+	        : "";
+	      const tbody = $("workflows-skipped-table");
+	      tbody.textContent = "";
+	      for (const g of groups.values()) {
+	        const tr = document.createElement("tr");
+	        const name = document.createElement("td");
+	        name.textContent = g.bundle_id;
+	        tr.appendChild(name);
+
+	        const affected = document.createElement("td");
+	        affected.textContent = g.count === 1 ? "1 version" : `${g.count} versions`;
+	        affected.title = g.paths.join("\\n");
+	        tr.appendChild(affected);
+
+	        const why = document.createElement("td");
+	        why.textContent = g.reason;
+	        tr.appendChild(why);
+
+	        const actions = document.createElement("td");
+	        if (state.principal && state.principal.admin) {
+	          const wrap = document.createElement("div");
+	          wrap.className = "actions";
+	          const del = document.createElement("button");
+	          del.className = "secondary danger";
+	          del.textContent = g.count === 1 ? "Delete" : `Delete ${g.count}`;
+	          del.title = "Remove these unusable bundle files";
+	          del.onclick = () => deleteBrokenGroup(g);
+	          wrap.appendChild(del);
+	          actions.appendChild(wrap);
+	        }
+	        tr.appendChild(actions);
+	        tbody.appendChild(tr);
+	      }
+	    }
+
+	    async function deleteBrokenGroup(group) {
+	      const versions = (state.workflowsSkipped || [])
+	        .filter((r) => r.bundle_id === group.bundle_id && r.reason === group.reason)
+	        .map((r) => r.bundle_version);
+	      const ok = await confirmAction({
+	        title: `Delete ${versions.length} broken version(s) of ${group.bundle_id}?`,
+	        message: `${group.reason}\\n\\nThese versions cannot run, so nothing that works stops working. The files are removed from disk and there is no undo.`,
+	        confirmLabel: `Delete ${versions.length}`,
+	        danger: true,
+	      });
+	      if (!ok) return;
+	      let removed = 0;
+	      const failed = [];
+	      for (const version of versions) {
+	        try {
+	          const res = await api(`/api/gateway/bundles/${encodeURIComponent(group.bundle_id)}?bundle_version=${encodeURIComponent(version)}&reload=false`, { method: "DELETE" });
+	          removed += Number(res.removed || 0);
+	        } catch (err) { failed.push(`${version}: ${String(err.message || err)}`); }
+	      }
+	      // ONE reload after the batch, not one per file: reloading a 231-file
+	      // registry per delete is the freeze, not the deletes.
+	      try { await api("/api/gateway/bundles/reload", { method: "POST" }); } catch (err) { /* listed below */ }
+	      $("workflows-message").textContent = failed.length
+	        ? `Removed ${removed}; failed — ${failed.join("; ")}.`
+	        : `Removed ${removed} broken file(s) for ${group.bundle_id}.`;
+	      $("workflows-message").className = failed.length ? "message error" : "message ok";
+	      await loadWorkflows();
+	    }
+
+	    async function loadWorkflows() {
+	      $("workflows-message").textContent = "Loading…";
+	      $("workflows-message").className = "message";
+	      try {
+	        const drafts = $("workflows-show-drafts").checked ? "1" : "0";
+	        const data = await api(`/api/gateway/bundles?all_versions=true&include_drafts=${drafts}&include_deprecated=true`);
+	        state.workflows = data.items || [];
+	        state.workflowsSkipped = data.skipped || [];
+	        state.workflowsDefaultId = data.default_bundle_id || "";
+	        $("workflows-message").textContent = "";
+	        renderWorkflows();
+	        if (state.selectedWorkflow) selectWorkflow(state.selectedWorkflow);
+	      } catch (err) {
+	        $("workflows-message").textContent = String(err.message || err);
+	        $("workflows-message").className = "message error";
+	      }
+	    }
+
+	    function selectWorkflow(bundleId) {
+	      state.selectedWorkflow = String(bundleId || "");
+	      const rows = workflowRows().filter((r) => r.bundle_id === state.selectedWorkflow);
+	      const row = rows[0];
+	      $("workflow-detail-section").classList.toggle("hidden", !row);
+	      if (!row) return;
+	      $("workflow-detail-name").textContent = row.bundle_id;
+	      $("workflow-detail-sub").textContent = row.draft
+	        ? `${row.published} published, ${row.draft} draft versions.`
+	        : `${row.published} published version(s).`;
+
+	      const vt = $("workflow-versions-table");
+	      vt.textContent = "";
+	      const versions = [...row.versions].sort((a, b) => String(b.bundle_version).localeCompare(String(a.bundle_version)));
+	      for (const v of versions) {
+	        const tr = document.createElement("tr");
+	        for (const value of [v.bundle_version, v.version_channel || (v.is_draft ? "draft" : "published"), v.created_at, String((v.entrypoints || []).length)]) {
+	          const td = document.createElement("td");
+	          td.textContent = String(value || "");
+	          tr.appendChild(td);
+	        }
+	        const actions = document.createElement("td");
+	        const wrap = document.createElement("div");
+	        wrap.className = "actions";
+	        const exportBtn = document.createElement("button");
+	        exportBtn.className = "secondary";
+	        exportBtn.textContent = "Export";
+	        exportBtn.onclick = () => exportWorkflow(row.bundle_id, v.bundle_version);
+	        wrap.appendChild(exportBtn);
+	        if (state.principal && state.principal.admin) {
+	          const del = document.createElement("button");
+	          del.className = "secondary danger";
+	          del.textContent = "Delete";
+	          del.onclick = () => deleteWorkflow(row.bundle_id, String(v.bundle_version || ""), null);
+	          wrap.appendChild(del);
+	        }
+	        actions.appendChild(wrap);
+	        tr.appendChild(actions);
+	        vt.appendChild(tr);
+	      }
+
+	      const et = $("workflow-entrypoints-table");
+	      et.textContent = "";
+	      const latest = versions[0] || {};
+	      for (const ep of latest.entrypoints || []) {
+	        const tr = document.createElement("tr");
+	        for (const value of [ep.name || ep.flow_id, ep.workflow_id, (ep.interfaces || []).join(", ") || "—", ep.description || ""]) {
+	          const td = document.createElement("td");
+	          td.textContent = String(value || "");
+	          tr.appendChild(td);
+	        }
+	        et.appendChild(tr);
+	      }
+	    }
+
+	    function exportWorkflow(bundleId, bundleVersion) {
+	      // The browser download lane: a normal navigation so the gateway's
+	      // Content-Disposition names the file. Bytes are the ORIGINAL .flow.
+	      const qs = bundleVersion ? `?bundle_version=${encodeURIComponent(bundleVersion)}` : "";
+	      window.location.href = `/api/gateway/bundles/${encodeURIComponent(bundleId)}/download${qs}`;
+	    }
+
+	    async function workflowUsage(bundleId, bundleVersion, row) {
+	      // Honest impact: the run store has no COUNT operation, so this reports
+	      // what a bounded page can PROVE and says so. It never presents a page
+	      // size as a total — a confident wrong number is what turns a refusal
+	      // into a confirmation.
+	      const ids = [];
+	      const versions = bundleVersion
+	        ? (row ? row.versions.filter((v) => String(v.bundle_version) === String(bundleVersion)) : [])
+	        : (row ? row.versions : []);
+	      for (const v of versions) for (const ep of v.entrypoints || []) if (ep.workflow_id) ids.push(ep.workflow_id);
+	      if (!ids.length && bundleVersion) return null;
+	      let seen = 0; let capped = false;
+	      const limit = 200;
+	      for (const wid of ids.slice(0, 12)) {
+	        try {
+	          const res = await api(`/api/gateway/runs?workflow_id=${encodeURIComponent(wid)}&limit=${limit}`);
+	          const items = res.items || res.runs || [];
+	          seen += items.length;
+	          if (res.has_more || items.length >= limit) capped = true;
+	        } catch (err) { capped = true; }
+	      }
+	      return { seen, capped };
+	    }
+
+	    async function deleteWorkflow(bundleId, bundleVersion, row) {
+	      const label = bundleVersion ? `${bundleId}@${bundleVersion}` : bundleId;
+	      let usageLine = "";
+	      try {
+	        const usage = await workflowUsage(bundleId, bundleVersion, row);
+	        if (usage && usage.seen) {
+	          usageLine = usage.capped
+	            ? `\\nAt least ${usage.seen} run(s) reference it — the run store cannot count exactly, so this is a floor, not a total.`
+	            : `\\n${usage.seen} run(s) reference it.`;
+	          usageLine += "\\nThose runs keep their records but can no longer be replayed or resumed.";
+	        } else if (usage) {
+	          usageLine = "\\nNo runs reference it in the pages checked.";
+	        }
+	      } catch (err) { usageLine = ""; }
+
+	      const scope = bundleVersion ? "this version" : "EVERY version of this workflow";
+	      const ok = await confirmAction({
+	        title: `Delete ${label}?`,
+	        message: `This removes ${scope} from disk. There is no undo.${usageLine}\\n\\nIf you may need it again, export it first.`,
+	        confirmLabel: "Delete",
+	        danger: true,
+	      });
+	      if (!ok) return;
+	      $("workflows-message").textContent = `Deleting ${label}…`;
+	      $("workflows-message").className = "message";
+	      try {
+	        const qs = bundleVersion ? `?bundle_version=${encodeURIComponent(bundleVersion)}&reload=true` : "?reload=true";
+	        const res = await api(`/api/gateway/bundles/${encodeURIComponent(bundleId)}${qs}`, { method: "DELETE" });
+	        $("workflows-message").textContent = `Removed ${res.removed} file(s) for ${label}.`;
+	        $("workflows-message").className = "message ok";
+	        if (!bundleVersion && state.selectedWorkflow === bundleId) {
+	          state.selectedWorkflow = "";
+	          $("workflow-detail-section").classList.add("hidden");
+	        }
+	        await loadWorkflows();
+	      } catch (err) {
+	        $("workflows-message").textContent = String(err.message || err);
+	        $("workflows-message").className = "message error";
+	      }
+	    }
+
+	    async function importWorkflows(files) {
+	      const list = [...(files || [])];
+	      if (!list.length) return;
+	      const done = []; const failed = []; const notLoaded = [];
+	      for (const file of list) {
+	        $("workflows-message").textContent = `Importing ${file.name}…`;
+	        $("workflows-message").className = "message";
+	        const form = new FormData();
+	        form.append("file", file);
+	        form.append("overwrite", "false");
+	        form.append("reload", "true");
+	        try {
+	          const res = await api("/api/gateway/bundles/upload", { method: "POST", body: form });
+	          // `loaded` is the honest field: the file can land and still not be
+	          // servable. Reporting it as installed would repeat the defect this
+	          // whole surface exists to remove.
+	          if (res.loaded === false) {
+	            notLoaded.push(`${res.bundle_ref}: ${(res.skipped && res.skipped.reason) || "not served"}`);
+	          } else {
+	            done.push(res.bundle_ref);
+	          }
+	        } catch (err) {
+	          failed.push(`${file.name}: ${String(err.message || err)}`);
+	        }
+	      }
+	      const parts = [];
+	      if (done.length) parts.push(`Installed ${done.join(", ")}.`);
+	      if (notLoaded.length) parts.push(`Installed but NOT running — ${notLoaded.join("; ")}.`);
+	      if (failed.length) parts.push(`Failed — ${failed.join("; ")}.`);
+	      $("workflows-message").textContent = parts.join(" ") || "Nothing to import.";
+	      $("workflows-message").className = failed.length ? "message error" : (notLoaded.length ? "message" : "message ok");
+	      await loadWorkflows();
+	    }
+
 	    // ---- Summoned Entities: full create + lifecycle management ----
 	    // Server-rendered console surface (NOT a React app), so it consumes the
 	    // gateway's own served payloads directly — templates, tool inventory,
@@ -4140,11 +4922,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // zero clicks away. Every detail loader is guarded by a selection
 	    // token (the manageToken precedent): a stale response must never
 	    // render under another runtime's header. ----
-	    const RUNTIME_SUBTAB_KEY = "abstractgateway_runtime_subtab_v2";
-	    // Console-TUI mirror (laurent dm#35): two tabs, and NO selection
+		    // Console-TUI mirror (laurent dm#35): two tabs, and NO selection
 	    // persistence across page loads — nothing loads until the operator
 	    // clicks a runtime this session.
-	    const RUNTIME_SUBTABS = ["sessions", "caches"];
+	    const RUNTIME_SUBTABS = ["sessions", "artifacts", "caches", "logs"];
 	    function _runtimeKeyOf(r) {
 	      return `${r.kind}|${r.tenant_id || "default"}|${r.runtime_id}`;
 	    }
@@ -4156,7 +4937,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      body.textContent = "";
 	      const loadingTr = document.createElement("tr");
 	      const loadingTd = document.createElement("td");
-	      loadingTd.colSpan = 5;
+	      loadingTd.colSpan = 6;
 	      loadingTd.className = "empty";
 	      loadingTd.textContent = "Scanning execution planes…";
 	      loadingTr.append(loadingTd);
@@ -4165,13 +4946,23 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const data = await api("/api/gateway/admin/runtimes");
 	        const rows = Array.isArray(data.runtimes) ? data.runtimes : [];
 	        state.runtimeRows = rows;
+	        // One cheap GET feeds every row's policy badge (never N+1) and the
+	        // policy modal's cached state.
+	        try {
+	          const cfg = await api("/api/gateway/admin/runtime-config");
+	          const map = cfg?.user_workspace_policies?.value;
+	          state.userPolicyKeys = new Set(map && typeof map === "object" ? Object.keys(map) : []);
+	          renderRuntimeConfig(cfg);
+	        } catch (e) {
+	          state.userPolicyKeys = state.userPolicyKeys || new Set();
+	        }
 	        $("runtimes-message").textContent = (data.warnings || []).join(" · ");
 	        body.textContent = "";
 	        for (const r of rows) {
 	          const tr = document.createElement("tr");
 	          if (r.error) {
 	            const td = document.createElement("td");
-	            td.colSpan = 5;
+	            td.colSpan = 6;
 	            td.className = "message";
 	            td.textContent = `${r.runtime_id || "?"}: ${r.error}`;
 	            tr.append(td);
@@ -4223,12 +5014,52 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          size.textContent = (typeof r.size_bytes === "number") ? _fmtBytes(r.size_bytes) : "";
 	          if (r.size_note) size.title = r.size_note;
 	          tr.append(size);
+	          // Workspace policy cell. The DEFAULT row is the gateway itself —
+	          // its button edits the gateway-wide defaults. User rows with
+	          // exactly ONE enabled owner edit that user's policy; multi-owner
+	          // and ownerless planes have no single principal to configure.
+	          const policyTd = document.createElement("td");
+	          const enabledOwners = (r.owners || []).filter((o) => o && o.enabled !== false && o.user_id);
+	          if (r.kind === "default") {
+	            const gear = document.createElement("button");
+	            gear.className = "secondary";
+	            // ICONS.gear inline: boot-time icon hydration only touches
+	            // static markup — dynamic rows must carry the SVG themselves
+	            // or they regress to the tiny platform glyph.
+	            gear.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.gear}</span><span>Gateway defaults</span>`;
+	            gear.title = "Edit the gateway-wide workspace defaults every user inherits";
+	            gear.setAttribute("aria-label", "Configure gateway workspace defaults");
+	            gear.onclick = (ev) => { ev.stopPropagation(); openGatewayPolicyModal(); };
+	            policyTd.append(gear);
+	          } else if (r.kind === "user" && enabledOwners.length === 1) {
+	            const target = { tenant_id: r.tenant_id || "default", user_id: enabledOwners[0].user_id };
+	            const key = _wspPolicyKeyOf(target);
+	            const badge = document.createElement("span");
+	            badge.className = "wsp-badge" + (state.userPolicyKeys?.has(key) ? " custom" : "");
+	            badge.dataset.wspkey = key;
+	            badge.textContent = state.userPolicyKeys?.has(key) ? "custom" : "inherited";
+	            const gear = document.createElement("button");
+	            gear.className = "secondary";
+	            gear.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.gear}</span><span>Configure</span>`;
+	            gear.title = `Configure where ${target.user_id}'s agents may read and write`;
+	            gear.setAttribute("aria-label", `Workspace policy for ${target.user_id}`);
+	            gear.onclick = (ev) => { ev.stopPropagation(); openWorkspacePolicyModal(target); };
+	            policyTd.append(gear, document.createTextNode(" "), badge);
+	          } else if (r.kind === "entity") {
+	            policyTd.innerHTML = `<span class="muted" title="Entity filesystem access is configured on the entity itself (workspace mounts, Users & Entities tab)">via entity</span>`;
+	          } else {
+	            policyTd.textContent = "—";
+	            policyTd.title = enabledOwners.length > 1
+	              ? "Several users bind this plane — set each user's policy from the Users table"
+	              : "No live user binds this plane";
+	          }
+	          tr.append(policyTd);
 	          body.append(tr);
 	        }
 	        if (!rows.length) {
 	          const tr = document.createElement("tr");
 	          const td = document.createElement("td");
-	          td.colSpan = 5;
+	          td.colSpan = 6;
 	          td.className = "empty";
 	          td.textContent = "No runtimes found.";
 	          tr.append(td);
@@ -4238,7 +5069,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // in-session choice survives a list refresh — the page never
 	        // auto-selects, so nothing loads until the operator clicks a
 	        // runtime. `preserve` keeps an unchanged selection's open panel
-	        // intact (a list refresh must not blow away a run-inspect
+	        // intact (a list refresh must not blow away the open tab
 	        // mid-read — adversary A hazard 4).
 	        const curKey = state.selectedRuntime ? _runtimeKeyOf(state.selectedRuntime) : "";
 	        const pick = curKey ? rows.find((r) => !r.error && _runtimeKeyOf(r) === curKey) || null : null;
@@ -4250,7 +5081,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        body.textContent = "";
 	        const tr = document.createElement("tr");
 	        const td = document.createElement("td");
-	        td.colSpan = 5;
+	        td.colSpan = 6;
 	        td.className = "message error";
 	        td.textContent = "Runtime inventory unavailable: " + (e.message || e);
 	        tr.append(td);
@@ -4313,41 +5144,50 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (same && opts.preserve) return; // unchanged selection: highlight only
 	      state.runtimeDetailToken = (state.runtimeDetailToken || 0) + 1;
 	      state.runtimeDrill = null;
-	      state.runsSessionFilter = "";
-	      _renderRunsSessionChip();
-	      openRuntimeSubtab(state.runtimeSubtab || readStringSetting(RUNTIME_SUBTAB_KEY, "sessions"));
+	      // Choosing a runtime ALWAYS lands on Runs (operator 2026-08-19: the
+	      // old restore-last-subtab reopened Logs on every selection). Each
+	      // tab still loads lazily, only when clicked.
+	      openRuntimeSubtab("sessions");
 	    }
 	    function openRuntimeSubtab(name) {
 	      if (!RUNTIME_SUBTABS.includes(name)) name = "sessions";
 	      state.runtimeSubtab = name;
-	      writeStringSetting(RUNTIME_SUBTAB_KEY, name);
 	      for (const t of RUNTIME_SUBTABS) {
 	        $("runtime-subtab-" + t).classList.toggle("active", t === name);
 	        $("runtime-panel-" + t).classList.toggle("hidden", t !== name);
 	      }
 	      const r = state.selectedRuntime;
 	      if (!r) return;
+	      // Explicit branches, no catch-all else (design adversary B9: an else
+	      // silently routes any NEW tab to the wrong loader).
 	      if (name === "sessions") {
 	        // The TUI's sessions panel: the chosen runtime's runs, session
 	        // ids on every row — actionable on the default plane, read-only
 	        // elsewhere. Loads ONLY here (lazy, per choice).
+	        state.runsOffset = 0;
+	        state.runtimeRunsOffset = 0;
 	        if (r.kind === "default") loadRuns();
 	        else loadRuntimeRuns();
-	      } else {
+	      } else if (name === "artifacts") {
+	        state.artifactsOffset = 0;
+	        loadRuntimeArtifacts();
+	      } else if (name === "caches") {
 	        loadRuntimeCaches();
+	      } else if (name === "logs") {
+	        loadRuntimeLogs();
 	      }
 	    }
-	    async function _runtimeDrillItems(r, token) {
-	      // ONE drill-in payload feeds the read-only Runs table AND the
-	      // sessions fold (limit=200 — the server clamp; a copy-pasted 50
-	      // would silently make the sessions fold worse than the old count).
-	      if (state.runtimeDrill && state.runtimeDrill.key === _runtimeKeyOf(r)) return state.runtimeDrill.items;
-	      const q = `/api/gateway/admin/runtimes/${encodeURIComponent(r.kind)}/${encodeURIComponent(r.tenant_id || "default")}/${encodeURIComponent(r.runtime_id)}/runs?limit=200`;
+	    async function _runtimeDrillItems(r, token, offset = 0) {
+	      // ONE drill-in payload per (plane, page) feeds the read-only Runs
+	      // table; pages of 100 reach every run (operator ruling 2026-08-19).
+	      const key = `${_runtimeKeyOf(r)}|${offset}`;
+	      if (state.runtimeDrill && state.runtimeDrill.key === key) return state.runtimeDrill;
+	      const q = `/api/gateway/admin/runtimes/${encodeURIComponent(r.kind)}/${encodeURIComponent(r.tenant_id || "default")}/${encodeURIComponent(r.runtime_id)}/runs?limit=100&offset=${encodeURIComponent(offset)}`;
 	      const data = await api(q);
 	      if (token !== state.runtimeDetailToken) return null; // stale — dropped
 	      const items = Array.isArray(data.items) ? data.items : [];
-	      state.runtimeDrill = { key: _runtimeKeyOf(r), items };
-	      return items;
+	      state.runtimeDrill = { key, items, hasMore: data.has_more === true };
+	      return state.runtimeDrill;
 	    }
 	    async function loadRuntimeRuns() {
 	      const r = state.selectedRuntime;
@@ -4358,11 +5198,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("runtime-detail-message").textContent = "";
 	      $("runtime-detail-message").className = "message";
 	      try {
-	        const items = await _runtimeDrillItems(r, token);
-	        if (items === null || token !== state.runtimeDetailToken) return;
+	        const pageSize = 100;
+	        const offset = Math.max(0, state.runtimeRunsOffset || 0);
+	        const drill = await _runtimeDrillItems(r, token, offset);
+	        if (drill === null || token !== state.runtimeDetailToken) return;
+	        const items = drill.items;
 	        body.textContent = "";
 	        const seen = new Set();
-	        for (const it of items.slice(0, 50)) {
+	        for (const it of items) {
 	          const tr = document.createElement("tr");
 	          const cells = [
 	            String(it.run_id || "").slice(0, 8),
@@ -4379,7 +5222,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          body.append(tr);
 	        }
 	        for (const it of items) if (it.session_id) seen.add(it.session_id);
-	        if (!items.length) {
+	        if (!items.length && offset === 0) {
 	          const tr = document.createElement("tr");
 	          const td = document.createElement("td");
 	          td.colSpan = 5;
@@ -4387,10 +5230,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          td.textContent = "No runs on this runtime yet.";
 	          tr.append(td);
 	          body.append(tr);
-	        } else {
+	        } else if (items.length) {
 	          $("runtime-detail-message").textContent =
-	            `${Math.min(items.length, 50)} shown of the ${items.length} most recent run${items.length === 1 ? "" : "s"} · ${seen.size} session${seen.size === 1 ? "" : "s"}`;
+	            `${seen.size} session${seen.size === 1 ? "" : "s"} on this page`;
 	        }
+	        renderPager($("runtime-runs-pager"), {
+	          offset,
+	          pageSize,
+	          shown: items.length,
+	          hasMore: drill.hasMore,
+	          onPage: (next) => { state.runtimeRunsOffset = next; loadRuntimeRuns(); },
+	        });
 	      } catch (e) {
 	        if (token !== state.runtimeDetailToken) return;
 	        // 409 (maintenance hold) / 404 (not materialized) render verbatim
@@ -4398,6 +5248,266 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        body.textContent = "";
 	        $("runtime-detail-message").textContent = String((e && e.message) || e);
 	        $("runtime-detail-message").className = "message error";
+	      }
+	    }
+	    function runtimeConfigSourceText(label, payload) {
+	      const source = String(payload?.source || "default");
+	      return `${label}: ${source}`;
+	    }
+	    function runtimeConfigStringValue(payload) {
+	      const value = payload?.value;
+	      return typeof value === "string" ? value : "";
+	    }
+	    function renderRuntimeConfig(payload) {
+	      // State only: the gateway defaults render nowhere but the modal
+	      // (operator 2026-08-19: the Runtimes tab is the table + the tabbed
+	      // panel, nothing else) — this cache feeds the modal and the
+	      // per-row policy badges.
+	      state.runtimeConfig = payload || null;
+	    }
+	    function renderMyWorkspacePolicy(payload) {
+	      state.myWorkspacePolicy = payload || null;
+	      const entry = payload?.policy || {};
+	      const eff = payload?.effective || {};
+	      $("my-workspace-mode").value = typeof entry.mode === "string" ? entry.mode : "";
+	      const trust = entry.trust_client_launch_folder;
+	      $("my-workspace-trust").value = trust === true ? "on" : trust === false ? "off" : "";
+	      $("my-workspace-allowed").value = (entry.workspace_allowed_paths || []).join("\\n");
+	      $("my-workspace-blocked").value = (entry.workspace_blocked_paths || []).join("\\n");
+	      const effMode = eff.mode || "whitelist";
+	      const effTrust = eff.trust_client_launch_folder === true;
+	      $("my-workspace-policy-summary").textContent = `${effMode} mode · launch-folder trust ${effTrust ? "on" : "off"}`;
+	      $("my-workspace-policy-current").textContent =
+	        `Effective: ${effMode} mode · launch-folder trust ${effTrust ? "on" : "off"} · ` +
+	        `${(eff.workspace_allowed_paths || []).length} allowed · ${(eff.workspace_blocked_paths || []).length} refused`;
+	    }
+	    async function loadMyWorkspacePolicy() {
+	      const msg = $("my-workspace-policy-message");
+	      msg.textContent = "Loading…";
+	      msg.className = "message";
+	      try {
+	        renderMyWorkspacePolicy(await api("/api/gateway/workspace/policy/self"));
+	        msg.textContent = "";
+	      } catch (e) {
+	        msg.textContent = String((e && e.message) || e);
+	        msg.className = "message error";
+	      }
+	    }
+	    async function saveMyWorkspacePolicy(clear = false) {
+	      const msg = $("my-workspace-policy-message");
+	      msg.textContent = clear ? "Resetting to inherited…" : "Saving…";
+	      msg.className = "message";
+	      const body = {};
+	      if (!clear) {
+	        const mode = $("my-workspace-mode").value;
+	        if (mode) body.mode = mode;
+	        const trust = $("my-workspace-trust").value;
+	        if (trust) body.trust_client_launch_folder = trust === "on";
+	        const allowed = $("my-workspace-allowed").value.trim();
+	        if (allowed) body.workspace_allowed_paths = allowed.split(/\\n+/).map((s) => s.trim()).filter(Boolean);
+	        const blocked = $("my-workspace-blocked").value.trim();
+	        if (blocked) body.workspace_blocked_paths = blocked.split(/\\n+/).map((s) => s.trim()).filter(Boolean);
+	      }
+	      try {
+	        renderMyWorkspacePolicy(await api("/api/gateway/workspace/policy/self", {
+	          method: "PUT",
+	          body: JSON.stringify(body),
+	        }));
+	        msg.textContent = clear ? "Reset — inheriting the gateway defaults." : "Saved.";
+	        msg.className = "message ok";
+	      } catch (e) {
+	        msg.textContent = String((e && e.message) || e);
+	        msg.className = "message error";
+	      }
+	    }
+	    function _wspSetMode(mode) {
+	      for (const card of document.querySelectorAll("#wsp-mode-cards .wsp-card")) {
+	        const input = card.querySelector("input");
+	        const on = input.value === (mode || "");
+	        input.checked = on;
+	        card.classList.toggle("selected", on);
+	      }
+	      const allowedHint = $("wsp-allowed-hint");
+	      if (allowedHint) {
+	        allowedHint.textContent = (mode === "blacklist")
+	          ? "Not used in the allow-everything posture (kept for when you switch back)."
+	          : "Extra folders this user's agents may use, one per line — added on top of the gateway-wide roots.";
+	      }
+	    }
+	    function _wspSelectedMode() {
+	      const el = document.querySelector('input[name="wsp-mode"]:checked');
+	      return el ? el.value : "";
+	    }
+	    function _wspLines(id) {
+	      const raw = $(id).value.trim();
+	      return raw ? raw.split(/\\n+/).map((s) => s.trim()).filter(Boolean) : [];
+	    }
+	    function _wspPolicyKeyOf(target) {
+	      return `${target.tenant_id || "default"}:${target.user_id}`;
+	    }
+	    function _wspTargetQuery(target) {
+	      return `tenant_id=${encodeURIComponent(target.tenant_id || "default")}&user_id=${encodeURIComponent(target.user_id)}`;
+	    }
+	    function _wspSyncBadges(key, customized) {
+	      if (!state.userPolicyKeys) state.userPolicyKeys = new Set();
+	      if (customized) state.userPolicyKeys.add(key); else state.userPolicyKeys.delete(key);
+	      for (const el of document.querySelectorAll(`[data-wspkey="${CSS.escape(key)}"]`)) {
+	        el.textContent = customized ? "custom" : "inherited";
+	        el.classList.toggle("custom", customized);
+	      }
+	    }
+	    function _wspApplyKind(kind) {
+	      // ONE modal, two subjects: a USER's policy, or the GATEWAY defaults
+	      // every user inherits (operator order 2026-08-19: the defaults are
+	      // set in the same modal, not an inline form).
+	      state.wspModalKind = kind;
+	      const gw = kind === "gateway";
+	      $("wsp-card-inherit").classList.toggle("hidden", gw);
+	      $("wsp-root-field").classList.toggle("hidden", !gw);
+	      $("wsp-reset").classList.toggle("hidden", gw);
+	      $("workspace-policy-modal-title").textContent = gw ? "Gateway workspace defaults" : "Workspace policy";
+	      $("wsp-trust").options[0].textContent = gw ? "Gateway default (on)" : "Inherit gateway default";
+	      $("wsp-overrides").options[0].textContent = gw ? "Gateway default" : "Inherit gateway default";
+	      $("wsp-overrides-hint").textContent = gw
+	        ? "Not the same as launch-folder trust: trust only covers the one folder an agent is started from. This legacy switch lets ANY client name ANY folder as a workspace and browse server files anywhere — the posture and folder lists above stop applying. Prefer per-user grants over this."
+	        : "Not the same as launch-folder trust: trust only covers the one folder an agent is started from. This legacy switch lets this user's clients name ANY folder as a workspace and browse server files anywhere — the posture and folder lists above stop applying. Leave inherited unless an old client depends on it.";
+	      $("wsp-whitelist-sub").textContent = gw
+	        ? "Every user without their own posture gets: deny everything except the gateway roots and allowed folders — plus the launch folder while trust is on. The shipped default."
+	        : "Agents may only work under the gateway roots plus this user's allowed folders — and the launch folder while trust is on.";
+	      $("wsp-blacklist-sub").textContent = gw
+	        ? "Every user without their own posture may work anywhere on the gateway host except the refused folders. A wide grant — consider per-user instead."
+	        : "Agents may work anywhere on the gateway host except the refused folders. The gateway-wide deny list still applies.";
+	      $("wsp-allowed-hint").textContent = gw
+	        ? "Folders every user's agents may use, one per line — the gateway-wide roots."
+	        : "Extra folders this user's agents may use, one per line — added on top of the gateway-wide roots.";
+	      $("wsp-blocked-hint").textContent = gw
+	        ? "Folders NO agent may ever touch, one per line — the gateway-wide deny list, enforced for every user in every posture."
+	        : "Folders this user's agents may never touch, one per line — enforced in every posture.";
+	    }
+	    function renderWorkspacePolicyModal(payload) {
+	      const entry = payload?.policy || {};
+	      _wspSetMode(typeof entry.mode === "string" ? entry.mode : "");
+	      const trust = entry.trust_client_launch_folder;
+	      $("wsp-trust").value = trust === true ? "on" : trust === false ? "off" : "";
+	      const overrides = entry.client_workspace_scope_overrides;
+	      $("wsp-overrides").value = overrides === true ? "on" : overrides === false ? "off" : "";
+	      $("wsp-allowed").value = (entry.workspace_allowed_paths || []).join("\\n");
+	      $("wsp-blocked").value = (entry.workspace_blocked_paths || []).join("\\n");
+	      const gd = payload?.gateway_defaults || {};
+	      const inheritSub = $("wsp-inherit-sub");
+	      if (inheritSub) {
+	        inheritSub.textContent = `Gateway default: ${gd.mode === "blacklist"
+	          ? "allow everything except the refused folders"
+	          : "deny everything except the allowed folders"} — launch-folder trust ${gd.trust_client_launch_folder ? "on" : "off"}.`;
+	      }
+	    }
+	    function renderGatewayPolicyModal(payload) {
+	      state.runtimeConfig = payload || state.runtimeConfig;
+	      _wspSetMode(payload?.workspace_default_mode?.value === "blacklist" ? "blacklist" : "whitelist");
+	      // Only STORED choices prefill (writing a resolved env/default value
+	      // back would silently promote it to the stored rung).
+	      const trustP = payload?.trust_client_launch_folder || {};
+	      $("wsp-trust").value = trustP.source === "stored" ? (trustP.value ? "on" : "off") : "";
+	      const ovP = payload?.client_workspace_scope_overrides || {};
+	      $("wsp-overrides").value = ovP.source === "stored" ? (ovP.value ? "on" : "off") : "";
+	      const rootP = payload?.workspace_root || {};
+	      $("wsp-root").value = rootP.source === "stored" ? (runtimeConfigStringValue(rootP) || "") : "";
+	      $("wsp-root").placeholder = runtimeConfigStringValue(rootP) || "/abs/path/to/default/workspace";
+	      $("wsp-allowed").value = runtimeConfigStringValue(payload?.workspace_allowed_paths || payload?.workspace_mounts);
+	      $("wsp-blocked").value = runtimeConfigStringValue(payload?.workspace_blocked_paths);
+	    }
+	    async function openWorkspacePolicyModal(target) {
+	      _wspApplyKind("user");
+	      state.workspacePolicyTarget = target;
+	      const label = (target.tenant_id && target.tenant_id !== "default")
+	        ? `${target.tenant_id}/${target.user_id}` : target.user_id;
+	      $("workspace-policy-modal-user").textContent =
+	        `Where ${label}'s agents may read and write. Inherits the gateway defaults until customized.`;
+	      $("wsp-message").textContent = "Loading current policy…";
+	      $("wsp-message").className = "message";
+	      $("workspace-policy-modal-backdrop").classList.remove("hidden");
+	      try {
+	        const payload = await api(`/api/gateway/admin/user-workspace-policy?${_wspTargetQuery(target)}`);
+	        renderWorkspacePolicyModal(payload);
+	        $("wsp-message").textContent = payload.customized
+	          ? "This user has a custom policy." : "This user inherits the gateway defaults.";
+	      } catch (e) {
+	        $("wsp-message").textContent = String((e && e.message) || e);
+	        $("wsp-message").className = "message error";
+	      }
+	    }
+	    async function openGatewayPolicyModal() {
+	      _wspApplyKind("gateway");
+	      state.workspacePolicyTarget = null;
+	      $("workspace-policy-modal-user").textContent =
+	        "The gateway-wide defaults every user inherits. Per-user overrides (Configure on a runtime row) win over these.";
+	      $("wsp-message").textContent = "Loading gateway defaults…";
+	      $("wsp-message").className = "message";
+	      $("workspace-policy-modal-backdrop").classList.remove("hidden");
+	      try {
+	        renderGatewayPolicyModal(await api("/api/gateway/admin/runtime-config"));
+	        $("wsp-message").textContent = "";
+	      } catch (e) {
+	        $("wsp-message").textContent = String((e && e.message) || e);
+	        $("wsp-message").className = "message error";
+	      }
+	    }
+	    function closeWorkspacePolicyModal() {
+	      $("workspace-policy-modal-backdrop").classList.add("hidden");
+	      state.workspacePolicyTarget = null;
+	    }
+	    async function saveWorkspacePolicyModal(reset = false) {
+	      $("wsp-message").textContent = reset ? "Resetting to inherited…" : "Saving…";
+	      $("wsp-message").className = "message";
+	      try {
+	        if (state.wspModalKind === "gateway") {
+	          // user_workspace_policies is DELIBERATELY absent from this body:
+	          // present-but-empty deletes the whole per-user map server-side
+	          // (design adversary B2); per-user edits ride the single-entry PUT.
+	          const trustSel = $("wsp-trust").value;
+	          const body = {
+	            workspace_default_mode: _wspSelectedMode() || "whitelist",
+	            workspace_root: $("wsp-root").value.trim() || null,
+	            workspace_allowed_paths: $("wsp-allowed").value.trim(),
+	            workspace_blocked_paths: $("wsp-blocked").value.trim(),
+	            trust_client_launch_folder: trustSel ? trustSel === "on" : null,
+	          };
+	          const ov = $("wsp-overrides").value;
+	          if (ov) body.client_workspace_scope_overrides = ov === "on";
+	          const payload = await api("/api/gateway/admin/runtime-config", {
+	            method: "POST",
+	            body: JSON.stringify(body),
+	          });
+	          renderRuntimeConfig(payload);
+	          closeWorkspacePolicyModal();
+	          return;
+	        }
+	        const target = state.workspacePolicyTarget;
+	        if (!target) return;
+	        const policy = {};
+	        if (!reset) {
+	          const mode = _wspSelectedMode();
+	          if (mode) policy.mode = mode;
+	          const trust = $("wsp-trust").value;
+	          if (trust) policy.trust_client_launch_folder = trust === "on";
+	          const overrides = $("wsp-overrides").value;
+	          if (overrides) policy.client_workspace_scope_overrides = overrides === "on";
+	          const allowed = _wspLines("wsp-allowed");
+	          if (allowed.length) policy.workspace_allowed_paths = allowed;
+	          const blocked = _wspLines("wsp-blocked");
+	          if (blocked.length) policy.workspace_blocked_paths = blocked;
+	        }
+	        const payload = await api(`/api/gateway/admin/user-workspace-policy?${_wspTargetQuery(target)}`, {
+	          method: "PUT",
+	          body: JSON.stringify({ policy: reset ? null : policy }),
+	        });
+	        _wspSyncBadges(_wspPolicyKeyOf(target), payload.customized === true);
+	        closeWorkspacePolicyModal();
+	      } catch (e) {
+	        // The modal stays open: the gateway's refusal names the offending
+	        // path/field — the admin fixes it in place.
+	        $("wsp-message").textContent = String((e && e.message) || e);
+	        $("wsp-message").className = "message error";
 	      }
 	    }
 	    async function ensureDataHomes(force = false) {
@@ -4408,9 +5518,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const data = await api("/api/gateway/admin/data-homes");
 	      const rows = Array.isArray(data.homes) ? data.homes : [];
 	      state.dataHomes = { rows, warnings: data.warnings || [] };
-	      const total = rows.reduce((a, h) => a + (typeof h.size_bytes === "number" ? h.size_bytes : 0), 0);
-	      const sum = $("data-homes-summary");
-	      if (sum) sum.textContent = `${rows.length} home${rows.length === 1 ? "" : "s"} · ${_fmtBytes(total)} — including rows tied to no runtime (model caches, foreign owners)`;
 	      return state.dataHomes;
 	    }
 	    function _samePath(a, b) {
@@ -4443,68 +5550,65 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // root CONTAINS users/ and entities/ — a prefix rule would swallow
 	      // every other plane's homes).
 	      if (droot && _samePath(root, droot)) return { kind: "default", key: "default" };
+	      // A data_root that is NOT ours = ANOTHER gateway's home (operator
+	      // 2026-08-19: this console shows THIS gateway, never its neighbors —
+	      // 39 distinct roots live in the machine registry). Only rows with
+	      // NO data_root are genuinely machine-shared (hub cache, blocs…).
+	      if (root && droot && root.startsWith(droot + "/")) return { kind: "default", key: "default" };
+	      if (root) return { kind: "foreign", key: root };
 	      return { kind: "machine", key: "" };
 	    }
-	    function renderDataHomeRow(h, msgEl) {
-	      // ONE row renderer for both cache surfaces (machine disclosure +
-	      // per-runtime Caches tab) — policy pills and the purge flow must
-	      // never fork.
+	    function renderDataHomeRow(h, msgEl, sizing = false) {
+	      // ONE row renderer for the Cache tab — the purge flow must never
+	      // fork. `sizing` = the fast no-walk paint: the size cell spins until
+	      // the sized pass replaces the rows. The DESCRIPTION is a visible
+	      // sub-line (operator 2026-08-19: hover-only was not actionable).
 	      const tr = document.createElement("tr");
-	      for (const cell of [h.name || "", h.kind || "", _fmtBytes(h.size_bytes), h.owner || ""]) {
+	      const nameTd = document.createElement("td");
+	      const nameLine = document.createElement("div");
+	      nameLine.textContent = h.name || "";
+	      nameLine.title = `owner: ${h.owner || "?"}`;
+	      const descLine = document.createElement("div");
+	      descLine.className = "muted";
+	      descLine.style.fontSize = "12px";
+	      descLine.style.maxWidth = "420px";
+	      descLine.textContent = h.description || "";
+	      nameTd.append(nameLine, descLine);
+	      tr.append(nameTd);
+	      const sizeCell = (typeof h.size_bytes === "number")
+	        ? _fmtBytes(h.size_bytes)
+	        : (h.exists === false ? "missing" : (sizing ? null : _fmtBytes(h.size_bytes)));
+	      for (const cell of [h.kind || "", sizeCell]) {
 	        const td = document.createElement("td");
-	        td.textContent = String(cell);
+	        if (cell === null) {
+	          const spin = document.createElement("span");
+	          spin.className = "spin-inline";
+	          spin.setAttribute("aria-hidden", "true");
+	          td.append(spin);
+	          td.title = "measuring…";
+	        } else {
+	          td.textContent = String(cell);
+	        }
 	        tr.append(td);
 	      }
-	      const pol = document.createElement("td");
-	      const pill = document.createElement("span");
-	      pill.className = h.safe_to_purge ? "entity-live-badge phase-none" : "entity-warn-pill";
-	      pill.textContent = h.safe_to_purge ? "purgeable" : "protected";
-	      pill.title = h.description || "";
-	      pol.append(pill);
-	      tr.append(pol);
+	      const pathTd = document.createElement("td");
+	      const code = document.createElement("code");
+	      code.textContent = h.path || "";
+	      code.title = h.path || "";
+	      pathTd.append(code);
+	      tr.append(pathTd);
 	      const actions = document.createElement("td");
-	      if (h.safe_to_purge) {
-	        // Danger class, not secondary (usability adversary P1-5): this
-	        // permanently deletes files — same visual weight as every other
-	        // destructive act.
-	        const btn = document.createElement("button");
-	        btn.className = "danger";
-	        btn.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Purge…</span>`;
-	        btn.title = "Delete the CONTENTS of this data home — a dry-run accounting is shown first";
-	        btn.setAttribute("aria-label", `Purge ${h.name}`);
-	        btn.onclick = () => purgeDataHome(h.name, msgEl);
-	        actions.append(btn);
-	      } else {
-	        const note = document.createElement("span");
-	        note.className = "muted";
-	        note.textContent = "owner-protected";
-	        note.title = h.description || "the owner declared safe_to_purge=false";
-	        actions.append(note);
-	      }
+	      // Every row here IS a cache (the tab filters to safe_to_purge — a
+	      // cache is a cache, operator 2026-08-19): the purge is always offered.
+	      const btn = document.createElement("button");
+	      btn.className = "danger";
+	      btn.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Purge…</span>`;
+	      btn.title = "Delete the CONTENTS of this cache; a dry-run accounting is shown first";
+	      btn.setAttribute("aria-label", `Purge ${h.name}`);
+	      btn.onclick = () => purgeDataHome(h.name, msgEl);
+	      actions.append(btn);
 	      tr.append(actions);
 	      return tr;
-	    }
-	    async function loadDataHomes() {
-	      const body = $("data-homes-table");
-	      if (!body) return;
-	      tableLoadingRow(body, 6, "Measuring data homes…");
-	      try {
-	        const { rows, warnings } = await ensureDataHomes(true);
-	        $("data-homes-message").textContent = (warnings || []).join(" · ");
-	        body.textContent = "";
-	        for (const h of rows) body.append(renderDataHomeRow(h, $("data-homes-message")));
-	        if (!rows.length) {
-	          const tr = document.createElement("tr");
-	          const td = document.createElement("td");
-	          td.colSpan = 6;
-	          td.className = "empty";
-	          td.textContent = "No registered data homes yet.";
-	          tr.append(td);
-	          body.append(tr);
-	        }
-	      } catch (e) {
-	        $("data-homes-message").textContent = "Data homes unavailable: " + (e.message || e);
-	      }
 	    }
 	    async function loadRuntimeCaches(force = false) {
 	      const r = state.selectedRuntime;
@@ -4513,20 +5617,34 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const body = $("runtime-caches-table");
 	      const msg = $("runtime-caches-message");
 	      const rem = $("runtime-caches-remainder");
-	      tableLoadingRow(body, 6, "Measuring data homes…");
 	      msg.textContent = "";
 	      msg.className = "message";
 	      rem.textContent = "";
-	      try {
-	        const { rows, warnings } = await ensureDataHomes(force);
-	        if (token !== state.runtimeDetailToken) return;
-	        msg.textContent = (warnings || []).join(" · ");
+
+	      const renderRows = (rows, warnings, sizing) => {
+	        // Filtering is RENDER-ONLY: the toolbar re-runs this with the
+	        // cached payload and never re-enters the loader (each load costs
+	        // a full registry size walk — debounced keystrokes must not
+	        // launch a stampede of 30s walks).
+	        state.cachesLast = { rows, warnings, sizing };
+	        msg.textContent = [
+	          (warnings || []).join(" · "),
+	          sizing ? "measuring sizes — the list is complete, numbers are filling in…" : "",
+	        ].filter(Boolean).join(" · ");
 	        const want =
 	          r.kind === "entity" ? { kind: "entity", key: r.entity }
 	          : r.kind === "user" ? { kind: "user", key: `${r.tenant_id || "default"}|${r.runtime_id}` }
 	          : { kind: "default", key: "default" };
 	        let mine = rows.filter((h) => {
 	          const a = homeAssociation(h);
+	          if (want.kind === "default") {
+	            // TUI parity (console-tui data_panel): the default plane is
+	            // the gateway process's own home, so its Cache tab ALSO
+	            // lists machine-wide stores (model caches, foreign owners —
+	            // everything outside user/entity planes). The standalone
+	            // machine-wide section died for this (operator 2026-08-19).
+	            return a.kind === "default" || a.kind === "machine";
+	          }
 	          return a.kind === want.kind && a.key === want.key;
 	        });
 	        // Path-identity drift belt (adversary B hazard 2): if the default
@@ -4536,42 +5654,148 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (!mine.length && r.kind === "default") {
 	          mine = rows.filter((h) => h.owner === "abstractgateway" && !(h.meta && h.meta.slug) && h.kind !== "entity-home");
 	          if (mine.length) {
-	            msg.textContent = [msg.textContent, "#FALLBACK matched by owner — data_root did not string-match this plane (path resolution drift); verify in Machine-wide data & caches"]
+	            msg.textContent = [msg.textContent, "#FALLBACK matched by owner — data_root did not string-match this plane (path resolution drift)"]
 	              .filter(Boolean).join(" · ");
 	          }
 	        }
+	        // A cache is a cache (operator 2026-08-19): this tab lists ONLY
+	        // disposable stores that EXIST. Durable homes are not caches
+	        // (deliverables → Artifacts tab), logs are not caches (→ Logs
+	        // tab), and stale registrations (path gone) get their own
+	        // sub-list with Forget — never a "?" masquerading as a cache.
+	        const attributed = mine.length;
+	        // Hygiene is REGISTRY-WIDE on the gateway's own plane: stale rows
+	        // mostly belong to dead test/scratch gateways (foreign roots), and
+	        // hiding them would leave no surface to Forget them from.
+	        const stale = r.kind === "default"
+	          ? rows.filter((h) => h.exists === false)
+	          : mine.filter((h) => h.exists === false);
+	        const foreignLive = r.kind === "default"
+	          ? rows.filter((h) => h.exists !== false && homeAssociation(h).kind === "foreign").length
+	          : 0;
+	        const live = mine.filter((h) => h.exists !== false);
+	        const durable = live.filter((h) => !h.safe_to_purge).length;
+	        const logsCount = live.filter((h) => h.safe_to_purge && h.kind === "logs").length;
+	        mine = live.filter((h) => h.safe_to_purge === true && h.kind !== "logs");
+	        // Dropdown options come from the RENDERED set (not raw rows), so
+	        // every option matches something; a vanished selection says so.
+	        const optSync = syncDerivedOptions($("runtime-caches-kind"), mine.map((h) => h.kind), "all kinds");
+	        const kindFilter = ($("runtime-caches-kind").value || "").trim();
+	        const cacheNeedle = makeNeedle($("runtime-caches-search").value);
+	        const cacheQuery = cacheNeedle.text;
+	        const matched = mine.filter((h) => {
+	          if (kindFilter && String(h.kind || "") !== kindFilter) return false;
+	          return cacheNeedle.matchesAny([h.name, h.kind, h.path, h.description]);
+	        });
+	        const filteredOut = mine.length - matched.length;
+	        mine = matched;
 	        body.textContent = "";
-	        for (const h of mine) body.append(renderDataHomeRow(h, msg));
+	        for (const h of mine) body.append(renderDataHomeRow(h, msg, sizing));
 	        if (!mine.length) {
 	          const tr = document.createElement("tr");
 	          const td = document.createElement("td");
-	          td.colSpan = 6;
+	          td.colSpan = 5;
 	          td.className = "empty";
-	          td.textContent =
-	            r.kind === "entity"
-	              ? "No registered data home for this entity — homes register at creation (or when the registry facade lands)."
-	              : r.kind === "user"
-	                ? "No registered data homes for this plane — a user's homes register when their service first boots."
-	                : "No registered homes for the default plane.";
+	          td.textContent = (kindFilter || cacheQuery)
+	            ? `No caches match ${[kindFilter && `kind "${kindFilter}"`, cacheQuery && `"${cacheQuery}"`].filter(Boolean).join(" + ")}.`
+	            : "No caches on this plane.";
 	          tr.append(td);
 	          body.append(tr);
 	        }
-	        const rest = rows.length - mine.length;
-	        if (rest > 0) {
-	          const span = document.createElement("span");
-	          span.textContent = `${rest} more registered home${rest === 1 ? "" : "s"} are machine-wide or belong to other planes (model caches, other owners) — `;
-	          const link = document.createElement("a");
-	          link.href = "#";
-	          link.textContent = "Machine-wide data & caches";
-	          link.onclick = (ev) => {
-	            ev.preventDefault();
-	            const d = $("data-homes-section");
-	            d.open = true;
-	            loadDataHomes();
-	            try { d.scrollIntoView({ block: "start" }); } catch {}
-	          };
-	          rem.append(span, link);
+	        if (stale.length) {
+	          const sep = document.createElement("tr");
+	          const sepTd = document.createElement("td");
+	          sepTd.colSpan = 5;
+	          sepTd.className = "muted";
+	          sepTd.style.paddingTop = "14px";
+	          sepTd.innerHTML = `<strong>Stale registrations (${stale.length}, whole machine registry)</strong> — rows whose path no longer exists, mostly left by dead test/scratch gateways. Forget removes the ROW only; disk is untouched.`;
+	          sep.append(sepTd);
+	          body.append(sep);
+	          for (const h of stale) {
+	            const tr = document.createElement("tr");
+	            for (const cell of [h.name || "", h.kind || "", "missing"]) {
+	              const td = document.createElement("td");
+	              td.className = "muted";
+	              td.textContent = String(cell);
+	              tr.append(td);
+	            }
+	            const pathTd = document.createElement("td");
+	            pathTd.className = "muted";
+	            pathTd.textContent = h.path || "";
+	            tr.append(pathTd);
+	            const act = document.createElement("td");
+	            const forget = document.createElement("button");
+	            forget.className = "secondary";
+	            forget.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Forget</span>`;
+	            forget.title = "Remove this stale registry row (disk untouched)";
+	            forget.setAttribute("aria-label", `Forget ${h.name}`);
+	            forget.onclick = () => forgetDataHomes({ name: h.name });
+	            act.append(forget);
+	            tr.append(act);
+	            body.append(tr);
+	          }
 	        }
+	        const notes = [];
+	        if (optSync.reset) notes.push(`The "${optSync.lost}" filter no longer matches anything — showing all kinds.`);
+	        if (filteredOut > 0) notes.push(`${filteredOut} cache${filteredOut === 1 ? "" : "s"} hidden by the filter.`);
+	        if (!sizing && mine.length) {
+	          const total = mine.reduce((a, h) => a + (typeof h.size_bytes === "number" ? h.size_bytes : 0), 0);
+	          notes.push(`${mine.length} cache${mine.length === 1 ? "" : "s"} · ${_fmtBytes(total)} on disk.`);
+	        }
+	        if (durable > 0) {
+	          notes.push(`${durable} durable store${durable === 1 ? "" : "s"} (deliverables, session history, entity minds) are not caches — deliverables live in the Artifacts tab.`);
+	        }
+	        if (logsCount > 0) {
+	          notes.push(`${logsCount} log home${logsCount === 1 ? "" : "s"} live in the Logs tab.`);
+	        }
+	        if (foreignLive > 0) {
+	          notes.push(`${foreignLive} home${foreignLive === 1 ? "" : "s"} belong to OTHER gateways' data roots on this machine and are not shown.`);
+	        }
+	        if (stale.length > 1) {
+	          notes.push(""); // spacing before the bulk action line
+	        }
+	        rem.textContent = notes.filter(Boolean).join(" ");
+	        if (stale.length > 1) {
+	          const bulk = document.createElement("button");
+	          bulk.className = "secondary";
+	          bulk.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Forget all stale (${stale.length})</span>`;
+	          bulk.title = "Remove every stale registry row in one go (disk untouched)";
+	          bulk.onclick = () => forgetDataHomes({ all_stale: true });
+	          rem.append(document.createElement("br"), bulk);
+	        }
+	        const rest = rows.length - attributed;
+	        if (rest > 0 && r.kind !== "default") {
+	          rem.append(document.createTextNode(` ${rest} more home${rest === 1 ? "" : "s"} belong to other planes — the default runtime lists the machine-wide ones.`));
+	        }
+	      };
+
+	      // The toolbar's re-render hook (render-only, no fetch).
+	      state.cachesRerender = () => {
+	        if (state.cachesLast) renderRows(state.cachesLast.rows, state.cachesLast.warnings, state.cachesLast.sizing);
+	      };
+	      try {
+	        const cached = !force && state.dataHomes;
+	        if (cached) {
+	          renderRows(cached.rows, cached.warnings, false);
+	          return;
+	        }
+	        // TWO-PHASE (operator 2026-08-19: a 30s blank "measuring" pane is
+	        // unacceptable): the row LIST paints instantly from the no-walk
+	        // listing — names, kinds, policies are registry facts — while the
+	        // size walk runs behind it; the sized pass then replaces the rows.
+	        tableLoadingRow(body, 5, "Loading caches…");
+	        try {
+	          const quick = await api("/api/gateway/admin/data-homes?sizes=0");
+	          if (token !== state.runtimeDetailToken) return;
+	          renderRows(quick.homes || [], quick.warnings || [], true);
+	        } catch (e) {
+	          // The fast paint is best-effort — the sized pass below still
+	          // owns the final render.
+	          tableLoadingRow(body, 5, "Measuring caches…");
+	        }
+	        const { rows, warnings } = await ensureDataHomes(true);
+	        if (token !== state.runtimeDetailToken) return;
+	        renderRows(rows, warnings, false);
 	      } catch (e) {
 	        if (token !== state.runtimeDetailToken) return;
 	        body.textContent = "";
@@ -4579,8 +5803,446 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        msg.className = "message error";
 	      }
 	    }
+	    async function forgetDataHomes(body) {
+	      const msg = $("runtime-caches-message");
+	      const label = body.all_stale ? "every stale registration" : `the stale row ${body.name}`;
+	      const go = await confirmAction({
+	        title: "Forget stale registrations?",
+	        message: `This removes ${label} from the data-home registry. Disk is never touched — the rows point at paths that no longer exist.`,
+	        confirmLabel: "Forget",
+	      });
+	      if (!go) return;
+	      try {
+	        const out = await api("/api/gateway/admin/data-homes/forget", {
+	          method: "POST",
+	          body: JSON.stringify(body),
+	        });
+	        msg.textContent = `Forgot ${out.forgotten.length} row${out.forgotten.length === 1 ? "" : "s"}`
+	          + ((out.errors || []).length ? ` — errors: ${out.errors.join("; ")}` : "");
+	        state.dataHomes = null;
+	        await loadRuntimeCaches();
+	      } catch (e) {
+	        msg.textContent = String((e && e.message) || e);
+	        msg.className = "message error";
+	      }
+	    }
+	    async function loadRuntimeLogs() {
+	      // The Logs tab (operator 2026-08-19: logs are their own category,
+	      // and readable). Files across this plane's registered log homes,
+	      // newest first; stale log homes get Forget.
+	      const r = state.selectedRuntime;
+	      if (!r) return;
+	      const token = state.runtimeDetailToken;
+	      const body = $("runtime-logs-table");
+	      const msg = $("runtime-logs-message");
+	      const note = $("runtime-logs-note");
+	      tableLoadingRow(body, 4, "Listing log files…");
+	      msg.textContent = "";
+	      msg.className = "message";
+	      note.textContent = "";
+	      try {
+	        const data = await api("/api/gateway/admin/logs");
+	        if (token !== state.runtimeDetailToken) return;
+	        const homes = Array.isArray(data.homes) ? data.homes : [];
+	        // Same plane-attribution rule as the Cache tab: the default plane
+	        // owns its homes plus the machine-wide ones.
+	        const wantDefault = r.kind === "default";
+	        const minePred = (h) => {
+	          const a = homeAssociation({ path: h.path, kind: "logs", name: h.home, meta: { data_root: h.data_root || "" } });
+	          if (wantDefault) return a.kind === "default" || a.kind === "machine";
+	          if (r.kind === "entity") return a.kind === "entity" && a.key === r.entity;
+	          return a.kind === "user" && a.key === `${r.tenant_id || "default"}|${r.runtime_id}`;
+	        };
+	        // Live homes of THIS gateway only — other gateways' log homes never
+	        // list here, and stale-row hygiene lives on the Cache tab.
+	        const liveHomes = homes.filter((h) => !h.missing).filter(minePred);
+	        state.logsLast = { liveHomes, wantDefault };
+	        paintLogRows(liveHomes, wantDefault);
+	      } catch (e) {
+	        if (token !== state.runtimeDetailToken) return;
+	        body.textContent = "";
+	        msg.textContent = "Logs unavailable: " + (e.message || e);
+	        msg.className = "message error";
+	      }
+	    }
+	    function paintLogRows(liveHomes, wantDefault) {
+	      // RENDER-ONLY (the toolbar re-runs this; it never refetches).
+	      const body = $("runtime-logs-table");
+	      const note = $("runtime-logs-note");
+	      {
+	        body.textContent = "";
+	        const allFiles = [];
+	        for (const h of liveHomes) for (const f of h.files || []) allFiles.push({ ...f, home: h.home, homePath: h.path });
+	        allFiles.sort((a, b) => String(b.modified_at || "").localeCompare(String(a.modified_at || "")));
+	        const homeSync = syncDerivedOptions($("runtime-logs-home"), allFiles.map((f) => f.home), "all log homes");
+	        const homeFilter = ($("runtime-logs-home").value || "").trim();
+	        const logNeedle = makeNeedle($("runtime-logs-search").value);
+	        const logQuery = logNeedle.text;
+	        const files = allFiles.filter((f) => {
+	          if (homeFilter && f.home !== homeFilter) return false;
+	          return logNeedle.matches(f.name);
+	        });
+	        for (const f of files) {
+	          // The ROW is the control (operator 2026-08-19): click = tail.
+	          const tr = document.createElement("tr");
+	          tr.className = "row-selectable";
+	          tr.tabIndex = 0;
+	          tr.setAttribute("role", "button");
+	          tr.setAttribute("aria-label", `View ${f.name}`);
+	          tr.title = `Click to tail ${f.name}`;
+	          tr.onclick = () => viewLogFile(f.home, f.name);
+	          tr.onkeydown = (ev) => {
+	            if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); viewLogFile(f.home, f.name); }
+	          };
+	          for (const cell of [f.name, f.home, _fmtBytes(f.size_bytes), (f.modified_at || "").replace("T", " ").slice(0, 19)]) {
+	            const td = document.createElement("td");
+	            td.textContent = String(cell);
+	            tr.append(td);
+	          }
+	          body.append(tr);
+	        }
+	        if (!files.length) {
+	          const tr = document.createElement("tr");
+	          const td = document.createElement("td");
+	          td.colSpan = 4;
+	          td.className = "empty";
+	          td.textContent = (homeFilter || logQuery)
+	            ? `No log files match ${[homeFilter && `home "${homeFilter}"`, logQuery && `"${logQuery}"`].filter(Boolean).join(" + ")}.`
+	            : (wantDefault
+	              ? "No log files yet."
+	              : "No log homes on this plane — serving logs live on the gateway default plane.");
+	          tr.append(td);
+	          body.append(tr);
+	        }
+	        note.textContent = [
+	          homeSync.reset ? `The "${homeSync.lost}" log home is gone — showing all homes.` : "",
+	          files.length < allFiles.length ? `${allFiles.length - files.length} file${allFiles.length - files.length === 1 ? "" : "s"} hidden by the filter.` : "",
+	          files.length ? "Serving and launcher logs — regenerable text. Purge a log home from the CLI (abstractgateway data purge) if it grows too large." : "",
+	        ].filter(Boolean).join(" ");
+	      }
+	    }
+	    // Shared modal discipline (design adversary Q5/S7): Escape closes via
+	    // addEventListener (never document.onkeydown — confirmAction owns and
+	    // clobbers that), the confirm layer wins when open, backdrop clicks
+	    // within 250ms of opening are ignored (a double-click's second click
+	    // lands on the fresh backdrop and closed what it just opened), and
+	    // focus lands on the dialog's Close button.
+	    const _modalState = {};
+	    function _openModal(backdropId, closeFn) {
+	      const backdrop = $(backdropId);
+	      backdrop.classList.remove("hidden");
+	      const openedAt = Date.now();
+	      const onKey = (ev) => {
+	        if (ev.key !== "Escape") return;
+	        const confirm = $("confirm-backdrop");
+	        if (confirm && !confirm.classList.contains("hidden")) return;
+	        ev.stopPropagation();
+	        closeFn();
+	      };
+	      document.addEventListener("keydown", onKey);
+	      _modalState[backdropId] = { onKey, openedAt };
+	      backdrop.onclick = (event) => {
+	        if (event.target !== backdrop) return;
+	        if (Date.now() - openedAt < 250) return;
+	        closeFn();
+	      };
+	      const closeBtn = backdrop.querySelector(".modal-actions button:last-of-type");
+	      if (closeBtn) try { closeBtn.focus(); } catch {}
+	    }
+	    function _closeModal(backdropId) {
+	      $(backdropId).classList.add("hidden");
+	      const st = _modalState[backdropId];
+	      if (st) {
+	        document.removeEventListener("keydown", st.onKey);
+	        delete _modalState[backdropId];
+	      }
+	    }
+	    async function viewLogFile(home, file) {
+	      // A MODAL, not an inline pane (operator 2026-08-19: the inline
+	      // viewer clogged the page and opened below the fold).
+	      state.currentLog = { home, file };
+	      $("log-modal-title").textContent = file;
+	      $("log-modal-sub").textContent = `from ${home} — newest lines at the bottom`;
+	      $("log-modal-status").textContent = "";
+	      const pre = $("log-modal-pre");
+	      pre.textContent = "Reading tail…";
+	      _openModal("log-modal-backdrop", closeLogModal);
+	      try {
+	        const maxBytes = $("log-modal-tail-size").value || "65536";
+	        const data = await api(`/api/gateway/admin/logs/read?home=${encodeURIComponent(home)}&file=${encodeURIComponent(file)}&max_bytes=${encodeURIComponent(maxBytes)}`);
+	        pre.textContent = data.content || "(empty file)";
+	        $("log-modal-status").textContent = data.truncated
+	          ? `showing the last ${_fmtBytes(data.bytes)} — earlier content not loaded (pick a bigger window to see more)`
+	          : `whole file (${_fmtBytes(data.bytes)})`;
+	        pre.scrollTop = pre.scrollHeight;
+	      } catch (e) {
+	        pre.textContent = String((e && e.message) || e);
+	      }
+	    }
+	    function closeLogModal() {
+	      state.currentLog = null;
+	      _closeModal("log-modal-backdrop");
+	    }
+	    async function loadRuntimeArtifacts() {
+	      // The Artifacts tab (operator 2026-08-19): the DELIVERABLES — images,
+	      // video, audio, text your agents produced — never conflated with
+	      // caches. Row click opens the preview MODAL. NOTE: the artifact
+	      // index is the gateway store this session reads (no per-plane
+	      // filter on /artifacts/search) — the note line says so.
+	      const r = state.selectedRuntime;
+	      if (!r) return;
+	      const token = state.runtimeDetailToken;
+	      // Per-call sequence (adversary S2): debounced searches + modality
+	      // changes put several same-token requests in flight — only the
+	      // NEWEST may paint.
+	      const seq = (state.artifactsSeq = (state.artifactsSeq || 0) + 1);
+	      const pageSize = 100;
+	      const offset = Math.max(0, state.artifactsOffset || 0);
+	      const body = $("runtime-artifacts-table");
+	      const msg = $("runtime-artifacts-message");
+	      const note = $("runtime-artifacts-note");
+	      tableLoadingRow(body, 6, "Loading artifacts…");
+	      msg.textContent = "";
+	      msg.className = "message";
+	      note.textContent = "";
+	      const modality = $("runtime-artifacts-modality").value;
+	      const query = $("runtime-artifacts-search").value.trim();
+	      try {
+	        const q = new URLSearchParams({ scope: "all", limit: String(pageSize), offset: String(offset), order_by: "created_at", order: "desc" });
+	        if (modality) q.set("modality", modality);
+	        if (query) q.set("query", query);
+	        const data = await api(`/api/gateway/artifacts/search?${q.toString()}`);
+	        if (token !== state.runtimeDetailToken || seq !== state.artifactsSeq) return;
+	        const items = Array.isArray(data.items) ? data.items : [];
+	        // The post-filter marker is plumbing, not operator information.
+	        msg.textContent = (data.warnings || [])
+	          .filter((w) => !String(w).includes("query_or_scope_requires_gateway_post_filter"))
+	          .join(" · ");
+	        body.textContent = "";
+	        for (const a of items) {
+	          const name = a.filename || a.artifact_id || "";
+	          const tr = document.createElement("tr");
+	          tr.className = "row-selectable";
+	          tr.tabIndex = 0;
+	          tr.setAttribute("role", "button");
+	          tr.setAttribute("aria-label", `Preview ${name}`);
+	          tr.title = `Click to preview ${name}`;
+	          tr.onclick = () => openArtifactModal(a);
+	          tr.onkeydown = (ev) => {
+	            if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openArtifactModal(a); }
+	          };
+	          const kind = _artifactRenderKind(a);
+	          const cells = [
+	            name,
+	            kind + (a.content_type ? ` (${a.content_type})` : ""),
+	            _fmtBytes(a.size_bytes),
+	            a.workflow_id || "—",
+	            a.run_id ? String(a.run_id).slice(0, 8) : "—",
+	            (a.created_at || "").replace("T", " ").slice(0, 19),
+	          ];
+	          for (const c of cells) {
+	            const td = document.createElement("td");
+	            td.textContent = String(c);
+	            tr.append(td);
+	          }
+	          body.append(tr);
+	        }
+	        if (!items.length) {
+	          const tr = document.createElement("tr");
+	          const td = document.createElement("td");
+	          td.colSpan = 6;
+	          td.className = "empty";
+	          const typeLabel = modality ? $("runtime-artifacts-modality").selectedOptions[0].textContent : "";
+	          td.textContent = query
+	            ? (modality ? `No ${typeLabel} artifacts match "${query}".` : `No artifacts match "${query}".`)
+	            : (modality ? `No ${typeLabel} artifacts yet.` : "No artifacts yet — runs that produce files, images, audio, or video will list them here.");
+	          tr.append(td);
+	          body.append(tr);
+	        }
+	        const total = Number(data.total || items.length);
+	        renderPager($("runtime-artifacts-pager"), {
+	          offset,
+	          pageSize,
+	          shown: items.length,
+	          hasMore: data.has_more === true || offset + items.length < total,
+	          total,
+	          onPage: (next) => { state.artifactsOffset = next; loadRuntimeArtifacts(); },
+	        });
+	        note.textContent = "Artifacts are indexed on the gateway store this console session reads (all planes).";
+	      } catch (e) {
+	        if (token !== state.runtimeDetailToken || seq !== state.artifactsSeq) return;
+	        body.textContent = "";
+	        msg.textContent = "Artifacts unavailable: " + (e.message || e);
+	        msg.className = "message error";
+	      }
+	    }
+	    function _artifactRenderKind(a) {
+	      // The STORE's precedence, mirrored (abstractruntime artifacts.py —
+	      // design adversary Q1): render_kind → content_type map → filename
+	      // extension. NEVER semantic_kind (it carries non-render values like
+	      // "transcript"/"workflow_snapshot").
+	      const rk = String(a.render_kind || "").toLowerCase();
+	      if (rk) return rk;
+	      const ct = String(a.content_type || "").toLowerCase();
+	      if (ct.startsWith("image/")) return "image";
+	      if (ct.startsWith("video/")) return "video";
+	      if (ct.startsWith("audio/")) return "audio";
+	      if (ct === "application/json" || ct.endsWith("+json")) return "json";
+	      if (ct === "text/markdown") return "markdown";
+	      if (ct === "text/html") return "html";
+	      if (ct === "application/pdf") return "document";
+	      if (ct.startsWith("text/")) return "text";
+	      const ext = String(a.filename || "").toLowerCase().split(".").pop() || "";
+	      if (["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(ext)) return "image";
+	      if (["mp4", "webm", "mov"].includes(ext)) return "video";
+	      if (["mp3", "wav", "ogg", "flac", "m4a"].includes(ext)) return "audio";
+	      if (["md", "markdown"].includes(ext)) return "markdown";
+	      if (ext === "json") return "json";
+	      if (ext === "html" || ext === "htm") return "html";
+	      if (["txt", "log", "csv"].includes(ext)) return "text";
+	      if (ext === "pdf") return "document";
+	      return "binary";
+	    }
+	    const _ARTIFACT_TEXT_CAP = 1024 * 1024;
+	    async function _fetchArtifactText(url) {
+	      // Raw fetch, never api() (it forces Accept: json and JSON-parses).
+	      // Raced deadline per the console's no-unbounded-fetch doctrine.
+	      const controller = typeof AbortController === "function" ? new AbortController() : null;
+	      const timer = setTimeout(() => { try { controller && controller.abort(); } catch {} }, 30000);
+	      try {
+	        const res = await fetch(url, { credentials: "same-origin", signal: controller ? controller.signal : undefined });
+	        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+	        const text = await res.text();
+	        return text.length > _ARTIFACT_TEXT_CAP ? { text: text.slice(0, _ARTIFACT_TEXT_CAP), clipped: true } : { text, clipped: false };
+	      } finally {
+	        clearTimeout(timer);
+	      }
+	    }
+	    async function openArtifactModal(a) {
+	      const name = a.filename || a.artifact_id || "artifact";
+	      const kind = _artifactRenderKind(a);
+	      $("artifact-modal-title").textContent = name;
+	      $("artifact-modal-sub").textContent = [
+	        kind,
+	        a.content_type || "",
+	        typeof a.size_bytes === "number" ? _fmtBytes(a.size_bytes) : "",
+	        (a.created_at || "").replace("T", " ").slice(0, 19),
+	      ].filter(Boolean).join(" · ");
+	      const meta = $("artifact-modal-meta");
+	      meta.textContent = "";
+	      for (const [k, v] of [["workflow", a.workflow_id], ["run", a.run_id], ["node", a.node_id], ["session", a.session_id], ["task", a.task]]) {
+	        if (!v) continue;
+	        const chip = document.createElement("span");
+	        chip.className = "muted";
+	        chip.style.marginRight = "12px";
+	        chip.textContent = `${k}: ${v}`;
+	        meta.append(chip);
+	      }
+	      // The bytes' location on the gateway host (served to admins only).
+	      if (a.content_path) {
+	        const pathLine = document.createElement("div");
+	        pathLine.style.marginTop = "6px";
+	        const label = document.createElement("span");
+	        label.className = "muted";
+	        label.textContent = "path: ";
+	        const code = document.createElement("code");
+	        code.textContent = a.content_path;
+	        code.title = "on-disk location on the gateway host";
+	        pathLine.append(label, code);
+	        meta.append(pathLine);
+	      }
+	      const content = $("artifact-modal-content");
+	      _clearArtifactModalContent();
+	      const rawLink = $("artifact-modal-raw");
+	      const hasContent = Boolean(a.run_id && a.artifact_id);
+	      rawLink.classList.toggle("hidden", !hasContent);
+	      _openModal("artifact-modal-backdrop", closeArtifactModal);
+	      if (!hasContent) {
+	        content.textContent = "This artifact has no run-scoped content route (no run id) — metadata only.";
+	        return;
+	      }
+	      const base = `/api/gateway/runs/${encodeURIComponent(a.run_id)}/artifacts/${encodeURIComponent(a.artifact_id)}/content`;
+	      rawLink.href = `${base}?access=download`;
+	      const previewUrl = `${base}?access=preview`;
+	      const tooBig = typeof a.size_bytes === "number" && a.size_bytes > _ARTIFACT_TEXT_CAP;
+	      try {
+	        if (kind === "image" || kind === "video" || kind === "audio") {
+	          // Blob-loaded (adversary S1): the content route serves no byte
+	          // ranges, so a direct <video src> fails on Safari; a typed Blob
+	          // object-URL plays everywhere and octet-stream retypes honestly.
+	          content.textContent = "Loading preview…";
+	          const res = await fetch(previewUrl, { credentials: "same-origin" });
+	          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+	          let blob = await res.blob();
+	          if (!blob.type || blob.type === "application/octet-stream") {
+	            const guess = { image: "image/png", video: "video/mp4", audio: "audio/mpeg" }[kind];
+	            blob = blob.slice(0, blob.size, guess);
+	          }
+	          const url = URL.createObjectURL(blob);
+	          state.artifactObjectUrls = state.artifactObjectUrls || [];
+	          state.artifactObjectUrls.push(url);
+	          content.textContent = "";
+	          const el = document.createElement(kind === "image" ? "img" : kind);
+	          if (kind !== "image") el.controls = true;
+	          el.src = url;
+	          if (kind === "image") el.alt = name;
+	          content.append(el);
+	        } else if (kind === "markdown" || kind === "json" || kind === "text" || kind === "code" || kind === "html") {
+	          if (tooBig) {
+	            content.textContent = `Too large to preview inline (${_fmtBytes(a.size_bytes)}) — use Open raw.`;
+	            return;
+	          }
+	          content.textContent = "Loading preview…";
+	          const { text, clipped } = await _fetchArtifactText(previewUrl);
+	          content.textContent = "";
+	          if (kind === "markdown") {
+	            const div = document.createElement("div");
+	            div.className = "artifact-md";
+	            div.innerHTML = renderMarkdown(text);
+	            content.append(div);
+	          } else {
+	            const pre = document.createElement("pre");
+	            let shown = text;
+	            if (kind === "json" && text.length < 512 * 1024) {
+	              try { shown = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+	            }
+	            // html renders as ESCAPED text only (adversary Q1): agent-
+	            // authored markup must never become live DOM here.
+	            pre.textContent = shown;
+	            content.append(pre);
+	          }
+	          if (clipped) {
+	            const note = document.createElement("p");
+	            note.className = "muted";
+	            note.textContent = "Preview clipped at 1 MB — use Open raw for the full file.";
+	            content.append(note);
+	          }
+	        } else {
+	          content.textContent = `No inline preview for ${kind} artifacts — use Open raw.`;
+	        }
+	      } catch (e) {
+	        content.textContent = "Preview failed: " + ((e && e.message) || e);
+	      }
+	    }
+	    function _clearArtifactModalContent() {
+	      const content = $("artifact-modal-content");
+	      // Stop playback BEFORE removal (adversary BLOCKER-2: hidden modals
+	      // keep playing) and revoke object URLs.
+	      for (const el of content.querySelectorAll("video, audio")) {
+	        try { el.pause(); el.removeAttribute("src"); el.load(); } catch {}
+	      }
+	      content.textContent = "";
+	      for (const url of state.artifactObjectUrls || []) {
+	        try { URL.revokeObjectURL(url); } catch {}
+	      }
+	      state.artifactObjectUrls = [];
+	    }
+	    function closeArtifactModal() {
+	      _clearArtifactModalContent();
+	      _closeModal("artifact-modal-backdrop");
+	    }
 	    async function purgeDataHome(name, msgEl) {
-	      const msg = msgEl || $("data-homes-message");
+	      const msg = msgEl || $("runtime-caches-message");
 	      try {
 	        // Dry-run first: the confirm dialog shows the REAL accounting.
 	        const dry = await api("/api/gateway/admin/data-homes/purge", {
@@ -4596,11 +6258,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          method: "POST", body: JSON.stringify({ name, confirm_name: name }),
 	        });
 	        msg.textContent = `Purged ${name}: ${done.files_deleted} files, ${_fmtBytes(done.bytes_freed)} freed` + ((done.errors || []).length ? ` — errors: ${done.errors.join("; ")}` : "");
-	        // Both cache surfaces re-render off the invalidated cache: the
-	        // machine table always (cheap, may be hidden), the Caches tab
-	        // when it is the visible panel.
+	        // The Cache tab is the ONE cache surface — re-render it off the
+	        // invalidated shared cache.
 	        state.dataHomes = null;
-	        await loadDataHomes();
 	        if (state.selectedRuntime && state.runtimeSubtab === "caches") await loadRuntimeCaches();
 	      } catch (e) {
 	        // Registry refusals arrive verbatim (409 detail) — render them.
@@ -4608,39 +6268,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 
-	    function _renderRunsSessionChip() {
-	      // The sessions->runs cross-filter's visible state: a dismissible
-	      // chip in the toolbar (an invisible filter would make the runs
-	      // table silently lie about "all runs").
-	      const box = $("runs-session-chip");
-	      if (!box) return;
-	      box.textContent = "";
-	      const sid = state.runsSessionFilter || "";
-	      if (!sid) return;
-	      const chip = document.createElement("span");
-	      chip.className = "runs-filter-chip";
-	      const label = document.createElement("span");
-	      label.textContent = "session: " + (sid.length > 24 ? sid.slice(0, 24) + "…" : sid);
-	      label.title = sid;
-	      const x = document.createElement("button");
-	      x.textContent = "×";
-	      x.title = "Clear the session filter";
-	      x.setAttribute("aria-label", "Clear the session filter");
-	      x.onclick = () => { state.runsSessionFilter = ""; _renderRunsSessionChip(); loadRuns(); };
-	      chip.append(label, x);
-	      box.append(chip);
-	    }
 	    async function loadRuns() {
 	      const body = $("runs-table");
 	      if (!body) return;
+	      // Per-call sequence: a debounced search + a Next click put several
+	      // requests in flight; only the NEWEST may paint (else page-1 rows
+	      // land under a page-2 pager).
+	      const seq = (state.runsSeq = (state.runsSeq || 0) + 1);
 	      tableLoadingRow(body, 7, "Loading runs…");
 	      try {
 	        const status = ($("runs-status").value || "").trim();
+	        const search = ($("runs-search").value || "").trim();
 	        const rootOnly = $("runs-root-only").checked;
-	        const q = new URLSearchParams({ limit: "100", include_ledger_len: "false", root_only: String(rootOnly) });
+	        const runsPageSize = 100;
+	        const runsOffset = Math.max(0, state.runsOffset || 0);
+	        const q = new URLSearchParams({ limit: String(runsPageSize), offset: String(runsOffset), include_ledger_len: "false", root_only: String(rootOnly) });
 	        if (status) q.set("status", status);
-	        if (state.runsSessionFilter) q.set("session_id", state.runsSessionFilter);
+	        if (search) q.set("query", search);
         const data = await api("/api/gateway/runs?" + q.toString());
+        if (seq !== state.runsSeq) return;  // a newer request owns the table
         const rows = Array.isArray(data.items) ? data.items : (Array.isArray(data.runs) ? data.runs : []);
 	        body.textContent = "";
 	        for (const r of rows) {
@@ -4672,23 +6318,46 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (!rows.length) {
 	          const tr = document.createElement("tr");
 	          const td = document.createElement("td");
-	          td.colSpan = 7; td.className = "section-note"; td.textContent = "No runs match.";
+	          td.colSpan = 7;
+	          td.className = "empty";
+	          td.textContent = search
+	            ? (status ? `No ${status} runs match "${search}".` : `No runs match "${search}".`)
+	            : (status ? `No ${status} runs.` : "No runs yet.");
 	          tr.append(td); body.append(tr);
 	        }
-	        $("runs-message").textContent = "";
+	        renderPager($("runs-pager"), {
+	          offset: runsOffset,
+	          pageSize: runsPageSize,
+	          shown: rows.length,
+	          hasMore: data.has_more === true,
+	          onPage: (next) => { state.runsOffset = next; loadRuns(); },
+	        });
+	        // #TRUNCATION rides through verbatim: a cost-capped scan must never
+	        // look like the end of the list.
+	        $("runs-message").textContent = (data.warnings || []).join(" · ");
 	        $("runs-message").className = "message";
 	      } catch (e) {
+	        if (seq !== state.runsSeq) return;
 	        $("runs-message").textContent = String(e.message || e);
 	        $("runs-message").className = "message error";
 	      }
 	    }
 	    async function inspectRun(runId) {
-	      const box = $("run-inspect");
-	      box.textContent = "";
+	      // A MODAL (operator 2026-08-19: the old inline div rendered below
+	      // the table's fold and looked like the button did nothing).
+	      const kv = $("run-modal-kv");
+	      const raw = $("run-modal-raw");
+	      $("run-modal-title").textContent = `Run ${String(runId).slice(0, 12)}`;
+	      $("run-modal-sub").textContent = "";
+	      kv.textContent = "Loading run…";
+	      raw.textContent = "";
+	      _openModal("run-modal-backdrop", closeRunModal);
 	      try {
 	        const r = await api(`/api/gateway/runs/${encodeURIComponent(runId)}`);
+	        $("run-modal-sub").textContent = [r.workflow_id, r.status].filter(Boolean).join(" · ");
+	        kv.textContent = "";
 	        const rows = [
-	          ["Run", r.run_id || runId], ["Workflow", r.workflow_id || ""], ["Status", r.status || ""],
+	          ["Run", r.run_id || runId], ["Workflow", r.workflow_id || "—"], ["Status", r.status || "—"],
 	          ["Node", r.current_node || ""], ["Session", r.session_id || ""], ["Actor", r.actor_id || ""],
 	          ["Waiting", r.waiting ? JSON.stringify(r.waiting).slice(0, 160) : ""], ["Error", r.error || ""],
 	          ["Created", String(r.created_at || "").slice(0, 19)], ["Updated", String(r.updated_at || "").slice(0, 19)],
@@ -4698,9 +6367,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const line = document.createElement("div"); line.className = "entity-kv";
 	          const key = document.createElement("span"); key.className = "entity-kv-key"; key.textContent = k;
 	          const val = document.createElement("span"); val.className = "entity-kv-val"; val.textContent = String(v);
-	          line.append(key); line.append(val); box.append(line);
+	          line.append(key); line.append(val); kv.append(line);
 	        }
-	      } catch (e) { box.textContent = "inspect failed: " + (e.message || e); }
+	        try { raw.textContent = JSON.stringify(r, null, 2); } catch { raw.textContent = String(r); }
+	      } catch (e) {
+	        kv.textContent = "inspect failed: " + (e.message || e);
+	      }
+	    }
+	    function closeRunModal() {
+	      _closeModal("run-modal-backdrop");
 	    }
 	    // Client-supplied idempotency key for the /commands door (UUID preferred).
 	    function cmdId() {
@@ -6413,6 +8088,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 		        $("page-title").textContent = "AbstractGateway Console";
 		        $("page-subtitle").textContent = "Users & summoned entities, runtimes, providers, and multimodal capabilities";
 		        $("account").textContent = "No active session.";
+	        state.runtimeConfig = null;
+	        state.myWorkspacePolicy = null;
 	        $("users-section").classList.add("hidden");
 	        $("runtime-reservations-section").classList.add("hidden");
 	      $("defaults-scope").textContent = "Sign in to edit provider/model defaults for this Gateway runtime.";
@@ -6434,17 +8111,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // the manage view.
       $("users-section").classList.toggle("hidden", !p.admin || Boolean(state.manageName));
       $("runtimes-section").classList.toggle("hidden", !p.admin);
-      $("runtime-reservations-section").classList.toggle("hidden", !p.admin);
+      // Retained runtimes: shown only for admins AND only when reservations
+      // exist (operator 2026-08-19: the Runtimes tab is the table + the
+      // tabbed panel — recovery UI appears when there is something to
+      // recover, never as standing clutter). renderRuntimeReservations
+      // handles the has-rows half.
+      if (!p.admin) $("runtime-reservations-section").classList.add("hidden");
       // The detail pane shows only for admins WITH a live selection — a
       // background account refresh must not re-hide an open detail, and a
       // non-admin must never see it (dm#32 redesign: the pane replaced the
       // old global runs-section).
       $("runtime-detail-section").classList.toggle("hidden", !p.admin || !state.selectedRuntime);
-      $("data-homes-section").classList.toggle("hidden", !p.admin);
       // Both Runtimes sections are admin-gated, so for a non-admin the tab
       // would render EMPTY (IA adversary) — hide the tab itself and fold a
       // restored runtimes selection back to the first tab.
       $("tab-button-runtimes").classList.toggle("hidden", !p.admin);
+      // Workflows stays visible to everyone — listing and exporting are
+      // user-level. Only the WRITE affordance is admin-gated, matching the
+      // server rule; hiding the tab would hide the workflows a user runs.
+      $("workflows-import").classList.toggle("hidden", !p.admin);
       if (!p.admin && state.activeTab === "runtimes") setActiveTab("users");
       applyEntityAdminGating();
       $("defaults-scope").textContent = p.admin
@@ -6454,6 +8139,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      setStatus(true, `${p.tenant_id}/${p.user_id}`);
 	      setActiveTab(state.activeTab);
 	    }
+    function principalKind(u) {
+      const kind = String((u && u.principal_kind) || "").trim().toLowerCase();
+      if (kind === "human" || kind === "entity") return kind;
+      return (u && Array.isArray(u.roles) && u.roles.some((r) => String(r || "").trim().toLowerCase() === "entity"))
+        ? "entity"
+        : "human";
+    }
     function renderUsers(users) {
       const tbody = $("users-table");
       tbody.textContent = "";
@@ -6461,8 +8153,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // users and entities in users... terrible design") — they live in the
       // entities roster; here they only get an honest one-line count.
       const all = users || [];
-      const humans = all.filter((u) => !((u.roles || []).includes("entity")));
-      const entityCount = all.length - humans.length;
+      const humans = all.filter((u) => principalKind(u) !== "entity");
+      const entityCount = all.filter((u) => principalKind(u) === "entity").length;
       const note = $("users-entity-note");
       if (note) {
         note.classList.toggle("hidden", entityCount === 0);
@@ -6484,6 +8176,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tr.innerHTML = `<td>${esc(shownUser)}</td><td>${esc(u.email || "—")}</td><td>${esc(u.runtime_id || u.user_id)}</td><td>${esc((u.roles || []).join(", "))}</td><td><span class="state-pill ${u.enabled ? "ok" : "off"}">${u.enabled ? "enabled" : "disabled"}</span></td>`;
         const actions = document.createElement("td");
         actions.className = "actions";
+        const wsp = document.createElement("button");
+        wsp.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.gear}</span><span>Workspace</span>`;
+        wsp.className = "secondary";
+        wsp.title = "Configure where this user's agents may read and write (deny-all + whitelist, or allow-all + blacklist)";
+        wsp.setAttribute("aria-label", `Workspace policy for ${u.user_id}`);
+        wsp.onclick = () => openWorkspacePolicyModal({ tenant_id: u.tenant_id || "default", user_id: u.user_id });
         const rotate = document.createElement("button");
         rotate.innerHTML = `<span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Rotate</span>`;
         rotate.className = "secondary";
@@ -6504,7 +8202,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         del.title = "Delete this account and its token — the runtime data is retained and stays reserved (see Retained runtimes)";
         del.setAttribute("aria-label", `Delete ${u.user_id}`);
         del.onclick = () => deleteUser(u);
-        actions.append(rotate, toggle, del);
+        actions.append(wsp, rotate, toggle, del);
         tr.append(actions);
         tbody.append(tr);
       }
@@ -6512,6 +8210,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function renderRuntimeReservations(reservations) {
       const tbody = $("runtime-reservations-table");
       tbody.textContent = "";
+      // Visible only when there is something to recover (admin gating is
+      // renderAccount's half) — never standing clutter on the Runtimes tab.
+      const isAdmin = state.principal?.admin === true;
+      $("runtime-reservations-section").classList.toggle("hidden", !isAdmin || !(reservations || []).length);
       if (!reservations || !reservations.length) {
         const tr = document.createElement("tr");
         tr.innerHTML = `<td colspan="6" class="empty">No retained runtime reservations.</td>`;
@@ -6528,7 +8230,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         empty.value = "";
         empty.textContent = "Transfer to...";
         transferTarget.append(empty);
-        for (const u of state.users.filter((u) => u.tenant_id === r.tenant_id)) {
+        for (const u of state.users.filter((u) => u.tenant_id === r.tenant_id && principalKind(u) !== "entity")) {
           const opt = document.createElement("option");
           opt.value = u.user_id;
           opt.textContent = `${u.user_id} (${u.runtime_id || u.user_id})`;
@@ -7543,7 +9245,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // catch: they sat at the end of a six-round-trip sequential chain, so
       // the first painted screen still showed the pre-login error row).
       if (state.activeTab === "users") loadEntities();
-      if (state.activeTab === "runtimes") loadRuntimes();  // data homes load on disclosure expand — nothing eager (dm#35)
+      if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached; no fold since 2026-08-19)
       try {
         await loadEndpointProfiles();
       } catch (err) {
@@ -7949,15 +9651,31 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("tab-button-users").onclick = () => { setActiveTab("users"); loadEntities(); };
 	    // (dm#32 redesign) no direct loadRuns() on tab open: loadRuntimes'
 	    // selection restore auto-selects a runtime (default first) and its
-	    // Runs tab loader fires from there. loadDataHomes stays eager — it
-	    // is today's tab-open cost and feeds both the disclosure summary
-	    // and the Caches tab's cache.
+	    // Runs tab loader fires from there. Cache sizes load when the Cache
+	    // tab opens (shared ensureDataHomes cache).
 	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); };
-	    $("data-homes-refresh").onclick = loadDataHomes;
-	    // Lazy first load (dm#35 nothing-eager rule): the machine-wide walk
-	    // runs the first time the operator OPENS the disclosure.
-	    $("data-homes-section").ontoggle = () => {
-	      if ($("data-homes-section").open && !state.dataHomes) loadDataHomes();
+	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); loadWorkflows(); };
+	    $("workflows-refresh").onclick = () => loadWorkflows();
+	    $("workflow-detail-refresh").onclick = () => loadWorkflows();
+	    $("workflows-search").oninput = () => renderWorkflows();
+	    $("workflows-show-drafts").onchange = () => loadWorkflows();
+	    $("workflows-import").onclick = () => $("workflows-import-file").click();
+	    $("workflows-import-file").onchange = async (ev) => {
+	      const files = ev.target.files;
+	      await importWorkflows(files);
+	      ev.target.value = "";
+	    };
+	    $("workflow-subtab-versions").onclick = () => {
+	      $("workflow-subtab-versions").classList.add("active");
+	      $("workflow-subtab-entrypoints").classList.remove("active");
+	      $("workflow-pane-versions").classList.remove("hidden");
+	      $("workflow-pane-entrypoints").classList.add("hidden");
+	    };
+	    $("workflow-subtab-entrypoints").onclick = () => {
+	      $("workflow-subtab-entrypoints").classList.add("active");
+	      $("workflow-subtab-versions").classList.remove("active");
+	      $("workflow-pane-entrypoints").classList.remove("hidden");
+	      $("workflow-pane-versions").classList.add("hidden");
 	    };
 	    $("tab-button-providers").onclick = () => setActiveTab("providers");
 	    $("tab-button-defaults").onclick = () => setActiveTab("defaults");
@@ -8006,9 +9724,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("entity-prompt-save").onclick = entityPromptSave;
 	    $("entity-reembed").onclick = entityReembed;
 	    $("entity-verify").onclick = entityVerify;
-	    $("runs-refresh").onclick = loadRuns;
-	    $("runs-status").onchange = loadRuns;
-	    $("runs-root-only").onchange = loadRuns;
+	    $("runs-status").onchange = () => { state.runsOffset = 0; loadRuns(); };
+	    $("runs-root-only").onchange = () => { state.runsOffset = 0; loadRuns(); };
+	    {
+	      let _runsSearchTimer = null;
+	      $("runs-search").oninput = () => {
+	        clearTimeout(_runsSearchTimer);
+	        _runsSearchTimer = setTimeout(() => { state.runsOffset = 0; loadRuns(); }, 400);
+	      };
+	      $("runs-search").onkeydown = (ev) => {
+	        if (ev.key === "Enter") { clearTimeout(_runsSearchTimer); state.runsOffset = 0; loadRuns(); }
+	      };
+	    }
 	    $("entity-chat-open").onclick = entityChatOpen;
 	    $("entity-chat-send").onclick = entityChatSend;
 	    $("entity-chat-close").onclick = entityChatClose;
@@ -8028,6 +9755,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("templates-backdrop").onclick = (event) => { if (event.target === $("templates-backdrop")) closeTemplates(); };
 	    $("tpl-select").onchange = renderTplSelectState;
 	    $("runtimes-refresh").onclick = loadRuntimes;
+		    $("my-workspace-policy-section").ontoggle = () => {
+	      if ($("my-workspace-policy-section").open && !state.myWorkspacePolicy) loadMyWorkspacePolicy();
+	    };
+	    $("my-workspace-policy-refresh").onclick = loadMyWorkspacePolicy;
+	    $("my-workspace-policy-save").onclick = () => saveMyWorkspacePolicy(false);
+	    $("my-workspace-policy-clear").onclick = () => saveMyWorkspacePolicy(true);
+	    $("wsp-cancel").onclick = closeWorkspacePolicyModal;
+	    $("wsp-save").onclick = () => saveWorkspacePolicyModal(false);
+	    $("wsp-reset").onclick = () => saveWorkspacePolicyModal(true);
+	    $("workspace-policy-modal-backdrop").onclick = (event) => {
+	      if (event.target === $("workspace-policy-modal-backdrop")) closeWorkspacePolicyModal();
+	    };
+	    // Guarded: the login-JS test harness stubs `document` without
+	    // querySelectorAll; browsers always have it.
+	    if (typeof document.querySelectorAll === "function") {
+	      for (const card of document.querySelectorAll("#wsp-mode-cards input")) {
+	        card.onchange = () => _wspSetMode(card.value);
+	      }
+	    }
 	    // Detail refresh re-runs the ACTIVE subtab's loader; on Caches it
 	    // forces a registry re-walk (the cached homes are the point of the
 	    // shared ensureDataHomes, so only an explicit refresh pays sizes).
@@ -8035,11 +9781,60 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!state.selectedRuntime) return;
 	      state.runtimeDrill = null;
 	      if (state.runtimeSubtab === "caches") { loadRuntimeCaches(true); return; }
+	      if (state.runtimeSubtab === "artifacts") { loadRuntimeArtifacts(); return; }
+	      if (state.runtimeSubtab === "logs") { loadRuntimeLogs(); return; }
+	      if (state.runtimeSubtab === "sessions") {
+	        // Refresh in place: the old per-tab ↻ preserved the page, and a
+	        // refresh that silently jumps to page 1 loses the operator's spot.
+	        if (state.selectedRuntime.kind === "default") loadRuns();
+	        else loadRuntimeRuns();
+	        return;
+	      }
 	      openRuntimeSubtab(state.runtimeSubtab || "sessions");
 	    };
 	    for (const _st of RUNTIME_SUBTABS) {
 	      $("runtime-subtab-" + _st).onclick = () => openRuntimeSubtab(_st);
 	    }
+	    $("runtime-artifacts-modality").onchange = () => { state.artifactsOffset = 0; loadRuntimeArtifacts(); };
+	    {
+	      // Debounced search + Enter fires immediately (both guarded by the
+	      // per-call sequence inside loadRuntimeArtifacts).
+	      let _artSearchTimer = null;
+	      $("runtime-artifacts-search").oninput = () => {
+	        clearTimeout(_artSearchTimer);
+	        _artSearchTimer = setTimeout(() => { state.artifactsOffset = 0; loadRuntimeArtifacts(); }, 400);
+	      };
+	      $("runtime-artifacts-search").onkeydown = (ev) => {
+	        if (ev.key === "Enter") { clearTimeout(_artSearchTimer); state.artifactsOffset = 0; loadRuntimeArtifacts(); }
+	      };
+	    }
+	    {
+	      const rerenderCaches = () => { if (state.cachesRerender) state.cachesRerender(); };
+	      const rerenderLogs = () => {
+	        if (state.logsLast) paintLogRows(state.logsLast.liveHomes, state.logsLast.wantDefault);
+	      };
+	      const debounced = (fn) => {
+	        let t = null;
+	        return () => { clearTimeout(t); t = setTimeout(fn, 400); };
+	      };
+	      $("runtime-caches-kind").onchange = rerenderCaches;
+	      $("runtime-caches-search").oninput = debounced(rerenderCaches);
+	      $("runtime-caches-search").onkeydown = (ev) => { if (ev.key === "Enter") rerenderCaches(); };
+	      $("runtime-logs-home").onchange = rerenderLogs;
+	      $("runtime-logs-search").oninput = debounced(rerenderLogs);
+	      $("runtime-logs-search").onkeydown = (ev) => { if (ev.key === "Enter") rerenderLogs(); };
+	    }
+	    $("artifact-modal-close").onclick = () => closeArtifactModal();
+	    $("run-modal-close").onclick = () => closeRunModal();
+	    $("log-modal-refresh").onclick = () => {
+	      if (state.currentLog) viewLogFile(state.currentLog.home, state.currentLog.file);
+	    };
+	    $("log-modal-tail-size").onchange = () => {
+	      if (state.currentLog) viewLogFile(state.currentLog.home, state.currentLog.file);
+	    };
+	    $("log-modal-close").onclick = closeLogModal;
+	    // Backdrop-click close is installed per-open by _openModal (with the
+	    // double-click grace) — no boot-time handler here.
 	    $("refresh-catalog").onclick = async () => {
 	      state.providerModels.clear();
 	      await loadProviders();

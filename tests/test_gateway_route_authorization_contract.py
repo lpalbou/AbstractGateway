@@ -72,10 +72,27 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # session it destroys.
     ("POST", "/api/gateway/session/login"),
     ("POST", "/api/gateway/session/logout"),
+    # --- self-service surfaces: the caller acts only on itself -------------
+    # A polite dequeue of the CALLER from a queue it joined (interaction
+    # surface, same class as chat/visit/summon).
+    ("POST", "/api/gateway/entities/{name}/queue/{queue_id}/leave"),
+    # The caller's OWN workspace policy. Its GET sibling is documented
+    # "user-level by design — every principal may read their own policy"; the
+    # PUT writes that same per-user entry and nobody else's.
+    ("PUT", "/api/gateway/workspace/policy/self"),
     # --- run lifecycle: per-principal service scoping ----------------------
     # `get_gateway_service()` resolves the CALLER's runtime via the principal
-    # contextvar when user auth is on — these mutate the caller's own runs,
-    # flows, and stores, never another principal's.
+    # contextvar — these mutate the caller's own runs, flows, and stores,
+    # never another principal's.
+    #
+    # THIS JUSTIFICATION USED TO BE CONDITIONAL ("when user auth is on") and
+    # that caveat was the hole: with user auth OFF the dispatch skipped
+    # per-principal resolution entirely and handed a registry-issued non-admin
+    # the SHARED service, so these writes reached the operator's own bundles
+    # and runs. `_principal_requires_isolation` now keys the split on the
+    # identity's origin rather than a mode flag, which is what makes the
+    # sentence above true unconditionally. If that function is ever narrowed,
+    # every entry below stops being safe.
     ("POST", "/api/gateway/runs/start"),
     ("POST", "/api/gateway/runs/schedule"),
     ("POST", "/api/gateway/runs/purge_drafts"),
@@ -166,14 +183,35 @@ def _live_route_table() -> set[tuple[str, str]]:
     from abstractgateway.app import app
 
     rows: set[tuple[str, str]] = set()
-    for route in app.routes:
-        path = getattr(route, "path", None)
-        if not path:
-            continue
-        for method in getattr(route, "methods", None) or {"GET"}:
-            if method in {"HEAD", "OPTIONS"}:
+
+    def _walk(routes: Any, prefix: str = "") -> None:
+        # FastAPI >= 0.141 does NOT flatten an included router into
+        # `app.routes` any more: `include_router` appends ONE `_IncludedRouter`
+        # wrapper holding the original router plus the prefix it was mounted
+        # under. A flat scan of `app.routes` therefore returns ZERO gateway
+        # routes, and every assertion in this module that loops over them
+        # passes VACUOUSLY — the contract stops catching new ungated write
+        # routes precisely when it is most needed. Recurse through the wrapper
+        # so this table means what its docstring says again.
+        for route in routes or []:
+            original = getattr(route, "original_router", None)
+            if original is not None:
+                ctx = getattr(route, "include_context", None)
+                _walk(getattr(original, "routes", None), prefix + str(getattr(ctx, "prefix", "") or ""))
                 continue
-            rows.add((str(method), str(path)))
+            path = getattr(route, "path", None)
+            if not path:
+                continue
+            for method in getattr(route, "methods", None) or {"GET"}:
+                if method in {"HEAD", "OPTIONS"}:
+                    continue
+                rows.add((str(method), prefix + str(path)))
+
+    _walk(app.routes)
+    assert any(p.startswith("/api/gateway") for _m, p in rows), (
+        "the live route table found ZERO /api/gateway routes — the enumeration "
+        "broke (framework upgrade?) and every contract below would pass vacuously"
+    )
     return rows
 
 

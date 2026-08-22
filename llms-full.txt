@@ -1315,6 +1315,16 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
   "http://127.0.0.1:8080/api/gateway/bundles/upload"
 ```
 
+The gateway's own bundle directory is the set every user shares, so installing,
+replacing, removing, deprecating or reloading a workflow there requires an admin
+principal; non-admin requests return `403`. Under hosted user auth each
+principal writes its own registry without admin rights. Listing and running the
+shared workflows are user-level.
+
+The response carries `loaded` alongside `ok`: `true` when the gateway is serving
+the exact version installed, `false` with a `skipped` reason when it is not, and
+`null` when `reload=false` left loadability unverified.
+
 You can also create a local env file and inspect readiness with:
 
 ```bash

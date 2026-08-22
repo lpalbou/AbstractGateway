@@ -7,7 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **The shared workflow registry is administered by the operator (2026-08-21).**
+  Installing, replacing, removing, deprecating and reloading workflows in the
+  gateway's own bundle directory now require an admin principal. The rule is
+  ownership rather than role: when hosted user auth is enabled each principal
+  writes its own registry and is unaffected; only the directory every user
+  shares is restricted. Reads are unchanged, so any user can still list and run
+  the shared workflows. One check now covers every route that writes the
+  registry — `POST /bundles/upload`, `DELETE /bundles/{bundle_id}`,
+  `POST /bundles/reload` and `POST /visualflows/{flow_id}/publish` — so a
+  workflow cannot be replaced through one door while another is guarded.
+  Non-admin callers receive `403` with the admin route to take instead.
+- **`POST /models/download` and `POST /config/capability-defaults/apply-recommended`
+  now require an admin principal (2026-08-21).** Both act on host-wide
+  resources: the first spends disk on the shared machine, the second rewrites
+  the capability defaults every user inherits. The download progress poll
+  `GET /models/download/{job}` remains user-level.
+
+### Added
+- **A Workflows tab in both consoles (2026-08-21).** The web console gains a
+  `Workflows` section and the console-TUI a `Workflows` screen (step 6), listing
+  every workflow registered on the gateway. A row is a bundle, and the version
+  cell carries two numbers — published and draft — so a registry that is mostly
+  drafts does not read as a short list. Selecting a row shows that workflow's
+  versions and its entrypoints with their declared interfaces. Versions the
+  gateway is not serving appear in a separate `Not loaded` block with the reason
+  and the file path, instead of being absent.
+
+  The tab covers the registry's lifecycle: **import** installs one or more
+  `.flow` bundles and reports, per file, whether the gateway is actually serving
+  the result; **export** downloads a version's original bytes; **delete** removes
+  a single version or a whole workflow behind a confirmation that states what is
+  irreversible and what it can determine about runs referencing it. In the TUI,
+  `e` exports to a local file, `d` deletes the selected version, `D` deletes the
+  workflow, and `t` toggles draft visibility. Listing and exporting are available
+  to any user; the write actions follow the registry ownership rule.
+- **`GET /api/gateway/bundles/{bundle_id}/download` (2026-08-21).** Returns one
+  bundle version as its original `.flow` bytes with
+  `Content-Disposition`, `Content-Length` and an `X-AbstractGateway-Bundle-Sha256`
+  checksum, so an exported workflow can be verified and re-installed unchanged.
+- **Every console search box now reads `*.jpg` (2026-08-20).** The runtime
+  tabs' filters were plain substring matches, so a filetype pattern matched
+  nothing at all — the `*` was compared literally and no row can carry one.
+  A query with no `*` and no `?` is still a case-insensitive substring
+  (`06-13` still finds a June 13th row); a query carrying either wildcard is
+  now a case-insensitive glob, anchored to the whole value and retried
+  against its basename, so `*.jpg` finds `photo.jpg` and
+  `/var/lib/gw/runs/run-1/photo.jpg` alike and `bundle-x@*:root` finds a
+  workflow. `*` crosses `/` deliberately: these boxes filter a flat list of
+  rows, they do not walk a tree. `[` stays literal. The rule is the same on
+  all four runtime tabs and in both consoles — `/artifacts/search?query=` and
+  `/runs?query=` on the server, the Cache and Logs filters in the web console
+  and the console-TUI, which carry transcriptions of the same matcher
+  (`makeNeedle` in `console.py`, `console-tui/src/query.rs`); their agreement
+  is a test, not a convention.
+
 ### Fixed
+- **A workflow version that cannot be served is now reported, not dropped
+  silently (2026-08-21).** A bundle version that misses its declared
+  `metadata.min_runtime` floor or fails to compile is still excluded from the
+  runnable set, and the file is left untouched on disk — but the reason is now
+  kept and surfaced. `GET /bundles` returns a `skipped` array carrying each
+  affected `bundle_id`, `bundle_version`, on-disk `path` and the reason;
+  `POST /bundles/reload` reports the same in its result. Version retention is
+  the point: a version other runs still reference must remain accountable, so
+  it can be repaired or deliberately removed rather than quietly disappearing
+  at the next reload.
+- **Installing a workflow reports whether it can actually run (2026-08-21).**
+  `POST /bundles/upload` and `POST /visualflows/{flow_id}/publish` return a
+  `loaded` field alongside `ok`: `true` when the gateway is serving the exact
+  version that was installed, `false` with a `skipped` reason when it is not,
+  and `null` when the request did not reload the gateway and loadability is
+  therefore unverified. `ok` is `false` only when the version is proven not to
+  be served. This also covers the case where another file in the bundle
+  directory claims the same bundle id and shadows the new version.
+- **The default framework agent cannot be deleted out from under the gateway
+  (2026-08-21).** `DELETE /bundles/{bundle_id}` returns `409` when the target
+  is the `basic-agent.flow` the gateway verifies at startup, because removing
+  it prevents the next start and bundle removal has no undo. Replacing the
+  default agent is still supported: install the replacement first, then remove
+  the old file.
 - **The container now serves the shipped workflows, and builds from source
   again (2026-08-02).** The compose profile bound a host directory over the
   registry unconditionally, so a deployment that did not run from a repo

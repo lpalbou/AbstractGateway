@@ -152,7 +152,13 @@ Evidence: `ScheduleRunRequest`, `start_scheduled_run` in `src/abstractgateway/ro
 ### 2c) Shared workflow catalog
 
 Private `/api/gateway/bundles` routes are scoped to the signed-in user's routed
-runtime. Shared/default workflows use the Gateway workflow catalog instead:
+runtime, and you may change the registry you own. The gateway's own bundle
+directory is shared by every user, so writing it — upload, delete, reload,
+deprecate, and `POST /visualflows/{flow_id}/publish` — requires an admin
+principal and otherwise returns `403`. Listing and running are unaffected. See
+[security.md](./security.md) for the full rule.
+
+Shared/default workflows use the Gateway workflow catalog instead:
 
 ```bash
 curl -sS -H "$AUTH" "$BASE_URL/api/gateway/workflow-catalog"

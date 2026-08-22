@@ -9,6 +9,8 @@ executor registry (not a hardcoded enum).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -125,6 +127,90 @@ def test_write_validates_before_persist(monkeypatch: pytest.MonkeyPatch):
         ok = client.post("/api/gateway/admin/runtime-config", json={"executor": "abstractcode"})
         assert ok.status_code == 200, ok.text
         assert ok.json()["executor"] == {"value": "abstractcode", "source": "stored"}
+
+
+def test_workspace_policy_roundtrip_and_validation(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    from abstractgateway.runtime_config import (
+        RuntimeConfigError,
+        resolve_client_workspace_scope_overrides_enabled,
+        resolve_workspace_blocked_paths,
+        resolve_workspace_mounts,
+        resolve_workspace_root,
+        write_runtime_config,
+    )
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+
+    out = write_runtime_config(
+        tmp_path,
+        {
+            "workspace_root": str(ws),
+            "workspace_allowed_paths": f"{archive}",
+            "workspace_blocked_paths": f"{blocked}",
+            "client_workspace_scope_overrides": True,
+        },
+        actor="person:admin",
+    )
+    assert out["workspace_root"] == {"value": str(ws.resolve()), "source": "stored"}
+    assert out["workspace_mounts"]["value"] == f"archive={archive.resolve()}"
+    assert out["workspace_mounts"]["source"] == "stored"
+    assert out["workspace_allowed_paths"]["value"] == str(archive.resolve())
+    assert out["workspace_blocked_paths"]["value"] == str(blocked.resolve())
+    assert out["client_workspace_scope_overrides"] == {
+        "value": True,
+        "source": "stored",
+    }
+    assert resolve_workspace_root(tmp_path) == ws.resolve()
+    assert resolve_workspace_mounts(tmp_path) == {"archive": archive.resolve()}
+    assert resolve_workspace_blocked_paths(tmp_path) == (blocked.resolve(),)
+    assert resolve_client_workspace_scope_overrides_enabled(tmp_path) is True
+
+    with pytest.raises(RuntimeConfigError):
+        write_runtime_config(
+            tmp_path,
+            {"workspace_root": str(tmp_path / "missing")},
+            actor="person:admin",
+        )
+    with pytest.raises(RuntimeConfigError):
+        write_runtime_config(
+            tmp_path,
+            {"workspace_allowed_paths": "relative/path"},
+            actor="person:admin",
+        )
+
+
+def test_non_admin_workspace_policy_read_redacts_paths(tmp_path):
+    from abstractgateway.runtime_config import read_runtime_config, write_runtime_config
+
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    write_runtime_config(
+        tmp_path,
+        {
+            "workspace_root": str(ws),
+            "workspace_allowed_paths": f"{archive}",
+            "workspace_blocked_paths": f"{blocked}",
+        },
+        actor="person:admin",
+    )
+
+    user_view = read_runtime_config(tmp_path, is_admin=False)
+    assert user_view["workspace_root"] == {"configured": True, "source": "stored"}
+    assert user_view["workspace_mounts"] == {"configured": True, "source": "stored"}
+    assert user_view["workspace_allowed_paths"] == {"configured": True, "source": "stored"}
+    assert user_view["workspace_blocked_paths"] == {"configured": True, "source": "stored"}
+    assert str(ws) not in json.dumps(user_view)
+    assert str(archive) not in json.dumps(user_view)
 
 
 def test_executor_registry_is_the_ruled_four_probed_not_declared():
