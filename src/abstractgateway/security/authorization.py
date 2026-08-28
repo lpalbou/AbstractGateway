@@ -84,8 +84,13 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     # Bridges currently read process/global configuration and provider credentials.
     # Keep them operator-only until per-principal bridge config exists.
     GatewayRoutePolicy(resource="email", reason_code="admin_required", prefixes=("/api/gateway/email",)),
-    # Host and model residency are operator surfaces. Discovery routes remain user-visible.
-    GatewayRoutePolicy(resource="host", reason_code="admin_required", prefixes=("/api/gateway/host",)),
+    # Host/model MUTATIONS are operator surfaces; the READ side (which models
+    # are resident, how much memory is left — /models/loaded, /host/state,
+    # /host/metrics/*, /models/context_estimate) is visibility every
+    # authenticated client needs to render an "agentic OS" view, so no row
+    # gates those GETs. All /host routes today are reads; a future /host
+    # write must add a row here (the route-authorization contract test lands
+    # RED until it does).
     GatewayRoutePolicy(
         resource="models",
         reason_code="admin_required",
@@ -93,12 +98,14 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
         # — the same class of act as load/unload, and the only route here that
         # spends disk on someone else's behalf. Exact paths only: the progress
         # poll `GET /models/download/{job}` stays user-level so a caller can
-        # watch a job it was allowed to start.
+        # watch a job it was allowed to start. lock/unlock pin/release shared
+        # host residency — the same operator class as load/unload.
         exact=(
-            "/api/gateway/models/loaded",
             "/api/gateway/models/load",
             "/api/gateway/models/unload",
             "/api/gateway/models/download",
+            "/api/gateway/models/lock",
+            "/api/gateway/models/unlock",
         ),
     ),
     # The HOST's capability-defaults store: which provider/model serves each
@@ -131,6 +138,16 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
         reason_code="admin_required",
         prefixes=("/api/gateway/prompt_cache",),
         methods=("POST", "PUT", "PATCH", "DELETE"),
+    ),
+    # Enumeration-based clear of EVERY runtime-minted cache for a session id.
+    # Unlike the identity-derived per-session lane above it takes any
+    # session_id and wipes real provider cache state wholesale — an operator
+    # act. The read twin (GET /sessions/prompt_cache) stays user-level.
+    GatewayRoutePolicy(
+        resource="prompt_cache",
+        reason_code="admin_required",
+        pattern=r"^/api/gateway/sessions/[^/]+/prompt_cache/clear_all$",
+        methods=("POST",),
     ),
     # Entity MUTATION routes are operator surfaces (config-object plan, N1 —
     # signed 2026-07-11). GW-H makes entities non-admin principals; without

@@ -129,9 +129,15 @@ Hosted multi-user mode is an incremental surface: the core request path now has
 principal auth and per-principal services. Gateway also applies a central
 route-family authorization table for operator/admin surfaces. Admin-only route
 families include user management, audit, process control, backlog/triage/report
-operations, email bridge routes, host metrics, model residency list/load/unload,
-server workspace file helpers, server-workspace artifact import/export, and
-global prompt-cache/bloc mutation routes. Regular users remain able to use
+operations, email bridge routes, model residency mutations
+(`POST /models/load|unload|lock|unlock|download`), session-wide prompt-cache
+clearing (`POST /sessions/{session_id}/prompt_cache/clear_all`), server
+workspace file helpers, server-workspace artifact import/export, and global
+prompt-cache/bloc mutation routes. Host and residency reads —
+`GET /models/loaded`, `GET /models/context_estimate`, `GET /host/state`,
+`GET /host/metrics/*`, and `GET /sessions/prompt_cache` — are visibility every
+authenticated client needs and serve any authenticated principal; anonymous
+requests remain rejected. Regular users remain able to use
 their own runtime data plane for run, ledger, artifact upload, discovery, and
 runtime-scoped Core capability-default routes.
 

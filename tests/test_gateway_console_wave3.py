@@ -101,7 +101,9 @@ def test_reembed_lives_in_substrate_behind_danger_disclosure(html: str) -> None:
 
 def test_tables_declare_loading_rows(html: str) -> None:
     assert "function tableLoadingRow(" in html
-    for text in ("Measuring data homes…", "Loading runs…", "Loading the roster…", "Scanning execution planes…"):
+    # "Measuring data homes…" became "Measuring caches…" when the machine-wide
+    # data-homes walk folded into the runtime Cache tab (2026-08-19 redesign).
+    for text in ("Measuring caches…", "Loading runs…", "Loading the roster…", "Scanning execution planes…"):
         assert text in html, f"table loading state {text!r} missing"
 
 

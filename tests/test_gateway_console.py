@@ -40,6 +40,17 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert "/api/gateway/audio/transcriptions/models" in console.text
     assert "/api/gateway/audio/music/models" in console.text
     assert "/api/gateway/embeddings/models" in console.text
+    # Models tab (host residency) routes: one snapshot read, the residency
+    # verbs, the estimate read, the per-session cache clear, and the
+    # discovery contract that carries the canonical modality palette.
+    assert "/api/gateway/host/state" in console.text
+    assert "/api/gateway/models/load" in console.text
+    assert "/api/gateway/models/unload" in console.text
+    assert "/api/gateway/models/lock" in console.text
+    assert "/api/gateway/models/unlock" in console.text
+    assert "/api/gateway/models/context_estimate" in console.text
+    assert "/api/gateway/sessions/${encodeURIComponent(sessionId)}/prompt_cache/clear_all" in console.text
+    assert "/api/gateway/discovery/capabilities" in console.text
     assert 'capability_route: "output.text"' in console.text
     assert 'capability_route: "input.image,output.text"' in console.text
     assert 'capability_route: "input.video,output.text"' in console.text
@@ -109,6 +120,7 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="tab-button-providers"' in console.text
     assert 'id="tab-button-defaults"' in console.text
     assert 'id="tab-button-sandbox"' in console.text
+    assert 'id="tab-button-models"' in console.text
     assert 'id="tab-button-entities"' not in console.text, "entities merged into Users & Entities"
     # Family shell: navigation lives in the sidebar (ids unchanged).
     assert 'class="shell_nav"' in console.text
@@ -221,6 +233,33 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="runs-refresh"' not in console.text  # no per-tab refresh (pane ↻ owns it)
     assert "/api/gateway/runs?" in console.text
     assert '"/api/gateway/commands"' in console.text
+    # Models tab (host residency: the agentic-OS resources view). One
+    # snapshot call feeds three stacked sections; the 5s poll is scoped to
+    # the ACTIVE tab; residency is TRI-STATE (null renders as a distinct
+    # "unknown", never a blank); the warm-up form is admin-only; the meter
+    # rides the SHARED determinate-bar recipe (one recipe, drive bars and
+    # host meters together — wave-3 rule).
+    assert 'id="tab-models"' in console.text
+    assert 'id="models-message"' in console.text
+    assert 'id="models-caches-message"' in console.text  # survives the finally-refresh clearing #models-message
+    assert 'id="models-table"' in console.text
+    assert 'id="models-caches-table"' in console.text
+    assert 'id="models-meters"' in console.text
+    assert 'id="models-degraded"' in console.text
+    assert 'id="models-host-facts"' in console.text
+    assert 'id="models-load-form"' in console.text
+    assert 'id="models-load-provider"' in console.text
+    assert 'id="models-load-model"' in console.text
+    assert 'id="models-load-lock"' in console.text
+    assert 'id="models-refresh"' in console.text
+    assert ".drive-track, .meter-track {" in console.text, "the meter must share the drive bar's recipe"
+    assert 'state.activeTab !== "models"' in console.text, "the host poll must stop off-tab"
+    assert '"configured — not in memory"' in console.text and '"resident"' in console.text, "residency must be tri-state"
+    # Loaded-vs-default truth: the table defaults to RESIDENT rows only, the
+    # rest sit behind an explicit configured/cached toggle with a count.
+    assert 'id="models-show-cached"' in console.text
+    assert 'id="models-show-cached-label"' in console.text
+    assert 'id="models-loaded-title"' in console.text
     assert 'id="sandbox-capability"' in console.text
     assert 'id="sandbox-provider"' in console.text
     assert 'id="sandbox-run"' in console.text
@@ -1121,3 +1160,438 @@ def test_console_authority_line_requires_evidence() -> None:
     assert "classList.add(\"hidden\")" in body
     # A per-runtime overlay is an AbstractCore file, but NOT the shared one.
     assert "abstractcore.runtime" in body
+
+
+def test_models_meter_and_residency_primitives_offline() -> None:
+    """The Models tab's render primitives, on the SHIPPED source (the offline
+    module's slicing idiom): the shared determinate-bar recipe steps
+    ok -> warn (>=75%) -> crit (>=90%) and renders a null fraction as an
+    EMPTY track with honest text; residency is TRI-STATE — null is a
+    rendered 'unknown', visually distinct from both yes and no."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "meterRow")}
+{_slice_function(source, "residencyPill")}
+{_slice_function(source, "_fmtCtx")}
+class Element {{
+  constructor() {{ this.children = []; this.className = ""; this.textContent = ""; this.style = {{}}; this.title = ""; }}
+  append(...items) {{ this.children.push(...items); }}
+  get classList() {{
+    const self = this;
+    return {{ add(name) {{ self.className = (self.className + " " + name).trim(); }} }};
+  }}
+}}
+const document = {{ createElement: () => new Element(), createTextNode: (t) => ({{ text: t }}) }};
+const find = (el, cls) => {{
+  if (String(el.className || "").split(" ").includes(cls)) return el;
+  for (const child of el.children || []) {{ const hit = find(child, cls); if (hit) return hit; }}
+  return null;
+}};
+const results = [];
+for (const [frac, text] of [[0.5, "half"], [0.8, "warm"], [0.97, "hot"], [null, "unknown"]]) {{
+  const row = meterRow("RAM", frac, text, "t");
+  const fill = find(row, "meter-fill");
+  results.push({{ kind: "meter", frac, width: fill.style.width, cls: fill.className, value: find(row, "meter-value").textContent }});
+}}
+for (const resident of [true, false, null]) {{
+  const pill = residencyPill({{ resident }});
+  results.push({{ kind: "pill", resident, cls: pill.className, text: pill.textContent }});
+}}
+results.push({{ kind: "ctx", short: _fmtCtx(900), k: _fmtCtx(32768), none: _fmtCtx(null) }});
+console.log(JSON.stringify(results));
+"""
+    rows = _node(harness)
+    meters = {r["frac"]: r for r in rows if r["kind"] == "meter"}
+    assert meters[0.5]["width"] == "50%" and "warn" not in meters[0.5]["cls"] and "crit" not in meters[0.5]["cls"]
+    assert "warn" in meters[0.8]["cls"] and "crit" not in meters[0.8]["cls"]
+    assert "crit" in meters[0.97]["cls"]
+    assert meters[None]["width"] == "0%", "an unknown fraction must render an empty track"
+    assert meters[None]["value"] == "unknown"
+    pills = {r["resident"]: r for r in rows if r["kind"] == "pill"}
+    assert pills[True]["text"] == "resident" and "ok" in pills[True]["cls"]
+    # `false` names the truth in words: configured/cached, NOT in memory.
+    assert pills[False]["text"] == "configured — not in memory" and "ok" not in pills[False]["cls"]
+    assert pills[None]["text"] == "unknown" and "covered" in pills[None]["cls"], (
+        "null residency must render as its own third state"
+    )
+    assert len({p["text"] for p in pills.values()}) == 3, "the three residency states must be distinct"
+    ctx = next(r for r in rows if r["kind"] == "ctx")
+    assert ctx == {"kind": "ctx", "short": "900", "k": "32K", "none": ""}
+
+
+def test_models_table_defaults_to_resident_rows_with_configured_cached_toggle() -> None:
+    """Loaded-vs-default truth on the SHIPPED renderModelsTable: the table
+    defaults to provider-verified RESIDENT rows only; configured/cached rows
+    (resident false or unknown) appear only behind the 'Show configured /
+    cached (N)' toggle, carry no Unload/Lock buttons (Estimate stays), and
+    the section title counts RESIDENT rows — a capability-default model with
+    nothing in memory must never present as loaded/unloadable."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "renderModelsTable")}
+{_slice_function(source, "renderModelsResidentCount")}
+{_slice_function(source, "renderModelsShowCachedToggle")}
+{_slice_function(source, "residencyPill")}
+{_slice_function(source, "modelsEmptyRow")}
+{_slice_function(source, "modelRowKey")}
+class El {{
+  constructor(tag) {{ this.tag = tag || ""; this.children = []; this.className = ""; this._tc = ""; this.style = {{}}; this.title = ""; this.innerHTML = ""; }}
+  get textContent() {{ return this._tc; }}
+  set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
+  append(...items) {{ this.children.push(...items); }}
+  get classList() {{
+    const self = this;
+    return {{
+      add(name) {{ self.className = (self.className + " " + name).trim(); }},
+      toggle(name, force) {{
+        const parts = String(self.className || "").split(" ").filter(Boolean).filter((p) => p !== name);
+        if (force) parts.push(name);
+        self.className = parts.join(" ");
+      }},
+    }};
+  }}
+}}
+const document = {{ createElement: (tag) => new El(tag), createTextNode: (t) => ({{ tag: "#text", text: t, children: [] }}) }};
+const els = {{}};
+for (const id of ["models-table", "models-loaded-title", "models-show-cached-label", "models-show-cached-text", "models-show-cached"]) els[id] = new El(id);
+function $(id) {{ return els[id] || new El(id); }}
+const ICONS = {{ lock: "<svg/>" }};
+const state = {{ principal: {{ admin: true }}, modelEstimates: new Map(), modelsShowCached: false, modalityUi: null }};
+function modalityChipEl() {{ return new El("chip"); }}
+function _fmtBytes(v) {{ return String(v); }}
+function _fmtCtx(v) {{ return v == null ? "" : String(v); }}
+function estimateDetailRow() {{ return new El("est"); }}
+function estimateModelContext() {{}}
+function toggleModelLock() {{}}
+function unloadModel() {{}}
+const buttons = (el, out = []) => {{
+  if (el.tag === "button") out.push(el.textContent);
+  for (const child of el.children || []) buttons(child, out);
+  return out;
+}};
+const pillText = (el) => {{
+  if (String(el.className || "").includes("state-pill") && el.tag === "span" && ["resident", "configured — not in memory", "unknown"].includes(el.textContent)) return el.textContent;
+  for (const child of el.children || []) {{ const hit = pillText(child); if (hit) return hit; }}
+  return null;
+}};
+const snap = () => ({{
+  title: els["models-loaded-title"].textContent,
+  toggleHidden: els["models-show-cached-label"].className.includes("hidden"),
+  toggleText: els["models-show-cached-text"].textContent,
+  rows: els["models-table"].children.map((tr) => ({{ pill: pillText(tr), buttons: buttons(tr), empty: tr.children.length === 1 && tr.children[0].className === "empty" ? tr.children[0].textContent : null }})),
+}});
+const data = {{ models: [
+  {{ runtime_id: "r1", provider: "lmstudio", model: "really-loaded", resident: true, locked: true, lockable: true, default: false, pinned: true, size_bytes: 1000, task: "text_generation" }},
+  {{ runtime_id: "r2", provider: "lmstudio", model: "qwen/qwen3.6-35b-a3b", resident: false, default: true, pinned: false, lockable: true, task: "text_generation" }},
+  {{ runtime_id: "r3", provider: "ollama", model: "mystery", resident: null, task: "text_generation" }},
+] }};
+const results = [];
+renderModelsTable(data);
+results.push({{ step: "default-view", ...snap() }});
+state.modelsShowCached = true;
+renderModelsTable(data);
+results.push({{ step: "toggled", ...snap() }});
+state.modelsShowCached = false;
+renderModelsTable({{ models: [ {{ provider: "p", model: "a", resident: false }}, {{ provider: "p", model: "b", resident: null }} ] }});
+results.push({{ step: "none-resident", ...snap() }});
+state.modelsShowCached = true;
+renderModelsTable({{ models: [ {{ provider: "lmstudio", model: "locked-evicted", resident: false, locked: true, lockable: true }} ] }});
+results.push({{ step: "locked-evicted", ...snap() }});
+console.log(JSON.stringify(results));
+"""
+    steps = {r["step"]: r for r in _node(harness)}
+    default_view = steps["default-view"]
+    assert default_view["title"] == "Models (1 resident)", "the header counts RESIDENT rows only"
+    assert default_view["toggleHidden"] is False
+    assert default_view["toggleText"] == "Show configured / cached (2)"
+    assert len(default_view["rows"]) == 1, "default view is resident rows ONLY"
+    assert default_view["rows"][0]["pill"] == "resident"
+    assert "Unload" in default_view["rows"][0]["buttons"] and "Unlock" in default_view["rows"][0]["buttons"]
+
+    toggled = steps["toggled"]
+    assert toggled["title"] == "Models (1 resident)", "the toggle must not inflate the resident count"
+    assert len(toggled["rows"]) == 3
+    by_pill = {row["pill"]: row for row in toggled["rows"]}
+    # The operator-defect row: a capability DEFAULT with nothing in memory —
+    # named in words, Estimate only, no Unload/Lock.
+    assert by_pill["configured — not in memory"]["buttons"] == ["Estimate"]
+    assert by_pill["unknown"]["buttons"] == ["Estimate"]
+    assert "Unload" in by_pill["resident"]["buttons"]
+
+    none_resident = steps["none-resident"]
+    assert none_resident["title"] == "Models (0 resident)"
+    assert len(none_resident["rows"]) == 1 and none_resident["rows"][0]["empty"]
+    assert "No models resident in memory right now" in none_resident["rows"][0]["empty"]
+    assert "2 configured / cached rows behind the toggle" in none_resident["rows"][0]["empty"]
+
+    # A LOCKED-but-evicted pair must never be stranded: the lock still blocks
+    # facade unloads, so Unlock renders despite resident:false — while Lock
+    # and Unload stay absent (nothing is in memory to lock or unload).
+    locked_evicted = steps["locked-evicted"]
+    assert len(locked_evicted["rows"]) == 1
+    assert locked_evicted["rows"][0]["buttons"] == ["Estimate", "Unlock"]
+
+
+def test_models_unload_409_offers_force_and_sends_force_true() -> None:
+    """The locked-unload contract, end to end on the SHIPPED unloadModel():
+    a 409 whose BODY carries model_locked opens a SECOND deliberate confirm
+    and only then re-sends with force:true; a 409 WITHOUT the code gets a
+    generic conflict message and never offers a force it cannot mean;
+    declining the first confirm sends nothing."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "unloadModel")}
+{_slice_function(source, "modelUnloadTarget")}
+{_slice_function(source, "_modelsMutationResult")}
+{_slice_function(source, "_modelsLockedRefusal")}
+const els = new Map();
+function $(id) {{
+  if (!els.has(id)) els.set(id, {{ textContent: "", className: "", disabled: false }});
+  return els.get(id);
+}}
+const confirms = [];
+let confirmAnswers = [];
+async function confirmAction(opts) {{ confirms.push(opts.title); return confirmAnswers.shift(); }}
+const calls = [];
+// mode: which refusal the first (non-force) unload answers with. The
+// message is a bare "HTTP 409" so the BODY code is what the gate reads.
+let mode = "locked";
+async function api(path, options = {{}}) {{
+  const body = JSON.parse(options.body || "{{}}");
+  calls.push({{ path, body }});
+  if (path === "/api/gateway/models/unload" && !body.force) {{
+    const err = new Error("HTTP 409");
+    err.status = 409;
+    err.data = mode === "locked"
+      ? {{ ok: false, error: "model_locked", locked: true }}
+      : {{ ok: false, error: "runtime_busy" }};
+    throw err;
+  }}
+  return {{ ok: true }};
+}}
+async function loadHostState() {{}}
+const results = [];
+confirmAnswers = [true, true];
+await unloadModel({{ runtime_id: "rt1", provider: "mlx", model: "qwen" }}, null);
+results.push({{ step: "locked", confirms: [...confirms], calls: [...calls], message: $("models-loaded-message").textContent }});
+confirms.length = 0;
+calls.length = 0;
+confirmAnswers = [false];
+await unloadModel({{ provider: "mlx", model: "other" }}, null);
+results.push({{ step: "declined", confirms: [...confirms], calls: [...calls] }});
+confirms.length = 0;
+calls.length = 0;
+mode = "busy";
+confirmAnswers = [true, true];
+await unloadModel({{ runtime_id: "rt2", provider: "mlx", model: "busy" }}, null);
+results.push({{ step: "other409", confirms: [...confirms], calls: [...calls], message: $("models-loaded-message").textContent }});
+console.log(JSON.stringify(results));
+"""
+    steps = {r["step"]: r for r in _node(harness)}
+    locked = steps["locked"]
+    assert locked["confirms"] == ["Unload model", "Model locked"], "the locked 409 must open a second, explicit confirm"
+    assert [c["body"] for c in locked["calls"]] == [{"runtime_id": "rt1"}, {"runtime_id": "rt1", "force": True}], (
+        "force:true must ride only the second call, addressed by runtime_id"
+    )
+    assert locked["message"].startswith("Force-unloaded")
+    declined = steps["declined"]
+    assert declined["confirms"] == ["Unload model"]
+    assert declined["calls"] == [], "a declined confirm must send nothing"
+    other = steps["other409"]
+    assert other["confirms"] == ["Unload model"], "a non-locked 409 must not open the force confirm"
+    assert len(other["calls"]) == 1 and "force" not in other["calls"][0]["body"], (
+        "a non-locked 409 must never re-send with force"
+    )
+    assert other["message"].startswith("Unload conflicted (HTTP 409)")
+
+
+def test_models_cache_clear_failure_message_survives_the_refresh() -> None:
+    """A refused cache clear lands in the caches section's OWN message line
+    and the finally-refresh (real loadHostState, success path) must not wipe
+    it — the exact zero-feedback defect: the clear's error went to
+    #models-message, which the refresh then unconditionally cleared."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "clearSessionCache")}
+{_slice_function(source, "_modelsMutationResult")}
+{_slice_function(source, "loadHostState")}
+const els = new Map();
+function $(id) {{
+  if (!els.has(id)) els.set(id, {{
+    textContent: "", className: "", disabled: false,
+    classList: {{ add() {{}}, remove() {{}}, toggle() {{}} }},
+  }});
+  return els.get(id);
+}}
+const state = {{ principal: {{ admin: true }}, hostStateSeq: 0 }};
+function tableLoadingRow() {{}}
+function modelsEmptyRow() {{}}
+async function ensureModalityUi() {{}}
+const rendered = [];
+function renderHostState(data) {{ rendered.push(data); }}
+async function confirmAction() {{ return true; }}
+async function api(path, options = {{}}) {{
+  if (path.includes("/prompt_cache/clear_all")) throw new Error("cache clear refused");
+  return {{ ok: true, models: [], session_caches: [], totals: {{}} }};
+}}
+await clearSessionCache("sess1", null);
+console.log(JSON.stringify([{{
+  cachesMsg: $("models-caches-message").textContent,
+  cachesCls: $("models-caches-message").className,
+  mainMsg: $("models-message").textContent,
+  refreshed: rendered.length,
+}}]));
+"""
+    row = _node(harness)[0]
+    assert row["refreshed"] == 1, "the finally-refresh must still run"
+    assert "cache clear refused" in row["cachesMsg"], "the clear's error must survive the refresh"
+    assert "error" in row["cachesCls"]
+    assert row["mainMsg"] == "", "the snapshot message line is the refresh's to clear"
+
+
+def test_models_host_facts_never_fabricate_zeros() -> None:
+    """Degraded sections must not read '0 models'/'0 caches' beside a table
+    that says unavailable: the fact line renders only when the section
+    enumerated (array non-null). The models line counts RESIDENT rows —
+    totals.models_resident when the server sent it, else counted from the
+    enumerated rows themselves (row-derived, never fabricated) — and names
+    the non-resident remainder 'configured / cached', never 'loaded'."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "renderHostFacts")}
+{_slice_function(source, "_fmtBytes")}
+class El {{
+  constructor() {{ this.children = []; this.className = ""; this._tc = ""; }}
+  get textContent() {{ return this._tc; }}
+  set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
+  append(...items) {{ this.children.push(...items); }}
+}}
+const facts = new El();
+function $(id) {{ return id === "models-host-facts" ? facts : new El(); }}
+const document = {{ createElement: () => new El() }};
+const lines = () => Object.fromEntries(facts.children.map((line) => [line.children[0].textContent, line.children[1].textContent]));
+const results = [];
+renderHostFacts({{ models: null, session_caches: [{{}}], totals: {{ models: 3, models_resident: 3, model_bytes: 5, session_caches: 1, session_cache_bytes: 4096 }}, memory: {{ process: {{ rss_bytes: 100 }} }} }});
+results.push({{ step: "models-degraded", lines: lines() }});
+renderHostFacts({{ models: [{{ resident: false }}], session_caches: null, totals: {{}} }});
+results.push({{ step: "totals-absent", lines: lines() }});
+renderHostFacts({{ models: [{{ resident: true, size_bytes: 1024 }}, {{ resident: false, size_bytes: 4096 }}], session_caches: [], totals: {{ models: 2, models_resident: 1, model_bytes: 5120, session_caches: 0, session_cache_bytes: null }} }});
+results.push({{ step: "healthy", lines: lines() }});
+console.log(JSON.stringify(results));
+"""
+    steps = {r["step"]: r["lines"] for r in _node(harness)}
+    degraded = steps["models-degraded"]
+    assert "Models" not in degraded, "null models must not render a fabricated model count"
+    assert degraded["Session caches"] == "1 cache · 4.1 KB", "the healthy section still renders"
+    assert degraded["Process RSS"] == "100 B"
+    absent = steps["totals-absent"]
+    # The rows ARE enumerated: the resident count derives from them (a
+    # truthful zero, not a fabrication) and the non-resident row is named
+    # configured/cached — never presented as loaded.
+    assert absent["Models"] == "0 resident · 1 configured / cached"
+    assert "Session caches" not in absent, "an absent totals block must not render cache zero counts"
+    healthy = steps["healthy"]
+    # RESIDENT count + resident-only bytes; the false row is configured/cached.
+    assert healthy["Models"] == "1 resident · 1.0 KB · 1 configured / cached"
+    assert healthy["Session caches"] == "0 caches", "a REAL zero still renders"
+
+
+def test_models_stale_host_snapshot_never_overwrites_a_fresh_one() -> None:
+    """Overlapping snapshots land in REQUEST order, not resolution order
+    (the shipped loadHostState's sequence guard): a hung slow-lane fetch
+    resolving after a newer snapshot must paint NOTHING — not resurrect an
+    unloaded model on screen."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "loadHostState")}
+const state = {{ principal: {{ admin: true }}, hostStateSeq: 0 }};
+function $() {{ return {{ textContent: "", className: "", classList: {{ add() {{}}, remove() {{}} }} }}; }}
+function tableLoadingRow() {{}}
+function modelsEmptyRow() {{}}
+async function ensureModalityUi() {{}}
+const painted = [];
+function renderHostState(data) {{ painted.push(data.marker); }}
+const pending = [];
+async function api() {{ return new Promise((resolve) => pending.push(resolve)); }}
+const p1 = loadHostState({{ quiet: true }});
+const p2 = loadHostState({{ quiet: true }});
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (pending.length !== 2) throw new Error("expected two in-flight snapshots, got " + pending.length);
+pending[1]({{ marker: "fresh" }});
+await p2;
+pending[0]({{ marker: "stale" }});
+await p1;
+console.log(JSON.stringify([{{ painted, kept: state.hostState && state.hostState.marker }}]));
+"""
+    row = _node(harness)[0]
+    assert row["painted"] == ["fresh"], "the stale resolution must paint nothing"
+    assert row["kept"] == "fresh", "state.hostState must keep the fresh snapshot"
+
+
+def test_models_load_ok_but_lock_fail_reports_the_mixed_outcome() -> None:
+    """Warm-up with 'lock in memory': a successful load followed by a failed
+    lock is a MIXED outcome — the message must say the model IS resident
+    (unlocked) AND why locking failed, never read as total failure."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "loadModelResidency")}
+{_slice_function(source, "_modelsMutationResult")}
+const els = new Map();
+function $(id) {{
+  if (!els.has(id)) els.set(id, {{ textContent: "", className: "", disabled: false, checked: false, value: "" }});
+  return els.get(id);
+}}
+$("models-load-provider").value = "mlx";
+$("models-load-model").value = "qwen";
+$("models-load-lock").checked = true;
+async function loadHostState() {{}}
+const calls = [];
+async function api(path, options = {{}}) {{
+  calls.push(path);
+  if (path === "/api/gateway/models/lock") throw new Error("lock not supported by this runtime");
+  return {{ ok: true }};
+}}
+await loadModelResidency();
+console.log(JSON.stringify([{{ msg: $("models-loaded-message").textContent, cls: $("models-loaded-message").className, calls }}]));
+"""
+    row = _node(harness)[0]
+    assert "/api/gateway/models/load" in row["calls"] and "/api/gateway/models/lock" in row["calls"]
+    assert row["msg"].startswith("Loaded mlx/qwen"), "the message must lead with the load that SUCCEEDED"
+    assert "UNLOCKED" in row["msg"] and "locking failed" in row["msg"]
+    assert "lock not supported by this runtime" in row["msg"], "the lock failure's reason must survive"
+    assert "error" in row["cls"], "a mixed outcome still needs the operator's attention"

@@ -169,6 +169,32 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert residency.get("endpoints", {}).get("loaded") == "/api/gateway/models/loaded"
         assert residency.get("endpoints", {}).get("load") == "/api/gateway/models/load"
         assert residency.get("endpoints", {}).get("unload") == "/api/gateway/models/unload"
+        assert residency.get("endpoints", {}).get("lock") == "/api/gateway/models/lock"
+        assert residency.get("endpoints", {}).get("unlock") == "/api/gateway/models/unlock"
+        assert residency.get("endpoints", {}).get("context_estimate") == "/api/gateway/models/context_estimate"
+        assert residency.get("row_schema") == "model_residency_row_v1"
+        modality_ui = residency.get("modality_ui")
+        assert isinstance(modality_ui, dict)
+        assert modality_ui.get("version") == 1
+        assert modality_ui.get("colors", {}).get("text_generation") == {"color": "#00D2FF", "label": "Text"}
+        assert modality_ui.get("colors", {}).get("unknown") == {"color": "#6B7280", "label": "Unknown"}
+        host_state = common.get("host_state")
+        assert isinstance(host_state, dict)
+        assert host_state.get("route_available") is True
+        assert host_state.get("available") is True
+        assert host_state.get("endpoints") == {
+            "state": "/api/gateway/host/state",
+            "memory": "/api/gateway/host/metrics/memory",
+            "gpu": "/api/gateway/host/metrics/gpu",
+        }
+        session_caches = common.get("session_caches")
+        assert isinstance(session_caches, dict)
+        assert session_caches.get("route_available") is True
+        assert isinstance(session_caches.get("available"), bool)
+        assert session_caches.get("endpoints") == {
+            "list": "/api/gateway/sessions/prompt_cache",
+            "clear_all": "/api/gateway/sessions/{session_id}/prompt_cache/clear_all",
+        }
 
         flow_editor = contracts.get("flow_editor")
         assert isinstance(flow_editor, dict)
@@ -340,8 +366,39 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert residency["supports"]["stt"] is False
     assert residency["supports"]["music_generation"] is False
     assert residency["endpoints"]["loaded"] == "/api/gateway/models/loaded"
+    assert residency["endpoints"]["lock"] == "/api/gateway/models/lock"
+    assert residency["endpoints"]["unlock"] == "/api/gateway/models/unlock"
+    assert residency["endpoints"]["context_estimate"] == "/api/gateway/models/context_estimate"
+    assert residency["row_schema"] == "model_residency_row_v1"
+    # The canonical modality palette is served even when the facade is absent
+    # (it is a CLIENT rendering contract, not a runtime capability).
+    assert residency["modality_ui"]["version"] == 1
+    assert set(residency["modality_ui"]["colors"]) == {
+        "text_generation",
+        "image_generation",
+        "image_to_image",
+        "image_upscale",
+        "video_generation",
+        "text_to_video",
+        "image_to_video",
+        "tts",
+        "stt",
+        "music_generation",
+        "scene3d_generation",
+        "text_to_scene3d",
+        "image_to_scene3d",
+        "embedding",
+        "unknown",
+    }
     assert contracts["flow_editor"]["model_residency"] == residency
     assert contracts["assistant"]["model_residency"] == residency
+    host_state = contracts["common"]["host_state"]
+    assert host_state["route_available"] is True
+    assert host_state["available"] is True
+    assert host_state["memory_available"] is False
+    session_caches = contracts["common"]["session_caches"]
+    assert session_caches["route_available"] is True
+    assert session_caches["available"] is False
 
     flow_editor = contracts["flow_editor"]
     assert flow_editor["visualflows"]["crud"]["available"] is True
@@ -588,7 +645,11 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
         "loaded": "/api/gateway/models/loaded",
         "load": "/api/gateway/models/load",
         "unload": "/api/gateway/models/unload",
+        "lock": "/api/gateway/models/lock",
+        "unlock": "/api/gateway/models/unlock",
+        "context_estimate": "/api/gateway/models/context_estimate",
     }
+    assert residency["row_schema"] == "model_residency_row_v1"
     assert contracts["flow_editor"]["model_residency"] == residency
     assert contracts["assistant"]["model_residency"] == residency
     assert contracts["assistant"]["prompt_cache"]["provider_controls_available"] is True

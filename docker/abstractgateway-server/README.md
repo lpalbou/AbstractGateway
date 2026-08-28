@@ -4,7 +4,7 @@ This image packages the AbstractGateway HTTP/SSE server for durable
 AbstractRuntime runs:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway:0.2.28
+ghcr.io/lpalbou/abstractgateway:0.2.29
 ```
 
 Release images are published for `linux/amd64` and `linux/arm64`.
@@ -12,7 +12,7 @@ A separate experimental full NVIDIA image is published best-effort for
 `linux/amd64`:
 
 ```bash
-ghcr.io/lpalbou/abstractgateway:0.2.28-gpu
+ghcr.io/lpalbou/abstractgateway:0.2.29-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -180,7 +180,7 @@ For unreleased local checkouts, build the image from this repository:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.28-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.29-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

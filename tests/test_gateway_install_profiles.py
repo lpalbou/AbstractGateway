@@ -31,7 +31,7 @@ def _sibling_pyproject(package_dir: str) -> dict:
 def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
-    assert "AbstractRuntime>=0.4.30" in deps
+    assert "AbstractRuntime>=0.4.31" in deps
     assert "abstractagent>=0.3.12" in deps
     assert "AbstractMemory[lancedb]>=0.2.6" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
@@ -56,7 +56,7 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     music_base = "\n".join(_sibling_pyproject("abstractmusic")["project"].get("dependencies", []))
 
     runtime_base = "\n".join(runtime_project["dependencies"])
-    assert "abstractcore[remote,tools,vision,voice,audio,music]>=2.13.38" in runtime_base
+    assert "abstractcore[remote,tools,vision,voice,audio,music]>=2.13.40" in runtime_base
     assert "pypdf" in runtime_base
     assert "reportlab" in runtime_base
     assert "pymupdf" not in runtime_base.lower()
@@ -127,7 +127,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[apple]>=0.4.30" in apple
+    assert "AbstractRuntime[apple]>=0.4.31" in apple
     assert "abstractagent[apple]>=0.3.12" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.2.6" in apple
@@ -136,7 +136,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[gpu]>=0.4.30" in gpu
+    assert "AbstractRuntime[gpu]>=0.4.31" in gpu
     assert "abstractagent[gpu]>=0.3.12" in gpu
     assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
     assert "abstractcore[" not in gpu

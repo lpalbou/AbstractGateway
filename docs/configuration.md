@@ -321,6 +321,40 @@ loads, bundles register, and the failure surfaces when a run actually needs that
 model — naming the capability route that configured the pair, how to change it,
 and how to download it.
 
+### Host state and model residency
+
+Beyond weights on disk, these endpoints report and control what is loaded in
+memory right now:
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/gateway/host/state` | One-call host snapshot: memory, GPU, resident models (frozen `model_residency_row_v1` rows), session prompt caches, and byte totals. Sections degrade independently in-band (`degraded` + `reasons`); never a 500. |
+| `GET /api/gateway/host/metrics/memory` | Host RAM/process/device memory snapshot; answers `supported: false` with a reason when the runtime facade has no snapshot. |
+| `GET /api/gateway/host/metrics/gpu` | GPU utilization probe with the same `supported`/degraded style. |
+| `GET /api/gateway/models/loaded` | Model residency listing: raw `models` records plus normalized `rows` (`row_schema = "model_residency_row_v1"`, including lock, modality, context-calibration, and host-identity fields). |
+| `GET /api/gateway/models/context_estimate` | Context/KV memory estimate for a `provider`+`model` (optional `context_length` >= 1), with in-band `confidence`: `calibrated`, `estimated`, or `unknown`. |
+| `POST /api/gateway/models/load` | Load (and by default pin) a model runtime. Admin only. |
+| `POST /api/gateway/models/unload` | Unload a model runtime by `runtime_id` or task/provider/model selector. A locked model answers HTTP 409 unless the request carries `"force": true`. Admin only. |
+| `POST /api/gateway/models/lock` | Lock a resident model against unload (same target selector as unload). Admin only. |
+| `POST /api/gateway/models/unlock` | Release a model-residency lock. Admin only. |
+
+Both consoles render this surface as a **Resources** view — a tab in the web
+console, screen 8 in the console-TUI: memory and GPU meters, the resident-model
+table (modality, tri-state residency, lock state, context facts), and session
+prompt caches. Any authenticated user can browse it and request context
+estimates; the warm-up, lock/unlock, unload (with a force confirmation when a
+locked model answers 409), and cache-clear controls appear for admins.
+
+The reads are available to any authenticated principal; the mutations (and
+`POST /models/download` above) require an admin principal, and anonymous
+requests are always rejected. For local development only,
+`ABSTRACTGATEWAY_DEV_READ_NO_AUTH=1` (default off) allows unauthenticated
+loopback reads as a non-admin read-only principal — see
+[security.md](./security.md).
+
+See [api.md](./api.md#host-state-and-model-residency) for payload shapes and
+the `model_residency_row_v1` field list.
+
 ### Runtime-scoped Core capability defaults
 
 In hosted user-auth mode, `GET /api/gateway/config/capability-defaults` returns
@@ -613,16 +647,23 @@ apps without pretending unsupported providers have local KV state.
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild`
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/clear`
+- `GET /api/gateway/sessions/prompt_cache`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear_all` (admin)
 
 Session lifecycle responses distinguish `unsupported`, `keyed`, and
 `local_control_plane` modes. Keyed providers receive a stable `runtime_hint`;
 local-control-plane providers can prepare, clear, and rebuild when their
 AbstractCore provider exposes those operations.
 
-Treat the three prompt-cache surfaces separately:
+Treat the prompt-cache surfaces separately:
 
 - `/prompt_cache/*`: provider/model prompt-cache controls
-- `/sessions/{session_id}/prompt_cache/*`: gateway-owned volatile session lifecycle
+- `/sessions/{session_id}/prompt_cache/*`: gateway-owned volatile session
+  lifecycle, derived from the session/bundle/provider identity
+- `GET /sessions/prompt_cache` + `/sessions/{session_id}/prompt_cache/clear_all`:
+  enumeration of the caches the runtime actually minted — the recommended lane
+  for observing and reclaiming session cache state, because it cannot miss
+  caches whose keys the gateway never derived
 - `/blocs/*`: durable exact-reuse bloc/KV contract that returns `prompt_cache_binding`
 
 The `saved` / `save` / `load` aliases are Runtime-backed host-local admin

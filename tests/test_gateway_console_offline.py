@@ -330,8 +330,14 @@ def test_both_free_text_lanes_go_through_one_contract() -> None:
         assert f'customLaneValue("{lane}")' in source, f"{lane} is never read back"
     # Exactly one place decides "is this lane live", and it is the reader that
     # pairs with the writer above. A second hand-rolled visibility test is how
-    # the two lanes drifted the first time.
-    assert source.count('classList.contains("hidden")') == 1, (
+    # the two lanes drifted the first time. The modal layer's Escape
+    # arbitration (_openModal: the confirm layer wins while open) is the one
+    # OTHER legitimate reader of a hidden class — everything else is the
+    # lane test duplicating again.
+    lane_reader = _slice_function(source, "customLaneValue")
+    assert 'classList.contains("hidden")' in lane_reader
+    residue = source.replace(lane_reader, "").replace(_slice_function(source, "_openModal"), "")
+    assert 'classList.contains("hidden")' not in residue, (
         "the lane-visibility test is duplicated again — centralise it in customLaneValue"
     )
 

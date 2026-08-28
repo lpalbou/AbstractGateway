@@ -6,6 +6,1247 @@ Relative links are normalized to repo-root paths.
 
 ---
 
+## docs/api.md
+
+# AbstractGateway — API overview
+
+The HTTP API is implemented with FastAPI under the `/api` prefix:
+- Health: `GET /api/health`
+- Gateway surface: `/api/gateway/*` (durable runs + operator tooling)
+
+The API is documented at runtime:
+- OpenAPI JSON: `GET /openapi.json`
+- Swagger UI: `GET /docs` (use **Authorize** to paste the bearer token)
+
+Context:
+- In the AbstractFramework ecosystem, UIs and automations call this API to operate **AbstractRuntime** runs.
+- Architecture diagram and core concepts: [architecture.md](docs/architecture.md)
+
+## Auth
+
+By default, `/api/gateway/*` is protected by `GatewaySecurityMiddleware` (bearer token + origin allowlist).
+See: [security.md](docs/security.md).
+
+All examples below assume:
+
+```bash
+export BASE_URL="http://127.0.0.1:8080"
+export AUTH="Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")"
+```
+
+## Provider connections
+
+Gateway-owned provider connections let users create reusable cloud, local, or
+OpenAI-compatible endpoints without putting raw API keys in workflow JSON or
+browser storage. The API route keeps the historical
+`provider-endpoint-profiles` name; the Console presents them as provider
+connections.
+
+- `GET /api/gateway/config/provider-endpoint-profiles`: list visible profiles.
+- `POST /api/gateway/config/provider-endpoint-profiles`: create a user- or
+  admin-owned profile.
+- `POST /api/gateway/config/provider-endpoint-profiles/discover-models`:
+  discover models for a draft or saved profile by calling the configured
+  provider family and base URL with the entered or server-side key. The raw key
+  is never returned.
+- `PUT` or `DELETE /api/gateway/config/provider-endpoint-profiles/{profile_id}`:
+  update or delete a profile.
+
+Enabled profiles appear in `GET /api/gateway/discovery/providers` as virtual
+providers such as `endpoint:office-vllm`. Model discovery through
+`GET /api/gateway/discovery/providers/{provider_name}/models` returns either the
+fixed profile allowlist or the live endpoint model catalog.
+
+## Core workflow lifecycle
+
+### 1) List bundles (bundle mode)
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/bundles"
+```
+
+Upload a bundle:
+
+```bash
+curl -sS -H "$AUTH" \
+  -F "file=@./my-bundle@0.1.0.flow" \
+  -F "overwrite=false" \
+  -F "reload=true" \
+  "$BASE_URL/api/gateway/bundles/upload"
+```
+
+### 2) Start a run
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"bundle_id":"my-bundle","input_data":{"prompt":"Hello"}}' \
+  "$BASE_URL/api/gateway/runs/start"
+```
+
+If you need a specific entrypoint:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Hello"}}' \
+  "$BASE_URL/api/gateway/runs/start"
+```
+
+Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
+
+For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
+Structured LLM/Agent schemas are Runtime/Core-owned: `response` remains textual,
+and schema-conformant object values are available through the node `data` output
+for data edges such as Break Object and Switch.
+
+#### Durable session replay (`use_session_history`)
+
+Thin clients do not need to carry conversation transcripts. Passing
+`"input_data": {"use_session_history": true}` together with a `session_id`
+makes the gateway seed the run's `context.messages` from the session's prior
+COMPLETED root runs before the run starts — the run store is the durable
+transcript (agora `durable-sessions` contract v1, 2026-07-16).
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"bundle_id":"my-bundle","session_id":"sess-1","input_data":{"prompt":"and what did I say before?","use_session_history":true}}' \
+  "$BASE_URL/api/gateway/runs/start"
+```
+
+Rules (the model-vs-display divergence contract — what the model replays is
+deliberately narrower than what history views display):
+
+- Client-provided non-empty `context.messages` always win; the seed never
+  overwrites them. An EMPTY client `context.messages` list does not count as
+  a transcript — the seed still runs (use the cap below to disable).
+- Only COMPLETED root runs of the session contribute, as strictly alternating
+  user/assistant pairs. FAILED and CANCELLED turns are invisible to replay by
+  design (a promptless answer or answerless prompt would seed a dangling
+  message and invite re-answering a stale ask); history views still show them.
+- Steering/operator guidance injected mid-run is not replayed; over-long
+  messages are truncated with a labeled `#TRUNCATION` marker; whole oldest
+  turns are dropped first (`session_history_max_chars` cumulative budget).
+- Caps: `input_data.session_history_max_messages` (1..200; explicit `0`
+  disables replay for the run) > `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES`
+  > default 40. Chars: `session_history_max_chars` >
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` > default 24000.
+- Failures degrade to a labeled `_runtime.session_history` `#FALLBACK` note
+  and an unseeded start — never a blocked run. Success records
+  `_runtime.session_history = {seeded: N, ...}` on the run for observability.
+- Entity lanes never ride this: their transcript authority is the entity home
+  (`_visit.history` / the chat driver), not the run store.
+
+Evidence: `_seed_session_history` in `src/abstractgateway/hosts/bundle_host.py`;
+read half `abstractruntime.session_history.session_chat_messages` (>=0.4.30);
+tests `tests/test_gateway_session_history_seed.py`.
+
+### 2b) Schedule a run (bundle mode)
+
+`POST /api/gateway/runs/schedule` starts a **scheduled parent run** that launches the target workflow as child runs over time.
+
+Example (run 3 times, every hour, starting now):
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Ping"},"start_at":"now","interval":"1h","repeat_count":3,"share_context":true,"session_id":"sess-1"}' \
+  "$BASE_URL/api/gateway/runs/schedule"
+```
+
+Notes:
+- `start_at`: ISO 8601 timestamp (recommended) or `"now"`.
+- `interval`: e.g. `"15m"`, `"1h"`, `"2d"`. If omitted, runs once.
+- `repeat_count`: if omitted and `interval` is set, repeats forever. Alternatively use `repeat_until` (ISO 8601).
+- To stop a schedule, cancel the scheduled parent run via `POST /api/gateway/commands` with type `cancel`.
+
+Evidence: `ScheduleRunRequest`, `start_scheduled_run` in `src/abstractgateway/routes/gateway.py`.
+
+### 2c) Shared workflow catalog
+
+Private `/api/gateway/bundles` routes are scoped to the signed-in user's routed
+runtime, and you may change the registry you own. The gateway's own bundle
+directory is shared by every user, so writing it — upload, delete, reload,
+deprecate, and `POST /visualflows/{flow_id}/publish` — requires an admin
+principal and otherwise returns `403`. Listing and running are unaffected. See
+[security.md](docs/security.md) for the full rule.
+
+Shared/default workflows use the Gateway workflow catalog instead:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/workflow-catalog"
+```
+
+Admin-only catalog operations live under
+`/api/gateway/admin/workflow-catalog/*`:
+
+- upload or promote immutable `.flow` versions;
+- move a bundle's default pointer;
+- set ACLs;
+- deprecate, block, or tombstone a version without deleting bundle bytes.
+
+Start a catalog workflow in the requesting user's runtime by setting
+`registry_scope`:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"registry_scope":"tenant_catalog","bundle_id":"basic-agent","flow_id":"root","input_data":{"prompt":"Hello"}}' \
+  "$BASE_URL/api/gateway/runs/start"
+```
+
+If `bundle_version` is omitted, Gateway uses the admin-managed catalog default
+pointer. Exact older versions keep working until that specific version is
+deprecated, blocked, or tombstoned.
+
+Catalog scope is explicit: omitting `registry_scope` starts only private
+runtime bundles. Flow/schema inspection for catalog workflows should use the
+ACL-aware catalog endpoints:
+
+- `GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}`
+- `GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}/input_schema`
+
+`framework_catalog` is reserved but not loadable yet; use `tenant_catalog`.
+
+### 2d) Docs Q&A (`docs-qa` catalog bundle)
+
+`docs-qa` is the shared transport for docs-grounded assistant panels (the
+unified top-bar drawers). The contract: the CALLER supplies its own corpus
+(typically its `llms.txt` text) — the bundle never guesses one, so answers are
+never silently grounded on another app's docs.
+
+Fresh installs need no manual publish: the gateway ships `docs-qa` in the
+wheel and boot idempotently publishes it into the tenant catalog
+(publish-if-absent by exact version; an admin's default pointer, tombstones,
+and publisher attribution are never touched; publisher `system:gateway-boot`).
+The publish is skipped on custom-bundle deployments whose private registry
+carries no LLM-bearing flow (it would add a boot requirement they never had)
+and can be disabled with `ABSTRACTGATEWAY_AUTO_PUBLISH_SHIPPED=0` — the
+manual upload below then remains the path.
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "registry_scope": "tenant_catalog",
+  "bundle_id": "docs-qa",
+  "bundle_version": "0.1.0",
+  "flow_id": "docsqa001",
+  "input_data": {
+    "question": "How do I publish a workflow bundle?",
+    "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
+    "docs": "<your llms.txt text>",
+    "app": "MyApp"
+  }
+}' "$BASE_URL/api/gateway/runs/start"
+```
+
+Then poll `GET /runs/{run_id}` (or stream the ledger); the answer is
+`output.response`. `provider`/`model`/`temperature` may ride `input_data` to
+override gateway defaults. Answers cite section headings and say plainly when
+the docs do not answer — the bundle refuses to invent endpoints or behavior.
+Docs Q&A must never route through entity chat (a visit is billable and forms
+memories).
+
+### Run-level skills selection
+
+`input_data.skills` (a list of skill NAMES) attaches curated skills to any
+run started through `/runs/start`:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "bundle_id": "basic-agent",
+  "input_data": {"prompt": "…", "skills": ["agora-collaboration"]}
+}' "$BASE_URL/api/gateway/runs/start"
+```
+
+Trust semantics (the same abstractskill gate as `GET /skills` and the
+workforce spawn lane — one gate, never a second resolver): VALIDATED skills
+activate and their index lands in the run's `_runtime.skills_block`
+(byte-stable for the whole run) with the `read_skill` tool made reachable;
+UNVERIFIED skills are held; advisory-BLOCKED skills never ride. Every
+outcome is recorded as a labeled verdict in `_runtime.skills_resolution`
+(`requested`/`active`/`verdicts`/`resolved_tree_hashes`) — nothing is
+silently dropped. Agent-node subruns inherit the block verbatim with
+`read_skill` appended to explicit child allowlists (empty allowlists keep
+registry defaults). A caller-supplied `_runtime.skills_block` is never
+overwritten; the selection is then ignored with a labeled verdict.
+
+The gateway serves its OWN corpus for the console drawer:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/docs/corpus"
+```
+
+Returns `{app, source, chars, text}`. Resolution order: the
+`ABSTRACTGATEWAY_DOCS_CORPUS` env override first (set-but-missing is an honest
+404 naming the checked candidates, never a silent fallback), then the repo
+`llms.txt` in dev checkouts, then the corpus packaged with the wheel.
+
+### 3) Replay the ledger (cursor-based)
+
+Ledger pages are replayed using `after` as “number of items already consumed”.
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger?after=0&limit=200"
+```
+
+Response shape:
+- `items`: list of durable ledger records
+- `next_after`: the next cursor to use
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`get_ledger`).
+
+### 3b) Replay ledgers for multiple runs (batch)
+
+Use `POST /api/gateway/runs/ledger/batch` to reduce request fanout when observing many runs/subflows.
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"limit":200,"runs":[{"run_id":"<run_id_1>","after":0},{"run_id":"<run_id_2>","after":0}]}' \
+  "$BASE_URL/api/gateway/runs/ledger/batch"
+```
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`get_ledger_batch`).
+
+### 4) Stream ledger updates (SSE)
+
+SSE is an optimization; clients should always be able to reconnect by replaying from the last `next_after`.
+
+```bash
+curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
+```
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`stream_ledger`).
+
+## Artifacts and filesystem handoff
+
+Gateway artifacts are the cross-package representation for files, media, and
+large payloads. Thin clients should pass artifact refs across runs instead of
+raw bytes or local paths:
+
+```json
+{
+  "$artifact": "abc123",
+  "artifact_id": "abc123",
+  "run_id": "session_memory_sess-1",
+  "content_type": "image/png",
+  "filename": "input.png"
+}
+```
+
+Gateway uses three distinct file-like source terms:
+
+- `Artifact`: a durable runtime-owned payload reference.
+- `Local File`: a browser/client upload source. Hosted clients should upload
+  bytes; browser-local paths are never interpreted as server paths.
+- `Server File` / `Server Folder`: user-facing wording for a workspace-scoped
+  server path under Gateway policy. The engineering contract is the canonical
+  `WorkspacePath` string returned by `/files/*`, artifact import/export, and
+  Runtime file nodes.
+
+Hosted local uploads stay artifact-backed:
+
+- one local file upload creates one artifact ref;
+- multiple local files create an ordered list of artifact refs in Flow;
+- a local folder uploads one artifact per file and may send `source_path`
+  (for example `reports/2026/summary.md`) so relative member paths survive in
+  artifact provenance without exposing browser-local absolute paths.
+
+Upload a local file or folder member:
+
+```bash
+curl -sS -H "$AUTH" \
+  -F "session_id=sess-1" \
+  -F "source_path=reports/summary.md" \
+  -F "file=@./summary.md" \
+  "$BASE_URL/api/gateway/attachments/upload"
+```
+
+List run artifacts:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/artifacts"
+```
+
+List artifacts visible to a session:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/sessions/sess-1/artifacts"
+```
+
+Browse server workspace files/folders:
+
+```bash
+curl -sS -H "$AUTH" \
+  "$BASE_URL/api/gateway/files/list?path=&include_directories=true&limit=200"
+```
+
+Optional filters:
+- `path`: browse a specific workspace folder or mount alias.
+- `recursive=true`
+- `family=image|video|audio|document|text|code|json|archive|other`
+- `extensions=png,jpg` or newline-separated values
+- `query=substring`
+- `max_depth=<n>`
+
+Search artifacts across Gateway storage:
+
+```bash
+curl -sS -H "$AUTH" \
+  "$BASE_URL/api/gateway/artifacts/search?scope=all&artifact_kind=image&query=logo&tags=pin_id=image&include_stats=true&limit=500"
+```
+
+`scope` can be `all`, `session`, or `run`. Use `session_id` with
+`scope=session` and `run_id` with `scope=run`; omit both for `scope=all`.
+Search responses preserve the legacy row fields and also include
+`artifact_envelope_v1`, a normalized projection of Runtime-owned descriptors,
+access stats, and Gateway action links.
+
+Useful query parameters:
+- `artifact_kind`: UI-oriented kind filter. Comma-separated values match
+  `semantic_kind`, `render_kind`, or `modality`; generic `audio` means
+  unclassified audio and does not match canonical `voice`, `music`, or `sound`.
+  Single canonical kinds such as `music`, `voice`, `image`, `markdown`, or
+  `json` map to Runtime catalog filters. Multi-kind unions are supported, but
+  may be Gateway post-filters until Runtime exposes OR filters.
+- `semantic_kind` / `render_kind`: canonical descriptor filters when the caller
+  wants the two dimensions separately.
+- `modality`, `content_type`, `workflow_id`, `node_id`, `created_after`,
+  `created_before`, and `tags`: server filters for indexed descriptor fields.
+- `query`: case-insensitive metadata search. Gateway may post-filter this field
+  when Runtime cannot index it directly.
+- `include_stats=true`: include exact `stats.total`, byte totals, and facet
+  counts for the selected server-side filter set, independent of `limit`.
+- `limit`, `offset`, and `cursor`: bounded paging. The default Runtime Explorer
+  page size is 500; `limit<=0` is bounded unless `debug_unlimited=true` is used
+  by an admin/debug caller.
+
+`artifact_envelope_v1` contains normalized fields such as `semantic_kind`,
+`render_kind`, `workflow_id`, `node_id`, `turn_id`, `ledger_cursor`,
+`generation`, `producer`, `media`, `source_refs`, `access`, and `links`.
+Sparse producer metadata is represented as missing fields; Gateway does not
+invent provider/model provenance from filenames.
+
+Generated-media artifacts created by child runs and projected into the parent
+run preserve Runtime descriptors and structured metadata. Direct transcription
+routes store transcript artifacts with source-audio refs, language/prompt hints,
+provider/model when available, and bounded route parameters.
+Descriptor-provided action links are sanitized to relative Gateway/UI links
+before they appear in envelopes; raw external provider URLs should be represented
+as trace availability or Gateway-owned trace records.
+
+Content reads can label the access type for Runtime access stats:
+
+```bash
+curl -sS -H "$AUTH" \
+  "$BASE_URL/api/gateway/runs/<run_id>/artifacts/<artifact_id>/content?access_action=preview"
+```
+
+Supported access actions are `content`, `preview`, and `download`. The shorter
+`access=preview` alias is also accepted.
+
+Import a server workspace path into a session artifact:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"session_id":"sess-1","source":{"kind":"workspace_path","path":"inputs/photo.png"},"pin_id":"image"}' \
+  "$BASE_URL/api/gateway/artifacts/import"
+```
+
+Export an artifact back into the server workspace:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"path":"outputs/photo.png","create_parent_dirs":true,"overwrite":false}' \
+  "$BASE_URL/api/gateway/runs/<run_id>/artifacts/<artifact_id>/export"
+```
+
+Import and export use the same Gateway workspace policy as file helpers:
+workspace roots, mounted roots, ignored paths, and size limits are enforced on
+the server. Browser-local files should be uploaded through
+`POST /api/gateway/attachments/upload`; browser-local file paths are not
+interpreted as Gateway workspace paths. In hosted user-auth mode, server
+workspace import/export and `/files/*` helpers require an admin principal.
+Ordinary users can still upload browser-local files and list/search artifacts in
+their own routed runtime.
+
+Canonical Gateway server paths use `rel/path` for the main workspace root and
+`mount_alias/rel/path` for approved mounts. When two allowed mounts share the
+same basename, Gateway emits deterministic digest-suffixed aliases so the same
+public path string can round-trip through `/files/*`, artifact import/export,
+and Runtime file nodes.
+
+## Durable commands (`POST /api/gateway/commands`)
+
+Commands are appended to a durable inbox and applied asynchronously by the runner.
+
+Request fields (see `SubmitCommandRequest` in `src/abstractgateway/routes/gateway.py`):
+- `command_id`: client-supplied idempotency key (UUID recommended)
+- `run_id`: target run id (or session id for some event use-cases)
+- `type`: `pause|resume|cancel|emit_event|update_schedule|compact_memory`
+- `payload`: command-specific object
+
+### Pause / cancel
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"command_id":"'"$(python -c 'import uuid; print(uuid.uuid4())')"'", "run_id":"<run_id>", "type":"pause", "payload":{"reason":"operator_pause"}}' \
+  "$BASE_URL/api/gateway/commands"
+```
+
+### Resume a paused run
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"command_id":"'"$(python -c 'import uuid; print(uuid.uuid4())')"'", "run_id":"<run_id>", "type":"resume", "payload":{}}' \
+  "$BASE_URL/api/gateway/commands"
+```
+
+### Resume a WAITING run with a payload (WAIT resume)
+
+When `payload.payload` is present, the runner interprets this as “resume a WAITING run with a durable payload”:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"command_id":"'"$(python -c 'import uuid; print(uuid.uuid4())')"'", "run_id":"<run_id>", "type":"resume", "payload":{"wait_key":"<optional_wait_key>", "payload":{"approved":true}}}' \
+  "$BASE_URL/api/gateway/commands"
+```
+
+Evidence: `src/abstractgateway/runner.py` (`_apply_command`, `_apply_run_control`).
+
+### Emit an external event
+
+Minimal form:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"command_id":"'"$(python -c 'import uuid; print(uuid.uuid4())')"'", "run_id":"<session_id>", "type":"emit_event", "payload":{"name":"chat.message","payload":{"text":"hi"}}}' \
+  "$BASE_URL/api/gateway/commands"
+```
+
+Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`).
+
+## Beyond the core
+
+`/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).
+See: [maintenance.md](docs/maintenance.md).
+
+## Discovery endpoints (optional)
+
+These exist to help thin clients adapt to the deployed gateway.
+
+- Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
+- Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
+- Tools (thin-client allowlist help): `GET /api/gateway/discovery/tools`
+- Skills inventory: `GET /api/gateway/skills` — the abstractskill shelf with
+  trust verdicts (roster rows `{name, description, trust_level, blocked,
+  requires_review, tree_hash, source, has_scripts, reasons}`); degradations
+  are labeled `warnings`, never a fabricated list. Shelf resolution:
+  `ABSTRACTGATEWAY_SKILLS_SHELF`, else the triage repo's
+  `abstractskill/registry`.
+- MCP server inventory: `GET /api/gateway/mcp/servers` — the declared
+  registry at `<data_dir>/config/mcp_servers.json`
+  (`{"version": 1, "servers": [{"name", "url"?, "description"?,
+  "auth_required"?, "tags"?}]}`), served with declared fields only and
+  `probed: false` (connect state/tool counts require a probe lane and are
+  never faked).
+- Dynamic capability catalogs: `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, `GET /api/gateway/audio/transcriptions/models`, `GET /api/gateway/audio/music/providers`, `GET /api/gateway/audio/music/models`, `GET /api/gateway/vision/provider_models`
+
+The capabilities payload includes package presence (`abstractruntime`,
+`abstractcore`, `abstractmemory`, `abstractvoice`, `abstractvision`), existing
+gateway helpers (`tools`, `visualflow`, `media`), memory-store readiness, and
+AbstractCore capability plugin status for `voice`, `audio`, `vision`, and
+`music`.
+
+Today the route paths and contract descriptors are the stable part of this
+surface. Catalog routes now also include a stable Gateway-owned envelope:
+
+- `catalog.contract = gateway_catalog_v1`
+- `catalog.version = 1`
+- `items = [...]`
+
+Legacy lower-layer fields are still preserved for compatibility. New thin
+clients should read `catalog` plus `items`; older clients can keep using route-
+specific fields like `models`, `provider_models`, `profiles`, or `voices`.
+
+Provider discovery also reports the resolved default provider/model when one is
+configured. The resolver follows request values, flow pins, and the execution-host
+`input.text` capability route; if no pair exists, the response includes
+`default_error` rather than a hardcoded local model.
+
+It also includes a versioned thin-client contract:
+
+- `capabilities.contracts.version`: currently `1`
+- `capabilities.contracts.common`: shared run start/list/summary/input/history,
+  ledger, artifact, attachment, workspace, discovery, provider prompt-cache
+  controls, and the host-visibility descriptors `model_residency` (including
+  `row_schema = "model_residency_row_v1"` and the canonical `modality_ui`
+  color map), `host_state`, and `session_caches`
+  (see [Host state and model residency](#host-state-and-model-residency)).
+  `common.artifacts` includes run listing/content, session artifact
+  listing, artifact search with `artifact_envelope_v1`, exact stats/facets,
+  `artifact_kind` UI filtering, workspace import, and workspace export
+  descriptors when available. Permission-sensitive descriptors are principal-aware:
+  ordinary users see admin-only workspace import/export and provider
+  prompt-cache controls marked unavailable with `admin_required` metadata.
+- `capabilities.contracts.common.readiness`: compact Gateway-owned
+  `gateway_surface_readiness_v1` summary derived from the shared endpoint/media/
+  residency descriptors
+- `capabilities.contracts.flow_editor`: the AbstractFlow editor/runtime surface
+- `capabilities.contracts.assistant`: assistant-facing voice/audio/media/cache
+  feature gates
+- `capabilities.contracts.abstractcode`: code-client run/history/workspace/cache
+  feature gates
+
+Contract booleans are intentionally conservative. Package `installed=true` is
+not the same thing as endpoint `available=true`; clients should branch on the
+versioned contract fields when enabling controls.
+
+`common.readiness` is intentionally narrower than provider/backend health. It
+summarizes Gateway surface availability from existing descriptors, but it does
+not invent selected backend/provider/model truth or stable degraded-state
+reason codes.
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`discovery_capabilities`, `discovery_providers`).
+
+## AbstractFlow gateway-first editor contract
+
+The browser editor can use AbstractGateway as its runtime and storage host.
+
+Draft VisualFlow records:
+
+- `GET /api/gateway/visualflows`
+- `POST /api/gateway/visualflows`
+- `GET /api/gateway/visualflows/{flow_id}`
+- `PUT /api/gateway/visualflows/{flow_id}`
+- `DELETE /api/gateway/visualflows/{flow_id}`
+- `POST /api/gateway/visualflows/{flow_id}/publish`
+
+Bundle inspection and editor run-schema helpers:
+
+- `GET /api/gateway/bundles`
+- `GET /api/gateway/bundles/{bundle_id}`
+- `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}`
+- `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema`
+
+The input-schema endpoint returns a versioned payload with:
+
+- `version`
+- `bundle_id`, `bundle_version`, `bundle_ref`, `flow_id`, `workflow_id`
+- `inputs`: entrypoint input pins derived from the `on_flow_start` node
+- `defaults`: pin defaults from VisualFlow JSON
+- `input_data_schema`: a small JSON Schema object for the Run Flow modal
+
+Example:
+
+```bash
+curl -sS -H "$AUTH" \
+  "$BASE_URL/api/gateway/bundles/my-bundle/flows/ac-echo/input_schema"
+```
+
+### Native-loop bundles (react / codeact / memact)
+
+Some shipped bundles declare `metadata.native_loop_factory` instead of VisualFlow
+JSON (`manifest.flows` is empty). The gateway materializes an abstractagent
+loop at load time. Discovery uses the same bundle list endpoint — **not**
+`/discovery/workflows`.
+
+Thin clients should:
+
+1. `GET /api/gateway/bundles` (authenticated).
+2. Filter entrypoints whose `interfaces` includes `abstractcode.agent.v1`.
+3. Read `metadata.native_loop_factory` (`react`, `codeact`, or `memact`) to
+   distinguish native loops from VisualFlow agent bundles.
+4. Use each entrypoint's `workflow_id` (for example `react-agent@0.1.0:react`).
+5. Start runs with `POST /api/gateway/runs/start` and
+   `bundle_id` / `flow_id` from the bundle listing (for example
+   `react-agent` + `react`).
+
+Native-loop entrypoints do not ship VisualFlow JSON. The gateway serves a
+versioned input-schema stub (`prompt` required; `provider` and `model`
+optional) from
+`GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema`.
+Headless clients may also pass those fields without fetching the schema.
+
+The shipped `react-agent@0.1.0` bundle is built by
+`scripts/build_react_agent_bundle.py` and force-included in the wheel. A running
+gateway process must restart (or call bundle reload) after the file lands on
+disk before `/bundles` lists it.
+
+### Run history bundle (`GET /runs/{run_id}/history_bundle`)
+
+Thin clients should prefer this endpoint over stitching ledger, session, and
+artifact endpoints. The export is owned by AbstractRuntime; the gateway forwards
+query parameters and returns the bundle JSON unchanged (including in-band
+degradations).
+
+Query parameters:
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `include_subruns` | `true` | Descendant runs in the bundle tree |
+| `include_session` | `false` | Root session turn list |
+| `session_turn_limit` | `200` | Cap when `include_session=true` |
+| `ledger_mode` | `tail` | `tail` or `full` |
+| `ledger_max_items` | `2000` | Per-run ledger cap when `ledger_mode=tail` |
+| `detail` | `full` | `full` (complete payloads) or `replay` (transcript-fold projection) |
+
+**`detail=replay`** drops request-side payloads and observability paths the
+transcript fold never reads; runtime marks each omission with `$omitted` inside
+ledger records. Use it for session replay and thin-client folds — it is much
+smaller than `full` (gzip helps further; send `Accept-Encoding: gzip`).
+
+**`warnings`** (always present, may be empty): typed degradations the export
+survived instead of failing silently. Each entry is an object with at least
+`code` and `detail`; many include `run_id`. Known codes today:
+
+| Code | Meaning |
+|------|---------|
+| `subtree_discovery_failed` | Could not list child runs; bundle covers root only |
+| `subtree_truncated` | Descendant discovery hit the run cap |
+| `ledger_read_failed` | Ledger for a run id could not be read |
+| `torn_rows_skipped` | Corrupt/unparseable ledger lines skipped |
+| `ledger_tail_window` | Ledger truncated to `ledger_max_items` (tail mode) |
+| `input_data_offload_failed` | Input-data artifact reference could not be resolved |
+
+Clients must surface non-empty `warnings` to the operator — a bundle that
+"looks complete" but carries warnings may be missing subruns, ledger tail, or
+offloaded input data.
+
+### Session history bloc (`GET /sessions/{session_id}/history/bloc`)
+
+Returns one cursor-bounded bloc of **root session turns**, each with an inline
+`history_bundle` export — one round-trip instead of N per-turn bundle fetches
+(laurent c5551). Resume pagination uses an ISO `created_at` cursor in the
+`before` query parameter (never turn-count offsets).
+
+Query parameters:
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `before` | *(omit)* | ISO-8601 cursor; only turns strictly **before** this timestamp |
+| `limit` | `5` | Max turns in this bloc (1–50) |
+| `detail` | `replay` | Forwarded to each turn's bundle export (`full` \| `replay`) |
+| `include_subruns` | `true` | Per-turn bundle tree |
+| `ledger_mode` | `tail` | `tail` or `full` |
+| `ledger_max_items` | `2000` | Per-turn ledger cap when `ledger_mode=tail` |
+| `include_drafts` | `false` | Include draft-test root runs |
+
+Response fields: `session_id`, `cursor_before` (echo of `before`), `cursor_after`
+(oldest turn returned — pass as the next `before`), `older_remaining`, `warnings`,
+and `turns[]` (`run_id`, `created_at`, `status`, `bundle` or `error`).
+
+The editor observes runs with the core lifecycle endpoints above:
+`/runs/start`, `/runs/{run_id}`, `/runs/{run_id}/ledger`,
+`/runs/{run_id}/ledger/stream`, `/runs/ledger/batch`,
+`/runs/{run_id}/input_data`, `/runs/{run_id}/history_bundle`, and
+`/runs/{run_id}/artifacts`.
+
+## Optional multimodal scope
+
+Current direct Gateway endpoints:
+- `POST /api/gateway/runs/{run_id}/voice/tts`
+- `POST /api/gateway/runs/{run_id}/voice/tts/stream`
+- `POST /api/gateway/runs/{run_id}/audio/transcribe`
+- `POST /api/gateway/runs/{run_id}/images/generate`
+- `POST /api/gateway/runs/{run_id}/images/edit`
+- `POST /api/gateway/runs/{run_id}/images/upscale`
+- `POST /api/gateway/runs/{run_id}/videos/generate`
+- `POST /api/gateway/runs/{run_id}/videos/from_image`
+- `POST /api/gateway/runs/{run_id}/music/generate`
+- `GET /api/gateway/voice/voices`
+- `GET /api/gateway/audio/speech/models`
+- `GET /api/gateway/audio/transcriptions/models`
+- `GET /api/gateway/audio/music/providers`
+- `GET /api/gateway/audio/music/models`
+- `GET /api/gateway/vision/provider_models`
+- `GET /api/gateway/vision/adapters`
+
+`/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
+returns JSON Lines stream events for progressive playback when discovery advertises
+`capabilities.contracts.assistant.voice.tts.streaming=true`; successful streams still
+finish with a Runtime-owned child-run audio artifact.
+
+The catalog endpoints proxy AbstractCore Server routes when
+`ABSTRACTCORE_SERVER_BASE_URL`
+is configured. Gateway uses explicit Core auth settings for that hop and never
+reuses the Gateway bearer token as a Core/provider secret. Without a configured
+Core server, the voice/model routes return bounded static descriptors from
+Gateway and capability-package environment variables.
+
+Each route now adds:
+
+- `catalog`: Gateway-owned route metadata (`contract`, `version`, `kind`,
+  `scope`, `route_source`, optional `upstream_source`, and route filters)
+- `items`: one canonical primary array for thin clients
+
+Examples:
+
+- `/voice/voices`: `items` contain voice/profile records with `id`, `label`,
+  optional `provider`, optional `model`, and `voice_kind`
+- `/audio/*/models`: `items` contain model records with `id`, `label`,
+  optional `provider`, optional `tasks`, and optional `parameters`
+- `/audio/music/providers` and `/discovery/providers`: `items` contain provider
+  records with `id`, `label`, and `provider`
+
+Generated images are available through Runtime workflows when a compatible
+image backend is installed and configured. Gateway also exposes a direct image
+generation endpoint that uses the Runtime/Core output-selector contract rather
+than a provider-specific image client. The route creates a durable child run,
+stores the generated image as a run artifact, and returns
+`event_name="abstract.progress"` so thin clients can stream the child-run ledger
+for progress:
+
+- `run_id`, `request_id`, `prompt`
+- optional `provider`, `model`, `size`, `width`, `height`, `format`, batch
+  `count` / `n`, `seeds`, and ordered `lora_adapters`
+- `image_artifact`: first generated image for compatibility
+- `image_artifacts`: full ordered image artifact list for batch generation
+
+`size`, `width`, and `height` are optional passthrough request overrides. Do
+not inject a client-side default size. Different image providers/models accept
+different size sets; when the client leaves dimensions unset, Runtime/Core lets
+the configured backend use its default or `auto` behavior.
+
+If the active workflow runtime already has an AbstractCore LLM client, the route
+uses it. For tools-only workflows, the route can create a direct Runtime/Core
+client from request `provider`/`model` or the execution-host capability route
+default. Unsupported or unconfigured deployments return a structured `ok=false`
+response instead of a failed run.
+
+Gateway also exposes a direct image-edit sibling route:
+
+- `POST /api/gateway/runs/{run_id}/images/edit`
+
+The request uses a source `image_artifact`, optional `mask_artifact`, the same
+provider/model and image backend selectors as image generation, plus optional
+batch `count` / `n`, `seeds`, and ordered `lora_adapters`, and returns an
+artifact-backed edited image. Batch responses also return `image_artifacts`.
+Thin clients should feature-detect it from
+`capabilities.contracts.flow_editor.media.edited_image` or
+`capabilities.contracts.assistant.media.edited_image`. It uses the same
+child-run `abstract.progress` progress contract as direct image generation.
+
+Gateway also exposes a direct image-upscale sibling route:
+
+- `POST /api/gateway/runs/{run_id}/images/upscale`
+
+The request uses a run-visible source `image_artifact`, optional provider/model
+selectors, and optional upscaler controls such as `scale`, `resolution`,
+`softness`, `seed`, `quantize`, and `vae_tiling`; `resolution` may be a
+shortest-edge integer or a scale factor such as `2x`. Thin clients should
+feature-detect it from `capabilities.contracts.flow_editor.media.upscaled_image`
+or `capabilities.contracts.assistant.media.upscaled_image`, list models with
+`GET /api/gateway/vision/provider_models?task=image_upscale`, and stream the
+returned child-run ledger for `abstract.progress` events.
+
+Generated music follows the same direct child-run pattern. Thin clients should
+discover it from `capabilities.contracts.flow_editor.media.generated_music` or
+`capabilities.contracts.assistant.media.generated_music`, list providers/models
+from the music catalog routes, and treat the returned `child_run_id` plus
+`music_artifact` as the durable output handle.
+
+Generated video also follows the direct child-run pattern:
+
+- `POST /api/gateway/runs/{run_id}/videos/generate` uses the Runtime/Core
+  `output.modality=video` / `task=text_to_video` contract and accepts optional
+  batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift`.
+- `POST /api/gateway/runs/{run_id}/videos/from_image` accepts a run-visible
+  source `image_artifact`, accepts the same optional batch/adapter/video
+  control fields, and uses `task=image_to_video`.
+- Thin clients should discover these routes from
+  `capabilities.contracts.flow_editor.media.generated_video` and
+  `capabilities.contracts.flow_editor.media.image_to_video` (or the matching
+  `assistant.media.*` entries), use
+  `GET /api/gateway/vision/provider_models?task=text_to_video|image_to_video`
+  for model catalogs, use `GET /api/gateway/vision/adapters` for compatible
+  installed adapter catalogs, stream the returned `child_run_id` ledger for
+  `abstract.progress` events, and read `video_artifacts` when batch generation
+  is requested.
+
+STT and listen contract notes:
+
+- `POST /api/gateway/runs/{run_id}/audio/transcribe` accepts a run-visible
+  `audio_artifact` plus optional `language`, `prompt`, `response_format`,
+  `temperature`, `format`, `provider`, and `model` hints.
+- `capabilities.contracts.flow_editor.voice.stt` and
+  `capabilities.contracts.assistant.voice.stt` point to that upload route.
+- `capabilities.contracts.flow_editor.voice.listen` and
+  `capabilities.contracts.assistant.voice.listen` are host-capture contracts,
+  not a live microphone socket. They tell higher apps to capture locally and
+  emit an event or upload the resulting audio artifact.
+
+## KG memory
+
+`POST /api/gateway/kg/query` queries the configured AbstractMemory TripleStore.
+Gateway resolves the store through:
+
+- `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory` (`sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`)
+- `ABSTRACTGATEWAY_MEMORY_STORE_PATH`
+- `ABSTRACTGATEWAY_MEMORY_REQUIRE_VECTOR`
+
+Structured queries work with LanceDB and in-memory stores. SQLite also works
+when the installed AbstractMemory build exposes `SQLiteTripleStore`. Semantic
+`query_text` requires a vector-capable backend plus the execution-host
+`embedding.text` route; SQLite returns a clear 400 instead of pretending to
+support semantic recall.
+
+Capability discovery reports KG memory as available when AbstractMemory is
+installed and the configured backend can be resolved. A fresh persistent store
+does not need to exist yet; empty-store structured queries return an empty
+result rather than making Flow authoring nodes unavailable.
+
+## Host state and model residency
+
+Gateway exposes a host-level view of the execution machine — memory, GPU,
+resident models, and session prompt caches — so consoles and agents can render
+an "agentic OS" panel from one API surface.
+
+Read endpoints (any authenticated principal):
+
+- `GET /api/gateway/host/state` — one-call host snapshot
+- `GET /api/gateway/host/metrics/memory` — host memory snapshot
+- `GET /api/gateway/host/metrics/gpu` — GPU utilization probe
+- `GET /api/gateway/models/loaded` — model residency listing
+- `GET /api/gateway/models/context_estimate` — context/KV memory estimate for
+  a provider+model
+- `GET /api/gateway/sessions/prompt_cache` — session prompt-cache enumeration
+
+Mutation endpoints (admin principal required):
+
+- `POST /api/gateway/models/load` — load (and by default pin) a model runtime
+- `POST /api/gateway/models/unload` — unload a model runtime
+- `POST /api/gateway/models/lock` — lock a resident model against unload
+- `POST /api/gateway/models/unlock` — release a model-residency lock
+- `POST /api/gateway/models/download` — fetch model weights onto the host
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear_all` — clear
+  every runtime-minted prompt cache for a session
+
+Reads are visibility every authenticated client needs; mutations spend shared
+host resources and stay operator acts. Anonymous requests are rejected on all
+of these routes, like every other `/api/gateway/*` path.
+
+### `GET /host/state`
+
+One snapshot with `memory`, `gpu`, `models`, and `session_caches` sections:
+
+```json
+{
+  "ok": true,
+  "ts": 1787857000.0,
+  "memory": {"ram": {"...": "..."}, "process": {"rss_bytes": 140443648}, "device": {"backend": "metal", "allocated_bytes": 0, "...": "..."}},
+  "gpu": {"supported": true, "source": "ioreg", "gpus": [{"name": "...", "utilization_gpu_pct": 0.0}]},
+  "models": [{"runtime_id": "...", "provider": "...", "model": "...", "resident": true, "...": "..."}],
+  "session_caches": [],
+  "totals": {"models": 2, "models_resident": 1, "model_bytes": 3109915433, "session_caches": 0, "session_cache_bytes": null},
+  "degraded": [],
+  "row_schema": "model_residency_row_v1"
+}
+```
+
+- `models` rows use the frozen `model_residency_row_v1` schema described
+  below; `session_caches` relays the runtime facade's cache rows verbatim.
+- Every section is independently best-effort and the route never returns a
+  500. A missing facade method or a failed probe nulls that section and names
+  it in `degraded`; a `reasons` map (present only when non-empty) says why.
+- The `gpu` section keeps its in-band `{"supported": false, "reason": "..."}`
+  payload when the probe answers but reports no support; it still counts as
+  degraded.
+- `totals.model_bytes` sums the known `size_bytes` values and is `null` when
+  no row reports a size; `totals.session_cache_bytes` behaves the same over
+  the cache rows' `bytes`.
+- `totals.models` counts every known row — configured / cached rows included —
+  while `totals.models_resident` (additive) counts only rows with
+  `resident: true`. Clients that display "N loaded" must read
+  `models_resident`: default ≠ loaded, and presenting configured capability
+  defaults as loaded is exactly the lie this field removes.
+- When the runtime memory snapshot reports a host identity, the response also
+  carries a top-level `host` object (the identity facts of the machine the
+  snapshot describes). The block is omitted when the runtime does not report
+  one. Together with the per-row `host_id`/`host_name` fields below, this is
+  the seam a multi-machine resource pool would aggregate on; one gateway
+  binds one runtime host, and the pool design is proposed in
+  [backlog 0093](docs/backlog/proposed/0093_multi_machine_model_resource_pool.md).
+
+### `GET /host/metrics/memory`
+
+Returns `{"ok": true, "supported": true, ...}` plus the snapshot sections:
+`ram` (total/available/used bytes and percent), `process` (`rss_bytes`), and
+`device` (`backend`, `allocated_bytes`, `total_bytes`, `free_bytes`). When the
+runtime host facade does not expose a memory snapshot, the route answers 200
+with `{"ok": true, "supported": false, "reason": "..."}` — the same degraded
+style as `GET /host/metrics/gpu`.
+
+How to compare memory measurements: `process.rss_bytes` and
+`device.allocated_bytes` are different axes. In-process device backends (for
+example MLX on Metal) return freed buffers to the process heap and the
+operating system may retain those pages, so process RSS does not shrink when a
+model unloads. Use `device.allocated_bytes` to verify that an unload freed
+device memory; use `ram` and `process` for overall host pressure.
+
+### Model residency (`/models/loaded`, `/models/load`, `/models/unload`)
+
+`GET /models/loaded` lists the model runtimes the host knows about, with
+optional `task`, `provider`, `model`, and `base_url` query filters. The
+response keeps the raw runtime records in `models` and adds a normalized
+`rows` array in the frozen `model_residency_row_v1` schema (named by
+`row_schema`), so thin clients do not need per-provider alias tables.
+
+Each `model_residency_row_v1` row has exactly these fields (unknown values
+are `null`, never guessed):
+
+`runtime_id`, `task`, `provider`, `model`, `source`, `resident`, `state`,
+`pinned`, `default`, `size_bytes`, `size_vram_bytes`, `expires_at`,
+`context_length`, `loaded_at`, `last_used_at`, `locked`, `lockable`,
+`modalities`, `calibrated_context_length`, `context_calibrated`, `host_id`,
+`host_name`, `details`
+
+The schema is additive-tolerant and keeps the `model_residency_row_v1` name
+as optional fields are added; treat fields beyond the original 16 as
+optional. The lock/calibration/host fields mean:
+
+- `locked` / `lockable` — tri-state booleans: whether the model is locked
+  against unload, and whether this runtime supports locking it at all.
+- `modalities` — list of modality strings when the runtime reports one
+  (`null` otherwise, including when the value is not a clean string list).
+- `calibrated_context_length` / `context_calibrated` — the measured usable
+  context length and whether it came from calibration rather than metadata.
+- `host_id` / `host_name` — identity of the machine serving the model,
+  stamped by the runtime that reported the row (see the `host` block note
+  under `GET /host/state` above).
+
+Residency truth is provider-first: `provider_resident` / `provider_loaded`
+booleans in the source record outrank the runtime-lease booleans `resident` /
+`loaded`, because a runtime can hold a lease on a model the provider has
+already evicted. A loaded-looking `state` string (`provider_loaded`, `loaded`,
+`resident`) can confirm residency, but a state string is never proof of
+absence — with no boolean present and no loaded-like state, `resident` stays
+`null`. `details` preserves the raw record for fields outside the schema.
+
+`POST /models/load` accepts `task` (default `text_generation`), `provider`,
+`model`, optional provider `options`, `pin` (default `true`), `base_url`,
+`timeout_s`, and `lock` (default `false`) — with `lock: true` a successful
+load is immediately locked against unload, and the lock outcome is reported
+additively under `lock` in the response (a lock failure or a runtime without
+lock support never turns the successful load into a failure). `POST
+/models/unload` selects the runtime by `runtime_id` or by
+`task`/`provider`/`model`. Both relay Runtime's host facade and return the
+normalized residency response (`operation`, affected records, and in-band
+`ok=false` errors instead of opaque failures).
+
+One unload failure gets a real status code: when the target model is locked,
+`POST /models/unload` answers **HTTP 409** with the normalized refusal payload
+as the body (`ok: false`, `error: "model_locked"`, plus whatever detail the
+runtime included), so clients can offer force-unload or point at
+`/models/unlock`. Sending `"force": true` in the unload request unloads the
+model despite the lock. Every other unload outcome stays in-band at 200.
+
+### Model locks and context estimates
+
+- `POST /models/lock` and `POST /models/unlock` (admin) pin a resident model
+  against unload and release that pin. The body selects the target like
+  unload does: `runtime_id`, or `provider` + `model`, with optional
+  `base_url` and `timeout_s`. Lock requires provider-verified residency: a
+  configured or merely-warm model refuses with an
+  `error: "model_not_resident"` payload (load it with `lock: true` instead);
+  unlock always works, even for a since-evicted model, so locks are never
+  stranded. Rows report `lockable` so clients know whether
+  a lock can work, and `locked` so they can render the current state.
+- `GET /models/context_estimate?provider=&model=&context_length=` (any
+  authenticated principal) relays the Runtime host facade's context/KV memory
+  estimate for a provider+model. `provider` and `model` are required;
+  `context_length` is optional and must be >= 1 (schema-rejected with 422
+  otherwise). The estimate reports its `confidence` in-band — `calibrated`,
+  `estimated`, or `unknown` — alongside facade fields such as
+  `predicted_max_context` (the context that fits beside the weights), the
+  tri-state `fits_weights` / `fits_requested_context` split, `budget_bytes`,
+  `est_kv_bytes`, and `notes` (which state the budget basis and reserve).
+  The estimate is advisory only — no load path gates on it.
+
+Like the other host-facade relays, these routes never 500 on capability gaps:
+a runtime without the method answers 200 with `ok: false`,
+`available: false`, and `code = "model_residency_unavailable"` (lock/unlock)
+or `code = "context_estimate_unavailable"` (estimate); facade exceptions use
+the matching `*_error` codes.
+
+### Session prompt-cache enumeration
+
+- `GET /api/gateway/sessions/prompt_cache?session_id=<optional>`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear_all` (admin)
+
+The list route enumerates the prompt caches the runtime actually minted. Each
+cache row carries the provider/model/runtime identity, byte and token counts,
+and stamped attribution metadata (`session_id`, `run_id`, `workflow_id`,
+`node_id`). Omit `session_id` to list every session's caches. This
+enumeration lane is the recommended way to observe and reclaim session cache
+state: unlike the identity-derived session lifecycle endpoints described
+under the prompt-cache control plane below, it cannot miss caches whose keys
+the gateway never derived.
+
+`clear_all` unloads every runtime-minted cache for one session in a single
+call. It requires an admin principal because it accepts any session id and
+clears real provider cache state; the identity-derived, caller-scoped session
+lifecycle endpoints remain user-level.
+
+When the runtime facade does not expose enumeration, both routes answer 200
+with `ok=false`, `available=false`, and `code="session_caches_unavailable"`
+(facade errors use `code="session_caches_error"`); the list route always
+carries a `caches` array and `clear_all` always carries `cleared` and `count`.
+
+### Discovery descriptors
+
+`GET /discovery/capabilities` advertises this surface under
+`capabilities.contracts.common`:
+
+- `model_residency`: `endpoints` (`loaded`, `load`, `unload`, `lock`,
+  `unlock`, `context_estimate`), the per-task support map,
+  `row_schema = "model_residency_row_v1"`, and `modality_ui` — the canonical
+  modality color map (`{version: 1, colors: {...}}`, one `{color, label}`
+  entry per residency task plus an `unknown` fallback) so every client
+  renders the same modality palette instead of hardcoding its own. It is a
+  rendering contract, not a runtime capability, so it is served even when the
+  runtime facade is absent.
+- `host_state`: `endpoints` (`state`, `memory`, `gpu`) plus
+  `memory_available`. The state route itself always answers; per-section truth
+  lives in the payload's `degraded` list.
+- `session_caches`: `endpoints` (`list`, `clear_all`) plus `available`,
+  reflecting whether the runtime facade supports cache enumeration.
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
+`host_memory_metrics`, `model_residency_loaded`, `model_residency_lock`,
+`model_context_estimate`, `session_prompt_caches_list`) and
+`src/abstractgateway/security/authorization.py` (route-family policy).
+
+## Prompt-cache control plane (operator API)
+
+The gateway exposes prompt-cache operator endpoints under `/api/gateway/prompt_cache/*`.
+Provider prompt-cache controls affect process-local or remote provider state
+and require an admin principal in hosted user-auth mode.
+
+Core endpoints:
+
+- `GET /api/gateway/prompt_cache/capabilities?provider=...&model=...`
+- `GET /api/gateway/prompt_cache/stats?provider=...&model=...`
+- `POST /api/gateway/prompt_cache/set`
+- `POST /api/gateway/prompt_cache/update`
+- `POST /api/gateway/prompt_cache/fork`
+- `POST /api/gateway/prompt_cache/clear`
+- `POST /api/gateway/prompt_cache/prepare_modules`
+
+Behavior:
+
+- These routes use the runtime's AbstractCore prompt-cache client contract rather than directly depending on provider-instance access.
+- In local mode they delegate to the in-process provider.
+- In remote/hybrid mode they follow whatever `/acore/prompt_cache/*` surface the configured AbstractCore server exposes.
+- All core prompt-cache responses include `operation` and `capabilities`, with structured unsupported/error cases (`code="prompt_cache_unsupported"` / `code="prompt_cache_error"` / `code="prompt_cache_unavailable"`).
+- These endpoints remain provider/model controls, not a Gateway-owned CachedSession persistence system.
+
+Session lifecycle endpoints:
+
+- `GET /api/gateway/sessions/{session_id}/prompt_cache/status`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear`
+
+These routes derive a deterministic bounded namespace/key from `session_id`,
+`bundle_id`, `bundle_version`, `flow_id`, `provider`, `model`, optional
+`template_id`, and `version`. The private hash also includes the authenticated
+principal scope, so two hosted users using the same session id/provider/model do
+not collide in a shared provider control plane; the returned `identity` remains
+portable app-level data and does not expose that private scope. These routes
+expose three honest modes:
+
+- `unsupported`: provider/model does not expose prompt-cache support; responses include `supported=false`, `ok=false`, and capabilities.
+- `keyed`: gateway returns a stable `runtime_hint`/`prompt_cache_key` for Runtime/Core injection, but does not claim module preparation occurred.
+- `local_control_plane`: gateway uses supported provider operations such as `prepare_modules`, `fork`, `set`, `clear`, and `stats`.
+
+`status` is read-only. `prepare` accepts optional modules (`system_prompt`,
+`workflow_instructions`, `tools`, `pinned_attachments`) and returns either
+provider operation results or a key hint. `rebuild` is clear-plus-prepare for
+providers that expose clear controls.
+
+These identity-derived endpoints only see caches whose keys the gateway
+derived. To enumerate or bulk-clear the caches the runtime actually minted for
+a session, use the recommended
+[session prompt-cache enumeration lane](#session-prompt-cache-enumeration).
+
+Durable bloc exact-reuse endpoints:
+
+- `POST /api/gateway/blocs/upsert_text`
+- `GET /api/gateway/blocs/record`
+- `GET /api/gateway/blocs`
+- `POST /api/gateway/blocs/delete`
+- `GET /api/gateway/blocs/kv/manifest`
+- `GET /api/gateway/blocs/kv/list`
+- `POST /api/gateway/blocs/kv/ensure`
+- `POST /api/gateway/blocs/kv/load`
+- `POST /api/gateway/blocs/kv/delete`
+- `POST /api/gateway/blocs/kv/prune`
+
+These routes are the primary app-facing durable prompt-cache path:
+
+- create or identify a durable text bloc;
+- ensure or load a KV artifact for a target local provider/model;
+- use the returned `prompt_cache_binding` in later Runtime-backed generation;
+- list/delete/prune artifacts without reaching into provider-private cache state.
+
+They delegate through Runtime's public AbstractCore host facade rather than
+proxying Core directly. They are operator-style host controls, so the routes
+themselves are not ledgered run execution; the ledgered exact-reuse path is the
+later `LLM_CALL.params.prompt_cache_binding` used inside real Runtime runs.
+
+Host-local prompt-cache export/import admin aliases:
+
+- `GET /api/gateway/prompt_cache/saved`
+- `POST /api/gateway/prompt_cache/save`
+- `POST /api/gateway/prompt_cache/load`
+
+These remain explicitly local/operator-oriented:
+
+- the route paths are compatibility aliases, but the implementation delegates to Runtime's public host facade:
+  - `saved` -> `list_prompt_cache_exports(...)`
+  - `save` -> `prompt_cache_export(...)`
+  - `load` -> `prompt_cache_import(...)`
+- local bundle/file runtimes store these exports under the Gateway data dir at `prompt_cache_exports/`
+- remote and hybrid runtimes return `code=prompt_cache_local_only`
+- response payloads follow Runtime's host-local export/import contract, including `operation`, `local_only`, `artifact_*`, `capabilities`, and `provider_response`
+
+## Email inbox (operator UI; optional)
+
+These endpoints power AbstractObserver’s **Inbox → Email** UI. They are **account-scoped**: the browser cannot supply arbitrary IMAP/SMTP host/user credentials. The gateway host must be configured with one or more email accounts (multi-account YAML or env vars).
+
+Endpoints:
+- `GET /api/gateway/email/accounts`
+- `GET /api/gateway/email/messages?account=…&mailbox=…&since=…&status=…&limit=…`
+- `GET /api/gateway/email/messages/{uid}?account=…&mailbox=…&max_body_chars=…`
+- `POST /api/gateway/email/send`
+
+Examples:
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/accounts"
+```
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/messages?status=unread&since=7d&limit=20"
+```
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/messages/12345?max_body_chars=20000"
+```
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"to":"you@example.com","subject":"Hello","body_text":"Hi!"}' \
+  "$BASE_URL/api/gateway/email/send"
+```
+
+Configuration notes (gateway host):
+- Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
+- Single-account env fallback: set `ABSTRACT_EMAIL_IMAP_*` and/or `ABSTRACT_EMAIL_SMTP_*`.
+- The secret itself must be present in the env var referenced by `*_PASSWORD_ENV_VAR` (e.g. `EMAIL_PASSWORD=...`).
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`/email/accounts|messages|send`) which proxies to the Runtime AbstractCore comms facade.
+
+Troubleshooting and common questions: [faq.md](docs/faq.md).
+
+---
+
 ## docs/shipped-workflows.md
 
 # Shipped Workflows
@@ -70,6 +1311,48 @@ only the figures are skipped. Install it if you want them:
 ```bash
 pip install matplotlib
 ```
+
+## Managing workflows from the console
+
+Both consoles carry a **Workflows** surface — a tab in the web console, step 6
+in the console-TUI — listing every workflow registered on this gateway with how
+many published and draft versions each has. Select a workflow to see its
+versions and its entrypoints with their declared interfaces.
+
+From there you can:
+
+- **Import** one or more `.flow` bundles. Each file reports whether the gateway
+  is serving the result, not merely that the upload succeeded.
+- **Export** a version as its original `.flow` bytes, byte-identical to what is
+  installed, so it can be archived or re-installed elsewhere. In the TUI, `e`
+  writes the file next to your working directory.
+- **Delete** a single version or every version of a workflow, behind a
+  confirmation that states what is irreversible. In the TUI, `d` removes the
+  selected version and `D` the whole workflow.
+
+Versions the gateway is not serving are listed separately under **Not loaded**,
+with the reason and the file path. They stay on disk until you remove them.
+
+## Who can change the registry
+
+The gateway's own bundle directory is the shared set: every user sees it and can
+run what it contains. Changing it is an operator act, so installing, replacing,
+removing, deprecating and reloading workflows there require an admin principal.
+Listing and running remain available to every user.
+
+Under hosted user auth each principal also gets its own workflow registry, and
+you can install and remove workflows there without admin rights — the shared
+directory stays visible and read-only alongside it. The rule is ownership: you
+may change the registry you own.
+
+The same check covers every route that writes the registry, including
+`POST /bundles/upload`, `DELETE /bundles/{bundle_id}`, `POST /bundles/reload`
+and `POST /visualflows/{flow_id}/publish`. A non-admin request against the
+shared registry returns `403`.
+
+`basic-agent.flow` is the default framework agent and the gateway verifies it at
+startup, so `DELETE` refuses to remove it and answers `409`. To replace the
+default agent, install the replacement bundle first, then remove the old file.
 
 ## Customizing the registry
 
@@ -413,6 +1696,40 @@ loads, bundles register, and the failure surfaces when a run actually needs that
 model — naming the capability route that configured the pair, how to change it,
 and how to download it.
 
+### Host state and model residency
+
+Beyond weights on disk, these endpoints report and control what is loaded in
+memory right now:
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/gateway/host/state` | One-call host snapshot: memory, GPU, resident models (frozen `model_residency_row_v1` rows), session prompt caches, and byte totals. Sections degrade independently in-band (`degraded` + `reasons`); never a 500. |
+| `GET /api/gateway/host/metrics/memory` | Host RAM/process/device memory snapshot; answers `supported: false` with a reason when the runtime facade has no snapshot. |
+| `GET /api/gateway/host/metrics/gpu` | GPU utilization probe with the same `supported`/degraded style. |
+| `GET /api/gateway/models/loaded` | Model residency listing: raw `models` records plus normalized `rows` (`row_schema = "model_residency_row_v1"`, including lock, modality, context-calibration, and host-identity fields). |
+| `GET /api/gateway/models/context_estimate` | Context/KV memory estimate for a `provider`+`model` (optional `context_length` >= 1), with in-band `confidence`: `calibrated`, `estimated`, or `unknown`. |
+| `POST /api/gateway/models/load` | Load (and by default pin) a model runtime. Admin only. |
+| `POST /api/gateway/models/unload` | Unload a model runtime by `runtime_id` or task/provider/model selector. A locked model answers HTTP 409 unless the request carries `"force": true`. Admin only. |
+| `POST /api/gateway/models/lock` | Lock a resident model against unload (same target selector as unload). Admin only. |
+| `POST /api/gateway/models/unlock` | Release a model-residency lock. Admin only. |
+
+Both consoles render this surface as a **Resources** view — a tab in the web
+console, screen 8 in the console-TUI: memory and GPU meters, the resident-model
+table (modality, tri-state residency, lock state, context facts), and session
+prompt caches. Any authenticated user can browse it and request context
+estimates; the warm-up, lock/unlock, unload (with a force confirmation when a
+locked model answers 409), and cache-clear controls appear for admins.
+
+The reads are available to any authenticated principal; the mutations (and
+`POST /models/download` above) require an admin principal, and anonymous
+requests are always rejected. For local development only,
+`ABSTRACTGATEWAY_DEV_READ_NO_AUTH=1` (default off) allows unauthenticated
+loopback reads as a non-admin read-only principal — see
+[security.md](docs/security.md).
+
+See [api.md](docs/api.md#host-state-and-model-residency) for payload shapes and
+the `model_residency_row_v1` field list.
+
 ### Runtime-scoped Core capability defaults
 
 In hosted user-auth mode, `GET /api/gateway/config/capability-defaults` returns
@@ -705,16 +2022,23 @@ apps without pretending unsupported providers have local KV state.
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild`
 - `POST /api/gateway/sessions/{session_id}/prompt_cache/clear`
+- `GET /api/gateway/sessions/prompt_cache`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear_all` (admin)
 
 Session lifecycle responses distinguish `unsupported`, `keyed`, and
 `local_control_plane` modes. Keyed providers receive a stable `runtime_hint`;
 local-control-plane providers can prepare, clear, and rebuild when their
 AbstractCore provider exposes those operations.
 
-Treat the three prompt-cache surfaces separately:
+Treat the prompt-cache surfaces separately:
 
 - `/prompt_cache/*`: provider/model prompt-cache controls
-- `/sessions/{session_id}/prompt_cache/*`: gateway-owned volatile session lifecycle
+- `/sessions/{session_id}/prompt_cache/*`: gateway-owned volatile session
+  lifecycle, derived from the session/bundle/provider identity
+- `GET /sessions/prompt_cache` + `/sessions/{session_id}/prompt_cache/clear_all`:
+  enumeration of the caches the runtime actually minted — the recommended lane
+  for observing and reclaiming session cache state, because it cannot miss
+  caches whose keys the gateway never derived
 - `/blocs/*`: durable exact-reuse bloc/KV contract that returns `prompt_cache_binding`
 
 The `saved` / `save` / `load` aliases are Runtime-backed host-local admin
@@ -900,7 +2224,11 @@ and Ollama (`http://localhost:11434`) are also surfaced automatically when
 Gateway can discover models from them. The Sandbox tab runs quick smoke tests
 against the selected multimodal capability defaults in a chat surface, including
 text chat, drag-and-drop attachments, inline image/video previews, and audio
-players for voice, sound, and music artifacts.
+players for voice, sound, and music artifacts. The Resources tab shows what is
+loaded in host memory right now — RAM/GPU meters, the resident-model table
+with modality chips, lock state, and context facts, and session prompt
+caches; admins additionally get warm-up, lock/unlock, unload (with a force
+confirmation when a model is locked), and cache-clear controls.
 Defaults model pickers use Core route filters for LLM/embedding rows, for
 example `capability_route=input.image,output.text` and
 `capability_route=embedding.text`. Generated image/video/voice/sound/music rows
@@ -924,7 +2252,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.28
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.29
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -932,7 +2260,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.28-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.29-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
@@ -1195,7 +2523,7 @@ Related repos:
 - Configuration (env vars + install extras): [configuration.md](docs/configuration.md)
 - Apple Silicon local Gateway + Flow quickstart: [apple-local-gateway-flow.md](docs/apple-local-gateway-flow.md)
 - Deployment (Docker/GHCR/Compose): [deployment.md](docs/deployment.md)
-- API overview (client contract + OpenAPI, including direct image/video, STT, and music generation): [api.md](docs/api.md)
+- API overview (client contract + OpenAPI, including host state/model residency, direct image/video, STT, and music generation): [api.md](docs/api.md)
 - Shipped workflows served out of the box (coder, deep research, co-scientist): [shipped-workflows.md](docs/shipped-workflows.md)
 - Shipped `deep-research` workflow bundle: [deep-research.md](docs/deep-research.md)
 - Security guide (auth/origin/limits/audit log): [security.md](docs/security.md)
@@ -1315,16 +2643,6 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
   "http://127.0.0.1:8080/api/gateway/bundles/upload"
 ```
 
-The gateway's own bundle directory is the set every user shares, so installing,
-replacing, removing, deprecating or reloading a workflow there requires an admin
-principal; non-admin requests return `403`. Under hosted user auth each
-principal writes its own registry without admin rights. Listing and running the
-shared workflows are user-level.
-
-The response carries `loaded` alongside `ok`: `true` when the gateway is serving
-the exact version installed, `false` with a `skipped` reason when it is not, and
-`null` when `reload=false` left loadability unverified.
-
 You can also create a local env file and inspect readiness with:
 
 ```bash
@@ -1396,7 +2714,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.2.28-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.2.29-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -1481,7 +2799,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **The shared workflow registry is administered by the operator (2026-08-21).**
+  Installing, replacing, removing, deprecating and reloading workflows in the
+  gateway's own bundle directory now require an admin principal. The rule is
+  ownership rather than role: when hosted user auth is enabled each principal
+  writes its own registry and is unaffected; only the directory every user
+  shares is restricted. Reads are unchanged, so any user can still list and run
+  the shared workflows. One check now covers every route that writes the
+  registry — `POST /bundles/upload`, `DELETE /bundles/{bundle_id}`,
+  `POST /bundles/reload` and `POST /visualflows/{flow_id}/publish` — so a
+  workflow cannot be replaced through one door while another is guarded.
+  Non-admin callers receive `403` with the admin route to take instead.
+- **`POST /models/download` and `POST /config/capability-defaults/apply-recommended`
+  now require an admin principal (2026-08-21).** Both act on host-wide
+  resources: the first spends disk on the shared machine, the second rewrites
+  the capability defaults every user inherits. The download progress poll
+  `GET /models/download/{job}` remains user-level.
+
+### Added
+- **A Workflows tab in both consoles (2026-08-21).** The web console gains a
+  `Workflows` section and the console-TUI a `Workflows` screen (step 6), listing
+  every workflow registered on the gateway. A row is a bundle, and the version
+  cell carries two numbers — published and draft — so a registry that is mostly
+  drafts does not read as a short list. Selecting a row shows that workflow's
+  versions and its entrypoints with their declared interfaces. Versions the
+  gateway is not serving appear in a separate `Not loaded` block with the reason
+  and the file path, instead of being absent.
+
+  The tab covers the registry's lifecycle: **import** installs one or more
+  `.flow` bundles and reports, per file, whether the gateway is actually serving
+  the result; **export** downloads a version's original bytes; **delete** removes
+  a single version or a whole workflow behind a confirmation that states what is
+  irreversible and what it can determine about runs referencing it. In the TUI,
+  `e` exports to a local file, `d` deletes the selected version, `D` deletes the
+  workflow, and `t` toggles draft visibility. Listing and exporting are available
+  to any user; the write actions follow the registry ownership rule.
+- **`GET /api/gateway/bundles/{bundle_id}/download` (2026-08-21).** Returns one
+  bundle version as its original `.flow` bytes with
+  `Content-Disposition`, `Content-Length` and an `X-AbstractGateway-Bundle-Sha256`
+  checksum, so an exported workflow can be verified and re-installed unchanged.
+- **Every console search box now reads `*.jpg` (2026-08-20).** The runtime
+  tabs' filters were plain substring matches, so a filetype pattern matched
+  nothing at all — the `*` was compared literally and no row can carry one.
+  A query with no `*` and no `?` is still a case-insensitive substring
+  (`06-13` still finds a June 13th row); a query carrying either wildcard is
+  now a case-insensitive glob, anchored to the whole value and retried
+  against its basename, so `*.jpg` finds `photo.jpg` and
+  `/var/lib/gw/runs/run-1/photo.jpg` alike and `bundle-x@*:root` finds a
+  workflow. `*` crosses `/` deliberately: these boxes filter a flat list of
+  rows, they do not walk a tree. `[` stays literal. The rule is the same on
+  all four runtime tabs and in both consoles — `/artifacts/search?query=` and
+  `/runs?query=` on the server, the Cache and Logs filters in the web console
+  and the console-TUI, which carry transcriptions of the same matcher
+  (`makeNeedle` in `console.py`, `console-tui/src/query.rs`); their agreement
+  is a test, not a convention.
+
 ### Fixed
+- **A workflow version that cannot be served is now reported, not dropped
+  silently (2026-08-21).** A bundle version that misses its declared
+  `metadata.min_runtime` floor or fails to compile is still excluded from the
+  runnable set, and the file is left untouched on disk — but the reason is now
+  kept and surfaced. `GET /bundles` returns a `skipped` array carrying each
+  affected `bundle_id`, `bundle_version`, on-disk `path` and the reason;
+  `POST /bundles/reload` reports the same in its result. Version retention is
+  the point: a version other runs still reference must remain accountable, so
+  it can be repaired or deliberately removed rather than quietly disappearing
+  at the next reload.
+- **Installing a workflow reports whether it can actually run (2026-08-21).**
+  `POST /bundles/upload` and `POST /visualflows/{flow_id}/publish` return a
+  `loaded` field alongside `ok`: `true` when the gateway is serving the exact
+  version that was installed, `false` with a `skipped` reason when it is not,
+  and `null` when the request did not reload the gateway and loadability is
+  therefore unverified. `ok` is `false` only when the version is proven not to
+  be served. This also covers the case where another file in the bundle
+  directory claims the same bundle id and shadows the new version.
+- **The default framework agent cannot be deleted out from under the gateway
+  (2026-08-21).** `DELETE /bundles/{bundle_id}` returns `409` when the target
+  is the `basic-agent.flow` the gateway verifies at startup, because removing
+  it prevents the next start and bundle removal has no undo. Replacing the
+  default agent is still supported: install the replacement first, then remove
+  the old file.
 - **The container now serves the shipped workflows, and builds from source
   again (2026-08-02).** The compose profile bound a host directory over the
   registry unconditionally, so a deployment that did not run from a repo
@@ -3228,6 +4626,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   three-lens adversarial review, structured audit outputs, and timestamped
   Markdown/PDF/DOCX export paths.
 
+## [0.2.29] - 2026-08-27
+
+### Added
+- **`GET /api/gateway/host/state` — one-call host snapshot.** Memory, GPU,
+  resident models, and session prompt caches, plus byte totals, in a single
+  authenticated read. Every section is independently best-effort: a missing
+  facade method or a failed probe nulls that section and names it in
+  `degraded` (with a `reasons` map saying why) instead of failing the
+  snapshot; the route never returns a 500. `totals.models_resident`
+  (additive) counts only rows with `resident: true` so every client can show
+  a truthful "N loaded" — `totals.models` counts every known row,
+  configured / cached included, and must not be presented as "loaded".
+- **`GET /api/gateway/host/metrics/memory`.** Host RAM/process/device memory
+  snapshot relayed from the Runtime host facade, with the same
+  `supported: false` degraded style as `GET /host/metrics/gpu`. The snapshot
+  exposes both `process.rss_bytes` and `device.allocated_bytes`;
+  `device.allocated_bytes` is the signal that verifies an in-process unload
+  freed device memory, since freed buffers can keep process RSS unchanged.
+- **Frozen `model_residency_row_v1` row schema.** `GET /models/loaded` now
+  also returns `rows` — normalized records (`runtime_id`, `task`,
+  `provider`, `model`, `source`, `resident`, `state`, `pinned`, `default`,
+  `size_bytes`, `size_vram_bytes`, `expires_at`, `context_length`,
+  `loaded_at`, `last_used_at`, `locked`, `lockable`, `modalities`,
+  `calibrated_context_length`, `context_calibrated`, `host_id`, `host_name`,
+  `details`) — and `row_schema`, alongside the unchanged raw `models`
+  records. Residency truth is provider-first:
+  `provider_resident`/`provider_loaded` outrank runtime lease booleans, state
+  strings can confirm residency but never deny it, and unknown values stay
+  `null`. The schema is additive-tolerant: fields beyond the original 16 are
+  optional and `null` when the runtime does not report them. Rows and the
+  `GET /host/state` snapshot (its optional top-level `host` block) carry a
+  host identity as the aggregation seam for a proposed multi-machine model
+  resource pool
+  ([backlog 0093](docs/backlog/proposed/0093_multi_machine_model_resource_pool.md)).
+- **Model residency locks.** Admin-only `POST /api/gateway/models/lock` and
+  `POST /api/gateway/models/unlock` pin a resident model against unload and
+  release that pin, selecting the target like unload does (`runtime_id` or
+  `provider`+`model`). Lock requires provider-verified residency: a
+  configured or merely-warm model refuses with an
+  `error: "model_not_resident"` payload (load with `lock: true` instead),
+  and unlock always works — even for a since-evicted model — so locks are
+  never stranded. `POST /models/unload` answers **HTTP 409** with
+  the normalized `model_locked` refusal payload when the target is locked,
+  and the unload request gains `"force": true` to unload anyway; every other
+  unload outcome stays in-band at 200. Rows report `locked`/`lockable` so
+  clients can render lock state and offer the right verb.
+- **`GET /api/gateway/models/context_estimate`.** Context/KV memory estimate
+  for a `provider`+`model` (optional `context_length` >= 1), relayed from the
+  Runtime host facade with in-band `confidence` (`calibrated` | `estimated` |
+  `unknown`) and fields such as `predicted_max_context` (the context that
+  fits beside the weights), the tri-state `fits_weights` /
+  `fits_requested_context` split, and `budget_bytes` (real-ceiling budget;
+  basis and reserve stated in `notes`). Advisory only — no load path gates
+  on it. Available to any
+  authenticated principal; degrades at 200 with
+  `code="context_estimate_unavailable"`/`"context_estimate_error"` like the
+  other host relays.
+- **A Resources surface in both consoles.** The web console gains a
+  `Resources` tab and the console-TUI a `Resources` screen (8): memory/GPU
+  meters with
+  degradation notes, the resident-model table (modality chips/labels from
+  the shared `modality_ui` palette, tri-state residency, lock state, context
+  facts with calibration), and session prompt caches with per-session clear.
+  The web table defaults to provider-verified RESIDENT rows only — the
+  section header counts resident rows, and configured / cached rows
+  (labeled "configured — not in memory", Estimate only, no Unload/Lock)
+  appear behind a "Show configured / cached (N)" toggle; the TUI totals line
+  counts resident rows apart from the row total. Default ≠ loaded: a
+  configured capability default is never presented as loaded.
+  Admins additionally get warm-up (with an optional lock-after-load and a
+  live context-estimate hint), lock/unlock, and unload — a locked model's
+  409 refusal triggers an explicit force-unload confirmation instead of a
+  dead end. Reads render for every authenticated user; mutation controls are
+  admin-gated. The web tab polls `/host/state` every 5s while active
+  (stale responses are discarded), the TUI every 4s while the screen is
+  active.
+- **Session prompt-cache enumeration lane.**
+  `GET /api/gateway/sessions/prompt_cache?session_id=` lists the prompt
+  caches the runtime actually minted, with session/run/workflow/node
+  attribution, and admin-only
+  `POST /api/gateway/sessions/{session_id}/prompt_cache/clear_all` unloads
+  every cache for a session in one call. This lane is recommended over the
+  identity-derived per-session lifecycle endpoints, which are unchanged.
+- **Discovery contract additions.** `capabilities.contracts.common` gains
+  `host_state` and `session_caches` descriptors, and the `model_residency`
+  descriptor now names its `row_schema`, lists the `lock`/`unlock`/
+  `context_estimate` endpoints, and carries `modality_ui` — the canonical
+  modality color map (`{version: 1, colors: {...}}`, one `{color, label}`
+  entry per residency task plus an `unknown` fallback) every residency
+  client renders with instead of hardcoding its own palette. `modality_ui`
+  is a rendering contract and is served even when the runtime facade is
+  absent.
+
+### Changed
+- **Host and residency reads are user-level.** `GET /models/loaded`,
+  `GET /models/context_estimate`, `GET /host/state`, `GET /host/metrics/*`,
+  and `GET /sessions/prompt_cache` serve any authenticated principal.
+  Mutations — `POST /models/load|unload|lock|unlock|download` and every
+  prompt-cache mutation, including the new `clear_all` — remain admin-only,
+  and anonymous requests are still rejected.
+- Raised the AbstractRuntime dependency floor to `AbstractRuntime>=0.4.31`
+  across the base, `apple`, and `gpu` profiles; that release provides the
+  host facade methods (memory snapshot, session-cache enumeration) these
+  endpoints relay.
+
 ## [0.2.28] - 2026-06-14
 
 ### Changed
@@ -3841,1011 +5344,6 @@ Thank you to everyone who reports issues, improves documentation, and contribute
 
 ---
 
-## docs/api.md
-
-# AbstractGateway — API overview
-
-The HTTP API is implemented with FastAPI under the `/api` prefix:
-- Health: `GET /api/health`
-- Gateway surface: `/api/gateway/*` (durable runs + operator tooling)
-
-The API is documented at runtime:
-- OpenAPI JSON: `GET /openapi.json`
-- Swagger UI: `GET /docs` (use **Authorize** to paste the bearer token)
-
-Context:
-- In the AbstractFramework ecosystem, UIs and automations call this API to operate **AbstractRuntime** runs.
-- Architecture diagram and core concepts: [architecture.md](docs/architecture.md)
-
-## Auth
-
-By default, `/api/gateway/*` is protected by `GatewaySecurityMiddleware` (bearer token + origin allowlist).
-See: [security.md](docs/security.md).
-
-All examples below assume:
-
-```bash
-export BASE_URL="http://127.0.0.1:8080"
-export AUTH="Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")"
-```
-
-## Provider connections
-
-Gateway-owned provider connections let users create reusable cloud, local, or
-OpenAI-compatible endpoints without putting raw API keys in workflow JSON or
-browser storage. The API route keeps the historical
-`provider-endpoint-profiles` name; the Console presents them as provider
-connections.
-
-- `GET /api/gateway/config/provider-endpoint-profiles`: list visible profiles.
-- `POST /api/gateway/config/provider-endpoint-profiles`: create a user- or
-  admin-owned profile.
-- `POST /api/gateway/config/provider-endpoint-profiles/discover-models`:
-  discover models for a draft or saved profile by calling the configured
-  provider family and base URL with the entered or server-side key. The raw key
-  is never returned.
-- `PUT` or `DELETE /api/gateway/config/provider-endpoint-profiles/{profile_id}`:
-  update or delete a profile.
-
-Enabled profiles appear in `GET /api/gateway/discovery/providers` as virtual
-providers such as `endpoint:office-vllm`. Model discovery through
-`GET /api/gateway/discovery/providers/{provider_name}/models` returns either the
-fixed profile allowlist or the live endpoint model catalog.
-
-## Core workflow lifecycle
-
-### 1) List bundles (bundle mode)
-
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/bundles"
-```
-
-Upload a bundle:
-
-```bash
-curl -sS -H "$AUTH" \
-  -F "file=@./my-bundle@0.1.0.flow" \
-  -F "overwrite=false" \
-  -F "reload=true" \
-  "$BASE_URL/api/gateway/bundles/upload"
-```
-
-### 2) Start a run
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"bundle_id":"my-bundle","input_data":{"prompt":"Hello"}}' \
-  "$BASE_URL/api/gateway/runs/start"
-```
-
-If you need a specific entrypoint:
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Hello"}}' \
-  "$BASE_URL/api/gateway/runs/start"
-```
-
-Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
-
-For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
-Structured LLM/Agent schemas are Runtime/Core-owned: `response` remains textual,
-and schema-conformant object values are available through the node `data` output
-for data edges such as Break Object and Switch.
-
-#### Durable session replay (`use_session_history`)
-
-Thin clients do not need to carry conversation transcripts. Passing
-`"input_data": {"use_session_history": true}` together with a `session_id`
-makes the gateway seed the run's `context.messages` from the session's prior
-COMPLETED root runs before the run starts — the run store is the durable
-transcript (agora `durable-sessions` contract v1, 2026-07-16).
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"bundle_id":"my-bundle","session_id":"sess-1","input_data":{"prompt":"and what did I say before?","use_session_history":true}}' \
-  "$BASE_URL/api/gateway/runs/start"
-```
-
-Rules (the model-vs-display divergence contract — what the model replays is
-deliberately narrower than what history views display):
-
-- Client-provided non-empty `context.messages` always win; the seed never
-  overwrites them. An EMPTY client `context.messages` list does not count as
-  a transcript — the seed still runs (use the cap below to disable).
-- Only COMPLETED root runs of the session contribute, as strictly alternating
-  user/assistant pairs. FAILED and CANCELLED turns are invisible to replay by
-  design (a promptless answer or answerless prompt would seed a dangling
-  message and invite re-answering a stale ask); history views still show them.
-- Steering/operator guidance injected mid-run is not replayed; over-long
-  messages are truncated with a labeled `#TRUNCATION` marker; whole oldest
-  turns are dropped first (`session_history_max_chars` cumulative budget).
-- Caps: `input_data.session_history_max_messages` (1..200; explicit `0`
-  disables replay for the run) > `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES`
-  > default 40. Chars: `session_history_max_chars` >
-  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` > default 24000.
-- Failures degrade to a labeled `_runtime.session_history` `#FALLBACK` note
-  and an unseeded start — never a blocked run. Success records
-  `_runtime.session_history = {seeded: N, ...}` on the run for observability.
-- Entity lanes never ride this: their transcript authority is the entity home
-  (`_visit.history` / the chat driver), not the run store.
-
-Evidence: `_seed_session_history` in `src/abstractgateway/hosts/bundle_host.py`;
-read half `abstractruntime.session_history.session_chat_messages` (>=0.4.30);
-tests `tests/test_gateway_session_history_seed.py`.
-
-### 2b) Schedule a run (bundle mode)
-
-`POST /api/gateway/runs/schedule` starts a **scheduled parent run** that launches the target workflow as child runs over time.
-
-Example (run 3 times, every hour, starting now):
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Ping"},"start_at":"now","interval":"1h","repeat_count":3,"share_context":true,"session_id":"sess-1"}' \
-  "$BASE_URL/api/gateway/runs/schedule"
-```
-
-Notes:
-- `start_at`: ISO 8601 timestamp (recommended) or `"now"`.
-- `interval`: e.g. `"15m"`, `"1h"`, `"2d"`. If omitted, runs once.
-- `repeat_count`: if omitted and `interval` is set, repeats forever. Alternatively use `repeat_until` (ISO 8601).
-- To stop a schedule, cancel the scheduled parent run via `POST /api/gateway/commands` with type `cancel`.
-
-Evidence: `ScheduleRunRequest`, `start_scheduled_run` in `src/abstractgateway/routes/gateway.py`.
-
-### 2c) Shared workflow catalog
-
-Private `/api/gateway/bundles` routes are scoped to the signed-in user's routed
-runtime. Shared/default workflows use the Gateway workflow catalog instead:
-
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/workflow-catalog"
-```
-
-Admin-only catalog operations live under
-`/api/gateway/admin/workflow-catalog/*`:
-
-- upload or promote immutable `.flow` versions;
-- move a bundle's default pointer;
-- set ACLs;
-- deprecate, block, or tombstone a version without deleting bundle bytes.
-
-Start a catalog workflow in the requesting user's runtime by setting
-`registry_scope`:
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"registry_scope":"tenant_catalog","bundle_id":"basic-agent","flow_id":"root","input_data":{"prompt":"Hello"}}' \
-  "$BASE_URL/api/gateway/runs/start"
-```
-
-If `bundle_version` is omitted, Gateway uses the admin-managed catalog default
-pointer. Exact older versions keep working until that specific version is
-deprecated, blocked, or tombstoned.
-
-Catalog scope is explicit: omitting `registry_scope` starts only private
-runtime bundles. Flow/schema inspection for catalog workflows should use the
-ACL-aware catalog endpoints:
-
-- `GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}`
-- `GET /api/gateway/workflow-catalog/{bundle_id}/versions/{bundle_version}/flows/{flow_id}/input_schema`
-
-`framework_catalog` is reserved but not loadable yet; use `tenant_catalog`.
-
-### 2d) Docs Q&A (`docs-qa` catalog bundle)
-
-`docs-qa` is the shared transport for docs-grounded assistant panels (the
-unified top-bar drawers). The contract: the CALLER supplies its own corpus
-(typically its `llms.txt` text) — the bundle never guesses one, so answers are
-never silently grounded on another app's docs.
-
-Fresh installs need no manual publish: the gateway ships `docs-qa` in the
-wheel and boot idempotently publishes it into the tenant catalog
-(publish-if-absent by exact version; an admin's default pointer, tombstones,
-and publisher attribution are never touched; publisher `system:gateway-boot`).
-The publish is skipped on custom-bundle deployments whose private registry
-carries no LLM-bearing flow (it would add a boot requirement they never had)
-and can be disabled with `ABSTRACTGATEWAY_AUTO_PUBLISH_SHIPPED=0` — the
-manual upload below then remains the path.
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "registry_scope": "tenant_catalog",
-  "bundle_id": "docs-qa",
-  "bundle_version": "0.1.0",
-  "flow_id": "docsqa001",
-  "input_data": {
-    "question": "How do I publish a workflow bundle?",
-    "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
-    "docs": "<your llms.txt text>",
-    "app": "MyApp"
-  }
-}' "$BASE_URL/api/gateway/runs/start"
-```
-
-Then poll `GET /runs/{run_id}` (or stream the ledger); the answer is
-`output.response`. `provider`/`model`/`temperature` may ride `input_data` to
-override gateway defaults. Answers cite section headings and say plainly when
-the docs do not answer — the bundle refuses to invent endpoints or behavior.
-Docs Q&A must never route through entity chat (a visit is billable and forms
-memories).
-
-### Run-level skills selection
-
-`input_data.skills` (a list of skill NAMES) attaches curated skills to any
-run started through `/runs/start`:
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "bundle_id": "basic-agent",
-  "input_data": {"prompt": "…", "skills": ["agora-collaboration"]}
-}' "$BASE_URL/api/gateway/runs/start"
-```
-
-Trust semantics (the same abstractskill gate as `GET /skills` and the
-workforce spawn lane — one gate, never a second resolver): VALIDATED skills
-activate and their index lands in the run's `_runtime.skills_block`
-(byte-stable for the whole run) with the `read_skill` tool made reachable;
-UNVERIFIED skills are held; advisory-BLOCKED skills never ride. Every
-outcome is recorded as a labeled verdict in `_runtime.skills_resolution`
-(`requested`/`active`/`verdicts`/`resolved_tree_hashes`) — nothing is
-silently dropped. Agent-node subruns inherit the block verbatim with
-`read_skill` appended to explicit child allowlists (empty allowlists keep
-registry defaults). A caller-supplied `_runtime.skills_block` is never
-overwritten; the selection is then ignored with a labeled verdict.
-
-The gateway serves its OWN corpus for the console drawer:
-
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/docs/corpus"
-```
-
-Returns `{app, source, chars, text}`. Resolution order: the
-`ABSTRACTGATEWAY_DOCS_CORPUS` env override first (set-but-missing is an honest
-404 naming the checked candidates, never a silent fallback), then the repo
-`llms.txt` in dev checkouts, then the corpus packaged with the wheel.
-
-### 3) Replay the ledger (cursor-based)
-
-Ledger pages are replayed using `after` as “number of items already consumed”.
-
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger?after=0&limit=200"
-```
-
-Response shape:
-- `items`: list of durable ledger records
-- `next_after`: the next cursor to use
-
-Evidence: `src/abstractgateway/routes/gateway.py` (`get_ledger`).
-
-### 3b) Replay ledgers for multiple runs (batch)
-
-Use `POST /api/gateway/runs/ledger/batch` to reduce request fanout when observing many runs/subflows.
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"limit":200,"runs":[{"run_id":"<run_id_1>","after":0},{"run_id":"<run_id_2>","after":0}]}' \
-  "$BASE_URL/api/gateway/runs/ledger/batch"
-```
-
-Evidence: `src/abstractgateway/routes/gateway.py` (`get_ledger_batch`).
-
-### 4) Stream ledger updates (SSE)
-
-SSE is an optimization; clients should always be able to reconnect by replaying from the last `next_after`.
-
-```bash
-curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
-```
-
-Evidence: `src/abstractgateway/routes/gateway.py` (`stream_ledger`).
-
-## Artifacts and filesystem handoff
-
-Gateway artifacts are the cross-package representation for files, media, and
-large payloads. Thin clients should pass artifact refs across runs instead of
-raw bytes or local paths:
-
-```json
-{
-  "$artifact": "abc123",
-  "artifact_id": "abc123",
-  "run_id": "session_memory_sess-1",
-  "content_type": "image/png",
-  "filename": "input.png"
-}
-```
-
-Gateway uses three distinct file-like source terms:
-
-- `Artifact`: a durable runtime-owned payload reference.
-- `Local File`: a browser/client upload source. Hosted clients should upload
-  bytes; browser-local paths are never interpreted as server paths.
-- `Server File` / `Server Folder`: user-facing wording for a workspace-scoped
-  server path under Gateway policy. The engineering contract is the canonical
-  `WorkspacePath` string returned by `/files/*`, artifact import/export, and
-  Runtime file nodes.
-
-Hosted local uploads stay artifact-backed:
-
-- one local file upload creates one artifact ref;
-- multiple local files create an ordered list of artifact refs in Flow;
-- a local folder uploads one artifact per file and may send `source_path`
-  (for example `reports/2026/summary.md`) so relative member paths survive in
-  artifact provenance without exposing browser-local absolute paths.
-
-Upload a local file or folder member:
-
-```bash
-curl -sS -H "$AUTH" \
-  -F "session_id=sess-1" \
-  -F "source_path=reports/summary.md" \
-  -F "file=@./summary.md" \
-  "$BASE_URL/api/gateway/attachments/upload"
-```
-
-List run artifacts:
-
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/artifacts"
-```
-
-List artifacts visible to a session:
-
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/sessions/sess-1/artifacts"
-```
-
-Browse server workspace files/folders:
-
-```bash
-curl -sS -H "$AUTH" \
-  "$BASE_URL/api/gateway/files/list?path=&include_directories=true&limit=200"
-```
-
-Optional filters:
-- `path`: browse a specific workspace folder or mount alias.
-- `recursive=true`
-- `family=image|video|audio|document|text|code|json|archive|other`
-- `extensions=png,jpg` or newline-separated values
-- `query=substring`
-- `max_depth=<n>`
-
-Search artifacts across Gateway storage:
-
-```bash
-curl -sS -H "$AUTH" \
-  "$BASE_URL/api/gateway/artifacts/search?scope=all&artifact_kind=image&query=logo&tags=pin_id=image&include_stats=true&limit=500"
-```
-
-`scope` can be `all`, `session`, or `run`. Use `session_id` with
-`scope=session` and `run_id` with `scope=run`; omit both for `scope=all`.
-Search responses preserve the legacy row fields and also include
-`artifact_envelope_v1`, a normalized projection of Runtime-owned descriptors,
-access stats, and Gateway action links.
-
-Useful query parameters:
-- `artifact_kind`: UI-oriented kind filter. Comma-separated values match
-  `semantic_kind`, `render_kind`, or `modality`; generic `audio` means
-  unclassified audio and does not match canonical `voice`, `music`, or `sound`.
-  Single canonical kinds such as `music`, `voice`, `image`, `markdown`, or
-  `json` map to Runtime catalog filters. Multi-kind unions are supported, but
-  may be Gateway post-filters until Runtime exposes OR filters.
-- `semantic_kind` / `render_kind`: canonical descriptor filters when the caller
-  wants the two dimensions separately.
-- `modality`, `content_type`, `workflow_id`, `node_id`, `created_after`,
-  `created_before`, and `tags`: server filters for indexed descriptor fields.
-- `query`: case-insensitive metadata search. Gateway may post-filter this field
-  when Runtime cannot index it directly.
-- `include_stats=true`: include exact `stats.total`, byte totals, and facet
-  counts for the selected server-side filter set, independent of `limit`.
-- `limit`, `offset`, and `cursor`: bounded paging. The default Runtime Explorer
-  page size is 500; `limit<=0` is bounded unless `debug_unlimited=true` is used
-  by an admin/debug caller.
-
-`artifact_envelope_v1` contains normalized fields such as `semantic_kind`,
-`render_kind`, `workflow_id`, `node_id`, `turn_id`, `ledger_cursor`,
-`generation`, `producer`, `media`, `source_refs`, `access`, and `links`.
-Sparse producer metadata is represented as missing fields; Gateway does not
-invent provider/model provenance from filenames.
-
-Generated-media artifacts created by child runs and projected into the parent
-run preserve Runtime descriptors and structured metadata. Direct transcription
-routes store transcript artifacts with source-audio refs, language/prompt hints,
-provider/model when available, and bounded route parameters.
-Descriptor-provided action links are sanitized to relative Gateway/UI links
-before they appear in envelopes; raw external provider URLs should be represented
-as trace availability or Gateway-owned trace records.
-
-Content reads can label the access type for Runtime access stats:
-
-```bash
-curl -sS -H "$AUTH" \
-  "$BASE_URL/api/gateway/runs/<run_id>/artifacts/<artifact_id>/content?access_action=preview"
-```
-
-Supported access actions are `content`, `preview`, and `download`. The shorter
-`access=preview` alias is also accepted.
-
-Import a server workspace path into a session artifact:
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"session_id":"sess-1","source":{"kind":"workspace_path","path":"inputs/photo.png"},"pin_id":"image"}' \
-  "$BASE_URL/api/gateway/artifacts/import"
-```
-
-Export an artifact back into the server workspace:
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"path":"outputs/photo.png","create_parent_dirs":true,"overwrite":false}' \
-  "$BASE_URL/api/gateway/runs/<run_id>/artifacts/<artifact_id>/export"
-```
-
-Import and export use the same Gateway workspace policy as file helpers:
-workspace roots, mounted roots, ignored paths, and size limits are enforced on
-the server. Browser-local files should be uploaded through
-`POST /api/gateway/attachments/upload`; browser-local file paths are not
-interpreted as Gateway workspace paths. In hosted user-auth mode, server
-workspace import/export and `/files/*` helpers require an admin principal.
-Ordinary users can still upload browser-local files and list/search artifacts in
-their own routed runtime.
-
-Canonical Gateway server paths use `rel/path` for the main workspace root and
-`mount_alias/rel/path` for approved mounts. When two allowed mounts share the
-same basename, Gateway emits deterministic digest-suffixed aliases so the same
-public path string can round-trip through `/files/*`, artifact import/export,
-and Runtime file nodes.
-
-## Durable commands (`POST /api/gateway/commands`)
-
-Commands are appended to a durable inbox and applied asynchronously by the runner.
-
-Request fields (see `SubmitCommandRequest` in `src/abstractgateway/routes/gateway.py`):
-- `command_id`: client-supplied idempotency key (UUID recommended)
-- `run_id`: target run id (or session id for some event use-cases)
-- `type`: `pause|resume|cancel|emit_event|update_schedule|compact_memory`
-- `payload`: command-specific object
-
-### Pause / cancel
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"command_id":"'"$(python -c 'import uuid; print(uuid.uuid4())')"'", "run_id":"<run_id>", "type":"pause", "payload":{"reason":"operator_pause"}}' \
-  "$BASE_URL/api/gateway/commands"
-```
-
-### Resume a paused run
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"command_id":"'"$(python -c 'import uuid; print(uuid.uuid4())')"'", "run_id":"<run_id>", "type":"resume", "payload":{}}' \
-  "$BASE_URL/api/gateway/commands"
-```
-
-### Resume a WAITING run with a payload (WAIT resume)
-
-When `payload.payload` is present, the runner interprets this as “resume a WAITING run with a durable payload”:
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"command_id":"'"$(python -c 'import uuid; print(uuid.uuid4())')"'", "run_id":"<run_id>", "type":"resume", "payload":{"wait_key":"<optional_wait_key>", "payload":{"approved":true}}}' \
-  "$BASE_URL/api/gateway/commands"
-```
-
-Evidence: `src/abstractgateway/runner.py` (`_apply_command`, `_apply_run_control`).
-
-### Emit an external event
-
-Minimal form:
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"command_id":"'"$(python -c 'import uuid; print(uuid.uuid4())')"'", "run_id":"<session_id>", "type":"emit_event", "payload":{"name":"chat.message","payload":{"text":"hi"}}}' \
-  "$BASE_URL/api/gateway/commands"
-```
-
-Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`).
-
-## Beyond the core
-
-`/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).
-See: [maintenance.md](docs/maintenance.md).
-
-## Discovery endpoints (optional)
-
-These exist to help thin clients adapt to the deployed gateway.
-
-- Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
-- Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
-- Tools (thin-client allowlist help): `GET /api/gateway/discovery/tools`
-- Skills inventory: `GET /api/gateway/skills` — the abstractskill shelf with
-  trust verdicts (roster rows `{name, description, trust_level, blocked,
-  requires_review, tree_hash, source, has_scripts, reasons}`); degradations
-  are labeled `warnings`, never a fabricated list. Shelf resolution:
-  `ABSTRACTGATEWAY_SKILLS_SHELF`, else the triage repo's
-  `abstractskill/registry`.
-- MCP server inventory: `GET /api/gateway/mcp/servers` — the declared
-  registry at `<data_dir>/config/mcp_servers.json`
-  (`{"version": 1, "servers": [{"name", "url"?, "description"?,
-  "auth_required"?, "tags"?}]}`), served with declared fields only and
-  `probed: false` (connect state/tool counts require a probe lane and are
-  never faked).
-- Dynamic capability catalogs: `GET /api/gateway/voice/voices`, `GET /api/gateway/audio/speech/models`, `GET /api/gateway/audio/transcriptions/models`, `GET /api/gateway/audio/music/providers`, `GET /api/gateway/audio/music/models`, `GET /api/gateway/vision/provider_models`
-
-The capabilities payload includes package presence (`abstractruntime`,
-`abstractcore`, `abstractmemory`, `abstractvoice`, `abstractvision`), existing
-gateway helpers (`tools`, `visualflow`, `media`), memory-store readiness, and
-AbstractCore capability plugin status for `voice`, `audio`, `vision`, and
-`music`.
-
-Today the route paths and contract descriptors are the stable part of this
-surface. Catalog routes now also include a stable Gateway-owned envelope:
-
-- `catalog.contract = gateway_catalog_v1`
-- `catalog.version = 1`
-- `items = [...]`
-
-Legacy lower-layer fields are still preserved for compatibility. New thin
-clients should read `catalog` plus `items`; older clients can keep using route-
-specific fields like `models`, `provider_models`, `profiles`, or `voices`.
-
-Provider discovery also reports the resolved default provider/model when one is
-configured. The resolver follows request values, flow pins, and the execution-host
-`input.text` capability route; if no pair exists, the response includes
-`default_error` rather than a hardcoded local model.
-
-It also includes a versioned thin-client contract:
-
-- `capabilities.contracts.version`: currently `1`
-- `capabilities.contracts.common`: shared run start/list/summary/input/history,
-  ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
-  controls. `common.artifacts` includes run listing/content, session artifact
-  listing, artifact search with `artifact_envelope_v1`, exact stats/facets,
-  `artifact_kind` UI filtering, workspace import, and workspace export
-  descriptors when available. Permission-sensitive descriptors are principal-aware:
-  ordinary users see admin-only workspace import/export and provider
-  prompt-cache controls marked unavailable with `admin_required` metadata.
-- `capabilities.contracts.common.readiness`: compact Gateway-owned
-  `gateway_surface_readiness_v1` summary derived from the shared endpoint/media/
-  residency descriptors
-- `capabilities.contracts.flow_editor`: the AbstractFlow editor/runtime surface
-- `capabilities.contracts.assistant`: assistant-facing voice/audio/media/cache
-  feature gates
-- `capabilities.contracts.abstractcode`: code-client run/history/workspace/cache
-  feature gates
-
-Contract booleans are intentionally conservative. Package `installed=true` is
-not the same thing as endpoint `available=true`; clients should branch on the
-versioned contract fields when enabling controls.
-
-`common.readiness` is intentionally narrower than provider/backend health. It
-summarizes Gateway surface availability from existing descriptors, but it does
-not invent selected backend/provider/model truth or stable degraded-state
-reason codes.
-
-Evidence: `src/abstractgateway/routes/gateway.py` (`discovery_capabilities`, `discovery_providers`).
-
-## AbstractFlow gateway-first editor contract
-
-The browser editor can use AbstractGateway as its runtime and storage host.
-
-Draft VisualFlow records:
-
-- `GET /api/gateway/visualflows`
-- `POST /api/gateway/visualflows`
-- `GET /api/gateway/visualflows/{flow_id}`
-- `PUT /api/gateway/visualflows/{flow_id}`
-- `DELETE /api/gateway/visualflows/{flow_id}`
-- `POST /api/gateway/visualflows/{flow_id}/publish`
-
-Bundle inspection and editor run-schema helpers:
-
-- `GET /api/gateway/bundles`
-- `GET /api/gateway/bundles/{bundle_id}`
-- `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}`
-- `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema`
-
-The input-schema endpoint returns a versioned payload with:
-
-- `version`
-- `bundle_id`, `bundle_version`, `bundle_ref`, `flow_id`, `workflow_id`
-- `inputs`: entrypoint input pins derived from the `on_flow_start` node
-- `defaults`: pin defaults from VisualFlow JSON
-- `input_data_schema`: a small JSON Schema object for the Run Flow modal
-
-Example:
-
-```bash
-curl -sS -H "$AUTH" \
-  "$BASE_URL/api/gateway/bundles/my-bundle/flows/ac-echo/input_schema"
-```
-
-### Native-loop bundles (react / codeact / memact)
-
-Some shipped bundles declare `metadata.native_loop_factory` instead of VisualFlow
-JSON (`manifest.flows` is empty). The gateway materializes an abstractagent
-loop at load time. Discovery uses the same bundle list endpoint — **not**
-`/discovery/workflows`.
-
-Thin clients should:
-
-1. `GET /api/gateway/bundles` (authenticated).
-2. Filter entrypoints whose `interfaces` includes `abstractcode.agent.v1`.
-3. Read `metadata.native_loop_factory` (`react`, `codeact`, or `memact`) to
-   distinguish native loops from VisualFlow agent bundles.
-4. Use each entrypoint's `workflow_id` (for example `react-agent@0.1.0:react`).
-5. Start runs with `POST /api/gateway/runs/start` and
-   `bundle_id` / `flow_id` from the bundle listing (for example
-   `react-agent` + `react`).
-
-Native-loop entrypoints do not ship VisualFlow JSON. The gateway serves a
-versioned input-schema stub (`prompt` required; `provider` and `model`
-optional) from
-`GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema`.
-Headless clients may also pass those fields without fetching the schema.
-
-The shipped `react-agent@0.1.0` bundle is built by
-`scripts/build_react_agent_bundle.py` and force-included in the wheel. A running
-gateway process must restart (or call bundle reload) after the file lands on
-disk before `/bundles` lists it.
-
-### Run history bundle (`GET /runs/{run_id}/history_bundle`)
-
-Thin clients should prefer this endpoint over stitching ledger, session, and
-artifact endpoints. The export is owned by AbstractRuntime; the gateway forwards
-query parameters and returns the bundle JSON unchanged (including in-band
-degradations).
-
-Query parameters:
-
-| Parameter | Default | Notes |
-|-----------|---------|-------|
-| `include_subruns` | `true` | Descendant runs in the bundle tree |
-| `include_session` | `false` | Root session turn list |
-| `session_turn_limit` | `200` | Cap when `include_session=true` |
-| `ledger_mode` | `tail` | `tail` or `full` |
-| `ledger_max_items` | `2000` | Per-run ledger cap when `ledger_mode=tail` |
-| `detail` | `full` | `full` (complete payloads) or `replay` (transcript-fold projection) |
-
-**`detail=replay`** drops request-side payloads and observability paths the
-transcript fold never reads; runtime marks each omission with `$omitted` inside
-ledger records. Use it for session replay and thin-client folds — it is much
-smaller than `full` (gzip helps further; send `Accept-Encoding: gzip`).
-
-**`warnings`** (always present, may be empty): typed degradations the export
-survived instead of failing silently. Each entry is an object with at least
-`code` and `detail`; many include `run_id`. Known codes today:
-
-| Code | Meaning |
-|------|---------|
-| `subtree_discovery_failed` | Could not list child runs; bundle covers root only |
-| `subtree_truncated` | Descendant discovery hit the run cap |
-| `ledger_read_failed` | Ledger for a run id could not be read |
-| `torn_rows_skipped` | Corrupt/unparseable ledger lines skipped |
-| `ledger_tail_window` | Ledger truncated to `ledger_max_items` (tail mode) |
-| `input_data_offload_failed` | Input-data artifact reference could not be resolved |
-
-Clients must surface non-empty `warnings` to the operator — a bundle that
-"looks complete" but carries warnings may be missing subruns, ledger tail, or
-offloaded input data.
-
-### Session history bloc (`GET /sessions/{session_id}/history/bloc`)
-
-Returns one cursor-bounded bloc of **root session turns**, each with an inline
-`history_bundle` export — one round-trip instead of N per-turn bundle fetches
-(laurent c5551). Resume pagination uses an ISO `created_at` cursor in the
-`before` query parameter (never turn-count offsets).
-
-Query parameters:
-
-| Parameter | Default | Notes |
-|-----------|---------|-------|
-| `before` | *(omit)* | ISO-8601 cursor; only turns strictly **before** this timestamp |
-| `limit` | `5` | Max turns in this bloc (1–50) |
-| `detail` | `replay` | Forwarded to each turn's bundle export (`full` \| `replay`) |
-| `include_subruns` | `true` | Per-turn bundle tree |
-| `ledger_mode` | `tail` | `tail` or `full` |
-| `ledger_max_items` | `2000` | Per-turn ledger cap when `ledger_mode=tail` |
-| `include_drafts` | `false` | Include draft-test root runs |
-
-Response fields: `session_id`, `cursor_before` (echo of `before`), `cursor_after`
-(oldest turn returned — pass as the next `before`), `older_remaining`, `warnings`,
-and `turns[]` (`run_id`, `created_at`, `status`, `bundle` or `error`).
-
-The editor observes runs with the core lifecycle endpoints above:
-`/runs/start`, `/runs/{run_id}`, `/runs/{run_id}/ledger`,
-`/runs/{run_id}/ledger/stream`, `/runs/ledger/batch`,
-`/runs/{run_id}/input_data`, `/runs/{run_id}/history_bundle`, and
-`/runs/{run_id}/artifacts`.
-
-## Optional multimodal scope
-
-Current direct Gateway endpoints:
-- `POST /api/gateway/runs/{run_id}/voice/tts`
-- `POST /api/gateway/runs/{run_id}/voice/tts/stream`
-- `POST /api/gateway/runs/{run_id}/audio/transcribe`
-- `POST /api/gateway/runs/{run_id}/images/generate`
-- `POST /api/gateway/runs/{run_id}/images/edit`
-- `POST /api/gateway/runs/{run_id}/images/upscale`
-- `POST /api/gateway/runs/{run_id}/videos/generate`
-- `POST /api/gateway/runs/{run_id}/videos/from_image`
-- `POST /api/gateway/runs/{run_id}/music/generate`
-- `GET /api/gateway/voice/voices`
-- `GET /api/gateway/audio/speech/models`
-- `GET /api/gateway/audio/transcriptions/models`
-- `GET /api/gateway/audio/music/providers`
-- `GET /api/gateway/audio/music/models`
-- `GET /api/gateway/vision/provider_models`
-- `GET /api/gateway/vision/adapters`
-
-`/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
-returns JSON Lines stream events for progressive playback when discovery advertises
-`capabilities.contracts.assistant.voice.tts.streaming=true`; successful streams still
-finish with a Runtime-owned child-run audio artifact.
-
-The catalog endpoints proxy AbstractCore Server routes when
-`ABSTRACTCORE_SERVER_BASE_URL`
-is configured. Gateway uses explicit Core auth settings for that hop and never
-reuses the Gateway bearer token as a Core/provider secret. Without a configured
-Core server, the voice/model routes return bounded static descriptors from
-Gateway and capability-package environment variables.
-
-Each route now adds:
-
-- `catalog`: Gateway-owned route metadata (`contract`, `version`, `kind`,
-  `scope`, `route_source`, optional `upstream_source`, and route filters)
-- `items`: one canonical primary array for thin clients
-
-Examples:
-
-- `/voice/voices`: `items` contain voice/profile records with `id`, `label`,
-  optional `provider`, optional `model`, and `voice_kind`
-- `/audio/*/models`: `items` contain model records with `id`, `label`,
-  optional `provider`, optional `tasks`, and optional `parameters`
-- `/audio/music/providers` and `/discovery/providers`: `items` contain provider
-  records with `id`, `label`, and `provider`
-
-Generated images are available through Runtime workflows when a compatible
-image backend is installed and configured. Gateway also exposes a direct image
-generation endpoint that uses the Runtime/Core output-selector contract rather
-than a provider-specific image client. The route creates a durable child run,
-stores the generated image as a run artifact, and returns
-`event_name="abstract.progress"` so thin clients can stream the child-run ledger
-for progress:
-
-- `run_id`, `request_id`, `prompt`
-- optional `provider`, `model`, `size`, `width`, `height`, `format`, batch
-  `count` / `n`, `seeds`, and ordered `lora_adapters`
-- `image_artifact`: first generated image for compatibility
-- `image_artifacts`: full ordered image artifact list for batch generation
-
-`size`, `width`, and `height` are optional passthrough request overrides. Do
-not inject a client-side default size. Different image providers/models accept
-different size sets; when the client leaves dimensions unset, Runtime/Core lets
-the configured backend use its default or `auto` behavior.
-
-If the active workflow runtime already has an AbstractCore LLM client, the route
-uses it. For tools-only workflows, the route can create a direct Runtime/Core
-client from request `provider`/`model` or the execution-host capability route
-default. Unsupported or unconfigured deployments return a structured `ok=false`
-response instead of a failed run.
-
-Gateway also exposes a direct image-edit sibling route:
-
-- `POST /api/gateway/runs/{run_id}/images/edit`
-
-The request uses a source `image_artifact`, optional `mask_artifact`, the same
-provider/model and image backend selectors as image generation, plus optional
-batch `count` / `n`, `seeds`, and ordered `lora_adapters`, and returns an
-artifact-backed edited image. Batch responses also return `image_artifacts`.
-Thin clients should feature-detect it from
-`capabilities.contracts.flow_editor.media.edited_image` or
-`capabilities.contracts.assistant.media.edited_image`. It uses the same
-child-run `abstract.progress` progress contract as direct image generation.
-
-Gateway also exposes a direct image-upscale sibling route:
-
-- `POST /api/gateway/runs/{run_id}/images/upscale`
-
-The request uses a run-visible source `image_artifact`, optional provider/model
-selectors, and optional upscaler controls such as `scale`, `resolution`,
-`softness`, `seed`, `quantize`, and `vae_tiling`; `resolution` may be a
-shortest-edge integer or a scale factor such as `2x`. Thin clients should
-feature-detect it from `capabilities.contracts.flow_editor.media.upscaled_image`
-or `capabilities.contracts.assistant.media.upscaled_image`, list models with
-`GET /api/gateway/vision/provider_models?task=image_upscale`, and stream the
-returned child-run ledger for `abstract.progress` events.
-
-Generated music follows the same direct child-run pattern. Thin clients should
-discover it from `capabilities.contracts.flow_editor.media.generated_music` or
-`capabilities.contracts.assistant.media.generated_music`, list providers/models
-from the music catalog routes, and treat the returned `child_run_id` plus
-`music_artifact` as the durable output handle.
-
-Generated video also follows the direct child-run pattern:
-
-- `POST /api/gateway/runs/{run_id}/videos/generate` uses the Runtime/Core
-  `output.modality=video` / `task=text_to_video` contract and accepts optional
-  batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift`.
-- `POST /api/gateway/runs/{run_id}/videos/from_image` accepts a run-visible
-  source `image_artifact`, accepts the same optional batch/adapter/video
-  control fields, and uses `task=image_to_video`.
-- Thin clients should discover these routes from
-  `capabilities.contracts.flow_editor.media.generated_video` and
-  `capabilities.contracts.flow_editor.media.image_to_video` (or the matching
-  `assistant.media.*` entries), use
-  `GET /api/gateway/vision/provider_models?task=text_to_video|image_to_video`
-  for model catalogs, use `GET /api/gateway/vision/adapters` for compatible
-  installed adapter catalogs, stream the returned `child_run_id` ledger for
-  `abstract.progress` events, and read `video_artifacts` when batch generation
-  is requested.
-
-STT and listen contract notes:
-
-- `POST /api/gateway/runs/{run_id}/audio/transcribe` accepts a run-visible
-  `audio_artifact` plus optional `language`, `prompt`, `response_format`,
-  `temperature`, `format`, `provider`, and `model` hints.
-- `capabilities.contracts.flow_editor.voice.stt` and
-  `capabilities.contracts.assistant.voice.stt` point to that upload route.
-- `capabilities.contracts.flow_editor.voice.listen` and
-  `capabilities.contracts.assistant.voice.listen` are host-capture contracts,
-  not a live microphone socket. They tell higher apps to capture locally and
-  emit an event or upload the resulting audio artifact.
-
-## KG memory
-
-`POST /api/gateway/kg/query` queries the configured AbstractMemory TripleStore.
-Gateway resolves the store through:
-
-- `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory` (`sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`)
-- `ABSTRACTGATEWAY_MEMORY_STORE_PATH`
-- `ABSTRACTGATEWAY_MEMORY_REQUIRE_VECTOR`
-
-Structured queries work with LanceDB and in-memory stores. SQLite also works
-when the installed AbstractMemory build exposes `SQLiteTripleStore`. Semantic
-`query_text` requires a vector-capable backend plus the execution-host
-`embedding.text` route; SQLite returns a clear 400 instead of pretending to
-support semantic recall.
-
-Capability discovery reports KG memory as available when AbstractMemory is
-installed and the configured backend can be resolved. A fresh persistent store
-does not need to exist yet; empty-store structured queries return an empty
-result rather than making Flow authoring nodes unavailable.
-
-## Prompt-cache control plane (operator API)
-
-The gateway exposes prompt-cache operator endpoints under `/api/gateway/prompt_cache/*`.
-Provider prompt-cache controls affect process-local or remote provider state
-and require an admin principal in hosted user-auth mode.
-
-Core endpoints:
-
-- `GET /api/gateway/prompt_cache/capabilities?provider=...&model=...`
-- `GET /api/gateway/prompt_cache/stats?provider=...&model=...`
-- `POST /api/gateway/prompt_cache/set`
-- `POST /api/gateway/prompt_cache/update`
-- `POST /api/gateway/prompt_cache/fork`
-- `POST /api/gateway/prompt_cache/clear`
-- `POST /api/gateway/prompt_cache/prepare_modules`
-
-Behavior:
-
-- These routes use the runtime's AbstractCore prompt-cache client contract rather than directly depending on provider-instance access.
-- In local mode they delegate to the in-process provider.
-- In remote/hybrid mode they follow whatever `/acore/prompt_cache/*` surface the configured AbstractCore server exposes.
-- All core prompt-cache responses include `operation` and `capabilities`, with structured unsupported/error cases (`code="prompt_cache_unsupported"` / `code="prompt_cache_error"` / `code="prompt_cache_unavailable"`).
-- These endpoints remain provider/model controls, not a Gateway-owned CachedSession persistence system.
-
-Session lifecycle endpoints:
-
-- `GET /api/gateway/sessions/{session_id}/prompt_cache/status`
-- `POST /api/gateway/sessions/{session_id}/prompt_cache/prepare`
-- `POST /api/gateway/sessions/{session_id}/prompt_cache/rebuild`
-- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear`
-
-These routes derive a deterministic bounded namespace/key from `session_id`,
-`bundle_id`, `bundle_version`, `flow_id`, `provider`, `model`, optional
-`template_id`, and `version`. The private hash also includes the authenticated
-principal scope, so two hosted users using the same session id/provider/model do
-not collide in a shared provider control plane; the returned `identity` remains
-portable app-level data and does not expose that private scope. These routes
-expose three honest modes:
-
-- `unsupported`: provider/model does not expose prompt-cache support; responses include `supported=false`, `ok=false`, and capabilities.
-- `keyed`: gateway returns a stable `runtime_hint`/`prompt_cache_key` for Runtime/Core injection, but does not claim module preparation occurred.
-- `local_control_plane`: gateway uses supported provider operations such as `prepare_modules`, `fork`, `set`, `clear`, and `stats`.
-
-`status` is read-only. `prepare` accepts optional modules (`system_prompt`,
-`workflow_instructions`, `tools`, `pinned_attachments`) and returns either
-provider operation results or a key hint. `rebuild` is clear-plus-prepare for
-providers that expose clear controls.
-
-Durable bloc exact-reuse endpoints:
-
-- `POST /api/gateway/blocs/upsert_text`
-- `GET /api/gateway/blocs/record`
-- `GET /api/gateway/blocs`
-- `POST /api/gateway/blocs/delete`
-- `GET /api/gateway/blocs/kv/manifest`
-- `GET /api/gateway/blocs/kv/list`
-- `POST /api/gateway/blocs/kv/ensure`
-- `POST /api/gateway/blocs/kv/load`
-- `POST /api/gateway/blocs/kv/delete`
-- `POST /api/gateway/blocs/kv/prune`
-
-These routes are the primary app-facing durable prompt-cache path:
-
-- create or identify a durable text bloc;
-- ensure or load a KV artifact for a target local provider/model;
-- use the returned `prompt_cache_binding` in later Runtime-backed generation;
-- list/delete/prune artifacts without reaching into provider-private cache state.
-
-They delegate through Runtime's public AbstractCore host facade rather than
-proxying Core directly. They are operator-style host controls, so the routes
-themselves are not ledgered run execution; the ledgered exact-reuse path is the
-later `LLM_CALL.params.prompt_cache_binding` used inside real Runtime runs.
-
-Host-local prompt-cache export/import admin aliases:
-
-- `GET /api/gateway/prompt_cache/saved`
-- `POST /api/gateway/prompt_cache/save`
-- `POST /api/gateway/prompt_cache/load`
-
-These remain explicitly local/operator-oriented:
-
-- the route paths are compatibility aliases, but the implementation delegates to Runtime's public host facade:
-  - `saved` -> `list_prompt_cache_exports(...)`
-  - `save` -> `prompt_cache_export(...)`
-  - `load` -> `prompt_cache_import(...)`
-- local bundle/file runtimes store these exports under the Gateway data dir at `prompt_cache_exports/`
-- remote and hybrid runtimes return `code=prompt_cache_local_only`
-- response payloads follow Runtime's host-local export/import contract, including `operation`, `local_only`, `artifact_*`, `capabilities`, and `provider_response`
-
-## Email inbox (operator UI; optional)
-
-These endpoints power AbstractObserver’s **Inbox → Email** UI. They are **account-scoped**: the browser cannot supply arbitrary IMAP/SMTP host/user credentials. The gateway host must be configured with one or more email accounts (multi-account YAML or env vars).
-
-Endpoints:
-- `GET /api/gateway/email/accounts`
-- `GET /api/gateway/email/messages?account=…&mailbox=…&since=…&status=…&limit=…`
-- `GET /api/gateway/email/messages/{uid}?account=…&mailbox=…&max_body_chars=…`
-- `POST /api/gateway/email/send`
-
-Examples:
-
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/accounts"
-```
-
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/messages?status=unread&since=7d&limit=20"
-```
-
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/messages/12345?max_body_chars=20000"
-```
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"to":"you@example.com","subject":"Hello","body_text":"Hi!"}' \
-  "$BASE_URL/api/gateway/email/send"
-```
-
-Configuration notes (gateway host):
-- Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
-- Single-account env fallback: set `ABSTRACT_EMAIL_IMAP_*` and/or `ABSTRACT_EMAIL_SMTP_*`.
-- The secret itself must be present in the env var referenced by `*_PASSWORD_ENV_VAR` (e.g. `EMAIL_PASSWORD=...`).
-
-Evidence: `src/abstractgateway/routes/gateway.py` (`/email/accounts|messages|send`) which proxies to the Runtime AbstractCore comms facade.
-
-Troubleshooting and common questions: [faq.md](docs/faq.md).
-
----
-
 ## docs/security.md
 
 # AbstractGateway — Security guide
@@ -4979,9 +5477,15 @@ Hosted multi-user mode is an incremental surface: the core request path now has
 principal auth and per-principal services. Gateway also applies a central
 route-family authorization table for operator/admin surfaces. Admin-only route
 families include user management, audit, process control, backlog/triage/report
-operations, email bridge routes, host metrics, model residency list/load/unload,
-server workspace file helpers, server-workspace artifact import/export, and
-global prompt-cache/bloc mutation routes. Regular users remain able to use
+operations, email bridge routes, model residency mutations
+(`POST /models/load|unload|lock|unlock|download`), session-wide prompt-cache
+clearing (`POST /sessions/{session_id}/prompt_cache/clear_all`), server
+workspace file helpers, server-workspace artifact import/export, and global
+prompt-cache/bloc mutation routes. Host and residency reads —
+`GET /models/loaded`, `GET /models/context_estimate`, `GET /host/state`,
+`GET /host/metrics/*`, and `GET /sessions/prompt_cache` — are visibility every
+authenticated client needs and serve any authenticated principal; anonymous
+requests remain rejected. Regular users remain able to use
 their own runtime data plane for run, ledger, artifact upload, discovery, and
 runtime-scoped Core capability-default routes.
 
@@ -5008,6 +5512,27 @@ admin principal. The current capability-default cascade uses execution-host
 Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.
+
+### Workflow registry ownership
+
+Writing a workflow registry requires owning it. Under hosted user auth the
+`/api/gateway/bundles` routes resolve to the calling principal's own bundle
+directory, which that user may change freely. The gateway's own directory is
+the shared set every user can see and run, so changing it requires an admin
+principal.
+
+One check covers every route that writes a registry — `POST /bundles/upload`,
+`DELETE /bundles/{bundle_id}`, `POST /bundles/reload`,
+`POST /bundles/{bundle_id}/deprecate` and `POST /visualflows/{flow_id}/publish`
+— so a shared workflow cannot be replaced through one route while another is
+restricted. `POST /visualflows/{flow_id}/publish` accepts a caller-supplied
+`bundle_id`, `bundle_version` and `overwrite`, and installs into the same
+registry as `upload`; it is gated on the same rule. Non-admin requests against
+the shared registry return `403`. Read routes are unchanged.
+
+`DELETE /bundles/{bundle_id}` returns `409` for the `basic-agent.flow` the
+gateway verifies at startup: removal has no undo and would prevent the next
+start. Install a replacement bundle first, then remove the old file.
 
 ### Shared workflow catalog
 
@@ -5195,7 +5720,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.28
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.29
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -5203,7 +5728,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.28-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.29-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -5391,7 +5916,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.28-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.2.29-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -5405,7 +5930,7 @@ PyPI release is available, matching the AbstractCore server image pattern.
 # AbstractGateway — Architecture
 
 > Status: implemented (main branch)
-> Last reviewed: 2026-05-23
+> Last reviewed: 2026-08-27
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
 - **Start runs** (and optionally schedule them)
@@ -5493,7 +6018,9 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:
 
 - `GET /api/gateway/discovery/capabilities` exposes a versioned shared contract
   for run input/history access, media endpoints, voice contracts, prompt-cache
-  surfaces, and model residency truth.
+  surfaces, host state, session-cache enumeration, and model residency truth
+  (`common.model_residency` with `row_schema` and the canonical `modality_ui`
+  color map, `common.host_state`, `common.session_caches`).
 - Provider/model catalogs are intentionally routed through Gateway. The legacy
   lower-layer payload fields are preserved, but Gateway now adds a stable
   `gateway_catalog_v1` envelope plus canonical `items` so higher apps can stop
@@ -5507,9 +6034,22 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:
 - Voice listen is intentionally a host-capture contract, not a server-side
   microphone transport. Gateway tells clients how to emit or upload captured
   audio; clients keep ownership of live capture UX.
-- Model residency, prompt-cache lifecycle, durable blocs, and discovery
-  catalogs are server-owned control-plane surfaces so higher apps do not have
-  to import Runtime/Core packages directly.
+- Model residency, host state/metrics, session prompt-cache enumeration,
+  prompt-cache lifecycle, durable blocs, and discovery catalogs are
+  server-owned control-plane surfaces so higher apps do not have to import
+  Runtime/Core packages directly.
+- Model residency truth is Runtime/provider-owned and Gateway-normalized:
+  `GET /models/loaded` and `GET /host/state` relay Runtime's host facade
+  records and add frozen `model_residency_row_v1` rows in which provider
+  residency booleans outrank runtime lease booleans, state strings can only
+  confirm residency (never deny it), and unknown values stay `null`. Gateway
+  never fabricates residency, memory, or GPU truth; unavailable sections
+  degrade in-band instead of failing the snapshot.
+- Host and residency surfaces follow a read/mutation authorization split:
+  reads (`/models/loaded`, `/models/context_estimate`, `/host/state`,
+  `/host/metrics/*`, `GET /sessions/prompt_cache`) serve any authenticated
+  principal, while mutations (`/models/load|unload|lock|unlock|download`,
+  prompt-cache mutations including `clear_all`) require an admin principal.
 - The shared contract is principal-aware for high-trust actions. Regular users
   see admin-only workspace artifact import/export and provider prompt-cache
   controls as unavailable in discovery, while ordinary run/ledger/artifact

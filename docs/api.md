@@ -563,8 +563,12 @@ It also includes a versioned thin-client contract:
 
 - `capabilities.contracts.version`: currently `1`
 - `capabilities.contracts.common`: shared run start/list/summary/input/history,
-  ledger, artifact, attachment, workspace, discovery, and provider prompt-cache
-  controls. `common.artifacts` includes run listing/content, session artifact
+  ledger, artifact, attachment, workspace, discovery, provider prompt-cache
+  controls, and the host-visibility descriptors `model_residency` (including
+  `row_schema = "model_residency_row_v1"` and the canonical `modality_ui`
+  color map), `host_state`, and `session_caches`
+  (see [Host state and model residency](#host-state-and-model-residency)).
+  `common.artifacts` includes run listing/content, session artifact
   listing, artifact search with `artifact_envelope_v1`, exact stats/facets,
   `artifact_kind` UI filtering, workspace import, and workspace export
   descriptors when available. Permission-sensitive descriptors are principal-aware:
@@ -877,6 +881,227 @@ installed and the configured backend can be resolved. A fresh persistent store
 does not need to exist yet; empty-store structured queries return an empty
 result rather than making Flow authoring nodes unavailable.
 
+## Host state and model residency
+
+Gateway exposes a host-level view of the execution machine — memory, GPU,
+resident models, and session prompt caches — so consoles and agents can render
+an "agentic OS" panel from one API surface.
+
+Read endpoints (any authenticated principal):
+
+- `GET /api/gateway/host/state` — one-call host snapshot
+- `GET /api/gateway/host/metrics/memory` — host memory snapshot
+- `GET /api/gateway/host/metrics/gpu` — GPU utilization probe
+- `GET /api/gateway/models/loaded` — model residency listing
+- `GET /api/gateway/models/context_estimate` — context/KV memory estimate for
+  a provider+model
+- `GET /api/gateway/sessions/prompt_cache` — session prompt-cache enumeration
+
+Mutation endpoints (admin principal required):
+
+- `POST /api/gateway/models/load` — load (and by default pin) a model runtime
+- `POST /api/gateway/models/unload` — unload a model runtime
+- `POST /api/gateway/models/lock` — lock a resident model against unload
+- `POST /api/gateway/models/unlock` — release a model-residency lock
+- `POST /api/gateway/models/download` — fetch model weights onto the host
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear_all` — clear
+  every runtime-minted prompt cache for a session
+
+Reads are visibility every authenticated client needs; mutations spend shared
+host resources and stay operator acts. Anonymous requests are rejected on all
+of these routes, like every other `/api/gateway/*` path.
+
+### `GET /host/state`
+
+One snapshot with `memory`, `gpu`, `models`, and `session_caches` sections:
+
+```json
+{
+  "ok": true,
+  "ts": 1787857000.0,
+  "memory": {"ram": {"...": "..."}, "process": {"rss_bytes": 140443648}, "device": {"backend": "metal", "allocated_bytes": 0, "...": "..."}},
+  "gpu": {"supported": true, "source": "ioreg", "gpus": [{"name": "...", "utilization_gpu_pct": 0.0}]},
+  "models": [{"runtime_id": "...", "provider": "...", "model": "...", "resident": true, "...": "..."}],
+  "session_caches": [],
+  "totals": {"models": 2, "models_resident": 1, "model_bytes": 3109915433, "session_caches": 0, "session_cache_bytes": null},
+  "degraded": [],
+  "row_schema": "model_residency_row_v1"
+}
+```
+
+- `models` rows use the frozen `model_residency_row_v1` schema described
+  below; `session_caches` relays the runtime facade's cache rows verbatim.
+- Every section is independently best-effort and the route never returns a
+  500. A missing facade method or a failed probe nulls that section and names
+  it in `degraded`; a `reasons` map (present only when non-empty) says why.
+- The `gpu` section keeps its in-band `{"supported": false, "reason": "..."}`
+  payload when the probe answers but reports no support; it still counts as
+  degraded.
+- `totals.model_bytes` sums the known `size_bytes` values and is `null` when
+  no row reports a size; `totals.session_cache_bytes` behaves the same over
+  the cache rows' `bytes`.
+- `totals.models` counts every known row — configured / cached rows included —
+  while `totals.models_resident` (additive) counts only rows with
+  `resident: true`. Clients that display "N loaded" must read
+  `models_resident`: default ≠ loaded, and presenting configured capability
+  defaults as loaded is exactly the lie this field removes.
+- When the runtime memory snapshot reports a host identity, the response also
+  carries a top-level `host` object (the identity facts of the machine the
+  snapshot describes). The block is omitted when the runtime does not report
+  one. Together with the per-row `host_id`/`host_name` fields below, this is
+  the seam a multi-machine resource pool would aggregate on; one gateway
+  binds one runtime host, and the pool design is proposed in
+  [backlog 0093](backlog/proposed/0093_multi_machine_model_resource_pool.md).
+
+### `GET /host/metrics/memory`
+
+Returns `{"ok": true, "supported": true, ...}` plus the snapshot sections:
+`ram` (total/available/used bytes and percent), `process` (`rss_bytes`), and
+`device` (`backend`, `allocated_bytes`, `total_bytes`, `free_bytes`). When the
+runtime host facade does not expose a memory snapshot, the route answers 200
+with `{"ok": true, "supported": false, "reason": "..."}` — the same degraded
+style as `GET /host/metrics/gpu`.
+
+How to compare memory measurements: `process.rss_bytes` and
+`device.allocated_bytes` are different axes. In-process device backends (for
+example MLX on Metal) return freed buffers to the process heap and the
+operating system may retain those pages, so process RSS does not shrink when a
+model unloads. Use `device.allocated_bytes` to verify that an unload freed
+device memory; use `ram` and `process` for overall host pressure.
+
+### Model residency (`/models/loaded`, `/models/load`, `/models/unload`)
+
+`GET /models/loaded` lists the model runtimes the host knows about, with
+optional `task`, `provider`, `model`, and `base_url` query filters. The
+response keeps the raw runtime records in `models` and adds a normalized
+`rows` array in the frozen `model_residency_row_v1` schema (named by
+`row_schema`), so thin clients do not need per-provider alias tables.
+
+Each `model_residency_row_v1` row has exactly these fields (unknown values
+are `null`, never guessed):
+
+`runtime_id`, `task`, `provider`, `model`, `source`, `resident`, `state`,
+`pinned`, `default`, `size_bytes`, `size_vram_bytes`, `expires_at`,
+`context_length`, `loaded_at`, `last_used_at`, `locked`, `lockable`,
+`modalities`, `calibrated_context_length`, `context_calibrated`, `host_id`,
+`host_name`, `details`
+
+The schema is additive-tolerant and keeps the `model_residency_row_v1` name
+as optional fields are added; treat fields beyond the original 16 as
+optional. The lock/calibration/host fields mean:
+
+- `locked` / `lockable` — tri-state booleans: whether the model is locked
+  against unload, and whether this runtime supports locking it at all.
+- `modalities` — list of modality strings when the runtime reports one
+  (`null` otherwise, including when the value is not a clean string list).
+- `calibrated_context_length` / `context_calibrated` — the measured usable
+  context length and whether it came from calibration rather than metadata.
+- `host_id` / `host_name` — identity of the machine serving the model,
+  stamped by the runtime that reported the row (see the `host` block note
+  under `GET /host/state` above).
+
+Residency truth is provider-first: `provider_resident` / `provider_loaded`
+booleans in the source record outrank the runtime-lease booleans `resident` /
+`loaded`, because a runtime can hold a lease on a model the provider has
+already evicted. A loaded-looking `state` string (`provider_loaded`, `loaded`,
+`resident`) can confirm residency, but a state string is never proof of
+absence — with no boolean present and no loaded-like state, `resident` stays
+`null`. `details` preserves the raw record for fields outside the schema.
+
+`POST /models/load` accepts `task` (default `text_generation`), `provider`,
+`model`, optional provider `options`, `pin` (default `true`), `base_url`,
+`timeout_s`, and `lock` (default `false`) — with `lock: true` a successful
+load is immediately locked against unload, and the lock outcome is reported
+additively under `lock` in the response (a lock failure or a runtime without
+lock support never turns the successful load into a failure). `POST
+/models/unload` selects the runtime by `runtime_id` or by
+`task`/`provider`/`model`. Both relay Runtime's host facade and return the
+normalized residency response (`operation`, affected records, and in-band
+`ok=false` errors instead of opaque failures).
+
+One unload failure gets a real status code: when the target model is locked,
+`POST /models/unload` answers **HTTP 409** with the normalized refusal payload
+as the body (`ok: false`, `error: "model_locked"`, plus whatever detail the
+runtime included), so clients can offer force-unload or point at
+`/models/unlock`. Sending `"force": true` in the unload request unloads the
+model despite the lock. Every other unload outcome stays in-band at 200.
+
+### Model locks and context estimates
+
+- `POST /models/lock` and `POST /models/unlock` (admin) pin a resident model
+  against unload and release that pin. The body selects the target like
+  unload does: `runtime_id`, or `provider` + `model`, with optional
+  `base_url` and `timeout_s`. Lock requires provider-verified residency: a
+  configured or merely-warm model refuses with an
+  `error: "model_not_resident"` payload (load it with `lock: true` instead);
+  unlock always works, even for a since-evicted model, so locks are never
+  stranded. Rows report `lockable` so clients know whether
+  a lock can work, and `locked` so they can render the current state.
+- `GET /models/context_estimate?provider=&model=&context_length=` (any
+  authenticated principal) relays the Runtime host facade's context/KV memory
+  estimate for a provider+model. `provider` and `model` are required;
+  `context_length` is optional and must be >= 1 (schema-rejected with 422
+  otherwise). The estimate reports its `confidence` in-band — `calibrated`,
+  `estimated`, or `unknown` — alongside facade fields such as
+  `predicted_max_context` (the context that fits beside the weights), the
+  tri-state `fits_weights` / `fits_requested_context` split, `budget_bytes`,
+  `est_kv_bytes`, and `notes` (which state the budget basis and reserve).
+  The estimate is advisory only — no load path gates on it.
+
+Like the other host-facade relays, these routes never 500 on capability gaps:
+a runtime without the method answers 200 with `ok: false`,
+`available: false`, and `code = "model_residency_unavailable"` (lock/unlock)
+or `code = "context_estimate_unavailable"` (estimate); facade exceptions use
+the matching `*_error` codes.
+
+### Session prompt-cache enumeration
+
+- `GET /api/gateway/sessions/prompt_cache?session_id=<optional>`
+- `POST /api/gateway/sessions/{session_id}/prompt_cache/clear_all` (admin)
+
+The list route enumerates the prompt caches the runtime actually minted. Each
+cache row carries the provider/model/runtime identity, byte and token counts,
+and stamped attribution metadata (`session_id`, `run_id`, `workflow_id`,
+`node_id`). Omit `session_id` to list every session's caches. This
+enumeration lane is the recommended way to observe and reclaim session cache
+state: unlike the identity-derived session lifecycle endpoints described
+under the prompt-cache control plane below, it cannot miss caches whose keys
+the gateway never derived.
+
+`clear_all` unloads every runtime-minted cache for one session in a single
+call. It requires an admin principal because it accepts any session id and
+clears real provider cache state; the identity-derived, caller-scoped session
+lifecycle endpoints remain user-level.
+
+When the runtime facade does not expose enumeration, both routes answer 200
+with `ok=false`, `available=false`, and `code="session_caches_unavailable"`
+(facade errors use `code="session_caches_error"`); the list route always
+carries a `caches` array and `clear_all` always carries `cleared` and `count`.
+
+### Discovery descriptors
+
+`GET /discovery/capabilities` advertises this surface under
+`capabilities.contracts.common`:
+
+- `model_residency`: `endpoints` (`loaded`, `load`, `unload`, `lock`,
+  `unlock`, `context_estimate`), the per-task support map,
+  `row_schema = "model_residency_row_v1"`, and `modality_ui` — the canonical
+  modality color map (`{version: 1, colors: {...}}`, one `{color, label}`
+  entry per residency task plus an `unknown` fallback) so every client
+  renders the same modality palette instead of hardcoding its own. It is a
+  rendering contract, not a runtime capability, so it is served even when the
+  runtime facade is absent.
+- `host_state`: `endpoints` (`state`, `memory`, `gpu`) plus
+  `memory_available`. The state route itself always answers; per-section truth
+  lives in the payload's `degraded` list.
+- `session_caches`: `endpoints` (`list`, `clear_all`) plus `available`,
+  reflecting whether the runtime facade supports cache enumeration.
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
+`host_memory_metrics`, `model_residency_loaded`, `model_residency_lock`,
+`model_context_estimate`, `session_prompt_caches_list`) and
+`src/abstractgateway/security/authorization.py` (route-family policy).
+
 ## Prompt-cache control plane (operator API)
 
 The gateway exposes prompt-cache operator endpoints under `/api/gateway/prompt_cache/*`.
@@ -924,6 +1149,11 @@ expose three honest modes:
 `workflow_instructions`, `tools`, `pinned_attachments`) and returns either
 provider operation results or a key hint. `rebuild` is clear-plus-prepare for
 providers that expose clear controls.
+
+These identity-derived endpoints only see caches whose keys the gateway
+derived. To enumerate or bulk-clear the caches the runtime actually minted for
+a session, use the recommended
+[session prompt-cache enumeration lane](#session-prompt-cache-enumeration).
 
 Durable bloc exact-reuse endpoints:
 

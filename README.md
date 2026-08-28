@@ -100,7 +100,11 @@ and Ollama (`http://localhost:11434`) are also surfaced automatically when
 Gateway can discover models from them. The Sandbox tab runs quick smoke tests
 against the selected multimodal capability defaults in a chat surface, including
 text chat, drag-and-drop attachments, inline image/video previews, and audio
-players for voice, sound, and music artifacts.
+players for voice, sound, and music artifacts. The Resources tab shows what is
+loaded in host memory right now — RAM/GPU meters, the resident-model table
+with modality chips, lock state, and context facts, and session prompt
+caches; admins additionally get warm-up, lock/unlock, unload (with a force
+confirmation when a model is locked), and cache-clear controls.
 Defaults model pickers use Core route filters for LLM/embedding rows, for
 example `capability_route=input.image,output.text` and
 `capability_route=embedding.text`. Generated image/video/voice/sound/music rows
@@ -124,7 +128,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.28
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.29
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -132,7 +136,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.28-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.29-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases

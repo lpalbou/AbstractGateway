@@ -23,7 +23,7 @@ Related repos:
 - Configuration (env vars + install extras): [configuration.md](./configuration.md)
 - Apple Silicon local Gateway + Flow quickstart: [apple-local-gateway-flow.md](./apple-local-gateway-flow.md)
 - Deployment (Docker/GHCR/Compose): [deployment.md](./deployment.md)
-- API overview (client contract + OpenAPI, including direct image/video, STT, and music generation): [api.md](./api.md)
+- API overview (client contract + OpenAPI, including host state/model residency, direct image/video, STT, and music generation): [api.md](./api.md)
 - Shipped workflows served out of the box (coder, deep research, co-scientist): [shipped-workflows.md](./shipped-workflows.md)
 - Shipped `deep-research` workflow bundle: [deep-research.md](./deep-research.md)
 - Security guide (auth/origin/limits/audit log): [security.md](./security.md)

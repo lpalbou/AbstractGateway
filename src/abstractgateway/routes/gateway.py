@@ -13,9 +13,11 @@ import asyncio
 import base64
 import datetime
 import hashlib
+import inspect
 import io
 import json
 import logging
+import math
 import mimetypes
 import os
 import platform
@@ -33,7 +35,8 @@ from pathlib import Path
 from typing import Any, Dict, List, NoReturn, Optional, Tuple, Union
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from abstractruntime.utils.workspace_paths import (
@@ -16146,6 +16149,8 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             },
         },
         "model_residency": _gateway_model_residency_contract_descriptor(),
+        "host_state": _gateway_host_state_contract_descriptor(),
+        "session_caches": _gateway_session_caches_contract_descriptor(),
         "memory": _memory_contract_descriptor(caps),
     }
     generated_media = _generated_media_contract(caps)
@@ -23205,6 +23210,11 @@ class _GatewayModelResidencyLoadRequest(BaseModel):
     pin: bool = Field(default=True, description="Keep the runtime resident until it is explicitly unloaded.")
     base_url: Optional[str] = Field(default=None, description="Optional upstream provider base URL forwarded to AbstractCore.")
     timeout_s: Optional[float] = Field(default=None, description="Optional provider load timeout forwarded to AbstractCore.")
+    lock: bool = Field(
+        default=False,
+        description="After a successful load, also lock the runtime against unload. The lock outcome is reported "
+        "additively under `lock` in the response; a lock failure never turns the successful load into a failure.",
+    )
 
 
 class _GatewayModelResidencyUnloadRequest(BaseModel):
@@ -23215,6 +23225,20 @@ class _GatewayModelResidencyUnloadRequest(BaseModel):
     options: Optional[Dict[str, Any]] = Field(default=None, description="Task/provider-specific unload options.")
     base_url: Optional[str] = Field(default=None, description="Optional upstream provider base URL used to disambiguate the runtime.")
     timeout_s: Optional[float] = Field(default=None, description="Optional provider unload timeout forwarded to AbstractCore.")
+    force: bool = Field(
+        default=False,
+        description="Unload even when the runtime reports the model as locked. Without it a locked model answers HTTP 409.",
+    )
+
+
+class _GatewayModelResidencyLockRequest(BaseModel):
+    """Target selector for lock/unlock — mirrors the unload request (runtime_id | provider+model)."""
+
+    runtime_id: Optional[str] = Field(default=None, description="Runtime identifier returned by load/list.")
+    provider: Optional[str] = Field(default=None, description="Provider id for the runtime to lock/unlock.")
+    model: Optional[str] = Field(default=None, description="Model id for the runtime to lock/unlock.")
+    base_url: Optional[str] = Field(default=None, description="Optional upstream provider base URL used to disambiguate the runtime.")
+    timeout_s: Optional[float] = Field(default=None, description="Optional provider timeout forwarded to AbstractCore.")
 
 
 class _GatewayCapabilityDefaultRequest(BaseModel):
@@ -23337,12 +23361,45 @@ class _GatewaySessionPromptCacheRequest(_GatewaySessionPromptCacheTarget):
     ttl_s: Optional[float] = Field(default=None, description="Optional provider TTL for prepared/forked keys.")
 
 
+def _gateway_model_residency_modality_ui() -> Dict[str, Any]:
+    """The CANONICAL modality color map every residency client renders with.
+
+    Served under contracts.common.model_residency.modality_ui so thin clients
+    (abstractflow's PIN_COLORS, console surfaces) share ONE palette instead of
+    each hardcoding a copy that drifts. Keys are residency task/modality names;
+    unknown/unlisted modalities fall back to the `unknown` entry.
+    """
+    return {
+        "version": 1,
+        "colors": {
+            "text_generation": {"color": "#00D2FF", "label": "Text"},
+            "image_generation": {"color": "#19D3B8", "label": "Image"},
+            "image_to_image": {"color": "#19D3B8", "label": "Image"},
+            "image_upscale": {"color": "#19D3B8", "label": "Image"},
+            "video_generation": {"color": "#A855F7", "label": "Video"},
+            "text_to_video": {"color": "#A855F7", "label": "Video"},
+            "image_to_video": {"color": "#A855F7", "label": "Video"},
+            "tts": {"color": "#22D3EE", "label": "Voice"},
+            "stt": {"color": "#22D3EE", "label": "Voice"},
+            "music_generation": {"color": "#F59E0B", "label": "Music"},
+            "scene3d_generation": {"color": "#9D4EDD", "label": "3D"},
+            "text_to_scene3d": {"color": "#9D4EDD", "label": "3D"},
+            "image_to_scene3d": {"color": "#9D4EDD", "label": "3D"},
+            "embedding": {"color": "#94A3B8", "label": "Embedding"},
+            "unknown": {"color": "#6B7280", "label": "Unknown"},
+        },
+    }
+
+
 def _gateway_model_residency_contract_descriptor() -> Dict[str, Any]:
     facade, err = _gateway_abstractcore_host_facade()
     endpoints = {
         "loaded": _api_gateway_path("/models/loaded"),
         "load": _api_gateway_path("/models/load"),
         "unload": _api_gateway_path("/models/unload"),
+        "lock": _api_gateway_path("/models/lock"),
+        "unlock": _api_gateway_path("/models/unlock"),
+        "context_estimate": _api_gateway_path("/models/context_estimate"),
     }
     task_names = [
         "text_generation",
@@ -23393,6 +23450,12 @@ def _gateway_model_residency_contract_descriptor() -> Dict[str, Any]:
         "available": available,
         "source": "abstractruntime.host_facade",
         "endpoints": endpoints,
+        # row_v1 stays additive-tolerant: the lock/modality/calibration wave
+        # added OPTIONAL row fields (locked, lockable, modalities,
+        # calibrated_context_length, context_calibrated, host_id, host_name)
+        # without a version bump — absent means unknown, never false.
+        "row_schema": MODEL_RESIDENCY_ROW_SCHEMA_V1,
+        "modality_ui": _gateway_model_residency_modality_ui(),
         "tasks": task_names,
         "supports": supports,
         "task_capabilities": task_capabilities,
@@ -23403,6 +23466,37 @@ def _gateway_model_residency_contract_descriptor() -> Dict[str, Any]:
         **({"capabilities_source": capabilities_source} if capabilities_source else {}),
         **({"diagnostics": diagnostics} if diagnostics else {}),
         "ledger": "workflow model_residency effects are ledgered by Runtime; operator model routes are not ledger commands",
+        **({"config_hint": err} if err else {}),
+    }
+
+
+def _gateway_host_state_contract_descriptor() -> Dict[str, Any]:
+    facade, err = _gateway_abstractcore_host_facade()
+    memory_available = bool(facade is not None and not err and callable(getattr(facade, "get_memory_snapshot", None)))
+    return {
+        "route_available": True,
+        # The state route always answers 200 (sections degrade in-band).
+        "available": True,
+        "memory_available": memory_available,
+        "endpoints": {
+            "state": _api_gateway_path("/host/state"),
+            "memory": _api_gateway_path("/host/metrics/memory"),
+            "gpu": _api_gateway_path("/host/metrics/gpu"),
+        },
+        **({"config_hint": err} if err else {}),
+    }
+
+
+def _gateway_session_caches_contract_descriptor() -> Dict[str, Any]:
+    facade, err = _gateway_abstractcore_host_facade()
+    available = bool(facade is not None and not err and callable(getattr(facade, "list_session_prompt_caches", None)))
+    return {
+        "route_available": True,
+        "available": available,
+        "endpoints": {
+            "list": _api_gateway_path("/sessions/prompt_cache"),
+            "clear_all": _api_gateway_path("/sessions/{session_id}/prompt_cache/clear_all"),
+        },
         **({"config_hint": err} if err else {}),
     }
 
@@ -23508,6 +23602,7 @@ def _gateway_model_residency_unavailable(*, operation: str, error: str) -> Dict[
         "ok": False,
         "success": False,
         "supported": False,
+        "available": False,
         "operation": operation,
         "code": "model_residency_unavailable",
         "error": error,
@@ -23555,6 +23650,99 @@ def _gateway_model_residency_client_call(
     return {"ok": True, "supported": True, "operation": operation, "data": result}
 
 
+def _gateway_host_facade_payload_call(
+    *,
+    method_name: str,
+    operation: str,
+    payload: Optional[Dict[str, Any]] = None,
+    unavailable_code: str,
+    error_code: str,
+) -> Dict[str, Any]:
+    """Relay one payload-dict facade call (model-management wave), degrading in-band.
+
+    The facade methods this wave adds (`lock_model_residency`,
+    `unlock_model_residency`, `get_context_estimate`) take ONE payload dict per
+    the agentic-OS facade contract, unlike the older kwargs-style residency
+    methods. The convention is chosen ONCE from the method's signature — first
+    non-self parameter named `payload` (or positional-only) means payload-style,
+    anything else means kwargs-style — and the method is invoked exactly once:
+    a retry-on-TypeError probe would misbind the dict into a positional-or-
+    keyword first param and would misread a TypeError raised INSIDE the facade
+    as a signature mismatch (double-invoking a mutation). A missing method or
+    facade degrades to `{ok: false, available: false, code: ...}` at HTTP 200
+    (established never-500 style).
+    """
+    facade, err = _gateway_abstractcore_host_facade()
+    fn = getattr(facade, method_name, None) if facade is not None and not err else None
+    if not callable(fn):
+        return {
+            "ok": False,
+            "route_available": True,
+            "available": False,
+            "supported": False,
+            "operation": operation,
+            "code": unavailable_code,
+            "error": err or f"Gateway runtime does not expose `{method_name}`.",
+        }
+    body = dict(payload or {})
+    try:
+        params = [
+            p
+            for p in inspect.signature(fn).parameters.values()
+            if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        ]
+        first = params[0] if params else None
+        payload_style = first is not None and (first.name == "payload" or first.kind is inspect.Parameter.POSITIONAL_ONLY)
+    except (TypeError, ValueError):
+        # Signature not introspectable (C callable, exotic proxy): the facade
+        # contract spelling (`fn(payload)`) wins.
+        payload_style = True
+    try:
+        result = fn(body) if payload_style else fn(**body)
+    except Exception as e:
+        return {
+            "ok": False,
+            "route_available": True,
+            "available": False,
+            "supported": False,
+            "operation": operation,
+            "code": error_code,
+            "error": str(e),
+        }
+    out = dict(result) if isinstance(result, dict) else {"ok": True, "data": result}
+    # A facade that only speaks `success` must not be stamped ok:true on failure.
+    out.setdefault("ok", out.get("success") is not False)
+    out.setdefault("operation", operation)
+    out["route_available"] = True
+    out["available"] = True
+    out.setdefault("source", "abstractruntime.host_facade")
+    return out
+
+
+def _model_residency_locked_refusal(out: Dict[str, Any]) -> bool:
+    """True when a facade unload answer is the model_locked refusal, any spelling.
+
+    Tolerated shapes: `error`/`code` as the bare string, or a dict whose own
+    `code`/`error` says model_locked (never a hash of the value — dict/list
+    error payloads must not 500 the route). Failure itself may be spelled
+    `ok: false` OR `success: false` (older facades never mint `ok`).
+    """
+    if out.get("ok") is not False and out.get("success") is not False:
+        return False
+    for value in (out.get("error"), out.get("code")):
+        if value == "model_locked":
+            return True
+        if isinstance(value, dict) and "model_locked" in (value.get("code"), value.get("error")):
+            return True
+    return False
+
+
+# Every spelling runtimes/providers have used for the residency records list,
+# preference-ordered. The ONE alias table for both the response coalescer and
+# the row_v1 extractor — two lists here would silently drift apart.
+_MODEL_RESIDENCY_RECORDS_KEYS = ("models", "items", "loaded", "runtimes", "data")
+
+
 def _normalize_gateway_model_residency_response(payload: Dict[str, Any], *, operation: str) -> Dict[str, Any]:
     out = dict(payload)
     out.setdefault("operation", operation)
@@ -23562,7 +23750,7 @@ def _normalize_gateway_model_residency_response(payload: Dict[str, Any], *, oper
     out.setdefault("route_available", True)
     out.setdefault("success", out.get("ok") is not False)
     if operation == "list_loaded" and "models" not in out:
-        for key in ("data", "loaded", "runtimes"):
+        for key in _MODEL_RESIDENCY_RECORDS_KEYS:
             if isinstance(out.get(key), list):
                 out["models"] = out[key]
                 break
@@ -23573,6 +23761,168 @@ def _normalize_gateway_model_residency_response(payload: Dict[str, Any], *, oper
             out["affected_models"] = [out["runtime"]]
         else:
             out["affected_models"] = []
+    return out
+
+
+MODEL_RESIDENCY_ROW_SCHEMA_V1 = "model_residency_row_v1"
+
+
+def _row_v1_str(rec: Dict[str, Any], *names: str) -> Optional[str]:
+    for name in names:
+        value = rec.get(name)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _row_v1_bool(rec: Dict[str, Any], *names: str) -> Optional[bool]:
+    for name in names:
+        value = rec.get(name)
+        if isinstance(value, bool):
+            return value
+    return None
+
+
+def _row_v1_int(rec: Dict[str, Any], *names: str) -> Optional[int]:
+    for name in names:
+        value = rec.get(name)
+        if isinstance(value, bool):
+            continue
+        # Junk numerics (nan/inf, unparsable strings) must coerce to None, not
+        # raise: one bad record would 500 the never-500 snapshot surfaces.
+        try:
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                num = value
+            elif isinstance(value, str) and value.strip():
+                num = float(value)
+            else:
+                continue
+            if not math.isfinite(num):
+                continue
+            return int(num)
+        except (ValueError, TypeError, OverflowError):
+            continue
+    return None
+
+
+def _row_v1_str_list(rec: Dict[str, Any], *names: str) -> Optional[list[str]]:
+    for name in names:
+        value = rec.get(name)
+        # Pass through ONLY a list of strings — anything else (dict, string,
+        # mixed list) is junk and coerces to null, never a guess.
+        if isinstance(value, list) and all(isinstance(item, str) for item in value):
+            return list(value)
+    return None
+
+
+def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
+    """Coerce one runtime residency record into the frozen `model_residency_row_v1` shape.
+
+    Server-side twin of the tolerant client normalization abstractflow ships in
+    `useModelResidency.ts`/`ModelResidencyPanel.tsx` (camelCase aliases,
+    resident vs loaded vs provider_resident/provider_loaded, state inference),
+    so thin clients no longer need alias tables. Unknown fields stay reachable
+    through `details` (the raw record).
+
+    The schema is ADDITIVE-TOLERANT and stays `model_residency_row_v1`: the
+    lock/modality/calibration wave added optional fields (locked, lockable,
+    modalities, calibrated_context_length, context_calibrated, host_id,
+    host_name) that are null when a runtime does not report them.
+    """
+    if not isinstance(record, dict):
+        return None
+    # Provider truth outranks runtime-lease booleans (a runtime can hold a
+    # lease on a model the provider already evicted), matching abstractflow's
+    # isProviderResidentRow ordering.
+    resident = _row_v1_bool(record, "provider_resident", "provider_loaded", "resident", "loaded")
+    state = _row_v1_str(record, "state", "provider_state", "health")
+    if resident is None and state is not None:
+        # A loaded-looking state may confirm residency, but a state STRING is
+        # never proof of absence — unknown stays null, never guessed false.
+        if state.strip().lower() in {"provider_loaded", "loaded", "resident"}:
+            resident = True
+    return {
+        "runtime_id": _row_v1_str(record, "runtime_id", "runtimeId", "load_id", "loadId", "id"),
+        "task": _row_v1_str(record, "task"),
+        "provider": _row_v1_str(record, "provider"),
+        "model": _row_v1_str(record, "model"),
+        "source": _row_v1_str(record, "source"),
+        "resident": resident,
+        "state": state,
+        "pinned": _row_v1_bool(record, "pinned"),
+        "default": _row_v1_bool(record, "default", "is_default"),
+        "size_bytes": _row_v1_int(record, "size_bytes", "sizeBytes"),
+        "size_vram_bytes": _row_v1_int(record, "size_vram_bytes", "sizeVramBytes", "vram_bytes"),
+        "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
+        "context_length": _row_v1_int(record, "context_length", "contextLength"),
+        "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
+        "last_used_at": _row_v1_str(record, "last_used_at", "lastUsedAt"),
+        # Additive-optional fields (lock/modality/calibration wave); null =
+        # the runtime did not report it, never false/empty by guess.
+        "locked": _row_v1_bool(record, "locked"),
+        "lockable": _row_v1_bool(record, "lockable"),
+        "modalities": _row_v1_str_list(record, "modalities"),
+        "calibrated_context_length": _row_v1_int(record, "calibrated_context_length", "calibratedContextLength"),
+        "context_calibrated": _row_v1_bool(record, "context_calibrated", "contextCalibrated"),
+        "host_id": _row_v1_str(record, "host_id", "hostId"),
+        "host_name": _row_v1_str(record, "host_name", "hostName"),
+        "details": dict(record),
+    }
+
+
+def _model_residency_rows_v1(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
+    records: list[Any] = []
+    for key in _MODEL_RESIDENCY_RECORDS_KEYS:
+        if isinstance(payload.get(key), list):
+            records = payload[key]
+            break
+    rows = [_normalize_model_residency_row_v1(record) for record in records]
+    return [row for row in rows if row is not None]
+
+
+def _gateway_session_cache_facade_call(
+    *,
+    method_name: str,
+    operation: str,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Relay one enumeration-based session-cache facade call, degrading in-band.
+
+    Enumeration (Runtime reading session_id stamped in cache-key meta) is the
+    truthful lane: the older identity-derived per-session endpoints can miss
+    keys the runtime actually minted, so the new list/clear surfaces never
+    reuse that derivation.
+    """
+    facade, err = _gateway_abstractcore_host_facade()
+    fn = getattr(facade, method_name, None) if facade is not None and not err else None
+    if not callable(fn):
+        return {
+            "ok": False,
+            "route_available": True,
+            "available": False,
+            "operation": operation,
+            "code": "session_caches_unavailable",
+            "error": err or "Gateway runtime does not expose session prompt-cache enumeration.",
+        }
+    try:
+        result = fn(**dict(payload or {}))
+    except Exception as e:
+        return {
+            "ok": False,
+            "route_available": True,
+            "available": False,
+            "operation": operation,
+            "code": "session_caches_error",
+            "error": str(e),
+        }
+    out = dict(result) if isinstance(result, dict) else {"ok": True, "data": result}
+    out.setdefault("ok", True)
+    out["operation"] = operation
+    out["route_available"] = True
+    out["available"] = True
+    out.setdefault("source", "abstractruntime.host_facade")
     return out
 
 
@@ -23985,7 +24335,7 @@ async def model_residency_loaded(
         "base_url": base_url,
     }
     payload = {k: v for k, v in query.items() if v is not None and str(v).strip()}
-    return _normalize_gateway_model_residency_response(
+    out = _normalize_gateway_model_residency_response(
         _gateway_model_residency_client_call(
             method_name="list_model_residency",
             operation="list_loaded",
@@ -23993,6 +24343,10 @@ async def model_residency_loaded(
         ),
         operation="list_loaded",
     )
+    # Additive frozen-schema rows; `models` keeps the raw runtime records.
+    out["rows"] = _model_residency_rows_v1(out)
+    out["row_schema"] = MODEL_RESIDENCY_ROW_SCHEMA_V1
+    return out
 
 
 @router.get("/config/capability-defaults")
@@ -24612,8 +24966,11 @@ async def capability_defaults_task_delete(kind: str, modality: str, task: str) -
 async def model_residency_load(request: Request, req: _GatewayModelResidencyLoadRequest) -> Dict[str, Any]:
     _ = request
     body = _model_dump_excluding_none(req)
+    # `lock` is a GATEWAY-level convenience (load, then lock): it never reaches
+    # the load facade method, whose older implementations reject unknown kwargs.
+    want_lock = bool(body.pop("lock", False))
     body.setdefault("task", "text_generation")
-    return _normalize_gateway_model_residency_response(
+    out = _normalize_gateway_model_residency_response(
         _gateway_model_residency_client_call(
             method_name="load_model_residency",
             operation="load",
@@ -24621,19 +24978,105 @@ async def model_residency_load(request: Request, req: _GatewayModelResidencyLoad
         ),
         operation="load",
     )
+    if want_lock and out.get("ok") is not False and out.get("success") is not False:
+        # Lock the runtime the load answer minted when it names one; otherwise
+        # fall back to the request's provider/model selector. The outcome rides
+        # ADDITIVELY under `lock` — mixed-outcome honesty: a lock failure (or a
+        # facade without the method) never turns the successful load into a
+        # failure, it is reported in the lock block for the client to render.
+        runtime = out.get("runtime") if isinstance(out.get("runtime"), dict) else {}
+        runtime_id = _row_v1_str(runtime, "runtime_id", "runtimeId", "id")
+        lock_payload: Dict[str, Any] = {}
+        if runtime_id:
+            lock_payload["runtime_id"] = runtime_id
+        else:
+            lock_payload = {key: body[key] for key in ("provider", "model", "base_url") if body.get(key)}
+        if req.timeout_s is not None:
+            lock_payload["timeout_s"] = req.timeout_s
+        out["lock"] = _gateway_host_facade_payload_call(
+            method_name="lock_model_residency",
+            operation="lock",
+            payload=lock_payload,
+            unavailable_code="model_residency_unavailable",
+            error_code="model_residency_error",
+        )
+    return out
 
 
 @router.post("/models/unload")
 async def model_residency_unload(request: Request, req: _GatewayModelResidencyUnloadRequest) -> Dict[str, Any]:
     _ = request
     body = _model_dump_excluding_none(req)
-    return _normalize_gateway_model_residency_response(
+    if not body.get("force"):
+        # Only pass `force` through when it is actually set: facades predating
+        # the lock wave reject unknown kwargs, and force=False means "default".
+        body.pop("force", None)
+    out = _normalize_gateway_model_residency_response(
         _gateway_model_residency_client_call(
             method_name="unload_model_residency",
             operation="unload",
             payload=body,
         ),
         operation="unload",
+    )
+    if _model_residency_locked_refusal(out):
+        # A locked-model refusal is the ONE unload failure clients must
+        # distinguish (offer force / point at unlock), so it gets a real
+        # status code instead of the in-band 200 envelope. jsonable_encoder:
+        # the 200 lane gets FastAPI's encoder for free; a raw JSONResponse
+        # would 500 on datetimes and friends in the facade payload.
+        return JSONResponse(status_code=409, content=jsonable_encoder(out))
+    return out
+
+
+@router.post("/models/lock")
+async def model_residency_lock(request: Request, req: _GatewayModelResidencyLockRequest) -> Dict[str, Any]:
+    """Pin a resident model against unload (and provider-side eviction when supported)."""
+    _ = request
+    return _gateway_host_facade_payload_call(
+        method_name="lock_model_residency",
+        operation="lock",
+        payload=_model_dump_excluding_none(req),
+        unavailable_code="model_residency_unavailable",
+        error_code="model_residency_error",
+    )
+
+
+@router.post("/models/unlock")
+async def model_residency_unlock(request: Request, req: _GatewayModelResidencyLockRequest) -> Dict[str, Any]:
+    """Release a model-residency lock set through /models/lock."""
+    _ = request
+    return _gateway_host_facade_payload_call(
+        method_name="unlock_model_residency",
+        operation="unlock",
+        payload=_model_dump_excluding_none(req),
+        unavailable_code="model_residency_unavailable",
+        error_code="model_residency_error",
+    )
+
+
+@router.get("/models/context_estimate")
+async def model_context_estimate(
+    request: Request,
+    provider: str = Query(..., description="Provider id the estimate is for."),
+    model: str = Query(..., description="Model id the estimate is for."),
+    context_length: Optional[int] = Query(None, ge=1, description="Optional context length to estimate memory for."),
+) -> Dict[str, Any]:
+    """Context/KV memory estimate for a provider+model via the Runtime host facade.
+
+    Confidence is in-band (`calibrated` | `estimated` | `unknown`); a facade
+    without the method degrades to `{ok: false, available: false, ...}` at 200.
+    """
+    _ = request
+    payload: Dict[str, Any] = {"provider": provider, "model": model}
+    if context_length is not None:
+        payload["context_length"] = int(context_length)
+    return _gateway_host_facade_payload_call(
+        method_name="get_context_estimate",
+        operation="context_estimate",
+        payload=payload,
+        unavailable_code="context_estimate_unavailable",
+        error_code="context_estimate_error",
     )
 
 
@@ -25260,6 +25703,47 @@ async def session_prompt_cache_rebuild(session_id: str, req: _GatewaySessionProm
     return out
 
 
+@router.get("/sessions/prompt_cache")
+async def session_prompt_caches_list(
+    session_id: Optional[str] = Query(None, description="Optional session filter; omit to list every session's caches."),
+) -> Dict[str, Any]:
+    """Enumerate the prompt caches the runtime actually minted (session_id read from cache-key meta).
+
+    This is the recommended lane: unlike the per-session identity-derived
+    endpoints above, it cannot miss caches whose keys the gateway never derived.
+
+    Cross-principal isolation invariant: this relays the facade enumeration
+    verbatim, which is safe ONLY because each non-admin principal resolves its
+    own per-principal runtime (`get_gateway_service`) and the facade enumerates
+    that runtime's pooled clients alone. If enumeration ever becomes
+    process-global, this read needs a principal filter or an admin gate.
+    """
+    out = _gateway_session_cache_facade_call(
+        method_name="list_session_prompt_caches",
+        operation="list",
+        payload={"session_id": str(session_id or "").strip() or None},
+    )
+    out.setdefault("caches", [])
+    return out
+
+
+@router.post("/sessions/{session_id}/prompt_cache/clear_all")
+async def session_prompt_cache_clear_all(session_id: str) -> Dict[str, Any]:
+    """One-call unload of every runtime-minted prompt cache for a session (enumeration-based)."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    out = _gateway_session_cache_facade_call(
+        method_name="clear_session_prompt_caches",
+        operation="clear_all",
+        payload={"session_id": sid},
+    )
+    out.setdefault("cleared", [])
+    if "count" not in out:
+        out["count"] = len(out["cleared"]) if isinstance(out.get("cleared"), list) else 0
+    return out
+
+
 @router.get("/prompt_cache/saved")
 async def prompt_cache_saved(
     provider: str = Query(..., description="AbstractCore provider name"),
@@ -25350,6 +25834,120 @@ async def prompt_cache_load(req: _GatewayPromptCacheLoadRequest) -> Dict[str, An
 @router.get("/host/metrics/gpu")
 async def host_gpu_metrics() -> Dict[str, Any]:
     return host_metrics.get_host_gpu_metrics()
+
+
+def _gateway_host_memory_snapshot() -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    facade, err = _gateway_abstractcore_host_facade()
+    fn = getattr(facade, "get_memory_snapshot", None) if facade is not None and not err else None
+    if not callable(fn):
+        return None, err or "Gateway runtime does not expose a host memory snapshot."
+    try:
+        snapshot = fn()
+    except Exception as e:
+        return None, f"host memory snapshot failed: {e}"
+    if not isinstance(snapshot, dict):
+        return None, "host memory snapshot returned a non-dict payload"
+    return dict(snapshot), None
+
+
+@router.get("/host/metrics/memory")
+async def host_memory_metrics() -> Dict[str, Any]:
+    """Best-effort host memory snapshot (RAM/process/device) via the Runtime host facade."""
+    snapshot, reason = _gateway_host_memory_snapshot()
+    if snapshot is None:
+        return {"ok": True, "supported": False, "reason": reason}
+    return {"ok": True, "supported": True, **snapshot}
+
+
+@router.get("/host/state")
+async def host_state() -> Dict[str, Any]:
+    """One-call "agentic OS" snapshot: memory, GPU, resident models, session caches.
+
+    Every section is independently best-effort — a missing facade method or a
+    failed probe nulls that section and names it in `degraded`, never a 500.
+    """
+    degraded: list[str] = []
+    reasons: Dict[str, str] = {}
+
+    memory, memory_reason = _gateway_host_memory_snapshot()
+    if memory is None:
+        degraded.append("memory")
+        if memory_reason:
+            reasons["memory"] = memory_reason
+
+    gpu: Optional[Dict[str, Any]] = None
+    try:
+        gpu_payload: Any = host_metrics.get_host_gpu_metrics()
+    except Exception as e:
+        gpu_payload = None
+        reasons["gpu"] = str(e)
+    if isinstance(gpu_payload, dict):
+        gpu = gpu_payload
+    elif gpu_payload is not None:
+        reasons["gpu"] = "gpu metrics probe returned a non-dict payload"
+    if gpu is None or gpu.get("supported") is not True:
+        degraded.append("gpu")
+
+    models: Optional[list[Dict[str, Any]]] = None
+    residency = _normalize_gateway_model_residency_response(
+        _gateway_model_residency_client_call(method_name="list_model_residency", operation="list_loaded"),
+        operation="list_loaded",
+    )
+    if residency.get("ok") is False or residency.get("supported") is False:
+        degraded.append("models")
+        if residency.get("error"):
+            reasons["models"] = str(residency.get("error"))
+    else:
+        models = _model_residency_rows_v1(residency)
+
+    session_caches: Optional[list[Any]] = None
+    caches = _gateway_session_cache_facade_call(method_name="list_session_prompt_caches", operation="list")
+    # `ok: false` is a facade-level in-band failure (no raise) — degrade like
+    # a missing method rather than answering with a silently empty list.
+    if caches.get("available") is False or caches.get("ok") is False:
+        degraded.append("session_caches")
+        if caches.get("error"):
+            reasons["session_caches"] = str(caches.get("error"))
+        else:
+            reasons.setdefault("session_caches", "session cache enumeration reported a failure")
+    else:
+        session_caches = caches.get("caches") if isinstance(caches.get("caches"), list) else []
+
+    def _sum_known_bytes(rows: list[Any], key: str) -> Optional[int]:
+        vals = [
+            row.get(key)
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get(key), (int, float)) and not isinstance(row.get(key), bool)
+        ]
+        return int(sum(vals)) if vals else None
+
+    # Host identity block (multi-host "agentic OS" views): pass through when
+    # the memory snapshot carries one; absent means this runtime predates it.
+    host_block = memory.get("host") if isinstance(memory, dict) and isinstance(memory.get("host"), dict) else None
+
+    return {
+        "ok": True,
+        "ts": time.time(),
+        **({"host": host_block} if host_block is not None else {}),
+        "memory": memory,
+        "gpu": gpu,
+        "models": models,
+        "session_caches": session_caches,
+        "totals": {
+            "models": len(models or []),
+            # Additive: rows the provider VERIFIED resident (resident is
+            # tri-state; null rows are not counted). `models` counts every
+            # known row — configured/cached included — so clients that need a
+            # truthful "N loaded" read this, not `models`.
+            "models_resident": sum(1 for row in models or [] if isinstance(row, dict) and row.get("resident") is True),
+            "model_bytes": _sum_known_bytes(models or [], "size_bytes"),
+            "session_caches": len(session_caches or []),
+            "session_cache_bytes": _sum_known_bytes(session_caches or [], "bytes"),
+        },
+        "degraded": degraded,
+        **({"reasons": reasons} if reasons else {}),
+        "row_schema": MODEL_RESIDENCY_ROW_SCHEMA_V1,
+    }
 
 
 @router.post("/embeddings", response_model=EmbeddingsResponse)

@@ -1,7 +1,7 @@
 # AbstractGateway — Architecture
 
 > Status: implemented (main branch)
-> Last reviewed: 2026-05-23
+> Last reviewed: 2026-08-27
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
 - **Start runs** (and optionally schedule them)
@@ -89,7 +89,9 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:
 
 - `GET /api/gateway/discovery/capabilities` exposes a versioned shared contract
   for run input/history access, media endpoints, voice contracts, prompt-cache
-  surfaces, and model residency truth.
+  surfaces, host state, session-cache enumeration, and model residency truth
+  (`common.model_residency` with `row_schema` and the canonical `modality_ui`
+  color map, `common.host_state`, `common.session_caches`).
 - Provider/model catalogs are intentionally routed through Gateway. The legacy
   lower-layer payload fields are preserved, but Gateway now adds a stable
   `gateway_catalog_v1` envelope plus canonical `items` so higher apps can stop
@@ -103,9 +105,22 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:
 - Voice listen is intentionally a host-capture contract, not a server-side
   microphone transport. Gateway tells clients how to emit or upload captured
   audio; clients keep ownership of live capture UX.
-- Model residency, prompt-cache lifecycle, durable blocs, and discovery
-  catalogs are server-owned control-plane surfaces so higher apps do not have
-  to import Runtime/Core packages directly.
+- Model residency, host state/metrics, session prompt-cache enumeration,
+  prompt-cache lifecycle, durable blocs, and discovery catalogs are
+  server-owned control-plane surfaces so higher apps do not have to import
+  Runtime/Core packages directly.
+- Model residency truth is Runtime/provider-owned and Gateway-normalized:
+  `GET /models/loaded` and `GET /host/state` relay Runtime's host facade
+  records and add frozen `model_residency_row_v1` rows in which provider
+  residency booleans outrank runtime lease booleans, state strings can only
+  confirm residency (never deny it), and unknown values stay `null`. Gateway
+  never fabricates residency, memory, or GPU truth; unavailable sections
+  degrade in-band instead of failing the snapshot.
+- Host and residency surfaces follow a read/mutation authorization split:
+  reads (`/models/loaded`, `/models/context_estimate`, `/host/state`,
+  `/host/metrics/*`, `GET /sessions/prompt_cache`) serve any authenticated
+  principal, while mutations (`/models/load|unload|lock|unlock|download`,
+  prompt-cache mutations including `clear_all`) require an admin principal.
 - The shared contract is principal-aware for high-trust actions. Regular users
   see admin-only workspace artifact import/export and provider prompt-cache
   controls as unavailable in discovery, while ordinary run/ledger/artifact

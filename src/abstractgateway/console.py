@@ -549,11 +549,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-drives { display: grid; gap: 6px; margin: 4px 0 12px; max-width: 560px; }
 	    .drive-row { display: grid; grid-template-columns: 88px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
 	    .drive-label { color: var(--muted); font-weight: 600; }
-	    .drive-track { height: 8px; border-radius: 999px; background: rgba(255, 255, 255, .06); border: 1px solid var(--line); overflow: hidden; }
-	    .drive-fill { height: 100%; border-radius: 999px; background: color-mix(in srgb, var(--success) 70%, transparent); transition: width .3s ease; }
-	    .drive-fill.saturated { background: color-mix(in srgb, var(--warning) 75%, transparent); }
+	    /* ONE determinate-bar recipe (the wave-3 chip rule applied to gauges):
+	       drive bars and the Models tab's host meters share shape/track/fill;
+	       families differ only in their STATE hooks — drives saturate amber on
+	       "nothing open", meters step ok -> warn -> crit on used/total
+	       thresholds via the state tokens. */
+	    .drive-track, .meter-track { height: 8px; border-radius: 999px; background: rgba(255, 255, 255, .06); border: 1px solid var(--line); overflow: hidden; }
+	    .drive-fill, .meter-fill { height: 100%; border-radius: 999px; background: color-mix(in srgb, var(--success) 70%, transparent); transition: width .3s ease; }
+	    .drive-fill.saturated, .meter-fill.warn { background: color-mix(in srgb, var(--warning) 75%, transparent); }
+	    .meter-fill.crit { background: color-mix(in srgb, var(--error) 75%, transparent); }
 	    .drive-counts { color: var(--muted); white-space: nowrap; }
 	    .drive-counts .drive-sat { color: var(--warn); font-weight: 600; }
+	    /* Meter layout (Models tab: RAM / device / GPU gauges). */
+	    .meter-stack { display: grid; gap: 6px; margin: 4px 0 12px; max-width: 640px; }
+	    .meter-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
+	    .meter-label { color: var(--muted); font-weight: 600; }
+	    .meter-value { color: var(--muted); white-space: nowrap; }
+	    /* Models tab: the admin warm-up row (inputs are width:100% globally —
+	       cap them so the row stays one line). */
+	    .models-load-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+	    .models-load-form input[list] { width: auto; flex: 1 1 190px; min-width: 150px; }
 	    .tpl-spark { width: 100%; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; line-height: 1.5; }
 	    .entity-checkbox input { width: auto; }
 	    .entity-prompt-layers { display: grid; gap: 10px; margin: 8px 0; }
@@ -796,26 +811,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .list-toolbar select { width: auto; min-width: 150px; flex: 0 0 auto; }
 	    .list-toolbar input[type="search"] { flex: 1 1 220px; min-width: 160px; }
 	    .list-toolbar .entity-checkbox { flex: 0 0 auto; white-space: nowrap; margin-bottom: 0; }
-	    #artifact-modal-content img { max-width: 100%; max-height: 58vh; object-fit: contain; display: block; margin: 0 auto; border-radius: 8px; }
-	    #artifact-modal-content video { max-width: 100%; max-height: 58vh; display: block; margin: 0 auto; border-radius: 8px; background: #000; }
+	    #artifact-modal-content img { max-width: 100%; max-height: 58vh; object-fit: contain; display: block; margin: 0 auto; border-radius: var(--radius-md); }
+	    #artifact-modal-content video { max-width: 100%; max-height: 58vh; display: block; margin: 0 auto; border-radius: var(--radius-md); background: #000; }
 	    #artifact-modal-content audio { width: 100%; }
 	    #artifact-modal-content pre, #artifact-modal-content .artifact-md {
 	      max-height: 58vh; overflow: auto; margin: 0;
 	      white-space: pre-wrap; overflow-wrap: anywhere;
 	      background: var(--ui-surface-3); border: 1px solid var(--ui-border-1);
-	      border-radius: 10px; padding: 12px 14px; font-size: 12px; line-height: 1.5;
+	      border-radius: var(--radius-lg); padding: 12px 14px; font-size: 12px; line-height: 1.5;
 	    }
 	    #artifact-modal-content .artifact-md { white-space: normal; font-size: 13px; }
 	    .log-modal #log-modal-pre {
 	      height: min(58vh, 640px); overflow: auto; margin: 0;
 	      white-space: pre-wrap; overflow-wrap: anywhere;
 	      background: var(--ui-surface-3); border: 1px solid var(--ui-border-1);
-	      border-radius: 10px; padding: 12px 14px;
+	      border-radius: var(--radius-lg); padding: 12px 14px;
 	      font-size: 12px; line-height: 1.5;
 	      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 	    }
 	    .wsp-mode-cards { display: grid; gap: 8px; margin: 2px 0 10px; }
-	    .wsp-card { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--ui-border-1); border-radius: 10px; padding: 10px 12px; cursor: pointer; text-transform: none; letter-spacing: normal; }
+	    .wsp-card { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--ui-border-1); border-radius: var(--radius-lg); padding: 10px 12px; cursor: pointer; text-transform: none; letter-spacing: normal; }
 	    .wsp-card:hover { border-color: var(--ui-border-2); }
 	    .wsp-card.selected { border-color: var(--accent); background: var(--accent-subtle); }
 	    .wsp-card input[type="radio"] { width: auto; min-height: auto; flex: 0 0 auto; margin-top: 3px; padding: 0; border: none; background: transparent; accent-color: var(--accent); }
@@ -1457,6 +1472,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <button id="tab-button-providers" class="tab-button shell_nav_item" type="button" title="LLM provider connections and endpoint profiles"><span class="shell_nav_icon" aria-hidden="true">◇</span><span class="shell_nav_label">Providers</span></button>
 	      <button id="tab-button-defaults" class="tab-button shell_nav_item" type="button" title="Which provider/model serves each capability (vision, audio, image...)"><span class="shell_nav_icon" aria-hidden="true">◆</span><span class="shell_nav_label">Multimodal</span></button>
 	      <button id="tab-button-sandbox" class="tab-button shell_nav_item" type="button" title="Try any provider/model directly — text, image, audio, video"><span class="shell_nav_icon" aria-hidden="true">▶</span><span class="shell_nav_label">Sandbox</span></button>
+	      <button id="tab-button-models" class="tab-button shell_nav_item" type="button" title="Host resources: loaded models, memory and GPU, session caches"><span class="shell_nav_icon" aria-hidden="true">▦</span><span class="shell_nav_label">Resources</span></button>
 	    </nav>
 	  </aside>
 	  <div class="shell_main">
@@ -1833,6 +1849,75 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="sandbox-message" class="message"></div>
 	            </div>
 	          </section>
+	        </div>
+	      </div>
+
+	      <!-- MODELS (agentic-OS resources view): what is resident on this
+	           host right now. ONE snapshot call (GET /host/state) feeds three
+	           stacked sections — Memory & GPU, Models, Session caches —
+	           all visible at once (a resources dashboard read at a glance;
+	           hiding the RAM meter behind a subtab defeats the point). Every
+	           section degrades independently and degraded[] names render as
+	           pills, never a silent blank. Reads render for every signed-in
+	           user; mutations (warm-up, unload/lock, cache clear) are
+	           admin-gated at render time. -->
+	      <div id="tab-models" class="tab-panel">
+	        <div class="tab-grid tab-grid-wide">
+	          <div class="tab-stack">
+	            <section id="models-host-section" class="session-only">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▦</span><span>Memory &amp; GPU</span></h2>
+	                  <p class="section-note">Live truth from the host behind this gateway: RAM pressure, accelerator memory, GPU load. Refreshes every 5 seconds while this tab is open; a failed probe is named below, never blanked.</p>
+	                </div>
+	                <button id="models-refresh" class="secondary icon-only" title="Reload host state now" aria-label="Refresh host state"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	              </div>
+	              <div id="models-message" class="message"></div>
+	              <div id="models-degraded" class="entity-chip-row hidden"></div>
+	              <div id="models-meters" class="meter-stack"></div>
+	              <div id="models-host-facts" class="entity-overview"></div>
+	            </section>
+	            <section id="models-loaded-section" class="session-only">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▣</span><span id="models-loaded-title">Models</span></h2>
+	                  <p class="section-note">Model runtimes on this host — resident in provider memory by default (default ≠ loaded: configured capability defaults sit behind the toggle until they are really in memory). Unload frees the memory (the next request pays the full load again); a locked model refuses unload until unlocked or forced; Estimate asks the host how much context actually fits.</p>
+	                </div>
+	                <label id="models-show-cached-label" class="entity-checkbox hidden" title="Also show configured / cached rows that are NOT resident in memory — informational only, nothing to unload"><input id="models-show-cached" type="checkbox"> <span id="models-show-cached-text">Show configured / cached</span></label>
+	              </div>
+	              <div id="models-load-form" class="models-load-form hidden">
+	                <input id="models-load-provider" list="models-load-provider-options" placeholder="provider (e.g. mlx, lmstudio)" aria-label="Provider to warm up" title="Provider to warm up — configured providers are suggested, free text stays allowed">
+	                <datalist id="models-load-provider-options"></datalist>
+	                <input id="models-load-model" list="models-load-model-options" placeholder="model id" aria-label="Model to warm up" title="Model to warm up — discovered models are suggested, free text stays allowed">
+	                <datalist id="models-load-model-options"></datalist>
+	                <label class="entity-checkbox" title="Lock the model in memory after loading so nothing can evict it until it is unlocked"><input id="models-load-lock" type="checkbox"> lock in memory</label>
+	                <button id="models-load-button" class="secondary" type="button" title="Load (warm up) this model on the host now">Load model</button>
+	              </div>
+	              <p id="models-load-hint" class="section-note hidden"></p>
+	              <div id="models-loaded-message" class="message"></div>
+	              <div class="table-scroll">
+	                <table>
+	                  <thead><tr><th>Modality</th><th>Provider</th><th>Model</th><th>Resident</th><th>Size</th><th>Context</th><th>Flags</th><th>Actions</th></tr></thead>
+	                  <tbody id="models-table"></tbody>
+	                </table>
+	              </div>
+	            </section>
+	            <section id="models-caches-section" class="session-only">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⌸</span><span>Session caches</span></h2>
+	                  <p class="section-note">Prompt (KV) caches the runtime minted per session. Clearing one only costs re-encoding the prompt on that session's next turn.</p>
+	                </div>
+	              </div>
+	              <div id="models-caches-message" class="message"></div>
+	              <div class="table-scroll">
+	                <table>
+	                  <thead><tr><th>Session</th><th>Model</th><th>Size</th><th>Tokens</th><th>Created</th><th>Actions</th></tr></thead>
+	                  <tbody id="models-caches-table"></tbody>
+	                </table>
+	              </div>
+	            </section>
+	          </div>
 	        </div>
 	      </div>
 	      <div id="tab-users" class="tab-panel">
@@ -2440,7 +2525,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, availabilitySeeded: "", downloadJobs: new Map(), runtimeConfig: null };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, availabilitySeeded: "", downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -2715,7 +2800,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox"];
+	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models"];
 	    // The kit's THEME_SPECS (abstractuic theme.ts), generated by
 	    // console_theme_sync — the console offers exactly the framework's
 	    // themes, never a hand-copied subset (operator catch 2026-07-15).
@@ -2915,6 +3000,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      providers: ["Providers", "LLM provider connections and endpoint profiles"],
 	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
 	      sandbox: ["Sandbox", "Try any provider/model directly — text, image, audio, video"],
+	      models: ["Resources", "Host resources: loaded models, memory and GPU, session caches"],
 	    };
 	    function setActiveTab(tab) {
 	      // Legacy persisted tab ids fold into their new homes (entities
@@ -6487,6 +6573,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const err = new Error(String(msg));
         if (detail && typeof detail === "object") err.detail = detail;
         err.status = res.status;
+        // The parsed body rides along: refusal contracts that answer with a
+        // real status but NO detail envelope (the 409 model_locked unload
+        // relays the facade payload verbatim) are unreadable from the
+        // message alone, and callers must gate on the CODE, not the status.
+        err.data = data;
         throw err;
       }
       return data;
@@ -8080,6 +8171,723 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      };
 	      return labels[value] || value;
 	    }
+	    // ---- Models (host residency: the agentic-OS resources view) ----
+	    // ONE snapshot (GET /host/state) feeds every section on the tab; the
+	    // 5s poll is a token-guarded self-rescheduling chain (the manage-panel
+	    // precedent) additionally scoped to the ACTIVE tab, so a hidden tab
+	    // never keeps the host walking its residency. Reads render for every
+	    // signed-in user; mutations are admin-gated at render time. Every
+	    // "unknown" (null) stays unknown on screen — never guessed.
+	    function _fmtPct(n) {
+	      return (typeof n === "number" && isFinite(n)) ? `${Math.round(n)}%` : "unknown";
+	    }
+	    function _fmtCtx(n) {
+	      if (typeof n !== "number" || !isFinite(n) || n <= 0) return "";
+	      return n >= 1024 ? `${Math.round(n / 1024)}K` : String(n);
+	    }
+	    function _fmtEpochS(s) {
+	      if (typeof s !== "number" || !isFinite(s) || s <= 0) return "";
+	      try { return new Date(s * 1000).toISOString().slice(0, 19).replace("T", " "); } catch { return ""; }
+	    }
+	    function modelsEmptyRow(body, colSpan, text) {
+	      if (!body) return;
+	      body.textContent = "";
+	      const tr = document.createElement("tr");
+	      const td = document.createElement("td");
+	      td.colSpan = colSpan;
+	      td.className = "empty";
+	      td.textContent = text;
+	      tr.append(td);
+	      body.append(tr);
+	    }
+	    // The CANONICAL modality palette (discovery contract:
+	    // contracts.common.model_residency.modality_ui) — one palette for every
+	    // residency client, never a console-local copy. Decoration only: a
+	    // failed probe falls back to the neutral chip and retries next load.
+	    const MODALITY_UI_FALLBACK = { color: "#6B7280", label: "Unknown" };
+	    async function ensureModalityUi() {
+	      if (state.modalityUi) return state.modalityUi;
+	      try {
+	        const caps = await api("/api/gateway/discovery/capabilities");
+	        const ui = caps?.contracts?.common?.model_residency?.modality_ui;
+	        state.modalityUi = (ui && typeof ui === "object" && ui.colors && typeof ui.colors === "object") ? ui : { colors: {} };
+	      } catch {
+	        return { colors: {} };
+	      }
+	      return state.modalityUi;
+	    }
+	    function modalityChipEl(task) {
+	      const colors = (state.modalityUi && state.modalityUi.colors) || {};
+	      const entry = (task && colors[task]) || colors.unknown || MODALITY_UI_FALLBACK;
+	      const chip = document.createElement("span");
+	      chip.className = "state-pill";
+	      chip.textContent = entry.label || (task ? String(task) : "Unknown");
+	      if (task) chip.title = String(task);
+	      // Data-driven accent from the contract (the entity phase-badge
+	      // precedent): inline style, hex validated so junk never reaches CSS.
+	      const hex = /^#[0-9a-fA-F]{3,8}$/.test(String(entry.color || "")) ? entry.color : MODALITY_UI_FALLBACK.color;
+	      if (chip.style) {
+	        chip.style.color = hex;
+	        chip.style.borderColor = `color-mix(in srgb, ${hex} 45%, transparent)`;
+	        chip.style.background = `color-mix(in srgb, ${hex} 10%, transparent)`;
+	      }
+	      return chip;
+	    }
+	    function meterRow(label, fraction, valueText, title) {
+	      // The shared determinate-bar recipe (.drive-track generalization): a
+	      // null fraction renders an EMPTY track with honest value text, never
+	      // a guessed bar. Thresholds ride the state tokens: warn >= 75%,
+	      // crit >= 90%.
+	      const row = document.createElement("div");
+	      row.className = "meter-row";
+	      const lab = document.createElement("span");
+	      lab.className = "meter-label";
+	      lab.textContent = label;
+	      const track = document.createElement("div");
+	      track.className = "meter-track";
+	      if (title) track.title = title;
+	      const fill = document.createElement("div");
+	      fill.className = "meter-fill";
+	      const pct = (typeof fraction === "number" && isFinite(fraction)) ? Math.max(0, Math.min(100, fraction * 100)) : null;
+	      if (fill.style) fill.style.width = pct === null ? "0%" : `${Math.round(pct * 10) / 10}%`;
+	      if (pct !== null && pct >= 90) fill.classList.add("crit");
+	      else if (pct !== null && pct >= 75) fill.classList.add("warn");
+	      track.append(fill);
+	      const value = document.createElement("span");
+	      value.className = "meter-value";
+	      value.textContent = valueText;
+	      row.append(lab, track, value);
+	      return row;
+	    }
+	    function modelRowKey(row) {
+	      return row.runtime_id || `${row.provider || ""}/${row.model || ""}`;
+	    }
+	    function residencyPill(row) {
+	      // TRI-STATE, three visually distinct renderings: true (ok green),
+	      // false = a configured/cached row NOT in memory (plain muted, said in
+	      // words — default ≠ loaded is the critical distinction), null = the
+	      // host does not know (info chip that SAYS unknown — text carries the
+	      // state, color is never the sole channel).
+	      const pill = document.createElement("span");
+	      if (row.resident === true) { pill.className = "state-pill ok"; pill.textContent = "resident"; }
+	      else if (row.resident === false) { pill.className = "state-pill"; pill.textContent = "configured — not in memory"; }
+	      else { pill.className = "state-pill covered"; pill.textContent = "unknown"; }
+	      if (row.state) pill.title = `runtime state: ${row.state}`;
+	      return pill;
+	    }
+	    function renderHostDegraded(data) {
+	      const box = $("models-degraded");
+	      if (!box) return;
+	      box.textContent = "";
+	      const degraded = Array.isArray(data.degraded) ? data.degraded : [];
+	      const reasons = (data.reasons && typeof data.reasons === "object") ? data.reasons : {};
+	      const names = [...new Set([...degraded, ...Object.keys(reasons)])];
+	      for (const name of names) {
+	        const pill = document.createElement("span");
+	        pill.className = "pill";
+	        pill.textContent = reasons[name] ? `${name} degraded — ${reasons[name]}` : `${name} degraded`;
+	        box.append(pill);
+	      }
+	      box.classList.toggle("hidden", !names.length);
+	    }
+	    function renderHostMeters(data) {
+	      const box = $("models-meters");
+	      if (!box) return;
+	      box.textContent = "";
+	      const mem = (data.memory && typeof data.memory === "object") ? data.memory : {};
+	      const ram = (mem.ram && typeof mem.ram === "object") ? mem.ram : {};
+	      const ramFrac = (typeof ram.used_bytes === "number" && typeof ram.total_bytes === "number" && ram.total_bytes > 0)
+	        ? ram.used_bytes / ram.total_bytes
+	        : (typeof ram.percent === "number" ? ram.percent / 100 : null);
+	      box.append(meterRow("RAM", ramFrac,
+	        ramFrac === null ? "unknown" : `${_fmtBytes(ram.used_bytes)} / ${_fmtBytes(ram.total_bytes)} · ${_fmtPct(typeof ram.percent === "number" ? ram.percent : ramFrac * 100)}`,
+	        "Host RAM used / total"));
+	      const dev = (mem.device && typeof mem.device === "object") ? mem.device : {};
+	      const devFrac = (typeof dev.allocated_bytes === "number" && typeof dev.total_bytes === "number" && dev.total_bytes > 0)
+	        ? dev.allocated_bytes / dev.total_bytes : null;
+	      box.append(meterRow(dev.backend ? `Device · ${dev.backend}` : "Device", devFrac,
+	        devFrac === null ? "unknown" : `${_fmtBytes(dev.allocated_bytes)} / ${_fmtBytes(dev.total_bytes)}`,
+	        "Accelerator memory allocated / total"));
+	      const gpu = (data.gpu && typeof data.gpu === "object") ? data.gpu : {};
+	      if (gpu.supported === true) {
+	        // GPU load renders only when the probe says supported — the
+	        // unsupported case is already named in the degraded pills.
+	        const util = (typeof gpu.utilization_gpu_pct === "number" && isFinite(gpu.utilization_gpu_pct)) ? gpu.utilization_gpu_pct : null;
+	        box.append(meterRow("GPU load", util === null ? null : util / 100,
+	          util === null ? "unknown" : _fmtPct(util),
+	          gpu.source ? `GPU utilization via ${gpu.source}` : "GPU utilization"));
+	      }
+	    }
+	    function renderHostFacts(data) {
+	      const box = $("models-host-facts");
+	      if (!box) return;
+	      box.textContent = "";
+	      const mem = (data.memory && typeof data.memory === "object") ? data.memory : {};
+	      const proc = (mem.process && typeof mem.process === "object") ? mem.process : {};
+	      const totals = (data.totals && typeof data.totals === "object") ? data.totals : {};
+	      const host = (data.host && typeof data.host === "object") ? data.host : {};
+	      // NO fabricated zeros: a degraded section (models/session_caches
+	      // null) or an absent totals block must not read "0 models" beside a
+	      // table that says unavailable — the fact line renders only when the
+	      // section actually enumerated AND totals carries a real count.
+	      // Truthful "N loaded": totals.models_resident (server-counted rows
+	      // with resident === true), falling back to counting resident rows
+	      // client-side. totals.models counts every known row — configured /
+	      // cached included — and must never be presented as "loaded".
+	      const modelRows = Array.isArray(data.models) ? data.models : null;
+	      const nResident = modelRows === null ? null
+	        : (typeof totals.models_resident === "number" ? totals.models_resident : modelRows.filter((r) => r && r.resident === true).length);
+	      const nKnown = modelRows === null ? null : (typeof totals.models === "number" ? totals.models : modelRows.length);
+	      const residentBytes = modelRows === null ? null : modelRows.reduce(
+	        (acc, r) => (r && r.resident === true && typeof r.size_bytes === "number") ? (acc === null ? r.size_bytes : acc + r.size_bytes) : acc, null);
+	      const nCaches = (Array.isArray(data.session_caches) && typeof totals.session_caches === "number") ? totals.session_caches : null;
+	      const rows = [
+	        ["Host", host.host_name || host.host_id || ""],
+	        ["Process RSS", typeof proc.rss_bytes === "number" ? _fmtBytes(proc.rss_bytes) : ""],
+	        ["Models", nResident === null ? "" : `${nResident} resident${residentBytes === null ? "" : ` · ${_fmtBytes(residentBytes)}`}${typeof nKnown === "number" && nKnown > nResident ? ` · ${nKnown - nResident} configured / cached` : ""}`],
+	        ["Session caches", nCaches === null ? "" : (nCaches === 0 ? "0 caches" : `${nCaches} cache${nCaches === 1 ? "" : "s"} · ${totals.session_cache_bytes == null ? "size unknown" : _fmtBytes(totals.session_cache_bytes)}`)],
+	      ];
+	      for (const [k, v] of rows) {
+	        if (!v) continue;
+	        const line = document.createElement("div");
+	        line.className = "entity-kv";
+	        const key = document.createElement("span"); key.className = "entity-kv-key"; key.textContent = k;
+	        const val = document.createElement("span"); val.className = "entity-kv-val"; val.textContent = String(v);
+	        line.append(key, val);
+	        box.append(line);
+	      }
+	    }
+	    function estimateDetailRow(est, colSpan) {
+	      const tr = document.createElement("tr");
+	      tr.className = "capability-derived";
+	      const td = document.createElement("td");
+	      td.colSpan = colSpan;
+	      const bits = [`context estimate: ${est.confidence || "unknown"}`];
+	      if (typeof est.predicted_max_context === "number") bits.push(`predicted max ${_fmtCtx(est.predicted_max_context)}`);
+	      if (typeof est.calibrated_context_length === "number") bits.push(`calibrated ${_fmtCtx(est.calibrated_context_length)}`);
+	      if (Array.isArray(est.notes) && est.notes.length) bits.push(est.notes.join("; "));
+	      if (est.error) bits.push(String(est.error));
+	      td.textContent = bits.join(" · ");
+	      tr.append(td);
+	      return tr;
+	    }
+	    async function estimateModelContext(row, btn) {
+	      if (!row.provider || !row.model) return;
+	      if (btn) btn.disabled = true;
+	      const key = modelRowKey(row);
+	      try {
+	        const est = await api(withQuery("/api/gateway/models/context_estimate", { provider: row.provider, model: row.model, context_length: row.context_length || null }));
+	        state.modelEstimates.set(key, est || {});
+	      } catch (e) {
+	        // The estimate is per-row detail: its failure lands IN the detail
+	        // row, labeled, never as a silent no-op.
+	        state.modelEstimates.set(key, { confidence: "unknown", error: String(e.message || e) });
+	      } finally {
+	        if (btn) btn.disabled = false;
+	      }
+	      if (state.hostState) renderModelsTable(state.hostState);
+	    }
+	    function modelUnloadTarget(row) {
+	      return row.runtime_id ? { runtime_id: row.runtime_id } : { provider: row.provider, model: row.model };
+	    }
+	    function _modelsMutationResult(res) {
+	      // The facade degrades IN-BAND at 200 ({ok:false, error}) — surface it
+	      // as the failure it is instead of painting a success line.
+	      if (res && res.ok === false) throw new Error(String(res.error || res.detail || res.code || "the host refused the operation"));
+	      return res;
+	    }
+	    function _modelsLockedRefusal(e) {
+	      // The force dialog is gated on the 409 BODY carrying the
+	      // model_locked code (any spelling the server's own detector
+	      // accepts), never on the status alone — a proxy's or another
+	      // route's 409 must not offer a force-unload it cannot mean.
+	      if (!e || e.status !== 409) return false;
+	      const body = (e.data && typeof e.data === "object") ? e.data : ((e.detail && typeof e.detail === "object") ? e.detail : {});
+	      const hit = (v) => v === "model_locked" || (v && typeof v === "object" && (v.code === "model_locked" || v.error === "model_locked"));
+	      if (Object.values(body).some(hit)) return true;
+	      return String(e.message || "").includes("model_locked");
+	    }
+	    async function unloadModel(row, btn) {
+	      const name = `${row.provider || "?"}/${row.model || "?"}`;
+	      const ok = await confirmAction({
+	        title: "Unload model",
+	        message: `Unload ${name} from host memory? The next request that needs it pays the full load again.`,
+	        confirmLabel: "Unload",
+	        danger: true,
+	      });
+	      if (!ok) return;
+	      const msg = $("models-loaded-message");
+	      if (btn) btn.disabled = true;
+	      try {
+	        _modelsMutationResult(await api("/api/gateway/models/unload", { slow: true, method: "POST", body: JSON.stringify(modelUnloadTarget(row)) }));
+	        msg.textContent = `Unloaded ${name}.`;
+	        msg.className = "message ok";
+	      } catch (e) {
+	        if (_modelsLockedRefusal(e)) {
+	          // 409 + model_locked in the body — the ONE unload refusal with a
+	          // second, deliberate way through. The force confirm is its own act.
+	          const force = await confirmAction({
+	            title: "Model locked",
+	            message: `${name} is locked in memory — the lock exists to keep it resident. Force the unload anyway?`,
+	            confirmLabel: "Force unload",
+	            danger: true,
+	          });
+	          if (force) {
+	            try {
+	              _modelsMutationResult(await api("/api/gateway/models/unload", { slow: true, method: "POST", body: JSON.stringify({ ...modelUnloadTarget(row), force: true }) }));
+	              msg.textContent = `Force-unloaded ${name}.`;
+	              msg.className = "message ok";
+	            } catch (e2) {
+	              msg.textContent = String(e2.message || e2);
+	              msg.className = "message error";
+	            }
+	          }
+	        } else if (e && e.status === 409) {
+	          // A 409 that does NOT carry model_locked is some other conflict:
+	          // never offer a force it cannot mean.
+	          msg.textContent = `Unload conflicted (HTTP 409): ${String(e.message || e)}`;
+	          msg.className = "message error";
+	        } else {
+	          msg.textContent = String(e.message || e);
+	          msg.className = "message error";
+	        }
+	      } finally {
+	        if (btn) btn.disabled = false;
+	        await loadHostState({ quiet: true });
+	      }
+	    }
+	    async function toggleModelLock(row, btn) {
+	      const name = `${row.provider || "?"}/${row.model || "?"}`;
+	      const locking = row.locked !== true;
+	      const msg = $("models-loaded-message");
+	      if (btn) btn.disabled = true;
+	      try {
+	        const path = locking ? "/api/gateway/models/lock" : "/api/gateway/models/unlock";
+	        _modelsMutationResult(await api(path, { method: "POST", body: JSON.stringify(modelUnloadTarget(row)) }));
+	        msg.textContent = `${locking ? "Locked" : "Unlocked"} ${name}.`;
+	        msg.className = "message ok";
+	      } catch (e) {
+	        msg.textContent = String(e.message || e);
+	        msg.className = "message error";
+	      } finally {
+	        if (btn) btn.disabled = false;
+	        await loadHostState({ quiet: true });
+	      }
+	    }
+	    function renderModelsResidentCount(n) {
+	      const title = $("models-loaded-title");
+	      if (!title) return;
+	      // The section header counts RESIDENT rows only — the truthful "N
+	      // loaded". Unknown (models section degraded) renders no count. Titled
+	      // "Models" (not "Loaded models") so the header can never contradict
+	      // the configured/cached rows the toggle reveals beneath it.
+	      title.textContent = n === null ? "Models" : `Models (${n} resident)`;
+	    }
+	    function renderModelsShowCachedToggle(n) {
+	      const label = $("models-show-cached-label");
+	      const text = $("models-show-cached-text");
+	      const box = $("models-show-cached");
+	      if (!label || !text || !box) return;
+	      if (!n && state.modelsShowCached) state.modelsShowCached = false;
+	      label.classList.toggle("hidden", !n);
+	      text.textContent = `Show configured / cached (${n})`;
+	      box.checked = Boolean(state.modelsShowCached);
+	    }
+	    function renderModelsTable(data) {
+	      const body = $("models-table");
+	      if (!body) return;
+	      body.textContent = "";
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      const rows = Array.isArray(data.models) ? data.models : null;
+	      const residentRows = rows === null ? [] : rows.filter((r) => r && r.resident === true);
+	      const cachedRows = rows === null ? [] : rows.filter((r) => r && r.resident !== true);
+	      renderModelsResidentCount(rows === null ? null : residentRows.length);
+	      renderModelsShowCachedToggle(rows === null ? 0 : cachedRows.length);
+	      if (rows === null) {
+	        const reason = data.reasons && data.reasons.models ? ` — ${data.reasons.models}` : "";
+	        modelsEmptyRow(body, 8, `Model residency unavailable on this host${reason}.`);
+	        return;
+	      }
+	      // DEFAULT VIEW = provider-verified RESIDENT rows only. Configured /
+	      // cached rows (resident false or unknown) sit behind the toggle:
+	      // presenting every capability-default model as "loaded" was the
+	      // operator defect this fixes — default ≠ loaded.
+	      const visible = state.modelsShowCached ? residentRows.concat(cachedRows) : residentRows;
+	      if (!visible.length) {
+	        if (!rows.length) modelsEmptyRow(body, 8, "No models loaded right now.");
+	        else modelsEmptyRow(body, 8, `No models resident in memory right now — ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.`);
+	        return;
+	      }
+	      for (const row of visible) {
+	        const tr = document.createElement("tr");
+	        const modTd = document.createElement("td");
+	        modTd.append(modalityChipEl(row.task));
+	        tr.append(modTd);
+	        const provTd = document.createElement("td");
+	        provTd.textContent = row.provider || "";
+	        tr.append(provTd);
+	        const modelTd = document.createElement("td");
+	        const code = document.createElement("code");
+	        code.textContent = row.model || "";
+	        const titleBits = [];
+	        if (row.source) titleBits.push(`source: ${row.source}`);
+	        if (Array.isArray(row.modalities) && row.modalities.length) titleBits.push(`modalities: ${row.modalities.join(", ")}`);
+	        if (row.loaded_at) titleBits.push(`loaded ${row.loaded_at}`);
+	        if (row.last_used_at) titleBits.push(`last used ${row.last_used_at}`);
+	        if (row.expires_at) titleBits.push(`expires ${row.expires_at}`);
+	        if (row.host_name || row.host_id) titleBits.push(`host ${row.host_name || row.host_id}`);
+	        if (titleBits.length) modelTd.title = titleBits.join(" · ");
+	        modelTd.append(code);
+	        tr.append(modelTd);
+	        const resTd = document.createElement("td");
+	        resTd.append(residencyPill(row));
+	        tr.append(resTd);
+	        const sizeTd = document.createElement("td");
+	        sizeTd.textContent = typeof row.size_bytes === "number" ? _fmtBytes(row.size_bytes) : "";
+	        if (typeof row.size_vram_bytes === "number") sizeTd.title = `VRAM ${_fmtBytes(row.size_vram_bytes)}`;
+	        tr.append(sizeTd);
+	        const ctxTd = document.createElement("td");
+	        ctxTd.textContent = _fmtCtx(row.context_length);
+	        if (row.context_calibrated === true) {
+	          const mark = document.createElement("span");
+	          mark.className = "state-pill ok";
+	          mark.textContent = "calibrated";
+	          mark.title = typeof row.calibrated_context_length === "number"
+	            ? `calibrated max context ${_fmtCtx(row.calibrated_context_length)}`
+	            : "context length calibrated on this host";
+	          ctxTd.append(document.createTextNode(" "), mark);
+	        }
+	        tr.append(ctxTd);
+	        const flagsTd = document.createElement("td");
+	        // The lock flag rides locked===true ALONE (a runtime can report a
+	        // lock without reporting lockability — the lock is the fact that
+	        // explains the 409, so it must never hide behind lockable:null);
+	        // only the Lock/Unlock BUTTON stays gated on endpoint
+	        // availability. ICONS.lock (registry SVG), never the raw emoji.
+	        if (row.locked === true) {
+	          const lockChip = document.createElement("span");
+	          lockChip.className = "pill";
+	          lockChip.title = "Locked in memory — unload refuses until unlocked or forced";
+	          lockChip.innerHTML = `<span class="chip-icon" aria-hidden="true">${ICONS.lock}</span>locked`;
+	          flagsTd.append(lockChip);
+	        }
+	        if (row.default === true) {
+	          const b = document.createElement("span");
+	          b.className = "badge";
+	          b.textContent = "default";
+	          flagsTd.append(b);
+	        }
+	        if (row.pinned === true) {
+	          const b = document.createElement("span");
+	          b.className = "badge";
+	          b.textContent = "pinned";
+	          flagsTd.append(b);
+	        }
+	        tr.append(flagsTd);
+	        const actionsTd = document.createElement("td");
+	        const act = document.createElement("div");
+	        act.className = "actions";
+	        if (row.provider && row.model) {
+	          const est = document.createElement("button");
+	          est.className = "secondary";
+	          est.type = "button";
+	          est.textContent = "Estimate";
+	          est.title = "Ask the host how much context actually fits for this model (calibrated when it has measured)";
+	          est.onclick = () => estimateModelContext(row, est);
+	          act.append(est);
+	        }
+	        if (admin && row.resident === true) {
+	          // Unload/Lock render for RESIDENT rows only: a "configured — not
+	          // in memory" row has nothing in memory to unload or lock (and the
+	          // lock rule refuses non-resident pairs host-side too). Estimate
+	          // stays available on every row.
+	          if (row.lockable === true) {
+	            const lockBtn = document.createElement("button");
+	            lockBtn.className = "secondary";
+	            lockBtn.type = "button";
+	            lockBtn.textContent = row.locked === true ? "Unlock" : "Lock";
+	            lockBtn.title = row.locked === true
+	              ? "Release the memory lock so this model can be unloaded or evicted"
+	              : "Lock this model in memory so nothing can evict it";
+	            lockBtn.onclick = () => toggleModelLock(row, lockBtn);
+	            act.append(lockBtn);
+	          }
+	          const unload = document.createElement("button");
+	          unload.className = "danger";
+	          unload.type = "button";
+	          unload.textContent = "Unload";
+	          unload.title = "Unload this model from host memory";
+	          unload.onclick = () => unloadModel(row, unload);
+	          act.append(unload);
+	        } else if (admin && row.locked === true) {
+	          // Locked-but-EVICTED pair: nothing is in memory, but the lock
+	          // still blocks facade unloads — Unlock must stay reachable or the
+	          // lock is stranded (unlock never requires residency host-side).
+	          const unlockBtn = document.createElement("button");
+	          unlockBtn.className = "secondary";
+	          unlockBtn.type = "button";
+	          unlockBtn.textContent = "Unlock";
+	          unlockBtn.title = "Release a lock whose model is no longer in memory (the lock still blocks unloads)";
+	          unlockBtn.onclick = () => toggleModelLock(row, unlockBtn);
+	          act.append(unlockBtn);
+	        }
+	        actionsTd.append(act);
+	        tr.append(actionsTd);
+	        body.append(tr);
+	        // A fetched estimate survives the 5s repaint: it lives in state,
+	        // keyed by row identity, and re-renders under its row every paint.
+	        const estData = state.modelEstimates.get(modelRowKey(row));
+	        if (estData) body.append(estimateDetailRow(estData, 8));
+	      }
+	    }
+	    async function clearSessionCache(sessionId, btn) {
+	      const ok = await confirmAction({
+	        title: "Clear session caches",
+	        message: `Clear every prompt cache for session ${sessionId}? The next turn re-encodes its prompt from scratch — nothing durable is lost.`,
+	        confirmLabel: "Clear",
+	        danger: true,
+	      });
+	      if (!ok) return;
+	      // The caches section's OWN message line: the finally-refresh's
+	      // success path clears #models-message, so a refused clear written
+	      // there would vanish before the admin could read it.
+	      const msg = $("models-caches-message");
+	      if (btn) btn.disabled = true;
+	      try {
+	        const res = await api(`/api/gateway/sessions/${encodeURIComponent(sessionId)}/prompt_cache/clear_all`, { method: "POST", body: JSON.stringify({}) });
+	        _modelsMutationResult(res);
+	        msg.textContent = `Cleared ${typeof res.count === "number" ? res.count : "the"} cache${res.count === 1 ? "" : "s"} for ${sessionId}.`;
+	        msg.className = "message ok";
+	      } catch (e) {
+	        msg.textContent = String(e.message || e);
+	        msg.className = "message error";
+	      } finally {
+	        if (btn) btn.disabled = false;
+	        await loadHostState({ quiet: true });
+	      }
+	    }
+	    function renderSessionCaches(data) {
+	      const body = $("models-caches-table");
+	      if (!body) return;
+	      body.textContent = "";
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      const rows = Array.isArray(data.session_caches) ? data.session_caches : null;
+	      if (rows === null) {
+	        const reason = data.reasons && data.reasons.session_caches ? ` — ${data.reasons.session_caches}` : "";
+	        modelsEmptyRow(body, 6, `Session cache enumeration unavailable on this host${reason}.`);
+	        return;
+	      }
+	      if (!rows.length) {
+	        modelsEmptyRow(body, 6, "No session prompt caches right now.");
+	        return;
+	      }
+	      for (const c of rows) {
+	        const tr = document.createElement("tr");
+	        const sessTd = document.createElement("td");
+	        const code = document.createElement("code");
+	        code.textContent = c.session_id || "";
+	        if (c.key) sessTd.title = String(c.key);
+	        sessTd.append(code);
+	        tr.append(sessTd);
+	        const modelTd = document.createElement("td");
+	        modelTd.textContent = [c.provider, c.model].filter(Boolean).join("/");
+	        if (c.runtime_id) modelTd.title = String(c.runtime_id);
+	        tr.append(modelTd);
+	        const sizeTd = document.createElement("td");
+	        sizeTd.textContent = typeof c.bytes === "number" ? _fmtBytes(c.bytes) : "";
+	        tr.append(sizeTd);
+	        const tokTd = document.createElement("td");
+	        tokTd.textContent = typeof c.token_count === "number" ? c.token_count.toLocaleString() : "";
+	        tr.append(tokTd);
+	        const createdTd = document.createElement("td");
+	        createdTd.textContent = _fmtEpochS(c.created_at_s);
+	        if (typeof c.last_used_at_s === "number") createdTd.title = `last used ${_fmtEpochS(c.last_used_at_s)}`;
+	        tr.append(createdTd);
+	        const actTd = document.createElement("td");
+	        if (admin && c.session_id) {
+	          const act = document.createElement("div");
+	          act.className = "actions";
+	          const clear = document.createElement("button");
+	          clear.className = "danger";
+	          clear.type = "button";
+	          clear.textContent = "Clear";
+	          clear.title = "Clear every prompt cache for this session";
+	          clear.onclick = () => clearSessionCache(c.session_id, clear);
+	          act.append(clear);
+	          actTd.append(act);
+	        }
+	        tr.append(actTd);
+	        body.append(tr);
+	      }
+	    }
+	    function renderModelsLoadForm({ rebuildOptions = true } = {}) {
+	      const form = $("models-load-form");
+	      if (!form) return;
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      form.classList.toggle("hidden", !admin);
+	      if (!admin || !rebuildOptions) return;
+	      // Provider suggestions reuse the catalog the defaults tab already
+	      // fetched (configured endpoint profiles); free text stays allowed —
+	      // offline is a supported mode, and datalists never block typing.
+	      const dl = $("models-load-provider-options");
+	      if (dl) {
+	        dl.textContent = "";
+	        for (const p of state.providers || []) {
+	          const opt = document.createElement("option");
+	          opt.value = p;
+	          dl.append(opt);
+	        }
+	      }
+	    }
+	    async function syncModelsLoadModelOptions() {
+	      const provider = $("models-load-provider").value.trim();
+	      const dl = $("models-load-model-options");
+	      if (!dl) return;
+	      dl.textContent = "";
+	      if (!provider) return;
+	      try {
+	        // Shared discovery cache (text catalog) — suggestions are
+	        // decoration, so a failed probe leaves typing fully live.
+	        const models = await fetchProviderModels(provider);
+	        for (const m of models) {
+	          const opt = document.createElement("option");
+	          opt.value = m;
+	          dl.append(opt);
+	        }
+	      } catch {}
+	    }
+	    let _modelsHintSeq = 0;
+	    async function updateModelsLoadHint() {
+	      const hint = $("models-load-hint");
+	      if (!hint) return;
+	      const provider = $("models-load-provider").value.trim();
+	      const model = $("models-load-model").value.trim();
+	      if (!provider || !model) {
+	        hint.textContent = "";
+	        hint.classList.add("hidden");
+	        return;
+	      }
+	      const seq = ++_modelsHintSeq;
+	      hint.classList.remove("hidden");
+	      hint.textContent = "Estimating context fit…";
+	      try {
+	        const est = await api(withQuery("/api/gateway/models/context_estimate", { provider, model }));
+	        if (seq !== _modelsHintSeq) return; // a newer provider/model pair owns the hint
+	        const parts = [];
+	        if (typeof est.predicted_max_context === "number") parts.push(`~${_fmtCtx(est.predicted_max_context)} ctx fits`);
+	        parts.push(est.confidence || "unknown");
+	        if (Array.isArray(est.notes) && est.notes.length) parts.push(est.notes.join("; "));
+	        hint.textContent = parts.join(" — ");
+	      } catch (e) {
+	        if (seq !== _modelsHintSeq) return;
+	        hint.textContent = "No context estimate: " + String(e.message || e);
+	      }
+	    }
+	    async function loadModelResidency() {
+	      const msg = $("models-loaded-message");
+	      const provider = $("models-load-provider").value.trim();
+	      const model = $("models-load-model").value.trim();
+	      if (!provider || !model) {
+	        msg.textContent = "Provider and model are required to warm a model up.";
+	        msg.className = "message error";
+	        return;
+	      }
+	      const lock = $("models-load-lock").checked;
+	      const btn = $("models-load-button");
+	      if (btn) btn.disabled = true;
+	      msg.textContent = `Loading ${provider}/${model} — a cold load can take minutes…`;
+	      msg.className = "message";
+	      try {
+	        _modelsMutationResult(await api("/api/gateway/models/load", { slow: true, method: "POST", body: JSON.stringify({ provider, model }) }));
+	        // The shipped load request has no lock field (pin is not lock):
+	        // locking is its own verb, so the checkbox rides a second call —
+	        // in its OWN try: a failed lock after a successful load is a MIXED
+	        // outcome, and reporting it as total failure would hide that the
+	        // model IS now resident (just unlocked).
+	        let lockError = "";
+	        if (lock) {
+	          try {
+	            _modelsMutationResult(await api("/api/gateway/models/lock", { method: "POST", body: JSON.stringify({ provider, model }) }));
+	          } catch (lockErr) {
+	            lockError = String(lockErr.message || lockErr);
+	          }
+	        }
+	        if (lockError) {
+	          msg.textContent = `Loaded ${provider}/${model} (now resident, UNLOCKED) — locking failed: ${lockError}`;
+	          msg.className = "message error";
+	        } else {
+	          msg.textContent = `Loaded ${provider}/${model}${lock ? " (locked in memory)" : ""}.`;
+	          msg.className = "message ok";
+	        }
+	      } catch (e) {
+	        msg.textContent = String(e.message || e);
+	        msg.className = "message error";
+	      } finally {
+	        if (btn) btn.disabled = false;
+	        await loadHostState({ quiet: true });
+	      }
+	    }
+	    function renderHostState(data, { quiet = false } = {}) {
+	      renderHostDegraded(data);
+	      renderHostMeters(data);
+	      renderHostFacts(data);
+	      renderModelsTable(data);
+	      renderSessionCaches(data);
+	      // Quiet (poll) repaints skip the datalist rebuild — replacing the
+	      // <option>s every 5s flicks an open suggestion popup shut.
+	      renderModelsLoadForm({ rebuildOptions: !quiet });
+	    }
+	    async function loadHostState({ quiet = false } = {}) {
+	      if (!state.principal) return;
+	      // Sequence guard (the manageToken precedent): overlapping snapshots
+	      // must land in REQUEST order, not resolution order — a hung slow-lane
+	      // fetch resolving minutes late must never overwrite a fresher
+	      // snapshot (it would resurrect an unloaded model on screen).
+	      const seq = state.hostStateSeq = (state.hostStateSeq || 0) + 1;
+	      const msg = $("models-message");
+	      if (!quiet) {
+	        tableLoadingRow($("models-table"), 8, "Reading host residency…");
+	        tableLoadingRow($("models-caches-table"), 6, "Loading session caches…");
+	      }
+	      try {
+	        await ensureModalityUi();
+	        // Slow lane: a host mid-load answers late, not never.
+	        const data = await api("/api/gateway/host/state", { slow: true });
+	        if (seq !== state.hostStateSeq) return; // a newer call owns the paint
+	        state.hostState = data;
+	        if (msg) { msg.textContent = ""; msg.className = "message"; }
+	        renderHostState(data, { quiet });
+	      } catch (e) {
+	        if (seq !== state.hostStateSeq) return; // stale failure: newer call owns the paint
+	        // Labeled failure replaces content (stale pixels are the incident
+	        // class): the message names the failure and every section says
+	        // unavailable rather than keeping the last snapshot on screen.
+	        state.hostState = null;
+	        if (msg) { msg.textContent = "Host state unavailable: " + String(e.message || e); msg.className = "message error"; }
+	        modelsEmptyRow($("models-table"), 8, "Host state unavailable.");
+	        modelsEmptyRow($("models-caches-table"), 6, "Host state unavailable.");
+	        const meters = $("models-meters"); if (meters) meters.textContent = "";
+	        const facts = $("models-host-facts"); if (facts) facts.textContent = "";
+	        const deg = $("models-degraded"); if (deg) { deg.textContent = ""; deg.classList.add("hidden"); }
+	      }
+	    }
+	    function _scheduleHostStatePoll(token) {
+	      // Token-guarded self-rescheduling chain (the manage-panel precedent),
+	      // additionally scoped to the ACTIVE tab and a live session: leaving
+	      // the Models tab or signing out ends the chain — a hidden tab must
+	      // never keep the host walking its residency every 5 seconds.
+	      if (typeof setTimeout === "undefined") return;
+	      setTimeout(async () => {
+	        if (token !== state.hostPollToken) return;
+	        if (state.activeTab !== "models" || !state.principal) return;
+	        try { await loadHostState({ quiet: true }); } catch {}
+	        _scheduleHostStatePoll(token);
+	      }, 5000);
+	    }
+	    function startHostStatePoll() {
+	      state.hostPollToken = (state.hostPollToken || 0) + 1;
+	      _scheduleHostStatePoll(state.hostPollToken);
+	    }
 	    function renderAccount(me) {
 	      const p = me?.principal;
 	      state.principal = p || null;
@@ -8090,6 +8898,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 		        $("account").textContent = "No active session.";
 	        state.runtimeConfig = null;
 	        state.myWorkspacePolicy = null;
+	        // Signed out: kill the host-state poll chain (the principal check
+	        // inside the poll is the belt; the token bump is the suspenders).
+	        state.hostPollToken = (state.hostPollToken || 0) + 1;
 	        $("users-section").classList.add("hidden");
 	        $("runtime-reservations-section").classList.add("hidden");
 	      $("defaults-scope").textContent = "Sign in to edit provider/model defaults for this Gateway runtime.";
@@ -8131,6 +8942,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // server rule; hiding the tab would hide the workflows a user runs.
       $("workflows-import").classList.toggle("hidden", !p.admin);
       if (!p.admin && state.activeTab === "runtimes") setActiveTab("users");
+      // Models tab: reads render for EVERY authenticated user (unlike the
+      // all-admin runtimes tab) — only the mutation surfaces are gated: the
+      // warm-up form here, per-row Unload/Lock and cache Clear at render
+      // time inside renderModelsTable/renderSessionCaches.
+      renderModelsLoadForm();
       applyEntityAdminGating();
       $("defaults-scope").textContent = p.admin
         ? "Editing as admin changes the Gateway multimodal capability defaults. Users inherit these unless they set their own runtime defaults."
@@ -9246,6 +10062,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // the first painted screen still showed the pre-login error row).
       if (state.activeTab === "users") loadEntities();
       if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached; no fold since 2026-08-19)
+      if (state.activeTab === "models") { loadHostState(); startHostStatePoll(); }
       try {
         await loadEndpointProfiles();
       } catch (err) {
@@ -9680,6 +10497,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("tab-button-providers").onclick = () => setActiveTab("providers");
 	    $("tab-button-defaults").onclick = () => setActiveTab("defaults");
 	    $("tab-button-sandbox").onclick = () => setActiveTab("sandbox");
+	    // Models: load now, then start the tab-scoped 5s poll (token-guarded —
+	    // the chain dies the moment another tab goes active or the user signs
+	    // out; re-entering the tab starts a fresh chain).
+	    $("tab-button-models").onclick = () => { setActiveTab("models"); loadHostState(); startHostStatePoll(); };
+	    $("models-refresh").onclick = () => { loadHostState(); startHostStatePoll(); };
+	    // Repaint from held state — the toggle is a pure view filter, no fetch.
+	    $("models-show-cached").onchange = () => { state.modelsShowCached = $("models-show-cached").checked; if (state.hostState) renderModelsTable(state.hostState); };
+	    $("models-load-button").onclick = loadModelResidency;
+	    // onchange, not oninput (the provider-modal precedent): commits on
+	    // blur/Enter, so an unreachable provider is probed once per commit.
+	    $("models-load-provider").onchange = () => { syncModelsLoadModelOptions(); updateModelsLoadHint(); };
+	    $("models-load-model").onchange = () => updateModelsLoadHint();
 	    $("entity-create").onclick = createEntity;
 	    $("entity-template").onchange = renderEntityTemplateDesc;
 	    $("entity-new-provider").onchange = () => loadModelsForProvider($("entity-new-provider").value);
@@ -9784,7 +10613,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (state.runtimeSubtab === "artifacts") { loadRuntimeArtifacts(); return; }
 	      if (state.runtimeSubtab === "logs") { loadRuntimeLogs(); return; }
 	      if (state.runtimeSubtab === "sessions") {
-	        // Refresh in place: the old per-tab ↻ preserved the page, and a
+	        // Refresh in place: the old per-tab refresh preserved the page, and a
 	        // refresh that silently jumps to page 1 loses the operator's spot.
 	        if (state.selectedRuntime.kind === "default") loadRuns();
 	        else loadRuntimeRuns();

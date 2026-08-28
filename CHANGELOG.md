@@ -1834,6 +1834,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   three-lens adversarial review, structured audit outputs, and timestamped
   Markdown/PDF/DOCX export paths.
 
+## [0.2.29] - 2026-08-27
+
+### Added
+- **`GET /api/gateway/host/state` — one-call host snapshot.** Memory, GPU,
+  resident models, and session prompt caches, plus byte totals, in a single
+  authenticated read. Every section is independently best-effort: a missing
+  facade method or a failed probe nulls that section and names it in
+  `degraded` (with a `reasons` map saying why) instead of failing the
+  snapshot; the route never returns a 500. `totals.models_resident`
+  (additive) counts only rows with `resident: true` so every client can show
+  a truthful "N loaded" — `totals.models` counts every known row,
+  configured / cached included, and must not be presented as "loaded".
+- **`GET /api/gateway/host/metrics/memory`.** Host RAM/process/device memory
+  snapshot relayed from the Runtime host facade, with the same
+  `supported: false` degraded style as `GET /host/metrics/gpu`. The snapshot
+  exposes both `process.rss_bytes` and `device.allocated_bytes`;
+  `device.allocated_bytes` is the signal that verifies an in-process unload
+  freed device memory, since freed buffers can keep process RSS unchanged.
+- **Frozen `model_residency_row_v1` row schema.** `GET /models/loaded` now
+  also returns `rows` — normalized records (`runtime_id`, `task`,
+  `provider`, `model`, `source`, `resident`, `state`, `pinned`, `default`,
+  `size_bytes`, `size_vram_bytes`, `expires_at`, `context_length`,
+  `loaded_at`, `last_used_at`, `locked`, `lockable`, `modalities`,
+  `calibrated_context_length`, `context_calibrated`, `host_id`, `host_name`,
+  `details`) — and `row_schema`, alongside the unchanged raw `models`
+  records. Residency truth is provider-first:
+  `provider_resident`/`provider_loaded` outrank runtime lease booleans, state
+  strings can confirm residency but never deny it, and unknown values stay
+  `null`. The schema is additive-tolerant: fields beyond the original 16 are
+  optional and `null` when the runtime does not report them. Rows and the
+  `GET /host/state` snapshot (its optional top-level `host` block) carry a
+  host identity as the aggregation seam for a proposed multi-machine model
+  resource pool
+  ([backlog 0093](docs/backlog/proposed/0093_multi_machine_model_resource_pool.md)).
+- **Model residency locks.** Admin-only `POST /api/gateway/models/lock` and
+  `POST /api/gateway/models/unlock` pin a resident model against unload and
+  release that pin, selecting the target like unload does (`runtime_id` or
+  `provider`+`model`). Lock requires provider-verified residency: a
+  configured or merely-warm model refuses with an
+  `error: "model_not_resident"` payload (load with `lock: true` instead),
+  and unlock always works — even for a since-evicted model — so locks are
+  never stranded. `POST /models/unload` answers **HTTP 409** with
+  the normalized `model_locked` refusal payload when the target is locked,
+  and the unload request gains `"force": true` to unload anyway; every other
+  unload outcome stays in-band at 200. Rows report `locked`/`lockable` so
+  clients can render lock state and offer the right verb.
+- **`GET /api/gateway/models/context_estimate`.** Context/KV memory estimate
+  for a `provider`+`model` (optional `context_length` >= 1), relayed from the
+  Runtime host facade with in-band `confidence` (`calibrated` | `estimated` |
+  `unknown`) and fields such as `predicted_max_context` (the context that
+  fits beside the weights), the tri-state `fits_weights` /
+  `fits_requested_context` split, and `budget_bytes` (real-ceiling budget;
+  basis and reserve stated in `notes`). Advisory only — no load path gates
+  on it. Available to any
+  authenticated principal; degrades at 200 with
+  `code="context_estimate_unavailable"`/`"context_estimate_error"` like the
+  other host relays.
+- **A Resources surface in both consoles.** The web console gains a
+  `Resources` tab and the console-TUI a `Resources` screen (8): memory/GPU
+  meters with
+  degradation notes, the resident-model table (modality chips/labels from
+  the shared `modality_ui` palette, tri-state residency, lock state, context
+  facts with calibration), and session prompt caches with per-session clear.
+  The web table defaults to provider-verified RESIDENT rows only — the
+  section header counts resident rows, and configured / cached rows
+  (labeled "configured — not in memory", Estimate only, no Unload/Lock)
+  appear behind a "Show configured / cached (N)" toggle; the TUI totals line
+  counts resident rows apart from the row total. Default ≠ loaded: a
+  configured capability default is never presented as loaded.
+  Admins additionally get warm-up (with an optional lock-after-load and a
+  live context-estimate hint), lock/unlock, and unload — a locked model's
+  409 refusal triggers an explicit force-unload confirmation instead of a
+  dead end. Reads render for every authenticated user; mutation controls are
+  admin-gated. The web tab polls `/host/state` every 5s while active
+  (stale responses are discarded), the TUI every 4s while the screen is
+  active.
+- **Session prompt-cache enumeration lane.**
+  `GET /api/gateway/sessions/prompt_cache?session_id=` lists the prompt
+  caches the runtime actually minted, with session/run/workflow/node
+  attribution, and admin-only
+  `POST /api/gateway/sessions/{session_id}/prompt_cache/clear_all` unloads
+  every cache for a session in one call. This lane is recommended over the
+  identity-derived per-session lifecycle endpoints, which are unchanged.
+- **Discovery contract additions.** `capabilities.contracts.common` gains
+  `host_state` and `session_caches` descriptors, and the `model_residency`
+  descriptor now names its `row_schema`, lists the `lock`/`unlock`/
+  `context_estimate` endpoints, and carries `modality_ui` — the canonical
+  modality color map (`{version: 1, colors: {...}}`, one `{color, label}`
+  entry per residency task plus an `unknown` fallback) every residency
+  client renders with instead of hardcoding its own palette. `modality_ui`
+  is a rendering contract and is served even when the runtime facade is
+  absent.
+
+### Changed
+- **Host and residency reads are user-level.** `GET /models/loaded`,
+  `GET /models/context_estimate`, `GET /host/state`, `GET /host/metrics/*`,
+  and `GET /sessions/prompt_cache` serve any authenticated principal.
+  Mutations — `POST /models/load|unload|lock|unlock|download` and every
+  prompt-cache mutation, including the new `clear_all` — remain admin-only,
+  and anonymous requests are still rejected.
+- Raised the AbstractRuntime dependency floor to `AbstractRuntime>=0.4.31`
+  across the base, `apple`, and `gpu` profiles; that release provides the
+  host facade methods (memory snapshot, session-cache enumeration) these
+  endpoints relay.
+
 ## [0.2.28] - 2026-06-14
 
 ### Changed

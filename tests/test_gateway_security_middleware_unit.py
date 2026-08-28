@@ -247,8 +247,6 @@ def test_non_admin_wildcard_scope_cannot_access_any_admin_route_family(tmp_path:
         ("GET", "/api/gateway/triage/items", None, "triage"),
         ("GET", "/api/gateway/reports/items", None, "reports"),
         ("GET", "/api/gateway/email/messages", None, "email"),
-        ("GET", "/api/gateway/host/metrics/gpu", None, "host"),
-        ("GET", "/api/gateway/models/loaded", None, "models"),
         ("POST", "/api/gateway/models/load", {"model": "x"}, "models"),
         ("GET", "/api/gateway/files/read?path=pyproject.toml", None, "workspace"),
         ("POST", "/api/gateway/artifacts/import", {"path": "x"}, "workspace"),
@@ -263,6 +261,26 @@ def test_non_admin_wildcard_scope_cannot_access_any_admin_route_family(tmp_path:
             payload = response.json()
             assert payload["required_role"] == "admin"
             assert payload["resource_class"] == resource
+
+
+def test_non_admin_user_token_can_read_host_and_residency_surfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The agentic-OS READ surfaces (which models are loaded, host metrics) are
+    visibility for every authenticated principal; only the mutations stay admin."""
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    from abstractgateway.users import GatewayUserRegistry
+
+    _record, user_token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"])
+    app = _make_app(policy=GatewayAuthPolicy(enabled=True, tokens=("admin-token",), user_auth_enabled=True))
+    headers = {"Authorization": f"Bearer {user_token}"}
+    with TestClient(app) as client:
+        assert client.get("/api/gateway/host/metrics/gpu", headers=headers).status_code == 200
+        assert client.get("/api/gateway/models/loaded", headers=headers).status_code == 200
+        denied = client.post("/api/gateway/models/load", headers=headers, json={"model": "x"})
+        assert denied.status_code == 403
+        assert denied.json()["required_role"] == "admin"
+        # Anonymous stays refused: the split widens READS to authenticated users only.
+        assert client.get("/api/gateway/host/metrics/gpu").status_code == 401
+        assert client.get("/api/gateway/models/loaded").status_code == 401
 
 
 def test_can_disable_write_protection_for_local_dev() -> None:
