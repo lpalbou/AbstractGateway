@@ -1422,9 +1422,11 @@ class AbstractCodeExecutor(BacklogExecutor):
         self.model = str(model or os.getenv("ABSTRACTGATEWAY_BACKLOG_ABSTRACTCODE_MODEL") or "").strip()
 
     def execute(self, *, prompt: str, repo_root: Path, run_dir: Path, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        import sys
-
-        cmd = [sys.executable, "-m", "abstractcode", "exec", "--permission-mode", "full-auto", "--json"]
+        # AbstractCode is a Rust binary on PATH (`cargo install abstractcode`);
+        # it is no longer a Python module, so there is nothing to `-m`.
+        # `--ungated` is what makes a gating-capable workflow run unattended,
+        # and it requires an explicit `--permissions` level.
+        cmd = ["abstractcode", "exec", "--permissions", "all", "--ungated"]
         if self.provider:
             cmd.extend(["--provider", self.provider])
         if self.model:
@@ -1432,26 +1434,20 @@ class AbstractCodeExecutor(BacklogExecutor):
         cmd.append(str(prompt or ""))
 
         def last_message(stdout_text: str) -> str:
-            # --json = JSONL event stream; the final answer is the last
-            # event carrying text/answer content. Tolerant scan, newest last.
-            final = ""
-            for line in stdout_text.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    evt = json.loads(line)
-                except Exception:
-                    continue
-                if isinstance(evt, dict):
-                    txt = evt.get("answer") or evt.get("text") or evt.get("content") or ""
-                    if isinstance(txt, str) and txt.strip():
-                        final = txt.strip()
-            return final or stdout_text.strip()[-20000:]
+            # `exec` streams human-readable events and prints the final answer
+            # under an "answer" rule. Take everything after the LAST such rule,
+            # so a run that concludes more than once yields its conclusion.
+            marker = "\u2501\u2501\u2501 answer \u2501\u2501\u2501"
+            idx = stdout_text.rfind(marker)
+            if idx != -1:
+                answer = stdout_text[idx + len(marker):].strip()
+                if answer:
+                    return answer
+            return stdout_text.strip()[-20000:]
 
         return _run_subprocess_executor(
             name=self.name, cmd=cmd, repo_root=repo_root, run_dir=run_dir, env=env,
-            last_message_fn=last_message, missing_hint="abstractcode package not importable in the gateway venv",
+            last_message_fn=last_message, missing_hint="abstractcode not on PATH - install with `cargo install abstractcode`",
         )
 
 

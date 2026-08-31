@@ -60,7 +60,7 @@ _EXECUTOR_REGISTRY: List[Dict[str, Any]] = [
      "aliases": ("claude-code", "claude_code", "claude_cli", "claude-cli")},
     {"id": "cursor-agent", "display": "Cursor Agent", "probe": ("bin", "cursor-agent"),
      "aliases": ("cursor", "cursor_agent", "cursoragent")},
-    {"id": "abstractcode", "display": "AbstractCode (framework-native)", "probe": ("py", "abstractcode"),
+    {"id": "abstractcode", "display": "AbstractCode (framework-native)", "probe": ("bin", "abstractcode"),
      "aliases": ("abstract-code", "abstract_code")},
 ]
 
