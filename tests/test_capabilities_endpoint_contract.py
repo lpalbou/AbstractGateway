@@ -173,6 +173,12 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         assert residency.get("endpoints", {}).get("unlock") == "/api/gateway/models/unlock"
         assert residency.get("endpoints", {}).get("context_estimate") == "/api/gateway/models/context_estimate"
         assert residency.get("row_schema") == "model_residency_row_v1"
+        # The display-size coalesce rule every residency UI must share.
+        assert residency.get("display_size_field_order") == [
+            "size_bytes",
+            "size_vram_bytes",
+            "est_weights_bytes",
+        ]
         modality_ui = residency.get("modality_ui")
         assert isinstance(modality_ui, dict)
         assert modality_ui.get("version") == 1
@@ -370,6 +376,15 @@ def test_client_capability_contracts_are_explicit_when_optional_features_are_mis
     assert residency["endpoints"]["unlock"] == "/api/gateway/models/unlock"
     assert residency["endpoints"]["context_estimate"] == "/api/gateway/models/context_estimate"
     assert residency["row_schema"] == "model_residency_row_v1"
+    # The display-size coalesce rule is a CLIENT rendering contract too: it is
+    # served whether or not a facade answers. First KNOWN field wins — an
+    # in-process MLX/GGUF row that only reports `est_weights_bytes` must render
+    # its real size instead of "0 B".
+    assert residency["display_size_field_order"] == [
+        "size_bytes",
+        "size_vram_bytes",
+        "est_weights_bytes",
+    ]
     # The canonical modality palette is served even when the facade is absent
     # (it is a CLIENT rendering contract, not a runtime capability).
     assert residency["modality_ui"]["version"] == 1
@@ -502,14 +517,12 @@ def test_generated_image_contract_separates_light_package_from_backend_config(mo
     assert image_to_video["direct_endpoint"]["provider_models_task"] == "image_to_video"
 
 
-def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With NO image route configured, an OpenAI key is what makes it available.
-
-    The premise has to be stated: the image backend is config-first, so a store
-    that carries an `output.image` row (a configured one, or the recommended
-    seed a never-written store answers with) names the backend and the env key
-    is irrelevant. An EXISTING store carrying no routes is how a test says
-    "nothing is configured" -- an absent file means a fresh install.
+def test_generated_image_contract_is_defined_by_the_configured_route_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Image availability is defined ONLY by the Gateway's `output.image` default
+    route (operator ruling 2026-09-04). An env key never enables it, and no env
+    var can block a configured route: an EXISTING store carrying no routes plus
+    an OpenAI key advertises UNAVAILABLE; the same store with an `output.image`
+    row and no env at all advertises AVAILABLE.
     """
     import abstractgateway.routes.gateway as gateway_routes
 
@@ -524,6 +537,23 @@ def test_generated_image_contract_uses_openai_key_as_default_backend(monkeypatch
 
     monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_run_facade", lambda: (object(), None))
 
+    caps = {
+        "abstractvision": {"installed": True, "version": "0.3.1"},
+        "capability_plugins": {
+            "installed": True,
+            "capabilities": {"vision": {"available": True, "selected_backend": "abstractvision:openai"}},
+        },
+    }
+    unconfigured = gateway_routes._build_client_capability_contracts(caps)["assistant"]["media"]["generated_image"]
+    assert unconfigured["workflow"]["available"] is False
+    assert unconfigured["direct_endpoint"]["available"] is False
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        gateway_routes,
+        "_configured_capability_route_provider",
+        lambda key: "mlx-gen" if key in {"output.image", "output.image.text_to_image"} else None,
+    )
     contracts = gateway_routes._build_client_capability_contracts(
         {
             "abstractvision": {"installed": True, "version": "0.3.1"},
@@ -576,6 +606,13 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     import abstractgateway.routes.gateway as gateway_routes
 
     monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+    # Image availability is defined by the configured `output.image` route only;
+    # the remote core server env is NOT an image configuration.
+    monkeypatch.setattr(
+        gateway_routes,
+        "_configured_capability_route_provider",
+        lambda key: "mlx-gen" if key in {"output.image", "output.image.text_to_image"} else None,
+    )
 
     class StubHostFacade:
         def get_model_residency_capabilities(self, **kwargs):
@@ -650,6 +687,13 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
         "context_estimate": "/api/gateway/models/context_estimate",
     }
     assert residency["row_schema"] == "model_residency_row_v1"
+    # Served in the remote-core lane too: the coalesce rule is what a client
+    # renders with, independent of which lane answers the residency calls.
+    assert residency["display_size_field_order"] == [
+        "size_bytes",
+        "size_vram_bytes",
+        "est_weights_bytes",
+    ]
     assert contracts["flow_editor"]["model_residency"] == residency
     assert contracts["assistant"]["model_residency"] == residency
     assert contracts["assistant"]["prompt_cache"]["provider_controls_available"] is True

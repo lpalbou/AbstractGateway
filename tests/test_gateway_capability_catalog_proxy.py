@@ -634,15 +634,39 @@ def test_gateway_vision_catalog_routes_local_mflux_without_diffusers_prefix(monk
     assert not str(item["model"]).startswith("diffusers/")
 
 
-def test_gateway_direct_image_available_with_downloaded_mflux(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gateway_direct_image_configured_by_route_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Image availability is defined ONLY by the configured `output.image` route.
+
+    Env vars neither enable it (no route + every ABSTRACTVISION_* export -> False)
+    nor block it (route configured + no export at all -> True)."""
     import abstractgateway.routes.gateway as gateway_routes
 
-    monkeypatch.delenv("ABSTRACTVISION_BACKEND", raising=False)
-    monkeypatch.delenv("ABSTRACTCORE_VISION_BACKEND", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("ABSTRACTVISION_API_KEY", raising=False)
-    monkeypatch.setattr(gateway_routes, "_gateway_has_local_mflux_preset", lambda model_id: model_id == "")
+    for name in (
+        "ABSTRACTCORE_SERVER_BASE_URL",
+        "ABSTRACTVISION_BACKEND",
+        "ABSTRACTCORE_VISION_BACKEND",
+        "ABSTRACTVISION_MFLUX_MODEL",
+        "ABSTRACTVISION_MODEL_ID",
+        "ABSTRACTVISION_BASE_URL",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+        "ABSTRACTVISION_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
+    monkeypatch.setattr(gateway_routes, "_configured_modality_route_provider", lambda modality, **_kw: None)
+    monkeypatch.setenv("ABSTRACTVISION_BACKEND", "mlx-gen")
+    monkeypatch.setenv("ABSTRACTVISION_MFLUX_MODEL", "flux")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert gateway_routes._gateway_direct_image_configured() is False
+
+    for name in ("ABSTRACTVISION_BACKEND", "ABSTRACTVISION_MFLUX_MODEL", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        gateway_routes,
+        "_configured_modality_route_provider",
+        lambda modality, **_kw: "mlx-gen" if modality == "image" else None,
+    )
     assert gateway_routes._gateway_direct_image_configured() is True
 
 

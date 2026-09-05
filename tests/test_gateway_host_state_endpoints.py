@@ -29,8 +29,43 @@ _MEMORY_SNAPSHOT: Dict[str, Any] = {
     "ts": 1756252800.0,
     "ram": {"total_bytes": 128_000, "available_bytes": 48_000, "used_bytes": 80_000, "percent": 62.5},
     "process": {"rss_bytes": 10_000},
-    "device": {"backend": "metal", "allocated_bytes": 5_000, "total_bytes": 50_000, "free_bytes": 45_000},
+    # `allocated_bytes` is PROCESS-LOCAL; `host_in_use_bytes` is the
+    # cross-process accelerator HEAP (driver-allocated buffers — memory-mapped
+    # GGUF weights never appear in it) and `wired_limit_bytes` the GPU
+    # wired-memory ceiling. The gateway relays the device block verbatim — see
+    # test_host_state_relays_the_device_memory_block_verbatim.
+    #
+    # This block is the MLX shape: a non-zero `allocated_bytes` because the
+    # weights went through mlx's allocator. `_METAL_GGUF_DEVICE` below is the
+    # OTHER real shape the wire serves, and the one this machine actually
+    # reports — see test_host_state_relays_the_gguf_shaped_device_block.
+    "device": {
+        "backend": "metal",
+        "allocated_bytes": 5_000,
+        "total_bytes": 50_000,
+        "free_bytes": 45_000,
+        "host_in_use_bytes": 40_000,
+        "wired_limit_bytes": 44_000,
+    },
     "host": {"host_id": "h-1", "host_name": "studio.local", "platform": "darwin"},
+}
+
+
+# The GGUF shape, transcribed from a live `GET /api/gateway/host/state` on an
+# Apple-silicon host holding a fully offloaded (`n_gpu_layers=-1`) 89.99 GB
+# three-shard GGUF. BOTH device numbers read near zero while ~90 GB of weights
+# are resident: `allocated_bytes` because llama.cpp does not use mlx's
+# allocator, and `host_in_use_bytes` because llama.cpp mmaps the file and wraps
+# the pages with `newBufferWithBytesNoCopy`, so they never become
+# driver-allocated accelerator memory. The weights are visible as process RSS
+# and as the model's own `est_weights_bytes` — nowhere else.
+_METAL_GGUF_DEVICE: Dict[str, Any] = {
+    "backend": "metal",
+    "allocated_bytes": 0,
+    "total_bytes": 137_438_953_472,
+    "free_bytes": None,
+    "host_in_use_bytes": 792_461_312,
+    "wired_limit_bytes": 115_343_360_000,
 }
 
 _CACHE_ROW: Dict[str, Any] = {
@@ -86,6 +121,9 @@ class _FullStubHostFacade:
                     "context_calibrated": True,
                     "host_id": "h-1",
                     "hostName": "studio.local",
+                    # memory wave (additive-optional): per-model footprint.
+                    "estWeightsBytes": 4096,
+                    "cache_bytes": 512,
                 }
             ],
         }
@@ -160,13 +198,20 @@ def test_host_state_full_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert row["context_calibrated"] is True
     assert row["host_id"] == "h-1"
     assert row["host_name"] == "studio.local"  # camelCase alias
+    # memory wave: both additive fields, camelCase alias + safe int coercion.
+    assert row["est_weights_bytes"] == 4096
+    assert row["cache_bytes"] == 512
     assert row["details"]["runtimeId"] == "local:text_generation:mlx:qwen"
 
     assert body["session_caches"] == [_CACHE_ROW]
     assert body["totals"] == {
         "models": 1,
         "models_resident": 1,
+        # Display-size coalesce: size_bytes wins over est_weights_bytes.
         "model_bytes": 1024,
+        # Per-model prompt-cache footprint, kept DISTINCT from the
+        # session-cache enumeration total below.
+        "cache_bytes_models": 512,
         "session_caches": 1,
         "session_cache_bytes": 4096,
     }
@@ -232,6 +277,7 @@ def test_host_state_partial_facade_degrades_sections(tmp_path: Path, monkeypatch
     # counted as resident: "N loaded" is provider-verified rows only.
     assert body["totals"]["models_resident"] == 0
     assert body["totals"]["model_bytes"] is None
+    assert body["totals"]["cache_bytes_models"] is None
     assert body["totals"]["session_caches"] == 0
     assert body["totals"]["session_cache_bytes"] is None
 
@@ -263,6 +309,7 @@ def test_host_state_everything_unavailable_still_200(tmp_path: Path, monkeypatch
         "models": 0,
         "models_resident": 0,
         "model_bytes": None,
+        "cache_bytes_models": None,
         "session_caches": 0,
         "session_cache_bytes": None,
     }
@@ -449,6 +496,9 @@ def test_models_loaded_carries_row_v1_rows(tmp_path: Path, monkeypatch: pytest.M
         "default",
         "size_bytes",
         "size_vram_bytes",
+        # additive-optional memory wave fields
+        "est_weights_bytes",
+        "cache_bytes",
         "expires_at",
         "context_length",
         "loaded_at",
@@ -508,6 +558,271 @@ def test_row_v1_int_coercion_survives_junk_numerics() -> None:
     assert norm({"size_bytes": "not-a-number"})["size_bytes"] is None
     assert norm({"size_bytes": "12.5"})["size_bytes"] == 12
     assert norm({"size_bytes": "nan", "sizeBytes": 7})["size_bytes"] == 7  # falls through to next alias
+
+
+def test_row_v1_memory_wave_fields_share_the_size_coercion() -> None:
+    """est_weights_bytes/cache_bytes are additive fields with the SAME safe int
+    coercion as size_bytes: bools and non-finite numerics are not values."""
+    import abstractgateway.routes.gateway as gateway_routes
+
+    norm = gateway_routes._normalize_model_residency_row_v1
+
+    assert norm({"est_weights_bytes": 93_000_000_000})["est_weights_bytes"] == 93_000_000_000
+    assert norm({"estWeightsBytes": "4096"})["est_weights_bytes"] == 4096  # camelCase + stringy
+    assert norm({"cache_bytes": 512})["cache_bytes"] == 512
+    assert norm({"cacheBytes": 512})["cache_bytes"] == 512
+    assert norm({"est_weights_bytes": True})["est_weights_bytes"] is None
+    assert norm({"cache_bytes": True})["cache_bytes"] is None
+    assert norm({"est_weights_bytes": float("nan")})["est_weights_bytes"] is None
+    assert norm({"cache_bytes": float("inf")})["cache_bytes"] is None
+    assert norm({"cache_bytes": "not-a-number"})["cache_bytes"] is None
+    # Absent means UNKNOWN, never 0.
+    assert norm({})["est_weights_bytes"] is None
+    assert norm({})["cache_bytes"] is None
+    # `cache_bytes: 0` is a KNOWN empty store, not unknown.
+    assert norm({"cache_bytes": 0})["cache_bytes"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Display-size coalesce rule (the contract every residency UI shares)
+# ---------------------------------------------------------------------------
+
+
+def test_display_size_coalesce_picks_the_first_known_field() -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    coalesce = gateway_routes._model_residency_display_size_bytes
+
+    assert gateway_routes.MODEL_RESIDENCY_DISPLAY_SIZE_FIELD_ORDER == (
+        "size_bytes",
+        "size_vram_bytes",
+        "est_weights_bytes",
+    )
+    # First KNOWN wins, in order.
+    assert coalesce({"size_bytes": 10, "size_vram_bytes": 20, "est_weights_bytes": 30}) == 10
+    assert coalesce({"size_vram_bytes": 20, "est_weights_bytes": 30}) == 20
+    # The case this rule exists for: an in-process MLX/GGUF runtime has no
+    # server reporting a size, so only the provider's weight estimate carries
+    # the row (it used to render as "0 B" / "size unknown").
+    assert coalesce({"est_weights_bytes": 93_000_000_000}) == 93_000_000_000
+    # camelCase aliases and stringy numerics ride the row_v1 coercion.
+    assert coalesce({"sizeBytes": "1024"}) == 1024
+    assert coalesce({"estWeightsBytes": 4096}) == 4096
+    # Junk is not a value: fall through to the next field, then to unknown.
+    assert coalesce({"size_bytes": float("nan"), "est_weights_bytes": 7}) == 7
+    assert coalesce({"size_bytes": True}) is None
+    assert coalesce({}) is None
+    assert coalesce("not-a-dict") is None
+    # cache_bytes is deliberately NOT a size: it is a separate footprint.
+    assert coalesce({"cache_bytes": 4096}) is None
+
+
+def test_host_state_model_bytes_coalesces_over_resident_rows_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`totals.model_bytes` sums the COALESCED display size over rows the
+    provider verified RESIDENT. An est_weights-only resident row counts (the
+    bug: a 93 GB GGUF summed to nothing); a cold row never does."""
+    import abstractgateway.routes.gateway as gateway_routes
+
+    class _MixedFacade(_FullStubHostFacade):
+        def list_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
+            _ = kwargs
+            return {
+                "ok": True,
+                "supported": True,
+                "models": [
+                    # server-reported size, resident
+                    {"runtime_id": "r1", "provider": "ollama", "model": "a", "resident": True, "size_bytes": 1_000, "cache_bytes": 10},
+                    # in-process runtime: only the provider's weight estimate
+                    {"runtime_id": "r2", "provider": "mlx", "model": "b", "resident": True, "est_weights_bytes": 2_000, "cache_bytes": 20},
+                    # vram-only, resident
+                    {"runtime_id": "r3", "provider": "ollama", "model": "c", "resident": True, "size_vram_bytes": 4_000},
+                    # NOT resident: configured/cold weights are not in memory
+                    {"runtime_id": "r4", "provider": "mlx", "model": "d", "resident": False, "size_bytes": 8_000, "cache_bytes": 40},
+                    # residency unknown (tri-state null) — never counted
+                    {"runtime_id": "r5", "provider": "mlx", "model": "e", "size_bytes": 16_000},
+                ],
+            }
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (_MixedFacade(), None))
+    _patch_gpu(monkeypatch, {"ts": "2026-08-27T00:00:00+00:00", "supported": True, "source": "test", "gpus": []})
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/host/state", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    totals = resp.json()["totals"]
+    assert totals["models"] == 5
+    assert totals["models_resident"] == 3
+    assert totals["model_bytes"] == 1_000 + 2_000 + 4_000
+    # cache_bytes_models sums every KNOWN row figure (residency is a separate
+    # question from what a row's prompt-cache store holds).
+    assert totals["cache_bytes_models"] == 10 + 20 + 40
+    # ...and stays DISTINCT from the session-cache enumeration total.
+    assert totals["session_cache_bytes"] == 4096
+
+
+def test_host_state_relays_the_device_memory_block_verbatim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The device block is Core-owned truth relayed UNTOUCHED.
+
+    `allocated_bytes` is PROCESS-LOCAL — a model resident in another process,
+    or a llama.cpp/GGUF model in this one, is invisible to it — so clients need
+    `host_in_use_bytes` (the cross-process accelerator heap) and
+    `wired_limit_bytes` (the GPU ceiling) to say anything true about
+    accelerator memory. No normalizer may drop them.
+    """
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (_FullStubHostFacade(), None))
+    _patch_gpu(monkeypatch, {"ts": "2026-08-27T00:00:00+00:00", "supported": True, "source": "test", "gpus": []})
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        state = client.get("/api/gateway/host/state", headers=headers)
+        metrics = client.get("/api/gateway/host/metrics/memory", headers=headers)
+
+    assert state.status_code == 200, state.text
+    device = state.json()["memory"]["device"]
+    assert device == _MEMORY_SNAPSHOT["device"]
+    assert device["host_in_use_bytes"] == 40_000
+    assert device["wired_limit_bytes"] == 44_000
+    # The dedicated memory route carries the same block.
+    assert metrics.status_code == 200, metrics.text
+    assert metrics.json()["device"] == _MEMORY_SNAPSHOT["device"]
+
+
+def test_host_state_relays_the_gguf_shaped_device_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The OTHER real device shape: both accelerator numbers near zero.
+
+    Transcribed from a live host holding a fully offloaded 89.99 GB three-shard
+    GGUF. `allocated_bytes` is 0 (llama.cpp does not use mlx's allocator) AND
+    `host_in_use_bytes` is 0.79 GB (llama.cpp mmaps the file and wraps the pages
+    with `newBufferWithBytesNoCopy`, so the weights are never driver-allocated
+    accelerator memory). ~90 GB is resident and NEITHER device figure shows it.
+
+    The fixture exists so nobody "fixes" a renderer by assuming a resident
+    model must move `host_in_use_bytes`. It must not, and a UI that renders
+    this block as the host's memory use reports 0.7% beside a 90 GB model row.
+    """
+    import abstractgateway.routes.gateway as gateway_routes
+
+    class _GgufHostFacade(_FullStubHostFacade):
+        def get_memory_snapshot(self) -> Dict[str, Any]:
+            snapshot = dict(_MEMORY_SNAPSHOT)
+            snapshot["device"] = dict(_METAL_GGUF_DEVICE)
+            snapshot["process"] = {"rss_bytes": 73_245_212_672}
+            return snapshot
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (_GgufHostFacade(), None))
+    _patch_gpu(monkeypatch, {"ts": "2026-08-27T00:00:00+00:00", "supported": True, "source": "test", "gpus": []})
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        state = client.get("/api/gateway/host/state", headers=headers)
+
+    assert state.status_code == 200, state.text
+    memory = state.json()["memory"]
+    assert memory["device"] == _METAL_GGUF_DEVICE
+    # The whole point: a zero here is NOT evidence of an empty accelerator.
+    assert memory["device"]["allocated_bytes"] == 0
+    assert memory["device"]["host_in_use_bytes"] == 792_461_312
+    # Where the mmapped weights ARE visible.
+    assert memory["process"]["rss_bytes"] == 73_245_212_672
+
+
+def test_host_state_does_not_clobber_an_explicit_sweep_lockable_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit `lockable: false` SURVIVES the relay.
+
+    Sweep rows (`source: "provider_server"`) are normally lockable — locking
+    ADOPTS them — and core stamps `lockable: True` on the rows it synthesizes.
+    But when a runtime states `lockable: false` for a specific row, that is a
+    REFUSAL and the gateway must relay it, not overwrite it with the general
+    rule. Observed live on this host: an LM Studio `provider_server` row served
+    `lockable: false` while a sibling row served `lockable: true`.
+
+    This matters to the UI contract: adopt WORDING is chosen by
+    `source == "provider_server"`, but the lock GATE still honours
+    `lockable is False`. Clobber this to `True` and the console offers a lock
+    the runtime already refused.
+    """
+    import abstractgateway.routes.gateway as gateway_routes
+
+    class _SweepRefusalFacade(_FullStubHostFacade):
+        def list_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
+            return {
+                "ok": True,
+                "supported": True,
+                "models": [
+                    {
+                        "provider": "lmstudio",
+                        "model": "qwen/qwen3-vl-4b",
+                        "source": "provider_server",
+                        "resident": True,
+                        "size_bytes": 3_109_915_433,
+                        "lockable": False,
+                    },
+                    {
+                        "runtime_id": "local:text_generation:huggingface:gguf",
+                        "provider": "huggingface",
+                        "model": "unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q3_K_XL",
+                        "source": "abstractruntime.local",
+                        "resident": True,
+                        "est_weights_bytes": 89_986_353_824,
+                        "lockable": True,
+                    },
+                ],
+            }
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (_SweepRefusalFacade(), None))
+    _patch_gpu(monkeypatch, {"ts": "2026-08-27T00:00:00+00:00", "supported": True, "source": "test", "gpus": []})
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        state = client.get("/api/gateway/host/state", headers=headers)
+
+    assert state.status_code == 200, state.text
+    rows = state.json()["models"]
+    sweep = next(row for row in rows if row["source"] == "provider_server")
+    managed = next(row for row in rows if row["source"] == "abstractruntime.local")
+
+    # The refusal is relayed, NOT rewritten to the sweep default.
+    assert sweep["lockable"] is False
+    assert managed["lockable"] is True
+    # And the sharded-GGUF weight total rides through as the row's display size.
+    assert managed["est_weights_bytes"] == 89_986_353_824
+    assert state.json()["totals"]["model_bytes"] == 3_109_915_433 + 89_986_353_824
+
+
+def test_host_state_relays_unknown_device_fields_a_future_core_adds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The relay is field-agnostic: a device figure this Gateway has never
+    heard of reaches clients anyway (no allowlist to fall behind Core)."""
+    import abstractgateway.routes.gateway as gateway_routes
+
+    class _FutureFacade(_FullStubHostFacade):
+        def get_memory_snapshot(self) -> Dict[str, Any]:
+            snap = dict(_MEMORY_SNAPSHOT)
+            snap["device"] = {**snap["device"], "some_future_bytes": 123}
+            return snap
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (_FutureFacade(), None))
+    _patch_gpu(monkeypatch, {"ts": "2026-08-27T00:00:00+00:00", "supported": True, "source": "test", "gpus": []})
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/host/state", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["memory"]["device"]["some_future_bytes"] == 123
 
 
 def test_models_loaded_rows_empty_when_facade_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

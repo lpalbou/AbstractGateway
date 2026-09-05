@@ -133,6 +133,94 @@ def test_lock_and_unlock_relay_payload_style_facade(tmp_path: Path, monkeypatch:
     ]
 
 
+def test_lock_relays_the_adopted_flag_verbatim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADOPTION: locking a sweep-resident model (one LM Studio / Ollama already
+    holds, that this stack never loaded) answers `adopted: true`. The gateway
+    relays that flag — and the LM Studio external-eviction caveat in
+    `provider_side` — verbatim; nothing here re-derives either."""
+    class _AdoptingFacade:
+        def lock_model_residency(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+            _ = payload
+            return {
+                "ok": True,
+                "locked": True,
+                "adopted": True,
+                "runtime_id": "local:text_generation:lmstudio:qwen3-4b",
+                "provider": "lmstudio",
+                "model": "qwen3-4b",
+                "provider_side": {
+                    "supported": False,
+                    "applied": False,
+                    "detail": "lock guards this stack's unloads; the external server may still evict on its own policy",
+                },
+            }
+
+    _patch_facade(monkeypatch, _AdoptingFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.post(
+            "/api/gateway/models/lock",
+            json={"provider": "lmstudio", "model": "qwen3-4b"},
+            headers=headers,
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["locked"] is True
+    assert body["adopted"] is True
+    assert body["runtime_id"] == "local:text_generation:lmstudio:qwen3-4b"
+    assert body["provider_side"]["supported"] is False
+    assert "may still evict on its own policy" in body["provider_side"]["detail"]
+
+
+def test_lock_omits_adopted_when_the_runtime_was_already_managed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`adopted` is absent (not `false`) on an ordinary lock: the flag marks an
+    adoption that happened, and the gateway never invents one."""
+    _patch_facade(monkeypatch, _LockStubFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.post("/api/gateway/models/lock", json={"provider": "mlx", "model": "qwen"}, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert "adopted" not in resp.json()
+
+
+def test_lock_relays_the_model_not_resident_refusal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Adoption refused (the sweep does not verify the model resident, or the
+    provider's own probe disagrees) rides the in-band envelope with its
+    `model_not_resident` code intact."""
+    class _RefusingFacade:
+        def lock_model_residency(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+            _ = payload
+            return {
+                "ok": False,
+                "error": "model_not_resident",
+                "detail": "Model lmstudio/qwen3-4b is not resident in provider memory; load it first.",
+                "runtime_id": "local:text_generation:lmstudio:qwen3-4b",
+            }
+
+    _patch_facade(monkeypatch, _RefusingFacade())
+
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.post(
+            "/api/gateway/models/lock",
+            json={"provider": "lmstudio", "model": "qwen3-4b"},
+            headers=headers,
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"] == "model_not_resident"
+    assert "adopted" not in body
+
+
 def test_lock_tolerates_kwargs_style_facade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A facade written in the older kwargs idiom still relays (TypeError fallback)."""
     calls: list[Dict[str, Any]] = []

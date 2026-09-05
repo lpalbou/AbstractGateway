@@ -251,6 +251,17 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="models-load-provider"' in console.text
     assert 'id="models-load-model"' in console.text
     assert 'id="models-load-lock"' in console.text
+    assert 'id="models-breakdown"' in console.text  # the itemized memory usage under the meters
+    # The warm-up row rides the console's OWN select recipe (operator: "both
+    # the provider and model should be the official dropdown components"), not
+    # free-text inputs with datalist suggestions. The free-text lanes survive
+    # only as the shared offline escape hatch.
+    assert '<select id="models-load-provider"' in console.text
+    assert '<select id="models-load-model"' in console.text
+    assert 'id="models-load-provider-options"' not in console.text
+    assert 'id="models-load-model-options"' not in console.text
+    assert 'id="models-load-provider-custom"' in console.text
+    assert 'id="models-load-model-custom"' in console.text
     assert 'id="models-refresh"' in console.text
     assert ".drive-track, .meter-track {" in console.text, "the meter must share the drive bar's recipe"
     assert 'state.activeTab !== "models"' in console.text, "the host poll must stop off-tab"
@@ -1244,6 +1255,8 @@ def test_models_table_defaults_to_resident_rows_with_configured_cached_toggle() 
 {_slice_function(source, "residencyPill")}
 {_slice_function(source, "modelsEmptyRow")}
 {_slice_function(source, "modelRowKey")}
+{_slice_function(source, "modelDisplaySize")}
+{_slice_function(source, "modelCacheBytes")}
 class El {{
   constructor(tag) {{ this.tag = tag || ""; this.children = []; this.className = ""; this._tc = ""; this.style = {{}}; this.title = ""; this.innerHTML = ""; }}
   get textContent() {{ return this._tc; }}
@@ -1507,8 +1520,12 @@ console.log(JSON.stringify(results));
     steps = {r["step"]: r["lines"] for r in _node(harness)}
     degraded = steps["models-degraded"]
     assert "Models" not in degraded, "null models must not render a fabricated model count"
-    assert degraded["Session caches"] == "1 cache · 4.1 KB", "the healthy section still renders"
-    assert degraded["Process RSS"] == "100 B"
+    assert degraded["Session caches"] == "1 cache · 4.0 KiB", "the healthy section still renders"
+    # Process RSS is stated EXACTLY ONCE, and this is not the place: it is the
+    # breakdown's `process_rss` item, where it carries the label that makes it
+    # readable ("includes memory-mapped GGUF weights"). Rendering it here too
+    # put the same 76 GB in one panel twice under two different framings.
+    assert "Process RSS" not in degraded
     absent = steps["totals-absent"]
     # The rows ARE enumerated: the resident count derives from them (a
     # truthful zero, not a fabrication) and the non-resident row is named
@@ -1517,7 +1534,7 @@ console.log(JSON.stringify(results));
     assert "Session caches" not in absent, "an absent totals block must not render cache zero counts"
     healthy = steps["healthy"]
     # RESIDENT count + resident-only bytes; the false row is configured/cached.
-    assert healthy["Models"] == "1 resident · 1.0 KB · 1 configured / cached"
+    assert healthy["Models"] == "1 resident · 1.0 KiB · 1 configured / cached"
     assert healthy["Session caches"] == "0 caches", "a REAL zero still renders"
 
 
@@ -1571,9 +1588,12 @@ def test_models_load_ok_but_lock_fail_reports_the_mixed_outcome() -> None:
     harness = f"""
 {_slice_function(source, "loadModelResidency")}
 {_slice_function(source, "_modelsMutationResult")}
+{_slice_function(source, "activeModelsLoadProvider")}
+{_slice_function(source, "activeModelsLoadModel")}
+{_slice_function(source, "customLaneValue")}
 const els = new Map();
 function $(id) {{
-  if (!els.has(id)) els.set(id, {{ textContent: "", className: "", disabled: false, checked: false, value: "" }});
+  if (!els.has(id)) els.set(id, {{ textContent: "", className: "hidden", disabled: false, checked: false, value: "", classList: {{ contains: (c) => c === "hidden" }} }});
   return els.get(id);
 }}
 $("models-load-provider").value = "mlx";
@@ -1595,3 +1615,862 @@ console.log(JSON.stringify([{{ msg: $("models-loaded-message").textContent, cls:
     assert "UNLOCKED" in row["msg"] and "locking failed" in row["msg"]
     assert "lock not supported by this runtime" in row["msg"], "the lock failure's reason must survive"
     assert "error" in row["cls"], "a mixed outcome still needs the operator's attention"
+
+
+def test_models_accelerator_meter_scopes_itself_and_carries_the_gguf_note() -> None:
+    """PART A of the canonical accelerator spec. `device.allocated_bytes` is
+    PROCESS-LOCAL: on this Mac it reads 0 while a 93 GB GGUF is resident in
+    another process, which is how the meter came to say "Device · metal 0 B"
+    beside an accelerator with 105 GB in use. `device.host_in_use_bytes` is a
+    genuine ACCELERATOR counter (driver-allocated Metal buffers across every
+    process) and `device.wired_limit_bytes` the real ceiling — both win
+    whenever known.
+
+    But that counter is NOT the machine's memory use: it is blind to
+    memory-mapped GGUF weights (llama.cpp mmaps the file and wraps the pages
+    with newBufferWithBytesNoCopy, so they never become driver-allocated).
+    Measured live here: an 89,986,353,824 B fully-offloaded GGUF with
+    host_in_use_bytes at 1,042,120,704. So the line is labelled as an
+    ACCELERATOR HEAP line, its scope is named in exactly two phrasings — "all
+    processes" / "this process only" — and the GGUF caveat rides the title on
+    BOTH variants. RAM stays the primary system meter, rendered first."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "deviceMeterView")}
+{_slice_function(source, "_fmtBytes")}
+const results = [];
+// The LIVE payload measured on the operator's Mac (2026-08-27).
+results.push({{ step: "live", ...deviceMeterView({{ backend: "metal", allocated_bytes: 0, host_in_use_bytes: 105743990784, wired_limit_bytes: 115343360000, total_bytes: 137438953472 }}) }});
+// No cross-process figure: the process-local number renders, LABELED as such.
+results.push({{ step: "process-only", ...deviceMeterView({{ backend: "cuda", allocated_bytes: 500, total_bytes: 1000 }}) }});
+// Cross-process figure, no wired limit: the device total is the ceiling.
+results.push({{ step: "no-wired", ...deviceMeterView({{ backend: "metal", allocated_bytes: 0, host_in_use_bytes: 600, total_bytes: 1000 }}) }});
+// An unknown/empty backend still gets a name: the literal `device`.
+results.push({{ step: "no-backend", ...deviceMeterView({{ allocated_bytes: 0, host_in_use_bytes: 600, total_bytes: 1000 }}) }});
+// Nothing known: an EMPTY track and honest text, never a guessed bar.
+results.push({{ step: "unknown", ...deviceMeterView({{ backend: "metal" }}) }});
+results.push({{ step: "junk", ...deviceMeterView(null) }});
+console.log(JSON.stringify(results));
+"""
+    steps = {r["step"]: r for r in _node(harness)}
+
+    live = steps["live"]
+    assert live["scope"] == "all processes"
+    assert live["used"] == 105743990784, "the cross-process figure must win over the process-local 0"
+    assert live["ceiling"] == 115343360000, "the wired limit is the ceiling, not the 137 GB device total"
+    assert live["label"] == "Accelerator heap · metal (all processes)", "the EXACT PART A2 label"
+    assert live["fraction"] is not None and 0.9 < live["fraction"] < 0.93
+    assert live["value"].startswith("98.5 GiB"), live["value"]
+    assert live["value"] != "0 B", "a 0 B bar beside a full accelerator is the bug this fixes"
+    assert "host_in_use_bytes" in live["title"] and "wired limit" in live["title"]
+
+    proc = steps["process-only"]
+    assert proc["scope"] == "this process only"
+    assert proc["label"] == "Accelerator heap · cuda (this process only)", (
+        "a process-local figure must SAY it is process-local"
+    )
+    assert proc["fraction"] == 0.5
+    assert "THIS PROCESS ONLY" in proc["title"]
+
+    no_wired = steps["no-wired"]
+    assert no_wired["scope"] == "all processes" and no_wired["ceiling"] == 1000
+    assert "device total" in no_wired["title"]
+
+    assert steps["no-backend"]["label"] == "Accelerator heap · device (all processes)", (
+        "an unknown backend falls back to the literal `device`, never to a bare label"
+    )
+
+    for key in ("unknown", "junk"):
+        assert steps[key]["fraction"] is None, f"{key} must render an EMPTY track"
+        assert steps[key]["value"] == "unknown", f"{key} must never fabricate a number"
+
+    # The note is EXACT and rides EVERY variant — it is what stops the figure
+    # being read as "how full is this machine".
+    note = "memory-mapped GGUF weights are not counted here"
+    for key, view in steps.items():
+        assert view["note"] == note, key
+        assert view["title"].startswith(note), f"{key}: the caveat must lead the tooltip"
+        assert view["label"].startswith("Accelerator heap · "), key
+        # PART A3: "host" is GONE as a scope name for this figure.
+        assert "(host)" not in view["label"] and "host-wide" not in view["label"], key
+        assert "host-wide" not in view["title"], key
+        assert view["scope"] in ("all processes", "this process only"), key
+
+
+def test_models_display_size_coalesces_and_names_its_source() -> None:
+    """The shared display-size rule: first KNOWN of size_bytes ->
+    size_vram_bytes -> est_weights_bytes. An MLX/HF row carrying only
+    est_weights_bytes used to render a BLANK size cell; it now renders the
+    estimate — and the tooltip says it is an ESTIMATE, so it can never be read
+    as a measurement. cache_bytes rides along as a secondary figure."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "modelDisplaySize")}
+{_slice_function(source, "modelCacheBytes")}
+const results = [];
+for (const [step, row] of [
+  ["reported", {{ size_bytes: 3, size_vram_bytes: 2, est_weights_bytes: 1 }}],
+  ["vram", {{ size_vram_bytes: 2, est_weights_bytes: 1 }}],
+  ["estimated", {{ est_weights_bytes: 1 }}],
+  ["nothing", {{}}],
+  ["zero", {{ size_bytes: 0 }}],
+]) results.push({{ step, ...modelDisplaySize(row) }});
+results.push({{ step: "cache", bytes: modelCacheBytes({{ cache_bytes: 42 }}), none: modelCacheBytes({{}}), junk: modelCacheBytes({{ cache_bytes: "big" }}) }});
+console.log(JSON.stringify(results));
+"""
+    steps = {r["step"]: r for r in _node(harness)}
+    assert steps["reported"]["bytes"] == 3 and steps["reported"]["source"] == "size_bytes"
+    assert steps["vram"]["bytes"] == 2 and steps["vram"]["source"] == "size_vram_bytes"
+    est = steps["estimated"]
+    assert est["bytes"] == 1 and est["source"] == "est_weights_bytes"
+    assert "ESTIMATED" in est["label"], "an estimate must announce itself as one"
+    assert steps["nothing"]["bytes"] is None and steps["nothing"]["label"] == "size unknown"
+    assert steps["zero"]["bytes"] == 0, "a real reported zero is a fact, not an absence"
+    cache = steps["cache"]
+    assert cache["bytes"] == 42 and cache["none"] is None and cache["junk"] is None
+
+
+# PART C SHARED FIXTURE — the live payload measured on this machine
+# (2026-08-27), verbatim. Every residency surface parses THIS one and must
+# agree on the keys, the order and the byte values.
+_HOST_STATE_FIXTURE = {
+    "ok": True,
+    "memory": {
+        "ram": {
+            "total_bytes": 137438953472,
+            "available_bytes": 96368312320,
+            "used_bytes": 33741111296,
+            "percent": 29.9,
+        },
+        "process": {"rss_bytes": 76762775552},
+        "device": {
+            "backend": "metal",
+            "allocated_bytes": 0,
+            "total_bytes": 137438953472,
+            "free_bytes": None,
+            "host_in_use_bytes": 1042120704,
+            "wired_limit_bytes": 115343360000,
+        },
+    },
+    "models": [
+        {
+            "runtime_id": "local:text_generation:huggingface:unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q3_K_XL",
+            "task": "text_generation",
+            "provider": "huggingface",
+            "model": "unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q3_K_XL",
+            "source": "provider_server",
+            "resident": True,
+            "state": "provider_loaded",
+            "locked": False,
+            "lockable": True,
+            "est_weights_bytes": 89986353824,
+            "cache_bytes": 2147483648,
+            "details": {"est_weights_bytes": 89986353824, "cache_bytes": 2147483648},
+        }
+    ],
+    "totals": {
+        "models": 1,
+        "models_resident": 1,
+        "model_bytes": 89986353824,
+        "session_caches": 3,
+        "session_cache_bytes": 4352519172,
+    },
+}
+
+_GGUF_NOTE = (
+    "Σ model weights exceeds the accelerator heap. That is the normal case for "
+    "memory-mapped GGUF weights: llama.cpp maps them from disk, so they are resident "
+    "as process RSS and are not counted in the accelerator heap."
+)
+
+
+def test_models_memory_breakdown_pins_the_shared_fixture() -> None:
+    """PART B/C of the canonical spec, on the SHIPPED memoryBreakdown().
+
+    The old `unattributed` remainder subtracted RAM-dimensioned quantities
+    (model weights, process RSS) from an ACCELERATOR counter
+    (host_in_use_bytes). On this fixture it computes 1,042,120,704 −
+    170,748,732,196 = −169.7 GB, clamped to "0 B" and blamed "overlap" for
+    what was a category error. It is GONE, with no replacement remainder.
+
+    What replaces it is three kinds of line, in one order, on every residency
+    surface: ITEMS (facts the framework knows, each labelled with what it
+    measures), then REFERENCE counters (Σ weights / RAM / accelerator heap —
+    separate measurements, NOT summable with the items), then the GGUF NOTE
+    when Σ weights exceeds the heap, which is the normal mmapped-GGUF case and
+    not an inconsistency."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "memoryBreakdown")}
+{_slice_function(source, "deviceMeterView")}
+{_slice_function(source, "modelDisplaySize")}
+{_slice_function(source, "modelCacheBytes")}
+{_slice_function(source, "_fmtBytes")}
+const results = [];
+results.push({{ step: "fixture", ...memoryBreakdown({json.dumps(_HOST_STATE_FIXTURE)}) }});
+// EMISSION RULE: a KNOWN value is emitted even when it is 0; an UNKNOWN one is
+// omitted. A resident row with no known size is SKIPPED — never an invented 0.
+results.push({{ step: "known-zeros", ...memoryBreakdown({{
+  memory: {{ process: {{ rss_bytes: 0 }}, device: {{ backend: "cuda", allocated_bytes: 0, total_bytes: 1000 }} }},
+  models: [{{ runtime_id: "a", model: "sized", resident: true, size_bytes: 0, cache_bytes: 0 }},
+           {{ runtime_id: "b", model: "sizeless", resident: true }}],
+  totals: {{ session_cache_bytes: 0 }},
+}}) }});
+// Nothing known at all: no items, no references, no note — never a zero line.
+results.push({{ step: "degraded", ...memoryBreakdown({{ memory: {{}}, models: null }}) }});
+results.push({{ step: "junk", ...memoryBreakdown(null) }});
+// The note fires on the COMPARISON, not on the file format: weights under the
+// heap means no note.
+results.push({{ step: "weights-under-heap", ...memoryBreakdown({{
+  memory: {{ device: {{ backend: "metal", host_in_use_bytes: 900, total_bytes: 1000 }} }},
+  models: [{{ runtime_id: "a", model: "m", resident: true, size_bytes: 100 }}],
+}}) }});
+// Source phrases ride the field that actually supplied the number.
+results.push({{ step: "sources", ...memoryBreakdown({{
+  memory: {{}},
+  models: [{{ runtime_id: "a", model: "reported", resident: true, size_bytes: 3 }},
+           {{ runtime_id: "b", model: "vram", resident: true, size_vram_bytes: 2 }},
+           {{ runtime_id: "c", model: "guess", resident: true, est_weights_bytes: 1 }}],
+}}) }});
+console.log(JSON.stringify(results));
+"""
+    steps = {r["step"]: r for r in _node(harness)}
+    fixture = steps["fixture"]
+
+    # 1. Item keys, in order.
+    assert [i["key"] for i in fixture["items"]] == [
+        "model:local:text_generation:huggingface:unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q3_K_XL",
+        "model_caches",
+        "session_caches",
+        "process_rss",
+    ]
+    # 2. Their byte values, in order.
+    assert [i["bytes"] for i in fixture["items"]] == [89986353824, 2147483648, 4352519172, 76762775552]
+    # 3. Reference keys, in order.
+    assert [r["key"] for r in fixture["references"]] == ["sum_model_weights", "ram", "accelerator"]
+    refs = {r["key"]: r for r in fixture["references"]}
+    # 4. Σ model weights is the sum of the model items.
+    assert refs["sum_model_weights"]["bytes"] == 89986353824
+    # 5. The accelerator reference IS the PART A2 line, caveat and all.
+    assert "Accelerator heap · metal (all processes)" in refs["accelerator"]["name"]
+    assert refs["accelerator"]["detail"] == "memory-mapped GGUF weights are not counted here"
+    assert refs["accelerator"]["bytes"] == 1042120704
+    # 6. The note is present (89986353824 > 1042120704) and EXACT.
+    assert fixture["note"] is not None, "Σ weights exceeds the heap here — the explanation must render"
+    assert fixture["note"]["text"] == _GGUF_NOTE
+
+    every_line = fixture["items"] + fixture["references"] + [fixture["note"]]
+    blob = json.dumps(every_line, ensure_ascii=False)
+    # 7. The remainder is GONE — key, name, note and all.
+    assert "nattributed" not in blob
+    # 8. And "host-wide" is gone as a scope name.
+    assert "host-wide" not in blob
+    for line in every_line:
+        for field in ("name", "detail", "text"):
+            assert "host-wide" not in str(line.get(field) or "")
+
+    # The names and details are the spec's, not paraphrases of them.
+    names = {i["key"]: i["name"] for i in fixture["items"]}
+    assert names["model:local:text_generation:huggingface:unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q3_K_XL"] == (
+        "unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q3_K_XL"
+    )
+    assert names["model_caches"] == "model KV caches"
+    assert names["session_caches"] == "session caches"
+    assert names["process_rss"] == "gateway process RSS"
+    details = {i["key"]: i["detail"] for i in fixture["items"]}
+    assert details["model:local:text_generation:huggingface:unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q3_K_XL"] == (
+        "resident model weights · estimated on-disk weight size (est_weights_bytes)"
+    )
+    assert details["model_caches"] == "prompt-cache bytes held for resident models"
+    assert details["session_caches"] == "prompt-cache bytes held by gateway sessions"
+    assert details["process_rss"] == (
+        "resident set size of the gateway process — includes memory-mapped GGUF weights"
+    )
+    assert refs["sum_model_weights"]["name"] == "Σ model weights"
+    assert refs["sum_model_weights"]["detail"] == "sum of the resident model weights above"
+    assert refs["ram"]["name"] == "RAM used"
+    assert refs["ram"]["detail"] == "system memory in use / installed"
+    assert " / " in refs["ram"]["value"], "RAM renders used / installed"
+
+    # THE EMISSION RULE, one rule everywhere: known 0 IS a line; unknown is not.
+    zeros = steps["known-zeros"]
+    assert [i["key"] for i in zeros["items"]] == ["model:a", "model_caches", "session_caches", "process_rss"]
+    assert [i["bytes"] for i in zeros["items"]] == [0, 0, 0, 0], "a known 0 is a fact, not an absence"
+    assert "model:b" not in [i["key"] for i in zeros["items"]], (
+        "a resident row with no known size is SKIPPED, never rendered as 0"
+    )
+    # The process-local accelerator figure still earns its reference line.
+    assert [r["key"] for r in zeros["references"]] == ["sum_model_weights", "accelerator"], (
+        "RAM is absent from this payload, so its reference line is too"
+    )
+    assert zeros["note"] is None, "0 does not exceed 0"
+
+    for key in ("degraded", "junk"):
+        assert steps[key]["items"] == [], f"{key} must not invent 0-byte lines"
+        assert steps[key]["references"] == [], key
+        assert steps[key]["note"] is None, key
+
+    assert steps["weights-under-heap"]["note"] is None, (
+        "the note explains an EXCESS; without one it must not appear"
+    )
+
+    sources = [i["detail"] for i in steps["sources"]["items"] if i["key"].startswith("model:")]
+    assert sources == [
+        "resident model weights · reported by the model server (size_bytes)",
+        "resident model weights · reported by the model server (size_vram_bytes)",
+        "resident model weights · estimated on-disk weight size (est_weights_bytes)",
+    ]
+    estimated = [i["estimated"] for i in steps["sources"]["items"] if i["key"].startswith("model:")]
+    assert estimated == [False, False, True], "only an est_weights_bytes figure is marked an estimate"
+
+
+def test_console_source_carries_the_canonical_wording_and_none_of_the_old() -> None:
+    """Belt and braces on the SERVED page, not just the sliced functions: the
+    spec's exact strings ship, and the two banned words ship nowhere — not in a
+    label, not in a tooltip, not in a comment that could be copied back into
+    one."""
+    html = gateway_console_html()
+    for exact in (
+        "Accelerator heap · ${backend || \"device\"} (${scope})",
+        "memory-mapped GGUF weights are not counted here",
+        "all processes",
+        "this process only",
+        "resident model weights · ",
+        "reported by the model server (size_bytes)",
+        "reported by the model server (size_vram_bytes)",
+        "estimated on-disk weight size (est_weights_bytes)",
+        "prompt-cache bytes held for resident models",
+        "prompt-cache bytes held by gateway sessions",
+        "resident set size of the gateway process — includes memory-mapped GGUF weights",
+        "Σ model weights",
+        "sum of the resident model weights above",
+        "RAM used",
+        "system memory in use / installed",
+        _GGUF_NOTE,
+    ):
+        assert exact in html, exact
+    # The remainder and the misleading scope name are gone from the whole page.
+    assert "nattributed" not in html
+    assert "host-wide" not in html and "Host-wide" not in html
+
+
+def test_models_process_rss_is_stated_exactly_once() -> None:
+    """Cross-surface rule (abstractflow found the same duplication in its own
+    panel): the gateway's process RSS is stated ONCE, as the breakdown's
+    `process_rss` item — the one rendering that says what the number means
+    ("includes memory-mapped GGUF weights"). The host-facts line used to print
+    it as well, so a single memory panel carried the same 76 GB twice under two
+    different framings, which is exactly the double-counting this wave removes.
+    Host id / host name stay: identity is not a duplicate figure."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "renderHostFacts")}
+{_slice_function(source, "renderHostBreakdown")}
+{_slice_function(source, "renderHostMeters")}
+{_slice_function(source, "meterRow")}
+{_slice_function(source, "memoryBreakdown")}
+{_slice_function(source, "deviceMeterView")}
+{_slice_function(source, "modelDisplaySize")}
+{_slice_function(source, "modelCacheBytes")}
+{_slice_function(source, "_fmtBytes")}
+{_slice_function(source, "_fmtPct")}
+class El {{
+  constructor() {{ this.children = []; this.className = ""; this._tc = ""; this.title = ""; this.style = {{}}; }}
+  get textContent() {{ return this._tc; }}
+  set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
+  append(...items) {{ this.children.push(...items); }}
+  get classList() {{
+    const self = this;
+    return {{
+      add(name) {{ self.className = (self.className + " " + name).trim(); }},
+      remove(name) {{ self.className = String(self.className).split(" ").filter((p) => p && p !== name).join(" "); }},
+      toggle(name, force) {{
+        const parts = String(self.className || "").split(" ").filter(Boolean).filter((p) => p !== name);
+        if (force) parts.push(name);
+        self.className = parts.join(" ");
+      }},
+    }};
+  }}
+}}
+const document = {{ createElement: () => new El() }};
+const boxes = {{ "models-host-facts": new El(), "models-breakdown": new El(), "models-meters": new El() }};
+function $(id) {{ return boxes[id] || new El(); }}
+const text = (el) => el.textContent + (el.children || []).map(text).join("");
+const data = {json.dumps(_HOST_STATE_FIXTURE)};
+renderHostFacts(data);
+renderHostMeters(data);
+renderHostBreakdown(data);
+console.log(JSON.stringify([{{
+  facts: boxes["models-host-facts"].children.map(text),
+  meters: boxes["models-meters"].children.map((r) => text(r) + " | " + (r.children[1] || {{}}).title),
+  breakdown: boxes["models-breakdown"].children.map(text),
+}}]));
+"""
+    (view,) = _node(harness)
+    rss = "71.5 GiB"  # 76762775552 bytes, as the console's _fmtBytes renders it
+    stated = sorted({where for where, lines in view.items() for line in lines if rss in line})
+    assert stated == ["breakdown"], f"process RSS must be stated exactly once, found in: {stated}"
+    rss_lines = [line for line in view["breakdown"] if rss in line]
+    assert len(rss_lines) == 1
+    assert rss_lines[0].startswith("gateway process RSS")
+    assert "includes memory-mapped GGUF weights" in rss_lines[0]
+    # Identity survives — it was never the duplicate.
+    assert not any("Process RSS" in line for line in view["facts"])
+
+
+def test_models_breakdown_item_key_falls_back_to_provider_and_model() -> None:
+    """Real sweep rows arrive with `runtime_id: null`. The shared item-key rule
+    for all four surfaces: `model:<runtime_id>` when the host sent one, else
+    `model:<provider>:<model>` — no index suffix, no task segment, no leading
+    empty segment. Colliding keys are KEPT; a genuine duplicate provider+model
+    row is itself worth seeing."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "memoryBreakdown")}
+{_slice_function(source, "deviceMeterView")}
+{_slice_function(source, "modelDisplaySize")}
+{_slice_function(source, "modelCacheBytes")}
+{_slice_function(source, "_fmtBytes")}
+const view = memoryBreakdown({{
+  memory: {{}},
+  models: [
+    {{ runtime_id: null, provider: "lmstudio", model: "qwen/qwen3-vl-4b", resident: true, size_bytes: 10 }},
+    {{ runtime_id: "", provider: "lmstudio", model: "qwen/qwen3-vl-4b", resident: true, size_bytes: 10 }},
+    {{ runtime_id: "rt-1", provider: "mlx", model: "named", resident: true, size_bytes: 10 }},
+  ],
+}});
+console.log(JSON.stringify([view.items.map((i) => i.key)]));
+"""
+    (keys,) = _node(harness)
+    assert keys == [
+        "model:lmstudio:qwen/qwen3-vl-4b",
+        # An EMPTY runtime_id is not a runtime_id — and the collision is kept.
+        "model:lmstudio:qwen/qwen3-vl-4b",
+        "model:rt-1",
+    ]
+
+
+def test_models_breakdown_separates_references_from_items() -> None:
+    """A reader must never add the reference counters onto the items, so the
+    renderer puts a RULE between the two groups and dims the references. The
+    GGUF note closes the block on its own line."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "renderHostBreakdown")}
+{_slice_function(source, "memoryBreakdown")}
+{_slice_function(source, "deviceMeterView")}
+{_slice_function(source, "modelDisplaySize")}
+{_slice_function(source, "modelCacheBytes")}
+{_slice_function(source, "_fmtBytes")}
+class El {{
+  constructor() {{ this.children = []; this.className = ""; this._tc = ""; this.title = ""; }}
+  get textContent() {{ return this._tc; }}
+  set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
+  append(...items) {{ this.children.push(...items); }}
+  get classList() {{
+    const self = this;
+    return {{
+      add(name) {{ self.className = (self.className + " " + name).trim(); }},
+      remove(name) {{ self.className = String(self.className).split(" ").filter((p) => p && p !== name).join(" "); }},
+    }};
+  }}
+}}
+const document = {{ createElement: () => new El() }};
+const box = new El();
+function $(id) {{ return id === "models-breakdown" ? box : null; }}
+const text = (el) => el.textContent + (el.children || []).map(text).join("");
+renderHostBreakdown({json.dumps(_HOST_STATE_FIXTURE)});
+console.log(JSON.stringify([{{
+  hidden: box.className.includes("hidden"),
+  rows: box.children.map((row) => ({{ cls: row.className, text: text(row) }})),
+}}]));
+"""
+    (view,) = _node(harness)
+    assert view["hidden"] is False
+    classes = [r["cls"] for r in view["rows"]]
+    assert classes == [
+        "mem-breakdown-head",
+        "mem-breakdown-row",  # the model
+        "mem-breakdown-row",  # model KV caches
+        "mem-breakdown-row",  # session caches
+        "mem-breakdown-row",  # gateway process RSS
+        "mem-breakdown-rule",  # THE SEPARATOR — items above, references below
+        "mem-breakdown-row reference",
+        "mem-breakdown-row reference",
+        "mem-breakdown-row reference",
+        "mem-breakdown-note-line",
+    ], classes
+    rows = view["rows"]
+    assert rows[1]["text"].startswith("unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q3_K_XL")
+    # PART D2's marker rides the breakdown too: this weight is an ESTIMATE.
+    assert "~" in rows[1]["text"], "an estimated weight must be marked as one on screen"
+    assert "Accelerator heap · metal (all processes)" in rows[8]["text"]
+    assert rows[9]["text"] == _GGUF_NOTE, "the note is quoted whole, never truncated or reworded"
+    assert "nattributed" not in json.dumps(view, ensure_ascii=False)
+
+
+def test_models_every_resident_row_offers_a_lock_including_swept_ones() -> None:
+    """Operator: 'i should have a lock on each line to lock/unlock a model.'
+    Lock now ADOPTS an externally loaded (LM Studio / ollama) resident model,
+    so a sweep-resident row whose `lockable` the host never reported (null)
+    offers Lock too — only an EXPLICIT lockable:false withholds it. A locked
+    row always offers Unlock, resident or not (a locked-but-evicted lock still
+    blocks facade unloads); a non-resident configured row keeps Estimate
+    only.
+
+    PART D1: the ADOPT WORDING is keyed on `source === "provider_server"`, not
+    on `lockable`. The residency sweep stamps every row it finds
+    `lockable: true`, so the old `row.lockable === true` test could never
+    separate a gateway-loaded model from an adopted one and the adopt sentence
+    never fired. The GATE is untouched.
+
+    PART D2: an `est_weights_bytes` figure renders with the SAME `~` prefix the
+    TUIs use, ON SCREEN — a marker that lives only in a tooltip is a marker
+    nobody sees. The tooltip still names the source field."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "renderModelsTable")}
+{_slice_function(source, "renderModelsResidentCount")}
+{_slice_function(source, "renderModelsShowCachedToggle")}
+{_slice_function(source, "residencyPill")}
+{_slice_function(source, "modelsEmptyRow")}
+{_slice_function(source, "modelRowKey")}
+{_slice_function(source, "modelDisplaySize")}
+{_slice_function(source, "modelCacheBytes")}
+class El {{
+  constructor(tag) {{ this.tag = tag || ""; this.children = []; this.className = ""; this._tc = ""; this.style = {{}}; this.title = ""; this.innerHTML = ""; }}
+  get textContent() {{ return this._tc; }}
+  set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
+  append(...items) {{ this.children.push(...items); }}
+  get classList() {{
+    const self = this;
+    return {{
+      add(name) {{ self.className = (self.className + " " + name).trim(); }},
+      toggle(name, force) {{
+        const parts = String(self.className || "").split(" ").filter(Boolean).filter((p) => p !== name);
+        if (force) parts.push(name);
+        self.className = parts.join(" ");
+      }},
+    }};
+  }}
+}}
+const document = {{ createElement: (tag) => new El(tag), createTextNode: (t) => ({{ tag: "#text", text: t, children: [] }}) }};
+const els = {{}};
+for (const id of ["models-table", "models-loaded-title", "models-show-cached-label", "models-show-cached-text", "models-show-cached"]) els[id] = new El(id);
+function $(id) {{ return els[id] || new El(id); }}
+const ICONS = {{ lock: "<svg/>" }};
+const state = {{ principal: {{ admin: true }}, modelEstimates: new Map(), modelsShowCached: true, modalityUi: null }};
+function modalityChipEl() {{ return new El("chip"); }}
+function _fmtBytes(v) {{ return String(v); }}
+function _fmtCtx(v) {{ return v == null ? "" : String(v); }}
+function estimateDetailRow() {{ return new El("est"); }}
+function estimateModelContext() {{}}
+function toggleModelLock() {{}}
+function unloadModel() {{}}
+const walk = (el, out = []) => {{
+  if (el.tag === "button") out.push({{ text: el.textContent, title: el.title }});
+  for (const child of el.children || []) walk(child, out);
+  return out;
+}};
+const sizeCell = (tr) => {{ const td = tr.children[4]; return {{ text: td.textContent, title: td.title }}; }};
+const models = [
+  {{ provider: "lmstudio", model: "swept", resident: true, size_bytes: 1000 }},
+  {{ provider: "mlx", model: "managed", resident: true, lockable: true, est_weights_bytes: 700, cache_bytes: 40 }},
+  {{ provider: "ollama", model: "refused", resident: true, lockable: false }},
+  {{ provider: "mlx", model: "locked-swept", resident: true, locked: true }},
+  {{ provider: "mlx", model: "locked-evicted", resident: false, locked: true }},
+  {{ provider: "mlx", model: "configured", resident: false, lockable: true }},
+  // D1: the sweep stamps BOTH of these lockable:true. Only `source` separates
+  // the adopted model from the one this gateway loaded itself.
+  {{ provider: "lmstudio", model: "adopt-me", resident: true, source: "provider_server", lockable: true, size_bytes: 5 }},
+  {{ provider: "mlx", model: "gateway-loaded", resident: true, source: "gateway", lockable: true, size_bytes: 5 }},
+  // The live wire really does serve lockable:false on a provider_server row
+  // (an LM Studio one) beside lockable:true on another: the GATE still wins.
+  {{ provider: "lmstudio", model: "refused-adopt", resident: true, source: "provider_server", lockable: false, size_bytes: 5 }},
+  // D2: an estimate with no cache beside it.
+  {{ provider: "mlx", model: "est-only", resident: true, lockable: true, est_weights_bytes: 900 }},
+];
+// The table renders RESIDENT rows first, then the configured / cached ones.
+const visible = models.filter((r) => r.resident === true).concat(models.filter((r) => r.resident !== true));
+const rows = {{}};
+renderModelsTable({{ models }});
+els["models-table"].children.forEach((tr, i) => {{
+  const found = walk(tr);
+  rows[visible[i].model] = {{
+    buttons: found.map((b) => b.text),
+    lockTitle: (found.find((b) => b.text === "Lock" || b.text === "Unlock") || {{}}).title || "",
+    size: sizeCell(tr),
+  }};
+}});
+console.log(JSON.stringify([rows]));
+"""
+    (rows,) = _node(harness)
+    # A sweep-resident row (lockable UNREPORTED) now offers Lock: locking
+    # adopts the externally loaded model.
+    assert rows["swept"]["buttons"] == ["Estimate", "Lock", "Unload"]
+    assert rows["managed"]["buttons"] == ["Estimate", "Lock", "Unload"]
+    # Only an explicit refusal withholds the control.
+    assert rows["refused"]["buttons"] == ["Estimate", "Unload"]
+    assert rows["locked-swept"]["buttons"] == ["Estimate", "Unlock", "Unload"]
+    # Locked-but-evicted keeps Unlock and nothing else: no lock is stranded.
+    assert rows["locked-evicted"]["buttons"] == ["Estimate", "Unlock"]
+    # A configured row that is NOT in memory has nothing to lock or unload.
+    assert rows["configured"]["buttons"] == ["Estimate"]
+
+    # D1 — the GATE is unchanged (both rows still offer Lock); the WORDING is
+    # what `source` now selects.
+    adopt = "Lock this model in memory — this host loaded it outside the Gateway, so locking adopts it first"
+    plain = "Lock this model in memory so nothing can evict it"
+    assert rows["adopt-me"]["buttons"] == ["Estimate", "Lock", "Unload"]
+    assert rows["adopt-me"]["lockTitle"] == adopt
+    assert rows["gateway-loaded"]["lockTitle"] == plain, (
+        "a gateway-loaded row must not be told the lock adopts anything"
+    )
+    # The GATE is untouched by D1: an EXPLICIT lockable:false still withholds
+    # the button, provider_server or not — there is no adopt wording to show
+    # because there is no control to show it on.
+    assert rows["refused-adopt"]["buttons"] == ["Estimate", "Unload"]
+    assert not rows["refused-adopt"]["lockTitle"]
+    # `lockable: true` alone must NEVER select the adopt sentence — that was the
+    # defect: the sweep stamps it on every row it finds.
+    assert rows["managed"]["lockTitle"] == plain
+    assert rows["swept"]["lockTitle"] == plain, "no source reported = no adoption claim"
+
+    # SIZE renders for every resident row, and names its source.
+    assert rows["swept"]["size"]["text"] == "1000"
+    assert "reported size" in rows["swept"]["size"]["title"]
+    # D2 — the `~` prefix rides the CELL, not only the tooltip.
+    assert rows["managed"]["size"]["text"] == "~700 + 40 cache", "the estimate and its cache both render"
+    assert rows["est-only"]["size"]["text"] == "~900"
+    assert "ESTIMATED" in rows["managed"]["size"]["title"], "an estimate must never pass for a measurement"
+    assert "est_weights_bytes" in rows["est-only"]["size"]["title"], "the tooltip still names the source field"
+    # A MEASURED size never gets the marker.
+    assert not rows["swept"]["size"]["text"].startswith("~")
+    assert not rows["adopt-me"]["size"]["text"].startswith("~")
+    assert rows["refused"]["size"]["text"] == ""
+    assert "size unknown" in rows["refused"]["size"]["title"]
+
+
+def test_models_load_form_selects_ride_the_shared_discovery_cache() -> None:
+    """Operator: 'both the provider and model should be the official dropdown
+    components ... select the provider, which then auto refresh the list of
+    available models for that provider.' The warm-up row uses the console's own
+    setSelectOptions recipe over the SAME cache the capability-defaults tab
+    fills (fetchDefaultProviders / fetchDefaultModels) — no second fetch path —
+    and the free-text lane opens ONLY when discovery has nothing to offer."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    # No second fetch path: both loaders go through the defaults-tab helpers.
+    provider_sync = _slice_function(source, "syncModelsLoadProviderOptions")
+    model_sync = _slice_function(source, "syncModelsLoadModelOptions")
+    assert "fetchDefaultProviders(" in provider_sync
+    assert "fetchDefaultModels(" in model_sync
+    assert 'setCustomLane("models-load-provider-custom"' in provider_sync
+    assert 'setCustomLane("models-load-model-custom"' in model_sync
+
+    harness = f"""
+{provider_sync}
+{model_sync}
+{_slice_function(source, "activeModelsLoadProvider")}
+{_slice_function(source, "activeModelsLoadModel")}
+{_slice_function(source, "customLaneValue")}
+{_slice_function(source, "setCustomLane")}
+{_slice_function(source, "setSelectOptions")}
+class El {{
+  constructor(id) {{ this.id = id; this.children = []; this.className = ""; this._tc = ""; this.value = ""; this.disabled = false; this.options = []; }}
+  get textContent() {{ return this._tc; }}
+  set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
+  append(...items) {{ this.children.push(...items); this.options = this.children; }}
+  get classList() {{
+    const self = this;
+    return {{
+      contains: (name) => String(self.className).split(" ").includes(name),
+      add(name) {{ self.className = (self.className + " " + name).trim(); }},
+      toggle(name, force) {{
+        const parts = String(self.className || "").split(" ").filter(Boolean).filter((p) => p !== name);
+        if (force) parts.push(name);
+        self.className = parts.join(" ");
+      }},
+    }};
+  }}
+}}
+const els = new Map();
+function $(id) {{ if (!els.has(id)) els.set(id, new El(id)); return els.get(id); }}
+const document = {{ createElement: () => new El("option") }};
+const state = {{ providerLabels: new Map() }};
+let _modelsCatalogSeq = 0;
+$("models-load-provider-custom").className = "hidden";
+$("models-load-model-custom").className = "hidden";
+let providers = ["lmstudio", "mlx"];
+let models = {{ lmstudio: ["qwen3-a3b"], mlx: [] }};
+const asked = [];
+async function fetchDefaultProviders() {{ asked.push("providers"); return providers; }}
+async function fetchDefaultModels(provider) {{ asked.push("models:" + provider); return models[provider] || []; }}
+const snap = (step) => ({{
+  step,
+  providerOptions: $("models-load-provider").options.map((o) => o.value),
+  providerDisabled: $("models-load-provider").disabled,
+  providerLaneHidden: $("models-load-provider-custom").className.includes("hidden"),
+  modelOptions: $("models-load-model").options.map((o) => o.value),
+  modelEmptyLabel: $("models-load-model").options[0] ? $("models-load-model").options[0].textContent : "",
+  modelLaneHidden: $("models-load-model-custom").className.includes("hidden"),
+  active: [activeModelsLoadProvider(), activeModelsLoadModel()],
+  asked: [...asked],
+}});
+const results = [];
+await syncModelsLoadProviderOptions();
+results.push(snap("initial"));
+// The operator picks a provider: the model list auto-refreshes for it.
+$("models-load-provider").value = "lmstudio";
+await syncModelsLoadModelOptions();
+results.push(snap("picked-lmstudio"));
+// A provider whose catalog is EMPTY opens the typing lane for the model.
+$("models-load-provider").value = "mlx";
+await syncModelsLoadModelOptions();
+results.push(snap("picked-mlx"));
+// Discovery with nothing at all: the provider lane opens too, and the typed
+// value is what the load reads.
+providers = [];
+await syncModelsLoadProviderOptions();
+$("models-load-provider-custom").value = " typed-provider ";
+$("models-load-model-custom").value = "typed-model";
+results.push(snap("offline"));
+console.log(JSON.stringify(results));
+"""
+    steps = {r["step"]: r for r in _node(harness)}
+
+    initial = steps["initial"]
+    assert initial["providerOptions"] == ["", "lmstudio", "mlx"], "the provider select is populated from discovery"
+    assert initial["providerDisabled"] is False
+    assert initial["providerLaneHidden"] is True, "a healthy catalog keeps the free-text lane SHUT"
+    assert initial["asked"] == ["providers"], "no provider picked yet = no model catalog to fetch"
+    assert initial["modelEmptyLabel"] == "Select provider first"
+
+    picked = steps["picked-lmstudio"]
+    assert "models:lmstudio" in picked["asked"], "picking a provider refreshes that provider's models"
+    assert picked["modelOptions"] == ["", "qwen3-a3b"]
+    assert picked["modelLaneHidden"] is True
+
+    mlx = steps["picked-mlx"]
+    assert mlx["modelOptions"] == [""], "an empty catalog offers nothing to pick"
+    assert mlx["modelLaneHidden"] is False, "an empty catalog must open the typing lane, not dead-end"
+
+    offline = steps["offline"]
+    assert offline["providerLaneHidden"] is False
+    assert offline["active"] == ["typed-provider", "typed-model"], "an open lane outranks the empty select"
+
+
+def test_models_load_custom_model_lane_never_inherits_the_previous_providers_model() -> None:
+    """PART D3. `setCustomLane("models-load-model-custom", !models.length, keep)`
+    seeded the free-text lane with `keep` — the model chosen under the PREVIOUS
+    provider. Switching provider to one whose catalog is empty therefore armed
+    the warm-up row with `newProvider/oldModel` and a click would load a pair
+    that never existed. The lane opens EMPTY; console-tui already does this."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    # The literal, so a future edit cannot quietly re-arm the lane.
+    assert 'setCustomLane("models-load-model-custom", !models.length, "");' in source
+    assert 'setCustomLane("models-load-model-custom", !models.length, models.length ? "" : keep)' not in source
+
+    harness = f"""
+{_slice_function(source, "syncModelsLoadModelOptions")}
+{_slice_function(source, "activeModelsLoadProvider")}
+{_slice_function(source, "activeModelsLoadModel")}
+{_slice_function(source, "customLaneValue")}
+{_slice_function(source, "setCustomLane")}
+{_slice_function(source, "setSelectOptions")}
+class El {{
+  constructor(id) {{ this.id = id; this.children = []; this.className = ""; this._tc = ""; this.value = ""; this.disabled = false; this.options = []; }}
+  get textContent() {{ return this._tc; }}
+  set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
+  append(...items) {{ this.children.push(...items); this.options = this.children; }}
+  get classList() {{
+    const self = this;
+    return {{
+      contains: (name) => String(self.className).split(" ").includes(name),
+      add(name) {{ self.className = (self.className + " " + name).trim(); }},
+      toggle(name, force) {{
+        const parts = String(self.className || "").split(" ").filter(Boolean).filter((p) => p !== name);
+        if (force) parts.push(name);
+        self.className = parts.join(" ");
+      }},
+    }};
+  }}
+}}
+const els = new Map();
+function $(id) {{ if (!els.has(id)) els.set(id, new El(id)); return els.get(id); }}
+const document = {{ createElement: () => new El("option") }};
+const state = {{ providerLabels: new Map() }};
+let _modelsCatalogSeq = 0;
+$("models-load-provider-custom").className = "hidden";
+$("models-load-model-custom").className = "hidden";
+const catalogs = {{ lmstudio: ["qwen3-a3b"], mlx: [] }};
+async function fetchDefaultModels(provider) {{ return catalogs[provider] || []; }}
+const results = [];
+// The operator picks lmstudio, then its one model.
+$("models-load-provider").value = "lmstudio";
+await syncModelsLoadModelOptions();
+$("models-load-model").value = "qwen3-a3b";
+results.push({{ step: "picked", model: activeModelsLoadModel() }});
+// ...then switches PROVIDER to one whose catalog is empty.
+$("models-load-provider").value = "mlx";
+await syncModelsLoadModelOptions();
+results.push({{
+  step: "switched",
+  laneHidden: $("models-load-model-custom").className.includes("hidden"),
+  laneValue: $("models-load-model-custom").value,
+  active: [activeModelsLoadProvider(), activeModelsLoadModel()],
+}});
+console.log(JSON.stringify(results));
+"""
+    steps = {r["step"]: r for r in _node(harness)}
+    assert steps["picked"]["model"] == "qwen3-a3b"
+    switched = steps["switched"]
+    assert switched["laneHidden"] is False, "an empty catalog must still open the typing lane"
+    assert switched["laneValue"] == "", "the lane must NEVER carry the previous provider's model"
+    assert switched["active"] == ["mlx", ""], (
+        "the warm-up row must read as mlx with nothing chosen, not mlx/qwen3-a3b"
+    )

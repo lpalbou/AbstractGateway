@@ -21,11 +21,20 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 0
-- Proposed: 30
-- Completed: 20
+- Planned: 1
+- Proposed: 38
+- Completed: 22
 - Deprecated: 1
 - Recurrent: 0
+
+<!-- Counts recomputed from the directories on 2026-08-29 while filing
+     0234. They had drifted (planned 0→1, proposed 30→38, completed
+     20→22) across earlier passes that added items without updating this
+     block; the skill treats count drift as a real backlog bug to fix in
+     the same pass rather than carry. The Proposed Items table below
+     still lists fewer rows than the directory holds — untabled items
+     are a separate hygiene pass, flagged rather than silently
+     backfilled. -->
 
 ## Priority Bands
 
@@ -118,6 +127,7 @@ relevant.
 | [0080_audit_reads_integrity_and_session_signature.md](proposed/0080_audit_reads_integrity_and_session_signature.md) | Phase 1. Promote with hosted multi-user hardening. |
 | [0081_failure_mode_test_suite.md](proposed/0081_failure_mode_test_suite.md) | Phase 2. Promote alongside 0063/0075 or incrementally now. |
 | [0085_runner_lock_adversary_followups.md](proposed/0085_runner_lock_adversary_followups.md) | Hardening residue of the 2026-07-11 runner-lock handover (adversary F3-F13, non-blocking; P0/P1 already fixed + pinned). Runner items (F3-F8) promotable any time — each is small + testable; launcher items (F9-F13) need observer/flow coordination on their duplicated script copies. |
+| [0234_deny_verb_for_run_tool_policy.md](proposed/0234_deny_verb_for_run_tool_policy.md) | Promote when a thin client commits to shipping the default-stance permission model — AbstractCode has asked (2026-08-28) and its client half is blocked on this. Verified gap: the run policy's two lists are both allow-shaped (`require_approval_tools` means ASK, not REFUSE), so "deny all", "deny + whitelist" and "approve + blacklist" are not expressible on the wire. |
 
 ## Completed Work Ledger
 

@@ -1749,34 +1749,15 @@ def _resolved_vision_backend() -> str:
 
 
 def _gateway_direct_image_configured() -> bool:
-    if _env_first("ABSTRACTCORE_SERVER_BASE_URL"):
-        return True
+    """Image generation is configured iff the Gateway has an `output.image`
+    default route (a task row or the modality cell) in the AbstractCore store.
 
-    backend = _resolved_vision_backend()
-
-    if backend in {"mlx-gen", "mlxgen", "mflux", "m-flux"}:
-        if _env_first("ABSTRACTVISION_MFLUX_MODEL", "ABSTRACTGATEWAY_VISION_MFLUX_MODEL", "ABSTRACTVISION_MODEL_ID"):
-            return True
-        return _gateway_has_local_mflux_preset("")
-    if backend in {"diffusers", "huggingface", "hf", "hf-diffusers"}:
-        return True
-    if backend in {"sdcpp", "sd-cpp", "stable-diffusion.cpp", "stable-diffusion-cpp"}:
-        return bool(_env_first("ABSTRACTVISION_SDCPP_MODEL", "ABSTRACTVISION_SDCPP_DIFFUSION_MODEL"))
-    if _gateway_has_local_mflux_preset(""):
-        return True
-
-    base_url = _env_first("ABSTRACTVISION_BASE_URL", "OPENAI_BASE_URL")
-    api_key = _env_first("ABSTRACTVISION_API_KEY", "OPENAI_API_KEY")
-    if base_url:
-        if _env_is_openai_base_url(base_url):
-            return bool(api_key)
-        return True
-
-    # AbstractVision's OpenAI backend defaults to the hosted OpenAI base URL.
-    # That endpoint is only usable when an API key is present.
-    if backend in {"openai", ""}:
-        return bool(api_key)
-    return False
+    NO env var gates this. The capability is defined ONLY by the Gateway's
+    default models, and apps (AbstractFlow, ...) may override the route per
+    request; an `ABSTRACTVISION_*` export must never hide a configured model
+    (operator ruling 2026-09-04: a configured mlx-gen route was advertised as
+    unconfigured because this probe demanded an env var the config replaces)."""
+    return bool(_configured_modality_route_provider("image"))
 
 
 def _optional_package_status(module_name: str, dist_name: Optional[str] = None) -> Dict[str, Any]:
@@ -23453,8 +23434,17 @@ def _gateway_model_residency_contract_descriptor() -> Dict[str, Any]:
         # row_v1 stays additive-tolerant: the lock/modality/calibration wave
         # added OPTIONAL row fields (locked, lockable, modalities,
         # calibrated_context_length, context_calibrated, host_id, host_name)
-        # without a version bump — absent means unknown, never false.
+        # and the memory wave added est_weights_bytes/cache_bytes, all without
+        # a version bump — absent means unknown, never false.
         "row_schema": MODEL_RESIDENCY_ROW_SCHEMA_V1,
+        # The DISPLAY-SIZE COALESCE RULE every residency UI must share: print
+        # the FIRST KNOWN of these fields as the row's size. A model server
+        # reports `size_bytes` (`size_vram_bytes` for the resident slice); an
+        # in-process MLX/HuggingFace runtime has no server to ask, so only its
+        # provider's `est_weights_bytes` estimate carries the row. `cache_bytes`
+        # is NOT part of the size: prompt-cache bytes are a separate footprint,
+        # summed on their own (`totals.cache_bytes_models`).
+        "display_size_field_order": list(MODEL_RESIDENCY_DISPLAY_SIZE_FIELD_ORDER),
         "modality_ui": _gateway_model_residency_modality_ui(),
         "tasks": task_names,
         "supports": supports,
@@ -23807,6 +23797,15 @@ def _row_v1_int(rec: Dict[str, Any], *names: str) -> Optional[int]:
     return None
 
 
+def _row_v1_camel(name: str) -> str:
+    """`size_vram_bytes` -> `sizeVramBytes` (the camelCase alias thin clients
+    have historically sent alongside the snake_case field)."""
+    head, _, tail = str(name).partition("_")
+    if not tail:
+        return head
+    return head + "".join(part[:1].upper() + part[1:] for part in tail.split("_"))
+
+
 def _row_v1_str_list(rec: Dict[str, Any], *names: str) -> Optional[list[str]]:
     for name in names:
         value = rec.get(name)
@@ -23829,7 +23828,8 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
     The schema is ADDITIVE-TOLERANT and stays `model_residency_row_v1`: the
     lock/modality/calibration wave added optional fields (locked, lockable,
     modalities, calibrated_context_length, context_calibrated, host_id,
-    host_name) that are null when a runtime does not report them.
+    host_name) that are null when a runtime does not report them, and the
+    memory wave added two more (est_weights_bytes, cache_bytes).
     """
     if not isinstance(record, dict):
         return None
@@ -23855,6 +23855,11 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "default": _row_v1_bool(record, "default", "is_default"),
         "size_bytes": _row_v1_int(record, "size_bytes", "sizeBytes"),
         "size_vram_bytes": _row_v1_int(record, "size_vram_bytes", "sizeVramBytes", "vram_bytes"),
+        # Per-model memory truth from Core (MLX/HuggingFace weight estimate;
+        # prompt-cache store footprint). Same safe int coercion as the size
+        # pair — nan/inf/bool/junk coerce to null, never a guess.
+        "est_weights_bytes": _row_v1_int(record, "est_weights_bytes", "estWeightsBytes"),
+        "cache_bytes": _row_v1_int(record, "cache_bytes", "cacheBytes"),
         "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
         "context_length": _row_v1_int(record, "context_length", "contextLength"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
@@ -23870,6 +23875,42 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "host_name": _row_v1_str(record, "host_name", "hostName"),
         "details": dict(record),
     }
+
+
+# The DISPLAY-SIZE COALESCE RULE every residency UI shares: the first KNOWN
+# field wins, in this order. Published to clients as
+# `contracts.common.model_residency.display_size_field_order` so the console,
+# the TUI and abstractflow render one number instead of three private guesses.
+#
+# Why the order: `size_bytes` is the model server's own report of what it
+# holds (Ollama/LM Studio) — the most authoritative figure when present.
+# `size_vram_bytes` is the resident slice of that same figure. Only when the
+# server reports neither (in-process MLX/HuggingFace runtimes have no server
+# to ask) does the provider's own `est_weights_bytes` estimate carry the row.
+# `cache_bytes` is deliberately NOT in the list: prompt-cache bytes are a
+# SEPARATE footprint from the weights, and summing them into one "size" would
+# double-count what the device actually holds.
+MODEL_RESIDENCY_DISPLAY_SIZE_FIELD_ORDER: tuple[str, ...] = (
+    "size_bytes",
+    "size_vram_bytes",
+    "est_weights_bytes",
+)
+
+
+def _model_residency_display_size_bytes(row: Any) -> Optional[int]:
+    """The one number a residency UI should print as a row's size, or None.
+
+    Applies `MODEL_RESIDENCY_DISPLAY_SIZE_FIELD_ORDER` — first KNOWN wins —
+    with the row_v1 int coercion (bool/nan/inf/junk are not values). Accepts
+    raw runtime records as well as normalized rows, so callers on either side
+    of the normalizer get the same answer."""
+    if not isinstance(row, dict):
+        return None
+    for name in MODEL_RESIDENCY_DISPLAY_SIZE_FIELD_ORDER:
+        value = _row_v1_int(row, name, _row_v1_camel(name))
+        if value is not None:
+            return value
+    return None
 
 
 def _model_residency_rows_v1(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -25921,6 +25962,25 @@ async def host_state() -> Dict[str, Any]:
         ]
         return int(sum(vals)) if vals else None
 
+    def _sum_resident_display_size(rows: list[Any]) -> Optional[int]:
+        """`totals.model_bytes`: the shared display size (first known of
+        `size_bytes` / `size_vram_bytes` / `est_weights_bytes`) summed over the
+        rows a provider VERIFIED resident.
+
+        Two rules, both learned the hard way: (1) a configured-but-cold row's
+        weights are not in memory, so counting it inflates the host total; and
+        (2) an in-process MLX/HuggingFace runtime never reports `size_bytes`,
+        so a `size_bytes`-only sum silently reported "0 B" beside a resident
+        multi-gigabyte model. None when no resident row carries any size."""
+        vals = [
+            size
+            for row in rows
+            if isinstance(row, dict) and row.get("resident") is True
+            for size in (_model_residency_display_size_bytes(row),)
+            if size is not None
+        ]
+        return int(sum(vals)) if vals else None
+
     # Host identity block (multi-host "agentic OS" views): pass through when
     # the memory snapshot carries one; absent means this runtime predates it.
     host_block = memory.get("host") if isinstance(memory, dict) and isinstance(memory.get("host"), dict) else None
@@ -25940,7 +26000,16 @@ async def host_state() -> Dict[str, Any]:
             # known row — configured/cached included — so clients that need a
             # truthful "N loaded" read this, not `models`.
             "models_resident": sum(1 for row in models or [] if isinstance(row, dict) and row.get("resident") is True),
-            "model_bytes": _sum_known_bytes(models or [], "size_bytes"),
+            # The shared display size over RESIDENT rows only (see
+            # `_sum_resident_display_size` and the contract's
+            # `display_size_field_order`).
+            "model_bytes": _sum_resident_display_size(models or []),
+            # Additive: the prompt-cache footprint carried by the model rows
+            # themselves — DISTINCT from `session_cache_bytes`, which totals the
+            # session-cache enumeration. A row's `cache_bytes` is per-model
+            # store bytes; the two lists overlap only by coincidence, so they
+            # are never added together.
+            "cache_bytes_models": _sum_known_bytes(models or [], "cache_bytes"),
             "session_caches": len(session_caches or []),
             "session_cache_bytes": _sum_known_bytes(session_caches or [], "bytes"),
         },

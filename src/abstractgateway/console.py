@@ -565,10 +565,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .meter-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
 	    .meter-label { color: var(--muted); font-weight: 600; }
 	    .meter-value { color: var(--muted); white-space: nowrap; }
-	    /* Models tab: the admin warm-up row (inputs are width:100% globally —
-	       cap them so the row stays one line). */
+	    /* Models tab: the itemized memory breakdown UNDER the meters — what the
+	       framework can actually account for, line by line. Same token vocabulary
+	       as the meters it sits beneath; no new color language.
+	       THREE KINDS OF LINE: items (facts), then a RULE, then the reference
+	       counters (Σ model weights / RAM / accelerator heap — separate
+	       measurements, dimmed so they never read as more items), then the GGUF
+	       note. The rule is load-bearing: it is what stops a reader adding the
+	       reference counters onto the items above them. */
+	    .mem-breakdown { display: grid; gap: 3px; margin: 0 0 12px; max-width: 640px; font-size: 12px; }
+	    .mem-breakdown-head { color: var(--muted); font-weight: 600; }
+	    .mem-breakdown-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; }
+	    .mem-breakdown-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	    .mem-breakdown-note { color: var(--muted); }
+	    .mem-breakdown-bytes { color: var(--muted); white-space: nowrap; }
+	    .mem-breakdown-rule { border-top: 1px solid var(--line); margin: 5px 0 2px; }
+	    .mem-breakdown-row.reference .mem-breakdown-name { color: var(--muted); }
+	    .mem-breakdown-note-line { color: var(--muted); white-space: normal; line-height: 1.45; margin-top: 5px; }
+	    /* Models tab: the admin warm-up row (inputs and selects are width:100%
+	       globally — cap them so the row stays one line). */
 	    .models-load-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
-	    .models-load-form input[list] { width: auto; flex: 1 1 190px; min-width: 150px; }
+	    .models-load-form select, .models-load-form input[type="text"] { width: auto; flex: 1 1 190px; min-width: 150px; }
 	    .tpl-spark { width: 100%; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; line-height: 1.5; }
 	    .entity-checkbox input { width: auto; }
 	    .entity-prompt-layers { display: grid; gap: 10px; margin: 8px 0; }
@@ -1875,6 +1892,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="models-message" class="message"></div>
 	              <div id="models-degraded" class="entity-chip-row hidden"></div>
 	              <div id="models-meters" class="meter-stack"></div>
+	              <div id="models-breakdown" class="mem-breakdown hidden"></div>
 	              <div id="models-host-facts" class="entity-overview"></div>
 	            </section>
 	            <section id="models-loaded-section" class="session-only">
@@ -1886,10 +1904,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <label id="models-show-cached-label" class="entity-checkbox hidden" title="Also show configured / cached rows that are NOT resident in memory — informational only, nothing to unload"><input id="models-show-cached" type="checkbox"> <span id="models-show-cached-text">Show configured / cached</span></label>
 	              </div>
 	              <div id="models-load-form" class="models-load-form hidden">
-	                <input id="models-load-provider" list="models-load-provider-options" placeholder="provider (e.g. mlx, lmstudio)" aria-label="Provider to warm up" title="Provider to warm up — configured providers are suggested, free text stays allowed">
-	                <datalist id="models-load-provider-options"></datalist>
-	                <input id="models-load-model" list="models-load-model-options" placeholder="model id" aria-label="Model to warm up" title="Model to warm up — discovered models are suggested, free text stays allowed">
-	                <datalist id="models-load-model-options"></datalist>
+	                <select id="models-load-provider" aria-label="Provider to warm up" title="Provider to warm up — the discovered provider catalog (the same source the Multimodal Capabilities tab picks from)"></select>
+	                <input id="models-load-provider-custom" class="hidden" type="text" autocomplete="off" aria-label="Provider id (nothing was discovered)" placeholder="type the provider id — none were discovered">
+	                <select id="models-load-model" aria-label="Model to warm up" title="Model to warm up — the selected provider's discovered catalog; pick a provider first"></select>
+	                <input id="models-load-model-custom" class="hidden" type="text" autocomplete="off" aria-label="Model id (discovery could not reach this provider)" placeholder="type the model id — discovery could not reach this provider">
 	                <label class="entity-checkbox" title="Lock the model in memory after loading so nothing can evict it until it is unlocked"><input id="models-load-lock" type="checkbox"> lock in memory</label>
 	                <button id="models-load-button" class="secondary" type="button" title="Load (warm up) this model on the host now">Load model</button>
 	              </div>
@@ -4993,11 +5011,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // management view over the machine data-home registry. Sizes are live;
 	    // purge shows a dry-run accounting first; protected rows render the
 	    // owner's refusal VERBATIM instead of a grayed mystery button.
+	    // BINARY math with BINARY labels (IEC), and the SAME arithmetic and the
+	    // SAME unit strings as console-tui, abstractcode-tui, abstractflow and
+	    // @abstractframework/monitor-memory. This is a MEMORY figure first, and
+	    // memory is binary everywhere it is configured or reported: this host
+	    // reads 137,438,953,472 B = 128.0 GiB exactly, and
+	    // `sysctl iogpu.wired_limit_mb=110000` lands on 115,343,360,000 B =
+	    // 107.4 GiB. The other four surfaces already divided by 1024 — they
+	    // only LABELLED the result `GB`. So the math here moves to binary and
+	    // the labels there move to `iB`; after this the same byte count renders
+	    // the same string on all five surfaces. Do not "simplify" one of them
+	    // back to 1e9: that is exactly the divergence this replaced (89.99 GB
+	    // on the web vs 83.8 GB in the TUIs for one 89,986,353,824 B GGUF).
 	    function _fmtBytes(n) {
 	      if (n === null || n === undefined) return "?";
-	      if (n >= 1e9) return (n / 1e9).toFixed(2) + " GB";
-	      if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB";
-	      if (n >= 1e3) return (n / 1e3).toFixed(1) + " KB";
+	      const KiB = 1024, MiB = 1024 * KiB, GiB = 1024 * MiB, TiB = 1024 * GiB;
+	      if (n >= TiB) return (n / TiB).toFixed(1) + " TiB";
+	      if (n >= GiB) return (n / GiB).toFixed(1) + " GiB";
+	      if (n >= MiB) return (n / MiB).toFixed(1) + " MiB";
+	      if (n >= KiB) return (n / KiB).toFixed(1) + " KiB";
 	      return String(n) + " B";
 	    }
 	    // ---- Runtimes: master -> tabbed detail (operator dm#32, 2026-07-25;
@@ -8189,7 +8221,198 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (typeof s !== "number" || !isFinite(s) || s <= 0) return "";
 	      try { return new Date(s * 1000).toISOString().slice(0, 19).replace("T", " "); } catch { return ""; }
 	    }
-	    function modelsEmptyRow(body, colSpan, text) {
+	    // ONE display-size rule, shared by every residency surface (this console,
+    // abstractflow's Resources panel, the monitor-memory widget): the first
+    // KNOWN of size_bytes -> size_vram_bytes -> est_weights_bytes. The SOURCE
+    // rides along so an ESTIMATE is never rendered as a measurement — the
+    // tooltip says which one the number is. An MLX/HF row that only carries
+    // est_weights_bytes used to render a BLANK size cell; it now renders the
+    // estimate, labeled as one.
+    function modelDisplaySize(row) {
+      const r = (row && typeof row === "object") ? row : {};
+      const pick = (value, source, label) => (typeof value === "number" && isFinite(value) && value >= 0) ? { bytes: value, source, label } : null;
+      return pick(r.size_bytes, "size_bytes", "reported size")
+        || pick(r.size_vram_bytes, "size_vram_bytes", "reported VRAM size")
+        || pick(r.est_weights_bytes, "est_weights_bytes", "ESTIMATED weights (not measured)")
+        || { bytes: null, source: "", label: "size unknown" };
+    }
+    function modelCacheBytes(row) {
+      const v = row ? row.cache_bytes : null;
+      return (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
+    }
+    // THE ACCELERATOR HEAP LINE — an accelerator-heap figure, clearly scoped,
+    // and NEVER a statement about how full this machine is (RAM stays the
+    // primary system meter; it is rendered first, above this one).
+    //
+    // device.allocated_bytes is PROCESS-LOCAL: on Apple silicon it reads 0
+    // while a 93 GB GGUF is resident in another process, which is how this
+    // meter came to say "Device · metal 0 B" beside a machine with 105 GB of
+    // accelerator memory in use. device.host_in_use_bytes (ioreg "In use
+    // system memory") is the genuine accelerator counter — driver-allocated
+    // Metal buffers across every process — and device.wired_limit_bytes is
+    // the REAL ceiling (total_bytes is the chip's whole unified pool, not what
+    // the accelerator may take). Both are preferred whenever known.
+    //
+    // It is BLIND to memory-mapped GGUF weights: llama.cpp mmaps the .gguf and
+    // wraps the pages with newBufferWithBytesNoCopy, so they never become
+    // driver-allocated accelerator memory. Measured live on this host: a fully
+    // offloaded 89,986,353,824 B GGUF, 76 GB of process RSS, and
+    // host_in_use_bytes at 1,042,120,704 (0.76% of a 137 GB machine). Hence
+    // the note, which rides EVERY variant of this label, and hence the scope
+    // words: exactly "all processes" or "this process only" — never "host",
+    // never a whole-machine scope name of any kind, and never anything a
+    // reader could take for total system usage.
+    function deviceMeterView(dev) {
+      const d = (dev && typeof dev === "object") ? dev : {};
+      const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
+      const backend = d.backend ? String(d.backend) : "";
+      const hostUsed = num(d.host_in_use_bytes);
+      const wired = num(d.wired_limit_bytes);
+      const total = num(d.total_bytes);
+      const free = num(d.free_bytes);
+      let procUsed = num(d.allocated_bytes);
+      if (procUsed === null && total !== null && free !== null) procUsed = Math.max(0, total - free);
+      const scope = hostUsed === null ? "this process only" : "all processes";
+      const used = hostUsed === null ? procUsed : hostUsed;
+      const ceiling = wired === null ? total : wired;
+      const label = `Accelerator heap · ${backend || "device"} (${scope})`;
+      const note = "memory-mapped GGUF weights are not counted here";
+      const fraction = (used !== null && ceiling !== null && ceiling > 0) ? used / ceiling : null;
+      const value = used === null ? "unknown" : `${_fmtBytes(used)}${ceiling === null ? "" : ` / ${_fmtBytes(ceiling)}`}`;
+      const bits = [note];
+      bits.push(hostUsed === null
+        ? "device.allocated_bytes — THIS PROCESS ONLY; this host reports no cross-process accelerator figure, so a model resident in another process is not counted here"
+        : "device.host_in_use_bytes — driver-allocated accelerator memory across every process on this machine, not just this gateway");
+      if (ceiling !== null) bits.push(wired !== null ? `ceiling: wired limit ${_fmtBytes(wired)}` : `ceiling: device total ${_fmtBytes(total)}`);
+      if (hostUsed !== null && procUsed !== null) bits.push(`this process: ${_fmtBytes(procUsed)}`);
+      if (wired !== null && total !== null) bits.push(`device total ${_fmtBytes(total)}`);
+      return { scope, used, ceiling, fraction, label, note, value, title: bits.join(" · "), hostUsed, procUsed, wired, total };
+    }
+    // WHAT IS ACTUALLY EATING THE MEMORY, itemized (operator: "not only to see
+    // the usage, but a more detailed usage where our models and caches appears
+    // here"). PURE — it takes the snapshot and returns lines, so the rule set
+    // is testable without a DOM.
+    //
+    // THREE KINDS OF LINE, in one order, on every residency surface:
+    //   item      — a fact the framework knows, LABELLED with what it measures.
+    //   reference — a separate counter, NOT summable with the items above it.
+    //   note      — the GGUF explanation, only when Σ weights exceeds the heap.
+    //
+    // The old remainder line is GONE, key and all. It subtracted RAM-dimensioned
+    // quantities (model weights, process RSS) from an ACCELERATOR counter
+    // (host_in_use_bytes), computed −79 GB on this machine, clamped to "0 B"
+    // and blamed "overlap" for what was a category error. No replacement
+    // remainder is introduced: attributing against RAM would need a
+    // per-process accounting this framework does not have, and a wrong second
+    // remainder is how the first one happened.
+    //
+    // EMISSION RULE, identical on every surface: a line is emitted when its
+    // value is KNOWN (non-null) and omitted when unknown. A known 0 IS
+    // emitted. No line is "always emitted"; none is conditional on being
+    // non-zero.
+    function memoryBreakdown(data) {
+      const snap = (data && typeof data === "object") ? data : {};
+      const mem = (snap.memory && typeof snap.memory === "object") ? snap.memory : {};
+      const ram = (mem.ram && typeof mem.ram === "object") ? mem.ram : {};
+      const proc = (mem.process && typeof mem.process === "object") ? mem.process : {};
+      const totals = (snap.totals && typeof snap.totals === "object") ? snap.totals : {};
+      const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
+      // WHICH FIELD SUPPLIED THE NUMBER — an estimate is never presented as a
+      // measurement, in the breakdown any more than in the table.
+      const SOURCE_PHRASE = {
+        size_bytes: "reported by the model server (size_bytes)",
+        size_vram_bytes: "reported by the model server (size_vram_bytes)",
+        est_weights_bytes: "estimated on-disk weight size (est_weights_bytes)",
+      };
+      // THE SHARED ITEM-KEY RULE (all four residency surfaces): a non-empty
+      // `runtime_id` when the host sent one, else `<provider>:<model>` — real
+      // sweep rows arrive with runtime_id NULL. No index suffix, no task
+      // segment, no leading empty segment. Colliding keys are KEPT: a genuine
+      // duplicate provider+model row is itself worth seeing.
+      const itemKey = (row) => `model:${(typeof row.runtime_id === "string" && row.runtime_id)
+        ? row.runtime_id
+        : `${row.provider || ""}:${row.model || ""}`}`;
+      const items = [];
+      // 1..n — one line per RESIDENT row with a KNOWN display size. A resident
+      // row whose size this host never reported is SKIPPED: no invented zero.
+      const modelRows = Array.isArray(snap.models) ? snap.models.filter((r) => r && r.resident === true) : [];
+      let sumWeights = null;
+      for (const row of modelRows) {
+        const size = modelDisplaySize(row);
+        if (size.bytes === null) continue;
+        sumWeights = (sumWeights === null ? 0 : sumWeights) + size.bytes;
+        items.push({
+          kind: "item",
+          key: itemKey(row),
+          name: row.model ? String(row.model) : (row.runtime_id || "model"),
+          bytes: size.bytes,
+          estimated: size.source === "est_weights_bytes",
+          detail: `resident model weights · ${SOURCE_PHRASE[size.source] || size.source}`,
+        });
+      }
+      // n+1 — prompt-cache bytes held FOR the resident models.
+      let modelCaches = num(totals.cache_bytes_models);
+      if (modelCaches === null) {
+        modelCaches = modelRows.reduce((acc, r) => {
+          const v = modelCacheBytes(r);
+          return v === null ? acc : (acc === null ? 0 : acc) + v;
+        }, null);
+      }
+      if (modelCaches !== null) {
+        items.push({ kind: "item", key: "model_caches", name: "model KV caches", bytes: modelCaches, estimated: false, detail: "prompt-cache bytes held for resident models" });
+      }
+      // n+2 — prompt-cache bytes held BY gateway sessions.
+      let sessionCaches = num(totals.session_cache_bytes);
+      if (sessionCaches === null && Array.isArray(snap.session_caches)) {
+        sessionCaches = snap.session_caches.reduce((acc, c) => {
+          const v = (c && typeof c.bytes === "number" && isFinite(c.bytes) && c.bytes >= 0) ? c.bytes : null;
+          return v === null ? acc : (acc === null ? 0 : acc) + v;
+        }, null);
+      }
+      if (sessionCaches !== null) {
+        items.push({ kind: "item", key: "session_caches", name: "session caches", bytes: sessionCaches, estimated: false, detail: "prompt-cache bytes held by gateway sessions" });
+      }
+      // n+3 — the gateway process itself. RSS is where memory-mapped GGUF
+      // weights DO show up, which is why it is named here and in the note.
+      const rss = num(proc.rss_bytes);
+      if (rss !== null) {
+        items.push({ kind: "item", key: "process_rss", name: "gateway process RSS", bytes: rss, estimated: false, detail: "resident set size of the gateway process — includes memory-mapped GGUF weights" });
+      }
+      // REFERENCES: separate counters. The renderer MUST put a rule between
+      // these and the items so no reader adds the two groups together.
+      const references = [];
+      if (sumWeights !== null) {
+        references.push({ kind: "reference", key: "sum_model_weights", name: "Σ model weights", bytes: sumWeights, value: _fmtBytes(sumWeights), detail: "sum of the resident model weights above" });
+      }
+      const ramUsed = num(ram.used_bytes);
+      const ramTotal = num(ram.total_bytes);
+      if (ramUsed !== null) {
+        references.push({
+          kind: "reference",
+          key: "ram",
+          name: "RAM used",
+          bytes: ramUsed,
+          value: ramTotal === null ? _fmtBytes(ramUsed) : `${_fmtBytes(ramUsed)} / ${_fmtBytes(ramTotal)}`,
+          detail: "system memory in use / installed",
+        });
+      }
+      const dev = deviceMeterView(mem.device);
+      if (dev.used !== null) {
+        references.push({ kind: "reference", key: "accelerator", name: dev.label, bytes: dev.used, value: dev.value, detail: dev.note });
+      }
+      // THE NOTE: emitted only when both figures are known and Σ weights
+      // actually exceeds the heap. That is the NORMAL GGUF case, not an
+      // inconsistency, and it must read as an explanation rather than a fault.
+      const note = (sumWeights !== null && dev.used !== null && sumWeights > dev.used)
+        ? {
+            kind: "note",
+            key: "gguf_mmap",
+            text: "Σ model weights exceeds the accelerator heap. That is the normal case for memory-mapped GGUF weights: llama.cpp maps them from disk, so they are resident as process RSS and are not counted in the accelerator heap.",
+          }
+        : null;
+      return { items, references, note };
+    }
+    function modelsEmptyRow(body, colSpan, text) {
 	      if (!body) return;
 	      body.textContent = "";
 	      const tr = document.createElement("tr");
@@ -8302,12 +8525,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      box.append(meterRow("RAM", ramFrac,
 	        ramFrac === null ? "unknown" : `${_fmtBytes(ram.used_bytes)} / ${_fmtBytes(ram.total_bytes)} · ${_fmtPct(typeof ram.percent === "number" ? ram.percent : ramFrac * 100)}`,
 	        "Host RAM used / total"));
-	      const dev = (mem.device && typeof mem.device === "object") ? mem.device : {};
-	      const devFrac = (typeof dev.allocated_bytes === "number" && typeof dev.total_bytes === "number" && dev.total_bytes > 0)
-	        ? dev.allocated_bytes / dev.total_bytes : null;
-	      box.append(meterRow(dev.backend ? `Device · ${dev.backend}` : "Device", devFrac,
-	        devFrac === null ? "unknown" : `${_fmtBytes(dev.allocated_bytes)} / ${_fmtBytes(dev.total_bytes)}`,
-	        "Accelerator memory allocated / total"));
+	      // RAM stays the PRIMARY system meter — it is the one above, and it is
+	      // the meter a reader takes as "how full is this machine". The
+	      // accelerator heap is a second, separately-scoped line: the
+	      // cross-process figure over the process-local one, the wired limit
+	      // over the device total, and deviceMeterView's note ("memory-mapped
+	      // GGUF weights are not counted here") leads the meter's title tooltip
+	      // so the caveat travels with the number.
+	      const devView = deviceMeterView(mem.device);
+	      box.append(meterRow(devView.label, devView.fraction, devView.value, devView.title));
 	      const gpu = (data.gpu && typeof data.gpu === "object") ? data.gpu : {};
 	      if (gpu.supported === true) {
 	        // GPU load renders only when the probe says supported — the
@@ -8318,12 +8544,66 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          gpu.source ? `GPU utilization via ${gpu.source}` : "GPU utilization"));
 	      }
 	    }
+	    function renderHostBreakdown(data) {
+	      // The itemized view sits directly UNDER the meters: a meter says how
+	      // full a counter is, this says WHAT the framework can account for.
+	      // Nothing here is fabricated — a figure this host did not report is not
+	      // a line at all.
+	      //
+	      // ITEMS first, then a RULE, then the REFERENCE counters. The rule is
+	      // load-bearing, not decoration: the references are separate measurements
+	      // (Σ weights, RAM, the accelerator heap) and must never be read as more
+	      // rows to add onto the items above them. The GGUF note closes the block
+	      // when Σ weights exceeds the heap.
+	      const box = $("models-breakdown");
+	      if (!box) return;
+	      box.textContent = "";
+	      const view = memoryBreakdown(data);
+	      if (!view.items.length && !view.references.length) { box.classList.add("hidden"); return; }
+	      box.classList.remove("hidden");
+	      const head = document.createElement("div");
+	      head.className = "mem-breakdown-head";
+	      head.textContent = "What is using memory";
+	      head.title = "Every line is a figure this host reported. The counters below the rule are SEPARATE measurements of the same machine — not further items to add to the ones above.";
+	      box.append(head);
+	      const line = (entry, extraClass, valueText) => {
+	        const row = document.createElement("div");
+	        row.className = extraClass ? `mem-breakdown-row ${extraClass}` : "mem-breakdown-row";
+	        const name = document.createElement("span");
+	        name.className = "mem-breakdown-name";
+	        name.textContent = entry.name;
+	        if (entry.detail) {
+	          const detail = document.createElement("span");
+	          detail.className = "mem-breakdown-note";
+	          detail.textContent = ` — ${entry.detail}`;
+	          name.append(detail);
+	        }
+	        const value = document.createElement("span");
+	        value.className = "mem-breakdown-bytes";
+	        value.textContent = valueText;
+	        row.append(name, value);
+	        box.append(row);
+	      };
+	      // The SAME `~` estimate marker the table and the TUIs carry, so an
+	      // estimated weight can never render as a measured one.
+	      for (const item of view.items) line(item, "", `${item.estimated ? "~" : ""}${_fmtBytes(item.bytes)}`);
+	      if (view.items.length && view.references.length) {
+	        const rule = document.createElement("div");
+	        rule.className = "mem-breakdown-rule";
+	        box.append(rule);
+	      }
+	      for (const ref of view.references) line(ref, "reference", ref.value);
+	      if (view.note) {
+	        const note = document.createElement("div");
+	        note.className = "mem-breakdown-note-line";
+	        note.textContent = view.note.text;
+	        box.append(note);
+	      }
+	    }
 	    function renderHostFacts(data) {
 	      const box = $("models-host-facts");
 	      if (!box) return;
 	      box.textContent = "";
-	      const mem = (data.memory && typeof data.memory === "object") ? data.memory : {};
-	      const proc = (mem.process && typeof mem.process === "object") ? mem.process : {};
 	      const totals = (data.totals && typeof data.totals === "object") ? data.totals : {};
 	      const host = (data.host && typeof data.host === "object") ? data.host : {};
 	      // NO fabricated zeros: a degraded section (models/session_caches
@@ -8341,9 +8621,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const residentBytes = modelRows === null ? null : modelRows.reduce(
 	        (acc, r) => (r && r.resident === true && typeof r.size_bytes === "number") ? (acc === null ? r.size_bytes : acc + r.size_bytes) : acc, null);
 	      const nCaches = (Array.isArray(data.session_caches) && typeof totals.session_caches === "number") ? totals.session_caches : null;
+	      // PROCESS RSS IS STATED EXACTLY ONCE, and the one place is the
+	      // breakdown's `process_rss` item — where it is labelled with what it
+	      // measures ("includes memory-mapped GGUF weights"). It used to render
+	      // here TOO, so one memory panel carried the same 76 GB twice with two
+	      // different framings; double-counting is precisely the confusion this
+	      // section exists to remove. Host id / host name stay: identity is not
+	      // a duplicate figure.
 	      const rows = [
 	        ["Host", host.host_name || host.host_id || ""],
-	        ["Process RSS", typeof proc.rss_bytes === "number" ? _fmtBytes(proc.rss_bytes) : ""],
 	        ["Models", nResident === null ? "" : `${nResident} resident${residentBytes === null ? "" : ` · ${_fmtBytes(residentBytes)}`}${typeof nKnown === "number" && nKnown > nResident ? ` · ${nKnown - nResident} configured / cached` : ""}`],
 	        ["Session caches", nCaches === null ? "" : (nCaches === 0 ? "0 caches" : `${nCaches} cache${nCaches === 1 ? "" : "s"} · ${totals.session_cache_bytes == null ? "size unknown" : _fmtBytes(totals.session_cache_bytes)}`)],
 	      ];
@@ -8542,9 +8828,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const resTd = document.createElement("td");
 	        resTd.append(residencyPill(row));
 	        tr.append(resTd);
+	        // SIZE (operator: "an estimate of the current memory footprint used
+	        // for each model currently loaded"). The coalesced display size
+	        // renders for EVERY row that has one — an MLX/HF row carrying only
+	        // est_weights_bytes used to render blank — and an est_weights_bytes
+	        // figure carries the SAME `~` prefix the TUIs render, ON SCREEN and
+	        // not only in the tooltip: a marker nobody hovers to see is a marker
+	        // nobody sees. The tooltip still names the source field. cache_bytes
+	        // rides as a secondary figure when the host reports it.
 	        const sizeTd = document.createElement("td");
-	        sizeTd.textContent = typeof row.size_bytes === "number" ? _fmtBytes(row.size_bytes) : "";
-	        if (typeof row.size_vram_bytes === "number") sizeTd.title = `VRAM ${_fmtBytes(row.size_vram_bytes)}`;
+	        const sizeView = modelDisplaySize(row);
+	        const cacheBytes = modelCacheBytes(row);
+	        const sizeMark = sizeView.source === "est_weights_bytes" ? "~" : "";
+	        sizeTd.textContent = sizeView.bytes === null
+	          ? (cacheBytes === null ? "" : `${_fmtBytes(cacheBytes)} cache`)
+	          : (cacheBytes === null ? `${sizeMark}${_fmtBytes(sizeView.bytes)}` : `${sizeMark}${_fmtBytes(sizeView.bytes)} + ${_fmtBytes(cacheBytes)} cache`);
+	        const sizeTitle = [sizeView.bytes === null
+	          ? "size unknown — this host reported no size for the model"
+	          : `${sizeView.label} (${sizeView.source})`];
+	        if (typeof row.size_vram_bytes === "number" && sizeView.source !== "size_vram_bytes") sizeTitle.push(`VRAM ${_fmtBytes(row.size_vram_bytes)}`);
+	        if (cacheBytes !== null) sizeTitle.push(`prompt/KV cache ${_fmtBytes(cacheBytes)}`);
+	        sizeTd.title = sizeTitle.join(" · ");
 	        tr.append(sizeTd);
 	        const ctxTd = document.createElement("td");
 	        ctxTd.textContent = _fmtCtx(row.context_length);
@@ -8596,40 +8900,52 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          est.onclick = () => estimateModelContext(row, est);
 	          act.append(est);
 	        }
-	        if (admin && row.resident === true) {
-	          // Unload/Lock render for RESIDENT rows only: a "configured — not
-	          // in memory" row has nothing in memory to unload or lock (and the
-	          // lock rule refuses non-resident pairs host-side too). Estimate
-	          // stays available on every row.
-	          if (row.lockable === true) {
+	        if (admin) {
+	          // A LOCK ON EVERY LINE (operator: "i should have a lock on each
+	          // line to lock/unlock a model"). Lock now ADOPTS an externally
+	          // loaded resident model (LM Studio / ollama swept from the host),
+	          // so a sweep-resident row whose `lockable` the host never reported
+	          // (null) is lockable too — only an EXPLICIT lockable:false
+	          // withholds the control. A locked row always offers Unlock,
+	          // resident or not: a locked-but-EVICTED lock still blocks facade
+	          // unloads and must never be stranded (unlock never requires
+	          // residency host-side). Non-resident configured rows keep Estimate
+	          // only — there is nothing in memory to lock.
+	          //
+	          // The ADOPT wording is keyed on `source === "provider_server"`,
+	          // NOT on `lockable`: the sweep stamps every row it finds
+	          // `lockable: true`, so the old `row.lockable === true` test could
+	          // never distinguish a gateway-loaded model from an adopted one and
+	          // the adopt sentence never fired. `source` is the field that
+	          // actually says the model server loaded it outside the Gateway,
+	          // and it is what the TUIs have always read.
+	          const canLock = row.locked !== true && row.lockable !== false && row.resident === true;
+	          if (row.locked === true || canLock) {
 	            const lockBtn = document.createElement("button");
 	            lockBtn.className = "secondary";
 	            lockBtn.type = "button";
 	            lockBtn.textContent = row.locked === true ? "Unlock" : "Lock";
 	            lockBtn.title = row.locked === true
-	              ? "Release the memory lock so this model can be unloaded or evicted"
-	              : "Lock this model in memory so nothing can evict it";
+	              ? (row.resident === true
+	                ? "Release the memory lock so this model can be unloaded or evicted"
+	                : "Release a lock whose model is no longer in memory (the lock still blocks unloads)")
+	              : (row.source === "provider_server"
+	                ? "Lock this model in memory — this host loaded it outside the Gateway, so locking adopts it first"
+	                : "Lock this model in memory so nothing can evict it");
 	            lockBtn.onclick = () => toggleModelLock(row, lockBtn);
 	            act.append(lockBtn);
 	          }
-	          const unload = document.createElement("button");
-	          unload.className = "danger";
-	          unload.type = "button";
-	          unload.textContent = "Unload";
-	          unload.title = "Unload this model from host memory";
-	          unload.onclick = () => unloadModel(row, unload);
-	          act.append(unload);
-	        } else if (admin && row.locked === true) {
-	          // Locked-but-EVICTED pair: nothing is in memory, but the lock
-	          // still blocks facade unloads — Unlock must stay reachable or the
-	          // lock is stranded (unlock never requires residency host-side).
-	          const unlockBtn = document.createElement("button");
-	          unlockBtn.className = "secondary";
-	          unlockBtn.type = "button";
-	          unlockBtn.textContent = "Unlock";
-	          unlockBtn.title = "Release a lock whose model is no longer in memory (the lock still blocks unloads)";
-	          unlockBtn.onclick = () => toggleModelLock(row, unlockBtn);
-	          act.append(unlockBtn);
+	          if (row.resident === true) {
+	            // Unload renders for RESIDENT rows only: a "configured — not in
+	            // memory" row has nothing in memory to unload.
+	            const unload = document.createElement("button");
+	            unload.className = "danger";
+	            unload.type = "button";
+	            unload.textContent = "Unload";
+	            unload.title = "Unload this model from host memory";
+	            unload.onclick = () => unloadModel(row, unload);
+	            act.append(unload);
+	          }
 	        }
 	        actionsTd.append(act);
 	        tr.append(actionsTd);
@@ -8720,48 +9036,97 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        body.append(tr);
 	      }
 	    }
+	    // THE OFFICIAL DROPDOWNS (operator: "both the provider and model should
+	    // be the official dropdown components ... select the provider, which
+	    // then auto refresh the list of available models for that provider").
+	    // The warm-up row rides the console's OWN select recipe
+	    // (setSelectOptions) over the SAME discovery cache the capability-
+	    // defaults tab fills — fetchDefaultProviders / fetchDefaultModels, keyed
+	    // in state.providerModels — so there is one fetch path, one cache, and
+	    // one retry discipline, not a second copy. The free text the datalists
+	    // used to allow survives as the established custom lane: it opens ONLY
+	    // when discovery has nothing to offer, because offline is a supported
+	    // mode here and a select with an empty catalog is a dead end.
+	    function activeModelsLoadProvider() {
+	      return customLaneValue("models-load-provider-custom") || String($("models-load-provider").value || "").trim();
+	    }
+	    function activeModelsLoadModel() {
+	      return customLaneValue("models-load-model-custom") || String($("models-load-model").value || "").trim();
+	    }
 	    function renderModelsLoadForm({ rebuildOptions = true } = {}) {
 	      const form = $("models-load-form");
 	      if (!form) return;
 	      const admin = Boolean(state.principal && state.principal.admin);
 	      form.classList.toggle("hidden", !admin);
+	      // The 5s poll repaints QUIETLY: rebuilding the option lists every tick
+	      // would drop the operator's half-made selection mid-click.
 	      if (!admin || !rebuildOptions) return;
-	      // Provider suggestions reuse the catalog the defaults tab already
-	      // fetched (configured endpoint profiles); free text stays allowed —
-	      // offline is a supported mode, and datalists never block typing.
-	      const dl = $("models-load-provider-options");
-	      if (dl) {
-	        dl.textContent = "";
-	        for (const p of state.providers || []) {
-	          const opt = document.createElement("option");
-	          opt.value = p;
-	          dl.append(opt);
-	        }
+	      void syncModelsLoadProviderOptions();
+	    }
+	    let _modelsCatalogSeq = 0;
+	    async function syncModelsLoadProviderOptions() {
+	      const select = $("models-load-provider");
+	      if (!select) return;
+	      const seq = ++_modelsCatalogSeq;
+	      const keep = activeModelsLoadProvider();
+	      setSelectOptions(select, [], { emptyLabel: "Loading providers...", disabled: true });
+	      setCustomLane("models-load-provider-custom", false);
+	      let providers = [];
+	      let failed = "";
+	      try {
+	        providers = await fetchDefaultProviders(null);
+	      } catch (e) {
+	        failed = String(e.message || e);
 	      }
+	      if (seq !== _modelsCatalogSeq) return; // a newer rebuild owns the row
+	      setSelectOptions(select, providers, {
+	        emptyLabel: providers.length ? "Select provider..." : (failed ? "Provider discovery failed" : "No providers discovered"),
+	        disabled: !providers.length,
+	        selected: keep,
+	      });
+	      // Nothing discovered = the offline case: open the typing lane so the
+	      // warm-up row stays usable instead of becoming an empty dead select.
+	      setCustomLane("models-load-provider-custom", !providers.length, keep);
+	      await syncModelsLoadModelOptions();
 	    }
 	    async function syncModelsLoadModelOptions() {
-	      const provider = $("models-load-provider").value.trim();
-	      const dl = $("models-load-model-options");
-	      if (!dl) return;
-	      dl.textContent = "";
-	      if (!provider) return;
+	      const select = $("models-load-model");
+	      if (!select) return;
+	      const seq = ++_modelsCatalogSeq;
+	      const provider = activeModelsLoadProvider();
+	      const keep = activeModelsLoadModel();
+	      if (!provider) {
+	        setSelectOptions(select, [], { emptyLabel: "Select provider first", disabled: true });
+	        setCustomLane("models-load-model-custom", false);
+	        return;
+	      }
+	      setSelectOptions(select, [], { emptyLabel: "Loading models...", disabled: true });
+	      setCustomLane("models-load-model-custom", false);
+	      let models = [];
+	      let failed = "";
 	      try {
-	        // Shared discovery cache (text catalog) — suggestions are
-	        // decoration, so a failed probe leaves typing fully live.
-	        const models = await fetchProviderModels(provider);
-	        for (const m of models) {
-	          const opt = document.createElement("option");
-	          opt.value = m;
-	          dl.append(opt);
-	        }
-	      } catch {}
+	        models = await fetchDefaultModels(provider, null);
+	      } catch (e) {
+	        failed = String(e.message || e);
+	      }
+	      if (seq !== _modelsCatalogSeq) return; // a newer provider owns the row
+	      setSelectOptions(select, models, {
+	        emptyLabel: models.length ? "Select model..." : (failed ? "Model discovery failed" : "No models discovered for this provider"),
+	        disabled: !models.length,
+	        selected: keep,
+	      });
+	      // NEVER seed the typing lane from `keep`: `keep` is the model chosen
+	      // under the PREVIOUS provider, so warming it here produced the
+	      // newProvider/oldModel pair. An empty catalog opens an EMPTY lane
+	      // (console-tui already does exactly this).
+	      setCustomLane("models-load-model-custom", !models.length, "");
 	    }
 	    let _modelsHintSeq = 0;
 	    async function updateModelsLoadHint() {
 	      const hint = $("models-load-hint");
 	      if (!hint) return;
-	      const provider = $("models-load-provider").value.trim();
-	      const model = $("models-load-model").value.trim();
+	      const provider = activeModelsLoadProvider();
+	      const model = activeModelsLoadModel();
 	      if (!provider || !model) {
 	        hint.textContent = "";
 	        hint.classList.add("hidden");
@@ -8785,8 +9150,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    async function loadModelResidency() {
 	      const msg = $("models-loaded-message");
-	      const provider = $("models-load-provider").value.trim();
-	      const model = $("models-load-model").value.trim();
+	      const provider = activeModelsLoadProvider();
+	      const model = activeModelsLoadModel();
 	      if (!provider || !model) {
 	        msg.textContent = "Provider and model are required to warm a model up.";
 	        msg.className = "message error";
@@ -8830,6 +9195,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function renderHostState(data, { quiet = false } = {}) {
 	      renderHostDegraded(data);
 	      renderHostMeters(data);
+	      renderHostBreakdown(data);
 	      renderHostFacts(data);
 	      renderModelsTable(data);
 	      renderSessionCaches(data);
@@ -8867,6 +9233,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        modelsEmptyRow($("models-table"), 8, "Host state unavailable.");
 	        modelsEmptyRow($("models-caches-table"), 6, "Host state unavailable.");
 	        const meters = $("models-meters"); if (meters) meters.textContent = "";
+	        const breakdown = $("models-breakdown"); if (breakdown) { breakdown.textContent = ""; breakdown.classList.add("hidden"); }
 	        const facts = $("models-host-facts"); if (facts) facts.textContent = "";
 	        const deg = $("models-degraded"); if (deg) { deg.textContent = ""; deg.classList.add("hidden"); }
 	      }
@@ -10507,8 +10874,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("models-load-button").onclick = loadModelResidency;
 	    // onchange, not oninput (the provider-modal precedent): commits on
 	    // blur/Enter, so an unreachable provider is probed once per commit.
-	    $("models-load-provider").onchange = () => { syncModelsLoadModelOptions(); updateModelsLoadHint(); };
+	    // Provider change auto-refreshes the model list for that provider (the
+	    // cascade the operator asked for); the custom lanes drive the same
+	    // cascade so an offline operator gets identical behaviour.
+	    $("models-load-provider").onchange = () => { void syncModelsLoadModelOptions().then(updateModelsLoadHint); };
+	    $("models-load-provider-custom").onchange = () => { void syncModelsLoadModelOptions().then(updateModelsLoadHint); };
 	    $("models-load-model").onchange = () => updateModelsLoadHint();
+	    $("models-load-model-custom").onchange = () => updateModelsLoadHint();
 	    $("entity-create").onclick = createEntity;
 	    $("entity-template").onchange = renderEntityTemplateDesc;
 	    $("entity-new-provider").onchange = () => loadModelsForProvider($("entity-new-provider").value);
