@@ -211,12 +211,12 @@ flows/bundles/*
 !flows/bundles/co-scientist@0.1.5.flow
 !flows/bundles/co-scientist@0.1.6.flow
 !flows/bundles/co-scientist@0.1.7.flow
-!flows/bundles/meta-consensus@0.1.0.flow
-!flows/bundles/meta-debate@0.1.0.flow
-!flows/bundles/meta-reflect@0.1.0.flow
-!flows/bundles/meta-perspectives@0.1.0.flow
-!flows/bundles/meta-deliberate@0.1.0.flow
-!flows/bundles/meta-baseline@0.1.0.flow
+!flows/bundles/meta-consensus@0.1.1.flow
+!flows/bundles/meta-debate@0.1.1.flow
+!flows/bundles/meta-reflect@0.1.1.flow
+!flows/bundles/meta-perspectives@0.1.1.flow
+!flows/bundles/meta-deliberate@0.1.1.flow
+!flows/bundles/meta-baseline@0.1.1.flow
 
 # Editor/agent workspace state (never release material)
 .cursor/
