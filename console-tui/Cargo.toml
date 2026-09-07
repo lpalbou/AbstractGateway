@@ -1,0 +1,37 @@
+[package]
+name = "abstractgateway-console"
+version = "0.5.1"
+edition = "2021"
+# MSRV floor comes from the engine (abstracttui 0.3.6 still declares 1.87).
+rust-version = "1.87"
+license = "MIT"
+description = "An intuitive terminal wizard to configure AbstractGateway — connection, providers, multimodal capability routes, users & entities — rendered by AbstractTUI."
+publish = false
+
+[lib]
+name = "abstractgateway_console"
+path = "src/lib.rs"
+
+[[bin]]
+name = "abstractgateway-console"
+path = "src/main.rs"
+
+[dependencies]
+# The rendering engine — published crate, exactly what any user installs.
+# 0.2.12: PageHost owns the tab bar/navigation, Drawer hosts the entity
+# inspector (the v2 upgrade brief, adopted same-day as the release).
+# 0.3.0: RunConfig gained hover_ink + platform_clipboard (breaking only for
+# exhaustive struct literals — both of ours spread ..RunConfig::default()).
+# 0.3.5: gfx::decode_image reads PROGRESSIVE JPEG (what most editors emit by
+# default), so the artifact preview renders the .jpg files users actually
+# upload instead of reporting "cannot decode this image here".
+# 0.3.6: Image follows MosaicMode::auto — quadrants (2x2 subpixels per cell)
+# wherever the terminal proves UTF-8 + color, instead of pinned half blocks.
+# The artifact preview is the whole reason this console draws bitmaps.
+abstracttui = "0.3.6"
+# HTTP client (blocking, small): fits the background-thread + posted-closure
+# model. "tls" is rustls (remote HTTPS gateways work with zero system
+# OpenSSL), "gzip" matches server defaults — the abstractcode-tui precedent.
+ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }
+# JSON: gateway payloads carry arbitrary user text; battle-tested parsing.
+serde_json = "1"
