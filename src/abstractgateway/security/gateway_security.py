@@ -78,7 +78,59 @@ def _split_csv(raw: Optional[str]) -> list[str]:
 
 def _is_loopback_ip(host: str) -> bool:
     h = str(host or "").strip().lower()
-    return h in {"127.0.0.1", "::1", "localhost", "testclient"}
+    if h in {"localhost", "testclient"}:
+        return True
+    # Dual-stack binds (`--host ::`) hand a v4 client over as ::ffff:127.0.0.1;
+    # 127.0.0.0/8 aliases (WSL, some distros) are loopback too.
+    if h.startswith("::ffff:"):
+        h = h[len("::ffff:"):]
+    try:
+        import ipaddress
+
+        return bool(ipaddress.ip_address(h).is_loopback)
+    except ValueError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Ephemeral loopback-only admin tokens (desktop tray helper, 2026-09-05)
+#
+# The gateway mints one random token per process for the tray helper it
+# spawns, hands it over on the child's stdin, and registers it here. The
+# token is accepted ONLY when the request's raw socket peer is loopback —
+# never through X-Forwarded-For, whatever `trust_proxy` says — and only for
+# this process's lifetime (nothing is written to disk). It resolves to the
+# same local admin principal as the static operator token. Registry access
+# is constant-time per token like `_token_valid`.
+# ---------------------------------------------------------------------------
+
+_EPHEMERAL_TOKENS_LOCK = threading.Lock()
+_EPHEMERAL_TOKENS: Dict[str, str] = {}  # token -> label
+
+
+def register_ephemeral_loopback_token(token: str, *, label: str) -> None:
+    tok = str(token or "").strip()
+    if len(tok) < 16:
+        raise ValueError("ephemeral loopback tokens must be at least 16 characters")
+    with _EPHEMERAL_TOKENS_LOCK:
+        _EPHEMERAL_TOKENS[tok] = str(label or "ephemeral")
+
+
+def revoke_ephemeral_loopback_token(token: str) -> None:
+    with _EPHEMERAL_TOKENS_LOCK:
+        _EPHEMERAL_TOKENS.pop(str(token or "").strip(), None)
+
+
+def ephemeral_loopback_token_valid(token: str, *, peer_ip: Optional[str]) -> bool:
+    """Constant-time membership check, gated on a loopback SOCKET peer."""
+    if not token or not _is_loopback_ip(str(peer_ip or "")):
+        return False
+    with _EPHEMERAL_TOKENS_LOCK:
+        candidates = list(_EPHEMERAL_TOKENS.keys())
+    for t in candidates:
+        if hmac.compare_digest(str(token), str(t)):
+            return True
+    return False
 
 
 def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
@@ -539,6 +591,15 @@ class GatewaySecurityMiddleware:
             return client[0]
         return "unknown"
 
+    @staticmethod
+    def _socket_peer_ip(scope: dict) -> str:
+        """The RAW socket peer — deliberately ignores X-Forwarded-For (the
+        ephemeral tray token must never be reachable through a proxy)."""
+        client = scope.get("client")
+        if isinstance(client, (list, tuple)) and client and isinstance(client[0], str):
+            return client[0]
+        return "unknown"
+
     def _origin_allowed(self, origin: str) -> bool:
         o = str(origin or "").strip()
         if not o:
@@ -601,9 +662,22 @@ class GatewaySecurityMiddleware:
         except Exception:
             return ("unreadable",)
 
-    def _authenticate_token(self, token: str) -> Optional[GatewayPrincipal]:
+    def _authenticate_token(self, token: str, *, peer_ip: Optional[str] = None) -> Optional[GatewayPrincipal]:
         if not token:
             return None
+        # Ephemeral loopback token (tray helper): checked FIRST and never
+        # cached — the cache is keyed on the token alone and a cached hit
+        # would answer for a non-loopback peer later. Cheap (hmac compare),
+        # so it also spares the PBKDF2 registry scan under user auth.
+        if peer_ip is not None and ephemeral_loopback_token_valid(token, peer_ip=peer_ip):
+            import dataclasses
+
+            # Same identity as the operator (one operator, one world), but the
+            # audit log must be able to tell the desktop helper from a human.
+            return dataclasses.replace(
+                local_admin_principal(token_fingerprint=token_fingerprint(token)),
+                source="loopback-ephemeral:desktop-tray",
+            )
         user_auth = self._policy.user_auth_enabled or gateway_user_auth_enabled()
         cache_key = hashlib.sha256(str(token).encode("utf-8", errors="ignore")).hexdigest()
         registry_id = self._registry_file_identity() if user_auth else ("no-user-auth",)
@@ -878,7 +952,7 @@ class GatewaySecurityMiddleware:
                         token = ""
                 if token:
                     presented_token_fp = _sha256_hex(token)[:12]
-                    principal = self._authenticate_token(token)
+                    principal = self._authenticate_token(token, peer_ip=self._socket_peer_ip(scope))
                 else:
                     session_auth = self._authenticate_session_header(
                         self._header(scope, gateway_session_header_name())

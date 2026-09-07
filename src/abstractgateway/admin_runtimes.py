@@ -225,6 +225,213 @@ def list_runtimes(*, data_dir: Path, include_sizes: bool = True, entity_registry
     return out
 
 
+def workflow_display_label(workflow_id: Any) -> str:
+    """A workflow id a person can read.
+
+    A catalog-published workflow runs under an internal id that carries its
+    scope and tenant in base64 -- `__catalog__v2__tenant_catalog__ZGVmYXVsdA__
+    YWJzdHJhY3Rhc3Npc3RhbnQtb3JjaGVzdHJhdG9y@0.0.3:c53b1579`. That is the
+    right key for the store and the wrong string for a menu: the operator
+    recognises "abstractassistant-orchestrator", which is exactly what those
+    base64 chunks decode to. Anything we cannot parse is returned unchanged --
+    an unreadable id beats a wrong one.
+    """
+    raw = str(workflow_id or "").strip()
+    if not raw:
+        return ""
+    bundle, sep, flow = raw.partition(":")
+    bundle = _strip_version(bundle)
+    parsed = _catalog_bundle_name(bundle)
+    if parsed is not None:
+        bundle = _strip_version(parsed)
+    return f"{bundle}{sep}{flow}" if sep else bundle
+
+
+def _strip_version(bundle_id: str) -> str:
+    """`name@0.0.3` -> `name`.
+
+    The version rides OUTSIDE the encoded catalog id (`…<b64>@0.0.3`), so it
+    has to come off before the parse or the base64 component never decodes.
+    It also tells two runs apart far less often than it costs width, and the
+    run id is the identity anyway — so it goes either way.
+    """
+    b = str(bundle_id or "")
+    return b.rsplit("@", 1)[0] if "@" in b else b
+
+
+def _catalog_bundle_name(bundle_id: str) -> Optional[str]:
+    """The public bundle id inside a catalog-internal one, or None."""
+    try:
+        from .workflow_catalog import parse_catalog_internal_bundle_id
+
+        parsed = parse_catalog_internal_bundle_id(str(bundle_id or ""))
+    except Exception:
+        return None
+    return parsed[2] if parsed is not None else None
+
+
+def is_internal_workflow_id(workflow_id: Any) -> bool:
+    """Machinery, not work an operator started — the catalog's own rule.
+
+    ONE definition, in the module that owns the id scheme: `/runs`, this
+    host-wide listing and anything else that hides bookkeeping runs must agree,
+    or a catalog-published workflow is visible in one list and missing from the
+    next.
+    """
+    try:
+        from .workflow_catalog import is_internal_workflow_id as _rule
+
+        return _rule(workflow_id)
+    except Exception:
+        return str(workflow_id or "").strip().startswith("__")
+
+
+def _runs_from_store(store: Any, *, limit: int, since_epoch: Optional[float], plane: str, root_only: bool) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for run in list(store.list_runs(limit=limit) or []):
+        summary = _run_summary(run)
+        if root_only and str(summary.get("parent_run_id") or "").strip():
+            continue
+        if is_internal_workflow_id(summary.get("workflow_id")):
+            continue
+        started = _epoch_or_none(summary.get("created_at"))
+        if since_epoch is not None and started is not None and started < since_epoch:
+            continue
+        summary["plane"] = plane
+        summary["label"] = workflow_display_label(summary.get("workflow_id"))
+        summary["started_epoch"] = started
+        rows.append(summary)
+    return rows
+
+
+def _ledger_len(ledger_store: Any, run_id: str) -> Optional[int]:
+    """How many ledger entries a run has — its steps. None when unknowable.
+
+    A missing count is NOT a zero: a store that cannot answer must leave the
+    column empty rather than report an active run as having done nothing.
+    """
+    if ledger_store is None or not run_id:
+        return None
+    try:
+        count_fn = getattr(ledger_store, "count", None)
+        if callable(count_fn):
+            return int(count_fn(run_id))
+        records = ledger_store.list(run_id)
+        return int(len(records)) if isinstance(records, list) else None
+    except Exception:
+        return None
+
+
+def _epoch_or_none(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        from datetime import datetime
+
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed.timestamp()
+
+
+def recent_runs_host_wide(
+    *,
+    data_dir: Path,
+    limit: int = 25,
+    since_epoch: Optional[float] = None,
+    root_only: bool = True,
+    default_run_store: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """The most recent runs on this MACHINE, across data planes.
+
+    WHY THIS EXISTS: `GET /runs` answers for the CALLING PRINCIPAL's plane,
+    which is the right answer for a user and the wrong one for a host view.
+    The desktop tray asked it and reported "no runs in the last 24 hours" on a
+    machine that was mid-conversation -- the work was on the gateway's default
+    plane, the tray's token on another. Memory, GPU and loaded models are all
+    host-wide there; the run list has to be too or it is simply lying.
+
+    CHEAP PLANES ONLY. The default plane and materialized user planes are
+    plain store reads. ENTITY planes are not touched: reaching one goes
+    through the entity registry, which opens homes and wires embedders -- work
+    that must never ride a background poll. They are named in `skipped` so the
+    payload says what it did not look at rather than implying it saw
+    everything.
+    """
+    limit = max(1, min(int(limit or 25), 200))
+    planes: List[Tuple[str, Any]] = []
+    ledgers: Dict[str, Any] = {}
+    warnings: List[str] = []
+    skipped: List[str] = []
+
+    try:
+        stores = _stores_for_dir(Path(data_dir))
+        planes.append(("default", default_run_store if default_run_store is not None else stores.run_store))
+        ledgers["default"] = getattr(stores, "ledger_store", None)
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"#FALLBACK default plane unreadable: {e}")
+
+    users_root = Path(data_dir) / "users"
+    if users_root.exists():
+        try:
+            for tenant_dir in sorted(users_root.iterdir()):
+                if not tenant_dir.is_dir():
+                    continue
+                for rt_dir in sorted(tenant_dir.iterdir()):
+                    runtime_dir = rt_dir / "runtime"
+                    if not runtime_dir.is_dir():
+                        continue
+                    try:
+                        plane = f"{tenant_dir.name}/{rt_dir.name}"
+                        stores = _stores_for_dir(runtime_dir)
+                        planes.append((plane, stores.run_store))
+                        ledgers[plane] = getattr(stores, "ledger_store", None)
+                    except Exception as e:  # noqa: BLE001
+                        warnings.append(f"#FALLBACK user plane {tenant_dir.name}/{rt_dir.name} unreadable: {e}")
+        except OSError as e:
+            warnings.append(f"#FALLBACK users dir scan failed: {e}")
+
+    entities_root = Path(data_dir) / "entities"
+    if entities_root.exists():
+        try:
+            skipped = sorted(d.name for d in entities_root.iterdir() if d.is_dir())
+        except OSError:
+            skipped = []
+
+    rows: List[Dict[str, Any]] = []
+    for plane, store in planes:
+        try:
+            rows.extend(_runs_from_store(store, limit=limit, since_epoch=since_epoch, plane=plane, root_only=root_only))
+        except Exception as e:  # noqa: BLE001
+            warnings.append(f"#FALLBACK runs unreadable on plane {plane}: {e}")
+
+    # Newest first ACROSS planes; a run with no readable timestamp sorts last
+    # rather than being dropped (it may be the one that is running now).
+    rows.sort(key=lambda r: (r.get("started_epoch") is None, -(r.get("started_epoch") or 0.0)))
+    rows = rows[:limit]
+    # Step counts LAST, on the survivors only: counting the ledger of every
+    # run we then threw away is the expensive mistake this ordering avoids.
+    for row in rows:
+        row["ledger_len"] = _ledger_len(ledgers.get(str(row.get("plane"))), str(row.get("run_id") or ""))
+    out: Dict[str, Any] = {
+        "ok": True,
+        "items": rows,
+        "count": len(rows),
+        "has_more": len(rows) >= limit,
+        "planes": [p for p, _ in planes],
+    }
+    if skipped:
+        out["skipped_entity_planes"] = skipped
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
 def runtime_runs(
     *,
     data_dir: Path,

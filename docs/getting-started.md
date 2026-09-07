@@ -36,6 +36,9 @@ pip install "abstractgateway[apple]"
 
 # Native/container GPU local engines, also used by the NVIDIA Docker image
 pip install "abstractgateway[gpu]"
+
+# Desktop menu bar / system tray icon for `serve` (macOS, Windows, Linux)
+pip install "abstractgateway[tray]"
 ```
 
 With the base install and a configured provider stack, Gateway can surface

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -313,7 +314,9 @@ def _runner_needs_restart(runner: Any) -> bool:
         # dead_worker / degraded_no_ticker) means runs accepted here would
         # not be ticked — re-attempt start (idempotent: start() no-ops when
         # the thread is alive).
-        return str(st.get("status")) not in {"active", "standby_peer_active", "starting"}
+        # "paused" (host pause, 2026-09-05) is the operator's choice: the
+        # loop is alive and holding the lock — never a restart case.
+        return str(st.get("status")) not in {"active", "standby_peer_active", "starting", "paused"}
     except Exception:
         return False
 
@@ -837,6 +840,23 @@ def begin_gateway_boot() -> None:
     def _boot() -> None:
         global _boot_state, _boot_error
         try:
+            # Host pause (tray/console, 2026-09-05): a persisted pause must
+            # be in force BEFORE the first runner schedules a tick.
+            try:
+                from . import host_control
+                from .users import gateway_data_dir_from_env
+
+                snap = host_control.configure(gateway_data_dir_from_env())
+                if snap.get("paused"):
+                    print(
+                        "[WARN] gateway execution is PAUSED (persisted from a previous run"
+                        f"{', by ' + str(snap.get('paused_by')) if snap.get('paused_by') else ''}); "
+                        "runs queue until resumed from the tray or Console → Resources.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            except Exception:  # noqa: BLE001 - the pause file is a courtesy, never a boot blocker
+                logging.getLogger("abstractgateway.service").warning("host pause state could not be loaded", exc_info=True)
             start_gateway_runner()
             _boot_state = "ready"
         except Exception as e:
@@ -1009,6 +1029,16 @@ def start_gateway_runner() -> None:
         reconcile_effective_spec_file(data_dir=Path(GatewayHostConfig.from_env().data_dir))
     except Exception:  # noqa: BLE001 - boot must never die on a heal pass
         logger.warning("effective phase-spec reconcile skipped at boot", exc_info=True)
+    # Host pause state (tray/console, 2026-09-05): bind + load BEFORE any
+    # runner schedules a tick. Here rather than only in the boot thread so
+    # the split `abstractgateway runner` process (which never runs the
+    # lifespan boot) honours a pause written by the API process.
+    try:
+        from . import host_control
+
+        host_control.configure(Path(GatewayHostConfig.from_env().data_dir))
+    except Exception:  # noqa: BLE001 - the pause file is a courtesy, never a boot blocker
+        logger.warning("host pause state could not be loaded", exc_info=True)
     if gateway_multi_user_enabled():
         # Per-principal services are created and started lazily on first
         # request; the BACKLOG EXEC RUNNER lives at the base data dir and is

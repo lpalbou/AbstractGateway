@@ -22,6 +22,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[embeddings]`: local sentence-transformer embeddings for semantic KG queries
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities; this is for native macOS, not Docker
 - `abstractgateway[gpu]`: full native/container GPU profile with local GPU engines and all relevant framework capabilities; the NVIDIA Docker image uses this profile
+- `abstractgateway[tray]`: the desktop menu bar / system tray icon shown by `abstractgateway serve` (pystray + Pillow; see [tray.md](./tray.md))
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
@@ -292,7 +293,7 @@ and both console-TUIs: `installed`, `not downloaded`, `unknown`, `remote`.
 
 | Endpoint | What it does |
 |---|---|
-| `GET /api/gateway/models/availability` | The capability grid annotated with weight availability, plus the recommended fresh-install set ("2 of 3 present"). Read-only; never downloads. |
+| `GET /api/gateway/models/availability` | The capability grid annotated with weight availability, plus the recommended fresh-install set — its raw counts (`total`, `installed`, `absent`, `would_download`) and `gaps`, the subset whose route has nothing else serving it. Read-only; never downloads. |
 | `POST /api/gateway/models/download` | `{"provider": "...", "artifact": "..."}` or `{"recommended": true}`, with optional `"dry_run": true`. Returns a job id immediately. |
 | `GET /api/gateway/models/download/{job}` | One job's progress: status, percent, byte counts and the provider tool's own recent output. |
 | `GET /api/gateway/models/downloads` | Every download job this Gateway process knows about. |
@@ -300,6 +301,15 @@ and both console-TUIs: `installed`, `not downloaded`, `unknown`, `remote`.
 The web console renders this as a **Weights** column on the capability-defaults
 table, with a per-row download button and a fresh-install banner. In both
 console-TUIs the verb is `w` on the Routes screen.
+
+**The recommendation is advice for an empty route, not a standing debt.** The
+banner speaks only about `gaps` — a recommended model that is absent *and*
+whose route has nothing serving it. Route text generation at a model of your
+own and the starter kit's LM Studio build stops being reported as missing:
+nothing on this host needs it. A route whose *own* model is not downloaded is
+still reported, on that row, in the Weights column. "Apply recommended" is a
+standing action in the section head (`a` on the TUI Routes screen), available
+whether or not the banner has anything to say.
 
 **The artifact is not the model id.** A route stores the id the provider
 *serves* (`qwen/qwen3.5-9b`); the download names the exact weights,
@@ -354,6 +364,31 @@ loopback reads as a non-admin read-only principal — see
 
 See [api.md](./api.md#host-state-and-model-residency) for payload shapes and
 the `model_residency_row_v1` field list.
+
+### Host control: pause, desktop tray, restart, update
+
+The process's own controls (system tray + console, 2026-09-05). Reads are
+user-level; every write is admin-only.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/gateway/host/runner` | `paused`, `paused_at`, `paused_by`, `reason`, `inflight_ticks` (runs still finishing their current step), `scope` (`"workflow runner"`), `runner_in_process`, `step_gate_supported`, restart/shutdown `capabilities`. |
+| `POST /api/gateway/host/pause` / `resume` | Pause or resume execution process-wide (persisted in `<data_dir>/gateway_paused.json`). Body `{"reason": "..."}` optional. |
+| `GET /api/gateway/host/metrics/live` | GPU + memory + paused/in-flight in one call, cached 1 s server-side — the tray's fast lane. |
+| `GET /api/gateway/host/runs` | Recent runs across every data plane on this machine (`limit`, `window_hours`), newest first, with a readable `label` and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in `skipped_entity_planes`. |
+| `GET /api/gateway/host/tray` | Whether the tray helper runs (`pid`, `ready`), and the decision (`reason`, `hint`) when it does not. |
+| `POST /api/gateway/host/tray/show` | Retry the helper now (admin) — the escape hatch for one that crashed. There is no `hide`. |
+| `POST /api/gateway/host/restart` / `shutdown` | Graceful restart (same command, same environment) or stop; `409` with the reason when this process cannot (`--reload`, not started by `abstractgateway serve`, an update is installing). |
+| `GET /api/gateway/host/update` | How the gateway was installed (`install.kind`, `upgradable`, the command), the last update check, the upgrade job, `restart_pending`. |
+| `POST /api/gateway/host/update/check` / `start` | Ask pypi.org for the latest release (offline is an in-band answer) / run the upgrade in the background. |
+
+The tray icon has **no setting**: while the gateway serves a desktop that can
+hold it, it is there. It is absent only for reasons that are facts about the
+machine — no display, no `tray` extra, `serve --reload`, a runner-only process
+— and `GET /host/tray` names which. (The retired `desktop_tray` knob now
+refuses with that explanation rather than accepting a write that does
+nothing.) `GET /api/health` carries `"paused": true` while paused (status
+stays `healthy`). Full description: [tray.md](./tray.md).
 
 ### Runtime-scoped Core capability defaults
 

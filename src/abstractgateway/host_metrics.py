@@ -245,7 +245,7 @@ def _read_host_gpu_metrics_best_effort(*, timeout_s: float = 1.0) -> Dict[str, A
     return {"supported": False, "reason": "; ".join(reasons) if reasons else "unsupported"}
 
 
-def get_host_gpu_metrics(*, cache_ttl_s: float = 0.5) -> Dict[str, Any]:
+def get_host_gpu_metrics(*, cache_ttl_s: float = 1.0) -> Dict[str, Any]:
     """Return best-effort host GPU utilization metrics.
 
     This is intentionally dependency-light:

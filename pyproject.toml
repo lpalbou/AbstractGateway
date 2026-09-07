@@ -38,6 +38,16 @@ embeddings = [
   "abstractcore[embeddings]>=2.13.38",
 ]
 
+# Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,
+# Linux): open the console, pause/resume workflows, unload models, watch memory
+# and GPU. pystray pulls pyobjc on macOS and python-xlib on Linux; Linux panels
+# additionally need the system GTK/AppIndicator bindings (see docs/tray.md).
+# The optional Activity window uses tkinter from the Python standard library.
+tray = [
+  "pystray>=0.19.5",
+  "Pillow>=10.0.0",
+]
+
 # Native Apple Gateway profile. This is for direct macOS Python installs (not
 # Docker), because MLX/Metal-backed engines need the host Apple runtime. As the
 # deployment entry point, Gateway's `apple` profile installs the full native

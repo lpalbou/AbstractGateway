@@ -85,7 +85,7 @@ from ..provider_connections import (
     configured_builtin_provider_public_rows,
     configured_provider_request_kwargs,
 )
-from .. import host_metrics
+from .. import host_control, host_metrics, self_update
 from ..run_retention import (
     DraftRunPurgeOptions,
     DraftRunPurgeUnsupported,
@@ -7422,6 +7422,11 @@ def _runner_inactive_warning(svc: Any) -> Optional[str]:
     incident class). Never raises — run acceptance must not depend on it.
     """
     try:
+        # Host pause (tray/console, 2026-09-05): accepted-and-queued must be
+        # SAID at run start, not discovered minutes later on a silent run.
+        paused = host_control.paused_warning()
+        if paused:
+            return paused
         warn_fn = getattr(getattr(svc, "runner", None), "inactive_warning", None)
         if callable(warn_fn):
             warning = warn_fn()
@@ -7868,6 +7873,13 @@ async def get_run(run_id: str) -> Dict[str, Any]:
 _RUNS_SCAN_CAP = 50_000
 
 
+def _is_internal_workflow_id(workflow_id: Any) -> bool:
+    """The catalog owns the id scheme, so it owns this question."""
+    from ..workflow_catalog import is_internal_workflow_id
+
+    return is_internal_workflow_id(workflow_id)
+
+
 @router.get("/runs")
 async def list_runs(
     request: Request,
@@ -8043,7 +8055,10 @@ async def list_runs(
                     row_count = len(rows or [])
                     for row in rows or []:
                         wf_id = str(row.get("workflow_id") or "").strip()
-                        if filter_internal and wf_id.startswith("__"):
+                        # NOT a bare `__` prefix: a catalog-published workflow
+                        # runs under `__catalog__v2__…` and is the opposite of
+                        # internal. See `is_internal_workflow_id`.
+                        if filter_internal and _is_internal_workflow_id(wf_id):
                             continue
                         if bool(root_only) and str(row.get("parent_run_id") or "").strip():
                             continue
@@ -8084,10 +8099,8 @@ async def list_runs(
                     break
                 probe = 0
                 for r in list(runs or []):
-                    if filter_internal:
-                        wf_id0 = getattr(r, "workflow_id", None)
-                        if isinstance(wf_id0, str) and wf_id0.startswith("__"):
-                            continue
+                    if filter_internal and _is_internal_workflow_id(getattr(r, "workflow_id", None)):
+                        continue
                     s0 = run_summary(r)
                     if not include_drafts and bool(s0.get("is_draft") is True):
                         continue
@@ -8115,10 +8128,8 @@ async def list_runs(
             runs_root = [r for r in runs_all if not _parent_id(r)] if bool(root_only) else runs_all
 
             for r in runs_root:
-                if filter_internal:
-                    wf_id = getattr(r, "workflow_id", None)
-                    if isinstance(wf_id, str) and wf_id.startswith("__"):
-                        continue
+                if filter_internal and _is_internal_workflow_id(getattr(r, "workflow_id", None)):
+                    continue
                 summary = run_summary(r)
                 if not include_drafts and bool(summary.get("is_draft") is True):
                     continue
@@ -25874,7 +25885,75 @@ async def prompt_cache_load(req: _GatewayPromptCacheLoadRequest) -> Dict[str, An
 
 @router.get("/host/metrics/gpu")
 async def host_gpu_metrics() -> Dict[str, Any]:
-    return host_metrics.get_host_gpu_metrics()
+    # OFF THE LOOP (tray wave, 2026-09-05): the probe is an `ioreg`/`nvidia-smi`
+    # subprocess; a 1 Hz poller must never run it on the event loop.
+    return await asyncio.to_thread(host_metrics.get_host_gpu_metrics)
+
+
+_HOST_MEMORY_CACHE_LOCK = threading.Lock()
+_HOST_MEMORY_CACHE: Dict[str, Any] = {"at": 0.0, "value": None}
+HOST_MEMORY_CACHE_TTL_S = 1.0
+
+
+def _gateway_host_memory_snapshot_cached() -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """The memory snapshot runs `ioreg`+`sysctl` on Apple silicon (uncached
+    upstream); several pollers (tray 1 Hz, console 5 s, activity window)
+    must share one probe per second."""
+    now = time.time()
+    try:
+        facade, _err = _gateway_abstractcore_host_facade()
+    except Exception:
+        facade = None
+    key = id(facade) if facade is not None else None
+    with _HOST_MEMORY_CACHE_LOCK:
+        cached = _HOST_MEMORY_CACHE.get("value")
+        if (
+            key is not None
+            and cached is not None
+            and _HOST_MEMORY_CACHE.get("key") == key
+            and (now - float(_HOST_MEMORY_CACHE.get("at") or 0.0)) <= HOST_MEMORY_CACHE_TTL_S
+        ):
+            return cached
+    value = _gateway_host_memory_snapshot()
+    if key is not None and value[0] is not None:
+        with _HOST_MEMORY_CACHE_LOCK:
+            _HOST_MEMORY_CACHE["at"] = now
+            _HOST_MEMORY_CACHE["key"] = key
+            _HOST_MEMORY_CACHE["value"] = value
+    return value
+
+
+def _host_live_metrics_payload() -> Dict[str, Any]:
+    """ONE call for the tray's fast lane: GPU + memory + execution state.
+    Every section is independently best-effort (in-band `supported`)."""
+    try:
+        gpu: Any = host_metrics.get_host_gpu_metrics()
+    except Exception as e:  # noqa: BLE001
+        gpu = {"supported": False, "reason": f"gpu probe failed: {e}"}
+    snapshot, reason = _gateway_host_memory_snapshot_cached()
+    memory: Dict[str, Any] = {"supported": True, **snapshot} if snapshot is not None else {"supported": False, "reason": reason}
+    pause = host_control.pause_snapshot()
+    inflight = 0
+    try:
+        from ..service import gateway_runner_health_snapshot
+
+        for r in gateway_runner_health_snapshot().get("runners") or []:
+            inflight += int(r.get("inflight_ticks") or 0)
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "ts": time.time(),
+        "gpu": gpu if isinstance(gpu, dict) else {"supported": False, "reason": "gpu probe returned a non-dict payload"},
+        "memory": memory,
+        "runner": {"paused": bool(pause.get("paused")), "inflight_ticks": inflight, "paused_by": pause.get("paused_by"), "reason": pause.get("reason")},
+    }
+
+
+@router.get("/host/metrics/live")
+async def host_live_metrics() -> Dict[str, Any]:
+    """GPU + memory + execution state in one cheap call (1 s server-side caches) — the tray's fast lane."""
+    return await asyncio.to_thread(_host_live_metrics_payload)
 
 
 def _gateway_host_memory_snapshot() -> tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -25894,7 +25973,7 @@ def _gateway_host_memory_snapshot() -> tuple[Optional[Dict[str, Any]], Optional[
 @router.get("/host/metrics/memory")
 async def host_memory_metrics() -> Dict[str, Any]:
     """Best-effort host memory snapshot (RAM/process/device) via the Runtime host facade."""
-    snapshot, reason = _gateway_host_memory_snapshot()
+    snapshot, reason = await asyncio.to_thread(_gateway_host_memory_snapshot_cached)
     if snapshot is None:
         return {"ok": True, "supported": False, "reason": reason}
     return {"ok": True, "supported": True, **snapshot}
@@ -25907,10 +25986,17 @@ async def host_state() -> Dict[str, Any]:
     Every section is independently best-effort — a missing facade method or a
     failed probe nulls that section and names it in `degraded`, never a 500.
     """
+    # OFF THE LOOP (tray wave, 2026-09-05): residency walks every provider
+    # (HTTP to LM Studio/Ollama, up to 2 s each) plus `ioreg`/`sysctl` probes;
+    # inline, an unreachable provider froze every other request for seconds.
+    return await asyncio.to_thread(_host_state_payload)
+
+
+def _host_state_payload() -> Dict[str, Any]:
     degraded: list[str] = []
     reasons: Dict[str, str] = {}
 
-    memory, memory_reason = _gateway_host_memory_snapshot()
+    memory, memory_reason = _gateway_host_memory_snapshot_cached()
     if memory is None:
         degraded.append("memory")
         if memory_reason:
@@ -26017,6 +26103,228 @@ async def host_state() -> Dict[str, Any]:
         **({"reasons": reasons} if reasons else {}),
         "row_schema": MODEL_RESIDENCY_ROW_SCHEMA_V1,
     }
+
+
+# ---------------------------------------------------------------------------
+# Host control (system tray + console, 2026-09-05): pause/resume execution,
+# the desktop tray helper, restart/shutdown, self-update. Every route answers
+# in-band JSON; "cannot" is a 409 with the reason, never a 500.
+# ---------------------------------------------------------------------------
+
+
+class _HostControlRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, description="Free-text reason recorded with the action (shown in logs and status).")
+
+
+def _host_control_actor(principal: GatewayPrincipal) -> str:
+    tenant = str(getattr(principal, "tenant_id", "") or "default")
+    user = str(getattr(principal, "user_id", "") or "operator")
+    return f"{tenant}/{user}"
+
+
+def _host_runner_payload() -> Dict[str, Any]:
+    from ..service import gateway_runner_health_snapshot
+
+    try:
+        snap = gateway_runner_health_snapshot()
+    except Exception as e:  # noqa: BLE001
+        snap = {"initialized": False, "degraded": False, "runners": [], "error": f"{type(e).__name__}: {e}"}
+    runners = list(snap.get("runners") or [])
+    inflight = 0
+    for r in runners:
+        try:
+            inflight += int(r.get("inflight_ticks") or 0)
+        except Exception:
+            continue
+    step_gate_supported: Optional[bool] = None
+    try:
+        from abstractruntime import Runtime as _Runtime
+
+        import inspect as _inspect
+
+        step_gate_supported = "step_gate" in _inspect.signature(_Runtime.tick).parameters
+    except Exception:
+        step_gate_supported = None
+    return {
+        "ok": True,
+        **host_control.pause_snapshot(),
+        "inflight_ticks": inflight,
+        # Honest scope: the pause holds the WORKFLOW runner(s) of this process.
+        # Summoned entities' own-time loops are separate processes with their
+        # own lifecycle controls; bridges keep accepting and queue.
+        "scope": "workflow runner",
+        # An enabled runner lives in this process (False in the split layout,
+        # where the pause reaches the runner process through the pause file).
+        "runner_in_process": any(bool(r.get("enabled")) for r in runners),
+        # Older runtimes stop only at tick boundaries (up to tick_max_steps
+        # steps each); the tray words its "Pausing…" line accordingly.
+        "step_gate_supported": step_gate_supported,
+        "runners": runners,
+        "degraded": bool(snap.get("degraded")),
+        "capabilities": host_control.control_capabilities(),
+    }
+
+
+@router.get("/host/runner")
+async def host_runner_state(request: Request) -> Dict[str, Any]:
+    """Execution state of THIS process: paused?, by whom, ticks still finishing, restart/shutdown capability."""
+    _principal_from_request(request)
+    return _host_runner_payload()
+
+
+@router.post("/host/pause")
+async def host_pause(request: Request, req: Optional[_HostControlRequest] = None) -> Dict[str, Any]:
+    """Pause execution process-wide: no new workflow step runs until resumed. Admin only.
+
+    Runs, schedules and bridge-started work stay accepted and queue; a step
+    already inside an LLM/tool call finishes (threads cannot be interrupted)
+    and `inflight_ticks` counts down to 0. Persisted across restarts."""
+    principal = _require_admin_principal(request)
+    host_control.pause(by=_host_control_actor(principal), reason=req.reason if req else None)
+    return _host_runner_payload()
+
+
+@router.post("/host/resume")
+async def host_resume(request: Request) -> Dict[str, Any]:
+    """Resume execution process-wide (every runner is nudged to reschedule). Admin only."""
+    principal = _require_admin_principal(request)
+    host_control.resume(by=_host_control_actor(principal))
+    return _host_runner_payload()
+
+
+_HOST_RUNS_CACHE: Dict[str, Any] = {"at": 0.0, "key": None, "payload": None}
+_HOST_RUNS_TTL_S = 5.0
+
+
+@router.get("/host/runs")
+async def host_runs(
+    request: Request,
+    limit: int = Query(25, ge=1, le=200, description="Maximum runs (most recent first, across planes)."),
+    window_hours: float = Query(24.0, gt=0, description="Only runs started within this many hours."),
+) -> Dict[str, Any]:
+    """Recent runs on this MACHINE, across data planes. Admin only.
+
+    `GET /runs` answers for the CALLING PRINCIPAL's plane — right for a user,
+    wrong for a host view. The desktop tray asked it and told an operator "no
+    runs in the last 24 hours" while they were mid-conversation: the work was
+    on the gateway's default plane and the tray's token on another. Memory,
+    GPU and loaded models are all host-wide on that menu; the run list has to
+    be too, or it is simply lying.
+
+    Admin because it crosses tenant boundaries, like `/admin/runtimes`. Cached
+    for a few seconds: the tray polls it, and so may a console.
+    """
+    _require_admin_principal(request)
+    from ..admin_runtimes import recent_runs_host_wide
+
+    key = (int(limit), round(float(window_hours), 3))
+    now = time.time()
+    cached = _HOST_RUNS_CACHE
+    if cached["payload"] is not None and cached["key"] == key and (now - float(cached["at"])) < _HOST_RUNS_TTL_S:
+        return dict(cached["payload"])
+
+    svc = get_gateway_service()
+    payload = await asyncio.to_thread(
+        recent_runs_host_wide,
+        data_dir=Path(svc.config.data_dir),
+        limit=int(limit),
+        since_epoch=now - (float(window_hours) * 3600.0),
+        default_run_store=getattr(getattr(svc, "host", None), "run_store", None),
+    )
+    _HOST_RUNS_CACHE.update({"at": now, "key": key, "payload": payload})
+    return dict(payload)
+
+
+@router.get("/host/tray")
+async def host_tray_state(request: Request) -> Dict[str, Any]:
+    """Desktop tray icon: whether the helper runs, and why not when it does not."""
+    _principal_from_request(request)
+    from ..tray_supervisor import tray_overview
+
+    return tray_overview()
+
+
+@router.post("/host/tray/show")
+async def host_tray_show(request: Request) -> Dict[str, Any]:
+    """Start the tray helper now. Admin only.
+
+    THE ONLY TRAY WRITE (operator ruling 2026-09-06). There is no `hide` and no
+    setting: while the gateway serves a desktop that can hold an icon, the icon
+    is there. This is the retry for a helper that crashed -- it clears the
+    crash-loop latch -- not half of a toggle.
+    """
+    _require_admin_principal(request)
+    from ..tray_supervisor import get_tray_supervisor, serve_context, tray_decision, tray_overview
+
+    ctx = serve_context()
+    if not ctx:
+        raise HTTPException(status_code=409, detail="this process was not started by `abstractgateway serve`; there is no tray to show")
+    decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")))
+    if not decision.start:
+        raise HTTPException(status_code=409, detail=f"the tray cannot start here ({decision.reason}): {decision.hint or ''}".strip())
+    await asyncio.to_thread(
+        get_tray_supervisor().start,
+        base_url=str(ctx["base_url"]),
+        data_dir=Path(ctx["data_dir"]),
+        version=str(ctx["version"]),
+        decision=decision,
+        manual=True,
+    )
+    return tray_overview()
+
+
+@router.post("/host/restart")
+async def host_restart(request: Request, req: Optional[_HostControlRequest] = None) -> Dict[str, Any]:
+    """Gracefully restart this gateway process (same command, same environment). Admin only.
+
+    409 when the process cannot relaunch itself (`serve --reload`, or a
+    server not started by `abstractgateway serve`)."""
+    principal = _require_admin_principal(request)
+    try:
+        return host_control.request_restart(by=_host_control_actor(principal), reason=req.reason if req else None)
+    except host_control.HostControlError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.post("/host/shutdown")
+async def host_shutdown(request: Request, req: Optional[_HostControlRequest] = None) -> Dict[str, Any]:
+    """Gracefully stop this gateway process. Admin only."""
+    principal = _require_admin_principal(request)
+    try:
+        return host_control.request_shutdown(by=_host_control_actor(principal), reason=req.reason if req else None)
+    except host_control.HostControlError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.get("/host/update")
+async def host_update_state(request: Request) -> Dict[str, Any]:
+    """How this gateway was installed, the last update check, and the upgrade job state. Admin only."""
+    _require_admin_principal(request)
+    return await asyncio.to_thread(self_update.update_overview, check=False)
+
+
+@router.post("/host/update/check")
+async def host_update_check(request: Request) -> Dict[str, Any]:
+    """Ask PyPI for the latest version (5 s timeout; offline is an in-band answer, never an error). Admin only."""
+    _require_admin_principal(request)
+
+    def _run() -> Dict[str, Any]:
+        self_update.check_for_update(force=True)
+        return self_update.update_overview(check=False)
+
+    return await asyncio.to_thread(_run)
+
+
+@router.post("/host/update/start")
+async def host_update_start(request: Request) -> Dict[str, Any]:
+    """Run the upgrade command in the background; poll GET /host/update. Admin only.
+
+    409 when the install method cannot be upgraded in place or a job is running."""
+    _require_admin_principal(request)
+    try:
+        return await asyncio.to_thread(self_update.start_update)
+    except (self_update.UpdateNotPossible, self_update.UpdateJobBusy) as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.post("/embeddings", response_model=EmbeddingsResponse)

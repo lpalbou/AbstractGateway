@@ -40,6 +40,7 @@ nav:
   - API Overview: api.md
   - Architecture: architecture.md
   - Summoned Entities: entities.md
+  - Desktop Tray: tray.md
   - Security: security.md
   - Operator Tooling: maintenance.md
   - FAQ: faq.md

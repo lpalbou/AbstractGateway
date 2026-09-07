@@ -7,6 +7,155 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A desktop tray icon for `abstractgateway serve` (2026-09-05).** With the
+  new `abstractgateway[tray]` extra (pystray + Pillow) the gateway launches a
+  small helper process that puts a live icon in the macOS menu bar, the
+  Windows system tray or a Linux panel. The icon is a gauge — outer ring
+  memory in use, inner ring GPU load, a centre dot while a workflow step
+  executes, pause bars while paused, a red `!` when the gateway stops
+  answering. The menu opens the console, pauses/resumes workflows, lists the
+  models in memory with their size (click to unload, with a plain-language
+  confirmation; a locked model asks once more), shows an Activity window
+  (two 2-minute graphs — memory with the gateway's own footprint, GPU — and
+  the model table; tkinter, in its own process), checks for updates,
+  restarts or quits the gateway, and has Help/About. Everything works
+  offline; the two items that need the internet say so in their label.
+  The helper talks to the gateway over loopback only, with a per-process
+  ephemeral admin token handed over on stdin (never argv, env or disk) and
+  accepted only from a loopback socket peer. It is started only when the
+  `desktop_tray` setting is on (default), a display exists and the extra is
+  installed; every refusal is named on stderr and on `GET /host/tray`.
+  Docs: `docs/tray.md`.
+- **Pause / resume execution, process-wide (2026-09-05).** `POST
+  /api/gateway/host/pause` and `/resume` (admin), `GET /host/runner`
+  (state), `"paused": true` on `/api/health` (status stays `healthy`). A
+  paused runner schedules no ticks, still applies commands (cancel works),
+  and — with AbstractRuntime's new `tick(step_gate=…)` — stops a running tick
+  at its next step boundary instead of after up to 100 steps. The pause
+  persists in `<data_dir>/gateway_paused.json` across restarts and reaches
+  a split `abstractgateway runner` process through that file. `POST
+  /runs/start` while paused carries a `runner_warning` saying the run is
+  queued. The web console shows a Paused banner on every tab and a new
+  Gateway card on the Resources tab (pause/resume, tray switch, version and
+  update, restart, quit).
+- **Restart and self-update from the tray or console (2026-09-05).** `POST
+  /host/restart` asks uvicorn for its normal graceful shutdown (bounded to
+  10 s for a requested bounce) and relaunches `python -m abstractgateway …`
+  in the same environment — only after a clean return, never after a
+  Ctrl-C. `GET /host/update` reports how the gateway was installed (pip /
+  uv venv / pipx / uv tool / editable / Docker / system Python) and offers a
+  one-click upgrade only for the reproducible kinds, keeping the installed
+  extras; the check against pypi.org is cached an hour and answers
+  `offline: true` instead of failing. A finished upgrade recommends a
+  restart; a no-op upgrade (the index has no newer release) says so instead
+  of looping.
+- **`GET /api/gateway/host/metrics/live`** — GPU + memory + execution state in
+  one call with 1 s server-side caches (the tray's fast lane). The existing
+  `/host/metrics/*` and `/host/state` probes now run off the event loop.
+
+### Fixed
+- **A catalog-published workflow's runs are no longer hidden as "internal"
+  (2026-09-06).** `GET /runs` dropped every run whose `workflow_id` starts with
+  `__`, the prefix the gateway uses for its own bookkeeping runs
+  (`__session_memory__`). A workflow published to the catalog also runs under a
+  `__`-prefixed id — `__catalog__v2__<scope>__<b64 tenant>__<b64 bundle>` — and
+  is the opposite of internal: it is what the operator is talking to. So the
+  console's **Runs** list and the tray's Workflows menu both showed nothing for
+  an assistant conversation that had run seven steps a minute earlier; with
+  `root_only` on, the only surviving rows were the child node-runs, and with it
+  off the list read as machinery. The rule now lives once, in
+  `workflow_catalog.is_internal_workflow_id` — a `__` id that parses as a
+  catalog id is real work — and `/runs`, `/host/runs` and the tray all ask it,
+  so a workflow cannot be visible in one list and missing from the next.
+
+### Added
+- **`GET /api/gateway/host/runs` — recent runs across every data plane on this
+  machine (2026-09-06).** Admin, `limit` + `window_hours`, cached 5 s. `/runs`
+  answers for the CALLING PRINCIPAL's plane, which is right for a user and
+  wrong for a host view — memory, GPU and loaded models on the tray menu all
+  describe the machine, so the run list has to describe the same machine. It
+  merges the default plane and every materialized user plane. Each row carries
+  a readable
+  `label` — a catalog-published workflow runs under
+  `__catalog__v2__…<base64>@0.0.3`, which is the right store key and an
+  unreadable menu string, so it is decoded back to
+  `abstractassistant-orchestrator`. That same id starts with `__`, the prefix
+  `/runs` uses to hide the gateway's own bookkeeping runs, so the
+  internal-run filter now excludes catalog ids explicitly — hiding them as
+  "internal" would drop exactly the work the operator came to see. The default
+  plane and materialized user planes are plain store reads; ENTITY planes are
+  skipped and named in `skipped_entity_planes`, because reaching one goes
+  through the entity registry (opening homes, wiring embedders) and that must
+  never ride a background poll.
+
+### Changed
+- **The tray menu gets a Workflows section, and loses its second console door
+  (2026-09-06).** *Show Activity in Console* is gone: it opened the same
+  browser as *Open Console*, at a different anchor, so the first thing the menu
+  asked a new user to do was choose between two identical destinations. (The
+  native *Show Activity Window* is a different thing and stays, where `tkinter`
+  can render it.) In its place, a **Workflows** submenu lists the last 24 hours
+  of root runs, newest first — a state badge (🟢 running, 🟡 waiting,
+  ✅ completed, ❌ failed, ⚪️ cancelled), the step count and the duration, under
+  a one-line tally ("Last 24 hours — 1 running · 12 done · 1 failed") — with
+  *Open Runs in Console* at the bottom and Pause/Resume Workflows directly
+  under it, where the high-level lever reads as a lever over the list above it.
+  The runs come from the new `GET /api/gateway/host/runs` on the sampler's slow
+  thread with its own 20 s throttle, and the menu's rebuild signature carries
+  which runs and their
+  state/steps but deliberately NOT their durations — a number that ticks every
+  second would close the menu under the operator's cursor. The console's
+  `#<tab>` fragment now deep-links to any tab (it was a `#models` special case)
+  so *Open Runs in Console* can land on Runtimes.
+- **Help items name what they open, and nothing else (2026-09-06).** The
+  "(needs internet)" and "(on this computer)" suffixes are gone from
+  *Documentation*, *Report a Problem…* and *Developer API Reference*. An
+  annotation the reader has to step over on every second line costs more than
+  it tells; the browser says so the one time it matters.
+
+### Removed
+- **The desktop icon has no off switch any more (2026-09-06).** Gone: the
+  tray menu's *Hide Menu Bar Icon* / *Hide Tray Icon* item, the console's
+  "Show the menu bar / tray icon" checkbox (Resources → Gateway), the
+  `desktop_tray` runtime-config knob, `POST /api/gateway/host/tray/hide`, and
+  `enabled_setting` on `GET /host/tray`. The icon is the gateway's presence on
+  the desktop — for someone who never opens a terminal it is the only entry
+  point they have — so a switch whose only effect is to remove it is a way to
+  lose the product, not a preference. While `abstractgateway serve` runs, the
+  icon is there. What remains in `tray_decision` is only what this machine can
+  or cannot do: a runner-only process, `serve --reload`, no desktop session, or
+  the `tray` extra not installed; the console's Gateway card now reports which,
+  as plain text. `POST /host/tray/show` stays as the admin retry for a helper
+  that crashed. A caller still writing `desktop_tray` gets a `400` explaining
+  the removal rather than a `200` that changes nothing.
+
+### Fixed
+- **The recommended-models banner no longer cries wolf on a configured host
+  (2026-09-06).** Both consoles rendered the fresh-install recommendation raw —
+  "Recommended defaults — 2 of 3 models present. Missing: lmstudio
+  qwen/qwen3.5-9b@4bit", in error red — above a grid of routes that were all
+  configured and all working. An operator who had deliberately routed text
+  generation at their own model got a permanent error they could clear only by
+  installing the model they had chosen against. The starter kit exists to give
+  an *unanswered* route something to run, so
+  `GET /api/gateway/models/availability` now carries `recommended.gaps`: the
+  recommended models that are absent **and** whose route has nothing else
+  serving it (its own provider/model, a `covered_by` derivation, a parent
+  covered by its task rows, or a task row inheriting its parent). The
+  judgement is AbstractCore's — `model_materializer.mark_recommended_route_gaps`
+  through `config_facade` — applied to the Gateway-resolved rows, so the web
+  console, the console-TUI, `abstractcore models status` and the AbstractCore
+  console all read one answer.
+  The web banner and the TUI's weights line speak only about those routes and
+  disappear entirely when there are none; "Download missing" now fetches
+  exactly the artifacts the banner named instead of the whole starter kit; and
+  "Apply recommended" moved to the section head (admin-only, matching the
+  endpoint) so no sentence has to be printed above the grid to keep it
+  reachable. The raw counts and `would_download` are unchanged — `--dry-run`
+  and `abstractcore config` ask what `--recommended` *would* fetch, which is a
+  different question.
+
 ### Security
 - **The shared workflow registry is administered by the operator (2026-08-21).**
   Installing, replacing, removing, deprecating and reloading workflows in the

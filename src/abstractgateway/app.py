@@ -32,6 +32,16 @@ async def _lifespan(_app: FastAPI):
     finally:
         stop_gateway_runner()
         reset_gateway_boot_state()
+        # Desktop tray helper (2026-09-05): lifespan shutdown is the one
+        # place that runs on EVERY exit path — uvicorn re-raises a captured
+        # SIGTERM after serve() returns, so the CLI's own `finally` never
+        # sees `systemctl stop`/`kill`. Best-effort, no-op when no helper.
+        try:
+            from .tray_supervisor import get_tray_supervisor
+
+            get_tray_supervisor().stop()
+        except Exception:
+            pass
 
 
 app = FastAPI(
@@ -411,6 +421,16 @@ async def health_check():
     except Exception as e:
         runner_snapshot = {"initialized": False, "degraded": False, "error": f"{type(e).__name__}: {e}"}
     body["runner"] = runner_snapshot
+    # Host pause (tray/console, 2026-09-05): visible on the liveness probe,
+    # but `status` stays healthy — a paused gateway is an operator's choice
+    # and a supervisor must never recycle it for that.
+    try:
+        from .host_control import pause_snapshot
+
+        if pause_snapshot().get("paused"):
+            body["paused"] = True
+    except Exception:
+        pass
     # Long-lived worker liveness (resilience wave 2026-07-21): reapers,
     # sweepers, bridges. A dead worker degrades honesty-first — the operator's
     # supervisor can key on it, and the label names WHICH worker died.

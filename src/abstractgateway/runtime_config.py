@@ -807,6 +807,18 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
     if "backlog_exec_runner" in changes:
         stored["backlog_exec_runner"] = _bool(changes["backlog_exec_runner"], False)
         applied["backlog_exec_runner"] = stored["backlog_exec_runner"]
+    if "desktop_tray" in changes:
+        # RETIRED (operator ruling 2026-09-06): the menu bar / tray icon is the
+        # gateway's presence on the desktop, so while it serves, it is there.
+        # An unknown key is otherwise ignored silently; a caller still sending
+        # this one is acting on a setting that no longer exists and deserves to
+        # be told, not to get a 200 that changed nothing.
+        raise RuntimeConfigError(
+            "desktop_tray was removed: the menu bar / tray icon is always shown while the gateway "
+            "runs. It can only be absent when this machine cannot hold it (no desktop session, "
+            "`serve --reload`, a runner-only process, or the `tray` extra not installed) — "
+            "GET /api/gateway/host/tray names which."
+        )
     if "triage_repo_root" in changes:
         raw = changes["triage_repo_root"]
         if raw is None or str(raw).strip() == "":

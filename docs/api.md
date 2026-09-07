@@ -1102,6 +1102,55 @@ Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
 `model_context_estimate`, `session_prompt_caches_list`) and
 `src/abstractgateway/security/authorization.py` (route-family policy).
 
+## Host control (pause, desktop tray, restart, update)
+
+The process's own controls — the surface behind the desktop tray icon and
+the console's Gateway card (see [tray.md](./tray.md)). Reads are available to
+any authenticated principal; writes require an admin principal.
+
+- `GET /api/gateway/host/runner` — execution state:
+
+```json
+{"ok": true, "paused": true, "paused_at": "2026-09-05T06:38:26+00:00", "paused_by": "default/admin", "reason": "meeting",
+ "inflight_ticks": 0, "scope": "workflow runner", "runner_in_process": true, "step_gate_supported": true,
+ "runners": [{"status": "paused", "...": "..."}], "degraded": false,
+ "capabilities": {"restart": true, "shutdown": true, "reason": null, "update_job_running": false}}
+```
+
+- `POST /api/gateway/host/pause` (body `{"reason": "..."}` optional) and
+  `POST /api/gateway/host/resume` — both answer the payload above.
+- `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
+  (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
+  `/host/metrics/gpu` and `/host/metrics/memory`.
+- `GET /api/gateway/host/runs?limit=25&window_hours=24` — recent runs across
+  every data plane on this host (admin; `/runs` answers only for the calling
+  principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
+  created_at, updated_at, ledger_len, plane, started_epoch}], count, has_more,
+  planes, skipped_entity_planes?, warnings?}`. `label` decodes a catalog
+  workflow's internal id (`__catalog__v2__…<base64>`) to the name an operator
+  uses. Root runs only; the gateway's own bookkeeping runs (`__`-prefixed, but
+  never a catalog id) are excluded.
+- `GET /api/gateway/host/tray` — `{dependencies_installed, install_hint,
+  decision: {start, reason, hint}, supervisor: {running, ready, pid,
+  exit_code, failure, log_path}, can_control}`. There is no setting: the icon
+  is shown whenever this process and this desktop can hold it.
+- `POST /api/gateway/host/tray/show` — retry the helper now (409 when this
+  process cannot). No `hide` counterpart, by design.
+- `POST /api/gateway/host/restart`, `POST /api/gateway/host/shutdown` —
+  `{"ok": true, "restart": true, "requested_by": "...", "reason": "..."}`;
+  409 with a plain reason when unsupported (`--reload`, embedded server, an
+  update is installing).
+- `GET /api/gateway/host/update`, `POST /api/gateway/host/update/check`,
+  `POST /api/gateway/host/update/start` — `{current, install: {kind,
+  upgradable, reason, command, extras}, check: {latest, update_available,
+  offline, checked_at, error}, job: {state, log_tail, exit_code,
+  restart_recommended, version_before, version_after}, restart_pending}`.
+  `start` answers 409 when the install cannot be upgraded in place or a job
+  is already running.
+
+`GET /api/health` adds `"paused": true` while paused; `status` stays
+`"healthy"`.
+
 ## Prompt-cache control plane (operator API)
 
 The gateway exposes prompt-cache operator endpoints under `/api/gateway/prompt_cache/*`.

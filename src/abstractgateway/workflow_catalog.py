@@ -152,6 +152,31 @@ def _unb64_component(value: str) -> Optional[str]:
         return None
 
 
+def is_internal_workflow_id(workflow_id: Any) -> bool:
+    """Gateway MACHINERY, as opposed to work someone started.
+
+    `__`-prefixed workflow ids are the gateway's own bookkeeping runs
+    (`__session_memory__`), which no run list should show. But a
+    CATALOG-PUBLISHED workflow also runs under a `__`-prefixed id --
+    `__catalog__v2__<scope>__<b64 tenant>__<b64 bundle>@<version>` -- and it is
+    the opposite of internal: it is what the operator is talking to.
+
+    The prefix alone was the test until 2026-09-06, and it made every
+    catalog-published workflow invisible in the console's Runs list and in the
+    tray's Workflows menu -- an operator mid-conversation with an assistant was
+    told their machine had run nothing for a week. A catalog id that PARSES is
+    real work; only the rest is machinery.
+    """
+
+    raw = str(workflow_id or "").strip()
+    if not raw.startswith("__"):
+        return False
+    bundle = raw.partition(":")[0]
+    if "@" in bundle:
+        bundle = bundle.rsplit("@", 1)[0]
+    return parse_catalog_internal_bundle_id(bundle) is None
+
+
 def parse_catalog_internal_bundle_id(bundle_id: str) -> Optional[tuple[str, str, str]]:
     s = str(bundle_id or "").strip()
     if not s.startswith(CATALOG_INTERNAL_PREFIX):

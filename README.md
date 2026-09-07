@@ -318,6 +318,7 @@ pip install abstractgateway
 - `abstractgateway[apple]`: full native macOS Python profile with Apple-local engines and all non-NVIDIA framework capabilities
 - `abstractgateway[gpu]`: full local GPU profile with vLLM/HuggingFace, local Diffusers image generation, local voice engines, music, and KG memory; this is also the NVIDIA Docker install profile
 - `abstractgateway[embeddings]`: local sentence-transformer embeddings for semantic KG queries
+- `abstractgateway[tray]`: a menu bar / system tray icon for `abstractgateway serve` (macOS, Windows, Linux) — open the console, pause/resume workflows, unload models, watch memory and GPU, restart or update; see [docs/tray.md](docs/tray.md)
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local test/dev deps
 

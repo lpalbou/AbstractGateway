@@ -639,13 +639,40 @@ def capability_default_specs() -> Dict[str, Dict[str, Any]]:
 # the multi-user deployments where it matters most.
 
 
+def _mark_recommended_route_gaps(plan: Dict[str, Any], rows: list) -> Dict[str, Any]:
+    """Split the recommended set into ADVICE and GAPS -- through the seam.
+
+    WHOSE PROBLEM IS AN ABSENT RECOMMENDED MODEL? Only an EMPTY route's.
+    `recommended_model_plan()` answers exactly one question -- "is the starter
+    kit on this disk?" -- and a console that rendered that answer raw told an
+    operator who had deliberately routed `input.text` at their own model that a
+    model was missing, in error red, on every visit. The only way to clear it
+    was to install the model they had chosen against, so it never cleared.
+
+    WHICH ROWS: the GATEWAY-RESOLVED ones, for the same reason the availability
+    annotation rides them (see the note above `gateway_model_availability_payload`).
+    A route answered by a principal or gateway-runtime overlay is answered, and
+    a fresh read of the install store would not know it.
+
+    WHOSE JUDGEMENT: AbstractCore's, through `config_facade`. "Is this route
+    answered?" reads four fields Core itself decorates the rows with
+    (`covered_by`, `covered_by_tasks`, `inherits_broad`, plus a value of its
+    own); re-deriving that here is exactly the drift this seam exists to
+    prevent, and the CLI and the AbstractCore console read the same answer.
+    """
+
+    return config_facade.mark_recommended_route_gaps(plan, rows)
+
+
 def gateway_model_availability_payload(*, base_dir: Optional[Path] = None) -> Dict[str, Any]:
     """The capability grid, annotated with local weight availability.
 
     Every route row gains `availability` (installed / absent / unknown /
     not_applicable, with the evidence that produced it) and, where the served
     model id is not the download reference, `download_artifact`. `recommended`
-    carries the fresh-install set so a console can say "2 of 3 present".
+    carries the fresh-install set so a console can say "2 of 3 present", plus
+    `gaps` -- the recommended models whose ROUTE is still empty, which is the
+    only part of that set an operator is being asked to act on.
 
     READ-ONLY AND CHEAP BY CONTRACT: probes never download and never contact a
     model hub. They do talk to localhost daemons with short timeouts, so a
@@ -681,7 +708,9 @@ def gateway_model_availability_payload(*, base_dir: Optional[Path] = None) -> Di
             out["errors"].append(f"model availability probe failed: {exc}")
             out["ok"] = False
         try:
-            out["recommended"] = config_facade.recommended_model_plan()
+            out["recommended"] = _mark_recommended_route_gaps(
+                config_facade.recommended_model_plan(), rows
+            )
         except Exception as exc:
             out["errors"].append(f"recommended model probe failed: {exc}")
     return out

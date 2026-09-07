@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import threading
+import time
 import warnings
 import json
 import sys
@@ -258,7 +259,7 @@ class _UvicornAccessLogFilter(logging.Filter):
             if isinstance(args, tuple) and len(args) >= 5:
                 full_path = str(args[2] or "")
                 status_code = args[4]
-                if "/api/gateway/host/metrics/gpu" in full_path:
+                if "/api/gateway/host/metrics/" in full_path or "/api/gateway/host/runner" in full_path:
                     try:
                         if int(status_code) == 200:
                             return False
@@ -272,7 +273,7 @@ class _UvicornAccessLogFilter(logging.Filter):
         except Exception:
             return True
 
-        if "/api/gateway/host/metrics/gpu" in msg and msg.rstrip().endswith(" 200"):
+        if ("/api/gateway/host/metrics/" in msg or "/api/gateway/host/runner" in msg) and msg.rstrip().endswith(" 200"):
             return False
         return True
 
@@ -371,6 +372,136 @@ def _reserve_gguf_metal() -> None:
         msg = f"GGUF GPU offload reservation failed ({exc}); GGUF models will run on CPU."
         logging.getLogger(__name__).warning(msg)
         warnings.warn(msg, RuntimeWarning, stacklevel=2)
+
+
+def _tray_base_url(bind_host: str, port: int) -> str:
+    """The URL the tray (and its 'Open Console' item) uses to reach THIS
+    server: loopback for wildcard/loopback binds, the bound address itself
+    otherwise (a 192.168.x.x bind does not answer on 127.0.0.1)."""
+    h = str(bind_host or "").strip()
+    if h in {"0.0.0.0", "127.0.0.1", "localhost", ""}:
+        host = "127.0.0.1"
+    elif h in {"::", "::1"}:
+        host = "[::1]"
+    elif ":" in h and not h.startswith("["):
+        host = f"[{h}]"
+    else:
+        host = h
+    return f"http://{host}:{int(port)}"
+
+
+def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv: list[str]) -> None:
+    """Run uvicorn with the host-control seam (restart/shutdown from the tray
+    or console) and the desktop tray helper (2026-09-05).
+
+    `--reload` keeps uvicorn's own supervisor (the app lives in a child that
+    never runs main(), so neither restart nor the tray can work there — both
+    say so instead of half-working). Otherwise the Server is built explicitly
+    so a request handler can ask for a graceful exit through
+    `host_control`; the tray child is started right before serving and
+    stopped right after, whatever the exit path.
+    """
+    from . import host_control
+    from .self_update import installed_version
+    from .tray_supervisor import get_tray_supervisor, record_serve_context, tray_decision
+    from .users import gateway_data_dir_from_env
+
+    data_dir = gateway_data_dir_from_env()
+    base_url = _tray_base_url(str(args.host), int(args.port))
+    version = installed_version()
+    reload = bool(run_kwargs.get("reload"))
+    record_serve_context(base_url=base_url, data_dir=data_dir, version=version, reload=reload, runner_only=False)
+
+    if reload:
+        host_control.register_server(
+            None,
+            restartable=False,
+            block_reason="`serve --reload` runs the app in uvicorn's reloader child; restart from the tray is unavailable",
+        )
+        _stderr("Desktop tray: not started (dev_reload: `serve --reload` runs the app in a reloader child; start without --reload)")
+        try:
+            uvicorn.run("abstractgateway.app:app", **run_kwargs)
+        finally:
+            host_control.unregister_server()
+        return
+
+    if not (callable(getattr(uvicorn, "Config", None)) and callable(getattr(uvicorn, "Server", None))):
+        # A uvicorn without the Server API (or a test double exposing only
+        # run()): serve the old way and say what is unavailable.
+        host_control.register_server(None, restartable=False, block_reason="this uvicorn exposes no Server API; restart from the tray is unavailable")
+        try:
+            uvicorn.run("abstractgateway.app:app", **run_kwargs)
+        finally:
+            host_control.unregister_server()
+        return
+
+    kwargs = {k: v for k, v in dict(run_kwargs).items() if k != "reload"}
+    config = uvicorn.Config("abstractgateway.app:app", **kwargs)
+    server = uvicorn.Server(config)
+    host_control.register_server(server, restartable=True, relaunch_argv=list(argv))
+    if str(os.getenv("FORWARDED_ALLOW_IPS") or "").strip() == "*":
+        _stderr(
+            "[WARN] FORWARDED_ALLOW_IPS=* lets any client rewrite its peer address through X-Forwarded-For; "
+            "the desktop tray's loopback-only token is no longer bound to this machine. Use a concrete proxy IP."
+        )
+
+    tray = get_tray_supervisor()
+    # NO SETTING TO READ (operator ruling 2026-09-06): while `serve` runs on a
+    # desktop that can hold an icon, the icon is there. What is left in
+    # `tray_decision` is only what this machine can or cannot do.
+    decision = tray_decision(reload=False, runner_only=False)
+    if decision.start:
+        # Spawn AFTER the listener is bound (a second `serve` on a busy port
+        # must never point a tray at the FIRST gateway with the wrong token
+        # — ten 401s lock every loopback client out). `server.started` flips
+        # once uvicorn accepts connections; boot (minutes) is separate and
+        # the tray shows "Starting…" meanwhile.
+        def _start_tray_when_bound() -> None:
+            deadline = time.monotonic() + 120.0
+            while time.monotonic() < deadline:
+                if getattr(server, "should_exit", False):
+                    return
+                if getattr(server, "started", False):
+                    break
+                time.sleep(0.1)
+            else:
+                return
+            st = tray.start(base_url=base_url, data_dir=data_dir, version=version, decision=decision)
+            if st.get("running"):
+                _stderr(f"Desktop tray: started (pid {st.get('pid')}); console at {base_url}/console")
+            else:
+                _stderr(f"[WARN] Desktop tray: failed to start: {st.get('error') or st.get('failure') or 'unknown error'}")
+
+        threading.Thread(target=_start_tray_when_bound, name="gateway-tray-launch", daemon=True).start()
+    elif decision.reason != "headless":
+        # A headless host does not care; a desktop that could have had the
+        # icon deserves the one line that says how to get it.
+        hint = f": {decision.hint}" if decision.hint else ""
+        _stderr(f"Desktop tray: not started ({decision.reason}{hint})")
+
+    try:
+        server.run()
+        # A normal return: uvicorn drained and (when a signal arrived) is
+        # about to re-raise it — a restart request may now be honoured.
+        host_control.mark_clean_exit()
+    except KeyboardInterrupt:
+        # uvicorn.run()'s own contract: Ctrl-C is a quiet stop, not a traceback
+        # — and never a relaunch.
+        host_control.clear_requests()
+    except BaseException:
+        host_control.clear_requests()
+        raise
+    finally:
+        tray.stop()
+        host_control.unregister_server()
+    # uvicorn.run()'s own contract: a server that never started (port in
+    # use, bad bind) exits with STARTUP_FAILURE so launchers see it.
+    if not getattr(server, "started", True):
+        try:
+            from uvicorn.main import STARTUP_FAILURE as _startup_failure
+        except Exception:  # noqa: BLE001
+            _startup_failure = 3
+        raise SystemExit(int(_startup_failure))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -615,12 +746,24 @@ def main(argv: list[str] | None = None) -> None:
             if log_config:
                 run_kwargs["log_config"] = log_config
 
-            uvicorn.run("abstractgateway.app:app", **run_kwargs)
+            _serve_with_host_controls(uvicorn=uvicorn, args=args, run_kwargs=run_kwargs, argv=list(argv if argv is not None else sys.argv[1:]))
         finally:
             if prev_runner_env is None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
             else:
                 os.environ["ABSTRACTGATEWAY_RUNNER"] = prev_runner_env
+            # Restart requested from the tray/console (host_control,
+            # 2026-09-05): ONLY after uvicorn returned cleanly (a Ctrl-C or
+            # an exception during the drain means "stop", never "bounce"),
+            # the tray child is gone — replace this process with a fresh
+            # gateway BEFORE the straggler belt below can _exit() us.
+            try:
+                from . import host_control as _host_control
+
+                if _host_control.should_relaunch():
+                    _host_control.relaunch_process()  # never returns
+            except Exception as exc:  # noqa: BLE001 - a failed relaunch must be loud, then exit normally
+                _stderr(f"[ERROR] gateway restart failed: {exc}")
             # Deterministic-exit belt (shutdown-forensics, 2026-07-24): after
             # uvicorn returns, ANY surviving non-daemon thread makes the
             # interpreter wait forever at exit — the true "TERM hangs, operator

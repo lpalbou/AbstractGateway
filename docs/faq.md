@@ -350,6 +350,29 @@ until a flow asserts triples.
 Evidence: memory KG wiring in `src/abstractgateway/memory_store.py` and
 `src/abstractgateway/hosts/bundle_host.py`.
 
+## Desktop tray
+
+### How do I get the menu bar / tray icon, and why is there none?
+
+Install the extra — `pip install "abstractgateway[tray]"` — and start the
+gateway with `abstractgateway serve` on a desktop session. The boot log says
+what happened: `Desktop tray: started (pid …)`, or `not started` with the
+reason (`missing_dependency`, `disabled_by_setting`, `dev_reload`). Headless
+hosts (SSH, containers, services) never start it and stay silent. On Linux the
+GTK/AppIndicator bindings are needed (`python3-gi` +
+`gir1.2-ayatanaappindicator3-0.1`); GNOME also needs the AppIndicator
+extension. The switch lives in Console → Resources → Gateway. Details:
+[tray.md](./tray.md).
+
+### What does "Pause Workflows" actually stop?
+
+New workflow steps. Runs, schedules and messages from connected apps are
+still accepted and wait; a step already inside an LLM or tool call finishes
+first; the console and the API keep answering; summoned entities' own loops
+are separate processes and keep their schedule. Pause persists across
+restarts until you resume (tray, console banner, or
+`POST /api/gateway/host/resume`).
+
 ## Deployment
 
 ### How do I run API and runner as separate processes?

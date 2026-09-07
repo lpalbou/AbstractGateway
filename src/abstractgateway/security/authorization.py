@@ -88,9 +88,30 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     # are resident, how much memory is left — /models/loaded, /host/state,
     # /host/metrics/*, /models/context_estimate) is visibility every
     # authenticated client needs to render an "agentic OS" view, so no row
-    # gates those GETs. All /host routes today are reads; a future /host
-    # write must add a row here (the route-authorization contract test lands
-    # RED until it does).
+    # gates those GETs (`/host/runner` and `/host/tray` joined them on
+    # 2026-09-05: paused-or-not and tray-running-or-not are visibility). The
+    # /host WRITES are the process's own controls — pause/resume execution,
+    # retry the tray helper, restart/shutdown, self-update — and
+    # `GET /host/update` names the interpreter prefix and the upgrade
+    # command (admin-classed paths, the runtime-config rule).
+    GatewayRoutePolicy(
+        resource="host",
+        reason_code="admin_required",
+        exact=(
+            # `/host/runs` is a READ, and still admin: it crosses tenant
+            # boundaries (every data plane on this machine), which is the
+            # `/admin/runtimes` rule, not the `/host/state` one.
+            "/api/gateway/host/runs",
+            "/api/gateway/host/pause",
+            "/api/gateway/host/resume",
+            "/api/gateway/host/tray/show",
+            "/api/gateway/host/restart",
+            "/api/gateway/host/shutdown",
+            "/api/gateway/host/update",
+            "/api/gateway/host/update/check",
+            "/api/gateway/host/update/start",
+        ),
+    ),
     GatewayRoutePolicy(
         resource="models",
         reason_code="admin_required",

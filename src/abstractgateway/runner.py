@@ -29,6 +29,7 @@ from abstractruntime.core.event_keys import build_event_wait_key
 from abstractruntime.core.models import Effect, EffectType, RunStatus, StepRecord, WaitReason
 from abstractruntime.core.vars import is_paused_vars
 from abstractruntime.scheduler.scheduler import utc_now_iso
+from . import host_control
 from abstractruntime.storage.commands import (
     CommandCursorStore,
     CommandRecord,
@@ -213,6 +214,27 @@ def _file_store_base(run_store: Any) -> Optional[Path]:
     return None
 
 
+_STEP_GATE_SUPPORT: Dict[type, bool] = {}
+
+
+def _runtime_supports_step_gate(runtime: Any) -> bool:
+    """True when this Runtime class accepts ``tick(step_gate=...)`` (runtime
+    2026-09-05+). Introspected once per class; a runtime whose signature
+    cannot be read is treated as unsupported (the pre-gate behaviour)."""
+    cls = type(runtime)
+    hit = _STEP_GATE_SUPPORT.get(cls)
+    if hit is not None:
+        return hit
+    try:
+        import inspect
+
+        supported = "step_gate" in inspect.signature(cls.tick).parameters
+    except Exception:  # noqa: BLE001
+        supported = False
+    _STEP_GATE_SUPPORT[cls] = supported
+    return supported
+
+
 class GatewayRunner:
     """Background worker: poll command inbox + tick runs forward."""
 
@@ -379,6 +401,10 @@ class GatewayRunner:
         # stops, e.g. invalidate_gateway_service_for_runtime).
         self._thread = threading.Thread(target=self._run, name="abstractgateway-runner", daemon=True)
         self._thread.start()
+        # Host pause (tray/console, 2026-09-05): a resume must reschedule
+        # promptly — the scan gate would otherwise wait for a fingerprint
+        # probe or a deadline before noticing the runs it skipped.
+        host_control.add_resume_listener(self.nudge)
         logger.info("GatewayRunner worker started (base_dir=%s)", self._base_dir)
 
     def stop(self, timeout_s: float = 5.0, *, drain_timeout_s: float = 30.0) -> None:
@@ -738,8 +764,14 @@ class GatewayRunner:
         holder_alive = self._pid_alive(holder_pid) if (holder_pid and not lock_held) else None
         heartbeat_fresh = heartbeat_age is not None and heartbeat_age <= float(self._lock_stale_after_s)
 
+        paused = host_control.pause_snapshot()
         if not self._enable:
             status = "disabled"
+        elif lock_held and loop_running and paused.get("paused"):
+            # Holding the lock, polling commands, scheduling NOTHING: the
+            # operator's choice, never a degraded state (health stays
+            # healthy; supervisors must not recycle a paused gateway).
+            status = "paused"
         elif lock_held and loop_running:
             status = "active"
         elif refused and heartbeat_fresh:
@@ -776,6 +808,12 @@ class GatewayRunner:
             "takeover_requested_at": takeover_at,
             "yielded_to_pid": yielded_to,
             "pid": os.getpid(),
+            # Host pause (tray/console): process-wide, so every runner in a
+            # multi-user process reports the same answer.
+            "paused": bool(paused.get("paused")),
+            "paused_at": paused.get("paused_at"),
+            "paused_by": paused.get("paused_by"),
+            "pause_reason": paused.get("reason"),
         }
         if loop_restarts:
             # Self-heal visibility: recoveries are normal operation ONLY when
@@ -964,6 +1002,13 @@ class GatewayRunner:
                     os.utime(self._singleton_lock_path, None)
                 except Exception:
                     pass
+                # Host pause written by ANOTHER process (split layout: the
+                # API process pauses, this runner process must obey) — one
+                # stat every ~2 s, reload on change.
+                try:
+                    host_control.maybe_reload()
+                except Exception:
+                    logger.debug("GatewayRunner: pause-file reload failed", exc_info=True)
                 if self._takeover_yield_requested():
                     return True
                 try:
@@ -1199,6 +1244,13 @@ class GatewayRunner:
         return str(getattr(run, "actor_id", "") or "") == "gateway"
 
     def _schedule_ticks(self) -> None:
+        # HOST PAUSE (tray/console, 2026-09-05): no tick is scheduled while
+        # the process is paused — not even the command lane. Commands
+        # themselves still APPLY (a cancel must work on a paused gateway);
+        # their priority ids stay queued in _priority_tick_ids and drain on
+        # the first pass after resume (resume() nudges every runner).
+        if host_control.is_paused():
+            return
         # COMMAND LANE drain (backlog 0152): submit just-commanded runs FIRST,
         # via the reserved executor, BEFORE the windowed RUNNING scan. This
         # runs even when the general pool is fully starved by hung ticks (its
@@ -2022,7 +2074,15 @@ class GatewayRunner:
         self._clear_resolution_failure(run_id)
 
         try:
-            state = runtime.tick(workflow=wf, run_id=run_id, max_steps=int(self._cfg.tick_max_steps or 100))
+            tick_kwargs: Dict[str, Any] = {"workflow": wf, "run_id": run_id, "max_steps": int(self._cfg.tick_max_steps or 100)}
+            if _runtime_supports_step_gate(runtime):
+                # Host pause reaches INSIDE the tick (runtime 2026-09-05): the
+                # runtime consults the gate at every step boundary, so a
+                # pause stops after the current step instead of after up to
+                # tick_max_steps of them. Older runtimes pause at tick
+                # boundaries only (introspected once per Runtime class).
+                tick_kwargs["step_gate"] = host_control.step_gate
+            state = runtime.tick(**tick_kwargs)
         except Exception as e:
             # Never leave runs stuck in RUNNING due to an unhandled exception.
             #

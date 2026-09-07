@@ -1512,6 +1512,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </button>
 	    </div>
 	  </header>
+	  <!-- Host pause (tray + console, 2026-09-05): a pause set last week from the
+	       menu bar must be visible on EVERY tab, before choosing one. Driven by
+	       GET /host/runner (15s poll while signed in) and by the Gateway card. -->
+	  <div id="paused-banner" class="entity-stop-banner hidden" role="status">
+	    <span id="paused-banner-text">Workflows are paused.</span>
+	    <button id="paused-banner-resume" class="secondary" type="button" title="Resume workflow execution on this gateway">Resume workflows</button>
+	  </div>
 	  <main class="console-shell shell_content">
 	    <section id="login-section" class="af-gateway-signin">
 	      <div class="af-gateway-signin__hero">
@@ -1806,13 +1813,23 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <p id="defaults-scope" class="section-note">Sign in to edit provider/model defaults for this Gateway runtime.</p>
 	              <p id="defaults-authority" class="authority-note hidden"></p>
 	            </div>
-	            <button id="refresh-catalog" class="secondary" title="Reload providers and capability defaults" aria-label="Refresh catalog"><span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Refresh</span></button>
+	            <div class="section-actions">
+	              <!-- "Apply recommended" lives in the section HEAD, not in the
+	                   weights banner below. It used to be appended to that
+	                   banner, so the banner had to render on a fully configured
+	                   host just to keep the button reachable — and a banner that
+	                   always renders ends up always saying something. Here it is
+	                   a standing action, and the banner is free to stay silent. -->
+	              <button id="defaults-apply-recommended" class="secondary" title="Set the recommended provider/model on the text, voice and image routes. Routes you configured differently are kept." aria-label="Apply recommended routes"><span class="button-icon" aria-hidden="true">◆</span><span>Apply recommended</span></button>
+	              <button id="refresh-catalog" class="secondary" title="Reload providers and capability defaults" aria-label="Refresh catalog"><span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Refresh</span></button>
+	            </div>
 	          </div>
-	          <!-- Weights banner: a fresh install has three recommended routes
-	               configured and possibly zero of their models on disk. The
-	               grid alone would read as "all set" — this line says how many
-	               of them can actually run, and offers the one action that
-	               fixes it. Hidden when there is nothing to say. -->
+	          <!-- Weights banner: a route with NOTHING routed to it cannot run,
+	               and the recommended starter model is the one-click way out of
+	               that. It speaks ONLY about those routes: a recommended model
+	               that is absent because the operator routed the capability at
+	               their own model is not a gap, and saying so in red is a false
+	               alarm nobody can clear. See `renderAvailabilityBanner`. -->
 	          <div id="defaults-availability" class="message hidden"></div>
 		          <table class="capability-table">
 		            <thead><tr><th>Route</th><th>Capability</th><th>Provider</th><th>Model</th><th>Weights</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
@@ -1881,6 +1898,32 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div id="tab-models" class="tab-panel">
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
+	            <section id="gateway-host-section" class="session-only">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◎</span><span>Gateway</span></h2>
+	                  <p class="section-note">How this gateway is running right now. Pausing stops new workflow steps; the console and connected apps keep answering.</p>
+	                </div>
+	              </div>
+	              <div id="gateway-host-message" class="message"></div>
+	              <div class="entity-live-line">
+	                <span id="gateway-host-state" class="state-pill">…</span>
+	                <button id="gateway-host-pause" class="secondary hidden" type="button" title="Pause: no new workflow step starts until you resume; work already inside a call finishes first">Pause workflows</button>
+	                <span id="gateway-host-detail" class="muted"></span>
+	              </div>
+	              <div class="entity-overview">
+	                <div class="entity-kv"><span class="entity-kv-key">Version</span><span class="entity-kv-val"><span id="gateway-host-version">…</span> <span id="gateway-host-update-hint" class="muted"></span> <button id="gateway-host-update-check" class="secondary" type="button" title="Ask the update server whether a newer AbstractGateway exists (needs internet)">Check now</button> <button id="gateway-host-update-start" class="secondary hidden" type="button" title="Install the newer version in the background; restart to finish">Update</button></span></div>
+	                <!-- STATUS, NOT A SWITCH (operator ruling 2026-09-06). The
+	                     icon is the gateway's presence on the desktop: while it
+	                     runs, it is there. The only reasons it can be absent are
+	                     facts about this machine, and this line names them. -->
+	                <div class="entity-kv"><span class="entity-kv-key">Desktop icon</span><span class="entity-kv-val"><span id="gateway-host-tray-note" class="muted"></span></span></div>
+	              </div>
+	              <div class="actions">
+	                <button id="gateway-host-restart" class="secondary hidden" type="button">Restart gateway…</button>
+	                <button id="gateway-host-quit" class="secondary danger hidden" type="button">Quit gateway…</button>
+	              </div>
+	            </section>
 	            <section id="models-host-section" class="session-only">
 	              <div class="section-head">
 	                <div>
@@ -2543,7 +2586,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, availabilitySeeded: "", downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -8028,41 +8071,45 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      state.availability = next;
 	      state.availabilityPlan = payload.recommended || null;
-	      state.availabilitySeeded = payload.seeded || "";
 	      renderAvailabilityBanner();
 	      if (rerender && Array.isArray(state.defaults) && state.defaults.length) renderDefaultRows(state.defaults);
 	    }
+	    // THE STARTER KIT IS ADVICE FOR AN EMPTY ROUTE, NOT A STANDING DEBT.
+	    // This banner used to render the recommended set raw -- "2 of 3 models
+	    // present. Missing: lmstudio qwen/qwen3.5-9b@4bit", in error red -- above
+	    // a grid whose routes were all configured and all working. An operator who
+	    // routed text generation at a model they prefer got a permanent error they
+	    // could clear only by installing the model they had deliberately chosen
+	    // against. The recommendation exists to give an UNANSWERED route something
+	    // to run, so the gateway marks each recommended model with whether its
+	    // route is answered (`plan.gaps` -- ONE decision, shared with the
+	    // console-TUI) and this line speaks about the gaps and nothing else.
+	    //
+	    // No gaps, no banner. "Apply recommended" lives in the section head, so
+	    // nothing has to be said above the grid to keep it reachable.
 	    function renderAvailabilityBanner() {
 	      const el = $("defaults-availability");
 	      if (!el) return;
 	      const plan = state.availabilityPlan;
-	      if (!plan || !plan.total) { el.classList.add("hidden"); el.textContent = ""; return; }
-	      const missing = plan.would_download || [];
-	      const seeded = state.availabilitySeeded ? "Recommended defaults seeded" : "Recommended defaults";
-	      const unknownNote = plan.unknown ? `, ${plan.unknown} unknown` : "";
+	      const gaps = (plan && Array.isArray(plan.gaps)) ? plan.gaps : [];
+	      el.textContent = "";
+	      if (!plan || !plan.total || !gaps.length) { el.classList.add("hidden"); return; }
 	      el.classList.remove("hidden");
-	      el.className = missing.length ? "message error" : "message ok";
-	      el.textContent = `${seeded} — ${plan.installed} of ${plan.total} models present${unknownNote}. `;
-	      if (missing.length) {
-	        el.append(document.createTextNode(`Missing: ${missing.map((m) => `${m.provider} ${m.artifact}`).join(", ")}. `));
-	        const btn = document.createElement("button");
-	        btn.className = "secondary";
-	        btn.innerHTML = `<span class="button-icon" aria-hidden="true">⭳</span><span>Download missing</span>`;
-	        btn.onclick = () => downloadRecommended(btn);
-	        el.append(btn);
-	      }
-	      // The banner says what SHOULD be here; this is the action that makes
-	      // the ROUTES say it too. Same vocabulary as the banner and as
-	      // `abstractcore config apply-recommended`: a route the operator
-	      // configured differently is KEPT and reported, never silently
-	      // replaced -- replacing it takes a second, explicit click.
-	      const apply = document.createElement("button");
-	      apply.id = "defaults-apply-recommended";
-	      apply.className = "secondary";
-	      apply.title = "Set the recommended provider/model on the text, voice and image routes. Routes you configured differently are kept.";
-	      apply.innerHTML = `<span class="button-icon" aria-hidden="true">\u25c6</span><span>Apply recommended</span>`;
-	      apply.onclick = () => applyRecommendedDefaults(apply, false);
-	      el.append(apply);
+	      // Plain, not `error`: the unconfigured rows below already carry their own
+	      // red "not configured" pills. This line is the OFFER of a way out, and an
+	      // offer that shouts reads as one more failure.
+	      el.className = "message";
+	      const routes = gaps.map((m) => m.route).filter(Boolean).join(", ");
+	      const pairs = gaps.map((m) => `${m.provider} ${m.artifact}`).join(", ");
+	      el.append(document.createTextNode(
+	        `${gaps.length === 1 ? "One route has" : `${gaps.length} routes have`} no model yet (${routes}). `
+	        + `Recommended to get started: ${pairs}. `
+	      ));
+	      const btn = document.createElement("button");
+	      btn.className = "secondary";
+	      btn.innerHTML = `<span class="button-icon" aria-hidden="true">⭳</span><span>Download missing</span>`;
+	      btn.onclick = () => downloadRecommended(btn, gaps);
+	      el.append(btn);
 	    }
 	    function describeAppliedRecommended(report) {
 	      const rows = (report && report.routes) || [];
@@ -8113,18 +8160,33 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (btn) btn.disabled = false;
 	      }
 	    }
-	    async function downloadRecommended(btn) {
-	      // The star journey: exactly the artifacts `RECOMMENDED_MODEL_DOWNLOADS`
-	      // names, resolved server-side. Already-installed rows finish instantly
-	      // rather than being filtered here, so a model that landed a second ago
-	      // cannot be re-fetched by a stale client-side plan.
+	    async function downloadRecommended(btn, gaps) {
+	      // EXACTLY THE GAPS THE BANNER NAMED, one artifact per call. The old lane
+	      // posted `{recommended: true}`, which fetches every absent artifact of
+	      // the starter kit -- including the multi-gigabyte image model for a route
+	      // the operator had already answered with their own choice. A button that
+	      // downloads more than the sentence above it names is the same false
+	      // promise as a banner that reports more than it should.
+	      //
+	      // Naming the artifacts here cannot re-fetch anything that landed a second
+	      // ago: the materializer still short-circuits an installed artifact to
+	      // `already_installed` server-side, which is where that guard belongs.
 	      if (btn) btn.disabled = true;
+	      const failed = [];
 	      try {
-	        const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ recommended: true }) });
-	        for (const job of res.jobs || []) if (job && job.job) trackDownloadJob(job);
-	      } catch (err) {
-	        $("defaults-message").textContent = String(err.message || err);
-	        $("defaults-message").className = "message error";
+	        for (const gap of gaps || []) {
+	          if (!gap || !gap.provider || !gap.artifact) continue;
+	          try {
+	            const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ provider: gap.provider, artifact: gap.artifact }) });
+	            trackDownloadJob(res.job);
+	          } catch (err) {
+	            failed.push(`${gap.provider} ${gap.artifact}: ${String(err.message || err)}`);
+	          }
+	        }
+	        if (failed.length) {
+	          $("defaults-message").textContent = `Could not start: ${failed.join("; ")}`;
+	          $("defaults-message").className = "message error";
+	        }
 	      } finally {
 	        if (btn) btn.disabled = false;
 	      }
@@ -9223,6 +9285,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        state.hostState = data;
 	        if (msg) { msg.textContent = ""; msg.className = "message"; }
 	        renderHostState(data, { quiet });
+	        loadGatewayHost();
 	      } catch (e) {
 	        if (seq !== state.hostStateSeq) return; // stale failure: newer call owns the paint
 	        // Labeled failure replaces content (stale pixels are the incident
@@ -9238,6 +9301,153 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const deg = $("models-degraded"); if (deg) { deg.textContent = ""; deg.classList.add("hidden"); }
 	      }
 	    }
+	    // ---- Gateway card (Resources tab) + paused banner (every tab) ----------
+	    // (host pause / desktop tray / restart / update, 2026-09-05). Reads render
+	    // for every signed-in user; mutations are admin-gated at render time.
+	    function _gwFmtWhen(iso) { try { const d = new Date(iso); return isNaN(d) ? String(iso || "") : d.toLocaleString(); } catch { return String(iso || ""); } }
+	    function _gwMsg(text, kind) { const msg = $("gateway-host-message"); if (!msg) return; msg.textContent = text || ""; msg.className = kind ? `message ${kind}` : "message"; }
+	    function renderPausedBanner(runner) {
+	      const el = $("paused-banner");
+	      if (!el) return;
+	      const paused = Boolean(runner && runner.paused && state.principal);
+	      el.classList.toggle("hidden", !paused);
+	      if (paused) {
+	        const by = runner.paused_by ? ` by ${runner.paused_by}` : "";
+	        const when = runner.paused_at ? ` since ${_gwFmtWhen(runner.paused_at)}` : "";
+	        $("paused-banner-text").textContent = `Workflows are paused${when}${by} — the gateway keeps answering; nothing new runs until you resume.`;
+	        $("paused-banner-resume").classList.toggle("hidden", !(state.principal && state.principal.admin));
+	      }
+	    }
+	    function renderGatewayHost(runner, tray) {
+	      if (runner) state.hostRunner = runner;
+	      if (tray) state.hostTray = tray;
+	      renderPausedBanner(state.hostRunner);
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      const badge = $("gateway-host-state");
+	      const btn = $("gateway-host-pause");
+	      if (runner && badge) {
+	        const paused = Boolean(runner.paused);
+	        const inflight = Number(runner.inflight_ticks || 0);
+	        badge.textContent = paused ? (inflight > 0 ? "Pausing…" : "Paused — still running") : (inflight > 0 ? `Running · working on ${inflight} step${inflight === 1 ? "" : "s"}` : "Running");
+	        badge.className = "state-pill " + (paused ? "off" : "ok");
+	        const detail = $("gateway-host-detail");
+	        if (paused) {
+	          detail.textContent = [runner.paused_at ? _gwFmtWhen(runner.paused_at) : "", runner.paused_by ? `by ${runner.paused_by}` : "", runner.reason || ""].filter(Boolean).join(" · ");
+	        } else {
+	          detail.textContent = runner.runner_in_process === false ? "Workflows run in a separate runner process; pausing reaches it through the shared data folder." : "";
+	        }
+	        btn.textContent = paused ? "Resume workflows" : "Pause workflows";
+	        btn.classList.toggle("hidden", !admin);
+	        btn.disabled = false;
+	        const caps = runner.capabilities || {};
+	        const restart = $("gateway-host-restart"); const quit = $("gateway-host-quit");
+	        restart.classList.toggle("hidden", !admin); quit.classList.toggle("hidden", !admin);
+	        restart.disabled = !caps.restart;
+	        restart.title = caps.restart ? "Gracefully restart this gateway process (same command, same settings)" : String(caps.reason || "Restart is not available for this launch");
+	        quit.disabled = !caps.shutdown;
+	        quit.title = caps.shutdown ? "Stop this gateway process" : String(caps.reason || "Quit is not available for this launch");
+	      }
+	      const note = $("gateway-host-tray-note");
+	      if (tray && note) {
+	        const sup = tray.supervisor || {}; const dec = tray.decision || {};
+	        let text;
+	        if (sup.running && sup.ready !== false) text = `shown (pid ${sup.pid})`;
+	        else if (sup.running) text = "starting…";
+	        else if (dec.reason === "missing_dependency") text = `not installed — ${tray.install_hint}`;
+	        else if (dec.reason === "headless") text = `not available here — ${dec.hint || "no display"}`;
+	        else if (dec.reason === "dev_reload") text = "not available while running with --reload";
+	        else if (dec.reason === "not_serving") text = "not available (this process was not started with `abstractgateway serve`)";
+	        else if (sup.failure && sup.failure.reason) text = `not running — ${sup.failure.reason}${sup.failure.hint ? " (" + sup.failure.hint + ")" : ""}`;
+	        else if (sup.error) text = `not running — ${sup.error}`;
+	        else text = "not running";
+	        note.textContent = text;
+	      }
+	    }
+	    function renderGatewayUpdate(upd) {
+	      state.hostUpdate = upd || null;
+	      const el = $("gateway-host-version"); if (!el || !upd) return;
+	      const chk = upd.check || null; const inst = upd.install || {}; const job = upd.job || {};
+	      let text = String(upd.current || "?");
+	      if (job.state === "running") text += " · installing…" + (job.log_tail && job.log_tail.length ? ` (${job.log_tail[job.log_tail.length - 1]})` : "");
+	      else if (job.state === "succeeded" || upd.restart_pending) text += ` · ${job.version_after || "the update"} is installed — restart to finish`;
+	      else if (job.state === "failed") text += ` · the update didn't finish (${job.error || "see logs"})`;
+	      else if (job.state === "succeeded_no_change") text += ` · ${job.error || "nothing changed"}`;
+	      else if (chk && chk.offline) text += " · couldn't reach the update server (offline?)";
+	      else if (chk && chk.update_available) text += ` · ${chk.latest} available`;
+	      else if (chk && chk.latest) text += ` · up to date, checked ${_gwFmtWhen(chk.checked_at)}`;
+	      el.textContent = text;
+	      const startBtn = $("gateway-host-update-start");
+	      const canStart = Boolean(chk && chk.update_available && inst.upgradable && job.state !== "running");
+	      startBtn.classList.toggle("hidden", !canStart);
+	      startBtn.textContent = chk && chk.latest ? `Update to ${chk.latest}` : "Update";
+	      const hint = $("gateway-host-update-hint");
+	      hint.textContent = (chk && chk.update_available && !inst.upgradable) ? String(inst.reason || "") : (inst.kind ? `installed with ${inst.kind}` : "");
+	    }
+	    async function loadGatewayHost() {
+	      if (!state.principal) return;
+	      try {
+	        const [runner, tray] = await Promise.all([api("/api/gateway/host/runner"), api("/api/gateway/host/tray")]);
+	        renderGatewayHost(runner, tray);
+	        _gwMsg("");
+	      } catch (e) {
+	        _gwMsg("Gateway state unavailable: " + String(e.message || e), "error");
+	      }
+	      if (state.principal && state.principal.admin) {
+	        try { renderGatewayUpdate(await api("/api/gateway/host/update")); } catch {}
+	      }
+	    }
+	    async function toggleGatewayPause() {
+	      const runner = state.hostRunner || {}; const btn = $("gateway-host-pause");
+	      btn.disabled = true;
+	      try {
+	        const out = await api(runner.paused ? "/api/gateway/host/resume" : "/api/gateway/host/pause", { method: "POST", body: JSON.stringify({}) });
+	        renderGatewayHost(out, null);
+	        _gwMsg("");
+	      } catch (e) { _gwMsg(String(e.message || e), "error"); btn.disabled = false; }
+	    }
+	    async function restartGateway() {
+	      const ok = await confirmAction({ title: "Restart AbstractGateway?", message: "Running workflows pause at their next step and continue after the restart. The console is unavailable for a few seconds.", confirmLabel: "Restart" });
+	      if (!ok) return;
+	      try { await api("/api/gateway/host/restart", { method: "POST", body: JSON.stringify({ reason: "console" }) }); _gwMsg("Restarting… reload this page in a few seconds."); }
+	      catch (e) { _gwMsg(String(e.message || e), "error"); }
+	    }
+	    async function quitGateway() {
+	      const ok = await confirmAction({ title: "Quit AbstractGateway?", message: "Workflows stop and this console goes offline until you start AbstractGateway again.", confirmLabel: "Quit", danger: true });
+	      if (!ok) return;
+	      try { await api("/api/gateway/host/shutdown", { method: "POST", body: JSON.stringify({ reason: "console" }) }); _gwMsg("Quitting… the gateway is shutting down."); }
+	      catch (e) { _gwMsg(String(e.message || e), "error"); }
+	    }
+	    async function checkGatewayUpdate() {
+	      const btn = $("gateway-host-update-check"); btn.disabled = true;
+	      try { renderGatewayUpdate(await api("/api/gateway/host/update/check", { method: "POST", body: JSON.stringify({}), slow: true })); _gwMsg(""); }
+	      catch (e) { _gwMsg(String(e.message || e), "error"); }
+	      finally { btn.disabled = false; }
+	    }
+	    async function startGatewayUpdate() {
+	      const upd = state.hostUpdate || {}; const latest = (upd.check && upd.check.latest) || "";
+	      const ok = await confirmAction({ title: "Update available", message: `AbstractGateway ${latest} is available (you have ${upd.current || "?"}). Installing takes a minute or two; workflows keep running until you restart.`, confirmLabel: "Update now" });
+	      if (!ok) return;
+	      try { renderGatewayUpdate(await api("/api/gateway/host/update/start", { method: "POST", body: JSON.stringify({}) })); _pollGatewayUpdate(); }
+	      catch (e) { _gwMsg(String(e.message || e), "error"); }
+	    }
+	    function _pollGatewayUpdate() {
+	      if (typeof setTimeout === "undefined") return;
+	      setTimeout(async () => {
+	        if (!state.principal) return;
+	        try { const upd = await api("/api/gateway/host/update"); renderGatewayUpdate(upd); if (upd.job && upd.job.state === "running") _pollGatewayUpdate(); } catch {}
+	      }, 3000);
+	    }
+	    // Paused must be visible on EVERY tab: a light 15s poll while signed in
+	    // (token-guarded chain, the host-state poll precedent).
+	    function _schedulePausedPoll(token) {
+	      if (typeof setTimeout === "undefined") return;
+	      setTimeout(async () => {
+	        if (token !== state.pausedPollToken || !state.principal) return;
+	        try { const runner = await api("/api/gateway/host/runner"); state.hostRunner = runner; renderPausedBanner(runner); } catch {}
+	        _schedulePausedPoll(token);
+	      }, 15000);
+	    }
+	    function startPausedPoll() { state.pausedPollToken = (state.pausedPollToken || 0) + 1; _schedulePausedPoll(state.pausedPollToken); }
 	    function _scheduleHostStatePoll(token) {
 	      // Token-guarded self-rescheduling chain (the manage-panel precedent),
 	      // additionally scoped to the ACTIVE tab and a live session: leaving
@@ -9268,6 +9478,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // Signed out: kill the host-state poll chain (the principal check
 	        // inside the poll is the belt; the token bump is the suspenders).
 	        state.hostPollToken = (state.hostPollToken || 0) + 1;
+	        state.pausedPollToken = (state.pausedPollToken || 0) + 1;
+	        state.hostRunner = null;
+	        renderPausedBanner(null);
 	        $("users-section").classList.add("hidden");
 	        $("runtime-reservations-section").classList.add("hidden");
 	      $("defaults-scope").textContent = "Sign in to edit provider/model defaults for this Gateway runtime.";
@@ -9318,9 +9531,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("defaults-scope").textContent = p.admin
         ? "Editing as admin changes the Gateway multimodal capability defaults. Users inherit these unless they set their own runtime defaults."
         : "Editing here changes your runtime multimodal capability defaults. Unset routes inherit the Gateway defaults.";
+      // `apply-recommended` rewrites the HOST-WIDE store, so it is admin-only
+      // server-side (403 otherwise). A non-admin can still set their own
+      // routes row by row — offering them a button that can only fail is worse
+      // than not offering it.
+      $("defaults-apply-recommended").classList.toggle("hidden", !p.admin);
 	      initEndpointProfileFormOptions();
 	      setStatus(true, `${p.tenant_id}/${p.user_id}`);
-	      setActiveTab(state.activeTab);
+	      // A `#<tab>` link (the tray menu's console entries: `#runtimes` for
+	      // "Open Runs in Console") lands on that tab ONCE per page load; later
+	      // account refreshes must not yank the user back there. Any tab id
+	      // works — the fragment is a deep link, not a special case, and
+	      // `setActiveTab` already folds an unknown id onto the first tab.
+	      const wantedTab = String(location.hash || "").replace(/^#/, "").trim();
+	      if (!state.hashApplied && TABS.includes(wantedTab)) {
+	        state.hashApplied = true;
+	        state.activeTab = wantedTab;
+	        setActiveTab(wantedTab);
+	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
+	      } else {
+	        setActiveTab(state.activeTab);
+	      }
+	      startPausedPoll();
+	      loadGatewayHost();
 	    }
     function principalKind(u) {
       const kind = String((u && u.principal_kind) || "").trim().toLowerCase();
@@ -10869,6 +11102,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // out; re-entering the tab starts a fresh chain).
 	    $("tab-button-models").onclick = () => { setActiveTab("models"); loadHostState(); startHostStatePoll(); };
 	    $("models-refresh").onclick = () => { loadHostState(); startHostStatePoll(); };
+	    $("gateway-host-pause").onclick = toggleGatewayPause;
+	    $("gateway-host-restart").onclick = restartGateway;
+	    $("gateway-host-quit").onclick = quitGateway;
+	    $("gateway-host-update-check").onclick = checkGatewayUpdate;
+	    $("gateway-host-update-start").onclick = startGatewayUpdate;
+	    $("paused-banner-resume").onclick = async () => {
+	      try { const out = await api("/api/gateway/host/resume", { method: "POST", body: JSON.stringify({}) }); renderGatewayHost(out, null); }
+	      catch (e) { _gwMsg(String(e.message || e), "error"); }
+	    };
 	    // Repaint from held state — the toggle is a pure view filter, no fetch.
 	    $("models-show-cached").onchange = () => { state.modelsShowCached = $("models-show-cached").checked; if (state.hostState) renderModelsTable(state.hostState); };
 	    $("models-load-button").onclick = loadModelResidency;
@@ -11041,6 +11283,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      await loadProviders();
 	      await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	    };
+	    // A STANDING action, not a banner ornament. Same vocabulary as
+	    // `abstractcore config apply-recommended` and as the console-TUI's `a`:
+	    // a route the operator configured differently is KEPT and reported,
+	    // never silently replaced — replacing it takes a second, explicit click.
+	    $("defaults-apply-recommended").onclick = () =>
+	      applyRecommendedDefaults($("defaults-apply-recommended"), false);
 	    $("close-default-modal").onclick = closeDefaultModal;
 	    $("default-modal-backdrop").onclick = (event) => { if (event.target === $("default-modal-backdrop")) closeDefaultModal(); };
 	    // ONE handler for BOTH provider controls. The free-text lane is a real
