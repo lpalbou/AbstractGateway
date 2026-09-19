@@ -1278,7 +1278,7 @@ async def gateway_admin_promote_workflow_catalog_bundle(request: Request, payloa
             make_default=bool(payload.make_default),
             publisher=_catalog_actor(principal),
         )
-        reload_result = reload_gateway_workflow_bundles()
+        reload_result = await _off_the_event_loop(reload_gateway_workflow_bundles)
     except WorkflowBundleRegistryError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except WorkflowCatalogError as e:
@@ -3406,6 +3406,24 @@ def _map_catalog_error(exc: Exception) -> HTTPException:
     if isinstance(exc, WorkflowCatalogNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
     return HTTPException(status_code=400, detail=str(exc))
+
+
+async def _off_the_event_loop(fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+    """Run a HOST REBUILD (or anything that can trigger one) in a worker thread.
+
+    `reload_bundles_from_disk` rebuilds the whole host — every bundle recompiled, the
+    memory store reopened, a new runtime and LLM client constructed; with an in-process
+    model that means reloading its weights. These routes are `async def`, so calling it
+    inline ran all of that ON the event loop and the process stopped answering anything.
+    Measured 2026-09-17 (audit log vs the supervisor's probe log, four for four):
+    publish 9-17 s and promote 27-53 s each lined up with a window of failed
+    `/api/health` probes, reported to the operator as "alive but not answering … likely
+    busy (in-process model inference)" while no run was executing at all.
+
+    The rebuild still swaps the host under the host lock, exactly as before; only the
+    thread it burns is different. Exceptions (HTTPException included) propagate.
+    """
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 def _ensure_catalog_selection_loaded(*, svc: Any, selection: WorkflowCatalogStartSelection) -> None:
@@ -6525,7 +6543,7 @@ async def publish_visualflow(request: Request, flow_id: str, req: PublishVisualF
         if not callable(reload_fn):
             raise HTTPException(status_code=503, detail="Bundle reload is not supported on this gateway host")
         try:
-            reload_fn()
+            await _off_the_event_loop(reload_fn)
             gateway_reloaded = True
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"Failed to reload bundles after publish: {e}")
@@ -6927,7 +6945,7 @@ async def reload_bundles(request: Request) -> Dict[str, Any]:
     if not callable(reload_fn):
         raise HTTPException(status_code=400, detail="Bundle reload is not supported on this gateway host")
     try:
-        return dict(reload_fn() or {})
+        return dict(await _off_the_event_loop(reload_fn) or {})
     except HTTPException:
         raise
     except Exception as e:
@@ -6990,7 +7008,7 @@ async def upload_bundle(
             gateway_reload_error = "Bundle reload is not supported on this gateway host"
         else:
             try:
-                reload_fn()
+                await _off_the_event_loop(reload_fn)
                 gateway_reloaded = True
             except Exception as e:
                 gateway_reload_error = str(e)
@@ -7077,7 +7095,7 @@ async def remove_bundle(
             gateway_reload_error = "Bundle reload is not supported on this gateway host"
         else:
             try:
-                reload_fn()
+                await _off_the_event_loop(reload_fn)
                 gateway_reloaded = True
             except Exception as e:
                 gateway_reload_error = str(e)
@@ -7478,7 +7496,8 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             input_data["_run_lifecycle"] = dict(req.run_lifecycle)
         normalize_run_lifecycle_vars(input_data)
 
-        catalog_selection = _maybe_resolve_catalog_start(
+        catalog_selection = await _off_the_event_loop(
+            _maybe_resolve_catalog_start,
             svc=svc,
             principal=principal,
             registry_scope=req.registry_scope,
@@ -7576,7 +7595,8 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
 
     catalog_input_data: Optional[Dict[str, Any]] = None
     schedule_input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
-    catalog_selection = _maybe_resolve_catalog_start(
+    catalog_selection = await _off_the_event_loop(
+        _maybe_resolve_catalog_start,
         svc=svc,
         principal=principal,
         registry_scope=req.registry_scope,
@@ -23120,6 +23140,15 @@ class _GatewayPromptCachePrepareModulesRequest(_GatewayPromptCacheTarget):
     make_default: bool = Field(default=False, description="Set the final derived key as default")
     ttl_s: Optional[float] = Field(default=None, description="Optional TTL for derived keys (seconds)")
     version: int = Field(default=1, description="Hash version for key derivation (bump on formatting changes)")
+    thinking: Optional[Union[bool, str]] = Field(
+        default=None,
+        description=(
+            "The SAME `thinking` value the caller will generate with. Thinking controls can rewrite the "
+            "head of the system block (Qwen3.8 renders its effort level there), so a prefix planned under "
+            "a different request is a prefix of nothing generate() sends. Omit to use the reasoning effort "
+            "configured on the text route."
+        ),
+    )
 
 
 class _GatewayPromptCacheSaveRequest(_GatewayPromptCacheTarget):
@@ -25502,6 +25531,9 @@ async def prompt_cache_prepare_modules(req: _GatewayPromptCachePrepareModulesReq
             "make_default": bool(req.make_default),
             "ttl_s": req.ttl_s,
             "version": int(req.version),
+            # Part of the prefix identity; pydantic dropped it silently when the model
+            # had no such field, so a host naming a level planned a prefix without it.
+            **({"thinking": req.thinking} if req.thinking is not None else {}),
         },
     )
 

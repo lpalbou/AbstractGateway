@@ -55,6 +55,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/host/metrics/*` and `/host/state` probes now run off the event loop.
 
 ### Fixed
+- **A workflow publish no longer makes the gateway stop answering (2026-09-17).** The
+  supervisor logged "UNHEALTHY for 6 probes (~60s) — alive but not answering
+  /api/health … likely busy (in-process model inference)" four times in 17 minutes while
+  NO run was executing. The audit log matched the probe log four for four: each window
+  was one `POST /visualflows/{id}/publish` (9-17 s) plus one
+  `POST /admin/workflow-catalog/promote` (27-53 s) from a desktop client reconciling its
+  workflow at launch. Those routes — and `/bundles/reload`, `/bundles/upload`,
+  `DELETE /bundles/{id}` and the catalog resolution inside `/runs/start` and
+  `/runs/schedule` — are `async def` and ran `reload_bundles_from_disk()` inline, i.e.
+  the whole host rebuild ON the asyncio event loop. They now hand it to a worker thread
+  (`_off_the_event_loop`); the host is still swapped under its lock exactly as before.
+  Pinned by a test that is red on the old routes ("/api/health was answered 1.21s after a
+  1.2s host rebuild began"). **Not fixed by this, and the larger problem:** the rebuild
+  still constructs a NEW runtime and LLM client per instantiated service. With an
+  in-process MLX model that is a fresh copy of the weights each time (measured: a second
+  provider for the same model loads a second copy and shares no prompt cache), so every
+  publish reloads the model once per service, discards every in-process prompt cache, and
+  the four services in one process held ~60 GB of one 15 GB model (physical footprint
+  113 GB, peak 129 GB, on a 128 GB machine). A bundle reload should swap the workflow
+  registry on the EXISTING runtime (`runtime.set_workflow_registry`), and in-process
+  providers should be pooled process-wide.
+- **`POST /prompt_cache/prepare_modules` carries `thinking` (2026-09-17).** It is part of a
+  prepared prefix's identity: for models that render their effort level at the head of
+  the system block (Qwen3.8), a prefix planned under a different request shares three
+  tokens with the prompt `generate()` sends. The request model had no such field and
+  pydantic drops unknown keys silently, so a host that named a level got a 200 and a
+  prefix that could never match. The field is now accepted and forwarded to the
+  runtime's control plane; omitting it keeps the old behaviour (AbstractCore resolves
+  the reasoning effort configured on the text route).
 - **A catalog-published workflow's runs are no longer hidden as "internal"
   (2026-09-06).** `GET /runs` dropped every run whose `workflow_id` starts with
   `__`, the prefix the gateway uses for its own bookkeeping runs

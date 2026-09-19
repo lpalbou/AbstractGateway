@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 1
+- Planned: 2
 - Proposed: 38
 - Completed: 22
 - Deprecated: 1
@@ -91,7 +91,8 @@ relevant.
 
 | Item | Acceptance summary |
 | --- | --- |
-| None | No active planned Gateway backlog item. |
+| [0846_publish_promote_must_not_rebuild_every_service.md](planned/0846_publish_promote_must_not_rebuild_every_service.md) | Publish/promote reloads only what changed, on the existing runtime, for the affected service only; no model reload, no prompt-cache loss, `/api/health` never misses a supervisor probe. |
+| [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 
 ## Proposed Items
 
