@@ -41,9 +41,9 @@ First run: open http://127.0.0.1:8080/console#claim=agclaim_...
 Open the `First run` link in a browser on the same machine. The console signs
 you in as the admin and opens the **first-run guide**.
 
-The admin token is not printed. It is kept in
-`<data dir>/auth/bootstrap-admin-token` (file mode `0600`). Set
-`ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` if you want it printed.
+The admin token is printed just above the link, and kept in
+`<data dir>/auth/bootstrap-admin-token` (file mode `0600`). Start with
+`abstractgateway serve --no-print-token` to keep it out of the output.
 
 ## 2. The first-run guide
 
@@ -1667,9 +1667,31 @@ It opens as a guided wizard on first run and as free tabs afterwards, with eight
 screens: Connection, Providers, Routes (capability defaults, including the MTP
 selector and a Test verb per route), Users & Entities, Runtimes (runs with
 cancel and steer, data homes), Workflows, Review & Test (the session's change
-journal), and Resources. Every write is verified with a follow-up read and
-recorded in the journal. Keys: `Tab` focus, `Enter` activate, `1`-`8` screens,
-`r` refresh, `q` quit; each screen lists its actions in the footer.
+journal), Resources, Models and Engines. Every write is verified with a
+follow-up read and recorded in the journal. Keys: `Tab` focus, `Enter`
+activate, `1`-`9` and `0` screens, `r` refresh, `q` quit; each screen lists its
+actions in the footer.
+
+### Models and Engines in the terminal console
+
+Screens 9 (**Models**) and 0 (**Engines**) are AbstractCore's own screens,
+taken from the `abstractcore-console` crate rather than rebuilt, so they look
+and behave the same in `abstractcore-console` and here. In the gateway console
+they act on the gateway's host, through the gateway's
+`/api/gateway/host/profile`, `/engines`, `/models/catalog`,
+`/models/installed`, `/models/download`, `/models/delete`,
+`/engines/{id}/install` and `/jobs/{id}` routes:
+
+- **Models:** browse the catalog with a fit verdict for the gateway host,
+  download (`w`), delete after a confirm that lists any blocker (`d`), filter
+  (`/`), fits only (`f`), engine (`e`), installed view (`v`), cancel (`c`).
+- **Engines:** see which engines are installed and running; install one (`i`)
+  after a confirm that shows the exact command and the host it runs on (a dry
+  run is offered), or open its download page (`o`).
+
+Downloads, deletes and installs are admin-only and run on the gateway host; a
+refusal (for example installs disabled on a remote gateway, or a loaded model)
+is shown with the gateway's reason.
 
 The terminal console needs no gateway-side component beyond the admin API. The
 crate version is independent of the Python package version; see
@@ -1800,7 +1822,9 @@ The normal browser-console/browser-app path uses Gateway user auth:
 - `abstractgateway serve`: when user auth is enabled, ensures `default/admin`
   exists and writes the first-login token to
   `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token` (mode `0600`). The
-  token is printed only with `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1`; until
+  token is printed on a loopback bind and hidden on other binds;
+  `serve --print-token` / `--no-print-token` override that (the older
+  `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` still acts as `--print-token`). Until
   the first-run guide is completed, a one-time sign-in link
   (`/console#claim=...`, 10 minutes, single use, loopback only) is printed
   instead
@@ -3299,9 +3323,10 @@ abstractgateway serve --host 127.0.0.1 --port 8080
 
 On first local start, Gateway creates `default/admin`, writes the browser-login
 token to `$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token` (mode `0600`),
-and prints a one-time console sign-in link instead of the token (set
-`ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` to print the token). Use the token
-file with user `admin` for browser apps. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
+prints that token, and prints a one-time console sign-in link. Use the token
+with user `admin` for browser apps. `abstractgateway serve --no-print-token`
+keeps the token out of the startup output (it stays in the file); on a
+non-loopback bind it is hidden by default and `--print-token` shows it. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
 bearer-token deployments, but it is not a browser sign-in token.
 
 OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs` (use **Authorize** with a Gateway user token)
@@ -3482,6 +3507,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **The admin token is printed again at first launch.** 0.3.0 hid it behind
+  `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1`, so a first launch showed only the
+  one-time console link and no credential for the browser apps. A loopback
+  `serve` now prints the token (as 0.2.30 did) together with the link; a
+  non-loopback bind hides it. The switch is a launch flag,
+  `abstractgateway serve --print-token` / `--no-print-token`; the environment
+  variable is kept only as an alias of `--print-token`.
+
 ## [0.3.0] - 2026-09-23
 
 This release requires AbstractRuntime 0.4.33 and AbstractCore 2.14.0
@@ -3518,6 +3554,12 @@ This release requires AbstractRuntime 0.4.33 and AbstractCore 2.14.0
   [docs/configuration.md](docs/configuration.md#allow_engine_install).
 - `abstractgateway claim` and `abstractgateway-config claim-url` accept
   `--base-url` as another name for `--url` (the bootstrap installers use it).
+- **console-tui (crate `abstractgateway-console` 0.7.0, versioned separately):**
+  the terminal console gains screens 9 **Models** and 0 **Engines**, which are
+  AbstractCore's shared screens from the `abstractcore-console` crate mounted
+  over the gateway's `/api/gateway/models/*`, `/engines/*`, `/host/profile`
+  and `/jobs/*` routes. See
+  [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
 - **Zero-configuration first run.** With no auth configured, `abstractgateway serve`
   binds `127.0.0.1`, enables user auth, creates `default/admin`, and prints a
   one-time console sign-in link instead of a token. See

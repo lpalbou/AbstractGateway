@@ -188,7 +188,7 @@ def test_bare_serve_starts_on_loopback_with_user_auth_and_a_claim_link(
     url = line.split("First run: open ", 1)[1].strip()
     assert url.startswith("http://127.0.0.1:18999/console#claim=agclaim_")
     token = (tmp_path / "data" / "auth" / "bootstrap-admin-token").read_text(encoding="utf-8").strip()
-    assert token and token not in err
+    assert token and f"Gateway admin token: {token}" in err  # printed on a loopback bind
     assert GatewayUserRegistry().authenticate(token) is not None
     rec = json.loads((tmp_path / "data" / "run" / "gateway-serve.json").read_text(encoding="utf-8"))
     assert rec["port"] == 18999 and rec["url"] == "http://127.0.0.1:18999"

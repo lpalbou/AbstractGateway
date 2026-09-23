@@ -221,7 +221,7 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     _spec("ABSTRACTGATEWAY_AUTO_PUBLISH_SHIPPED", BEHAVIOR, console_path="catalog"),
     _spec("ABSTRACTGATEWAY_AUTO_BOOTSTRAP_ADMIN", DEPLOYMENT, note="bootstrap"),
     _spec("ABSTRACTGATEWAY_BOOTSTRAP_ADMIN", DEPLOYMENT),
-    _spec("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN", DEPLOYMENT),
+    _spec("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN", DEPLOYMENT, note="legacy alias of `serve --print-token`"),
     _spec("ABSTRACTGATEWAY_DEV_READ_NO_AUTH", DEPLOYMENT,
           note="dev posture; security-inversion carve-out — a config write must not weaken auth"),
     _spec("ABSTRACTGATEWAY_ALLOWED_ORIGINS", DEPLOYMENT,

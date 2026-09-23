@@ -80,9 +80,10 @@ abstractgateway serve --host 127.0.0.1 --port 8080
 
 On first local start, Gateway creates `default/admin`, writes the browser-login
 token to `$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token` (mode `0600`),
-and prints a one-time console sign-in link instead of the token (set
-`ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` to print the token). Use the token
-file with user `admin` for browser apps. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
+prints that token, and prints a one-time console sign-in link. Use the token
+with user `admin` for browser apps. `abstractgateway serve --no-print-token`
+keeps the token out of the startup output (it stays in the file); on a
+non-loopback bind it is hidden by default and `--print-token` shows it. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
 bearer-token deployments, but it is not a browser sign-in token.
 
 OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs` (use **Authorize** with a Gateway user token)

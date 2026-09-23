@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **The admin token is printed again at first launch.** 0.3.0 hid it behind
+  `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1`, so a first launch showed only the
+  one-time console link and no credential for the browser apps. A loopback
+  `serve` now prints the token (as 0.2.30 did) together with the link; a
+  non-loopback bind hides it. The switch is a launch flag,
+  `abstractgateway serve --print-token` / `--no-print-token`; the environment
+  variable is kept only as an alias of `--print-token`.
+
 ## [0.3.0] - 2026-09-23
 
 This release requires AbstractRuntime 0.4.33 and AbstractCore 2.14.0

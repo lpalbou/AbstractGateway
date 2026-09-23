@@ -194,13 +194,16 @@ def _env_falsey(name: str, *, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"0", "false", "no", "n", "off"}
 
 
-def _maybe_bootstrap_user_auth_admin(*, host: str, port: int | None = None) -> None:
+def _maybe_bootstrap_user_auth_admin(*, host: str, port: int | None = None, print_token: bool | None = None) -> None:
     """Ensure `default/admin` exists and say how to get in.
 
-    The raw token is NEVER printed unless ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1
-    (first-run, 2026-09-23): stderr ends up in service logs. It stays in the
-    0600 token file; on a loopback bind whose first run is not done yet, a
-    one-time claim link (10 min, single use) is printed instead."""
+    The admin token is printed on a loopback bind (the single-machine default),
+    so a first launch shows the credential the browser apps ask for. It is
+    hidden on a non-loopback bind, where stderr usually lands in shared logs.
+    `serve --print-token` / `--no-print-token` override that default;
+    `print_token=None` means "not given on the command line". On a loopback
+    bind whose first run is not done yet, a one-time claim link (10 min,
+    single use) is printed as well."""
     if _env_falsey("ABSTRACTGATEWAY_BOOTSTRAP_ADMIN") or _env_falsey("ABSTRACTGATEWAY_AUTO_BOOTSTRAP_ADMIN"):
         _stderr("Gateway user auth: enabled; admin auto-bootstrap disabled by env.")
         return
@@ -215,7 +218,10 @@ def _maybe_bootstrap_user_auth_admin(*, host: str, port: int | None = None) -> N
     runtime_id = str(user.get("runtime_id") or user_id)
     token_path = str(payload.get("token_file") or "")
     token = str(payload.get("token") or "").strip()
-    can_print_raw_token = bool(token) and _env_truthy("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN")
+    if print_token is None:
+        # Legacy alias kept for existing service configs; the flag is the documented switch.
+        print_token = _env_truthy("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN") or _is_loopback_host(host)
+    can_print_raw_token = bool(token) and bool(print_token)
 
     _stderr("Gateway user auth: enabled.")
     _stderr(f"Gateway admin user: {tenant_id}/{user_id} (runtime: {runtime_id})")
@@ -224,7 +230,7 @@ def _maybe_bootstrap_user_auth_admin(*, host: str, port: int | None = None) -> N
     if can_print_raw_token:
         _stderr(f"Gateway admin token: {token}")
     elif token_path:
-        _stderr(f"Gateway admin token: in {token_path} (0600; not printed)")
+        _stderr(f"Gateway admin token: in {token_path} (0600; not printed; `serve --print-token` prints it)")
     else:
         _stderr("Gateway admin token: unavailable; run `abstractgateway-config bootstrap-admin --rotate-token --print-token`.")
 
@@ -609,6 +615,14 @@ def main(argv: list[str] | None = None) -> None:
         "user auth on; 0.0.0.0 when an auth token or user auth is configured, as before)",
     )
     serve.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
+    serve.add_argument(
+        "--print-token",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="print_token",
+        help="Print the admin token at startup (default: yes on a loopback bind, no otherwise; "
+        "the token always stays in <data dir>/auth/bootstrap-admin-token)",
+    )
     serve.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
     serve.add_argument(
         "--no-runner",
@@ -856,7 +870,9 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
             if bool(getattr(policy, "user_auth_enabled", False)):
-                _maybe_bootstrap_user_auth_admin(host=host, port=int(args.port))
+                _maybe_bootstrap_user_auth_admin(
+                    host=host, port=int(args.port), print_token=getattr(args, "print_token", None)
+                )
 
             if _is_public_bind_host(host):
                 _stderr(

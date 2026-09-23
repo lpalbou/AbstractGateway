@@ -31,9 +31,9 @@ First run: open http://127.0.0.1:8080/console#claim=agclaim_...
 Open the `First run` link in a browser on the same machine. The console signs
 you in as the admin and opens the **first-run guide**.
 
-The admin token is not printed. It is kept in
-`<data dir>/auth/bootstrap-admin-token` (file mode `0600`). Set
-`ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` if you want it printed.
+The admin token is printed just above the link, and kept in
+`<data dir>/auth/bootstrap-admin-token` (file mode `0600`). Start with
+`abstractgateway serve --no-print-token` to keep it out of the output.
 
 ## 2. The first-run guide
 

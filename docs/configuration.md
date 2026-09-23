@@ -103,7 +103,9 @@ The normal browser-console/browser-app path uses Gateway user auth:
 - `abstractgateway serve`: when user auth is enabled, ensures `default/admin`
   exists and writes the first-login token to
   `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token` (mode `0600`). The
-  token is printed only with `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1`; until
+  token is printed on a loopback bind and hidden on other binds;
+  `serve --print-token` / `--no-print-token` override that (the older
+  `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` still acts as `--print-token`). Until
   the first-run guide is completed, a one-time sign-in link
   (`/console#claim=...`, 10 minutes, single use, loopback only) is printed
   instead

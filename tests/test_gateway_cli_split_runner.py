@@ -144,18 +144,14 @@ def test_cli_serve_user_auth_bootstraps_admin_without_legacy_token(
     assert "Gateway user auth: enabled." in err
     assert "Gateway admin user: default/admin" in err
     assert "Gateway admin token file:" in err
-    # The raw token is no longer printed (it lands in service logs); a
-    # one-time claim link is printed instead on a first run.
-    assert token not in err
+    # A loopback first launch shows both the admin token and the one-time
+    # console link (`--no-print-token` hides the token, see below).
+    assert f"Gateway admin token: {token}" in err
     assert "First run: open http://127.0.0.1:9999/console#claim=agclaim_" in err
 
 
-@pytest.mark.basic
-def test_cli_serve_prints_raw_token_only_when_asked(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def _serve_stderr(tmp_path, monkeypatch: pytest.MonkeyPatch, capsys, argv: list[str]) -> tuple[str, str]:
+    """Run `serve` with a stub uvicorn; return (stderr, bootstrap token)."""
     from abstractgateway import cli as gateway_cli
 
     uvicorn = types.ModuleType("uvicorn")
@@ -163,13 +159,36 @@ def test_cli_serve_prints_raw_token_only_when_asked(
     monkeypatch.setitem(sys.modules, "uvicorn", uvicorn)
     monkeypatch.setattr(gateway_cli, "_resolve_default_console_level", lambda: logging.ERROR)
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
-    monkeypatch.setenv("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN", "1")
+    monkeypatch.delenv("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN", raising=False)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
 
-    gateway_cli.main(["serve", "--host", "127.0.0.1", "--port", "9999", "--no-runner"])
+    gateway_cli.main(["serve", *argv, "--no-runner"])
 
     token = (tmp_path / "runtime" / "auth" / "bootstrap-admin-token").read_text(encoding="utf-8").strip()
-    assert f"Gateway admin token: {token}" in capsys.readouterr().err
+    return capsys.readouterr().err, token
+
+
+@pytest.mark.basic
+def test_cli_serve_prints_admin_token_by_default_on_loopback(tmp_path, monkeypatch, capsys) -> None:
+    err, token = _serve_stderr(tmp_path, monkeypatch, capsys, ["--host", "127.0.0.1", "--port", "9999"])
+    assert f"Gateway admin token: {token}" in err
+    # The one-time console link is printed as well; the two are complementary.
+    assert "First run: open http://127.0.0.1:9999/console#claim=agclaim_" in err
+
+
+@pytest.mark.basic
+def test_cli_serve_no_print_token_hides_it(tmp_path, monkeypatch, capsys) -> None:
+    err, token = _serve_stderr(tmp_path, monkeypatch, capsys, ["--host", "127.0.0.1", "--port", "9999", "--no-print-token"])
+    assert token not in err
+    assert "not printed; `serve --print-token` prints it" in err
+
+
+@pytest.mark.basic
+def test_cli_serve_public_bind_hides_token_unless_print_token(tmp_path, monkeypatch, capsys) -> None:
+    err, token = _serve_stderr(tmp_path, monkeypatch, capsys, ["--host", "0.0.0.0", "--port", "9999"])
+    assert token not in err
+    err, token = _serve_stderr(tmp_path, monkeypatch, capsys, ["--host", "0.0.0.0", "--port", "9999", "--print-token"])
+    assert f"Gateway admin token: {token}" in err
 
 
 @pytest.mark.basic
