@@ -26433,13 +26433,16 @@ def _gateway_host_memory_snapshot_cached() -> tuple[Optional[Dict[str, Any]], Op
         facade, _err = _gateway_abstractcore_host_facade()
     except Exception:
         facade = None
-    key = id(facade) if facade is not None else None
+    # Key on the facade OBJECT, not id(facade): the cache holds a reference,
+    # so a discarded facade's id cannot be reused by a new one and serve it
+    # the old snapshot (seen as a test-order flake on Python 3.13).
+    key = facade
     with _HOST_MEMORY_CACHE_LOCK:
         cached = _HOST_MEMORY_CACHE.get("value")
         if (
             key is not None
             and cached is not None
-            and _HOST_MEMORY_CACHE.get("key") == key
+            and _HOST_MEMORY_CACHE.get("key") is key
             and (now - float(_HOST_MEMORY_CACHE.get("at") or 0.0)) <= HOST_MEMORY_CACHE_TTL_S
         ):
             return cached
