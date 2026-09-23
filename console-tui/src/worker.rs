@@ -478,6 +478,30 @@ pub fn spawn(
     on_token: impl Fn(String, String) + Send + 'static,
     on_done: impl Fn(u64, Result<String, String>) + Send + 'static,
 ) -> std::thread::JoinHandle<()> {
+    spawn_with_client_slot(
+        store,
+        wake,
+        rx,
+        tx,
+        crate::transport_http::client_slot(),
+        on_token,
+        on_done,
+    )
+}
+
+/// [`spawn`], publishing the VERIFIED client into `shared` — the slot the
+/// Models/Engines screens' [`HttpTransport`](crate::transport_http::HttpTransport)
+/// reads. A probe empties it first and fills it before "connected" is
+/// posted, so the screens never read an unverified or previous gateway.
+pub fn spawn_with_client_slot(
+    store: Store,
+    wake: WakeHandle,
+    rx: Receiver<Cmd>,
+    tx: Sender<Cmd>,
+    shared: crate::transport_http::ClientSlot,
+    on_token: impl Fn(String, String) + Send + 'static,
+    on_done: impl Fn(u64, Result<String, String>) + Send + 'static,
+) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("gateway-worker".into())
         .spawn(move || {
@@ -490,7 +514,16 @@ pub fn spawn(
                 // in_flight would otherwise show "applying…" forever).
                 let panicked_form = cmd_form_id(&cmd);
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    handle(&mut client, &store, &wake, &tx, cmd, &on_token, &on_done);
+                    handle(
+                        &mut client,
+                        &shared,
+                        &store,
+                        &wake,
+                        &tx,
+                        cmd,
+                        &on_token,
+                        &on_done,
+                    );
                 }));
                 if let Err(payload) = result {
                     let msg = payload
@@ -652,11 +685,15 @@ fn require_client(client: &Option<GatewayClient>) -> Result<GatewayClient, ApiEr
     client.clone().ok_or(ApiError {
         kind: ApiErrorKind::NotConnected,
         message: "no gateway connection".into(),
+        body: None,
+        timed_out: false,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle(
     client: &mut Option<GatewayClient>,
+    shared: &crate::transport_http::ClientSlot,
     store: &Store,
     wake: &WakeHandle,
     tx: &Sender<Cmd>,
@@ -678,6 +715,10 @@ fn handle(
                 // passes through Ctx::reset_domains.
                 s.reset_domains();
             });
+            // The screens' transport forgets the old gateway NOW: a
+            // Models/Engines read during the probe says "not connected"
+            // instead of answering from the gateway being left.
+            crate::transport_http::publish(shared, None);
             let candidate = GatewayClient::new(&url, Some(&token.0));
             let started = std::time::Instant::now();
             let outcome = with_busy(store, wake, "probing gateway", || {
@@ -711,6 +752,10 @@ fn handle(
             };
             match outcome {
                 Ok(me) => {
+                    // Published BEFORE "connected" is posted: the screen
+                    // loads that the Connected transition triggers must
+                    // find this client, not an empty slot.
+                    crate::transport_http::publish(shared, Some(candidate.clone()));
                     *client = Some(candidate);
                     let identity = Identity::from_me(&me);
                     match identity {
@@ -1156,6 +1201,8 @@ fn handle(
                         std::fs::create_dir_all(parent).map_err(|e| crate::api::ApiError {
                             kind: crate::api::ApiErrorKind::Unreachable,
                             message: format!("cannot create {}: {e}", parent.display()),
+                            body: None,
+                            timed_out: false,
                         })?;
                     }
                 }
@@ -1165,11 +1212,15 @@ fn handle(
                     return Err(crate::api::ApiError {
                         kind: crate::api::ApiErrorKind::Unreachable,
                         message: format!("{} already exists", path.display()),
+                        body: None,
+                        timed_out: false,
                     });
                 }
                 std::fs::write(&path, &bytes).map_err(|e| crate::api::ApiError {
                     kind: crate::api::ApiErrorKind::Unreachable,
                     message: format!("cannot write {}: {e}", path.display()),
+                    body: None,
+                    timed_out: false,
                 })?;
                 Ok(serde_json::json!({
                     "ok": true, "path": dest, "bytes": bytes.len(),
@@ -2335,6 +2386,8 @@ fn handle(
                     Err(ApiError {
                         kind: ApiErrorKind::Protocol,
                         message: why,
+                        body: None,
+                        timed_out: false,
                     })
                 } else {
                     Ok(v)
@@ -2651,6 +2704,8 @@ fn handle_download(
             return Err(ApiError {
                 kind: ApiErrorKind::Protocol,
                 message: "POST /models/download started no job".to_string(),
+                body: None,
+                timed_out: false,
             });
         }
         Ok(status)

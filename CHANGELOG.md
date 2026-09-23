@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **console-tui (crate `abstractgateway-console` 0.7.0, versioned separately):**
+  the terminal console gains screens 9 **Models** and 0 **Engines**, which are
+  AbstractCore's shared screens from the `abstractcore-console` crate mounted
+  over the gateway's `/api/gateway/models/*`, `/engines/*`, `/host/profile`
+  and `/jobs/*` routes. See
+  [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
 - **Zero-configuration first run.** With no auth configured, `abstractgateway serve`
   binds `127.0.0.1`, enables user auth, creates `default/admin`, and prints a
   one-time console sign-in link instead of a token. See

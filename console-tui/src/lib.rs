@@ -3,8 +3,14 @@
 //! capability routes, users & entities), rendered by AbstractTUI
 //! against the gateway's existing admin HTTP API.
 //!
+//! Screens 9 (Models) and 0 (Engines) are AbstractCore's shared screens
+//! from the `abstractcore-console` crate, answered by
+//! [`transport_http::HttpTransport`] over the gateway's
+//! `/api/gateway/models/*` and `/engines/*` mirrors.
+//!
 //! Architecture: the UI thread owns all signals; one worker thread owns
-//! the HTTP client. Commands cross via mpsc, results come back as
+//! the HTTP client (and publishes the verified one to the shared
+//! screens' own worker through a [`transport_http::ClientSlot`]). Commands cross via mpsc, results come back as
 //! closures posted through `WakeHandle` (the engine's live-data law).
 
 pub mod api;
@@ -12,6 +18,8 @@ pub mod health;
 /// The one query language every search box speaks (substring, or glob).
 pub mod query;
 pub mod store;
+/// The shared Models/Engines screens' transport over the gateway API.
+pub mod transport_http;
 pub mod ui;
 pub mod worker;
 
@@ -42,8 +50,13 @@ OPTIONS:
   --version      print the version
 
 KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back ·
-      ] / [ next/back (outside text fields) · 1-8 screens (browse) ·
+      ] / [ next/back (outside text fields) · 1-9,0 screens (browse) ·
       r refresh · Ctrl+L repaint · q / Ctrl+C quit
+
+SCREENS: 1 Connection · 2 Providers · 3 Routes · 4 Users & Entities ·
+         5 Runtimes · 6 Workflows · 7 Review & Test · 8 Resources ·
+         9 Models (browse, download, delete models on the gateway host) ·
+         0 Engines (detect and install Ollama, LM Studio, MLX, llama.cpp)
 ";
 
 struct Args {
@@ -132,6 +145,16 @@ pub fn run_cli(argv: &[String]) -> i32 {
     let ui_slot: Rc<RefCell<Option<UiState>>> = Rc::new(RefCell::new(None));
     let ui_out = ui_slot.clone();
 
+    // The Models/Engines screens' transport reads the client the worker
+    // verified (published into this slot on every successful probe).
+    let client_slot = transport_http::client_slot();
+    let screens_transport: std::sync::Arc<dyn abstractcore_console::ConsoleTransport> =
+        std::sync::Arc::new(transport_http::HttpTransport::new(
+            client_slot.clone(),
+            ui::normalize_url(&url0),
+        ));
+    let overlays_screens = overlays.clone();
+
     let tx_mount = tx.clone();
     if let Err(e) = app.mount(move |cx| {
         let store = Store::create(cx);
@@ -161,6 +184,17 @@ pub fn run_cli(argv: &[String]) -> i32 {
                 },
             ));
         }
+        // ONE ScreensCtx, created in the mount scope, sharing this app's
+        // notice signal (its toast effect + footer already render it).
+        let screens = abstractcore_console::screens::ScreensCtx::new(
+            cx,
+            screens_transport.clone(),
+            overlays_screens.clone(),
+            abstractcore_console::screens::ScreensOptions {
+                notice: Some(store.notice),
+                ..abstractcore_console::screens::ScreensOptions::default()
+            },
+        );
         let ctx = Ctx {
             tx: tx_mount.clone(),
             overlays: overlays.clone(),
@@ -171,6 +205,8 @@ pub fn run_cli(argv: &[String]) -> i32 {
             entity_drawer: Rc::new(RefCell::new(None)),
             env_token_set,
             prober,
+            screens,
+            screens_transport: screens_transport.clone(),
         };
         ui::root(cx, ctx)
     }) {
@@ -199,7 +235,15 @@ pub fn run_cli(argv: &[String]) -> i32 {
             wake.post(move || ui.write_done.set(Some((form_id, outcome.clone()))));
         }
     };
-    let worker_handle = worker::spawn(store, wake, rx, tx.clone(), token_sink, done_sink);
+    let worker_handle = worker::spawn_with_client_slot(
+        store,
+        wake,
+        rx,
+        tx.clone(),
+        client_slot,
+        token_sink,
+        done_sink,
+    );
 
     // Auto-probe at boot ALWAYS (P2-B, cycle-1 UX) — even tokenless: a
     // local dev gateway with open reads is then a ZERO-keystroke

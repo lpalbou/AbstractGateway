@@ -669,7 +669,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .on_click(move || {
                             ctx3.ui.wizard.set(false);
                             ctx3.store.notice.set(Some(
-                                "wizard finished — browse with 1-8, q quits".into(),
+                                "wizard finished — browse with 1-9 and 0, q quits".into(),
                             ));
                         })
                         .element(gcx, &t)

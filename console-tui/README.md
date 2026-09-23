@@ -6,10 +6,18 @@ sibling of the served web console (`GET /console`), so the
 configuring a gateway. Rendered by
 [AbstractTUI](https://crates.io/crates/abstracttui) (`abstracttui`
 0.3.6 — the engine's `PageHost` owns the tab bar/navigation and a
-right `Drawer` hosts the entity inspector), talking to the gateway's existing admin HTTP API
-(`/api/gateway/...`) — no gateway-side changes.
+right `Drawer` hosts the entity inspector), talking to the gateway's admin HTTP API
+(`/api/gateway/...`).
 
-Eight screens, shared by a **guided wizard** (gated steps, first-run) and
+Screens 9 and 0 are not implemented here: they are AbstractCore's shared
+**Models** and **Engines** screens, from the
+[`abstractcore-console`](https://crates.io/crates/abstractcore-console)
+crate (0.2), the same screens `abstractcore-console` shows over the
+`abstractcore` CLI. This crate mounts them over its own HTTP transport
+(`src/transport_http.rs`) against the gateway's mirrors of the
+AbstractCore routes. Both crates build on one abstracttui (0.3.6).
+
+Ten screens, shared by a **guided wizard** (gated steps, first-run) and
 a **browse mode** (free tabs):
 
 1. **Connection** — base URL + admin token (masked; env fallback
@@ -67,6 +75,28 @@ a **browse mode** (free tabs):
    answers HTTP 409 and the screen offers a force unload), `e` asks
    for a context estimate, `c` clears the selected session's prompt
    caches.
+9. **Models** (AbstractCore's shared screen, page id `catalog`) — the
+   model catalog for the GATEWAY host: each model's artifacts per engine
+   (Ollama, LM Studio, MLX, Hugging Face…), size, whether it fits the
+   host's memory (`fits` / `tight` / `too large` / `partial offload`),
+   and whether it is already on disk. `w` downloads (progress strip,
+   toast on completion), `d` deletes after a confirm that names the
+   blockers (loaded, shared cache), `/` filters, `f` fits only, `e`
+   cycles the engine, `v` flips to what is installed, `c` cancels the
+   running job.
+0. **Engines** (AbstractCore's shared screen, page id `engines`) — the
+   local engines on the gateway host: installed or not, version,
+   running and reachable. `i` installs after a confirm showing the
+   exact command and "runs on gateway host …" (dry run available),
+   `o` opens the download page (LM Studio), `r` probes the local
+   servers, `c` cancels.
+
+Screens 9 and 0 read `GET /api/gateway/host/profile`, `/engines`,
+`/models/catalog`, `/models/installed` and `/jobs/{id}`, and write
+through `POST /models/download`, `/models/delete`, `/engines/{id}/install`
+and `/jobs/{id}/cancel` (admin-only on the gateway). A gateway without
+those routes shows each read as "not found" on those two screens; the
+other eight are unaffected.
 
 Parity contract with the web console: every write targets the SAME
 endpoint with the same body shape — changing a parameter here or in
@@ -100,7 +130,7 @@ cargo run < /dev/null   # headless: prints a skip line, exits 0
 
 Keys: `Tab` focus · `Enter` activate · `Ctrl+N` next step / `Ctrl+P`
 back (always work — `]`/`[` are alternates that text fields swallow) ·
-`Esc` back / close modal · `1-8` screens (browse; the screen bar is
+`Esc` back / close modal · `1-9`, `0` screens (browse; the screen bar is
 also clickable in browse) · `r` refresh · `Ctrl+L` repaint · `q`
 (browse) / `Ctrl+C` quit. Per-screen actions sit in the footer, and a
 refused action always SAYS why (toast + footer) instead of doing
@@ -119,7 +149,8 @@ ABSTRACTGATEWAY_AUTH_TOKEN=console-dev-secret-0123456789 \
 ## Test
 
 ```sh
-cargo test                 # headless CaptureTerm suite (no network)
+cargo test                 # headless CaptureTerm suite + the HTTP transport
+                           # against a local fake gateway (no real network)
 # live end-to-end (writes + verify-via-GET + cleanup; needs a gateway):
 ABSTRACTGATEWAY_AUTH_TOKEN=... cargo test --test live_e2e -- --ignored --nocapture
 # keyboard-driven pty smoke against a live gateway (writes + restores a route):
@@ -147,11 +178,17 @@ live keyboard pass.
 - `src/store.rs` — signals + typed rows parsed from gateway payloads;
   `Loadable<T>` keeps the four honest states distinct.
 - `src/worker.rs` — the one background thread owning HTTP; commands in
-  via mpsc, results back as posted closures (`WakeHandle`).
+  via mpsc, results back as posted closures (`WakeHandle`). It publishes
+  the verified client for the Models/Engines screens.
+- `src/transport_http.rs` — `HttpTransport`, the `abstractcore-console`
+  `ConsoleTransport` over `GatewayClient` (route and error mapping).
 - `src/ui/` — root shell (wizard/browse) + one module per screen;
   shared components in `ui/util.rs`.
-- `tests/headless_ui.rs` — the CaptureTerm suite; `tests/live_e2e.rs` —
-  the ignored live test; `scripts/pty_smoke.py` — the pty proof.
+- `tests/headless_ui.rs` — the CaptureTerm suite (screens 9/0 over a
+  mock transport and AbstractCore's contract fixtures in
+  `tests/fixtures/`); `tests/http_transport.rs` — `HttpTransport`
+  against a local fake gateway; `tests/live_e2e.rs` — the ignored live
+  tests; `scripts/pty_smoke.py` — the pty proof.
 
 This is the second **validator app** for the AbstractTUI engine (epic:
 `abstracttui/docs/backlog/planned/ports/0215_gateway_config_wizard_app.md`).

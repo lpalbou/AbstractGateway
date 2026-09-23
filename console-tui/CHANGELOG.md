@@ -1,5 +1,46 @@
 # Changelog — abstractgateway-console
 
+## 0.7.0 (2026-09-23) — Models and Engines, inherited from AbstractCore
+
+Needs an AbstractGateway that serves the Models/Engines routes
+(`/api/gateway/host/profile`, `/engines`, `/engines/{id}/install`,
+`/models/catalog`, `/models/installed`, `/models/download`,
+`/models/delete`, `/jobs/{id}`, `/jobs/{id}/cancel`). Against an older
+gateway, screens 9 and 0 say "not found" and the other eight work as
+before.
+
+- **Screen 9 "Models" and screen 0 "Engines".** They are AbstractCore's
+  shared screens from the [`abstractcore-console`](https://crates.io/crates/abstractcore-console)
+  crate (0.2.0), not a copy: the same catalog with fit verdicts, download
+  (`w`) with a progress strip and a completion toast, delete (`d`) with a
+  confirm that lists blockers, filters (`/`, `f`, `e`), installed view
+  (`v`), engine install (`i`) with a confirm that shows the exact command
+  and the gateway host it runs on, download page (`o`), probe (`r`) and
+  cancel (`c`). Page ids are `catalog` and `engines`; Resources keeps
+  `models`.
+- **`HttpTransport`** (`src/transport_http.rs`) answers those screens
+  over the gateway API. 401 is "not authorized", 403 and 409 are
+  "refused" with the gateway's reason and blockers, 404 is "not found",
+  timeouts are "timed out". The confirms name the gateway host from
+  `/host/state` (`host.host_name`) or the connection URL, and say "this
+  machine" for a loopback gateway.
+- The worker hands the verified connection to those screens when a probe
+  succeeds. Reconnecting (to the same or another gateway) clears their
+  data and reloads the screen you are on.
+- Keys: `0` jumps to Engines; the footer reads `1-9,0`. In the wizard, the
+  two screens come after Resources, each with a one-line goal. `q` refuses
+  to quit while a Models/Engines job is running (`Ctrl+C` still quits; the
+  job keeps running on the gateway).
+- `ApiError` carries the response's JSON body (`body`, FastAPI's
+  `{"detail": {...}}` unwrapped) and a `timed_out` flag;
+  `ApiError::new` builds a body-less one. `GatewayClient` gains the
+  contract methods (`host_profile`, `engines_status`, `models_catalog`,
+  `models_installed`, `models_download`, `models_delete`,
+  `engine_install`, `host_job`, `cancel_host_job`) and
+  `with_read_timeout`.
+- Maintenance: `cargo fmt` over the crate and the current clippy
+  `-D warnings` findings fixed.
+
 ## 0.6.0 (2026-09-23) — first crates.io release
 
 Install with `cargo install abstractgateway-console`. Works against

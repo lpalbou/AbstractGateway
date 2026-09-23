@@ -61,9 +61,31 @@ It opens as a guided wizard on first run and as free tabs afterwards, with eight
 screens: Connection, Providers, Routes (capability defaults, including the MTP
 selector and a Test verb per route), Users & Entities, Runtimes (runs with
 cancel and steer, data homes), Workflows, Review & Test (the session's change
-journal), and Resources. Every write is verified with a follow-up read and
-recorded in the journal. Keys: `Tab` focus, `Enter` activate, `1`-`8` screens,
-`r` refresh, `q` quit; each screen lists its actions in the footer.
+journal), Resources, Models and Engines. Every write is verified with a
+follow-up read and recorded in the journal. Keys: `Tab` focus, `Enter`
+activate, `1`-`9` and `0` screens, `r` refresh, `q` quit; each screen lists its
+actions in the footer.
+
+### Models and Engines in the terminal console
+
+Screens 9 (**Models**) and 0 (**Engines**) are AbstractCore's own screens,
+taken from the `abstractcore-console` crate rather than rebuilt, so they look
+and behave the same in `abstractcore-console` and here. In the gateway console
+they act on the gateway's host, through the gateway's
+`/api/gateway/host/profile`, `/engines`, `/models/catalog`,
+`/models/installed`, `/models/download`, `/models/delete`,
+`/engines/{id}/install` and `/jobs/{id}` routes:
+
+- **Models:** browse the catalog with a fit verdict for the gateway host,
+  download (`w`), delete after a confirm that lists any blocker (`d`), filter
+  (`/`), fits only (`f`), engine (`e`), installed view (`v`), cancel (`c`).
+- **Engines:** see which engines are installed and running; install one (`i`)
+  after a confirm that shows the exact command and the host it runs on (a dry
+  run is offered), or open its download page (`o`).
+
+Downloads, deletes and installs are admin-only and run on the gateway host; a
+refusal (for example installs disabled on a remote gateway, or a loaded model)
+is shown with the gateway's reason.
 
 The terminal console needs no gateway-side component beyond the admin API. The
 crate version is independent of the Python package version; see
