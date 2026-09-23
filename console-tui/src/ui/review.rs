@@ -801,4 +801,3 @@ fn sandbox_status(t: &TokenSet, s: &Loadable<SandboxOutcome>) -> View {
         }
     }
 }
-

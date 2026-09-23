@@ -10,10 +10,10 @@ pub mod providers;
 pub mod review;
 pub mod routes;
 pub mod runtimes;
-mod workflows;
 pub mod users;
 pub mod util;
 pub mod widths;
+mod workflows;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -831,7 +831,8 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     // §1 bridge: ui.screen (usize, the wizard gate's truth) ⇄ PageHost's
     // string `active`. Both effects are equality-guarded — one hop, no
     // oscillation.
-    let active = cx.signal(SCREEN_IDS[ui.screen.get_untracked().min(SCREEN_IDS.len() - 1)].to_string());
+    let active =
+        cx.signal(SCREEN_IDS[ui.screen.get_untracked().min(SCREEN_IDS.len() - 1)].to_string());
     cx.effect(move || {
         let id = SCREEN_IDS[ui.screen.get().min(SCREEN_IDS.len() - 1)];
         if active.with_untracked(|a| a != id) {
@@ -1086,8 +1087,7 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
         let ctx = ctx.clone();
         let was_on = Rc::new(std::cell::Cell::new(false));
         cx.effect(move || {
-            let on = ui.screen.get() == SCREEN_MODELS
-                && store.conn.with(ConnPhase::is_connected);
+            let on = ui.screen.get() == SCREEN_MODELS && store.conn.with(ConnPhase::is_connected);
             if on && !was_on.get() {
                 let first = matches!(store.host_state.get_untracked(), Loadable::NotAsked);
                 if first {

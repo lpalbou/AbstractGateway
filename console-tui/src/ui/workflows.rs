@@ -82,37 +82,42 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .padding(Edges::all(1)),
                 )
                 .child(dyn_view_scoped(
-            LayoutStyle::default().grow(1.0),
-            move |gcx| {
-                let conn = store.conn.get();
-                let data = store.workflows.get();
-                let sel = ui.workflow_sel;
-                let _ = &ctx_table;
-                loadable_view(
-                    &tt,
-                    &conn,
-                    || store.tick.get(),
-                    &data,
-                    |d: &WorkflowsData| d.rows.is_empty() && d.skipped.is_empty(),
-                    "no workflows registered on this gateway",
-                    |d: &WorkflowsData| {
-                        let mut children: Vec<View> = vec![master_table(gcx, &tt, d, sel)];
-                        if let Some(row) = d.rows.get(sel.get()) {
-                            children.push(detail_block(gcx, &tt, row, &d.default_bundle_id));
-                        }
-                        if !d.skipped.is_empty() {
-                            children.push(skipped_block(gcx, &tt, d));
-                        }
-                        let mut col = Element::new()
-                            .style(LayoutStyle::column().gap(0).grow(1.0));
-                        for child in children {
-                            col = col.child(child);
-                        }
-                        col.build()
+                    LayoutStyle::default().grow(1.0),
+                    move |gcx| {
+                        let conn = store.conn.get();
+                        let data = store.workflows.get();
+                        let sel = ui.workflow_sel;
+                        let _ = &ctx_table;
+                        loadable_view(
+                            &tt,
+                            &conn,
+                            || store.tick.get(),
+                            &data,
+                            |d: &WorkflowsData| d.rows.is_empty() && d.skipped.is_empty(),
+                            "no workflows registered on this gateway",
+                            |d: &WorkflowsData| {
+                                let mut children: Vec<View> = vec![master_table(gcx, &tt, d, sel)];
+                                if let Some(row) = d.rows.get(sel.get()) {
+                                    children.push(detail_block(
+                                        gcx,
+                                        &tt,
+                                        row,
+                                        &d.default_bundle_id,
+                                    ));
+                                }
+                                if !d.skipped.is_empty() {
+                                    children.push(skipped_block(gcx, &tt, d));
+                                }
+                                let mut col =
+                                    Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
+                                for child in children {
+                                    col = col.child(child);
+                                }
+                                col.build()
+                            },
+                        )
                     },
-                )
-            },
-        ))
+                ))
                 .element(t)
                 .build(),
         )
@@ -127,7 +132,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 span(" delete bundle  ", tt.text_muted),
                 span("t", tt.accent),
                 span(
-                    if drafts { " drafts shown  " } else { " drafts hidden  " },
+                    if drafts {
+                        " drafts shown  "
+                    } else {
+                        " drafts hidden  "
+                    },
                     tt.text_muted,
                 ),
                 span("r", tt.accent),
@@ -252,7 +261,7 @@ fn detail_block(cx: Scope, t: &TokenSet, row: &WorkflowRow, default_id: &str) ->
         span_bold(row.bundle_id.clone(), t.accent),
         span("  ", t.text_muted),
         span(
-            &format!("{} published, {} draft", row.published, row.draft),
+            format!("{} published, {} draft", row.published, row.draft),
             t.text_muted,
         ),
     ];
@@ -281,12 +290,7 @@ fn detail_block(cx: Scope, t: &TokenSet, row: &WorkflowRow, default_id: &str) ->
         widths::ColRule::head("eps", 4),
     ];
     let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    children.push(
-        Table::new(cols)
-            .rows(rows)
-            .element(cx, t)
-            .build(),
-    );
+    children.push(Table::new(cols).rows(rows).element(cx, t).build());
 
     if !row.flows.is_empty() {
         let joined = row

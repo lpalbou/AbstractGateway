@@ -49,13 +49,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     super::util::clamp_selection(cx, ui.rt_logs_sel, move || {
         let home_f = ui.rt_logs_home.get();
         let query_f = ui.rt_logs_query.get();
-        store
-            .logs
-            .with(|d| {
-                d.ready()
-                    .map(|rows| filter_log_files(rows, &home_f, &query_f).len())
-                    .unwrap_or(0)
-            })
+        store.logs.with(|d| {
+            d.ready()
+                .map(|rows| filter_log_files(rows, &home_f, &query_f).len())
+                .unwrap_or(0)
+        })
     });
     // F8-class for the Data tab, installed ONCE at page scope: purge
     // shrinks the displayed set — clamp the index. (It used to install
@@ -159,7 +157,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 }
                 last_requested.set(Some(wanted.clone()));
                 store.runs.set(Loadable::Loading);
-                ctx_runs.send(Cmd::LoadRuns { scope: wanted, status, query, offset });
+                ctx_runs.send(Cmd::LoadRuns {
+                    scope: wanted,
+                    status,
+                    query,
+                    offset,
+                });
             }
         });
     }
@@ -179,13 +182,19 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             let query = ui.rt_art_query.get();
             let offset = ui.rt_art_offset.get();
             let held = store.artifacts.with(|d| match d {
-                Loadable::Ready(a) => a.modality == modality && a.query == query && a.offset == offset,
+                Loadable::Ready(a) => {
+                    a.modality == modality && a.query == query && a.offset == offset
+                }
                 Loadable::Loading => true,
                 _ => false,
             });
             if !held {
                 store.artifacts.set(Loadable::Loading);
-                ctx_art.send(Cmd::LoadArtifacts { offset, modality, query });
+                ctx_art.send(Cmd::LoadArtifacts {
+                    offset,
+                    modality,
+                    query,
+                });
             }
         });
     }
@@ -200,11 +209,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 return;
             }
             let tab = ui.rt_tab.get();
-            if tab == 3 && ui.rt_detail.with(|d| d.is_some()) {
-                if matches!(store.logs.get(), Loadable::NotAsked) {
-                    store.logs.set(Loadable::Loading);
-                    ctx_homes.send(Cmd::LoadLogs);
-                }
+            if tab == 3
+                && ui.rt_detail.with(|d| d.is_some())
+                && matches!(store.logs.get(), Loadable::NotAsked)
+            {
+                store.logs.set(Loadable::Loading);
+                ctx_homes.send(Cmd::LoadLogs);
             }
             if tab != 2 || ui.rt_detail.with(|d| d.is_none()) {
                 return;
@@ -551,7 +561,11 @@ fn scroll_text_view(
         })
         .shortcut(KeyChord::plain(Key::Home), move |_| top.set(0))
         .shortcut(KeyChord::plain(Key::End), move |_| top.set(max_top))
-        .child(view.layout(LayoutStyle::default().grow(1.0)).element(&t0).build())
+        .child(
+            view.layout(LayoutStyle::default().grow(1.0))
+                .element(&t0)
+                .build(),
+        )
         // Fixed row: the code pane grows, so a status line without its own
         // reserved height gets squeezed to nothing.
         .child(
@@ -598,10 +612,9 @@ fn open_selected_row(cx: Scope, ctx: &Ctx) {
                 None => ctx.store.notice.set(Some("no log file selected".into())),
             }
         }
-        _ => ctx
-            .store
-            .notice
-            .set(Some("nothing to open on this tab (i inspects a run)".into())),
+        _ => ctx.store.notice.set(Some(
+            "nothing to open on this tab (i inspects a run)".into(),
+        )),
     }
 }
 
@@ -622,31 +635,42 @@ fn open_tab_filter(cx: Scope, ctx: &Ctx) {
                 ("failed", "failed"),
                 ("cancelled", "cancelled"),
             ];
-            open_filter_prompt(cx, ctx, "Runs — status", &opts, ui.rt_runs_status, move || {
-                ui.rt_runs_offset.set(0);
-            });
+            open_filter_prompt(
+                cx,
+                ctx,
+                "Runs — status",
+                &opts,
+                ui.rt_runs_status,
+                move || {
+                    ui.rt_runs_offset.set(0);
+                },
+            );
         }
         1 => {
             let opts: Vec<(&str, &str)> = ARTIFACT_TYPES.to_vec();
-            open_filter_prompt(cx, ctx, "Artifacts — type", &opts, ui.rt_art_modality, move || {
-                ui.rt_art_offset.set(0);
-            });
+            open_filter_prompt(
+                cx,
+                ctx,
+                "Artifacts — type",
+                &opts,
+                ui.rt_art_modality,
+                move || {
+                    ui.rt_art_offset.set(0);
+                },
+            );
         }
         2 => {
             // Derived from the RENDERED rows, like the web console.
-            let mut kinds: Vec<String> = ctx
-                .store
-                .data_homes
-                .with_untracked(|d| {
-                    d.ready()
-                        .map(|rows| {
-                            rows.iter()
-                                .filter(|h| h.safe_to_purge && h.kind != "logs")
-                                .map(|h| h.kind.clone())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()
-                });
+            let mut kinds: Vec<String> = ctx.store.data_homes.with_untracked(|d| {
+                d.ready()
+                    .map(|rows| {
+                        rows.iter()
+                            .filter(|h| h.safe_to_purge && h.kind != "logs")
+                            .map(|h| h.kind.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            });
             kinds.sort();
             kinds.dedup();
             let mut opts: Vec<(String, String)> = vec![(String::new(), "all kinds".into())];
@@ -656,14 +680,11 @@ fn open_tab_filter(cx: Scope, ctx: &Ctx) {
             open_filter_prompt(cx, ctx, "Cache — kind", &borrowed, ui.rt_cache_kind, || {});
         }
         _ => {
-            let mut homes: Vec<String> = ctx
-                .store
-                .logs
-                .with_untracked(|d| {
-                    d.ready()
-                        .map(|rows| rows.iter().map(|f| f.home.clone()).collect::<Vec<_>>())
-                        .unwrap_or_default()
-                });
+            let mut homes: Vec<String> = ctx.store.logs.with_untracked(|d| {
+                d.ready()
+                    .map(|rows| rows.iter().map(|f| f.home.clone()).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            });
             homes.sort();
             homes.dedup();
             let mut opts: Vec<(String, String)> = vec![(String::new(), "all log homes".into())];
@@ -687,8 +708,16 @@ fn open_tab_search(cx: Scope, ctx: &Ctx) {
     }
     let tab = ui.rt_tab.get_untracked();
     let (title, target, offset): (&str, Signal<String>, Option<Signal<u32>>) = match tab {
-        0 => ("Search runs — run id, workflow, session", ui.rt_runs_query, Some(ui.rt_runs_offset)),
-        1 => ("Search artifacts — name, kind, tags", ui.rt_art_query, Some(ui.rt_art_offset)),
+        0 => (
+            "Search runs — run id, workflow, session",
+            ui.rt_runs_query,
+            Some(ui.rt_runs_offset),
+        ),
+        1 => (
+            "Search artifacts — name, kind, tags",
+            ui.rt_art_query,
+            Some(ui.rt_art_offset),
+        ),
         2 => ("Search caches — name, kind, path", ui.rt_cache_query, None),
         _ => ("Search log files — file name", ui.rt_logs_query, None),
     };
@@ -754,11 +783,15 @@ fn page_tab(ctx: &Ctx, dir: i32) {
     let (offset, has_more) = match ui.rt_tab.get_untracked() {
         0 => (
             ui.rt_runs_offset,
-            ctx.store.runs.with_untracked(|d| d.ready().map(|r| r.has_more).unwrap_or(false)),
+            ctx.store
+                .runs
+                .with_untracked(|d| d.ready().map(|r| r.has_more).unwrap_or(false)),
         ),
         1 => (
             ui.rt_art_offset,
-            ctx.store.artifacts.with_untracked(|d| d.ready().map(|a| a.has_more).unwrap_or(false)),
+            ctx.store
+                .artifacts
+                .with_untracked(|d| d.ready().map(|a| a.has_more).unwrap_or(false)),
         ),
         _ => {
             ctx.store
@@ -804,7 +837,14 @@ fn inspect_selected_run(cx: Scope, ctx: &Ctx) {
             ("workflow", row.workflow_id.clone()),
             ("status", row.status.clone()),
             ("updated", row.updated_at.clone()),
-            ("paused", if row.paused { "yes".to_string() } else { String::new() }),
+            (
+                "paused",
+                if row.paused {
+                    "yes".to_string()
+                } else {
+                    String::new()
+                },
+            ),
             ("parent", row.parent_run_id.clone().unwrap_or_default()),
         ] {
             if v.is_empty() {
@@ -864,7 +904,6 @@ fn forget_stale_homes(cx: Scope, ctx: &Ctx) {
     );
 }
 
-
 /// The VISIBLE toolbar row — a filter dropdown and a search box, the same
 /// shape the web console wears. It costs one row, so it renders only when
 /// the viewport can spare it (at 80x24 the inspector's own minimum already
@@ -872,6 +911,7 @@ fn forget_stale_homes(cx: Scope, ctx: &Ctx) {
 /// `f` / `/` gestures still work). Built on the PAGE scope: a Select's
 /// popup dies with the scope that built it, and background store writes
 /// regenerate the panel scopes constantly.
+#[allow(clippy::too_many_arguments)]
 fn toolbar_row(
     cx: Scope,
     ctx: &Ctx,
@@ -928,7 +968,12 @@ fn toolbar_row(
                         on_change();
                     }
                 })
-                .layout(LayoutStyle::default().basis(Dimension::Cells(0)).grow(1.0).h(1))
+                .layout(
+                    LayoutStyle::default()
+                        .basis(Dimension::Cells(0))
+                        .grow(1.0)
+                        .h(1),
+                )
                 .element(cx, &t0)
                 .build(),
         )
@@ -946,7 +991,11 @@ fn toolbar_fits(cx: Scope) -> bool {
 /// exactly like renderPager does.
 fn page_label(offset: u32, shown: usize, has_more: bool, total: Option<u64>) -> String {
     if shown == 0 {
-        return if offset == 0 { "0 rows".into() } else { format!("nothing at offset {offset}") };
+        return if offset == 0 {
+            "0 rows".into()
+        } else {
+            format!("nothing at offset {offset}")
+        };
     }
     let from = offset as usize + 1;
     let to = offset as usize + shown;
@@ -1025,10 +1074,7 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             ),
             t.text,
         ),
-        span(
-            format!("  ({})", d.workspace_root_source),
-            t.text_faint,
-        ),
+        span(format!("  ({})", d.workspace_root_source), t.text_faint),
     ]));
     rows.push(line(vec![
         span(format!("{:>20}: ", "allowed_workspaces"), t.text_muted),
@@ -1099,10 +1145,7 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             t.text,
         ),
         span(
-            format!(
-                "  ({})",
-                d.client_workspace_scope_overrides_source
-            ),
+            format!("  ({})", d.client_workspace_scope_overrides_source),
             t.text_faint,
         ),
     ]));
@@ -1178,14 +1221,7 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
         let in_flight = mcx.signal(false);
         let form_id = crate::worker::next_form_id();
 
-        super::install_write_done(
-            mcx,
-            &ctx2,
-            form_id,
-            in_flight,
-            form_error,
-            close.clone(),
-        );
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
 
         let ctx_save = ctx2.clone();
         let close_cancel = close.clone();
@@ -1379,7 +1415,8 @@ fn open_user_policy_for_selected(cx: Scope, ctx: &Ctx) {
         ctx.store.notice.set(Some(if row.owners.is_empty() {
             "no live user binds this plane — there is no principal to configure".to_string()
         } else {
-            "several users bind this plane — configure each user from screen 4 (Users & Entities)".to_string()
+            "several users bind this plane — configure each user from screen 4 (Users & Entities)"
+                .to_string()
         }));
         return;
     }
@@ -1390,23 +1427,29 @@ fn open_user_policy_for_selected(cx: Scope, ctx: &Ctx) {
             // `w` fires the load itself and asks for one more keypress.
             ctx.store.runtime_config.set(Loadable::Loading);
             ctx.send(Cmd::LoadRuntimeConfig);
-            ctx.store
-                .notice
-                .set(Some("loading workspace config — press w again in a moment".into()));
+            ctx.store.notice.set(Some(
+                "loading workspace config — press w again in a moment".into(),
+            ));
             return;
         }
         _ => {
-            ctx.store
-                .notice
-                .set(Some("runtime config still loading — try again in a moment".into()));
+            ctx.store.notice.set(Some(
+                "runtime config still loading — try again in a moment".into(),
+            ));
             return;
         }
     };
     if !config.writable {
-        ctx.store.notice.set(Some("this needs an admin token".into()));
+        ctx.store
+            .notice
+            .set(Some("this needs an admin token".into()));
         return;
     }
-    let tenant = if row.tenant_id.trim().is_empty() { "default".to_string() } else { row.tenant_id.clone() };
+    let tenant = if row.tenant_id.trim().is_empty() {
+        "default".to_string()
+    } else {
+        row.tenant_id.clone()
+    };
     let user = row.owners[0].clone();
     open_user_policy_form(cx, ctx, &config, tenant, user);
 }
@@ -1415,12 +1458,20 @@ fn open_user_policy_for_selected(cx: Scope, ctx: &Ctx) {
 /// live ON the runtime, with an explicit posture choice — deny-all+allow
 /// list, or allow-all+refuse list). Three-state fields cycle on click;
 /// blank = inherit. Save PUTs the SINGLE entry — never the map.
-fn open_user_policy_form(cx: Scope, ctx: &Ctx, config: &RuntimeConfigData, tenant: String, user: String) {
+fn open_user_policy_form(
+    cx: Scope,
+    ctx: &Ctx,
+    config: &RuntimeConfigData,
+    tenant: String,
+    user: String,
+) {
     let key = format!("{tenant}:{user}");
     let entry = user_policy_entry(config, &key);
     let customized = !entry.is_empty();
     let str_of = |v: Option<&Value>| -> String {
-        v.and_then(Value::as_str).map(str::to_string).unwrap_or_default()
+        v.and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_default()
     };
     let tri_of = |v: Option<&Value>| -> String {
         match v.and_then(Value::as_bool) {
@@ -1431,7 +1482,12 @@ fn open_user_policy_form(cx: Scope, ctx: &Ctx, config: &RuntimeConfigData, tenan
     };
     let lines_of = |v: Option<&Value>| -> String {
         v.and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"))
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
             .unwrap_or_default()
     };
     let mode0 = str_of(entry.get("mode"));
@@ -1954,7 +2010,10 @@ fn open_artifact_detail(cx: Scope, ctx: &Ctx, a: crate::store::ArtifactRow) {
     ctx.store.artifact_image.set(None);
     ctx.store
         .preview_target
-        .set(crate::store::artifact_preview_key(&a.run_id, &a.artifact_id));
+        .set(crate::store::artifact_preview_key(
+            &a.run_id,
+            &a.artifact_id,
+        ));
     let store_img = ctx.store;
     // Two thirds of the terminal, not a fixed 96x26 — see `preview_size`.
     // The image mosaic and the text window both scale with the space;
@@ -2029,18 +2088,38 @@ fn open_artifact_detail(cx: Scope, ctx: &Ctx, a: crate::store::ArtifactRow) {
                 format!(
                     "{} · {} · {} · {}",
                     a.kind,
-                    if a.content_type.is_empty() { "—" } else { &a.content_type },
+                    if a.content_type.is_empty() {
+                        "—"
+                    } else {
+                        &a.content_type
+                    },
                     a.size_bytes.map(human_bytes).unwrap_or_else(|| "—".into()),
-                    a.created_at.replace('T', " ").chars().take(19).collect::<String>()
+                    a.created_at
+                        .replace('T', " ")
+                        .chars()
+                        .take(19)
+                        .collect::<String>()
                 ),
                 t0.text_faint,
             )]))
             .child(line(vec![span(
                 format!(
                     "workflow: {} · run: {} · session: {}",
-                    if a.workflow_id.is_empty() { "—" } else { &a.workflow_id },
-                    if a.run_id.is_empty() { "—" } else { &a.run_id },
-                    if a.session_id.is_empty() { "—" } else { &a.session_id },
+                    if a.workflow_id.is_empty() {
+                        "—"
+                    } else {
+                        &a.workflow_id
+                    },
+                    if a.run_id.is_empty() {
+                        "—"
+                    } else {
+                        &a.run_id
+                    },
+                    if a.session_id.is_empty() {
+                        "—"
+                    } else {
+                        &a.session_id
+                    },
                 ),
                 t0.text_muted,
             )]))
@@ -2088,33 +2167,36 @@ fn logs_panel(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_bar = ctx.clone();
     Element::new()
         .style(LayoutStyle::column().gap(0))
-        .child(dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |bcx| {
-            let _ = bcx;
-            if !toolbar_fits(cx) {
-                return line(vec![]);
-            }
-            let mut homes: Vec<String> = store
-                .logs
-                .get()
-                .ready()
-                .map(|rows| rows.iter().map(|f| f.home.clone()).collect())
-                .unwrap_or_default();
-            homes.sort();
-            homes.dedup();
-            let mut opts: Vec<(String, String)> =
-                vec![(String::new(), "all log homes".to_string())];
-            opts.extend(homes.into_iter().map(|h| (h.clone(), h)));
-            toolbar_row(
-                cx,
-                &ctx_bar,
-                &tt,
-                opts,
-                ui.rt_logs_home,
-                ui.rt_logs_query,
-                "search log files — file name, e.g. *.log (Enter)",
-                move || ui.rt_logs_sel.set(0),
-            )
-        }))
+        .child(dyn_view_scoped(
+            LayoutStyle::line(1).shrink(0.0),
+            move |bcx| {
+                let _ = bcx;
+                if !toolbar_fits(cx) {
+                    return line(vec![]);
+                }
+                let mut homes: Vec<String> = store
+                    .logs
+                    .get()
+                    .ready()
+                    .map(|rows| rows.iter().map(|f| f.home.clone()).collect())
+                    .unwrap_or_default();
+                homes.sort();
+                homes.dedup();
+                let mut opts: Vec<(String, String)> =
+                    vec![(String::new(), "all log homes".to_string())];
+                opts.extend(homes.into_iter().map(|h| (h.clone(), h)));
+                toolbar_row(
+                    cx,
+                    &ctx_bar,
+                    &tt,
+                    opts,
+                    ui.rt_logs_home,
+                    ui.rt_logs_query,
+                    "search log files — file name, e.g. *.log (Enter)",
+                    move || ui.rt_logs_sel.set(0),
+                )
+            },
+        ))
         .child(dyn_view_scoped(
             LayoutStyle::default().grow(1.0).min_h(1),
             move |gcx| {
@@ -2314,37 +2396,41 @@ fn data_panel(cx: Scope, ctx: &Ctx, t: &TokenSet, row: &RuntimeRow) -> View {
             span(dir_text, tt.text),
             span(format!("  ·  size on disk: {size}"), tt.text_muted),
         ]))
-        .child(dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |bcx| {
-            let _ = bcx;
-            if !toolbar_fits(cx) {
-                return line(vec![]);
-            }
-            let mut kinds: Vec<String> = store
-                .data_homes
-                .get()
-                .ready()
-                .map(|rows| {
-                    rows.iter()
-                        .filter(|h| h.safe_to_purge && h.kind != "logs")
-                        .map(|h| h.kind.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            kinds.sort();
-            kinds.dedup();
-            let mut opts: Vec<(String, String)> = vec![(String::new(), "all kinds".to_string())];
-            opts.extend(kinds.into_iter().map(|k| (k.clone(), k)));
-            toolbar_row(
-                cx,
-                &ctx_bar,
-                &tt,
-                opts,
-                ui.rt_cache_kind,
-                ui.rt_cache_query,
-                "search caches — name, kind, path · *glob* (Enter)",
-                move || ui.home_sel.set(0),
-            )
-        }))
+        .child(dyn_view_scoped(
+            LayoutStyle::line(1).shrink(0.0),
+            move |bcx| {
+                let _ = bcx;
+                if !toolbar_fits(cx) {
+                    return line(vec![]);
+                }
+                let mut kinds: Vec<String> = store
+                    .data_homes
+                    .get()
+                    .ready()
+                    .map(|rows| {
+                        rows.iter()
+                            .filter(|h| h.safe_to_purge && h.kind != "logs")
+                            .map(|h| h.kind.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                kinds.sort();
+                kinds.dedup();
+                let mut opts: Vec<(String, String)> =
+                    vec![(String::new(), "all kinds".to_string())];
+                opts.extend(kinds.into_iter().map(|k| (k.clone(), k)));
+                toolbar_row(
+                    cx,
+                    &ctx_bar,
+                    &tt,
+                    opts,
+                    ui.rt_cache_kind,
+                    ui.rt_cache_query,
+                    "search caches — name, kind, path · *glob* (Enter)",
+                    move || ui.home_sel.set(0),
+                )
+            },
+        ))
         .child(dyn_view_scoped(
             LayoutStyle::default().grow(1.0).min_h(1),
             move |gcx| {
@@ -2360,13 +2446,23 @@ fn data_panel(cx: Scope, ctx: &Ctx, t: &TokenSet, row: &RuntimeRow) -> View {
                     |homes: &Vec<DataHomeRow>| {
                         store
                             .runtimes
-                            .with(|rt| filter_homes(displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row_t), &kind_f, &query_f))
+                            .with(|rt| {
+                                filter_homes(
+                                    displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row_t),
+                                    &kind_f,
+                                    &query_f,
+                                )
+                            })
                             .is_empty()
                     },
                     "no caches match on this plane (the plane's data dir is listed above)",
                     |homes| {
                         let rows = store.runtimes.with(|rt| {
-                            filter_homes(displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row_t), &kind_f, &query_f)
+                            filter_homes(
+                                displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row_t),
+                                &kind_f,
+                                &query_f,
+                            )
                         });
                         homes_table(gcx, &tt, &rows, ui.home_sel)
                     },
@@ -2378,9 +2474,13 @@ fn data_panel(cx: Scope, ctx: &Ctx, t: &TokenSet, row: &RuntimeRow) -> View {
             let desc = store.data_homes.with(|d| {
                 d.ready()
                     .map(|homes| {
-                        store
-                            .runtimes
-                            .with(|rt| filter_homes(displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row_purge), &ui.rt_cache_kind.get(), &ui.rt_cache_query.get()))
+                        store.runtimes.with(|rt| {
+                            filter_homes(
+                                displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row_purge),
+                                &ui.rt_cache_kind.get(),
+                                &ui.rt_cache_query.get(),
+                            )
+                        })
                     })
                     .and_then(|rows| rows.get(idx).map(|(h, _)| h.description.clone()))
                     .unwrap_or_default()
@@ -2415,7 +2515,11 @@ fn data_panel(cx: Scope, ctx: &Ctx, t: &TokenSet, row: &RuntimeRow) -> View {
 /// The rows the Data tab displays for a plane: (home, shared) pairs —
 /// shared=true only on the default plane (stores outside every plane).
 /// `query` is what the user TYPED — see [`filter_log_files`].
-fn filter_homes(rows: Vec<(DataHomeRow, bool)>, kind: &str, query: &str) -> Vec<(DataHomeRow, bool)> {
+fn filter_homes(
+    rows: Vec<(DataHomeRow, bool)>,
+    kind: &str,
+    query: &str,
+) -> Vec<(DataHomeRow, bool)> {
     let needle = Needle::new(query);
     rows.into_iter()
         .filter(|(h, _)| kind.is_empty() || h.kind == kind)
@@ -2499,11 +2603,11 @@ fn homes_table(cx: Scope, t: &TokenSet, rows: &[(DataHomeRow, bool)], sel: Signa
     ];
     let cols = widths::columns(&rules, &mut body, w - widths::BLOCK_CHROME);
     Table::new(cols)
-    .rows(body)
-    .selection(sel)
-    .layout(LayoutStyle::default().grow(1.0))
-    .element(cx, t)
-    .build()
+        .rows(body)
+        .selection(sel)
+        .layout(LayoutStyle::default().grow(1.0))
+        .element(cx, t)
+        .build()
 }
 
 /// Purge the Data tab's selected store: same refusal ladder the old
@@ -2515,7 +2619,13 @@ fn purge_selected(cx: Scope, ctx: &Ctx, row: &RuntimeRow) {
         d.ready().and_then(|homes| {
             ctx.store
                 .runtimes
-                .with_untracked(|rt| filter_homes(displayed_homes(rt.ready().map_or(&[], |v| v), homes, row), &ctx.ui.rt_cache_kind.get_untracked(), &ctx.ui.rt_cache_query.get_untracked()))
+                .with_untracked(|rt| {
+                    filter_homes(
+                        displayed_homes(rt.ready().map_or(&[], |v| v), homes, row),
+                        &ctx.ui.rt_cache_kind.get_untracked(),
+                        &ctx.ui.rt_cache_query.get_untracked(),
+                    )
+                })
                 .get(idx)
                 .map(|(h, _)| h.clone())
         })
@@ -2580,7 +2690,11 @@ fn table(
             // the config is loaded it also says custom vs inherited.
             row.push(
                 if (r.kind == "user" || r.kind == "default") && r.owners.len() == 1 {
-                    let tenant = if r.tenant_id.trim().is_empty() { "default" } else { r.tenant_id.as_str() };
+                    let tenant = if r.tenant_id.trim().is_empty() {
+                        "default"
+                    } else {
+                        r.tenant_id.as_str()
+                    };
                     match &policy_keys {
                         Some(keys) if keys.contains(&format!("{tenant}:{}", r.owners[0])) => {
                             "custom (w edits)".to_string()
@@ -2631,7 +2745,11 @@ fn table(
     // FIRST MOUNT ONLY (design adversary BLOCKER-1): `.autofocus()` is
     // re-armed by every Dyn regeneration — a store write while a modal is
     // open would drag focus back to this table mid-keystroke.
-    if autofocus { el.autofocus().build() } else { el.build() }
+    if autofocus {
+        el.autofocus().build()
+    } else {
+        el.build()
+    }
 }
 
 /// The selected run + the scope its rows were loaded under (actions
@@ -2722,12 +2840,12 @@ fn runs_table(
     ];
     let cols = widths::columns(&rules, &mut rows, w - widths::BLOCK_CHROME);
     Table::new(cols)
-    .rows(rows)
-    .selection(sel)
-    .on_activate(on_activate)
-    .layout(LayoutStyle::default().grow(1.0))
-    .element(cx, t)
-    .build()
+        .rows(rows)
+        .selection(sel)
+        .on_activate(on_activate)
+        .layout(LayoutStyle::default().grow(1.0))
+        .element(cx, t)
+        .build()
 }
 
 fn confirm_cancel(cx: Scope, ctx: &Ctx, r: RunRow) {
@@ -2892,7 +3010,10 @@ mod tests {
             log("gateway.log.1", "main"),
             log("screenshot.jpg", "runs"),
         ];
-        assert_eq!(names(&filter_log_files(&rows, "", "*.log")), ["gateway.log"]);
+        assert_eq!(
+            names(&filter_log_files(&rows, "", "*.log")),
+            ["gateway.log"]
+        );
         assert_eq!(
             names(&filter_log_files(&rows, "", "*.jpg")),
             ["screenshot.jpg"]

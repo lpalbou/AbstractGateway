@@ -212,8 +212,7 @@ mod tests {
         }
         match p[0] {
             '*' => {
-                reference_matches(v, &p[1..])
-                    || (!v.is_empty() && reference_matches(&v[1..], p))
+                reference_matches(v, &p[1..]) || (!v.is_empty() && reference_matches(&v[1..], p))
             }
             '?' => !v.is_empty() && reference_matches(&v[1..], &p[1..]),
             c => !v.is_empty() && v[0] == c && reference_matches(&v[1..], &p[1..]),
@@ -225,7 +224,9 @@ mod tests {
         // Deterministic LCG — no dev-dependency for 20k cases.
         let mut seed: u64 = 0x2026_0820;
         let mut next = move || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as usize
         };
         let alphabet: Vec<char> = "ab./".chars().collect();
@@ -233,7 +234,9 @@ mod tests {
         for _ in 0..20_000 {
             let vlen = next() % 8;
             let plen = next() % 6;
-            let v: Vec<char> = (0..vlen).map(|_| alphabet[next() % alphabet.len()]).collect();
+            let v: Vec<char> = (0..vlen)
+                .map(|_| alphabet[next() % alphabet.len()])
+                .collect();
             let p: Vec<char> = (0..plen)
                 .map(|_| pat_alphabet[next() % pat_alphabet.len()])
                 .collect();

@@ -603,7 +603,12 @@ pub struct AvailabilityData {
 impl AvailabilityData {
     pub fn from_value(v: &Value) -> AvailabilityData {
         let mut by_route = HashMap::new();
-        for row in v.get("routes").and_then(Value::as_array).into_iter().flatten() {
+        for row in v
+            .get("routes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let Some(key) = s(row, "key").filter(|k| !k.is_empty()) else {
                 continue;
             };
@@ -879,20 +884,44 @@ pub struct WorkflowsData {
 pub fn workflows_from_payload(v: &serde_json::Value) -> WorkflowsData {
     use std::collections::BTreeMap;
     let mut by_id: BTreeMap<String, WorkflowRow> = BTreeMap::new();
-    for it in v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default() {
-        let bid = it.get("bundle_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    for it in v
+        .get("items")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default()
+    {
+        let bid = it
+            .get("bundle_id")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
         if bid.is_empty() {
             continue;
         }
-        let ver = it.get("bundle_version").and_then(|x| x.as_str()).unwrap_or("").to_string();
-        let is_draft = it.get("is_draft").and_then(|x| x.as_bool()).unwrap_or(false);
+        let ver = it
+            .get("bundle_version")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let is_draft = it
+            .get("is_draft")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false);
         let channel = it
             .get("version_channel")
             .and_then(|x| x.as_str())
             .unwrap_or(if is_draft { "draft" } else { "published" })
             .to_string();
-        let created = it.get("created_at").and_then(|x| x.as_str()).unwrap_or("").to_string();
-        let eps = it.get("entrypoints").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+        let created = it
+            .get("created_at")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let eps = it
+            .get("entrypoints")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default();
 
         let row = by_id.entry(bid.clone()).or_insert_with(|| WorkflowRow {
             bundle_id: bid.clone(),
@@ -916,7 +945,11 @@ pub fn workflows_from_payload(v: &serde_json::Value) -> WorkflowsData {
                 .unwrap_or("")
                 .to_string();
         }
-        if eps.iter().any(|e| e.get("deprecated").and_then(|x| x.as_bool()).unwrap_or(false)) {
+        if eps.iter().any(|e| {
+            e.get("deprecated")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false)
+        }) {
             row.deprecated = true;
         }
         if row.flows.is_empty() {
@@ -924,8 +957,14 @@ pub fn workflows_from_payload(v: &serde_json::Value) -> WorkflowsData {
                 .iter()
                 .map(|e| {
                     (
-                        e.get("flow_id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                        e.get("workflow_id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        e.get("flow_id")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        e.get("workflow_id")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         e.get("interfaces")
                             .and_then(|x| x.as_array())
                             .map(|a| {
@@ -954,14 +993,26 @@ pub fn workflows_from_payload(v: &serde_json::Value) -> WorkflowsData {
         .unwrap_or_default()
         .iter()
         .map(|r| WorkflowSkipRow {
-            bundle_id: r.get("bundle_id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            bundle_id: r
+                .get("bundle_id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
             bundle_version: r
                 .get("bundle_version")
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string(),
-            reason: r.get("reason").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            path: r.get("path").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            reason: r
+                .get("reason")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            path: r
+                .get("path")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
         })
         .collect();
 
@@ -1144,7 +1195,11 @@ impl RuntimeConfigData {
                             .lines()
                             .map(|line| line.trim())
                             .filter(|line| !line.is_empty())
-                            .map(|line| line.split_once('=').map(|(_, path)| path.trim()).unwrap_or(line))
+                            .map(|line| {
+                                line.split_once('=')
+                                    .map(|(_, path)| path.trim())
+                                    .unwrap_or(line)
+                            })
                             .collect::<Vec<_>>()
                             .join("\n");
                         workspace_allowed_paths_source = source.as_str().unwrap_or("?").to_string();
@@ -1185,8 +1240,7 @@ impl RuntimeConfigData {
                         Value::String(s) => matches!(s.as_str(), "1" | "true" | "yes" | "on"),
                         _ => true,
                     };
-                    trust_client_launch_folder_source =
-                        source.as_str().unwrap_or("?").to_string();
+                    trust_client_launch_folder_source = source.as_str().unwrap_or("?").to_string();
                     continue;
                 }
                 if key == "workspace_default_mode" {
@@ -1201,13 +1255,10 @@ impl RuntimeConfigData {
                 if key == "user_workspace_policies" {
                     user_workspace_policies = match value {
                         Value::Object(map) if map.is_empty() => String::new(),
-                        Value::Object(_) => {
-                            serde_json::to_string_pretty(value).unwrap_or_default()
-                        }
+                        Value::Object(_) => serde_json::to_string_pretty(value).unwrap_or_default(),
                         _ => String::new(),
                     };
-                    user_workspace_policies_source =
-                        source.as_str().unwrap_or("?").to_string();
+                    user_workspace_policies_source = source.as_str().unwrap_or("?").to_string();
                     continue;
                 }
                 let rendered = match value {
@@ -1341,7 +1392,11 @@ pub const ACCELERATOR_NOTE: &str = "memory-mapped GGUF weights are not counted h
 /// backend prints the literal `device`.
 pub fn accelerator_label(backend: &str, scope: DeviceScope) -> String {
     let backend = backend.trim();
-    let backend = if backend.is_empty() { "device" } else { backend };
+    let backend = if backend.is_empty() {
+        "device"
+    } else {
+        backend
+    };
     format!("Accelerator heap · {backend} ({})", scope.label())
 }
 
@@ -1488,7 +1543,9 @@ pub fn size_marked(bytes: u64, estimated: bool) -> String {
 pub enum LockAction {
     Unlock,
     /// Lock; `true` when the row looks externally loaded (an adoption).
-    Lock { adopt: bool },
+    Lock {
+        adopt: bool,
+    },
     /// Not offered — the reason, verbatim, for the refusal notice.
     Refused(&'static str),
 }
@@ -1891,11 +1948,14 @@ pub fn host_state_from_payload(v: &Value) -> HostStateData {
             .and_then(Value::as_u64),
         device,
         gpu_supported: gpu.and_then(|g| b(g, "supported")).unwrap_or(false),
-        gpu_util_pct: gpu.and_then(|g| g.get("utilization_gpu_pct")).and_then(Value::as_f64),
-        host_name: v
-            .get("host")
-            .and_then(|h| s(h, "host_name"))
-            .or_else(|| memory.and_then(|m| m.get("host")).and_then(|h| s(h, "host_name"))),
+        gpu_util_pct: gpu
+            .and_then(|g| g.get("utilization_gpu_pct"))
+            .and_then(Value::as_f64),
+        host_name: v.get("host").and_then(|h| s(h, "host_name")).or_else(|| {
+            memory
+                .and_then(|m| m.get("host"))
+                .and_then(|h| s(h, "host_name"))
+        }),
         models: v
             .get("models")
             .and_then(Value::as_array)
@@ -1906,7 +1966,9 @@ pub fn host_state_from_payload(v: &Value) -> HostStateData {
             .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(SessionCacheRow::from_value).collect())
             .unwrap_or_default(),
-        model_bytes: totals.and_then(|t| t.get("model_bytes")).and_then(Value::as_u64),
+        model_bytes: totals
+            .and_then(|t| t.get("model_bytes"))
+            .and_then(Value::as_u64),
         cache_bytes: totals
             .and_then(|t| t.get("session_cache_bytes"))
             .and_then(Value::as_u64),
@@ -2360,14 +2422,28 @@ pub fn log_preview_key(home: &str, file: &str) -> String {
 
 pub fn log_files_from_payload(v: &Value) -> Vec<LogFileRow> {
     let mut out: Vec<LogFileRow> = Vec::new();
-    for home in v.get("homes").and_then(Value::as_array).into_iter().flatten() {
+    for home in v
+        .get("homes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         // Stale (missing) homes are hygiene, not logs — the Cache tab owns
         // them, exactly as the web console does.
-        if home.get("missing").and_then(Value::as_bool).unwrap_or(false) {
+        if home
+            .get("missing")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             continue;
         }
         let hname = s(home, "home").unwrap_or_default();
-        for f in home.get("files").and_then(Value::as_array).into_iter().flatten() {
+        for f in home
+            .get("files")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let Some(name) = s(f, "name") else { continue };
             out.push(LogFileRow {
                 name,
@@ -2392,7 +2468,11 @@ pub fn artifacts_from_payload(v: &Value) -> Vec<ArtifactRow> {
             // semantic_kind (it carries non-render values like
             // "transcript"/"workflow_snapshot"), which is what this parsed
             // first before parity work.
-            kind: artifact_render_kind(&s(a, "render_kind").unwrap_or_default(), &content_type, &filename),
+            kind: artifact_render_kind(
+                &s(a, "render_kind").unwrap_or_default(),
+                &content_type,
+                &filename,
+            ),
             size_bytes: a.get("size_bytes").and_then(Value::as_u64),
             run_id: s(a, "run_id").unwrap_or_default(),
             created_at: s(a, "created_at").unwrap_or_default(),
@@ -2434,7 +2514,11 @@ pub fn artifact_render_kind(render_kind: &str, content_type: &str, filename: &st
     if ct.starts_with("text/") {
         return "text".into();
     }
-    let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     match ext.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => "image".into(),
         "mp4" | "webm" | "mov" => "video".into(),
@@ -2448,7 +2532,12 @@ pub fn artifact_render_kind(render_kind: &str, content_type: &str, filename: &st
     }
 }
 
-pub fn artifacts_data_from_payload(v: &Value, offset: u32, modality: &str, query: &str) -> ArtifactsData {
+pub fn artifacts_data_from_payload(
+    v: &Value,
+    offset: u32,
+    modality: &str,
+    query: &str,
+) -> ArtifactsData {
     ArtifactsData {
         rows: artifacts_from_payload(v),
         total: v.get("total").and_then(Value::as_u64).unwrap_or(0),
@@ -2770,9 +2859,9 @@ impl Store {
             tick: _,          // clock
             notice: _,        // transient toast
             download: _,      // survives: the job is on the OLD host, and
-                              // its status line is the only record of it
-            host_poll_gen,   // bumped below: live poll chains must die
-                              // with the world they were reading
+            // its status line is the only record of it
+            host_poll_gen, // bumped below: live poll chains must die
+            // with the world they were reading
             providers,
             profiles,
             routes,
@@ -2947,7 +3036,11 @@ mod tests {
         let covered = parent(true);
         assert!(covered.is_task_parent());
         assert_eq!(covered.task_keys.len(), 3);
-        assert_eq!(covered.display_key(), "output.image", "the parent is not indented");
+        assert_eq!(
+            covered.display_key(),
+            "output.image",
+            "the parent is not indented"
+        );
         assert_eq!(
             covered.state_label(),
             "not needed",
@@ -3331,7 +3424,10 @@ mod tests {
         assert_eq!(d.model_bytes, Some(1024));
         assert_eq!(d.cache_bytes, Some(4096));
         assert_eq!(d.degraded, vec!["gpu"]);
-        assert!(d.reasons.contains_key("gpu"), "reason travels with the section");
+        assert!(
+            d.reasons.contains_key("gpu"),
+            "reason travels with the section"
+        );
     }
 
     /// The LIVE wire shape, captured from `GET /api/gateway/host/state`
@@ -3492,10 +3588,7 @@ mod tests {
             host_in_use_bytes: Some(7),
             ..DeviceGauge::default()
         };
-        assert_eq!(
-            no_ceiling.accelerator(),
-            Some((7, None, DeviceScope::Host))
-        );
+        assert_eq!(no_ceiling.accelerator(), Some((7, None, DeviceScope::Host)));
         assert_eq!(no_ceiling.meter(), None, "no ceiling, no bar");
 
         // No host figure at all → the process-local pair, LABELLED.
@@ -3601,8 +3694,12 @@ mod tests {
             vec!["sum_model_weights", "ram", "accelerator"]
         );
         assert!(
-            b.iter().position(|l| l.kind == BreakdownKind::Reference).unwrap()
-                > b.iter().rposition(|l| l.kind == BreakdownKind::Item).unwrap(),
+            b.iter()
+                .position(|l| l.kind == BreakdownKind::Reference)
+                .unwrap()
+                > b.iter()
+                    .rposition(|l| l.kind == BreakdownKind::Item)
+                    .unwrap(),
             "references come after every item"
         );
         // 4 — Σ model weights is the sum of the model items.
@@ -3612,11 +3709,16 @@ mod tests {
         // 5 — the accelerator reference wears the PART A2 label and the
         // note that says what the counter is blind to.
         assert!(
-            refs[2].label.contains("Accelerator heap · metal (all processes)"),
+            refs[2]
+                .label
+                .contains("Accelerator heap · metal (all processes)"),
             "the A2 label, verbatim: {}",
             refs[2].label
         );
-        assert_eq!(refs[2].note, "memory-mapped GGUF weights are not counted here");
+        assert_eq!(
+            refs[2].note,
+            "memory-mapped GGUF weights are not counted here"
+        );
         assert_eq!(refs[2].bytes, Some(1_042_120_704));
         // 6 — 89_986_353_824 > 1_042_120_704, so the GGUF case is NAMED,
         // in the spec's words and no others.
@@ -3636,7 +3738,8 @@ mod tests {
         );
         // 8 — and so is the forbidden scope word.
         assert!(
-            !b.iter().any(|l| l.label.contains("host-wide") || l.note.contains("host-wide")),
+            !b.iter()
+                .any(|l| l.label.contains("host-wide") || l.note.contains("host-wide")),
             "`host-wide` is a deleted scope name: {b:#?}"
         );
 

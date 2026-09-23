@@ -505,10 +505,7 @@ impl GatewayClient {
     pub fn clear_session_prompt_caches(&self, session_id: &str) -> ApiResult<Value> {
         self.send(
             "POST",
-            &format!(
-                "/sessions/{}/prompt_cache/clear_all",
-                urlencode(session_id)
-            ),
+            &format!("/sessions/{}/prompt_cache/clear_all", urlencode(session_id)),
             &json!({}),
             false,
         )
@@ -839,7 +836,12 @@ impl GatewayClient {
     /// Artifact bytes as TEXT, hard-capped. The content route streams the
     /// whole file with no ceiling, and `get()` always JSON-parses — so a
     /// preview needs its own bounded reader (design adversary BLOCKER-5).
-    pub fn artifact_text(&self, run_id: &str, artifact_id: &str, max_bytes: usize) -> ApiResult<String> {
+    pub fn artifact_text(
+        &self,
+        run_id: &str,
+        artifact_id: &str,
+        max_bytes: usize,
+    ) -> ApiResult<String> {
         use std::io::Read;
         let url = format!(
             "{}/api/gateway/runs/{}/artifacts/{}/content?access=preview",
@@ -851,7 +853,9 @@ impl GatewayClient {
         if let Some(tok) = &self.token {
             req = req.set("Authorization", &format!("Bearer {tok}"));
         }
-        let resp = req.call().map_err(|e| err_from_ureq("artifact content", e))?;
+        let resp = req
+            .call()
+            .map_err(|e| err_from_ureq("artifact content", e))?;
         let mut buf = String::new();
         resp.into_reader()
             .take(max_bytes as u64)
@@ -882,7 +886,9 @@ impl GatewayClient {
         if let Some(tok) = &self.token {
             req = req.set("Authorization", &format!("Bearer {tok}"));
         }
-        let resp = req.call().map_err(|e| err_from_ureq("artifact content", e))?;
+        let resp = req
+            .call()
+            .map_err(|e| err_from_ureq("artifact content", e))?;
         let mut buf: Vec<u8> = Vec::new();
         resp.into_reader()
             .take(max_bytes as u64)
@@ -982,7 +988,14 @@ impl GatewayClient {
         prompt: &str,
         max_tokens: u32,
     ) -> ApiResult<Value> {
-        self.sandbox_generate_with_controls(capability, provider, model, prompt, max_tokens, &json!({}))
+        self.sandbox_generate_with_controls(
+            capability,
+            provider,
+            model,
+            prompt,
+            max_tokens,
+            &json!({}),
+        )
     }
 
     /// Request controls belong to the current audition, not a separate store.
@@ -1004,12 +1017,7 @@ impl GatewayClient {
                 body[key] = value.clone();
             }
         }
-        self.send(
-            "POST",
-            "/sandbox/generate",
-            &body,
-            true,
-        )
+        self.send("POST", "/sandbox/generate", &body, true)
     }
 }
 

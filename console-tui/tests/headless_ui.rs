@@ -1277,7 +1277,10 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
     // Row 0 = input.text, configured with reasoning "medium".
     h.type_text("e");
     let s = h.turns(3);
-    assert!(s.contains("Route — Text Input (input.text)"), "editor:\n{s}");
+    assert!(
+        s.contains("Route — Text Input (input.text)"),
+        "editor:\n{s}"
+    );
     assert!(
         s.contains("Applies now: lmstudio / test-model-a"),
         "the stored pair leads the form:\n{s}"
@@ -1321,7 +1324,10 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
 
 #[test]
 fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
-    for value in [json!(false), json!({"mode":"native_mtp", "num_draft_tokens":4, "require_acceleration":false})] {
+    for value in [
+        json!(false),
+        json!({"mode":"native_mtp", "num_draft_tokens":4, "require_acceleration":false}),
+    ] {
         let mut h = harness();
         h.connect_as_admin();
         h.goto_screen(2);
@@ -1330,14 +1336,23 @@ fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
         h.store.routes.set(Loadable::Ready(routes));
         h.store.providers.set(Loadable::Ready(providers_fixture()));
         h.store.models.update(|models| {
-            models.insert("lmstudio".into(), Loadable::Ready(vec!["test-model-a".into()]));
+            models.insert(
+                "lmstudio".into(),
+                Loadable::Ready(vec!["test-model-a".into()]),
+            );
         });
         h.turns(2);
         h.type_text("e");
         let screen = h.turns(3);
-        assert!(screen.contains("MTP default"), "MTP policy control must be visible: {screen}");
+        assert!(
+            screen.contains("MTP default"),
+            "MTP policy control must be visible: {screen}"
+        );
         // mode -> provider -> model -> URL -> reasoning -> options -> MTP -> Save -> Test
-        for _ in 0..8 { h.key(b"\t"); h.turn(); }
+        for _ in 0..8 {
+            h.key(b"\t");
+            h.turn();
+        }
         h.type_text("\r");
         h.turns(2);
         match h.find_cmd(|command| matches!(command, Cmd::TestRoute { .. })) {
@@ -2689,7 +2704,9 @@ fn title_bar_and_separator_survive_content_pressure() {
     h.store
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     for wizard in [true, false] {
         h.ui.wizard.set(wizard);
         for screen in 0..8 {
@@ -3316,7 +3333,8 @@ fn data_tab_lazy_load_and_attribution() {
     h.ui.rt_tab.set(2);
     h.turns(2);
     assert!(
-        h.find_cmd(|c| matches!(c, Cmd::LoadDataHomes { .. })).is_some(),
+        h.find_cmd(|c| matches!(c, Cmd::LoadDataHomes { .. }))
+            .is_some(),
         "first look at the Data tab loads the registry"
     );
     h.store.data_homes.set(Loadable::Ready(
@@ -3732,7 +3750,11 @@ fn busy_tick_does_not_steal_focus_from_the_tabs_bar() {
     h.turns(1);
     h.key(b"\x1b[C"); // Right → Data & cache
     h.turns(2);
-    assert_eq!(h.ui.rt_tab.get_untracked(), 1, "tabs bar reachable via Tab; Right switches");
+    assert_eq!(
+        h.ui.rt_tab.get_untracked(),
+        1,
+        "tabs bar reachable via Tab; Right switches"
+    );
     h.key(b"\x1b[D"); // Left → Sessions
     h.turns(2);
     assert_eq!(h.ui.rt_tab.get_untracked(), 0);
@@ -3806,10 +3828,7 @@ fn runtimes_inspector_fits_at_80x24() {
         s.contains("Runtime knobs"),
         "knobs disclosure header survives at 80x24:\n{s}"
     );
-    assert!(
-        s.contains("focus"),
-        "footer hints survive at 80x24:\n{s}"
-    );
+    assert!(s.contains("focus"), "footer hints survive at 80x24:\n{s}");
 }
 
 /// Honesty pin: a user plane the gateway lists with `data_dir: null`
@@ -3820,14 +3839,16 @@ fn unmaterialized_plane_data_dir_renders_a_dash() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(4);
-    h.store.runtimes.set(Loadable::Ready(runtimes_from_payload(&json!({
-        "runtimes": [
-            {"kind": "default", "tenant_id": "default", "runtime_id": "default",
-             "label": "Gateway default runtime", "data_dir": "/tmp/runtime"},
-            {"kind": "user", "tenant_id": "default", "runtime_id": "ghost",
-             "label": "default/ghost", "data_dir": null, "materialized": false}
-        ]
-    }))));
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&json!({
+            "runtimes": [
+                {"kind": "default", "tenant_id": "default", "runtime_id": "default",
+                 "label": "Gateway default runtime", "data_dir": "/tmp/runtime"},
+                {"kind": "user", "tenant_id": "default", "runtime_id": "ghost",
+                 "label": "default/ghost", "data_dir": null, "materialized": false}
+            ]
+        }))));
     h.turns(2);
     h.key(b"\x1b[B"); // choose the unmaterialized user plane
     h.turns(2);
@@ -3875,7 +3896,10 @@ fn home_plane_index_duplicate_dirs_first_wins() {
         "duplicate data_dirs: first plane in payload order wins (documented)"
     );
     // Empty data_dir never owns anything.
-    let planes2 = vec![plane("user", "ghost", ""), plane("default", "default", "/tmp/runtime")];
+    let planes2 = vec![
+        plane("user", "ghost", ""),
+        plane("default", "default", "/tmp/runtime"),
+    ];
     assert_eq!(home_plane_index(&planes2, "/tmp/runtime/x"), Some(1));
 }
 
@@ -4034,7 +4058,6 @@ fn sandbox_pane_survives_a_response_that_shrinks() {
     );
 }
 
-
 // =======================================================================
 // WEIGHTS: the `d` verb (model downloads on the execution host)
 // =======================================================================
@@ -4062,8 +4085,14 @@ fn routes_screen_shows_weight_availability_and_no_banner_when_every_route_is_ans
         !s.contains("no model yet") && !s.contains("recommended:"),
         "a fully routed host is never told it is short of a model:\n{s}"
     );
-    assert!(s.contains("not downloaded"), "absent weights read plainly:\n{s}");
-    assert!(s.contains("installed"), "present weights read plainly:\n{s}");
+    assert!(
+        s.contains("not downloaded"),
+        "absent weights read plainly:\n{s}"
+    );
+    assert!(
+        s.contains("installed"),
+        "present weights read plainly:\n{s}"
+    );
     assert!(s.contains("weights"), "the column is labelled:\n{s}");
     assert!(
         s.contains("download weights"),
@@ -4252,7 +4281,10 @@ fn w_refuses_with_a_reason_instead_of_guessing() {
     h.key(b"w");
     let s = h.turns(2);
     assert!(s.contains("already installed"), "installed refusal:\n{s}");
-    assert!(h.drain_cmds().is_empty(), "no download for an installed model");
+    assert!(
+        h.drain_cmds().is_empty(),
+        "no download for an installed model"
+    );
 
     h.ui.route_sel.set(5); // output.image.text_to_image — unknown
     h.key(b"w");
@@ -4261,7 +4293,10 @@ fn w_refuses_with_a_reason_instead_of_guessing() {
         s.contains("availability is unknown"),
         "unknown is never treated as absent:\n{s}"
     );
-    assert!(h.drain_cmds().is_empty(), "no download on an unknown answer");
+    assert!(
+        h.drain_cmds().is_empty(),
+        "no download on an unknown answer"
+    );
 
     h.ui.route_sel.set(6); // input.sound — unconfigured, no weights row
     h.key(b"w");
@@ -4286,17 +4321,22 @@ fn a_running_download_takes_over_the_banner() {
     h.store
         .availability
         .set(Loadable::Ready(availability_fixture()));
-    h.store.download.set(Some(DownloadStatus::from_value_for_test(
-        "job1",
-        "lmstudio",
-        "qwen/qwen3.5-9b@4bit",
-        "running",
-        "pulling layer",
-        Some(42.0),
-        12.0,
-    )));
+    h.store
+        .download
+        .set(Some(DownloadStatus::from_value_for_test(
+            "job1",
+            "lmstudio",
+            "qwen/qwen3.5-9b@4bit",
+            "running",
+            "pulling layer",
+            Some(42.0),
+            12.0,
+        )));
     let s = h.turns(2);
-    assert!(s.contains("download:"), "the live line takes the banner:\n{s}");
+    assert!(
+        s.contains("download:"),
+        "the live line takes the banner:\n{s}"
+    );
     assert!(s.contains("42%"), "progress is shown:\n{s}");
     assert!(s.contains("pulling layer"), "the gateway's own words:\n{s}");
 }
@@ -4430,7 +4470,6 @@ fn narrow_routes_grid_keeps_the_discriminating_tail() {
     );
 }
 
-
 /// WEB-CONSOLE PARITY (operator 2026-08-19: "exactly the same design and
 /// parity with the console-tui for runtime"). The four tabs each carry a
 /// toolbar line: the active filter, the query, the page position, and the
@@ -4466,7 +4505,10 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
         rows: runs_fixture_rows(3, "running"),
     }));
     let s = h.turns(2);
-    assert!(s.contains("status=running"), "status filter on the line:\n{s}");
+    assert!(
+        s.contains("status=running"),
+        "status filter on the line:\n{s}"
+    );
     assert!(s.contains("q=\"coder\""), "query on the line:\n{s}");
     assert!(s.contains("101–103"), "page position on the line:\n{s}");
     // Gestures are taught once, in the footer hint bar (repeating them on
@@ -4501,7 +4543,10 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
     let s = h.turns(2);
     assert!(s.contains("hero.png"), "artifact row renders:\n{s}");
     assert!(s.contains("type=image"), "type filter named:\n{s}");
-    assert!(s.contains("of 79147"), "the real total, never a 'newest N' cap:\n{s}");
+    assert!(
+        s.contains("of 79147"),
+        "the real total, never a 'newest N' cap:\n{s}"
+    );
 
     // --- Logs tab: FILES (not homes), with the filter line ---
     h.ui.rt_tab.set(3);
@@ -4564,7 +4609,6 @@ fn cache_tab_lists_caches_and_stale_rows_only() {
     );
 }
 
-
 /// OPERATOR BUGS (2026-08-19): (a) every list tab capped at the THIRD row
 /// because Artifacts/Logs borrowed `home_sel`, whose clamp is sized by the
 /// CACHE row count; (b) the filter dropdown and search box were invisible
@@ -4608,8 +4652,14 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
     h.store.logs.set(Loadable::Ready(files));
     h.ui.rt_tab.set(3);
     let s = h.turns(3);
-    assert!(s.contains("all log homes"), "the filter DROPDOWN is visible:\n{s}");
-    assert!(s.contains("search log files"), "the SEARCH box is visible:\n{s}");
+    assert!(
+        s.contains("all log homes"),
+        "the filter DROPDOWN is visible:\n{s}"
+    );
+    assert!(
+        s.contains("search log files"),
+        "the SEARCH box is visible:\n{s}"
+    );
 
     // Reach past the old ceiling. The CLAMP is what capped the operator at
     // line 3 (three caches -> max index 2 -> the third row), so the pin
@@ -4652,8 +4702,14 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
     }));
     h.ui.rt_tab.set(1);
     let s = h.turns(3);
-    assert!(s.contains("all types"), "artifacts filter dropdown visible:\n{s}");
-    assert!(s.contains("search artifacts"), "artifacts search box visible:\n{s}");
+    assert!(
+        s.contains("all types"),
+        "artifacts filter dropdown visible:\n{s}"
+    );
+    assert!(
+        s.contains("search artifacts"),
+        "artifacts search box visible:\n{s}"
+    );
     h.ui.rt_art_sel.set(4);
     h.turns(3);
     assert_eq!(
@@ -4670,7 +4726,6 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
         "the artifacts clamp is sized by the artifacts rows"
     );
 }
-
 
 /// IMAGES PREVIEW IN THE TERMINAL (operator 2026-08-19: "you should be
 /// able to preview images thanks to abstracttui"). The engine decodes
@@ -4723,7 +4778,8 @@ fn image_artifact_previews_as_a_bitmap() {
         "images are no longer refused:\n{s}"
     );
     assert!(
-        h.find_cmd(|c| matches!(c, Cmd::LoadArtifactImage { .. })).is_some(),
+        h.find_cmd(|c| matches!(c, Cmd::LoadArtifactImage { .. }))
+            .is_some(),
         "the modal requests the image bytes for decoding"
     );
 
@@ -4745,7 +4801,6 @@ fn image_artifact_previews_as_a_bitmap() {
         "the placeholder gives way to the picture:\n{s}"
     );
 }
-
 
 /// LONG TEXT SCROLLS (operator 2026-08-19: "how come i can't scroll
 /// through the log file content"). `CodeView` windows its draw but takes
@@ -4781,7 +4836,10 @@ fn log_tail_scrolls_through_its_content() {
     h.store.log_text.set(Some(body));
     let s = h.turns(3);
     assert!(s.contains("line-001"), "the first line renders:\n{s}");
-    assert!(!s.contains("line-055"), "a deep line is off-screen at first:\n{s}");
+    assert!(
+        !s.contains("line-055"),
+        "a deep line is off-screen at first:\n{s}"
+    );
     assert!(s.contains("line 1/60"), "the position is stated:\n{s}");
 
     // End jumps to the bottom — the content MOVES.
@@ -4845,25 +4903,40 @@ fn a_filetype_glob_filters_the_cache_tab() {
         })),
     ));
     let all = h.turns(2);
-    assert!(all.contains("shots") && all.contains("blocs"), "both rows:\n{all}");
+    assert!(
+        all.contains("shots") && all.contains("blocs"),
+        "both rows:\n{all}"
+    );
 
     // The reported defect: a filetype pattern must SELECT, not empty the
     // table. `*` crosses `/`, so it reaches into the stored path.
     h.ui.rt_cache_query.set("*.jpg".into());
     let jpg = h.turns(2);
-    assert!(jpg.contains("shots"), "the .jpg row survives `*.jpg`:\n{jpg}");
-    assert!(!jpg.contains("blocs"), "the .db row is filtered out:\n{jpg}");
+    assert!(
+        jpg.contains("shots"),
+        "the .jpg row survives `*.jpg`:\n{jpg}"
+    );
+    assert!(
+        !jpg.contains("blocs"),
+        "the .db row is filtered out:\n{jpg}"
+    );
 
     // The substring half is untouched — this is what shipped before.
     h.ui.rt_cache_query.set("blocs".into());
     let sub = h.turns(2);
-    assert!(sub.contains("blocs") && !sub.contains("shots"), "substring:\n{sub}");
+    assert!(
+        sub.contains("blocs") && !sub.contains("shots"),
+        "substring:\n{sub}"
+    );
 
     // A glob that matches nothing empties the table rather than matching
     // everything (the failure mode a broken anchor would produce).
     h.ui.rt_cache_query.set("*.png".into());
     let none = h.turns(2);
-    assert!(!none.contains("shots") && !none.contains("blocs"), "no rows:\n{none}");
+    assert!(
+        !none.contains("shots") && !none.contains("blocs"),
+        "no rows:\n{none}"
+    );
 }
 
 /// The search modal states the rule ONCE, above the field — the glob half
@@ -4907,9 +4980,7 @@ fn the_search_modal_teaches_the_glob_half() {
 /// at open and the worker drops anything else.
 #[test]
 fn a_stale_preview_result_never_paints_under_the_next_artifact() {
-    use abstractgateway_console::store::{
-        artifact_preview_key, ArtifactRow, ArtifactsData,
-    };
+    use abstractgateway_console::store::{artifact_preview_key, ArtifactRow, ArtifactsData};
 
     let art = |id: &str, name: &str| ArtifactRow {
         name: name.into(),
@@ -4953,7 +5024,8 @@ fn a_stale_preview_result_never_paints_under_the_next_artifact() {
     h.type_text("o");
     h.turns(2);
     assert!(
-        h.store.preview_wanted(&artifact_preview_key("run-1", "a-slow")),
+        h.store
+            .preview_wanted(&artifact_preview_key("run-1", "a-slow")),
         "the open modal claims its own artifact"
     );
     h.press_escape(); // bare-ESC needs its disambiguation deadline
@@ -4962,16 +5034,21 @@ fn a_stale_preview_result_never_paints_under_the_next_artifact() {
     h.turns(2);
     h.type_text("o");
     let s = h.turns(2);
-    assert!(s.contains("lpa.jpeg"), "the second artifact is on screen:\n{s}");
+    assert!(
+        s.contains("lpa.jpeg"),
+        "the second artifact is on screen:\n{s}"
+    );
 
     // The first artifact's result lost its race and must be DROPPED —
     // this is the predicate the worker consults before publishing.
     assert!(
-        !h.store.preview_wanted(&artifact_preview_key("run-1", "a-slow")),
+        !h.store
+            .preview_wanted(&artifact_preview_key("run-1", "a-slow")),
         "a result for the artifact left behind is no longer wanted"
     );
     assert!(
-        h.store.preview_wanted(&artifact_preview_key("run-1", "a-wanted")),
+        h.store
+            .preview_wanted(&artifact_preview_key("run-1", "a-wanted")),
         "the artifact actually on screen still is"
     );
 
@@ -4994,7 +5071,10 @@ fn a_stale_preview_result_never_paints_under_the_next_artifact() {
         !s.contains("cannot decode this image here"),
         "the guarded publish drops a result the screen no longer wants:\n{s}"
     );
-    assert!(s.contains("decoding image"), "and leaves the real one alone:\n{s}");
+    assert!(
+        s.contains("decoding image"),
+        "and leaves the real one alone:\n{s}"
+    );
 
     // Publishing WITHOUT asking is precisely the reported defect — pinned
     // here so the assertion above cannot pass for the wrong reason.
@@ -5018,10 +5098,7 @@ fn a_stale_preview_result_never_paints_under_the_next_artifact() {
 fn modal_frame(screen: &str) -> (usize, usize) {
     let rows: Vec<Vec<char>> = screen.lines().map(|l| l.chars().collect()).collect();
     for (top, line) in rows.iter().enumerate() {
-        let Some(col) = line
-            .windows(2)
-            .position(|w| w[0] == '╭' && w[1] == '─')
-        else {
+        let Some(col) = line.windows(2).position(|w| w[0] == '╭' && w[1] == '─') else {
             continue;
         };
         let width = line[col + 1..].iter().take_while(|c| **c == '─').count() + 2;
@@ -5034,7 +5111,6 @@ fn modal_frame(screen: &str) -> (usize, usize) {
     }
     (0, 0)
 }
-
 
 /// Operator 2026-08-20: "use more space for the previews", then "use at
 /// most 66% width and 66% height". The artifact preview and the log tail
@@ -5090,7 +5166,10 @@ fn previews_take_two_thirds_of_each_axis() {
     // inside it loses the Modal's own 1-cell padding on each side.
     for (cols, rows) in [(170, 40), (120, 36), (240, 60)] {
         let s = open_preview(cols, rows);
-        assert!(s.contains("lpa.jpeg"), "the preview opened at {cols}x{rows}:\n{s}");
+        assert!(
+            s.contains("lpa.jpeg"),
+            "the preview opened at {cols}x{rows}:\n{s}"
+        );
         let (w, h) = modal_frame(&s);
         let want_w = (cols * 2 / 3) as usize;
         let want_h = (rows * 2 / 3) as usize;
@@ -5163,7 +5242,9 @@ fn models_tab_renders_gauges_and_table_from_fixture() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
     // Memory strip: the RAM gauge's facts and the backend-labeled
     // device gauge.
@@ -5226,7 +5307,9 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     let mut h = harness_sized(Size::new(80, 24));
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
 
     // 1. THE TABLE IS THERE AT REST, with the columns the operator came for.
@@ -5286,7 +5369,8 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
          accelerator figure readable:\n{s}"
     );
     assert!(
-        s.lines().any(|l| l.contains("qwen3-32b") && l.contains("yes")),
+        s.lines()
+            .any(|l| l.contains("qwen3-32b") && l.contains("yes")),
         "and the model rows are still there at the tail:\n{s}"
     );
 
@@ -5357,9 +5441,14 @@ fn models_tab_resident_null_renders_the_third_state() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
-    assert!(s.contains("mystery-model"), "the null-resident row renders:\n{s}");
+    assert!(
+        s.contains("mystery-model"),
+        "the null-resident row renders:\n{s}"
+    );
     assert!(
         s.contains("unknown"),
         "null resident renders the distinct third state:\n{s}"
@@ -5381,7 +5470,9 @@ fn models_tab_locked_row_shows_the_lock_marker() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
     // The TABLE row (the breakdown above also names mlx/qwen3-32b —
     // only the table row carries the tri-state residency cell).
@@ -5389,10 +5480,7 @@ fn models_tab_locked_row_shows_the_lock_marker() {
         .lines()
         .find(|l| l.contains("qwen3-32b") && l.contains("mlx") && l.contains("yes"))
         .expect("locked model row renders");
-    assert!(
-        row.contains('\u{2298}'),
-        "the locked row carries ⊘:\n{row}"
-    );
+    assert!(row.contains('\u{2298}'), "the locked row carries ⊘:\n{row}");
     assert!(
         !s.contains('\u{1F512}'),
         "never the padlock emoji (column-advance hazard):\n{s}"
@@ -5415,7 +5503,9 @@ fn models_tab_unload_confirms_then_emits_the_cmd() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
     h.type_text("u");
     let s = h.turns(2);
@@ -5476,7 +5566,9 @@ fn models_tab_locked_refusal_offers_force_unload() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
     // The worker's 409 arm posts the pair; simulate it.
     h.store
@@ -5513,7 +5605,9 @@ fn models_tab_device_meter_shows_the_host_figure_not_the_process_zero() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
     assert!(
         s.contains("Accelerator heap · metal (all processes)"),
@@ -5546,9 +5640,14 @@ fn models_tab_breaks_down_what_is_consuming_memory() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
-    assert!(s.contains("consuming memory:"), "the breakdown header:\n{s}");
+    assert!(
+        s.contains("consuming memory:"),
+        "the breakdown header:\n{s}"
+    );
     let line_of = |needle: &str| -> String {
         s.lines()
             .find(|l| l.contains(needle))
@@ -5579,7 +5678,10 @@ fn models_tab_breaks_down_what_is_consuming_memory() {
     assert!(line_of("gateway process RSS").contains("1.0 GiB"));
     // The references live behind their rule, and are NOT summable with
     // the items above them.
-    assert!(strip.contains("NOT summable with the items above"), "{strip}");
+    assert!(
+        strip.contains("NOT summable with the items above"),
+        "{strip}"
+    );
     assert!(line_of("Σ model weights").contains("~95.0 GiB"));
     assert!(line_of("RAM used").contains("80.0 GiB / 128.0 GiB"));
     assert!(
@@ -5601,7 +5703,9 @@ fn models_tab_states_the_gateway_process_rss_exactly_once() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
     // The strip, from the first meter down to the tables.
     let strip: Vec<&str> = s
@@ -5625,7 +5729,10 @@ fn models_tab_states_the_gateway_process_rss_exactly_once() {
         stated[0]
     );
     // The host identity is not a duplicate: it stays.
-    assert!(s.contains("host: studio.local"), "the host id survives:\n{s}");
+    assert!(
+        s.contains("host: studio.local"),
+        "the host id survives:\n{s}"
+    );
 }
 
 /// SPEC PART B3: when the itemized weights EXCEED the accelerator heap —
@@ -5670,7 +5777,9 @@ fn models_tab_locks_an_externally_loaded_sweep_row() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
     // Down twice: qwen3-32b → mystery-model → glm-4.6-gguf (the sweep).
     h.key(b"\x1b[B");
@@ -5755,7 +5864,9 @@ fn models_tab_warmup_form_picks_provider_and_model_from_the_catalogs() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
     h.type_text("w");

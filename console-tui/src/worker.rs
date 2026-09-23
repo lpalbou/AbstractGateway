@@ -148,14 +148,23 @@ pub enum Cmd {
     LoadEntities,
     LoadRuntimes,
     /// The registered workflow registry (bundles + the versions refused).
-    LoadWorkflows { include_drafts: bool },
+    LoadWorkflows {
+        include_drafts: bool,
+    },
     /// Remove one version, or every version when `version` is empty.
     /// There is NO undo — the gateway unlinks the file.
-    DeleteWorkflow { bundle_id: String, version: String },
+    DeleteWorkflow {
+        bundle_id: String,
+        version: String,
+    },
     /// Write one version's ORIGINAL bytes to a LOCAL path. The TUI may be on
     /// a different machine than the gateway, so this is the operator's own
     /// filesystem, never the server's.
-    ExportWorkflow { bundle_id: String, version: String, dest: String },
+    ExportWorkflow {
+        bundle_id: String,
+        version: String,
+        dest: String,
+    },
     /// One page of artifact metadata (deliverables).
     LoadArtifacts {
         offset: u32,
@@ -778,12 +787,24 @@ fn handle(
             handle_download(client, store, wake, tx, &provider, &artifact)
         }
 
-        Cmd::PollDownload { job, provider, artifact, op, started_ms } => handle_poll_download(
+        Cmd::PollDownload {
+            job,
+            provider,
+            artifact,
+            op,
+            started_ms,
+        } => handle_poll_download(
             client,
             store,
             wake,
             tx,
-            &PollTarget { job, provider, artifact, op, started_ms },
+            &PollTarget {
+                job,
+                provider,
+                artifact,
+                op,
+                started_ms,
+            },
         ),
 
         Cmd::PollHostState { gen, first } => {
@@ -970,8 +991,8 @@ fn handle(
         Cmd::ClearSessionCaches { session_id, op } => {
             let action = format!("clear prompt caches of session '{session_id}'");
             let (write, verify) = finish_busy(store, wake, op, || {
-                let write = require_client(client)
-                    .and_then(|c| c.clear_session_prompt_caches(&session_id));
+                let write =
+                    require_client(client).and_then(|c| c.clear_session_prompt_caches(&session_id));
                 let verify = require_client(client).and_then(|c| c.session_prompt_caches());
                 (write, verify)
             });
@@ -1111,16 +1132,24 @@ fn handle(
             });
             finish_write(store, wake, action, write, verified, None, on_done);
             if let Ok(v) = verify {
-                publish_ready(wake, store.workflows, crate::store::workflows_from_payload(&v));
+                publish_ready(
+                    wake,
+                    store.workflows,
+                    crate::store::workflows_from_payload(&v),
+                );
             }
         }
 
-        Cmd::ExportWorkflow { bundle_id, version, dest } => {
+        Cmd::ExportWorkflow {
+            bundle_id,
+            version,
+            dest,
+        } => {
             let label = format!("{bundle_id}@{version}");
             let action = format!("EXPORT workflow '{label}' to {dest}");
             let write = with_busy(store, wake, &format!("exporting {label}"), || {
-                let bytes = require_client(client)
-                    .and_then(|c| c.download_bundle(&bundle_id, &version))?;
+                let bytes =
+                    require_client(client).and_then(|c| c.download_bundle(&bundle_id, &version))?;
                 let path = std::path::PathBuf::from(&dest);
                 if let Some(parent) = path.parent() {
                     if !parent.as_os_str().is_empty() {
@@ -1156,14 +1185,21 @@ fn handle(
                 .map(|v| runtimes_from_payload(&v))
         }),
 
-        Cmd::LoadArtifacts { offset, modality, query } => {
-            load(store, wake, "loading artifacts", store.artifacts, || {
-                let v = require_client(client)?.artifacts_search(100, offset, &modality, &query)?;
-                Ok(crate::store::artifacts_data_from_payload(&v, offset, &modality, &query))
-            })
-        }
+        Cmd::LoadArtifacts {
+            offset,
+            modality,
+            query,
+        } => load(store, wake, "loading artifacts", store.artifacts, || {
+            let v = require_client(client)?.artifacts_search(100, offset, &modality, &query)?;
+            Ok(crate::store::artifacts_data_from_payload(
+                &v, offset, &modality, &query,
+            ))
+        }),
 
-        Cmd::LoadArtifactImage { run_id, artifact_id } => {
+        Cmd::LoadArtifactImage {
+            run_id,
+            artifact_id,
+        } => {
             let key = crate::store::artifact_preview_key(&run_id, &artifact_id);
             // 12 MB cap: a screenshot is ~1 MB; past this the mosaic is
             // pointless and the memory is not.
@@ -1181,9 +1217,7 @@ fn handle(
                     }
                     Err(e) => {
                         let msg = format!("cannot decode this image here: {e}");
-                        post_preview(wake, store, key, move |s| {
-                            s.artifact_text.set(Some(msg))
-                        });
+                        post_preview(wake, store, key, move |s| s.artifact_text.set(Some(msg)));
                     }
                 },
                 Err(e) => {
@@ -1193,10 +1227,14 @@ fn handle(
             }
         }
 
-        Cmd::LoadArtifactText { run_id, artifact_id } => {
+        Cmd::LoadArtifactText {
+            run_id,
+            artifact_id,
+        } => {
             let key = crate::store::artifact_preview_key(&run_id, &artifact_id);
             let out = with_busy(store, wake, "reading artifact", || {
-                require_client(client).and_then(|c| c.artifact_text(&run_id, &artifact_id, 256 * 1024))
+                require_client(client)
+                    .and_then(|c| c.artifact_text(&run_id, &artifact_id, 256 * 1024))
             });
             let text = match out {
                 Ok(t) if t.is_empty() => "(empty file)".to_string(),
@@ -1213,7 +1251,11 @@ fn handle(
             post_preview(wake, store, key, move |s| s.artifact_text.set(Some(text)));
         }
 
-        Cmd::LoadLogText { home, file, max_bytes } => {
+        Cmd::LoadLogText {
+            home,
+            file,
+            max_bytes,
+        } => {
             // Same lane, same slot, same race as the artifact previews:
             // tail two files in a row and the first read lands under the
             // second file's header.
@@ -1223,8 +1265,16 @@ fn handle(
             });
             let text = match out {
                 Ok(v) => {
-                    let body = v.get("content").and_then(Value::as_str).unwrap_or("").to_string();
-                    if body.is_empty() { "(empty file)".to_string() } else { body }
+                    let body = v
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    if body.is_empty() {
+                        "(empty file)".to_string()
+                    } else {
+                        body
+                    }
                 }
                 Err(e) => format!("read failed: {e}"),
             };
@@ -1257,7 +1307,11 @@ fn handle(
                 .map(|_| Ok("GET reloaded the registry".to_string()));
             finish_write(store, wake, action, write, verified, None, on_done);
             if let Ok(v) = verify {
-                publish_ready(wake, store.data_homes, crate::store::data_homes_from_payload(&v));
+                publish_ready(
+                    wake,
+                    store.data_homes,
+                    crate::store::data_homes_from_payload(&v),
+                );
             }
         }
 
@@ -1286,11 +1340,20 @@ fn handle(
                 .map(|_| Ok("GET reloaded runtime config".to_string()));
             finish_write(store, wake, action, write, verified, form_id, on_done);
             if let Ok(v) = verify {
-                publish_ready(wake, store.runtime_config, RuntimeConfigData::from_value(&v));
+                publish_ready(
+                    wake,
+                    store.runtime_config,
+                    RuntimeConfigData::from_value(&v),
+                );
             }
         }
 
-        Cmd::SaveUserWorkspacePolicy { tenant_id, user_id, body, form_id } => {
+        Cmd::SaveUserWorkspacePolicy {
+            tenant_id,
+            user_id,
+            body,
+            form_id,
+        } => {
             let action = format!("PUT workspace policy {tenant_id}:{user_id}");
             let (write, verify) = with_busy(store, wake, "saving workspace policy", || {
                 let write = require_client(client)
@@ -1306,7 +1369,11 @@ fn handle(
                 .map(|_| Ok("GET reloaded runtime config".to_string()));
             finish_write(store, wake, action, write, verified, form_id, on_done);
             if let Ok(v) = verify {
-                publish_ready(wake, store.runtime_config, RuntimeConfigData::from_value(&v));
+                publish_ready(
+                    wake,
+                    store.runtime_config,
+                    RuntimeConfigData::from_value(&v),
+                );
             }
         }
 
@@ -1443,9 +1510,7 @@ fn handle(
             let verified = verify.as_ref().ok().map(|v| {
                 let data = RoutesData::from_value(v);
                 match data.rows.iter().find(|r| r.key == key) {
-                    Some(r) if r.configured => {
-                        Ok(format!("GET shows {key} = {}", route_proof(r)))
-                    }
+                    Some(r) if r.configured => Ok(format!("GET shows {key} = {}", route_proof(r))),
                     Some(_) => Err(format!("GET shows {key} still not configured")),
                     None => Err(format!("GET no longer lists route {key}")),
                 }
@@ -1503,8 +1568,7 @@ fn handle(
                 "POST apply-recommended routes".to_string()
             };
             let (write, verify) = with_busy(store, wake, "applying recommended routes", || {
-                let write =
-                    require_client(client).and_then(|c| c.apply_recommended_routes(force));
+                let write = require_client(client).and_then(|c| c.apply_recommended_routes(force));
                 let verify = require_client(client).and_then(|c| c.capability_defaults());
                 (write, verify)
             });
@@ -1743,10 +1807,25 @@ fn handle(
                         .take(120)
                         .collect();
                     let mtp = match v.get("speculation") {
-                        Some(outcome) if outcome.get("used").and_then(Value::as_bool) == Some(true) => {
-                            format!("MTP used{}", outcome.get("num_draft_tokens").map(|n| format!(" (depth {n})")).unwrap_or_default())
+                        Some(outcome)
+                            if outcome.get("used").and_then(Value::as_bool) == Some(true) =>
+                        {
+                            format!(
+                                "MTP used{}",
+                                outcome
+                                    .get("num_draft_tokens")
+                                    .map(|n| format!(" (depth {n})"))
+                                    .unwrap_or_default()
+                            )
                         }
-                        Some(outcome) if !outcome.is_null() => format!("MTP not used{}", outcome.get("reason").and_then(Value::as_str).map(|reason| format!(": {reason}")).unwrap_or_default()),
+                        Some(outcome) if !outcome.is_null() => format!(
+                            "MTP not used{}",
+                            outcome
+                                .get("reason")
+                                .and_then(Value::as_str)
+                                .map(|reason| format!(": {reason}"))
+                                .unwrap_or_default()
+                        ),
                         _ => "MTP execution not reported".to_string(),
                     };
                     RouteTestOutcome {
@@ -2135,7 +2214,12 @@ fn handle(
             }
         }
 
-        Cmd::LoadRuns { scope, status, query, offset } => {
+        Cmd::LoadRuns {
+            scope,
+            status,
+            query,
+            offset,
+        } => {
             let label = format!("loading runs: {}", scope.short());
             load(store, wake, &label, store.runs, || {
                 let c = require_client(client)?;
@@ -2221,11 +2305,13 @@ fn handle(
             finish_write(store, wake, action, write, verified, None, on_done);
         }
 
-        Cmd::LoadDataHomes { sizes } => load(store, wake, "loading data homes", store.data_homes, || {
-            require_client(client)?
-                .data_homes(sizes)
-                .map(|v| crate::store::data_homes_from_payload(&v))
-        }),
+        Cmd::LoadDataHomes { sizes } => {
+            load(store, wake, "loading data homes", store.data_homes, || {
+                require_client(client)?
+                    .data_homes(sizes)
+                    .map(|v| crate::store::data_homes_from_payload(&v))
+            })
+        }
 
         Cmd::PurgeDataHome { name } => {
             let action = format!("purge data home '{name}'");
@@ -2639,7 +2725,13 @@ fn handle_poll_download(
     tx: &Sender<Cmd>,
     target: &PollTarget,
 ) {
-    let PollTarget { job, provider, artifact, op, started_ms } = target;
+    let PollTarget {
+        job,
+        provider,
+        artifact,
+        op,
+        started_ms,
+    } = target;
     let (op, started_ms) = (*op, *started_ms);
     let polled = require_client(client).and_then(|c| c.model_download_job(job));
     let mut status = match polled {
@@ -2783,7 +2875,10 @@ fn finish_write(
             // success.
             let ok_flag = v.get("ok").and_then(Value::as_bool);
             match ok_flag {
-                Some(false) => Err(format!("gateway reports failure: {}", write_failure_text(v))),
+                Some(false) => Err(format!(
+                    "gateway reports failure: {}",
+                    write_failure_text(v)
+                )),
                 _ => Ok("applied".to_string()),
             }
         }
