@@ -1469,6 +1469,24 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      .sandbox-composer-actions { justify-content: flex-end; }
 	    }
+    /* First-run wizard (2026-09-23): reuses the modal shell; ids are a
+       contract for later embedding (see the FIRST RUN block in the JS). */
+    .first-run-modal { width: min(760px, 100%); }
+    .first-run-steps { display: flex; flex-wrap: wrap; gap: 6px 14px; list-style: none; margin: 4px 0 0; padding: 0; color: var(--muted); font-size: 0.85em; }
+    .first-run-step-dot.active { color: var(--accent); font-weight: 600; }
+    .first-run-panel { display: grid; gap: 10px; }
+    .first-run-kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
+    .first-run-kv dt { color: var(--muted); }
+    .first-run-kv dd { margin: 0; overflow-wrap: anywhere; }
+    .first-run-note { margin: 0; }
+    .first-run-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+    .first-run-card { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-2); }
+    .first-run-table { width: 100%; border-collapse: collapse; }
+    .first-run-table th, .first-run-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line-soft); }
+    .first-run-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .first-run-app { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+    .first-run-cmd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .first-run-cmd code { padding: 2px 6px; border-radius: var(--radius-sm); background: var(--panel-2); }
 	  </style>
 </head>
 <body>
@@ -1504,6 +1522,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    <div class="status af-topbar" role="group" aria-label="Console actions">
 	      <button id="open-assistant" class="af-topbar__btn session-only" title="Docs assistant" aria-label="Open docs assistant" aria-pressed="false">✦</button>
 	      <button id="open-appearance" class="af-topbar__btn" title="Appearance" aria-label="Appearance">◐</button>
+	      <button id="open-setup" class="af-topbar__btn session-only hidden" title="Setup: the first-run guide (engines, default model, apps)" aria-label="Open setup guide">⚑</button>
 	      <span id="status-dot" class="dot"></span>
 	      <span id="status-text">Signed out</span>
 	      <button id="sign-out" class="af-topbar__pill af-topbar__pill--connected hidden" title="Sign out of the gateway session" aria-label="Sign out">
@@ -2422,6 +2441,46 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <button id="cancel-endpoint-profile" class="secondary">Cancel</button>
 	        <button id="discover-endpoint-models" type="button" class="secondary" title="Probe the endpoint and list the models it actually serves"><span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Test</span></button>
 	        <button id="save-endpoint-profile" title="Store this connection server-side and expose it as a provider"><span class="button-icon" aria-hidden="true">✓</span><span>Confirm</span></button>
+	      </div>
+	    </div>
+	  </div>
+	  <!-- FIRST-RUN WIZARD (2026-09-23). Opens by itself once per data dir
+	       for an admin (after a #claim= link, or while /host/first-run says
+	       not completed); the topbar Setup button reopens it. The ids below
+	       are a contract: later workstreams mount AbstractCore's Engines /
+	       Models fragments into #first-run-engines-body / #first-run-model-body. -->
+	  <div id="first-run-backdrop" class="modal-backdrop hidden" role="presentation">
+	    <div id="first-run-wizard" class="modal first-run-modal" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
+	      <div class="modal-header">
+	        <h2 id="first-run-title">Set up AbstractGateway</h2>
+	        <ol id="first-run-steps" class="first-run-steps" aria-label="Setup steps"></ol>
+	      </div>
+	      <div class="modal-body">
+	        <section id="first-run-step-welcome" class="first-run-panel" data-step="welcome">
+	          <p class="first-run-note">Your gateway is running on this machine and you are signed in as its admin. A few optional steps get you to a working model; you can skip any of them and come back with <strong>Setup</strong> (top right).</p>
+	          <div id="first-run-host-summary"></div>
+	        </section>
+	        <section id="first-run-step-engines" class="first-run-panel hidden" data-step="engines">
+	          <p class="first-run-note">Local engines run models on this machine. You need one for local models; cloud providers need only an API key (Providers tab).</p>
+	          <div id="first-run-engines-body"></div>
+	        </section>
+	        <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
+	          <div id="first-run-model-body"></div>
+	        </section>
+	        <section id="first-run-step-apps" class="first-run-panel hidden" data-step="apps">
+	          <div id="first-run-apps-body"></div>
+	        </section>
+	        <section id="first-run-step-done" class="first-run-panel hidden" data-step="done">
+	          <p class="first-run-note">You are set. Everything in this guide stays available in the console tabs and from the command line:</p>
+	          <div id="first-run-done-body"></div>
+	        </section>
+	        <div id="first-run-message" class="message"></div>
+	      </div>
+	      <div class="modal-actions">
+	        <button id="first-run-skip" class="secondary" title="Close the guide and do not open it automatically again">Skip setup</button>
+	        <button id="first-run-back" class="secondary hidden">Back</button>
+	        <button id="first-run-next">Next</button>
+	        <button id="first-run-finish" class="hidden">Finish</button>
 	      </div>
 	    </div>
 	  </div>
@@ -8145,6 +8204,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      state.availability = next;
 	      state.availabilityPlan = payload.recommended || null;
 	      renderAvailabilityBanner();
+	      renderFirstRunModel();
 	      if (rerender && Array.isArray(state.defaults) && state.defaults.length) renderDefaultRows(state.defaults);
 	    }
 	    // THE STARTER KIT IS ADVICE FOR AN EMPTY ROUTE, NOT A STANDING DEBT.
@@ -8280,6 +8340,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!job || !job.job) return;
 	      state.downloadJobs.set(downloadJobKey(job.provider, job.artifact), job);
 	      if (Array.isArray(state.defaults) && state.defaults.length) renderDefaultRows(state.defaults);
+	      renderFirstRunModel();
 	      pollDownloadJob(job.job);
 	    }
 	    async function pollDownloadJob(jobId) {
@@ -8301,6 +8362,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const job = res.job || {};
 	        state.downloadJobs.set(downloadJobKey(job.provider, job.artifact), job);
 	        if (Array.isArray(state.defaults) && state.defaults.length) renderDefaultRows(state.defaults);
+	        renderFirstRunModel();
 	        if (job.status !== "running") {
 	          if (job.status === "failed") {
 	            const result = job.result || {};
@@ -9627,6 +9689,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      startPausedPoll();
 	      loadGatewayHost();
+	      $("open-setup").classList.toggle("hidden", !p.admin);
+	      maybeOpenFirstRun();
 	    }
     function principalKind(u) {
       const kind = String((u && u.principal_kind) || "").trim().toLowerCase();
@@ -10728,6 +10792,297 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        .catch(() => { /* ditto */ });
 	      refreshDefaultSpeculationSupport();
 	    }
+    // ------------------------------------------------------------------
+    // FIRST RUN (2026-09-23). A fresh install reaches this console through a
+    // one-time link printed by `abstractgateway serve` / `abstractgateway
+    // claim` (`/console#claim=<code>`): the code is redeemed for an ADMIN
+    // browser session (POST /session/claim, loopback-only server-side),
+    // stripped from the address bar before anything else can read it, and the
+    // first-run wizard opens. The wizard opens by itself ONCE per data dir
+    // (GET/POST /host/first-run); the topbar "Setup" button reopens it.
+    //
+    // DOM CONTRACT (later work embeds AbstractCore's Engines/Models fragments
+    // into these ids -- do not rename): #first-run-backdrop, #first-run-wizard,
+    // #first-run-steps, step panels #first-run-step-{welcome,engines,model,
+    // apps,done}, bodies #first-run-host-summary, #first-run-engines-body,
+    // #first-run-model-body, #first-run-apps-body, #first-run-done-body,
+    // controls #first-run-back/-next/-skip/-finish, #first-run-message, and
+    // the topbar #open-setup.
+    // ------------------------------------------------------------------
+    const FIRST_RUN_STEPS = ["welcome", "engines", "model", "apps", "done"];
+    const FIRST_RUN_STEP_TITLES = {
+      welcome: "Welcome",
+      engines: "Local engines",
+      model: "Default model",
+      apps: "Apps",
+      done: "Done",
+    };
+    const FIRST_RUN_APPS = [
+      { pkg: "@abstractframework/flow", name: "Flow Editor", what: "Visual workflow editor." },
+      { pkg: "@abstractframework/code", name: "Code", what: "Browser-based coding assistant with durable agent sessions." },
+      { pkg: "@abstractframework/observer", name: "Observer", what: "Watch runs, replay/stream ledgers, submit durable commands." },
+      { pkg: "@abstractframework/continuum", name: "Continuum", what: "Backlog, inbox triage and managed processes against this gateway." },
+      { pkg: "@abstractframework/entity", name: "Entity", what: "Create summoned entities, watch their memory graph, talk with them." },
+    ];
+    const FIRST_RUN_ENGINE_LINKS = [
+      { id: "ollama", name: "Ollama", url: "https://ollama.com/download", note: "Local model server (default port 11434)." },
+      { id: "lmstudio", name: "LM Studio", url: "https://lmstudio.ai/download", note: "Desktop app + local server (default port 1234); the recommended starter model uses it." },
+    ];
+    const firstRun = { open: false, step: "welcome", checked: false, autoOpened: false, host: null, engines: null, enginesMissing: false, enginesError: "" };
+    function firstRunHash() {
+      try { return String((typeof location !== "undefined" && location && location.hash) || ""); } catch { return ""; }
+    }
+    function stripClaimFromUrl() {
+      // The code is a credential: it must not survive in the address bar, the
+      // history entry, or a bookmark. replaceState keeps the page as it is.
+      try {
+        if (typeof history !== "undefined" && history && typeof history.replaceState === "function" && typeof location !== "undefined") {
+          history.replaceState(null, "", String(location.pathname || "/console") + String(location.search || ""));
+        } else if (typeof location !== "undefined" && location) {
+          location.hash = "";
+        }
+      } catch { /* best effort: the server already made the code single-use */ }
+    }
+    function redeemClaimFromHash() {
+      // Returns true when it took over the boot (it calls refresh() itself).
+      const match = /(?:^#|&)claim=([^&]+)/.exec(firstRunHash());
+      if (!match) return false;
+      const code = decodeURIComponent(match[1]);
+      stripClaimFromUrl();
+      setLoginStatus("Claiming first-run link...", "warn", "token: one-time link");
+      (async () => {
+        try {
+          await api("/api/gateway/session/claim", { method: "POST", body: JSON.stringify({ code }) });
+          firstRun.claimed = true;
+          setLoginStatus("Signed in", "ok", "token: first-run link");
+        } catch (err) {
+          $("login-message").textContent = `${String(err.message || err)}`;
+          $("login-message").className = "message error";
+          setLoginStatus("First-run link not accepted", "err", "token: link rejected");
+        }
+        await refresh();
+      })();
+      return true;
+    }
+    async function maybeOpenFirstRun() {
+      // Once per page load; admins only (the wizard's writes are admin routes).
+      if (firstRun.checked || !state.principal || !state.principal.admin) return;
+      firstRun.checked = true;
+      let st = null;
+      try { st = await api("/api/gateway/host/first-run"); } catch { return; }
+      if (firstRun.claimed || !(st && st.completed)) {
+        firstRun.autoOpened = true;
+        openFirstRunWizard("welcome");
+      }
+    }
+    function openFirstRunWizard(step) {
+      firstRun.open = true;
+      $("first-run-message").textContent = "";
+      $("first-run-message").className = "message";
+      $("first-run-backdrop").classList.remove("hidden");
+      firstRunGoto(step || "welcome");
+    }
+    function closeFirstRunWizard() {
+      firstRun.open = false;
+      $("first-run-backdrop").classList.add("hidden");
+    }
+    async function completeFirstRun(outcome) {
+      try {
+        await api("/api/gateway/host/first-run", { method: "POST", body: JSON.stringify({ outcome }) });
+      } catch (err) {
+        $("first-run-message").textContent = `Could not record the first-run state: ${String(err.message || err)}`;
+        $("first-run-message").className = "message error";
+        return;
+      }
+      closeFirstRunWizard();
+    }
+    function renderFirstRunSteps() {
+      const list = $("first-run-steps");
+      list.textContent = "";
+      FIRST_RUN_STEPS.forEach((step, i) => {
+        const li = document.createElement("li");
+        li.className = `first-run-step-dot${step === firstRun.step ? " active" : ""}`;
+        li.textContent = `${i + 1}. ${FIRST_RUN_STEP_TITLES[step]}`;
+        list.append(li);
+      });
+    }
+    function firstRunGoto(step) {
+      if (!FIRST_RUN_STEPS.includes(step)) step = "welcome";
+      firstRun.step = step;
+      for (const s of FIRST_RUN_STEPS) $(`first-run-step-${s}`).classList.toggle("hidden", s !== step);
+      const idx = FIRST_RUN_STEPS.indexOf(step);
+      $("first-run-back").classList.toggle("hidden", idx === 0);
+      $("first-run-next").classList.toggle("hidden", step === "done");
+      $("first-run-finish").classList.toggle("hidden", step !== "done");
+      renderFirstRunSteps();
+      if (step === "welcome") loadFirstRunWelcome();
+      if (step === "engines") loadFirstRunEngines();
+      if (step === "model") loadFirstRunModel();
+      if (step === "apps") renderFirstRunApps();
+      if (step === "done") renderFirstRunDone();
+    }
+    function firstRunStep(delta) {
+      const idx = FIRST_RUN_STEPS.indexOf(firstRun.step);
+      firstRunGoto(FIRST_RUN_STEPS[Math.max(0, Math.min(FIRST_RUN_STEPS.length - 1, idx + delta))]);
+    }
+    function firstRunKv(rows) {
+      return `<dl class="first-run-kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
+    }
+    async function loadFirstRunWelcome() {
+      const box = $("first-run-host-summary");
+      box.innerHTML = `<p class="subtle">Reading this machine...</p>`;
+      let snap = null;
+      try { snap = await api("/api/gateway/host/state"); } catch (err) {
+        box.innerHTML = `<p class="message error">Host summary unavailable: ${esc(String(err.message || err))}</p>`;
+        return;
+      }
+      firstRun.host = snap;
+      const gw = (snap && snap.gateway) || {};
+      const ram = ((snap && snap.memory) || {}).ram || {};
+      const gpus = (((snap && snap.gpu) || {}).gpus || []).map((g) => g && g.name).filter(Boolean);
+      const host = (snap && snap.host) || {};
+      const svc = gw.service || {};
+      box.innerHTML = firstRunKv([
+        ["Machine", esc([host.hostname || host.name, host.os || host.platform].filter(Boolean).join(" · ") || "this computer")],
+        ["Memory", esc(typeof ram.total_bytes === "number" ? _fmtBytes(ram.total_bytes) : "unknown")],
+        ["GPU", esc(gpus.length ? gpus.join(", ") : "none detected")],
+        ["Data folder", `<code>${esc(gw.data_dir || "?")}</code> <span class="subtle">(${esc(gw.data_dir_source || "?")})</span>`],
+        ["Sign-in", esc(gw.auth_mode === "users" ? "user accounts (you are the admin)" : String(gw.auth_mode || "?"))],
+        ["Starts at login", esc(svc.installed ? `yes (${svc.mechanism})` : "no — run `abstractgateway service install`")],
+      ]);
+    }
+    async function loadFirstRunEngines() {
+      const box = $("first-run-engines-body");
+      box.innerHTML = `<p class="subtle">Looking for local engines...</p>`;
+      let payload = null;
+      try {
+        payload = await api("/api/gateway/engines");
+        firstRun.enginesMissing = false;
+      } catch (err) {
+        if (err && err.status === 404) {
+          firstRun.enginesMissing = true;
+        } else {
+          firstRun.enginesError = String(err.message || err);
+        }
+      }
+      if (payload && Array.isArray(payload.engines)) {
+        const rows = payload.engines.map((e) => {
+          const status = e.installed === true ? (e.running ? "running" : "installed") : (e.installed === false ? "not installed" : "unknown");
+          const cls = e.installed === true ? "ok" : "off";
+          const link = (e.install && e.install.url) || e.docs_url || "";
+          return `<tr><td>${esc(e.name || e.id)}</td><td><span class="state-pill ${cls}">${esc(status)}</span></td><td>${esc(e.version || "")}</td>`
+            + `<td>${link ? `<a href="${esc(link)}" target="_blank" rel="noopener">download page</a>` : ""}</td></tr>`;
+        }).join("");
+        box.innerHTML = `<table class="first-run-table"><thead><tr><th>Engine</th><th>Status</th><th>Version</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+        return;
+      }
+      const cards = FIRST_RUN_ENGINE_LINKS.map((e) =>
+        `<div class="first-run-card"><strong>${esc(e.name)}</strong><span>${esc(e.note)}</span>`
+        + `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.url)}</a></div>`).join("");
+      const lead = firstRun.enginesMissing
+        ? "Engine detection arrives with the next AbstractCore release. Until then, install a local engine yourself if you want models on this machine (cloud providers work without one):"
+        : `Engine detection failed (${esc(firstRun.enginesError)}). You can still install a local engine yourself:`;
+      box.innerHTML = `<p class="first-run-note" id="first-run-engines-fallback">${lead}</p><div class="first-run-cards">${cards}</div>`
+        + `<p class="subtle">Cloud keys (OpenAI, Anthropic, OpenRouter...) go in the Providers tab.</p>`;
+    }
+    async function loadFirstRunModel() {
+      const box = $("first-run-model-body");
+      box.innerHTML = `<p class="subtle">Checking the recommended starter models...</p>`;
+      await refreshAvailability({ rerender: false });
+      renderFirstRunModel();
+    }
+    function renderFirstRunModel() {
+      if (!firstRun.open || firstRun.step !== "model") return;
+      const box = $("first-run-model-body");
+      const plan = state.availabilityPlan || {};
+      const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
+      const text = (state.defaults || []).find((r) => r && r.key === "output.text")
+        || (state.defaults || []).find((r) => r && r.key === "input.text") || null;
+      const current = text && text.provider && text.model ? `${text.provider} / ${text.model}` : "not configured yet";
+      const body = rows.map((r) => {
+        const job = state.downloadJobs.get(downloadJobKey(r.provider, r.artifact));
+        let cell;
+        if (job && job.status === "running") {
+          const pct = typeof job.percent === "number" ? ` ${Math.round(job.percent)}%` : "";
+          cell = `<span class="state-pill" title="${esc(job.message || "")}">downloading${esc(pct)}</span>`;
+        } else if (job && job.status === "failed") {
+          cell = `<span class="state-pill off" title="${esc(job.message || "")}">failed</span>`;
+        } else {
+          const view = WEIGHT_LABELS[r.status] || { label: r.status || "unknown", cls: "covered" };
+          cell = `<span class="state-pill ${esc(view.cls)}" title="${esc(r.evidence || r.instruction || "")}">${esc(view.label)}</span>`;
+        }
+        const canDownload = r.status === "absent" && !(job && job.status === "running");
+        const btn = canDownload ? `<button class="secondary first-run-download" data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}">Download</button>` : "";
+        return `<tr><td>${esc(r.route || "")}</td><td>${esc(r.provider || "")}</td><td><code>${esc(r.artifact || "")}</code></td><td>${cell}</td><td>${btn}</td></tr>`;
+      }).join("");
+      box.innerHTML = firstRunKv([["Text model now", esc(current)]])
+        + `<p class="first-run-note">One click sets the recommended provider/model on the text, voice and image routes (routes you already configured are kept). Downloads run on this machine; their size depends on the model.</p>`
+        + `<div class="first-run-actions"><button id="first-run-apply-recommended" class="secondary">Use recommended defaults</button>`
+        + `<span class="subtle">CLI: <code>abstractgateway-config defaults</code>, <code>abstractcore models download --recommended</code></span></div>`
+        + (rows.length
+          ? `<table class="first-run-table"><thead><tr><th>Route</th><th>Provider</th><th>Model</th><th>Weights</th><th></th></tr></thead><tbody>${body}</tbody></table>`
+          : `<p class="subtle">No recommended downloads reported by this gateway.</p>`)
+        + `<p class="subtle">Everything here is also in the Multimodal tab.</p>`;
+      $("first-run-apply-recommended").onclick = async () => {
+        await applyRecommendedDefaults($("first-run-apply-recommended"), false);
+        $("first-run-message").textContent = $("defaults-message").textContent;
+        $("first-run-message").className = $("defaults-message").className;
+        renderFirstRunModel();
+      };
+      if (typeof box.querySelectorAll === "function") {
+        box.querySelectorAll(".first-run-download").forEach((b) => {
+          b.onclick = async () => {
+            b.disabled = true;
+            try {
+              const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ provider: b.dataset.provider, artifact: b.dataset.artifact }) });
+              trackDownloadJob(res.job);
+            } catch (err) {
+              $("first-run-message").textContent = String(err.message || err);
+              $("first-run-message").className = "message error";
+            }
+            renderFirstRunModel();
+          };
+        });
+      }
+    }
+    function firstRunCopy(text, btn) {
+      const done = () => { if (btn) { btn.textContent = "Copied"; setTimeout(() => { btn.textContent = "Copy"; }, 1500); } };
+      try {
+        if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, () => {});
+        }
+      } catch { /* the command stays visible to copy by hand */ }
+    }
+    function gatewayBaseUrl() {
+      const gw = (firstRun.host && firstRun.host.gateway) || {};
+      if (gw.url) return String(gw.url);
+      try { return String(location.origin || "http://127.0.0.1:8080"); } catch { return "http://127.0.0.1:8080"; }
+    }
+    function renderFirstRunApps() {
+      const box = $("first-run-apps-body");
+      const url = gatewayBaseUrl();
+      const rows = FIRST_RUN_APPS.map((a, i) =>
+        `<div class="first-run-app"><div><strong>${esc(a.name)}</strong> <span class="subtle">${esc(a.what)}</span></div>`
+        + `<div class="first-run-cmd"><code>npx ${esc(a.pkg)}</code><button class="secondary first-run-copy" data-cmd="npx ${esc(a.pkg)}" id="first-run-copy-${i}">Copy</button>`
+        + `<a href="https://www.npmjs.com/package/${esc(a.pkg)}" target="_blank" rel="noopener">npm</a></div></div>`).join("");
+      box.innerHTML = `<p class="first-run-note">The apps run in your browser and talk to this gateway at <code>${esc(url)}</code>. They need Node.js 18+ (<a href="https://nodejs.org/" target="_blank" rel="noopener">nodejs.org</a>). Run one in a terminal:</p>${rows}`
+        + `<p class="subtle">Apps sign in with a Gateway user token: create one for yourself in Users &amp; Entities (or print the admin one with <code>abstractgateway-config bootstrap-admin --print-token</code>).</p>`;
+      if (typeof box.querySelectorAll === "function") {
+        box.querySelectorAll(".first-run-copy").forEach((b) => { b.onclick = () => firstRunCopy(b.dataset.cmd, b); });
+      }
+    }
+    function renderFirstRunDone() {
+      const box = $("first-run-done-body");
+      const url = gatewayBaseUrl();
+      const svc = ((firstRun.host && firstRun.host.gateway) || {}).service || {};
+      box.innerHTML = firstRunKv([
+        ["Console", `<code>${esc(url)}/console</code>`],
+        ["Sign in again", `<code>abstractgateway claim --open</code> <span class="subtle">(one-time link, from this machine)</span>`],
+        ["Start at login", svc.installed ? esc(`installed (${svc.mechanism}); remove with abstractgateway service uninstall`) : `<code>abstractgateway service install</code>`],
+        ["Status", `<code>abstractgateway-config status</code>`],
+        ["Reopen this guide", "the Setup button, top right"],
+      ]);
+    }
     async function refresh() {
       let me;
       try {
@@ -11457,7 +11812,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        document.querySelectorAll("." + cls).forEach((el) => { el.innerHTML = icon; });
 	      }
 	    }
-	    refresh();
+	    $("open-setup").onclick = () => openFirstRunWizard(firstRun.step || "welcome");
+	    $("first-run-next").onclick = () => firstRunStep(1);
+	    $("first-run-back").onclick = () => firstRunStep(-1);
+	    $("first-run-skip").onclick = () => completeFirstRun("skipped");
+	    $("first-run-finish").onclick = () => completeFirstRun("finished");
+	    // Clicking outside closes WITHOUT marking it done (it reopens next load).
+	    $("first-run-backdrop").onclick = (event) => { if (event.target === $("first-run-backdrop")) closeFirstRunWizard(); };
+	    // A #claim= link signs this browser in (and opens the wizard) before
+	    // the normal session probe; without one, boot is unchanged.
+	    if (!redeemClaimFromHash()) refresh();
   </script>
 </body>
 </html>"""

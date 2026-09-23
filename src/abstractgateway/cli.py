@@ -592,7 +592,11 @@ def _run_models_command(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
-    _reserve_gguf_metal()
+    _argv0 = (list(argv) if argv is not None else sys.argv[1:])[:1]
+    if _argv0 not in (["claim"], ["service"]):
+        # The local-only first-run verbs never load a model; the reservation
+        # (and its CPU-fallback warning) is noise for them.
+        _reserve_gguf_metal()
     parser = argparse.ArgumentParser(prog="abstractgateway", description="AbstractGateway (Run Gateway host)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -741,7 +745,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "serve" and getattr(args, "data_dir", None):
         from .host_paths import DATA_DIR_SOURCE_ENV
 
-        os.environ["ABSTRACTGATEWAY_DATA_DIR"] = str(Path(args.data_dir).expanduser().resolve())
+        import pathlib as _pathlib  # `Path` is function-local in main() (later branches import it)
+
+        os.environ["ABSTRACTGATEWAY_DATA_DIR"] = str(_pathlib.Path(args.data_dir).expanduser().resolve())
         os.environ.pop(DATA_DIR_SOURCE_ENV, None)
 
     if args.cmd != "models":
