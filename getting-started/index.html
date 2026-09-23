@@ -344,6 +344,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#0-fastest-start-on-your-own-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0) Fastest start on your own machine
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-run-bundle-mode-file-backed-stores" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -807,6 +818,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#0-fastest-start-on-your-own-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0) Fastest start on your own machine
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-run-bundle-mode-file-backed-stores" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -964,6 +986,16 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"abst
 <p>With the base install and a configured provider stack, Gateway can surface
 run-scoped direct TTS, STT, image generation, image edit, and music generation
 for higher apps through one shared capability contract.</p>
+<h2 id="0-fastest-start-on-your-own-machine">0) Fastest start on your own machine<a class="headerlink" href="#0-fastest-start-on-your-own-machine" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>serve
+</code></pre></div>
+<p>With no auth configured, this binds <code>127.0.0.1:8080</code>, enables user auth,
+creates <code>default/admin</code>, keeps data in your OS's per-user data folder, and
+prints a one-time <code>First run: open http://127.0.0.1:8080/console#claim=...</code>
+link that signs you into the console and opens the first-run guide. See
+<a href="../first-run/">first-run.md</a>, including <code>abstractgateway claim</code> and
+<code>abstractgateway service install</code>. The rest of this guide uses explicit
+configuration.</p>
 <h2 id="1-run-bundle-mode-file-backed-stores">1) Run (bundle mode, file-backed stores)<a class="headerlink" href="#1-run-bundle-mode-file-backed-stores" title="Permanent link">&para;</a></h2>
 <p>File-backed stores are the default and easiest for dev.</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_WORKFLOW_SOURCE</span><span class="o">=</span>bundle
@@ -980,9 +1012,10 @@ for higher apps through one shared capability contract.</p>
 abstractgateway<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
 <p>On first local start, Gateway creates <code>default/admin</code>, writes the browser-login
-token to <code>$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token</code>, and prints it
-in the terminal. Use that token with user <code>admin</code> in <code>/console</code> and browser
-apps. <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> remains available for legacy server/operator
+token to <code>$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token</code> (mode <code>0600</code>),
+and prints a one-time console sign-in link instead of the token (set
+<code>ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1</code> to print the token). Use the token
+file with user <code>admin</code> for browser apps. <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> remains available for legacy server/operator
 bearer-token deployments, but it is not a browser sign-in token.</p>
 <p>OpenAPI docs (Swagger UI): <code>http://127.0.0.1:8080/docs</code> (use <strong>Authorize</strong> with a Gateway user token)</p>
 <p>Smoke checks:</p>
@@ -1049,7 +1082,7 @@ require <code>abstractgateway[embeddings]</code>.</p>
 customization.</p>
 <p>On first start, the container creates <code>default/admin</code> and writes the token to
 <code>runtime/auth/bootstrap-admin-token</code>. NVIDIA hosts can try
-<code>ghcr.io/lpalbou/abstractgateway:0.2.30-gpu</code> with the compose overlay in
+<code>ghcr.io/lpalbou/abstractgateway:0.3.0-gpu</code> with the compose overlay in
 <code>docker/abstractgateway-server/compose.nvidia.yml</code>.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

@@ -433,6 +433,34 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#models-and-engines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models and engines
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Models and engines">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#allow_engine_install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        allow_engine_install
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#host-state-and-model-residency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1025,6 +1053,34 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#models-and-engines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models and engines
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Models and engines">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#allow_engine_install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        allow_engine_install
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#host-state-and-model-residency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1270,8 +1326,14 @@ the newer memory-agent API directly.</p>
 <div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>status
 abstractgateway-config<span class="w"> </span>init<span class="w"> </span>--env-file<span class="w"> </span>.env
 abstractgateway-config<span class="w"> </span>bootstrap-admin<span class="w"> </span>--print-token
+abstractgateway-config<span class="w"> </span>claim-url<span class="w"> </span><span class="o">[</span>--open<span class="o">]</span>
 abstractgateway<span class="w"> </span>config<span class="w"> </span>status<span class="w"> </span>--json
 </code></pre></div>
+<p><code>claim-url</code> (also <code>abstractgateway claim</code>) prints a one-time console sign-in
+link for this machine; see <a href="../first-run/">first-run.md</a>. <code>status --json</code>
+also reports <code>data_dir_source</code>, <code>auth_mode</code>, <code>service</code>, <code>claim_pending</code>,
+<code>first_run</code> and <code>serve</code> (schema <code>gateway_config_status_v1</code>, documented in
+<a href="../first-run/#checking-the-setup-from-scripts">first-run.md</a>).</p>
 <p>It reports Gateway auth/data/store/runtime defaults, Core-server handoff
 configuration, memory-store selection, and package readiness. <code>init</code> writes a
 private env file for server/operator deployments. Gateway Console (<code>/console</code>)
@@ -1286,8 +1348,14 @@ token hash in <code>auth/users.json</code>, and can write the raw bootstrap toke
 <h2 id="core-environment-variables">Core environment variables<a class="headerlink" href="#core-environment-variables" title="Permanent link">&para;</a></h2>
 <h3 id="paths-workflow-source">Paths + workflow source<a class="headerlink" href="#paths-workflow-source" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>ABSTRACTGATEWAY_DATA_DIR</code>: durable data directory (default: <code>./runtime</code>)<br />
-  Evidence: <code>src/abstractgateway/config.py</code> (<code>GatewayHostConfig.from_env</code>)</li>
+<li><code>ABSTRACTGATEWAY_DATA_DIR</code>: durable data directory. When unset: <code>./runtime</code>
+  if it already exists in the working directory, else the per-user data folder
+  (macOS <code>~/Library/Application Support/AbstractGateway</code>, Linux
+  <code>$XDG_DATA_HOME/abstractgateway</code> or <code>~/.local/share/abstractgateway</code>,
+  Windows <code>%LOCALAPPDATA%\AbstractGateway</code>). <code>serve --data-dir</code> sets it for
+  one process. <code>abstractgateway-config status</code> prints the folder and why it
+  was chosen.
+  Evidence: <code>src/abstractgateway/host_paths.py</code></li>
 <li><code>ABSTRACTGATEWAY_FLOWS_DIR</code>: workflows directory. When unset, Gateway uses the
   packaged shipped bundle directory, which carries <code>basic-agent</code>,
   <code>coding-agent</code>, <code>deep-research</code>, <code>co-scientist</code>, and more
@@ -1299,13 +1367,28 @@ token hash in <code>auth/users.json</code>, and can write the raw bootstrap toke
   Evidence: <code>src/abstractgateway/service.py</code> (<code>create_default_gateway_service</code>)</li>
 </ul>
 <h3 id="authentication-and-user-routing">Authentication and user routing<a class="headerlink" href="#authentication-and-user-routing" title="Permanent link">&para;</a></h3>
+<p><strong>Default on loopback.</strong> When no auth setting is present (none of
+<code>ABSTRACTGATEWAY_AUTH_TOKEN[S]</code>, <code>ABSTRACTGATEWAY_USER_AUTH</code>,
+<code>ABSTRACTGATEWAY_MULTI_USER</code>, <code>ABSTRACTGATEWAY_AUTH_MODE</code>,
+<code>ABSTRACTGATEWAY_SECURITY</code>, <code>ABSTRACTGATEWAY_PROTECT_WRITE</code>), <code>serve</code> binds
+<code>127.0.0.1</code> and enables user auth automatically. A non-loopback bind in that
+state refuses to start. When any auth setting is present, <code>serve</code> keeps the
+<code>0.0.0.0</code> default bind and your settings apply unchanged.</p>
 <p>The normal browser-console/browser-app path uses Gateway user auth:</p>
 <ul>
 <li><code>ABSTRACTGATEWAY_USER_AUTH=1</code> or <code>ABSTRACTGATEWAY_AUTH_MODE=users</code>: enable
   file-backed user principals and per-principal runtime routing</li>
 <li><code>abstractgateway serve</code>: when user auth is enabled, ensures <code>default/admin</code>
   exists and writes the first-login token to
-  <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/bootstrap-admin-token</code></li>
+  <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/bootstrap-admin-token</code> (mode <code>0600</code>). The
+  token is printed only with <code>ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1</code>; until
+  the first-run guide is completed, a one-time sign-in link
+  (<code>/console#claim=...</code>, 10 minutes, single use, loopback only) is printed
+  instead</li>
+<li><code>POST /api/gateway/session/claim</code>: redeems a one-time link code for an admin
+  browser session; accepted only from a loopback peer without proxy headers.
+  <code>GET /api/gateway/host/first-run</code> / <code>POST</code> (admin) read and record the
+  first-run guide state</li>
 </ul>
 <p>Legacy server/operator mode uses a Gateway bearer token:</p>
 <ul>
@@ -1640,14 +1723,105 @@ row's <code>model</code>.</p>
 <p><strong>Single-flight.</strong> A second request for an artifact already downloading joins
 the running job instead of starting a second copy of the provider's tool; the
 returned job's <code>joined</code> counter says so.</p>
-<p><strong>Jobs live in the Gateway process.</strong> A restart forgets them, and a job id
-polled across a restart returns 404. That is not a lost download — the provider
-tool owns the bytes. Re-read <code>/api/gateway/models/availability</code> to learn whether
-the weights landed.</p>
+<p><strong>Jobs run in AbstractCore's host job registry.</strong> Downloads, deletes and
+engine installs are jobs of one kind (<code>host_job_v1</code>), readable at
+<code>GET /api/gateway/jobs/{id}</code> as well as through the older
+<code>GET /api/gateway/models/download/{job}</code> (which keeps its <code>{ok, job}</code> envelope
+and reports a queued job as <code>running</code>). AbstractCore keeps a snapshot of each
+job on disk, so jobs started by <code>abstractcore models download</code> on the same
+machine appear too. A job the gateway no longer knows returns 404; that is not
+a lost download — the provider tool owns the bytes. Re-read
+<code>/api/gateway/models/availability</code> to learn whether the weights landed.</p>
 <p><strong>A default whose weights are missing does not stop the Gateway.</strong> The host
 loads, bundles register, and the failure surfaces when a run actually needs that
 model — naming the capability route that configured the pair, how to change it,
 and how to download it.</p>
+<h3 id="models-and-engines">Models and engines<a class="headerlink" href="#models-and-engines" title="Permanent link">&para;</a></h3>
+<p>The <strong>Models</strong> and <strong>Engines</strong> tabs of the web console, the terminal console
+and the <code>abstractgateway models …</code> / <code>abstractgateway engines …</code> commands show
+the same things AbstractCore shows (<code>abstractcore models …</code>, <code>abstractcore
+engines …</code>): the host's hardware, the local inference engines, a model catalog
+with a "fits this machine" verdict per download, the models already installed,
+and the jobs that download, delete or install. The gateway does not detect
+engines or size models itself; it serves AbstractCore's answers
+(AbstractCore 2.14.0 or newer), so both entry points always agree.</p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/gateway/host/profile</code></td>
+<td>This host: OS, accelerator, RAM/VRAM, how much memory a model may use, free disk per model store.</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/engines?probe=1</code></td>
+<td>Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face: supported here, installed, version, running, and the exact install command. <code>install_allowed</code> says whether installs are enabled on this gateway.</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/engines/{id}/install</code></td>
+<td><code>{"dry_run": true}</code> shows the command; <code>{"dry_run": false}</code> runs it on the gateway host as a job. Admin only, and only when <code>allow_engine_install</code> is on.</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/models/catalog?q=&amp;engine=&amp;fits=1&amp;hub=1</code></td>
+<td>Downloadable models with presence and a fit verdict (<code>fits</code>, <code>tight</code>, <code>too_large</code>, <code>partial_offload</code>, <code>unknown</code>).</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/models/installed?provider=</code></td>
+<td>Every installed model per engine, with sizes and what would block a delete.</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/models/download</code></td>
+<td>Download one model as a job (see <a href="#model-weights">Model weights</a>). Admin only.</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/models/delete</code></td>
+<td><code>{"provider", "artifact", "dry_run", "force"}</code>: delete one model as a job. Admin only; refuses a loaded or shared model unless <code>force</code>.</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/jobs</code>, <code>GET /api/gateway/jobs/{id}</code>, <code>POST /api/gateway/jobs/{id}/cancel</code></td>
+<td>Download, delete and install jobs, newest first; cancel is admin only.</td>
+</tr>
+</tbody>
+</table>
+<p>Every job carries a <code>cli_equivalent</code> you can run by hand, for example
+<code>abstractgateway models download ollama qwen3:8b</code> or
+<code>abstractgateway engines install ollama --yes</code>. Payloads and refusals are
+listed in <a href="../api/#models-and-engines">api.md</a>.</p>
+<p><a id="allow_engine_install"></a></p>
+<h4 id="allow_engine_install"><code>allow_engine_install</code><a class="headerlink" href="#allow_engine_install" title="Permanent link">&para;</a></h4>
+<p>Installing an engine runs its vendor installer (for example
+<code>brew install ollama</code>) <strong>on the machine that runs the gateway</strong>, which for a
+remote gateway is not the machine of the person clicking. So installs are
+controlled by the runtime-config setting <code>allow_engine_install</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Gateway bound to</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a loopback address (<code>127.0.0.1</code>, <code>::1</code>, <code>localhost</code>), which is what a bare <code>abstractgateway serve</code> and <code>abstractgateway service install</code> use</td>
+<td>on</td>
+</tr>
+<tr>
+<td>any other address (<code>0.0.0.0</code>, a LAN IP, a host name), or started without <code>abstractgateway serve</code></td>
+<td>off</td>
+</tr>
+</tbody>
+</table>
+<p>An admin changes it with
+<code>POST /api/gateway/admin/runtime-config {"allow_engine_install": true}</code>
+(<code>false</code> turns it off, <code>null</code> returns to the default). The current value and
+where it came from are in <code>GET /api/gateway/admin/runtime-config</code> and in
+<code>install_policy</code> on <code>GET /api/gateway/engines</code>. There is no environment
+variable for it. A dry run ("show the command") is always allowed, and every
+install is admin-only and recorded in the audit log.</p>
 <h3 id="host-state-and-model-residency">Host state and model residency<a class="headerlink" href="#host-state-and-model-residency" title="Permanent link">&para;</a></h3>
 <p>Beyond weights on disk, these endpoints report and control what is loaded in
 memory right now:</p>
@@ -2132,8 +2306,14 @@ then the final artifact.</p>
 <h2 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h2>
 <p><code>abstractgateway --help</code> shows all subcommands (serve/runner/migrate/triage/…).</p>
 <p>Most-used:
-- <code>abstractgateway serve --host 127.0.0.1 --port 8080 [--no-runner] [--reload]</code>
+- <code>abstractgateway serve [--host H] [--port 8080] [--data-dir DIR] [--no-runner] [--reload]</code>
+  (<code>--host</code> defaults to <code>127.0.0.1</code> when no auth is configured, else <code>0.0.0.0</code>)
   Evidence: <code>src/abstractgateway/cli.py</code>
+- <code>abstractgateway claim [--open] [--port P | --url URL] [--json]</code>: one-time
+  console sign-in link (<a href="../first-run/">first-run.md</a>)
+- <code>abstractgateway service install|uninstall|status [--port P] [--host H] [--data-dir DIR] [--dry-run] [--json]</code>:
+  start the gateway at login (LaunchAgent, systemd user unit, Windows Startup
+  shortcut; <a href="../first-run/#4-start-the-gateway-at-login-optional">first-run.md</a>)
 - <code>abstractgateway runner</code> (worker only)
 - <code>abstractgateway config status --json</code>
 - <code>abstractgateway migrate --from=file --to=sqlite --data-dir &lt;DIR&gt; --db-path &lt;FILE&gt;</code>
@@ -2141,6 +2321,7 @@ then the final artifact.</p>
   (model residency on a running gateway; see <a href="../console/#model-residency-from-a-shell">console.md</a>)</p>
 <h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
 <ul>
+<li>First run: <a href="../first-run/">first-run.md</a></li>
 <li>Getting started: <a href="../getting-started/">getting-started.md</a></li>
 <li>FAQ: <a href="../faq/">faq.md</a></li>
 <li>Security configuration: <a href="../security/">security.md</a></li>

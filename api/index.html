@@ -767,6 +767,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#models-and-engines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models and engines
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#host-state-and-model-residency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1393,6 +1404,17 @@
     <span class="md-ellipsis">
       
         KG memory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#models-and-engines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models and engines
       
     </span>
   </a>
@@ -2338,6 +2360,156 @@ support semantic recall.</p>
 installed and the configured backend can be resolved. A fresh persistent store
 does not need to exist yet; empty-store structured queries return an empty
 result rather than making Flow authoring nodes unavailable.</p>
+<h2 id="models-and-engines">Models and engines<a class="headerlink" href="#models-and-engines" title="Permanent link">&para;</a></h2>
+<p>The gateway serves AbstractCore's models and engines payloads unchanged
+(AbstractCore 2.14.0 or newer), under <code>/api/gateway</code>. The bodies and payloads
+are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractcore</code> and
+<code>abstractgateway</code> render them with the same screens.</p>
+<table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Access</th>
+<th>Body / query</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /host/profile</code></td>
+<td>user</td>
+<td><code>refresh=1</code></td>
+<td><code>host_profile_v1</code></td>
+</tr>
+<tr>
+<td><code>GET /engines</code></td>
+<td>user</td>
+<td><code>probe=1</code></td>
+<td><code>engines_status_v1</code> plus <code>install_allowed</code> and <code>install_policy</code></td>
+</tr>
+<tr>
+<td><code>GET /engines/{id}</code></td>
+<td>user</td>
+<td><code>probe=1</code></td>
+<td>one engine row plus <code>install_allowed</code>; 404 for an unknown id</td>
+</tr>
+<tr>
+<td><code>POST /engines/{id}/install</code></td>
+<td>admin</td>
+<td><code>{"dry_run": bool, "force": bool}</code></td>
+<td><code>host_job_v1</code> (kind <code>engine_install</code>)</td>
+</tr>
+<tr>
+<td><code>GET /models/catalog</code></td>
+<td>user</td>
+<td><code>q</code>, <code>engine</code>, <code>fits=1</code>, <code>hub=1</code>, <code>tag</code> (repeatable)</td>
+<td><code>model_catalog_v1</code></td>
+</tr>
+<tr>
+<td><code>GET /models/installed</code></td>
+<td>user</td>
+<td><code>provider</code></td>
+<td><code>models_installed_v1</code></td>
+</tr>
+<tr>
+<td><code>POST /models/download</code></td>
+<td>admin</td>
+<td><code>{"provider", "artifact", "dry_run", "expected_bytes"?}</code> or <code>{"recommended": true}</code></td>
+<td><code>{"ok": true, "job": {...}}</code></td>
+</tr>
+<tr>
+<td><code>GET /models/download/{job}</code></td>
+<td>user</td>
+<td></td>
+<td><code>{"ok": true, "job": {...}}</code></td>
+</tr>
+<tr>
+<td><code>POST /models/delete</code></td>
+<td>admin</td>
+<td><code>{"provider", "artifact", "dry_run": bool, "force": bool}</code></td>
+<td><code>host_job_v1</code> (kind <code>delete</code>)</td>
+</tr>
+<tr>
+<td><code>GET /jobs</code></td>
+<td>user</td>
+<td><code>kind</code>, <code>status</code></td>
+<td><code>{"schema": "host_jobs_v1", "jobs": [...], "generated_at"}</code>, newest first</td>
+</tr>
+<tr>
+<td><code>GET /jobs/{id}</code></td>
+<td>user</td>
+<td></td>
+<td><code>host_job_v1</code>; 404 when unknown</td>
+</tr>
+<tr>
+<td><code>POST /jobs/{id}/cancel</code></td>
+<td>admin</td>
+<td>none (an empty <code>{}</code> is accepted)</td>
+<td><code>host_job_v1</code>; 404 when unknown</td>
+</tr>
+</tbody>
+</table>
+<p>Empty query values (<code>q=</code>, <code>engine=</code>) mean "no filter". <code>probe</code>, <code>fits</code> and
+<code>hub</code> accept <code>1</code>/<code>0</code> and <code>true</code>/<code>false</code>.</p>
+<p><strong>Jobs.</strong> A <code>host_job_v1</code> has <code>schema</code>, <code>job_id</code>, <code>kind</code>
+(<code>download | delete | engine_install</code>), <code>status</code>
+(<code>queued | running | completed | failed | cancelled</code>), <code>provider</code>, <code>artifact</code>,
+<code>engine</code>, <code>percent</code>, <code>downloaded_bytes</code>, <code>total_bytes</code>, <code>message</code>, <code>log_tail</code>,
+<code>command</code> (the exact argv), <code>dry_run</code>, <code>started_at</code>, <code>finished_at</code>, <code>error</code>
+(a string or <code>null</code>), <code>joined</code>, <code>result</code> and <code>cli_equivalent</code>, which names the
+<code>abstractgateway</code> command that does the same thing. A dry run finishes before
+the POST returns. On the older <code>/models/download</code> lane the job also carries
+<code>job</code> (the id), <code>events</code>, <code>host_status</code>, reports <code>queued</code> as <code>running</code>, and
+counts <code>joined</code> including the first request.</p>
+<p><strong>Refusals</strong> share one body:
+<code>{"ok": false, "status", "reason"?, "message", "detail", "error": {"message", "type"}, ...}</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400 <code>invalid</code></td>
+<td>provider or artifact missing</td>
+</tr>
+<tr>
+<td>403 <code>refused</code> / <code>not_allowed</code></td>
+<td>a real engine install while <code>allow_engine_install</code> is off (<a href="../configuration/#allow_engine_install">configuration.md</a>); <code>install_policy</code> says why</td>
+</tr>
+<tr>
+<td>403</td>
+<td>the caller is not an admin (every POST above)</td>
+</tr>
+<tr>
+<td>404 <code>not_found</code></td>
+<td>unknown job id, engine id, or a model that is not installed</td>
+</tr>
+<tr>
+<td>409 <code>busy</code></td>
+<td>an engine install is already running (<code>job</code> is the running one)</td>
+</tr>
+<tr>
+<td>409 <code>refused</code></td>
+<td>the engine is not supported here or has no install command (<code>install</code> is the plan), or a delete is blocked (<code>delete_blockers</code>: <code>loaded</code>, <code>shared_cache:…</code>, <code>unknown_location</code>, <code>engine_not_running</code>, <code>remote_engine</code>; <code>force: true</code> overrides the first two)</td>
+</tr>
+<tr>
+<td>501 <code>unsupported</code> / <code>abstractcore_too_old</code></td>
+<td>the installed AbstractCore predates 2.14.0; <code>required</code>, <code>installed</code> and <code>missing</code> name what to upgrade</td>
+</tr>
+<tr>
+<td>503 <code>unavailable</code></td>
+<td>AbstractCore is not installed</td>
+</tr>
+</tbody>
+</table>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-s<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$GW</span><span class="s2">/api/gateway/models/catalog?q=qwen3&amp;fits=1"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">'.rows[0].artifacts[0].fit'</span>
+curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"dry_run": true}'</span><span class="w"> </span><span class="s2">"</span><span class="nv">$GW</span><span class="s2">/api/gateway/engines/ollama/install"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">'.command, .cli_equivalent'</span>
+</code></pre></div>
 <h2 id="host-state-and-model-residency">Host state and model residency<a class="headerlink" href="#host-state-and-model-residency" title="Permanent link">&para;</a></h2>
 <p>Gateway exposes a host-level view of the execution machine — memory, GPU,
 resident models, and session prompt caches — so consoles and agents can render
