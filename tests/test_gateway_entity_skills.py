@@ -252,7 +252,7 @@ def test_birth_defaults_to_entity_self_knowledge_and_installs_map(monkeypatch: p
 
     # Point the shelf at the real checkout so the map resolves.
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "birthdef-secret")
-    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", "/Users/albou/tmp/abstractframework")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(Path(__file__).resolve().parents[2]))
     from abstractgateway.app import app
 
     with TestClient(app, headers={"Authorization": "Bearer birthdef-secret"}) as client:
@@ -281,7 +281,7 @@ def test_explicit_empty_skills_opts_out_of_the_default(monkeypatch: pytest.Monke
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "emptyskills-secret")
-    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", "/Users/albou/tmp/abstractframework")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(Path(__file__).resolve().parents[2]))
     from abstractgateway.app import app
 
     with TestClient(app, headers={"Authorization": "Bearer emptyskills-secret"}) as client:

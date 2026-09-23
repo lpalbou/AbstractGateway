@@ -101,7 +101,7 @@ pick a free port; never kill the existing listener):
 
 ```sh
 ABSTRACTGATEWAY_AUTH_TOKEN=console-dev-secret-0123456789 \
-  /Users/albou/tmp/abstractframework/.venv/bin/python -P -m abstractgateway serve --host 127.0.0.1 --port 8090
+  python -P -m abstractgateway serve --host 127.0.0.1 --port 8090
 ```
 
 ## Test

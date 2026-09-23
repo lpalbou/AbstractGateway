@@ -6,7 +6,7 @@ import fs from "node:fs";
 
 const OUT = process.argv[2] || "/tmp/console_shots";
 const PREFIX = process.argv[3] || "";
-const TOKEN = JSON.parse(fs.readFileSync("/Users/albou/tmp/abstractframework/runtime/dev/gateway-user-tokens.json", "utf8")).users["default:admin"].token;
+const TOKEN = process.env.ABSTRACTGATEWAY_CONSOLE_TOKEN || JSON.parse(fs.readFileSync(process.env.ABSTRACTGATEWAY_USER_TOKENS_FILE || "../runtime/dev/gateway-user-tokens.json", "utf8")).users["default:admin"].token;
 
 const VIEW = { width: 1560, height: 980 };
 

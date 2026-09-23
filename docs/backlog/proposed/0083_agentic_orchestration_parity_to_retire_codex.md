@@ -22,7 +22,7 @@ codex. If and only if we reach that parity and can PROVE it, the codex dependenc
 can be dropped entirely, and self-evolution becomes durable/auditable for free by
 running through the existing Runtime run/ledger machinery.
 
-## Investigation findings (codex 0.89 fork, verified in `/Users/albou/projects/gh/codex/codex-rs`)
+## Investigation findings (codex 0.89 fork, verified in a local `codex-rs` checkout)
 
 Codex is a **single ReAct-style loop, not a planner/executor split**
 (`core/src/codex.rs` `run_turn` ~8093; the model "finishes" simply by replying
