@@ -76,7 +76,19 @@ Every write is three-phase in the worker: write → **verify via GET** →
 journal. Failures surface the gateway's `detail` text verbatim; `ok:false`
 inside a 200 renders as failure (body over transport).
 
-## Run
+## Install
+
+```sh
+cargo install abstractgateway-console
+ABSTRACTGATEWAY_AUTH_TOKEN=... abstractgateway-console --url http://127.0.0.1:8081
+```
+
+The crate is released from the AbstractGateway repository
+(`console-tui/`); see [CHANGELOG.md](CHANGELOG.md). The gateway-side guide is
+[docs/console.md](https://github.com/lpalbou/abstractgateway/blob/main/docs/console.md).
+
+## Run from source
+
 
 ```sh
 cargo build
@@ -140,8 +152,6 @@ live keyboard pass.
   shared components in `ui/util.rs`.
 - `tests/headless_ui.rs` — the CaptureTerm suite; `tests/live_e2e.rs` —
   the ignored live test; `scripts/pty_smoke.py` — the pty proof.
-- `LAUNCH-PROMPT.md` — the builder brief (API grounding, design laws,
-  engine feedback protocol).
 
 This is the second **validator app** for the AbstractTUI engine (epic:
 `abstracttui/docs/backlog/planned/ports/0215_gateway_config_wizard_app.md`).

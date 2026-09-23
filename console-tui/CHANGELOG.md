@@ -1,6 +1,28 @@
 # Changelog — abstractgateway-console
 
-## Unreleased — the Resources screen: live host residency (2026-08-28)
+## 0.6.0 (2026-09-23) — first crates.io release
+
+Install with `cargo install abstractgateway-console`. Works against
+AbstractGateway 0.2.30 (older gateways degrade screen by screen).
+
+- **MTP (speculative decoding) default on the Routes screen.** The text route
+  editor has an MTP selector (inherit / off / depth 2-5) that edits
+  `options.speculation`, the route table shows the configured MTP default, and
+  the route **Test** verb forwards the reasoning/speculation controls to
+  `/sandbox/generate`.
+- **Resources screen (8):** live memory/GPU gauges, resident models (warm up,
+  lock, unload, context estimate) and session prompt caches.
+- **Workflows screen (6):** every registered workflow with versions,
+  entrypoints and a `Not loaded` block; export, delete, draft toggle.
+- Runtime tabs: `*.jpg`-style filters, image previews (JPEG, quadrant
+  mosaics), binary byte units (`KiB`/`MiB`/`GiB`).
+- Engine: AbstractTUI 0.3.6.
+- Packaging: published to crates.io (`publish = true`), crate metadata and an
+  explicit file list.
+
+The detailed notes for this release follow.
+
+### the Resources screen: live host residency (2026-08-28)
 
 - **The Routes weights line no longer warns a fully configured host
   (2026-09-06).** It read `recommended models: 2 of 3 present · missing:
@@ -130,7 +152,7 @@ The `/host/state` fixtures are pinned from a LIVE capture (allocated 0,
 host-in-use 98.5 GB, a sweep row with only an estimate) rather than
 written to match the parser.
 
-## Unreleased — the Workflows screen: the registered registry (2026-08-21)
+### the Workflows screen: the registered registry (2026-08-21)
 
 - **A new 6th screen, "Workflows" — every workflow registered on the
   gateway**, mirroring the web console's tab. A row is a BUNDLE, not a
@@ -156,7 +178,7 @@ written to match the parser.
   `r` refreshes honoring the drafts toggle so `r` reloads what is on
   screen rather than silently changing what it shows.
 
-## Unreleased — previews take two thirds of the terminal (2026-08-20)
+### previews take two thirds of the terminal (2026-08-20)
 
 - **The artifact preview and the log tail scale with the TERMINAL**,
   capped at two thirds of each axis, instead of pinning a fixed 96x26 /
@@ -180,7 +202,7 @@ written to match the parser.
   its untitled corner, since every panel's BOTTOM border is untitled and
   the corner alone identifies nothing.
 
-## Unreleased — the preview flash, and denser image mosaics (2026-08-20)
+### the preview flash, and denser image mosaics (2026-08-20)
 
 - **Fixed: another artifact's message flashed under this artifact's
   header.** Opening a .jpeg showed a decode error (or the previous
@@ -213,7 +235,7 @@ a headless test that opens two artifacts, replays the slow one's result
 through the guard (dropped) and then without it (paints) — so the
 assertion cannot pass for the wrong reason.
 
-## Unreleased — `*.jpg` filters, on every runtime tab (2026-08-20)
+### `*.jpg` filters, on every runtime tab (2026-08-20)
 
 - **The search box speaks a query LANGUAGE now, not a substring.** Typing
   `*.jpg` on the Artifacts tab returned `0 rows`: every filter compared
@@ -242,7 +264,7 @@ assertion cannot pass for the wrong reason.
   Cache tab and search modal. `cargo test` 129 green (37 lib + 92
   headless), `cargo clippy --all-targets` clean of new warnings.
 
-## Unreleased — engine 0.3.5: JPEG previews that actually open (2026-08-20)
+### engine 0.3.5: JPEG previews that actually open (2026-08-20)
 
 - **`abstracttui` 0.3.0 → 0.3.5.** (Superseded by 0.3.6, above.) 0.3.5 taught `gfx::decode_image` to
   read PROGRESSIVE JPEG (SOF2 — spectral selection, successive
@@ -262,7 +284,7 @@ against 0.3.5. Decode proven directly: a progressive and a baseline JPEG
 of the same image both decode on 0.3.5; the progressive one errors on
 0.3.0.
 
-## Unreleased — one config language, two doors (2026-08-01, operator ruling)
+### one config language, two doors (2026-08-01, operator ruling)
 
 Harmonized with `abstractcore-console` for the configuration the two
 entry points SHARE. This console is the reference and keeps its shape;

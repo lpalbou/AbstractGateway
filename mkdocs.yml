@@ -36,6 +36,8 @@ nav:
   - Home: README.md
   - Getting Started: getting-started.md
   - Configuration: configuration.md
+  - Consoles (web + terminal): console.md
+  - Shipped Workflows: shipped-workflows.md
   - Deployment: deployment.md
   - API Overview: api.md
   - Architecture: architecture.md

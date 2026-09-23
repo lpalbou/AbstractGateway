@@ -1,12 +1,20 @@
 [package]
 name = "abstractgateway-console"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 # MSRV floor comes from the engine (abstracttui 0.3.6 still declares 1.87).
 rust-version = "1.87"
 license = "MIT"
 description = "An intuitive terminal wizard to configure AbstractGateway — connection, providers, multimodal capability routes, users & entities — rendered by AbstractTUI."
-publish = false
+repository = "https://github.com/lpalbou/abstractgateway"
+homepage = "https://github.com/lpalbou/abstractgateway/tree/main/console-tui"
+readme = "README.md"
+keywords = ["abstractgateway", "tui", "terminal", "llm", "configuration"]
+categories = ["command-line-utilities"]
+# Published to crates.io from the gateway repository's release workflow
+# (`cargo install abstractgateway-console`). Only the crate sources, the
+# README and the changelog ship; dev scripts and backlog notes stay in git.
+include = ["src/**/*.rs", "tests/**/*.rs", "Cargo.toml", "Cargo.lock", "README.md", "CHANGELOG.md"]
 
 [lib]
 name = "abstractgateway_console"

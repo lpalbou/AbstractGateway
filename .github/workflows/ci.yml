@@ -66,6 +66,21 @@ jobs:
       - name: MkDocs build
         run: mkdocs build -q
 
+  console-tui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: console-tui
+      - name: Test
+        working-directory: console-tui
+        run: cargo test --locked
+      - name: Package
+        working-directory: console-tui
+        run: cargo package --locked
+
   docker:
     runs-on: ubuntu-latest
     steps:

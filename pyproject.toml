@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.2.29"
+version = "0.2.30"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,9 +12,9 @@ license = { text = "MIT" }
 authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
-  "AbstractRuntime>=0.4.31",
-  "abstractagent>=0.3.12",
-  "AbstractMemory[lancedb]>=0.2.6",
+  "AbstractRuntime>=0.4.32",
+  "abstractagent>=0.3.13",
+  "AbstractMemory[lancedb]>=0.3.0",
   "requests<3.0.0,>=2.32.5",
   "urllib3<3.0.0,>=2.5.0",
   "fastapi<1.0.0,>=0.136.0",
@@ -35,7 +35,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.13.38",
+  "abstractcore[embeddings]>=2.13.41",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,
@@ -53,17 +53,17 @@ tray = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.4.31",
-  "abstractagent[apple]>=0.3.12",
-  "AbstractMemory[all-apple]>=0.2.6",
+  "AbstractRuntime[apple]>=0.4.32",
+  "abstractagent[apple]>=0.3.13",
+  "AbstractMemory[all-apple]>=0.3.0",
 ]
 
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.4.31",
-  "abstractagent[gpu]>=0.3.12",
-  "AbstractMemory[all-gpu]>=0.2.6",
+  "AbstractRuntime[gpu]>=0.4.32",
+  "abstractagent[gpu]>=0.3.13",
+  "AbstractMemory[all-gpu]>=0.3.0",
 ]
 dev = [
   "pytest>=7.0.0",
@@ -110,6 +110,7 @@ packages = ["src/abstractgateway"]
 [tool.hatch.build.targets.sdist]
 exclude = [
   "/docs/backlog/**",
+  "/console-tui/docs/**",
   "/flows/**",
   "/tests/**",
 ]

@@ -128,7 +128,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.29
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.30
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -136,7 +136,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.29-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.2.30-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
@@ -292,6 +292,11 @@ Workflow/Core-backed capabilities:
 - Clients **render** by replaying/streaming the durable ledger:
   - replay: `GET /api/gateway/runs/{run_id}/ledger?after=...`
   - stream (SSE): `GET /api/gateway/runs/{run_id}/ledger/stream?after=...`
+
+The same configuration surfaces are available in a terminal through the
+`abstractgateway-console` Rust app (`cargo install abstractgateway-console`),
+and model residency through `abstractgateway models loaded|load|unload`. See
+[docs/console.md](docs/console.md).
 
 See [docs/api.md](docs/api.md) for curl examples and the live OpenAPI spec (`/openapi.json`).
 

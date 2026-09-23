@@ -31,9 +31,9 @@ def _sibling_pyproject(package_dir: str) -> dict:
 def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
-    assert "AbstractRuntime>=0.4.31" in deps
-    assert "abstractagent>=0.3.12" in deps
-    assert "AbstractMemory[lancedb]>=0.2.6" in deps
+    assert "AbstractRuntime>=0.4.32" in deps
+    assert "abstractagent>=0.3.13" in deps
+    assert "AbstractMemory[lancedb]>=0.3.0" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
     assert "fastapi<1.0.0,>=0.136.0" in deps
@@ -56,7 +56,7 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     music_base = "\n".join(_sibling_pyproject("abstractmusic")["project"].get("dependencies", []))
 
     runtime_base = "\n".join(runtime_project["dependencies"])
-    assert "abstractcore[remote,tools,vision,voice,audio,music]>=2.13.40" in runtime_base
+    assert "abstractcore[remote,tools,vision,voice,audio,music]>=2.13.41" in runtime_base
     assert "pypdf" in runtime_base
     assert "reportlab" in runtime_base
     assert "pymupdf" not in runtime_base.lower()
@@ -69,10 +69,10 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     assert "openai" in core_remote
     assert "anthropic" in core_remote
 
-    assert "abstractvision>=0.3.26" in "\n".join(core_extras["vision"])
-    assert "abstractvoice>=0.10.18" in "\n".join(core_extras["voice"])
-    assert "abstractvoice>=0.10.18" in "\n".join(core_extras["audio"])
-    assert "abstractmusic>=0.1.13" in "\n".join(core_extras["music"])
+    assert "abstractvision>=0.3.29" in "\n".join(core_extras["vision"])
+    assert "abstractvoice>=0.11.2" in "\n".join(core_extras["voice"])
+    assert "abstractvoice>=0.11.2" in "\n".join(core_extras["audio"])
+    assert "abstractmusic>=0.1.15" in "\n".join(core_extras["music"])
     core_light_capabilities = "\n".join(
         [
             *core_extras["vision"],
@@ -118,7 +118,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]>=2.13.38" in embeddings
+    assert "abstractcore[embeddings]>=2.13.41" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras
@@ -127,18 +127,18 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[apple]>=0.4.31" in apple
-    assert "abstractagent[apple]>=0.3.12" in apple
+    assert "AbstractRuntime[apple]>=0.4.32" in apple
+    assert "abstractagent[apple]>=0.3.13" in apple
     assert "abstractagent[all-apple]" not in apple
-    assert "AbstractMemory[all-apple]>=0.2.6" in apple
+    assert "AbstractMemory[all-apple]>=0.3.0" in apple
     assert "abstractcore[" not in apple
     assert "abstractvision" not in apple
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[gpu]>=0.4.31" in gpu
-    assert "abstractagent[gpu]>=0.3.12" in gpu
-    assert "AbstractMemory[all-gpu]>=0.2.6" in gpu
+    assert "AbstractRuntime[gpu]>=0.4.32" in gpu
+    assert "abstractagent[gpu]>=0.3.13" in gpu
+    assert "AbstractMemory[all-gpu]>=0.3.0" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu
     assert "abstractvoice" not in gpu
@@ -236,11 +236,11 @@ def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> 
     assert "ABSTRACTGATEWAY_DATA_DIR=/data" in dockerfile
     assert "ABSTRACTGATEWAY_FLOWS_DIR=/data/flows" not in dockerfile
     assert "ENTRYPOINT [\"abstractgateway-docker-entrypoint\"]" in dockerfile
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.2.28}" in compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.2.30}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS: ${ABSTRACTGATEWAY_EXTRAS:-}" in compose
     assert "ABSTRACTGATEWAY_USER_AUTH: ${ABSTRACTGATEWAY_USER_AUTH:-1}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS:-gpu" in nvidia_compose
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.2.28-gpu}" in nvidia_compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.2.30-gpu}" in nvidia_compose
     assert "context: ../.." in nvidia_compose
 
 

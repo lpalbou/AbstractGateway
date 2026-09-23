@@ -169,6 +169,7 @@ exists yet, so a store you already have is never modified.
 | --- | --- | --- | --- |
 | Capability route provider/model/base URL (text, image, video, voice, sound, music, 3D, embeddings) | AbstractCore | `capability_defaults.routes` in `abstractcore.json` | `GET/PUT/DELETE /api/gateway/config/capability-defaults[/{kind}/{modality}[/{task}]]`, console **Capability defaults** |
 | Reasoning effort for text generation | AbstractCore | `reasoning` on the `output.text` route (stored as `input.text`) | the same routes and console panel |
+| MTP default policy | AbstractCore | `options.speculation` on that text route | web/TUI **MTP** selector; application/run overrides remain independent |
 | Plugin/provider route options (voice, profile, language) | AbstractCore | `options` on the route | the same routes and console panel |
 | Provider API keys | AbstractCore | `api_keys` in `abstractcore.json` | console **Provider connections** (values are never returned) |
 | Mail connection (IMAP/SMTP host, port, username, folder) | AbstractCore | `email` in `abstractcore.json` | the email bridge and inbox routes read it; `ABSTRACT_EMAIL_*` variables override it |
@@ -249,6 +250,23 @@ It applies to any call that names no effort of its own. An explicit `thinking`
 on a run, a Flow LLM/Agent node, or an entity's substrate wins over it,
 `thinking=false` included; with no configured effort and no explicit value, no
 reasoning parameter is sent at all.
+
+**MTP defaults and overrides.** Fresh Core configurations seed native MTP at depth
+2 for compatible models; existing stores are preserved. Gateway's web and terminal
+capability-default editors change this Core-owned policy, not a separate Gateway
+setting. Choose Off or a draft depth; clearing the policy does not reseed it.
+Other route options are preserved by the dedicated selector. A default is a
+policy, not proof that the selected backend or loaded model can execute it.
+
+Flow, Assistant and Code default to inheritance. A run may supply `speculation`
+on `/runs/start` or `/runs/schedule`, or `_runtime.speculation` in its input:
+`false` disables MTP and a native-MTP object selects a depth. Explicit node/call
+settings override inherited run settings. The sandbox selector uses execution
+capabilities for the selected provider/model and reports the response's actual
+MTP outcome. Selecting a depth never downloads a head or silently reloads a model.
+Prepared models can change depth or switch Off without unloading; an unprepared
+instance reports that provisioning/reloading is needed. Depth 2 is a starting
+default, not a workload-independent speed guarantee.
 
 **If the other entry point writes.** `abstractcore config set-default <route>
 --provider … --model …` (and AbstractCore's console-TUI, which runs that
@@ -608,6 +626,37 @@ These map to `GatewayHostConfig` and `GatewayRunnerConfig`:
 
 Evidence: `src/abstractgateway/config.py`, `src/abstractgateway/runner.py`.
 
+### Stop and the kill switch
+
+A `cancel` command (the Stop button) cancels the run tree AND stops the model
+call that is executing now: the runtime hands the call a cancel event and the
+provider stops within one token (MLX) or one stream chunk (any streaming
+provider). The stopped call is recorded as an `llm_call` step with status
+`cancelled` and `cancelled_by: command`.
+
+If a model call of the cancelled tree is still executing after the kill-switch
+deadline (a provider lane that cannot observe the event, e.g. a non-streaming
+HTTP request), the gateway kills THAT INFERENCE in process — never the gateway
+process: other runs, sessions and the HTTP API keep working. The runtime
+injects an `EffectKilled` exception into the one thread executing the call (it
+unwinds within one token of a Python-level decode loop); the step is recorded
+`cancelled` with `killed_by: kill_switch`. The gateway logs an ERROR line
+(`STOP KILL SWITCH FIRED … killed_by=kill_switch action=kill_inference`), writes
+an `abstract.status` record "Stop forced at N s: inference killed" on every run
+of the tree (the web UI shows it), and ends the runs CANCELLED with that reason.
+A thread blocked inside ONE native call for more than 5 s after the kill
+(`KILL_GRACE_S`) is reported as "could not be interrupted" in the log and the
+ledger; the pending kill fires when that call returns. Tools are never
+escalated: a tool still running is named in the log and its result is never
+fed to another model call.
+
+| Knob (runtime config key / env) | Default | Meaning |
+|---|---|---|
+| `stop_kill_switch_s` / `ABSTRACTGATEWAY_STOP_KILL_SWITCH_S` | `10` | seconds after the cancel is applied; `0` disables (logged at ERROR on every Stop) |
+
+It is read at every Stop (runtime config via `POST /api/gateway/admin/runtime-config`
+supersedes env, env supersedes the default). Evidence: `src/abstractgateway/stop_kill_switch.py`.
+
 ## LLM/tool defaults (bundle mode)
 
 Only needed when the loaded bundle(s) contain LLM/tool/agent nodes.
@@ -768,6 +817,8 @@ Most-used:
 - `abstractgateway runner` (worker only)
 - `abstractgateway config status --json`
 - `abstractgateway migrate --from=file --to=sqlite --data-dir <DIR> --db-path <FILE>`
+- `abstractgateway models loaded|load|unload --url <URL> [--provider P --model M] [--force]`
+  (model residency on a running gateway; see [console.md](./console.md#model-residency-from-a-shell))
 
 ## Related docs
 
