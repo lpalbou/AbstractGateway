@@ -45,6 +45,20 @@ With the base install and a configured provider stack, Gateway can surface
 run-scoped direct TTS, STT, image generation, image edit, and music generation
 for higher apps through one shared capability contract.
 
+## 0) Fastest start on your own machine
+
+```bash
+abstractgateway serve
+```
+
+With no auth configured, this binds `127.0.0.1:8080`, enables user auth,
+creates `default/admin`, keeps data in your OS's per-user data folder, and
+prints a one-time `First run: open http://127.0.0.1:8080/console#claim=...`
+link that signs you into the console and opens the first-run guide. See
+[first-run.md](./first-run.md), including `abstractgateway claim` and
+`abstractgateway service install`. The rest of this guide uses explicit
+configuration.
+
 ## 1) Run (bundle mode, file-backed stores)
 
 File-backed stores are the default and easiest for dev.
@@ -65,9 +79,10 @@ abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
 On first local start, Gateway creates `default/admin`, writes the browser-login
-token to `$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token`, and prints it
-in the terminal. Use that token with user `admin` in `/console` and browser
-apps. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
+token to `$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token` (mode `0600`),
+and prints a one-time console sign-in link instead of the token (set
+`ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` to print the token). Use the token
+file with user `admin` for browser apps. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
 bearer-token deployments, but it is not a browser sign-in token.
 
 OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs` (use **Authorize** with a Gateway user token)

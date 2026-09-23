@@ -42,8 +42,15 @@ Gateway has a first-class configuration helper:
 abstractgateway-config status
 abstractgateway-config init --env-file .env
 abstractgateway-config bootstrap-admin --print-token
+abstractgateway-config claim-url [--open]
 abstractgateway config status --json
 ```
+
+`claim-url` (also `abstractgateway claim`) prints a one-time console sign-in
+link for this machine; see [first-run.md](./first-run.md). `status --json`
+also reports `data_dir_source`, `auth_mode`, `service`, `claim_pending`,
+`first_run` and `serve` (schema `gateway_config_status_v1`, documented in
+[first-run.md](./first-run.md#checking-the-setup-from-scripts)).
 
 It reports Gateway auth/data/store/runtime defaults, Core-server handoff
 configuration, memory-store selection, and package readiness. `init` writes a
@@ -61,8 +68,14 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
 
 ### Paths + workflow source
 
-- `ABSTRACTGATEWAY_DATA_DIR`: durable data directory (default: `./runtime`)  
-  Evidence: `src/abstractgateway/config.py` (`GatewayHostConfig.from_env`)
+- `ABSTRACTGATEWAY_DATA_DIR`: durable data directory. When unset: `./runtime`
+  if it already exists in the working directory, else the per-user data folder
+  (macOS `~/Library/Application Support/AbstractGateway`, Linux
+  `$XDG_DATA_HOME/abstractgateway` or `~/.local/share/abstractgateway`,
+  Windows `%LOCALAPPDATA%\AbstractGateway`). `serve --data-dir` sets it for
+  one process. `abstractgateway-config status` prints the folder and why it
+  was chosen.
+  Evidence: `src/abstractgateway/host_paths.py`
 - `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway uses the
   packaged shipped bundle directory, which carries `basic-agent`,
   `coding-agent`, `deep-research`, `co-scientist`, and more
@@ -75,13 +88,29 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
 
 ### Authentication and user routing
 
+**Default on loopback.** When no auth setting is present (none of
+`ABSTRACTGATEWAY_AUTH_TOKEN[S]`, `ABSTRACTGATEWAY_USER_AUTH`,
+`ABSTRACTGATEWAY_MULTI_USER`, `ABSTRACTGATEWAY_AUTH_MODE`,
+`ABSTRACTGATEWAY_SECURITY`, `ABSTRACTGATEWAY_PROTECT_WRITE`), `serve` binds
+`127.0.0.1` and enables user auth automatically. A non-loopback bind in that
+state refuses to start. When any auth setting is present, `serve` keeps the
+`0.0.0.0` default bind and your settings apply unchanged.
+
 The normal browser-console/browser-app path uses Gateway user auth:
 
 - `ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_MODE=users`: enable
   file-backed user principals and per-principal runtime routing
 - `abstractgateway serve`: when user auth is enabled, ensures `default/admin`
   exists and writes the first-login token to
-  `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token`
+  `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token` (mode `0600`). The
+  token is printed only with `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1`; until
+  the first-run guide is completed, a one-time sign-in link
+  (`/console#claim=...`, 10 minutes, single use, loopback only) is printed
+  instead
+- `POST /api/gateway/session/claim`: redeems a one-time link code for an admin
+  browser session; accepted only from a loopback peer without proxy headers.
+  `GET /api/gateway/host/first-run` / `POST` (admin) read and record the
+  first-run guide state
 
 Legacy server/operator mode uses a Gateway bearer token:
 
@@ -812,8 +841,14 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve --host 127.0.0.1 --port 8080 [--no-runner] [--reload]`
+- `abstractgateway serve [--host H] [--port 8080] [--data-dir DIR] [--no-runner] [--reload]`
+  (`--host` defaults to `127.0.0.1` when no auth is configured, else `0.0.0.0`)
   Evidence: `src/abstractgateway/cli.py`
+- `abstractgateway claim [--open] [--port P | --url URL] [--json]`: one-time
+  console sign-in link ([first-run.md](./first-run.md))
+- `abstractgateway service install|uninstall|status [--port P] [--host H] [--data-dir DIR] [--dry-run] [--json]`:
+  start the gateway at login (LaunchAgent, systemd user unit, Windows Startup
+  shortcut; [first-run.md](./first-run.md#4-start-the-gateway-at-login-optional))
 - `abstractgateway runner` (worker only)
 - `abstractgateway config status --json`
 - `abstractgateway migrate --from=file --to=sqlite --data-dir <DIR> --db-path <FILE>`
@@ -822,6 +857,7 @@ Most-used:
 
 ## Related docs
 
+- First run: [first-run.md](./first-run.md)
 - Getting started: [getting-started.md](./getting-started.md)
 - FAQ: [faq.md](./faq.md)
 - Security configuration: [security.md](./security.md)

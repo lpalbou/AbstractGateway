@@ -42,6 +42,16 @@ async def _lifespan(_app: FastAPI):
             get_tray_supervisor().stop()
         except Exception:
             pass
+        # Serve record (first-run, 2026-09-23): same reason as the tray —
+        # the CLI's `finally` never runs after a re-raised SIGTERM. Removes
+        # <data>/run/gateway-serve.json only when it names THIS pid.
+        try:
+            from .first_run import clear_serve_record
+            from .users import gateway_data_dir_from_env
+
+            clear_serve_record(gateway_data_dir_from_env())
+        except Exception:
+            pass
 
 
 app = FastAPI(

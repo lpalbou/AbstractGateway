@@ -17,6 +17,7 @@ Related repos:
 
 ## Docs map
 
+- First run on your own machine (no configuration, one-time sign-in link, start at login): [first-run.md](./first-run.md)
 - Quickstart + stores (file/SQLite): [getting-started.md](./getting-started.md)
 - FAQ / troubleshooting: [faq.md](./faq.md)
 - Architecture (durable contract + components): [architecture.md](./architecture.md)

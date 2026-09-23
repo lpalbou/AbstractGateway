@@ -23,7 +23,22 @@ Related repos:
 - AbstractCore: https://github.com/lpalbou/abstractcore
 - AbstractRuntime: https://github.com/lpalbou/abstractruntime
 
-## Quickstart (HTTP server, bundle mode)
+## Quickstart: your own machine
+
+```bash
+pip install abstractgateway
+abstractgateway serve
+```
+
+On a first run with nothing configured, `serve` binds `127.0.0.1:8080`, turns
+on user auth, creates the admin user, and prints a one-time link
+(`http://127.0.0.1:8080/console#claim=...`). Open it in a browser on the same
+machine: you are signed in as the admin and a short first-run guide helps you
+pick a local engine, a default model and the browser apps. A new link:
+`abstractgateway claim --open`. Start the gateway at login:
+`abstractgateway service install`. See [docs/first-run.md](docs/first-run.md).
+
+## Quickstart (HTTP server, bundle mode, explicit configuration)
 
 ```bash
 pip install abstractgateway

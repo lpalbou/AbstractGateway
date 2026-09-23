@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Zero-configuration first run.** With no auth configured, `abstractgateway serve`
+  binds `127.0.0.1`, enables user auth, creates `default/admin`, and prints a
+  one-time console sign-in link instead of a token. See
+  [docs/first-run.md](docs/first-run.md).
+- **One-time sign-in links:** `abstractgateway claim [--open]` and
+  `abstractgateway-config claim-url [--open]` mint a single-use, 10-minute link
+  (`/console#claim=<code>`); `POST /api/gateway/session/claim` redeems it for an
+  admin browser session from a loopback peer only.
+- **First-run guide in the web console** (host summary, local engines, default
+  model with recommended downloads, apps, CLI equivalents), opened once per
+  data folder and reachable later from the **Setup** button.
+  `GET /api/gateway/host/first-run` and `POST` (admin) hold its state.
+- **`abstractgateway service install|uninstall|status`**: start the gateway at
+  login as a macOS LaunchAgent, a Linux systemd user unit, or (experimental) a
+  Windows Startup shortcut, with `--dry-run`, free-port selection and a
+  persisted port.
+- `serve --data-dir`.
+- `abstractgateway-config status --json` gains `schema`
+  (`gateway_config_status_v1`), `data_dir_source`, `data_dir_reason`,
+  `auth_mode`, `auth`, `service`, `claim_pending`, `claims`, `first_run` and
+  `serve`; `GET /api/gateway/host/state` gains a `gateway` block with the same
+  facts.
+
+### Changed
+- **Default data folder.** When `ABSTRACTGATEWAY_DATA_DIR` is unset, the gateway
+  uses `./runtime` only if it already exists in the working directory, and
+  otherwise the per-user data folder (macOS
+  `~/Library/Application Support/AbstractGateway`, Linux
+  `$XDG_DATA_HOME/abstractgateway`, Windows `%LOCALAPPDATA%\AbstractGateway`).
+  The `triage-reports`, `triage-apply`, `backlog-exec-runner` and `data list`
+  commands use the same default as `serve` (they previously defaulted to
+  `./runtime/gateway`). Set `ABSTRACTGATEWAY_DATA_DIR` to keep any other layout.
+- **`serve --host` default.** `127.0.0.1` when no auth setting is present;
+  `0.0.0.0` (unchanged) when any auth setting is present.
+- **The bootstrap admin token is no longer printed** on loopback starts; it
+  stays in `<data dir>/auth/bootstrap-admin-token`. Set
+  `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` to print it.
+- **Windows:** the runner's singleton lock uses `msvcrt.locking`, so two
+  gateways on one data folder no longer both run workflows.
+
 ## [0.2.30] - 2026-09-23
 
 This release requires AbstractRuntime 0.4.32, AbstractAgent 0.3.13 and

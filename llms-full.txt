@@ -6,6 +6,170 @@ Relative links are normalized to repo-root paths.
 
 ---
 
+## docs/first-run.md
+
+# AbstractGateway — First run
+
+This page covers the shortest path from `pip install abstractgateway` (or
+`uv tool install abstractgateway`) to a signed-in console on your own machine:
+no environment variables, no token to copy. It also covers starting the gateway
+at login. For server deployments, see [deployment.md](docs/deployment.md); for
+every setting, see [configuration.md](docs/configuration.md).
+
+## 1. Start the gateway
+
+```bash
+abstractgateway serve
+```
+
+With no auth configured, `serve`:
+
+- binds **127.0.0.1** (port 8080; use `--port` to pick another);
+- turns on **user auth** and creates the admin user `default/admin`;
+- keeps its data in the per-user data folder for your OS (see
+  [Where the data lives](#where-the-data-lives));
+- prints a short banner:
+
+```text
+Gateway data dir: /Users/you/Library/Application Support/AbstractGateway (os_default: ...)
+Gateway auth: user auth enabled automatically (bound to loopback 127.0.0.1, no auth configured). ...
+Gateway admin token file: .../auth/bootstrap-admin-token
+First run: open http://127.0.0.1:8080/console#claim=agclaim_...
+           (one-time link, valid 10 minutes, works from this machine only; ...)
+```
+
+Open the `First run` link in a browser on the same machine. The console signs
+you in as the admin and opens the **first-run guide**.
+
+The admin token is not printed. It is kept in
+`<data dir>/auth/bootstrap-admin-token` (file mode `0600`). Set
+`ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` if you want it printed.
+
+## 2. The first-run guide
+
+The guide has five steps. Every step is optional:
+
+| Step | What it shows |
+|---|---|
+| Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
+| Local engines | Local model engines on this machine. Engine detection (`GET /api/gateway/engines`) comes with the next AbstractCore release; until then the step links to the Ollama and LM Studio downloads |
+| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), and a **Download** button for each recommended model that is not on this machine, with progress |
+| Apps | The `npx @abstractframework/{flow,code,observer,continuum,entity}` commands with copy buttons |
+| Done | How to reopen the console, the login-service status, and the CLI equivalents |
+
+The guide opens by itself once per data folder. **Finish** or **Skip setup**
+records that it ran (`POST /api/gateway/host/first-run`); clicking outside the
+dialog closes it without recording anything. The **Setup** button (⚑, top
+right, admins only) reopens it at any time.
+
+## 3. Get a new sign-in link
+
+A link works once and expires after 10 minutes. To get another one:
+
+```bash
+abstractgateway claim            # prints the link
+abstractgateway claim --open     # prints it and opens your browser
+abstractgateway-config claim-url # same command, from the config helper
+```
+
+The command finds the running gateway's port from the data folder (the gateway
+writes `<data dir>/run/gateway-serve.json` while it runs). Use `--port` or
+`--url` to target another gateway, `--data-dir` for another data folder, and
+`--json` for machine-readable output. It exits with code `2` when the running
+gateway does not use user auth (a static `ABSTRACTGATEWAY_AUTH_TOKEN`
+deployment), because that gateway would refuse the link.
+
+How the link is protected:
+
+- only someone who can write the data folder can mint one (the CLI writes it
+  under `<data dir>/auth/claims/`, stored as a SHA-256 digest only);
+- `POST /api/gateway/session/claim` redeems it **only** from a loopback socket
+  peer, and refuses any request carrying proxy headers (`X-Forwarded-For`,
+  `X-Forwarded-Host`, `X-Real-IP`, `Forwarded`);
+- the console removes the code from the address bar before sending it;
+- the result is the same browser session as a normal sign-in (session cookie +
+  CSRF cookie).
+
+## 4. Start the gateway at login (optional)
+
+```bash
+abstractgateway service install      # install and start
+abstractgateway service status       # installed? loaded?
+abstractgateway service uninstall    # stop and remove (your data is kept)
+```
+
+| OS | What is installed | Logs |
+|---|---|---|
+| macOS | LaunchAgent `~/Library/LaunchAgents/ai.abstractframework.gateway.plist` (`RunAtLoad`, restarted if it crashes), loaded with `launchctl bootstrap gui/<uid>` | `~/Library/Logs/AbstractGateway/` |
+| Linux | systemd user unit `~/.config/systemd/user/abstractgateway.service` (`Restart=on-failure`), enabled with `systemctl --user enable --now` | `journalctl --user -u abstractgateway.service` |
+| Windows (experimental) | Startup-folder shortcut `AbstractGateway.lnk` that starts the gateway with `pythonw.exe` (no console window) | `<data dir>\logs\gateway.log` |
+
+Details:
+
+- The service runs the absolute path of the `abstractgateway` you installed
+  and sets `PATH` itself (including `~/.local/bin`, `~/.lmstudio/bin`,
+  `/opt/homebrew/bin`, `/usr/local/bin`), because service managers do not read
+  your shell profile.
+- The port is `--port` when given, else the port of a previous install, else
+  the first free port from 8080 upwards. The choice is stored in
+  `<data dir>/service.json`.
+- After starting, `install` waits up to 60 seconds for `/api/health`
+  (`--wait-s`, `--no-wait`) and, on a first run, prints a sign-in link
+  (`--no-claim` to skip).
+- `--dry-run` prints the files and commands without changing anything.
+  `--no-start` registers the service without starting it now.
+- On Linux, a user unit runs while you are logged in. To keep it running after
+  logout or start it at boot, run `loginctl enable-linger "$USER"` once.
+
+## Where the data lives
+
+When `ABSTRACTGATEWAY_DATA_DIR` is not set, the gateway uses, in order:
+
+1. `./runtime`, if it already exists in the working directory (repository
+   checkouts and the AbstractFramework workspace scripts);
+2. the per-user data folder for your OS:
+   - macOS: `~/Library/Application Support/AbstractGateway`
+   - Linux: `$XDG_DATA_HOME/abstractgateway` (default `~/.local/share/abstractgateway`)
+   - Windows: `%LOCALAPPDATA%\AbstractGateway`
+
+`abstractgateway-config status` prints the folder and the reason it was
+chosen. `serve --data-dir <dir>` or `ABSTRACTGATEWAY_DATA_DIR` choose it
+explicitly.
+
+## Exposing the gateway beyond this machine
+
+The automatic setup applies to loopback binds only. `serve --host 0.0.0.0` (or
+any non-loopback address) still refuses to start until you configure auth
+explicitly (`ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_TOKEN`); see
+[security.md](docs/security.md). When any auth setting is present, `serve` keeps
+its `0.0.0.0` default bind.
+
+## Checking the setup from scripts
+
+`abstractgateway-config status --json` includes these keys (schema
+`gateway_config_status_v1`):
+
+| Key | Meaning |
+|---|---|
+| `data_dir`, `data_dir_source`, `data_dir_reason` | The data folder, and `env`, `legacy_cwd_runtime` or `os_default` |
+| `auth_mode`, `auth` | `users`, `token`, `users+token`, `open` or `loopback_auto` (nothing configured: `serve` on loopback enables user auth) |
+| `service` | The login service: `installed`, `mechanism`, `unit_path`, `port`, `url` |
+| `claim_pending`, `claims` | Whether an unused, unexpired sign-in link exists |
+| `first_run` | Whether the first-run guide was completed |
+| `serve` | The running gateway for this data folder (`url`, `port`, `pid`, `alive`, its `auth`), or `null` |
+
+`GET /api/gateway/host/state` carries the same facts in its `gateway` block.
+
+## Related docs
+
+- [getting-started.md](docs/getting-started.md): runs, bundles, stores
+- [configuration.md](docs/configuration.md): every environment variable and CLI flag
+- [console.md](docs/console.md): the web console and the terminal console
+- [security.md](docs/security.md): auth, origins, limits
+- [tray.md](docs/tray.md): the desktop tray icon
+
+---
+
 ## docs/api.md
 
 # AbstractGateway — API overview
@@ -1342,8 +1506,15 @@ Gateway has a first-class configuration helper:
 abstractgateway-config status
 abstractgateway-config init --env-file .env
 abstractgateway-config bootstrap-admin --print-token
+abstractgateway-config claim-url [--open]
 abstractgateway config status --json
 ```
+
+`claim-url` (also `abstractgateway claim`) prints a one-time console sign-in
+link for this machine; see [first-run.md](docs/first-run.md). `status --json`
+also reports `data_dir_source`, `auth_mode`, `service`, `claim_pending`,
+`first_run` and `serve` (schema `gateway_config_status_v1`, documented in
+[first-run.md](docs/first-run.md#checking-the-setup-from-scripts)).
 
 It reports Gateway auth/data/store/runtime defaults, Core-server handoff
 configuration, memory-store selection, and package readiness. `init` writes a
@@ -1361,8 +1532,14 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
 
 ### Paths + workflow source
 
-- `ABSTRACTGATEWAY_DATA_DIR`: durable data directory (default: `./runtime`)
-  Evidence: `src/abstractgateway/config.py` (`GatewayHostConfig.from_env`)
+- `ABSTRACTGATEWAY_DATA_DIR`: durable data directory. When unset: `./runtime`
+  if it already exists in the working directory, else the per-user data folder
+  (macOS `~/Library/Application Support/AbstractGateway`, Linux
+  `$XDG_DATA_HOME/abstractgateway` or `~/.local/share/abstractgateway`,
+  Windows `%LOCALAPPDATA%\AbstractGateway`). `serve --data-dir` sets it for
+  one process. `abstractgateway-config status` prints the folder and why it
+  was chosen.
+  Evidence: `src/abstractgateway/host_paths.py`
 - `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway uses the
   packaged shipped bundle directory, which carries `basic-agent`,
   `coding-agent`, `deep-research`, `co-scientist`, and more
@@ -1375,13 +1552,29 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
 
 ### Authentication and user routing
 
+**Default on loopback.** When no auth setting is present (none of
+`ABSTRACTGATEWAY_AUTH_TOKEN[S]`, `ABSTRACTGATEWAY_USER_AUTH`,
+`ABSTRACTGATEWAY_MULTI_USER`, `ABSTRACTGATEWAY_AUTH_MODE`,
+`ABSTRACTGATEWAY_SECURITY`, `ABSTRACTGATEWAY_PROTECT_WRITE`), `serve` binds
+`127.0.0.1` and enables user auth automatically. A non-loopback bind in that
+state refuses to start. When any auth setting is present, `serve` keeps the
+`0.0.0.0` default bind and your settings apply unchanged.
+
 The normal browser-console/browser-app path uses Gateway user auth:
 
 - `ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_MODE=users`: enable
   file-backed user principals and per-principal runtime routing
 - `abstractgateway serve`: when user auth is enabled, ensures `default/admin`
   exists and writes the first-login token to
-  `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token`
+  `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token` (mode `0600`). The
+  token is printed only with `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1`; until
+  the first-run guide is completed, a one-time sign-in link
+  (`/console#claim=...`, 10 minutes, single use, loopback only) is printed
+  instead
+- `POST /api/gateway/session/claim`: redeems a one-time link code for an admin
+  browser session; accepted only from a loopback peer without proxy headers.
+  `GET /api/gateway/host/first-run` / `POST` (admin) read and record the
+  first-run guide state
 
 Legacy server/operator mode uses a Gateway bearer token:
 
@@ -2112,8 +2305,14 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve --host 127.0.0.1 --port 8080 [--no-runner] [--reload]`
+- `abstractgateway serve [--host H] [--port 8080] [--data-dir DIR] [--no-runner] [--reload]`
+  (`--host` defaults to `127.0.0.1` when no auth is configured, else `0.0.0.0`)
   Evidence: `src/abstractgateway/cli.py`
+- `abstractgateway claim [--open] [--port P | --url URL] [--json]`: one-time
+  console sign-in link ([first-run.md](docs/first-run.md))
+- `abstractgateway service install|uninstall|status [--port P] [--host H] [--data-dir DIR] [--dry-run] [--json]`:
+  start the gateway at login (LaunchAgent, systemd user unit, Windows Startup
+  shortcut; [first-run.md](docs/first-run.md#4-start-the-gateway-at-login-optional))
 - `abstractgateway runner` (worker only)
 - `abstractgateway config status --json`
 - `abstractgateway migrate --from=file --to=sqlite --data-dir <DIR> --db-path <FILE>`
@@ -2122,6 +2321,7 @@ Most-used:
 
 ## Related docs
 
+- First run: [first-run.md](docs/first-run.md)
 - Getting started: [getting-started.md](docs/getting-started.md)
 - FAQ: [faq.md](docs/faq.md)
 - Security configuration: [security.md](docs/security.md)
@@ -2282,7 +2482,22 @@ Related repos:
 - AbstractCore: https://github.com/lpalbou/abstractcore
 - AbstractRuntime: https://github.com/lpalbou/abstractruntime
 
-## Quickstart (HTTP server, bundle mode)
+## Quickstart: your own machine
+
+```bash
+pip install abstractgateway
+abstractgateway serve
+```
+
+On a first run with nothing configured, `serve` binds `127.0.0.1:8080`, turns
+on user auth, creates the admin user, and prints a one-time link
+(`http://127.0.0.1:8080/console#claim=...`). Open it in a browser on the same
+machine: you are signed in as the admin and a short first-run guide helps you
+pick a local engine, a default model and the browser apps. A new link:
+`abstractgateway claim --open`. Start the gateway at login:
+`abstractgateway service install`. See [docs/first-run.md](docs/first-run.md).
+
+## Quickstart (HTTP server, bundle mode, explicit configuration)
 
 ```bash
 pip install abstractgateway
@@ -2658,6 +2873,7 @@ Related repos:
 
 ## Docs map
 
+- First run on your own machine (no configuration, one-time sign-in link, start at login): [first-run.md](docs/first-run.md)
 - Quickstart + stores (file/SQLite): [getting-started.md](docs/getting-started.md)
 - FAQ / troubleshooting: [faq.md](docs/faq.md)
 - Architecture (durable contract + components): [architecture.md](docs/architecture.md)
@@ -2741,6 +2957,20 @@ With the base install and a configured provider stack, Gateway can surface
 run-scoped direct TTS, STT, image generation, image edit, and music generation
 for higher apps through one shared capability contract.
 
+## 0) Fastest start on your own machine
+
+```bash
+abstractgateway serve
+```
+
+With no auth configured, this binds `127.0.0.1:8080`, enables user auth,
+creates `default/admin`, keeps data in your OS's per-user data folder, and
+prints a one-time `First run: open http://127.0.0.1:8080/console#claim=...`
+link that signs you into the console and opens the first-run guide. See
+[first-run.md](docs/first-run.md), including `abstractgateway claim` and
+`abstractgateway service install`. The rest of this guide uses explicit
+configuration.
+
 ## 1) Run (bundle mode, file-backed stores)
 
 File-backed stores are the default and easiest for dev.
@@ -2761,9 +2991,10 @@ abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
 On first local start, Gateway creates `default/admin`, writes the browser-login
-token to `$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token`, and prints it
-in the terminal. Use that token with user `admin` in `/console` and browser
-apps. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
+token to `$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token` (mode `0600`),
+and prints a one-time console sign-in link instead of the token (set
+`ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` to print the token). Use the token
+file with user `admin` for browser apps. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
 bearer-token deployments, but it is not a browser sign-in token.
 
 OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs` (use **Authorize** with a Gateway user token)
@@ -2945,6 +3176,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+- **Zero-configuration first run.** With no auth configured, `abstractgateway serve`
+  binds `127.0.0.1`, enables user auth, creates `default/admin`, and prints a
+  one-time console sign-in link instead of a token. See
+  [docs/first-run.md](docs/first-run.md).
+- **One-time sign-in links:** `abstractgateway claim [--open]` and
+  `abstractgateway-config claim-url [--open]` mint a single-use, 10-minute link
+  (`/console#claim=<code>`); `POST /api/gateway/session/claim` redeems it for an
+  admin browser session from a loopback peer only.
+- **First-run guide in the web console** (host summary, local engines, default
+  model with recommended downloads, apps, CLI equivalents), opened once per
+  data folder and reachable later from the **Setup** button.
+  `GET /api/gateway/host/first-run` and `POST` (admin) hold its state.
+- **`abstractgateway service install|uninstall|status`**: start the gateway at
+  login as a macOS LaunchAgent, a Linux systemd user unit, or (experimental) a
+  Windows Startup shortcut, with `--dry-run`, free-port selection and a
+  persisted port.
+- `serve --data-dir`.
+- `abstractgateway-config status --json` gains `schema`
+  (`gateway_config_status_v1`), `data_dir_source`, `data_dir_reason`,
+  `auth_mode`, `auth`, `service`, `claim_pending`, `claims`, `first_run` and
+  `serve`; `GET /api/gateway/host/state` gains a `gateway` block with the same
+  facts.
+
+### Changed
+- **Default data folder.** When `ABSTRACTGATEWAY_DATA_DIR` is unset, the gateway
+  uses `./runtime` only if it already exists in the working directory, and
+  otherwise the per-user data folder (macOS
+  `~/Library/Application Support/AbstractGateway`, Linux
+  `$XDG_DATA_HOME/abstractgateway`, Windows `%LOCALAPPDATA%\AbstractGateway`).
+  The `triage-reports`, `triage-apply`, `backlog-exec-runner` and `data list`
+  commands use the same default as `serve` (they previously defaulted to
+  `./runtime/gateway`). Set `ABSTRACTGATEWAY_DATA_DIR` to keep any other layout.
+- **`serve --host` default.** `127.0.0.1` when no auth setting is present;
+  `0.0.0.0` (unchanged) when any auth setting is present.
+- **The bootstrap admin token is no longer printed** on loopback starts; it
+  stays in `<data dir>/auth/bootstrap-admin-token`. Set
+  `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` to print it.
+- **Windows:** the runner's singleton lock uses `msvcrt.locking`, so two
+  gateways on one data folder no longer both run workflows.
 
 ## [0.2.30] - 2026-09-23
 
@@ -4403,6 +4675,15 @@ Filesystem/media controls from AbstractCore remain available:
 - `ABSTRACTCORE_SERVER_URL_FETCH_ALLOWLIST`
 - `ABSTRACTCORE_SERVER_MEDIA_ROOT`
 - `ABSTRACTCORE_SERVER_ALLOW_LOCAL_FILES`
+
+## Single machine without Docker
+
+On a desktop or laptop, `abstractgateway service install` registers the
+gateway as a per-user login service (macOS LaunchAgent, Linux systemd user
+unit, Windows Startup shortcut) bound to `127.0.0.1`, with data in the
+per-user data folder. See [first-run.md](docs/first-run.md). Containers and
+servers keep the explicit configuration shown on this page: the image sets
+`--host 0.0.0.0` and needs explicit auth, exactly as before.
 
 ## Cache and auth notes
 

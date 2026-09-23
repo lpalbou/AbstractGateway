@@ -186,6 +186,15 @@ Filesystem/media controls from AbstractCore remain available:
 - `ABSTRACTCORE_SERVER_MEDIA_ROOT`
 - `ABSTRACTCORE_SERVER_ALLOW_LOCAL_FILES`
 
+## Single machine without Docker
+
+On a desktop or laptop, `abstractgateway service install` registers the
+gateway as a per-user login service (macOS LaunchAgent, Linux systemd user
+unit, Windows Startup shortcut) bound to `127.0.0.1`, with data in the
+per-user data folder. See [first-run.md](./first-run.md). Containers and
+servers keep the explicit configuration shown on this page: the image sets
+`--host 0.0.0.0` and needs explicit auth, exactly as before.
+
 ## Cache and auth notes
 
 Gateway auth is controlled by `ABSTRACTGATEWAY_*` variables and protects
