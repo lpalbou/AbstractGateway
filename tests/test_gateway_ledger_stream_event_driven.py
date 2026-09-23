@@ -412,7 +412,24 @@ def test_i2_i5_stream_equals_replay_and_closes_terminal(
         else:
             pytest.fail("run never reached terminal state")
 
+        # SNAPSHOT THE REPLAY ONLY ONCE THE LEDGER HAS SETTLED. A run is saved
+        # terminal BEFORE its final `abstract.status` record is appended
+        # (`Runtime`: save(run) then _append_terminal_status_event — the F6
+        # window the stream route's docstring names), so a status poll can
+        # observe `completed` while one record is still in flight. Taking the
+        # baseline inside that window made THIS fixture, not the stream, the
+        # flaky part: the stream correctly delivered the complete ledger and
+        # the comparison called the extra record an invention. Two identical
+        # reads in a row means the window has closed.
         replay = client.get(f"/api/gateway/runs/{rid}/ledger?limit=2000", headers=headers).json()["items"]
+        settle_deadline = time.time() + 5.0
+        while time.time() < settle_deadline:
+            time.sleep(0.05)
+            again = client.get(f"/api/gateway/runs/{rid}/ledger?limit=2000", headers=headers).json()["items"]
+            if len(again) == len(replay):
+                replay = again
+                break
+            replay = again
         assert replay, "terminal run has an empty ledger"
 
         # I2: stream from 0 delivers exactly the replay, then done (I5).

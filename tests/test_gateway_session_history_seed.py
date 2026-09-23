@@ -175,6 +175,13 @@ def test_seed_skipped_without_session_id(tmp_path: Path) -> None:
     assert "session_history" not in (run.vars.get("_runtime") or {})
 
 
+def _strip_drop_marker(content: str) -> str:
+    """Drop Runtime's leading `[#TRUNCATION: N earlier turn(s) ...]` line."""
+    if content.startswith("[#TRUNCATION:") and "]\n" in content:
+        return content.split("]\n", 1)[1]
+    return content
+
+
 def test_seed_honors_input_message_cap(tmp_path: Path) -> None:
     run = _start(
         tmp_path,
@@ -186,8 +193,10 @@ def test_seed_honors_input_message_cap(tmp_path: Path) -> None:
     )
 
     messages = run.vars["context"]["messages"]
-    # Newest turn only, never split: [user, assistant] of turn-2.
-    assert [m["content"] for m in messages] == ["explain simply", "In short: X."]
+    # Newest turn only, never split: [user, assistant] of turn-2. The replay
+    # labels the cut on the first kept message (Runtime #TRUNCATION marker).
+    assert [_strip_drop_marker(m["content"]) for m in messages] == ["explain simply", "In short: X."]
+    assert messages[0]["content"].startswith("[#TRUNCATION: 1 earlier turn(s)")
     assert run.vars["_runtime"]["session_history"]["max_messages"] == 2
 
 
@@ -196,7 +205,7 @@ def test_seed_honors_env_message_cap(tmp_path: Path, monkeypatch: pytest.MonkeyP
     run = _start(tmp_path, input_data={"prompt": "next", "use_session_history": True})
 
     messages = run.vars["context"]["messages"]
-    assert [m["content"] for m in messages] == ["explain simply", "In short: X."]
+    assert [_strip_drop_marker(m["content"]) for m in messages] == ["explain simply", "In short: X."]
 
 
 def test_seed_zero_cap_disables_replay_but_normalizes_context(tmp_path: Path) -> None:

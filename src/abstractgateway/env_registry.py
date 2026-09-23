@@ -201,6 +201,10 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     _spec("ABSTRACTGATEWAY_AUDIT_LOG_MAX_BYTES", DEPLOYMENT, scope="process"),
     _spec("ABSTRACTGATEWAY_AUDIT_LOG_ROTATIONS", DEPLOYMENT, scope="process"),
     _spec("SHELL", DEPLOYMENT, owner="os", note="host shell (process-manager env plumbing)"),
+    _spec("FORWARDED_ALLOW_IPS", DEPLOYMENT, owner="uvicorn",
+          note="uvicorn's trusted-proxy list; serve warns when it is '*' (peer address spoofable)"),
+    _spec("ABSTRACTGATEWAY_URL", DEPLOYMENT,
+          note="client-side default gateway base URL for `abstractgateway models` (never read by serve)"),
 
     # --- BEHAVIOR: service posture / limits / toggles (settings-registry rows) ---
     _spec("ABSTRACTGATEWAY_TOOL_MODE", BEHAVIOR, console_path="tools.mode",
@@ -272,6 +276,11 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     _spec("ABSTRACTGATEWAY_TICK_MAX_STEPS", BEHAVIOR, console_path="runtime.runner", effective="restart-required"),
     _spec("ABSTRACTGATEWAY_RUN_SCAN_LIMIT", BEHAVIOR, console_path="runtime.runner", effective="restart-required"),
     _spec("ABSTRACTGATEWAY_COMMAND_BATCH_LIMIT", BEHAVIOR, console_path="runtime.runner", effective="restart-required"),
+    # Stop kill switch (stop_kill_switch.py): the runtime-config key
+    # stop_kill_switch_s supersedes it; read at every Stop, so a change
+    # applies to the next one.
+    _spec("ABSTRACTGATEWAY_STOP_KILL_SWITCH_S", BEHAVIOR, console_path="runtime.stop_kill_switch_s",
+          effective="next-request", note="seconds after a cancel before a still-decoding model call is killed in process (never the gateway); 0 disables"),
     # Entity lane.
     _spec("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", BEHAVIOR, console_path="entities.substrate",
           note="operator-env rung of the ruled substrate chain (request > home > env > refusal); console rung replaces THIS rung, never reorders (adversary P0-3)"),

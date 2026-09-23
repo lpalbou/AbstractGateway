@@ -238,16 +238,18 @@ def test_start_run_never_overwrites_a_caller_skills_block(tmp_path: Path, monkey
     assert any("ignored" in v for v in rt["skills_resolution"]["verdicts"])
 
 
-def test_start_run_extends_a_caller_allowlist_with_read_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("allowed_tools", [[], ["read_file"], ["read_file", "read_skill"]])
+def test_start_run_skills_preserve_explicit_tool_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allowed_tools) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_SKILLS_SHELF", str(_write_shelf(tmp_path)))
     host = _host(tmp_path)
     run_id = host.start_run(
         flow_id="root",
         bundle_id="skills-seam",
-        input_data={"skills": ["demo-skill"], "_runtime": {"allowed_tools": ["read_file"]}},
+        input_data={"skills": ["demo-skill"], "_runtime": {"allowed_tools": list(allowed_tools)}},
     )
     rt = host.runtime.get_state(run_id).vars["_runtime"]
-    assert rt["allowed_tools"] == ["read_file", "read_skill"]
+    assert rt["allowed_tools"] == allowed_tools
+    assert "demo-skill" in rt["skills_block"]
 
 
 # ----------------------------------------------- end-to-end (both halves)
@@ -316,7 +318,8 @@ def _agent_bundle_bytes() -> bytes:
     return buf.getvalue()
 
 
-def test_skills_block_reaches_the_agent_node_child_run_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("allowed_tools", [None, [], ["read_file"]])
+def test_skills_block_reaches_the_agent_node_child_run_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allowed_tools) -> None:
     """The 0087 seam, BOTH halves through the real gateway host: gateway
     resolves `input_data.skills` into the root `_runtime.skills_block`
     (c2286 half) and the runtime compiler carries it into the Agent-node
@@ -340,7 +343,10 @@ def test_skills_block_reaches_the_agent_node_child_run_end_to_end(tmp_path: Path
         artifact_store=InMemoryArtifactStore(),
     )
 
-    run_id = host.start_run(flow_id="root", bundle_id="skills-agent", input_data={"skills": ["demo-skill"]})
+    input_data = {"skills": ["demo-skill"]}
+    if allowed_tools is not None:
+        input_data["_runtime"] = {"allowed_tools": list(allowed_tools)}
+    run_id = host.start_run(flow_id="root", bundle_id="skills-agent", input_data=input_data)
     parent_block = host.runtime.get_state(run_id).vars["_runtime"]["skills_block"]
     assert "demo-skill" in parent_block
 
@@ -357,5 +363,8 @@ def test_skills_block_reaches_the_agent_node_child_run_end_to_end(tmp_path: Path
     assert child_rt.get("skills_block") == parent_block, "verbatim ride (prompt-cache contract)"
     tools = child_rt.get("allowed_tools")
     assert isinstance(tools, list)
-    assert "read_skill" in tools, "the executor half must be reachable in the child"
-    assert "read_file" in tools, "existing allowlist intact"
+    if allowed_tools is None:
+        assert "read_skill" in tools, "default scope retains skill discovery"
+        assert "read_file" in tools, "existing allowlist intact"
+    else:
+        assert tools == allowed_tools, "skill helper must not widen an explicit caller ceiling"

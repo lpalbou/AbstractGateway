@@ -133,6 +133,9 @@ def test_detect_install_classifies_editable_docker_pipx_uv_and_pip(tmp_path: Pat
     plain = tmp_path / "venv"
     plain.mkdir()
     monkeypatch.setattr(self_update, "_dist_installed", lambda name: name == "pip")
+    # Hermetic: the suite's own venv may have been populated by uv, which the
+    # INSTALLER record would otherwise report for this "plain pip" case.
+    monkeypatch.setattr(self_update, "_dist_installer", lambda: "pip")
     info = self_update.detect_install(executable="/py", prefix=str(plain), env={})
     assert info.kind == "pip" and info.command == ["/py", "-m", "pip", "install", "--upgrade", "abstractgateway[apple]"]
     assert info.extras == ["apple"] and info.display_command
@@ -240,6 +243,11 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient
 
 
 def test_tray_and_update_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import tray_supervisor
+
+    # Hermetic: a serve test earlier in the session may have recorded a serve
+    # context in this process; this test pins the "not serving" answer.
+    monkeypatch.setattr(tray_supervisor, "_serve_context", {})
     monkeypatch.setattr(self_update, "installed_version", lambda: "0.2.29")
     monkeypatch.setattr(self_update, "_fetch_pypi_latest", lambda timeout_s=5.0: {"ok": True, "offline": False, "latest": "0.2.30"})
     c, h = _client(tmp_path, monkeypatch)

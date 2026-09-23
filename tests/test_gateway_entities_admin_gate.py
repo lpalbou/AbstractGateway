@@ -179,6 +179,9 @@ def test_policy_rows_cover_the_live_mutation_route_table() -> None:
         ("POST", "/api/gateway/entities/{name}/validate"),  # DRY-RUN lint: READ-ONLY (writes nothing), same level as create
         ("POST", "/api/gateway/entities/auth/probe"),
         ("POST", "/api/gateway/entities/{name}/summon"),
+        # The summon queue's step-away (contract §6): the waiter's own button;
+        # the queue_id is the capability, same interaction class as summon.
+        ("POST", "/api/gateway/entities/{name}/queue/{queue_id}/leave"),
         ("POST", "/api/gateway/entities/{name}/chat/open"),
         ("POST", "/api/gateway/entities/{name}/chat/{chat_id}/turn"),
         ("POST", "/api/gateway/entities/{name}/chat/{chat_id}/close"),

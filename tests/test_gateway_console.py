@@ -563,7 +563,8 @@ const context = vm.createContext({{
   Intl: browserIntl,
   navigator: {{ languages: ["fr-FR"], language: "fr-FR" }},
   console,
-  setTimeout,
+  // Browser lifetime polls must not keep this completed Node harness alive.
+  setTimeout: (fn, ms, ...args) => {{ const timer = setTimeout(fn, ms, ...args); timer.unref(); return timer; }},
   clearTimeout,
   encodeURIComponent,
   decodeURIComponent,
@@ -1461,6 +1462,7 @@ function tableLoadingRow() {{}}
 function modelsEmptyRow() {{}}
 async function ensureModalityUi() {{}}
 const rendered = [];
+async function loadGatewayHost() {{}}
 function renderHostState(data) {{ rendered.push(data); }}
 async function confirmAction() {{ return true; }}
 async function api(path, options = {{}}) {{
@@ -1557,6 +1559,7 @@ function tableLoadingRow() {{}}
 function modelsEmptyRow() {{}}
 async function ensureModalityUi() {{}}
 const painted = [];
+async function loadGatewayHost() {{}}
 function renderHostState(data) {{ painted.push(data.marker); }}
 const pending = [];
 async function api() {{ return new Promise((resolve) => pending.push(resolve)); }}

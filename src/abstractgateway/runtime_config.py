@@ -43,6 +43,11 @@ _ENV_WORKSPACE_ROOT = "ABSTRACTGATEWAY_WORKSPACE_DIR"
 _ENV_WORKSPACE_MOUNTS = "ABSTRACTGATEWAY_WORKSPACE_MOUNTS"
 _ENV_ALLOW_CLIENT_WORKSPACE_SCOPE = "ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE"
 _ENV_TRUST_CLIENT_WORKSPACE_SCOPE = "ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE"
+# Stop kill switch (stop_kill_switch.py): seconds a cancelled run's model call
+# may keep running before that inference is killed in process (0 = disabled,
+# logged at ERROR at every Stop). Never a process kill.
+_ENV_STOP_KILL_SWITCH_S = "ABSTRACTGATEWAY_STOP_KILL_SWITCH_S"
+_DEFAULT_STOP_KILL_SWITCH_S = 10.0
 
 _DEFAULT_EXECUTOR = "codex"
 _WORKSPACE_MOUNT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
@@ -729,7 +734,29 @@ def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, A
         "executor": _resolve(stored, "executor", _ENV_EXECUTOR, _DEFAULT_EXECUTOR),
         "executors": executor_registry(),
         "operator_email": operator_email,
+        "stop_kill_switch_s": _stop_kill_switch_seconds_payload(stored),
     }
+
+
+def _parse_kill_switch_seconds(raw: Any) -> float:
+    if isinstance(raw, bool):
+        raise ValueError("a boolean is not a number of seconds")
+    value = float(raw)
+    if value != value or value < 0 or value == float("inf"):
+        raise ValueError("must be a finite number >= 0 (0 disables the kill switch)")
+    return value
+
+
+def _stop_kill_switch_seconds_payload(stored: Dict[str, Any], default: float = _DEFAULT_STOP_KILL_SWITCH_S) -> Dict[str, Any]:
+    """{value, source} for the Stop kill-switch deadline. An UNPARSEABLE env
+    value is not silently replaced: the default applies and `invalid_env`
+    names what was rejected."""
+    resolved = _resolve(stored, "stop_kill_switch_s", _ENV_STOP_KILL_SWITCH_S, default)
+    try:
+        resolved["value"] = _parse_kill_switch_seconds(resolved["value"])
+    except (TypeError, ValueError) as exc:
+        return {"value": float(default), "source": "default", "invalid_" + resolved["source"]: f"{resolved['value']!r}: {exc}"}
+    return resolved
 
 
 def resolve_operator_email(
@@ -959,13 +986,27 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
             stored["operator_email"] = addr
             applied["operator_email"] = addr
 
+    if "stop_kill_switch_s" in changes:
+        raw_s = changes["stop_kill_switch_s"]
+        if raw_s is None or str(raw_s).strip() == "":
+            stored.pop("stop_kill_switch_s", None)  # clear = fall back to env/default
+            applied["stop_kill_switch_s"] = None
+        else:
+            try:
+                seconds = _parse_kill_switch_seconds(raw_s)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeConfigError(f"stop_kill_switch_s {raw_s!r} rejected: {exc}")
+            stored["stop_kill_switch_s"] = seconds
+            applied["stop_kill_switch_s"] = seconds
+
     if not applied:
         raise RuntimeConfigError(
             "no recognized config keys in the request (one of: process_manager, "
             "backlog_exec_runner, triage_repo_root, workspace_root, workspace_mounts, "
             "workspace_allowed_paths, workspace_blocked_paths, "
             "client_workspace_scope_overrides, trust_client_launch_folder, "
-            "workspace_default_mode, user_workspace_policies, executor, operator_email)"
+            "workspace_default_mode, user_workspace_policies, executor, operator_email, "
+            "stop_kill_switch_s)"
         )
 
     stored["_last_changed_by"] = str(actor)
@@ -1010,6 +1051,20 @@ def _write_store(data_dir: Path, stored: Dict[str, Any]) -> None:
 # The surface persists values; these are what the actual knob-readers call so
 # a stored choice is HONORED, not cosmetic. Each mirrors read_runtime_config's
 # precedence for one knob but returns the bare value.
+
+def resolve_stop_kill_switch(data_dir: Path, *, default_deadline_s: float = _DEFAULT_STOP_KILL_SWITCH_S) -> Dict[str, Any]:
+    """{deadline_s, source} for the Stop kill switch (stored > env > default).
+
+    Read at EVERY arm, so a console change applies to the next Stop without a
+    restart. Reads only this module's store — never the rest of the posture."""
+    stored = _read_store(data_dir)
+    seconds = _stop_kill_switch_seconds_payload(stored, default_deadline_s)
+    out = {"deadline_s": float(seconds["value"]), "source": seconds["source"]}
+    for key, value in seconds.items():
+        if key.startswith("invalid_"):
+            out[key] = value
+    return out
+
 
 def resolve_process_manager_enabled(data_dir: Path) -> bool:
     return bool(read_runtime_config(data_dir)["process_manager"]["value"])

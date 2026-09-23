@@ -173,6 +173,16 @@ def test_workflow_catalog_admin_upload_acl_defaults_and_immutability(tmp_path: P
             default_run = client.get(f"/api/gateway/runs/{default_start.json()['run_id']}", headers=alice_headers)
             assert default_run.status_code == 200, default_run.text
             assert "@0.0.2:" in default_run.json()["workflow_id"]
+            restored = client.get(f"/api/gateway/runs/{default_start.json()['run_id']}/input_data", headers=alice_headers)
+            assert restored.status_code == 200, restored.text
+            assert restored.json().get("workflow_selection") == {
+                "registry_scope": "tenant_catalog",
+                "bundle_id": "demo",
+                "bundle_version": "0.0.2",
+                "flow_id": "root",
+            }
+            assert "signature" not in restored.text
+            assert "host_workflow_id" not in restored.text
 
             implicit_catalog_start = client.post(
                 "/api/gateway/runs/start",

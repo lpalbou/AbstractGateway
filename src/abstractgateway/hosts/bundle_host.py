@@ -1648,6 +1648,14 @@ class WorkflowBundleGatewayHost:
                 node_id = str(n.get("id") or "").strip()
                 if not node_id:
                     continue
+                # An event-entry flow already listens in its root run. A
+                # second derived listener would handle the same event twice,
+                # duplicating messages and potentially tool side effects.
+                # Use the compiled entry, including inferred entrypoints;
+                # independent On Event branches still need their own runs.
+                root_spec = specs.get(flow_id)
+                if root_spec is not None and node_id == root_spec.entry_node:
+                    continue
                 listener_wid = _visual_event_listener_workflow_id(flow_id=flow_id, node_id=node_id)
 
                 # Derive a listener workflow with entryNode = on_event node.
@@ -1781,6 +1789,12 @@ class WorkflowBundleGatewayHost:
 
         setter = getattr(client, "set_default_provider_model", None)
         if not callable(setter):
+            capability_setter = getattr(client, "set_capability_defaults", None)
+            if callable(capability_setter):
+                return {
+                    "ok": True, "changed": bool(capability_setter(payload)),
+                    "reason": "capability defaults refreshed; remote model routing remains host-owned",
+                }
             return {"ok": True, "changed": False, "reason": "runtime LLM client does not support live default refresh"}
 
         changed = bool(
@@ -2103,7 +2117,11 @@ class WorkflowBundleGatewayHost:
         if isinstance(vars0.get("task"), str) and str(vars0.get("task") or "").strip():
             return
         ctx = vars0.get("context")
-        if not isinstance(ctx, dict):
+        if ctx is not None and not isinstance(ctx, dict):
+            # A client-owned non-object context is never replaced (the same
+            # rule the session-history seed follows).
+            return
+        if ctx is None:
             ctx = {}
             vars0["context"] = ctx
         if str(ctx.get("task") or "").strip():
@@ -2288,9 +2306,9 @@ class WorkflowBundleGatewayHost:
         # `_runtime.skills_block` (byte-stable per run — the cache
         # contract). Held/blocked ride as labeled verdicts in
         # `_runtime.skills_resolution`, never silently absent, never
-        # trust-bypassed. read_skill joins a caller-supplied allowlist so
-        # the progressive-disclosure tool is reachable; default-allowlist
-        # runs already see it via the logic registry.
+        # trust-bypassed. An explicit caller tool ceiling is never widened
+        # by skills selection; read_skill must be enabled by the caller.
+        # Default-allowlist runs already see it via the logic registry.
         raw_skills = vars0.get("skills")
         if isinstance(raw_skills, list) and any(isinstance(s, str) and s.strip() for s in raw_skills):
             if "skills_block" in rt_ns:
@@ -2316,9 +2334,6 @@ class WorkflowBundleGatewayHost:
                 block = resolution.pop("skills_block", None)
                 if isinstance(block, str) and block.strip():
                     rt_ns["skills_block"] = block
-                    allowed = rt_ns.get("allowed_tools")
-                    if isinstance(allowed, list) and "read_skill" not in allowed:
-                        allowed.append("read_skill")
                 rt_ns["skills_resolution"] = resolution
 
         # Best-effort: seed durable run vars with the gateway runtime defaults so VisualFlow

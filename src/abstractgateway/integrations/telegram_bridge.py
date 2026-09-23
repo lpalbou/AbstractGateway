@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import re
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +37,8 @@ except Exception:  # pragma: no cover
         return None
 from abstractruntime import Runtime
 from abstractruntime.core.models import RunStatus, WaitReason
+
+from ..run_retention import resolve_gateway_run_workspace
 
 
 def _utc_now_iso() -> str:
@@ -2416,13 +2417,14 @@ class TelegramBridge:
         if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages > 0:
             input_data["_limits"] = {"max_history_messages": int(self._cfg.max_history_messages)}
 
-        # Workspace policy: mimic the gateway HTTP API default by creating a per-run workspace.
+        # Workspace policy: mimic the gateway HTTP API default — ONE
+        # gateway-owned workspace per session (a chat is one session until
+        # /reset rotates it), not one per run. A per-run folder moved the
+        # "Default working directory" line at the head of the SYSTEM prompt
+        # on every turn, which cost the whole prompt cache on every message.
         try:
             base = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR") or str(self._cfg.state_path.parent)).expanduser().resolve()
-            ws_base = base / "workspaces"
-            ws_base.mkdir(parents=True, exist_ok=True)
-            ws_dir = ws_base / uuid.uuid4().hex
-            ws_dir.mkdir(parents=True, exist_ok=True)
+            ws_dir, _session_scoped = resolve_gateway_run_workspace(base, session_id=session_id)
             input_data.setdefault("workspace_root", str(ws_dir))
         except Exception:
             pass
@@ -2799,13 +2801,14 @@ class TelegramBridge:
         if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages > 0:
             input_data["_limits"] = {"max_history_messages": int(self._cfg.max_history_messages)}
 
-        # Workspace policy: mimic the gateway HTTP API default by creating a per-run workspace.
+        # Workspace policy: mimic the gateway HTTP API default — ONE
+        # gateway-owned workspace per session (a chat is one session until
+        # /reset rotates it), not one per run. A per-run folder moved the
+        # "Default working directory" line at the head of the SYSTEM prompt
+        # on every turn, which cost the whole prompt cache on every message.
         try:
             base = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR") or str(self._cfg.state_path.parent)).expanduser().resolve()
-            ws_base = base / "workspaces"
-            ws_base.mkdir(parents=True, exist_ok=True)
-            ws_dir = ws_base / uuid.uuid4().hex
-            ws_dir.mkdir(parents=True, exist_ok=True)
+            ws_dir, _session_scoped = resolve_gateway_run_workspace(base, session_id=session_id)
             input_data.setdefault("workspace_root", str(ws_dir))
         except Exception:
             pass

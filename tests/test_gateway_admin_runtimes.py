@@ -97,17 +97,18 @@ def test_console_runtimes_tab_order_and_creation_modals() -> None:
 
     # Runtimes tab order (console-TUI mirror, laurent dm#35): runtimes list
     # -> inspect pane (teaching line until chosen; then Sessions | Data &
-    # cache tabs) -> machine-wide disclosure -> retained (last). No separate
-    # runs section: the chosen runtime's runs ARE the Sessions tab.
+    # cache tabs) -> retained (last). No separate runs section: the chosen
+    # runtime's runs ARE the Sessions tab, and the data homes ride inside the
+    # runtimes list (the standalone data-homes section was folded in).
     order = [
         'id="runtimes-section"',
         'id="runtime-detail-section"',
-        'id="data-homes-section"',
         'id="runtime-reservations-section"',
     ]
     positions = [html.index(n) for n in order]
     assert positions == sorted(positions), "runtimes tab section order broken"
-    assert '<details id="runtime-reservations-section"' in html  # demoted, not deleted
+    # Demoted, not deleted: retained runtimes are a session-only section.
+    assert '<section id="runtime-reservations-section" class="session-only hidden">' in html
 
     # Creation modals exist; the old always-visible inline forms are gone.
     for needle in (

@@ -63,6 +63,7 @@ from ..core_config import (
     clear_gateway_capability_default,
     gateway_capability_defaults_payload,
     gateway_model_availability_payload,
+    normalize_speculation_control,
     runtime_core_config_file,
     save_gateway_capability_default,
     text_route_provider_warnings,
@@ -90,6 +91,7 @@ from ..run_retention import (
     DraftRunPurgeOptions,
     DraftRunPurgeUnsupported,
     purge_ephemeral_draft_runs,
+    resolve_gateway_run_workspace,
     write_gateway_workspace_marker,
 )
 from ..session_history_bloc import assemble_session_history_bloc, parse_created_at_cursor
@@ -131,6 +133,7 @@ from ..workflow_catalog import (
     parse_catalog_internal_bundle_id,
     principal_can_run_catalog_record,
     sign_workflow_policy,
+    verify_workflow_policy_signature,
 )
 from ..workflow_deprecations import WorkflowDeprecatedError
 
@@ -1475,9 +1478,11 @@ def _configured_modality_route_provider(modality: str, *, kind: str = "output") 
     which is their PRIMARY key -- the same call answers them correctly.
     """
     try:
-        from abstractcore.config.capability_defaults import capability_route_keys_for_output
+        from abstractruntime.integrations.abstractcore.output_specs import (
+            capability_default_route_keys_for_spec,
+        )
 
-        exact, broad = capability_route_keys_for_output(modality, None)
+        exact, broad = capability_default_route_keys_for_spec({"modality": modality, "task": None})
     except Exception:
         exact, broad = None, None
     if not exact:
@@ -1781,7 +1786,25 @@ def _optional_package_status(module_name: str, dist_name: Optional[str] = None) 
         return {"installed": False, "error": str(e)}
 
 
-class StartRunRequest(BaseModel):
+class _SpeculationControlRequest(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_speculation(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        if "speculation" in out:
+            out["speculation"] = normalize_speculation_control(out["speculation"])
+        # Validate the run-namespace spelling too, before it reaches durable
+        # input data. A top-level explicit value retains precedence at the fold.
+        inputs = out.get("input_data")
+        runtime = inputs.get("_runtime") if isinstance(inputs, dict) else None
+        if isinstance(runtime, dict) and "speculation" in runtime:
+            out["input_data"] = {**inputs, "_runtime": {**runtime, "speculation": normalize_speculation_control(runtime["speculation"])}}
+        return out
+
+
+class StartRunRequest(_SpeculationControlRequest):
     registry_scope: Optional[str] = Field(
         default=None,
         description="Optional workflow registry scope: private (default when present in caller runtime) or tenant_catalog.",
@@ -1805,6 +1828,10 @@ class StartRunRequest(BaseModel):
     thinking: Optional[Union[bool, str]] = Field(
         default=None,
         description="Optional run-scoped reasoning/thinking control inherited by Flow LLM and Agent nodes when supported.",
+    )
+    speculation: Optional[Union[bool, Dict[str, Any]]] = Field(
+        default=None,
+        description="Optional run-scoped MTP override: false disables, or an object sets mode/num_draft_tokens. Omit to inherit the Core default.",
     )
     run_lifecycle: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -2137,7 +2164,7 @@ def _origin_version(versions: list[Dict[str, str]]) -> Optional[str]:
     return min(versions, key=lambda x: (str(x.get("created_at") or ""), str(x.get("bundle_version") or ""))).get("bundle_version")
 
 
-class ScheduleRunRequest(BaseModel):
+class ScheduleRunRequest(_SpeculationControlRequest):
     registry_scope: Optional[str] = Field(
         default=None,
         description="Optional workflow registry scope: private (default when present in caller runtime) or tenant_catalog.",
@@ -2155,6 +2182,10 @@ class ScheduleRunRequest(BaseModel):
             "Optional run-scoped reasoning/thinking control applied to every scheduled execution "
             "(same semantics as /runs/start: folded into input_data._runtime.thinking)."
         ),
+    )
+    speculation: Optional[Union[bool, Dict[str, Any]]] = Field(
+        default=None,
+        description="Optional MTP override for every scheduled execution; false explicitly disables. Omit to inherit.",
     )
 
     start_at: Optional[str] = Field(
@@ -3057,6 +3088,9 @@ def _extract_entrypoint_inputs_from_visualflow(raw: Any) -> list[Dict[str, Any]]
             continue
         label = str(p.get("label") or pid).strip() or pid
         item: Dict[str, Any] = {"id": pid, "label": label, "type": ptype or "unknown"}
+        # Unspecified start pins resolve to None in the VisualFlow executor;
+        # absence of a default is not a declaration that the caller must fill it.
+        item["required"] = p.get("required") is True
         if isinstance(p.get("schema"), dict):
             item["schema"] = dict(p.get("schema"))
         if pid in pin_defaults:
@@ -3163,12 +3197,12 @@ def _entrypoint_input_schema_from_visualflow(raw: Any) -> Dict[str, Any]:
         if has_default:
             prop["default"] = item.get("default")
             defaults[pid] = item.get("default")
-        else:
+        if item.get("required") is True:
             required.append(pid)
         properties[pid] = prop
 
         pin = dict(item)
-        pin["required"] = not has_default
+        pin["required"] = item.get("required") is True
         pin["schema"] = dict(prop)
         pins.append(pin)
 
@@ -3321,6 +3355,34 @@ def _strip_client_workflow_policy(input_data: Dict[str, Any]) -> Dict[str, Any]:
         runtime_ns.pop("workflow_policy", None)
         input_data["_runtime"] = runtime_ns
     return input_data
+
+
+def _public_run_workflow_selection(*, svc: Any, vars_obj: Dict[str, Any]) -> Dict[str, str]:
+    """Return only the public identity from a gateway-signed workflow policy."""
+
+    runtime_ns = vars_obj.get("_runtime")
+    policy = runtime_ns.get("workflow_policy") if isinstance(runtime_ns, dict) else None
+    if not isinstance(policy, dict):
+        return {}
+    try:
+        valid = verify_workflow_policy_signature(policy, secret=_workflow_policy_secret_for_service(svc))
+    except Exception:
+        valid = False
+    if not valid:
+        return {}
+
+    scope = str(policy.get("registry_scope") or "").strip()
+    bundle_id = str(policy.get("bundle_id") or "").strip()
+    bundle_version = str(policy.get("bundle_version") or "").strip()
+    flow_id = str(policy.get("flow_id") or "").strip()
+    if scope not in {"private", CATALOG_SCOPE_TENANT} or not bundle_id or not flow_id:
+        return {}
+    if scope == CATALOG_SCOPE_TENANT and not bundle_version:
+        return {}
+    out = {"registry_scope": scope, "bundle_id": bundle_id, "flow_id": flow_id}
+    if bundle_version:
+        out["bundle_version"] = bundle_version
+    return out
 
 
 def _private_bundle_loaded(host: Any, bundle_id: str) -> bool:
@@ -7492,6 +7554,8 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         thinking = _normalize_gateway_thinking(req.thinking)
         if thinking is not None:
             _ensure_input_runtime_namespace(input_data)["thinking"] = thinking
+        if req.speculation is not None:
+            _ensure_input_runtime_namespace(input_data)["speculation"] = req.speculation
         if isinstance(req.run_lifecycle, dict):
             input_data["_run_lifecycle"] = dict(req.run_lifecycle)
         normalize_run_lifecycle_vars(input_data)
@@ -7514,15 +7578,30 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             raise HTTPException(status_code=403, detail="Catalog workflows must be started through registry_scope='tenant_catalog'")
 
         # Default workspace_root behavior (cross-client):
-        # - If omitted, create a per-run workspace under the gateway data_dir.
+        # - If omitted AND the run carries a session_id, resolve the ONE
+        #   gateway-owned workspace of that session (first run creates it,
+        #   every later turn finds it) — derived from the session id, so no
+        #   lookup and stable across a gateway restart.
+        # - If omitted and there is no session, keep the historical per-run
+        #   workspace under the gateway data_dir.
         # - Clients may override only within the operator-configured server workspace roots.
+        #
+        # Why session-stable: the workspace path is rendered into the SYSTEM
+        # prompt ("Default working directory: ..."), so a per-run UUID moved
+        # the HEAD of the prompt on every turn of a conversation and killed
+        # every prefix/KV cache hit (measured: cold, cached_tokens 0 on all
+        # 7 turns of a session). It also means turn 2 sees the files turn 1
+        # wrote, for clients that do not echo the first run's workspace back.
         raw_ws = input_data.get("workspace_root")
         gateway_owned_workspace: Optional[Path] = None
+        gateway_workspace_is_session_scoped = False
         if not (isinstance(raw_ws, str) and raw_ws.strip()):
-            base = Path(svc.config.data_dir) / "workspaces"
-            base.mkdir(parents=True, exist_ok=True)
-            ws_dir = base / uuid.uuid4().hex
-            ws_dir.mkdir(parents=True, exist_ok=True)
+            ws_dir, gateway_workspace_is_session_scoped = resolve_gateway_run_workspace(
+                svc.config.data_dir,
+                session_id=session_id,
+                tenant_id=str(getattr(principal, "tenant_id", "") or ""),
+                user_id=str(getattr(principal, "user_id", "") or ""),
+            )
             input_data["workspace_root"] = str(ws_dir)
             gateway_owned_workspace = ws_dir
 
@@ -7547,12 +7626,17 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             session_id=session_id,
         )
         try:
-            svc.runner.nudge()  # first tick at poll cadence despite the scan gate
+            svc.runner.nudge(str(run_id))  # tick this run NOW, not at the next poll
         except Exception:
             pass
         if gateway_owned_workspace is not None:
             try:
-                write_gateway_workspace_marker(gateway_owned_workspace, run_id=str(run_id))
+                write_gateway_workspace_marker(
+                    gateway_owned_workspace,
+                    run_id=str(run_id),
+                    session_id=session_id,
+                    session_scoped=gateway_workspace_is_session_scoped,
+                )
             except Exception as e:
                 logger.warning("Failed to write gateway workspace ownership marker", extra={"error": str(e)})
     except HTTPException:
@@ -7782,6 +7866,8 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
     schedule_thinking = _normalize_gateway_thinking(req.thinking)
     if schedule_thinking is not None:
         _ensure_input_runtime_namespace(input_data)["thinking"] = schedule_thinking
+    if req.speculation is not None:
+        _ensure_input_runtime_namespace(input_data)["speculation"] = req.speculation
     schedule_meta: Dict[str, Any] = {
         "kind": "scheduled_run",
         "target_workflow_id": target_workflow_id,
@@ -7823,6 +7909,8 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
             _wrapper_rt = {}
             wrapper_vars["_runtime"] = _wrapper_rt
         _wrapper_rt.setdefault("thinking", _sched_thinking)
+    if isinstance(_sched_rt, dict) and _sched_rt.get("speculation") is not None:
+        _ensure_input_runtime_namespace(wrapper_vars).setdefault("speculation", _sched_rt["speculation"])
     # Best-effort: lift a common prompt string to the parent run for UX/digest.
     prompt_text = input_data.get("prompt")
     if isinstance(prompt_text, str) and prompt_text.strip():
@@ -8427,6 +8515,12 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     if not isinstance(vars_obj, dict):
         vars_obj = {}
     workspace_defaults = _public_run_workspace_defaults(vars_obj)
+    workflow_selection = _public_run_workflow_selection(svc=svc, vars_obj=vars_obj)
+
+    def _response(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if workflow_selection:
+            payload["workflow_selection"] = dict(workflow_selection)
+        return payload
 
     # Scheduled wrapper runs: expose the target bundle/flow + the target input payload.
     try:
@@ -8458,7 +8552,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                     if pin_ids:
                         allowed = set(pin_ids)
                         filtered = {k: v for k, v in target_vars.items() if isinstance(k, str) and k in allowed}
-                        return {
+                        return _response({
                             "run_id": str(getattr(run, "run_id", run_id)),
                             "workflow_id": str(workflow_id or ""),
                             "bundle_id": bundle_id2,
@@ -8467,12 +8561,12 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                             "pin_ids": pin_ids,
                             "input_data": filtered,
                             "workspace": workspace_defaults,
-                        }
+                        })
                 except Exception:
                     pass
 
                 # Fallback: return the raw target vars.
-                return {
+                return _response({
                     "run_id": str(getattr(run, "run_id", run_id)),
                     "workflow_id": str(workflow_id or ""),
                     "bundle_id": bundle_id2,
@@ -8480,7 +8574,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                     "pin_ids": [],
                     "input_data": target_vars if isinstance(target_vars, dict) else {},
                     "workspace": workspace_defaults,
-                }
+                })
     except Exception:
         pass
 
@@ -8503,7 +8597,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                 allowed = set(pin_ids)
                 filtered = {k: v for k, v in vars_obj.items() if isinstance(k, str) and k in allowed}
                 bid_base, _bid_ver = _split_bundle_ref(str(bundle_id))
-                return {
+                return _response({
                     "run_id": str(getattr(run, "run_id", run_id)),
                     "workflow_id": str(workflow_id or ""),
                     "bundle_id": bid_base,
@@ -8512,14 +8606,14 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                     "pin_ids": pin_ids,
                     "input_data": filtered,
                     "workspace": workspace_defaults,
-                }
+                })
         except Exception:
             # Fall back to generic filtering below.
             pin_ids = []
 
     # Fallback: exclude private namespaces (e.g. _runtime/_temp).
     filtered2 = {k: v for k, v in vars_obj.items() if isinstance(k, str) and not k.startswith("_")}
-    return {
+    return _response({
         "run_id": str(getattr(run, "run_id", run_id)),
         "workflow_id": str(workflow_id or ""),
         "bundle_id": bundle_id,
@@ -8527,7 +8621,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
         "pin_ids": pin_ids,
         "input_data": filtered2,
         "workspace": workspace_defaults,
-    }
+    })
 
 
 @router.post("/runs/{run_id}/workspace/open")
@@ -9300,6 +9394,20 @@ async def get_ledger_batch(req: LedgerBatchRequest) -> Dict[str, Any]:
     return {"runs": await asyncio.to_thread(_collect)}
 
 
+# SSE terminal-detection settle window (mission B2). After a drain that
+# emitted records, the ledger-stream generator re-reads the RUN STATUS on the
+# next progress-less pass instead of waiting for the 0.75s idle tick: the
+# terminal state lives in the run file, so "records stopped" is the only hint
+# the stream gets that a run may have finished. `_SSE_SETTLE_CHECKS` bounds the
+# extra run loads to a handful per record batch (not a poll loop) and covers
+# the window in which a run's terminal save lands just after its last ledger
+# append; `_SSE_SETTLE_POLL_S` is the short fallback wait used only while that
+# window is open (the 0.25s cross-process fallback poll is unchanged outside
+# it).
+_SSE_SETTLE_CHECKS = 3
+_SSE_SETTLE_POLL_S = 0.03
+
+
 def _ledger_news_count(ledger_store: Any, run_id: str) -> int:
     """Record count probe — the store's fast `count()` when it exists, else
     len(list()).
@@ -9354,6 +9462,15 @@ async def stream_ledger(
     H7b loop discipline stands: every store read runs OFF the event loop;
     abandoned clients are detected and stop the generator; terminal runs
     get one final drain then an explicit `done` frame (never a hang).
+
+    Terminal LATENCY (mission B2): the run's terminal state is in the run
+    file, not the ledger, so a drain that emitted records opens a short
+    bounded settle window (`_SSE_SETTLE_CHECKS` status re-reads at
+    `_SSE_SETTLE_POLL_S`) instead of deferring the check to the 0.75s idle
+    tick. `event: done` used to land ~0.26s (up to 0.75s) after the run
+    ended; it now lands within a few ms. Nothing else changes: the same
+    frames, the same final-drain-before-done ordering, the same 0.25s
+    cross-process fallback poll once the window closes.
     """
     from ..ledger_tail import find_observable, resolve_ledger_tail
 
@@ -9409,6 +9526,17 @@ async def stream_ledger(
             last_emit = loop.time()
             last_status_check = last_emit
             terminal = _is_terminal(getattr(run0, "status", None))
+            # SETTLE WINDOW (backlog B2): a run that just emitted records is a
+            # run that may have just FINISHED, and the terminal state lives in
+            # the run file, not in the ledger. Re-checking it only on the 0.75s
+            # idle tick put `event: done` ~0.26s (up to 0.75s) behind the
+            # terminal save — 85% of a chat turn's remaining client-observed
+            # overhead. After a drain that emitted, the next progress-less pass
+            # re-checks the status IMMEDIATELY and keeps a short, BOUNDED
+            # re-check window open so the terminal-save/last-append race is
+            # covered without a sleep. Bounded on purpose: `_SETTLE_CHECKS`
+            # loads per record batch, not a poll loop.
+            settle_checks_left = 0
             while True:
                 if await request.is_disconnected():
                     return
@@ -9437,6 +9565,10 @@ async def stream_ledger(
                         if parts:
                             yield bytes(parts)
                         last_emit = loop.time()
+                        # This batch may be the run's LAST: open the settle
+                        # window so the next progress-less pass re-reads the
+                        # run status instead of waiting for the 0.75s tick.
+                        settle_checks_left = _SSE_SETTLE_CHECKS
                         # More may already be pending past max_records: re-drain
                         # immediately rather than waiting for the next signal.
                         dirty.set()
@@ -9465,8 +9597,14 @@ async def stream_ledger(
                         yield f"data: {payload}\n\n".encode("utf-8")
                         break
 
-                    # Poll run status while idle (best-effort, bounded).
-                    if (now - last_status_check) >= 0.75:
+                    # Poll run status: immediately while the settle window is
+                    # open (this stream just drained records — the run may have
+                    # ended with them), otherwise on the idle tick. Still ONE
+                    # bounded store read per pass, still OFF the event loop.
+                    settling = settle_checks_left > 0
+                    if settling or (now - last_status_check) >= 0.75:
+                        if settling:
+                            settle_checks_left -= 1
                         last_status_check = now
                         try:
                             cur_run = await asyncio.to_thread(rs.load, run_id2)
@@ -9486,8 +9624,14 @@ async def stream_ledger(
                     # Fallback poll: wakeup-driven in-process; cross-process
                     # (split runner) news is caught by the periodic tail read
                     # (a stat() for JSONL / indexed SELECT for SQLite — cheap).
+                    # Inside the settle window the wait is short so the
+                    # terminal-save/last-append race resolves in milliseconds
+                    # rather than at the next 0.25s poll.
                     try:
-                        await asyncio.wait_for(dirty.wait(), timeout=0.25)
+                        await asyncio.wait_for(
+                            dirty.wait(),
+                            timeout=(_SSE_SETTLE_POLL_S if settle_checks_left > 0 else 0.25),
+                        )
                     except asyncio.TimeoutError:
                         dirty.set()  # timed poll: run one tail read
         finally:
@@ -16018,6 +16162,15 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
                     # against is worse than none (adversary cycle-1 D6).
                     "values": ["none", "minimal", "low", "medium", "high", "xhigh"],
                 },
+                "speculation_control": {
+                    "field": "speculation",
+                    "runtime_field": "_runtime.speculation",
+                    "default_authority": "abstractcore.capability_defaults.routes.input.text.options.speculation",
+                    "inherit": "omit",
+                    "off": False,
+                    "depth_field": "num_draft_tokens",
+                    "capabilities_endpoint": _api_gateway_path("/discovery/models/capabilities"),
+                },
             },
             "schedule": {"available": True, "endpoint": _api_gateway_path("/runs/schedule")},
             "summary": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}")},
@@ -17515,8 +17668,11 @@ async def discovery_provider_models(
 
 
 @router.get("/discovery/models/capabilities")
-async def discovery_model_capabilities(model_name: str = Query(..., description="Model id/name (may include provider prefix like 'lmstudio/...')")) -> Dict[str, Any]:
-    """Best-effort model capability lookup for UI context meters and defaults."""
+async def discovery_model_capabilities(
+    model_name: str = Query(..., description="Model id/name (may include provider prefix like 'lmstudio/...')"),
+    provider: Optional[str] = Query(default=None, description="Execution provider; required to distinguish model support from backend availability."),
+) -> Dict[str, Any]:
+    """Model metadata plus execution-host capabilities, without loading weights."""
     name = str(model_name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="model_name is required")
@@ -17532,6 +17688,15 @@ async def discovery_model_capabilities(model_name: str = Query(..., description=
     caps = out.get("capabilities")
     if not isinstance(caps, dict):
         out["capabilities"] = {}
+    execution_probe = getattr(discovery, "get_execution_capabilities", None)
+    if callable(execution_probe):
+        try:
+            execution = await _discovery_to_thread(execution_probe, name, provider=provider)
+            out["execution"] = dict(execution) if isinstance(execution, dict) else {}
+        except Exception as exc:
+            out["execution"] = {"available": False, "error": str(exc)}
+    else:
+        out["execution"] = {"available": False, "error": "Execution capability discovery requires an updated AbstractRuntime/Core host."}
     return out
 
 
@@ -19772,7 +19937,10 @@ async def backlog_exec_config() -> BacklogExecConfigResponse:
         canon = canonical_executor_id(cfg.executor)
         if canon is not None:
             row = next((r for r in executor_registry() if r["id"] == canon), None)
-            if row is not None and row.get("available") is False:
+            # A configured codex binary path (ABSTRACTGATEWAY_BACKLOG_CODEX_BIN)
+            # is probed below; the roster's PATH probe only knows `codex`.
+            configured_codex_bin = canon == "codex" and bool(str(cfg.codex_bin or "").strip())
+            if row is not None and row.get("available") is False and not configured_codex_bin:
                 can_execute = False
     except Exception:
         pass
@@ -23339,7 +23507,7 @@ class _GatewayProviderEndpointProfileModelDiscoveryRequest(BaseModel):
     api_key: Optional[str] = Field(default=None, max_length=65536)
 
 
-class _GatewaySandboxGenerateRequest(BaseModel):
+class _GatewaySandboxGenerateRequest(_SpeculationControlRequest):
     model_config = ConfigDict(extra="forbid")
 
     capability: str = Field(default="output.text", max_length=80)
@@ -23359,6 +23527,7 @@ class _GatewaySandboxGenerateRequest(BaseModel):
     # console posts, `thinking` is the wire name every other door speaks.
     reasoning: Optional[str] = Field(default=None, max_length=40)
     thinking: Optional[str] = Field(default=None, max_length=40)
+    speculation: Optional[Union[bool, Dict[str, Any]]] = Field(default=None)
 
 
 class _GatewaySessionPromptCacheTarget(_GatewayPromptCacheTarget):
@@ -24718,6 +24887,8 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
     reasoning_effort = str(req.reasoning or req.thinking or "").strip()
     if reasoning_effort:
         params["thinking"] = reasoning_effort
+    if req.speculation is not None:
+        params["speculation"] = req.speculation
     trace_metadata: Dict[str, Any] = {
         "user_id": str(principal.user_id or ""),
         "tenant_id": str(principal.tenant_id or "default"),
@@ -24795,6 +24966,9 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
         "response": text,
         "reasoning": reasoning_text,
         "requested_reasoning": reasoning_effort or None,
+        "requested_speculation": req.speculation,
+        "execution": (result.get("metadata") or {}).get("execution") if isinstance(result, dict) else None,
+        "speculation": (result.get("metadata") or {}).get("speculation") if isinstance(result, dict) else None,
         "usage": result.get("usage") if isinstance(result, dict) else None,
         "provider_endpoint_profile": profile_public,
     }

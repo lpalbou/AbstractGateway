@@ -319,8 +319,8 @@ def test_settings_toggle_takes_effect_live(monkeypatch: pytest.MonkeyPatch):
 
 def test_executor_commands_are_the_documented_headless_shapes(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Each agent spawns its REAL headless front door: claude -p (json),
-    cursor-agent -p (text, --force), abstractcode exec (module spawn from
-    THIS interpreter, full-auto). Captured via a stubbed subprocess.run —
+    cursor-agent -p (text, --force), abstractcode exec (the Rust client on
+    PATH, all permissions, ungated). Captured via a stubbed subprocess.run —
     no real agent runs in the suite."""
     import subprocess as _subprocess
 
@@ -349,13 +349,12 @@ def test_executor_commands_are_the_documented_headless_shapes(tmp_path, monkeypa
     assert captured[-1][0] == "cursor-agent" and "--force" in captured[-1]
     assert r2["executor"] == "cursor-agent"
 
-    import sys
-
     ac = ber.AbstractCodeExecutor()
     r3 = ac.execute(prompt="build it", repo_root=tmp_path, run_dir=tmp_path / "r3")
-    assert captured[-1][0] == sys.executable
-    assert captured[-1][1:4] == ["-m", "abstractcode", "exec"]
-    assert "--permission-mode" in captured[-1] and "full-auto" in captured[-1]
+    # AbstractCode is the Rust client on PATH (`cargo install abstractcode`).
+    assert captured[-1][:2] == ["abstractcode", "exec"]
+    assert "--permissions" in captured[-1] and "all" in captured[-1] and "--ungated" in captured[-1]
+    assert captured[-1][-1] == "build it"
     assert r3["executor"] == "abstractcode"
     # One result contract across agents (the queue/UI read one shape).
     for r in (r1, r2, r3):

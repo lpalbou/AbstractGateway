@@ -9,6 +9,7 @@ import time
 import warnings
 import json
 import sys
+import urllib.parse
 import copy
 from pathlib import Path
 from typing import Any
@@ -504,6 +505,32 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         raise SystemExit(int(_startup_failure))
 
 
+def _run_models_command(args: argparse.Namespace) -> int:
+    """`abstractgateway models loaded|load|unload` -> the console's routes. Prints
+    the gateway's JSON answer; exit 0 only when the gateway says it worked."""
+    import json as _json
+
+    from .tray.client import GatewayClient
+
+    token = args.token if args.token is not None else os.environ.get("ABSTRACTGATEWAY_AUTH_TOKEN", "")
+    client = GatewayClient(args.url, token)
+    if args.models_cmd == "loaded":
+        query = {k: v for k, v in (("provider", args.provider), ("model", args.model)) if v}
+        path = "/models/loaded" + (("?" + urllib.parse.urlencode(query)) if query else "")
+        res = client._request("GET", path, timeout=args.timeout_s)
+    else:
+        body = {"provider": args.provider, "model": args.model}
+        if args.models_cmd == "unload" and getattr(args, "force", False):
+            body["force"] = True
+        res = client._request("POST", f"/models/{args.models_cmd}", body=body, timeout=args.timeout_s)
+    print(_json.dumps(res.data if res.data is not None else {"error": res.error, "status": res.status},
+                      indent=2, default=str))
+    worked = res.ok  # GatewayClient: 2xx AND not an in-band {"ok": false}
+    if not worked:
+        print(f"abstractgateway models {args.models_cmd}: {res.detail}", file=sys.stderr)
+    return 0 if worked else 1
+
+
 def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
@@ -604,7 +631,31 @@ def main(argv: list[str] | None = None) -> None:
     data_purge.add_argument("--dry-run", action="store_true", help="Account without deleting")
     data_purge.add_argument("--yes", action="store_true", help="Confirm the real purge (required without --dry-run)")
 
+    # Model residency from a shell (2026-09-23): the SAME routes the web console,
+    # the console TUI and the tray drive (GET /models/loaded, POST /models/load,
+    # POST /models/unload) — list, warm, eject — against a RUNNING gateway.
+    models_cmd = sub.add_parser("models", help="List / load / eject models on a running gateway (console routes)")
+    models_sub = models_cmd.add_subparsers(dest="models_cmd", required=True)
+    for _name, _help in (
+        ("loaded", "What is resident (every local provider the gateway can see)"),
+        ("load", "Load (warm) a provider/model"),
+        ("unload", "Eject a provider/model: in-flight calls on it are cancelled first"),
+    ):
+        _p = models_sub.add_parser(_name, help=_help)
+        _p.add_argument("--url", default=os.environ.get("ABSTRACTGATEWAY_URL") or "http://127.0.0.1:8080",
+                        help="Gateway base URL (default: $ABSTRACTGATEWAY_URL or http://127.0.0.1:8080)")
+        _p.add_argument("--token", default=None, help="Bearer token (default: $ABSTRACTGATEWAY_AUTH_TOKEN)")
+        _p.add_argument("--provider", required=_name != "loaded", default=None)
+        _p.add_argument("--model", required=_name != "loaded", default=None)
+        _p.add_argument("--timeout-s", type=float, default={"loaded": 60.0, "load": 1800.0, "unload": 600.0}[_name],
+                        help="HTTP timeout for this call (explicit; a model load can take minutes)")
+        if _name == "unload":
+            _p.add_argument("--force", action="store_true", help="Unload even a locked model")
+
     args = parser.parse_args(argv)
+
+    if args.cmd == "models":
+        raise SystemExit(_run_models_command(args))
 
     if args.cmd == "entity":
         from .entity_cli import run_entity_command

@@ -215,6 +215,9 @@ runtime/
 # bundle version, update the pin in pyproject.toml AND the negation here.
 flows/bundles/*
 !flows/bundles/basic-agent.flow
+# Repo/dev layout twin of basic-agent.flow; abstractflow's bundle sync audit
+# (scripts/build_basic_agent_bundle.py) checks both. Not in the wheel.
+!flows/bundles/basic-agent@0.0.5.flow
 !flows/bundles/abstractassistant-orchestrator@0.0.0.flow
 !flows/bundles/docs-qa@0.1.0.flow
 !flows/bundles/react-agent@0.1.0.flow

@@ -1864,6 +1864,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <option value="high">high</option>
 	                  <option value="xhigh">xhigh</option>
 	                </select></label>
+	                <label id="sandbox-speculation-label" class="sandbox-system-compact" title="Per-request MTP override. Inherit uses the Core default; explicit depths require a compatible loaded backend.">MTP<select id="sandbox-speculation">
+	                  <option value="">inherit</option><option value="off">off</option>
+	                  <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
+	                </select></label>
 	              </div>
 	              <div id="sandbox-dropzone" class="sandbox-dropzone">
 	                <button id="sandbox-attach" class="secondary icon-only sandbox-composer-icon" title="Attach files" aria-label="Attach files"><span class="button-icon" aria-hidden="true">＋</span></button>
@@ -2243,7 +2247,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label title="Point this ONE route at a specific server — a local inference server on a non-default port, say. Blank inherits the provider's own base URL.">Base URL <span class="subtle">(optional)</span>
 	            <input id="modal-default-base-url" type="text" autocomplete="off" spellcheck="false"
 	                   placeholder="inherit from the provider — e.g. http://localhost:1234/v1"></label>
-	          <label title="Raw provider options for this route, as a JSON object. The voice picker above writes into this same dict.">Options <span class="subtle">(JSON, optional)</span>
+	          <label id="modal-default-speculation-label" class="hidden" title="Core-owned default policy. Explicit request overrides win; unsupported backends do not enable MTP merely because a default is saved.">MTP<select id="modal-default-speculation">
+	            <option value="">inherit (no override)</option><option value="off">off</option>
+	            <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
+	          </select><span id="modal-default-speculation-status" class="subtle"></span></label>
+	          <label title="Other provider options for this route, as a JSON object. Voice and MTP have dedicated controls; their owned keys are kept separately and preserved.">Options <span class="subtle">(JSON, optional)</span>
 	            <textarea id="modal-default-options" rows="3" autocomplete="off" spellcheck="false"
 	                      placeholder='{"temperature": 0.7}'></textarea></label>
 	          <div id="default-modal-message" class="message"></div>
@@ -7077,6 +7085,71 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function defaultReasoningValue(row) {
 	      return textValue((row || {}).reasoning);
 	    }
+	    function speculationChoice(value) {
+	      if (value == null) return "";
+	      if (value === false || value?.mode === "off") return "off";
+	      if (value && typeof value === "object" && [2, 3, 4, 5].includes(value.num_draft_tokens)) return String(value.num_draft_tokens);
+	      return "custom";
+	    }
+	    function speculationFromChoice(choice, stored, strict = false) {
+	      if (!choice) return undefined;
+	      if (choice === "off") return false;
+	      if (choice === "custom") return stored;
+	      return { ...(stored && typeof stored === "object" ? stored : {}), mode: "native_mtp", num_draft_tokens: Number(choice), require_acceleration: strict };
+	    }
+	    function speculationSummary(result) {
+	      const value = result?.speculation;
+	      if (!value) return "MTP execution not reported";
+	      if (value.used === true) return `MTP used${value.num_draft_tokens ? ` (depth ${value.num_draft_tokens})` : ""}`;
+	      return `MTP not used${value.reason ? `: ${value.reason}` : ""}`;
+	    }
+	    function loadDefaultSpeculation(row) {
+	      const label = $("modal-default-speculation-label");
+	      const select = $("modal-default-speculation");
+	      label.classList.toggle("hidden", !isTextGenerationDefault(row));
+	      const choice = speculationChoice(row?.options?.speculation);
+	      select.querySelector?.('option[value="custom"]')?.remove();
+	      if (choice === "custom") {
+	        const option = document.createElement("option"); option.value = "custom"; option.textContent = "custom (preserve configured value)"; select.append(option);
+	      }
+	      select.value = choice;
+	      $("modal-default-speculation-status").textContent = "Configured policy; checking execution support…";
+	    }
+	    async function refreshDefaultSpeculationSupport() {
+	      const row = state.activeDefaultRow;
+	      if (!row || !isTextGenerationDefault(row)) return;
+	      const provider = activeDefaultProvider(), model = activeDefaultModel();
+	      const status = $("modal-default-speculation-status");
+	      if (!provider || !model) { status.textContent = "Choose a provider and model to check MTP support."; return; }
+	      try {
+	        const result = await api(`/api/gateway/discovery/models/capabilities?model_name=${encodeURIComponent(model)}&provider=${encodeURIComponent(provider)}`);
+	        if (state.activeDefaultRow !== row || provider !== activeDefaultProvider() || model !== activeDefaultModel()) return;
+	        const caps = result.execution?.speculation;
+	        status.textContent = caps ? (caps.ready === true ? "MTP ready; the request reports actual execution." : (caps.reason || (caps.supported ? "Compatible backend; loading/reloading may be required." : "MTP is unavailable for this backend/model."))) : "Execution support unknown; saving a default does not enable MTP.";
+	      } catch (err) {
+	        if (state.activeDefaultRow === row) status.textContent = `Execution support unavailable: ${err.message || err}`;
+	      }
+	    }
+	    async function refreshSandboxSpeculationSupport(row) {
+	      const select = $("sandbox-speculation");
+	      const target = `${row?.provider || ""}/${row?.model || ""}`;
+	      if (state.sandboxSpeculationTarget !== target) select.value = "";
+	      state.sandboxSpeculationTarget = target;
+	      const label = $("sandbox-speculation-label");
+	      for (const option of select.options) if (/^[2-5]$/.test(option.value)) option.disabled = true;
+	      label.title = "Checking this execution host's MTP support. Off and inherit remain available.";
+	      if (!row?.provider || !row?.model) return;
+	      try {
+	        const result = await api(`/api/gateway/discovery/models/capabilities?model_name=${encodeURIComponent(row.model)}&provider=${encodeURIComponent(row.provider)}`);
+	        if (state.sandboxSpeculationTarget !== target) return;
+	        const caps = result.execution?.speculation;
+	        const depths = caps?.supported === true && Array.isArray(caps.supported_depths) ? caps.supported_depths.map(String) : [];
+	        for (const option of select.options) if (/^[2-5]$/.test(option.value)) option.disabled = !depths.includes(option.value);
+	        label.title = caps?.reason || (caps?.ready === true ? "MTP ready. An explicit depth requires MTP execution; inherit uses the Core default." : "MTP support is unavailable or requires model loading; inspect model capabilities before overriding.");
+	      } catch (err) {
+	        if (state.sandboxSpeculationTarget === target) label.title = `MTP support unknown: ${err.message || err}`;
+	      }
+	    }
 	    function loadDefaultReasoning(row) {
 	      const label = $("modal-default-reasoning-label");
 	      const select = $("modal-default-reasoning");
@@ -9967,6 +10040,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("sandbox-provider-label").classList.add("hidden");
 	      $("sandbox-model-label").classList.add("hidden");
 	      $("sandbox-system-label").classList.toggle("hidden", mode !== "text");
+	      $("sandbox-speculation-label").classList.toggle("hidden", mode !== "text");
+	      if (mode === "text") refreshSandboxSpeculationSupport(row);
 	      const configured = defaultRowConfigured(row);
 	      const prov = row.provider ? (state.providerLabels.get(row.provider) || row.provider) : "";
 	      $("sandbox-context").textContent = configured
@@ -10229,7 +10304,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        details.append(summary, pre);
 	        message.body.parentNode?.insertBefore(details, message.body);
 	      }
-	      const metaLine = sandboxUsageLabel(usage, elapsedMs) || meta;
+	      const metaLine = [sandboxUsageLabel(usage, elapsedMs), meta].filter(Boolean).join(" · ");
 	      if (metaLine && message.meta?.children?.[1]) message.meta.children[1].textContent = metaLine;
 	      if (speakable && content && sandboxVoiceDefaultRow()) {
 	        const speak = document.createElement("button");
@@ -10465,11 +10540,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          };
 	          const reasoningChoice = ($("sandbox-reasoning")?.value || "").trim();
 	          if (reasoningChoice) payload.reasoning = reasoningChoice;
+	          const mtpChoice = $("sandbox-speculation").value;
+	          if (mtpChoice) payload.speculation = speculationFromChoice(mtpChoice, undefined, true);
 	          pendingMessage = appendSandboxMessage(`${state.providerLabels.get(provider) || provider} / ${model}`, "Thinking...", { pending: true, pendingLabel: "Generating answer", kind: "assistant" });
 	          const res = await api("/api/gateway/sandbox/generate", { slow: true, method: "POST", body: JSON.stringify(payload) });
 	          const text = res.response || "(empty response)";
 	          state.sandboxMessages.push({ role: "user", content: promptText }, { role: "assistant", content: text });
-	          finalizeSandboxMessage(pendingMessage, { content: text, usage: res.usage, elapsedMs: Date.now() - started, speakable: true, reasoning: res.reasoning || "" });
+	          finalizeSandboxMessage(pendingMessage, { content: text, usage: res.usage, elapsedMs: Date.now() - started, speakable: true, reasoning: res.reasoning || "", meta: speculationSummary(res) });
 	        } else {
 	          const runId = sandboxRunId();
 	          let endpoint = "";
@@ -10563,6 +10640,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // invite the two controls to disagree in front of the operator.
 	      let shownOptions = storedOptions ? { ...storedOptions } : null;
 	      if (shownOptions && isVoiceOutputDefault(row)) { delete shownOptions.voice; delete shownOptions.profile; }
+	      if (shownOptions && isTextGenerationDefault(row)) delete shownOptions.speculation;
 	      $("modal-default-options").value = shownOptions && Object.keys(shownOptions).length
 	        ? JSON.stringify(shownOptions, null, 2)
 	        : "";
@@ -10579,6 +10657,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        base_url: $("modal-default-base-url").value,
 	        options: $("modal-default-options").value,
 	        voice: defaultVoiceValue(row),
+	        speculation: speculationChoice(row?.options?.speculation),
 	      };
 	      $("test-default").classList.toggle("hidden", !defaultRowTestable(row));
 	      $("default-modal-backdrop").classList.remove("hidden");
@@ -10614,6 +10693,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("default-modal-message").className = "message error";
 	      }
 	      loadDefaultReasoning(row);
+	      loadDefaultSpeculation(row);
 	      // Each loader owns its own terminal state, message and free-text lane
 	      // (see loadDefaultModels). All this sequencing still has to guarantee
 	      // is that a failed MODEL load does not SKIP the voice load, or the
@@ -10623,6 +10703,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // failure erased a perfectly good discovered model list, and the bare
 	      // error string overwrote the loader's "type the model id" guidance.
 	      await loadDefaultModels(activeDefaultProvider(), row.model || "", row).catch(() => {});
+	      refreshDefaultSpeculationSupport();
 	      await loadDefaultVoices(activeDefaultProvider(), activeDefaultModel(), defaultVoiceValue(row), row).catch(() => {});
 	      if (defaultModalMoved(row)) return;
 	      $("clear-default").classList.toggle("hidden", !defaultRowConfigured(row));
@@ -10645,6 +10726,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      } catch { /* terminal state + modal message already set by the loader */ }
 	      await loadDefaultVoices(activeDefaultProvider(), activeDefaultModel(), "", row)
 	        .catch(() => { /* ditto */ });
+	      refreshDefaultSpeculationSupport();
 	    }
     async function refresh() {
       let me;
@@ -10918,6 +11000,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          target.append(line);
 	          renderSandboxArtifact(target, { runId, ref: res.audio_artifact, mode: "audio", label: "Test audio" });
 	        } else {
+	          const probe = { capability: key, provider, model, prompt: "Reply with the single word: ready." };
+	          const choice = $("modal-default-speculation").value;
+	          if (choice) probe.speculation = speculationFromChoice(choice, row?.options?.speculation, true);
+	          const reasoning = $("modal-default-reasoning").value;
+	          if (reasoning) probe.reasoning = reasoning;
 	          const res = await api("/api/gateway/sandbox/generate", {
 	            slow: true,
 	            method: "POST",
@@ -10926,13 +11013,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            // reasoning tokens, so a healthy capability reported "(empty
 	            // response)" — a cap manufacturing a false failure on the very
 	            // screen an operator uses to decide whether a model works.
-	            body: JSON.stringify({ capability: key, provider, model, prompt: "Reply with the single word: ready." }),
+	            body: JSON.stringify(probe),
 	          });
 	          const sec = ((Date.now() - started) / 1000).toFixed(1);
 	          target.textContent = "";
 	          const line = document.createElement("div");
 	          line.className = "message ok";
-	          line.textContent = `Responded in ${sec}s with ${provider}/${model}: ${String(res.response || "").slice(0, 120) || "(empty response)"}`;
+	          line.textContent = `Responded in ${sec}s with ${provider}/${model}: ${String(res.response || "").slice(0, 120) || "(empty response)"} · ${speculationSummary(res)}`;
 	          target.append(line);
 	        }
 	      } catch (err) {
@@ -11013,6 +11100,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            // dict dirty even when the JSON box was never touched.
 	            if (voice !== String(prefill.voice || "")) optionsEdited = true;
 	          }
+	        }
+	        if (isTextGenerationDefault(row)) {
+	          if (Object.prototype.hasOwnProperty.call(options, "speculation")) throw new Error("Use the MTP selector for speculation; the options box edits the remaining provider settings.");
+	          const choice = $("modal-default-speculation").value;
+	          const changed = choice !== String(prefill.speculation || "");
+	          const value = changed ? speculationFromChoice(choice, row?.options?.speculation) : row?.options?.speculation;
+	          delete options.speculation;
+	          if (value !== undefined && value !== null) options.speculation = value;
+	          if (changed) optionsEdited = true;
 	        }
 	        if (optionsEdited) body.options = options;
 	        // Slow lane: see apply-recommended. A 60s abort on a PUT is
@@ -11301,6 +11397,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("modal-default-provider-custom").onchange = reloadDefaultModalCatalogs;
 	    $("modal-default-model").onchange = () => {
 	      clearDefaultTest();
+	      refreshDefaultSpeculationSupport();
 	      return loadDefaultVoices(
 	        activeDefaultProvider(),
 	        activeDefaultModel(),
@@ -11311,6 +11408,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // The typed model is a model choice too, so the voice catalog follows it.
 	    $("modal-default-model-custom").onchange = $("modal-default-model").onchange;
 	    $("modal-default-voice").onchange = () => clearDefaultTest();
+	    $("modal-default-speculation").onchange = () => clearDefaultTest();
 	    $("save-default").onclick = saveDefault;
 	    $("test-default").onclick = testDefault;
 	    $("clear-default").onclick = () => clearDefault();

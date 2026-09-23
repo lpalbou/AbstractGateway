@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
 import re
 import shutil
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,7 +19,11 @@ from .service import is_draft_run_lifecycle, run_summary
 TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled"}
 DEFAULT_DRAFT_RUN_TTL_S = 7 * 24 * 60 * 60
 GATEWAY_WORKSPACE_MARKER = ".abstractgateway-workspace.json"
+RUN_WORKSPACE_KIND = "run_workspace"
+SESSION_WORKSPACE_KIND = "session_workspace"
+SESSION_WORKSPACE_PREFIX = "session-"
 _HEX_WORKSPACE_RE = re.compile(r"^[a-fA-F0-9]{32}$")
+_SESSION_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class DraftRunPurgeUnsupported(RuntimeError):
@@ -48,20 +54,112 @@ def default_draft_run_ttl_s() -> int:
     return DEFAULT_DRAFT_RUN_TTL_S
 
 
-def write_gateway_workspace_marker(workspace: Path, *, run_id: str) -> None:
+def session_workspace_dirname(
+    session_id: Any,
+    *,
+    tenant_id: Any = "",
+    user_id: Any = "",
+) -> Optional[str]:
+    """Deterministic folder name for a session's gateway-owned workspace.
+
+    `None` when there is no session id — the caller then falls back to the
+    historical per-run `uuid4().hex` folder.
+
+    The name is derived, never looked up: the same session resolves to the
+    same folder after a gateway restart, from any process (HTTP route, chat
+    bridge), with no store read on the run-start hot path. The digest covers
+    tenant + user so two principals sharing one data dir (single-user mode
+    with several accounts) can never land in the same folder even when a
+    client reuses a session id; the readable slug is cosmetic.
+
+    The `session-` prefix is load-bearing for retention: it keeps the folder
+    out of `_HEX_WORKSPACE_RE`, the markerless per-run shape the draft purge
+    deletes (see `_gateway_owned_workspace_path`).
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return None
+    key = "\x1f".join([str(tenant_id or ""), str(user_id or ""), sid])
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+    slug = _SESSION_SLUG_RE.sub("-", sid).strip("-._")[:40].strip("-._")
+    if not slug:
+        return f"{SESSION_WORKSPACE_PREFIX}{digest}"
+    return f"{SESSION_WORKSPACE_PREFIX}{slug}-{digest}"
+
+
+def resolve_gateway_run_workspace(
+    data_dir: Any,
+    *,
+    session_id: Any = None,
+    tenant_id: Any = "",
+    user_id: Any = "",
+) -> tuple[Path, bool]:
+    """The gateway-owned folder a run works in when the client named none.
+
+    Returns `(path, session_scoped)`; the directory exists on return.
+
+    Session-stable by default (2026-09-22). A per-run `workspaces/<uuid4>`
+    is rendered into the SYSTEM prompt as the run's default working
+    directory, so in a conversation — where every turn is a new run — the
+    HEAD of the prompt changed on every turn and no prefix/KV cache could
+    restore anything (Mission A measured `cold`, `cached_tokens: 0` on all
+    7 turns of a session). Clients that read the first run's workspace back
+    and echo it (abstractcode web, abstractassistant) papered over this;
+    clients that do not (the Telegram bridge, thin HTTP callers) paid full
+    prefill every turn. Deriving the folder from the session id fixes it for
+    every client at once, and is also what multi-turn file work wants: turn
+    2 sees the files turn 1 wrote.
+    """
+    base = Path(data_dir).expanduser() / "workspaces"
+    base.mkdir(parents=True, exist_ok=True)
+    name = session_workspace_dirname(session_id, tenant_id=tenant_id, user_id=user_id)
+    session_scoped = name is not None
+    if not name:
+        name = uuid.uuid4().hex
+    ws_dir = base / name
+    ws_dir.mkdir(parents=True, exist_ok=True)
+    return ws_dir, session_scoped
+
+
+def write_gateway_workspace_marker(
+    workspace: Path,
+    *,
+    run_id: str,
+    session_id: Any = None,
+    session_scoped: bool = False,
+) -> None:
+    """Stamp gateway ownership on a minted workspace.
+
+    A session-scoped folder is stamped ONCE (the first run of the session)
+    and records `first_run_id`, never `run_id`: the marker's `run_id` is what
+    the draft purge matches a folder to a run tree by, and a shared folder
+    must not die with the run that happened to create it.
+    """
     rid = str(run_id or "").strip()
     if not rid:
         return
     path = Path(workspace)
     if not path.exists() or not path.is_dir():
         return
-    marker = {
-        "owner": "abstractgateway",
-        "kind": "run_workspace",
-        "run_id": rid,
-        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-    }
     marker_path = path / GATEWAY_WORKSPACE_MARKER
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if session_scoped:
+        if marker_path.exists():
+            return
+        marker: Dict[str, Any] = {
+            "owner": "abstractgateway",
+            "kind": SESSION_WORKSPACE_KIND,
+            "session_id": str(session_id or "").strip(),
+            "first_run_id": rid,
+            "created_at": now,
+        }
+    else:
+        marker = {
+            "owner": "abstractgateway",
+            "kind": RUN_WORKSPACE_KIND,
+            "run_id": rid,
+            "created_at": now,
+        }
     marker_path.write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -432,6 +530,12 @@ def _gateway_owned_workspace_path(
     if resolved == base:
         return None
 
+    # A session-scoped workspace is shared by every run of the conversation:
+    # purging one draft run of it must never delete the folder the next turn
+    # (and every other turn already recorded) works in.
+    if resolved.name.startswith(SESSION_WORKSPACE_PREFIX):
+        return None
+
     marker_path = resolved / GATEWAY_WORKSPACE_MARKER
     if marker_path.exists():
         try:
@@ -439,6 +543,8 @@ def _gateway_owned_workspace_path(
         except Exception:
             return None
         if not isinstance(marker, dict) or marker.get("owner") != "abstractgateway":
+            return None
+        if marker.get("kind") == SESSION_WORKSPACE_KIND:
             return None
         marker_run_id = str(marker.get("run_id") or "").strip()
         if marker_run_id and marker_run_id in run_tree_ids:

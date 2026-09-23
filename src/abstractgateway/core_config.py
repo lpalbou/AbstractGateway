@@ -105,6 +105,11 @@ TEXT_ROUTE_KEYS: Tuple[str, ...] = (TEXT_ROUTE_KEY, TEXT_ROUTE_STORAGE_KEY)
 _ROUTE_FIELDS: Tuple[str, ...] = ("provider", "model", "base_url", "reasoning")
 
 
+def normalize_speculation_control(value: Any) -> Any:
+    """Validate request controls through Core, retaining explicit Off and partial depth overrides."""
+    return config_facade.normalize_speculation_control(value)
+
+
 def gateway_capability_defaults_payload(*, base_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Return execution-host capability defaults through the Gateway control plane.
 

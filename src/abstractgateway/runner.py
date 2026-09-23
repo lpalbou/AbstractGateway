@@ -149,6 +149,15 @@ class GatewayRunnerConfig:
     poller_reap_min_age_s: float = 3600.0
     poller_reap_interval_s: float = 300.0
 
+    # STOP KILL SWITCH (stop_kill_switch.py, incident 2026-09-22): seconds a
+    # cancelled run's model call may keep decoding after the cancel command
+    # was applied before that INFERENCE is killed in process (never the
+    # gateway: operator rule 2026-09-23). This is the
+    # DEFAULT rung only: the runtime-config key `stop_kill_switch_s` (console)
+    # and env ABSTRACTGATEWAY_STOP_KILL_SWITCH_S supersede it, re-read at every
+    # Stop. 0 disables the switch (logged at every arm, never silent).
+    stop_kill_switch_s: float = 10.0
+
 
 def file_store_fingerprint(base_dir: Path) -> tuple:
     """Cheap change fingerprint over a JsonFileRunStore directory.
@@ -259,6 +268,19 @@ class GatewayRunner:
         )
 
         self._stop = threading.Event()
+        # WAKE (chat-turn overhead, 2026-09-22): the loop's between-pass sleep
+        # is an Event wait, not a blind `_stop.wait(poll_interval)`, so an
+        # IN-PROCESS event that makes a run runnable is served immediately
+        # instead of sleeping out the rest of the tick. poll_interval_s stays
+        # the UPPER bound (the multi-process/standby case still polls), and a
+        # burst of wakes coalesces into ONE pass because an Event is a single
+        # flag, not a queue. Idle behaviour is unchanged: nothing sets it.
+        self._wake = threading.Event()
+        # Runs an in-process event just made runnable, to be ticked WITHOUT a
+        # store scan (a scan is O(store): ~0.2s on the operator's 9.3k-run
+        # dir). Guarded by _inflight_lock.
+        self._direct_tick_ids: set = set()
+        self._ledger_unsubscribe: Optional[Any] = None
         self._thread: Optional[threading.Thread] = None
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(self._cfg.tick_workers or 1)))
         # COMMAND LANE (backlog 0152, framework c4988 wedge claim c4998): a
@@ -283,6 +305,22 @@ class GatewayRunner:
         # health surface sees the pool starving before it is fully dead.
         self._inflight: Dict[str, float] = {}
         self._inflight_lock = threading.Lock()
+
+        # Stop kill switch (stop_kill_switch.py): armed by every applied cancel
+        # command; fires only when a model call of the cancelled tree is still
+        # executing `stop_kill_switch_s` later. Settings are resolved at each
+        # arm (runtime config > env > GatewayRunnerConfig default).
+        from .stop_kill_switch import StopKillSwitch, resolve_settings as _resolve_kill_switch_settings
+        from .users import gateway_data_dir_from_env as _gateway_data_dir
+
+        self._kill_switch_data_dir = Path(_gateway_data_dir())
+        self._kill_switch = StopKillSwitch(
+            run_store=lambda: self.run_store,
+            ledger_store=lambda: self.ledger_store,
+            settings=lambda: _resolve_kill_switch_settings(
+                self._kill_switch_data_dir, default_deadline_s=float(self._cfg.stop_kill_switch_s)
+            ),
+        )
 
         # Idle-poller reaper state (observability surfaced in runner_status).
         self._last_reap_at = 0.0
@@ -356,12 +394,25 @@ class GatewayRunner:
     def command_store(self) -> CommandStore:
         return self._command_store
 
-    def nudge(self) -> None:
+    def nudge(self, run_id: Optional[str] = None) -> None:
         """Tell the runner something changed (a run started/resumed through
-        the HTTP surface): the next poll runs the scheduling pass without
-        waiting for a fingerprint probe. Keeps interactive run-start latency
-        at poll_interval_s under the scan gate. Safe from any thread."""
+        the HTTP surface): the next pass runs WITHOUT waiting out the poll
+        interval or a fingerprint probe. Safe from any thread.
+
+        `run_id` (optional) names the run that just became runnable, so it is
+        ticked directly instead of being found by a full store scan. The
+        forced scan is kept as the belt — it is what a nudge has always meant
+        — so a caller that passes a stale/foreign id loses nothing.
+        """
+        if isinstance(run_id, str) and run_id.strip():
+            with self._inflight_lock:
+                # Bounded: a pathological producer (or a long host pause) must
+                # not grow this without limit. Overflow degrades to the scan,
+                # which is exactly the pre-change behaviour.
+                if len(self._direct_tick_ids) < 10000:
+                    self._direct_tick_ids.add(run_id.strip())
         self._scan_force = True
+        self._wake.set()
 
     @property
     def run_store(self) -> Any:
@@ -405,7 +456,168 @@ class GatewayRunner:
         # promptly — the scan gate would otherwise wait for a fingerprint
         # probe or a deadline before noticing the runs it skipped.
         host_control.add_resume_listener(self.nudge)
+        self._subscribe_ledger()
+        self._report_stop_kill_switch_posture()
         logger.info("GatewayRunner worker started (base_dir=%s)", self._base_dir)
+
+    # ---------------------------------------------------------------------
+    # In-process wake seam (chat-turn overhead, 2026-09-22)
+    # ---------------------------------------------------------------------
+
+    def _report_stop_kill_switch_posture(self) -> None:
+        """Boot line for the Stop kill switch's effective setting (a disabled
+        switch is reported at ERROR: the default console is ERROR-only)."""
+        try:
+            settings = self._kill_switch._settings() or {}
+            enabled = float(settings.get("deadline_s") or 0) > 0
+            (logger.info if enabled else logger.error)(
+                "stop kill switch: %s (stop_kill_switch_s=%s, source=%s; kills the inference in process, never the gateway)",
+                "ENABLED" if enabled else "DISABLED", settings.get("deadline_s"), settings.get("source"),
+            )
+        except Exception:
+            logger.exception("GatewayRunner: stop kill switch posture report failed")
+
+    def _subscribe_ledger(self) -> None:
+        """Subscribe to this process's ledger appends — the ONE general seam.
+
+        Every run-state transition the runtime makes in this process appends a
+        StepRecord, so a ledger append is the process-wide "something may be
+        runnable now" signal: a `start_subworkflow` creating a child run, a
+        child reaching a terminal state (the parent's `subworkflow:` wait
+        becomes resolvable), an `emit_event` resuming an `on_event` waiter, a
+        node finishing. Before this, each of those waited for the next
+        poll+gate (~0.25-0.75s) and a no-tool chat turn paid it six times.
+
+        This does NOT replace the scan gate: it only wakes the loop (and, for
+        the one case a record names precisely, hands it a run id to tick
+        directly). Cross-process writers still arrive through the fingerprint
+        probe exactly as before — an in-process listener cannot see them, and
+        nothing here assumes it can.
+        """
+        subscribe = getattr(self.ledger_store, "subscribe", None)
+        if not callable(subscribe):
+            # Non-observable ledger (a plain JsonlLedgerStore in a test or an
+            # older wiring): the loop keeps its poll cadence. Visible, not
+            # silent — a lost wake seam is a latency regression, not a bug.
+            logger.info("GatewayRunner: ledger store is not observable; runner wakes on the poll interval only")
+            return
+        try:
+            self._ledger_unsubscribe = subscribe(self._on_ledger_record)
+        except Exception:
+            self._ledger_unsubscribe = None
+            logger.warning("GatewayRunner: ledger subscribe failed; falling back to poll-interval wakes", exc_info=True)
+
+    def _unsubscribe_ledger(self) -> None:
+        unsub, self._ledger_unsubscribe = self._ledger_unsubscribe, None
+        if callable(unsub):
+            try:
+                unsub()
+            except Exception:
+                logger.debug("GatewayRunner: ledger unsubscribe failed", exc_info=True)
+
+    def _on_ledger_record(self, record: Any) -> None:
+        """Wake the loop for an in-process run-state transition.
+
+        Runs on the TICK thread that appended the record, so it must be cheap
+        and must never raise into the runtime's durability path: it sets one
+        Event and (at most) adds one string to a set.
+        """
+        try:
+            if isinstance(record, dict):
+                result = record.get("result")
+                wait = result.get("wait") if isinstance(result, dict) else None
+                if isinstance(wait, dict):
+                    sub_id = None
+                    details = wait.get("details")
+                    if isinstance(details, dict) and isinstance(details.get("sub_run_id"), str):
+                        sub_id = details["sub_run_id"]
+                    else:
+                        key = wait.get("wait_key")
+                        if isinstance(key, str) and key.startswith("subworkflow:"):
+                            sub_id = key.split(":", 1)[1]
+                    if isinstance(sub_id, str) and sub_id.strip():
+                        # The child run was created and saved (RUNNING) before
+                        # this record was appended: tick it now, no scan.
+                        with self._inflight_lock:
+                            if len(self._direct_tick_ids) < 10000:
+                                self._direct_tick_ids.add(sub_id.strip())
+                    until = wait.get("until")
+                    if isinstance(until, str) and until.strip():
+                        # A wait_until deadline changes no bytes on disk, so
+                        # the fingerprint alone would sleep through it. Pull
+                        # the loop's next wake forward to the deadline; the
+                        # scan pass (_note_next_due) remains authoritative.
+                        epoch = _epoch_from_iso(until)
+                        if epoch is not None:
+                            current = self._next_due_epoch
+                            if current is None or epoch < float(current):
+                                self._next_due_epoch = epoch
+        except Exception:
+            logger.debug("GatewayRunner: ledger wake parse failed (waking anyway)", exc_info=True)
+        self._wake.set()
+
+    def _queue_direct_tick(self, run_id: Any) -> None:
+        rid = str(run_id or "").strip()
+        if not rid:
+            return
+        with self._inflight_lock:
+            if len(self._direct_tick_ids) < 10000:
+                self._direct_tick_ids.add(rid)
+        self._wake.set()
+
+    def _drain_direct_ticks(self) -> None:
+        """Tick the runs an in-process event named, without a store scan.
+
+        Runs on EVERY loop iteration (the scan gate governs the expensive
+        full-store pass, not this): each id costs one cached `load()`. Every
+        id is load-verified + gateway-owned + RUNNING-gated, so a stale or
+        foreign id is a no-op — never a false resolution failure.
+        """
+        if host_control.is_paused():
+            # Leave the ids queued: resume() nudges every runner, and the
+            # pause contract is "no tick is scheduled while paused".
+            return
+        with self._inflight_lock:
+            ids = list(self._direct_tick_ids)
+            self._direct_tick_ids.clear()
+        if not ids:
+            return
+        load = getattr(self.run_store, "load", None)
+        if not callable(load):
+            return
+        for rid in ids:
+            try:
+                run = load(rid)
+            except Exception:
+                run = None
+            if run is None or getattr(run, "actor_id", None) != "gateway":
+                continue
+            if getattr(run, "status", None) != RunStatus.RUNNING:
+                # WAITING/terminal runs are the scan's business (a due
+                # wait_until arrives through list_due_wait_until).
+                continue
+            self._submit_tick(rid)
+
+    def _wake_timeout(self) -> float:
+        """How long the loop may sleep: poll_interval_s, shortened when a wait
+        deadline falls inside it.
+
+        A PAST-due deadline deliberately does NOT shorten the wait — otherwise
+        a waiting run nobody can tick (foreign actor, unresolvable workflow)
+        would spin the loop at 100% CPU, which is the failure class the scan
+        gate exists to prevent."""
+        base = float(self._cfg.poll_interval_s or 0.25)
+        if base <= 0:
+            base = 0.25
+        due = self._next_due_epoch
+        if due is not None:
+            try:
+                remaining = float(due) - time.time()
+            except Exception:
+                remaining = base
+            if 0.0 < remaining < base:
+                base = remaining
+        return max(0.005, base)
 
     def stop(self, timeout_s: float = 5.0, *, drain_timeout_s: float = 30.0) -> None:
         with self._state_lock:
@@ -414,6 +626,8 @@ class GatewayRunner:
             # from a crashed thread).
             self._stopped_deliberately = True
         self._stop.set()
+        self._wake.set()  # the loop sleeps on _wake; stop must not wait it out
+        self._unsubscribe_ledger()
         if self._thread is not None:
             self._thread.join(timeout=timeout_s)
         self._thread = None
@@ -994,6 +1208,12 @@ class GatewayRunner:
             self._loop_running = True
         try:
             cursor = int(self._cursor_store.load() or 0)
+            # The command inbox keeps its OWN cadence (poll_interval_s). The
+            # loop now iterates more often than that (an in-process wake), and
+            # JsonlCommandStore.list_after re-reads the whole inbox file
+            # (~600KB on the operator's box) — polling it per wake would trade
+            # latency for I/O. Commands are rare and never in the chat path.
+            last_command_poll = 0.0
             while not self._stop.is_set():
                 # Heartbeat: prove to other processes that this holder is alive
                 # AND polling (a wedged holder stops heartbeating and readers
@@ -1011,13 +1231,27 @@ class GatewayRunner:
                     logger.debug("GatewayRunner: pause-file reload failed", exc_info=True)
                 if self._takeover_yield_requested():
                     return True
+                now_mono = time.monotonic()
+                if (now_mono - last_command_poll) >= float(self._cfg.poll_interval_s or 0.25):
+                    last_command_poll = now_mono
+                    try:
+                        cursor = self._poll_commands(cursor)
+                    except Exception as e:
+                        logger.exception("GatewayRunner command poll error: %s", e)
                 try:
-                    cursor = self._poll_commands(cursor)
+                    # Cheap, ungated: the runs an in-process event just made
+                    # runnable. One cached load each — never a store scan.
+                    self._drain_direct_ticks()
                 except Exception as e:
-                    logger.exception("GatewayRunner command poll error: %s", e)
+                    logger.exception("GatewayRunner direct-tick drain error: %s", e)
                 try:
                     if self._scan_pass_due():
                         self._schedule_ticks()
+                        # A scan of a large store takes ~0.2s; an event that
+                        # landed DURING it would otherwise wait for the next
+                        # iteration. Draining again costs a lock and an empty
+                        # set check when nothing arrived.
+                        self._drain_direct_ticks()
                 except Exception as e:
                     logger.exception("GatewayRunner tick scheduling error: %s", e)
                 # Idle-poller reap sweep — slow cadence, exception-guarded,
@@ -1029,7 +1263,12 @@ class GatewayRunner:
                     self._reap_idle_pollers()
                 except Exception as e:
                     logger.exception("GatewayRunner idle-poller reap error: %s", e)
-                self._stop.wait(timeout=float(self._cfg.poll_interval_s or 0.25))
+                # Sleep until the next wake OR the poll interval, whichever
+                # comes first. A burst of wakes during this wait sets one flag
+                # and therefore costs exactly one extra pass (coalescing);
+                # with nothing happening, this is the old blind sleep.
+                self._wake.wait(timeout=self._wake_timeout())
+                self._wake.clear()
             return False
         finally:
             with self._state_lock:
@@ -1275,11 +1514,22 @@ class GatewayRunner:
                     continue
                 self._submit_tick(rid, priority=True)
 
+        # DRAIN BETWEEN THE WALKS (mission B2). Each store query below is a
+        # full directory walk — ~57ms each at 9,326 run files, ~0.18s for the
+        # pass — and this method runs on the LOOP thread, the same thread that
+        # serves the direct-tick queue. An in-process event landing mid-pass
+        # therefore waited for the WHOLE pass before its run was submitted,
+        # which is most of a chat turn's remaining scheduling latency at
+        # operator store size. Draining between the walks bounds that wait by
+        # ONE walk instead of the pass. It costs an empty set check when
+        # nothing arrived, and it cannot reorder anything: every path still
+        # goes through _submit_tick's in-flight dedup.
         list_runs = getattr(self.run_store, "list_runs", None)
         if callable(list_runs):
             runs = list_runs(status=RunStatus.RUNNING, limit=int(self._cfg.run_scan_limit))
         else:
             runs = []
+        self._drain_direct_ticks()
 
         list_due = getattr(self.run_store, "list_due_wait_until", None)
         if callable(list_due):
@@ -1289,6 +1539,7 @@ class GatewayRunner:
                 due = []
         else:
             due = []
+        self._drain_direct_ticks()
 
         def _is_gateway_owned(run: Any) -> bool:
             return bool(getattr(run, "actor_id", None) == "gateway")
@@ -1312,6 +1563,7 @@ class GatewayRunner:
                 waiting_all = list(list_runs(status=RunStatus.WAITING, limit=int(self._cfg.run_scan_limit)) or [])
             except Exception:
                 waiting_all = []
+        self._drain_direct_ticks()
         self._note_next_due(waiting_all)
 
         # Best-effort recovery: if we restart after a child run reaches a terminal state,
@@ -1398,6 +1650,7 @@ class GatewayRunner:
                     payload=payload,
                     max_steps=0,
                 )
+                self._queue_direct_tick(getattr(r, "run_id", None))
             except Exception:
                 # Best-effort recovery only; avoid blocking the runner loop on a single bad tree.
                 continue
@@ -1417,11 +1670,42 @@ class GatewayRunner:
         def _done(_f: Any) -> None:
             with self._inflight_lock:
                 self._inflight.pop(run_id, None)
-            # A finished tick usually changed run state; force the next pass
-            # so continuing runs reschedule promptly AND a tick that crashed
-            # BEFORE saving (no file change for the fingerprint to see) still
-            # gets its retry — the pre-gate 0.25s rescan was that retry loop.
-            self._scan_force = True
+            # A finished tick usually changed run state. The two things this
+            # has to guarantee are (a) a run still RUNNING after its tick is
+            # re-ticked NOW and (b) a tick that crashed BEFORE saving (no file
+            # change for the fingerprint to see) still gets its retry.
+            #
+            # Both are the SAME run, so re-queue THAT run for a direct tick
+            # instead of forcing a whole-store scan pass. The direct drain
+            # load-verifies, gateway-owns-gates and RUNNING-gates the id, so a
+            # run that finished or parked is a no-op. Runs made runnable by
+            # OTHER runs keep arriving through the ledger seam (every state
+            # change appends a record) and, as the backstop, through the
+            # fingerprint gate — any run-file write moves the fingerprint, so
+            # a scan still follows within scan_gate_idle_interval_s.
+            #
+            # WHY (mission B2): forcing the scan here ran a full pass after
+            # EVERY tick — four whole-directory walks, ~0.18s at 9,326 run
+            # files — on the LOOP thread, so the next hop's wake could not be
+            # served until the pass finished. That was 0.88s of a no-tool chat
+            # turn at operator store size, and it is pure scheduling latency.
+            #
+            # EXCEPTION — an unresolvable workflow. That tick appends nothing
+            # and saves nothing, so neither the ledger seam nor the
+            # fingerprint would ever wake it again: it needs the forced pass
+            # to keep retrying (and to reach the FAILED promotion at
+            # workflow_resolution_failure_limit). It gets the old behaviour,
+            # and deliberately NOT a direct re-queue, which would turn a
+            # ~poll-cadence retry into a tight loop.
+            with self._resolution_failures_lock:
+                unresolvable = run_id in self._resolution_failures
+            if unresolvable:
+                self._scan_force = True
+            else:
+                self._queue_direct_tick(run_id)
+            # ...and do not sleep out the rest of the poll interval first: a
+            # run that is still RUNNING after its tick is runnable NOW.
+            self._wake.set()
 
         executor = self._command_executor if priority else self._executor
         fut = executor.submit(self._tick_run, run_id)
@@ -1744,7 +2028,20 @@ class GatewayRunner:
                 # Otherwise, interpret resume as "resume paused run".
                 runtime.resume_run(rid)
             else:
-                runtime.cancel_run(rid, reason=reason_str or "Cancelled")
+                # `cancelled_by="command"`: the runtime signals every effect of
+                # this run that is executing NOW (core.effect_cancellation) —
+                # the model call stops within one token instead of decoding on.
+                runtime.cancel_run(rid, reason=reason_str or "Cancelled", cancelled_by="command")
+
+        if typ == "cancel":
+            # Backstop (stop_kill_switch.py): if a model call of this tree is
+            # still executing `stop_kill_switch_s` after this point, that
+            # inference is killed in process (only its thread), with a
+            # ledger/log/UI attribution. The gateway keeps serving throughout.
+            try:
+                self._kill_switch.arm(root_run_id=run_id, run_ids=list(targets))
+            except Exception:
+                logger.exception("GatewayRunner: arming the stop kill switch for %s failed", run_id)
 
         # UX affordance for scheduled runs: resuming a paused schedule should trigger the next
         # WAIT_UNTIL immediately so the schedule "wakes up" right away.
@@ -1820,7 +2117,21 @@ class GatewayRunner:
             return {"resumed": 0, "appended": 0}
 
         resumed = 0
-        waiting_runs = list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.EVENT, limit=10_000)
+        # The command lane's own copy of emit_event's listener lookup. Prefer
+        # the store's O(waiters) index (EventWaiterQueryableRunStore, mission
+        # B2) over the whole-store scan — 62ms per call at 9,326 run files —
+        # and keep the scan as the fallback for stores without it. Every
+        # per-run filter below is unchanged, including the exact wait_key
+        # check, so this narrows WHERE candidates come from and nothing else.
+        waiting_runs: Any
+        lookup = getattr(self.run_store, "list_event_waiters", None)
+        if callable(lookup):
+            try:
+                waiting_runs = lookup(wait_keys=[wait_key], limit=10_000)
+            except (NotImplementedError, AttributeError, TypeError):
+                waiting_runs = list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.EVENT, limit=10_000)
+        else:
+            waiting_runs = list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.EVENT, limit=10_000)
         for r in waiting_runs or []:
             if getattr(r, "waiting", None) is None:
                 continue
@@ -2159,11 +2470,48 @@ class GatewayRunner:
                     run_id,
                 )
 
-    def _resume_subworkflow_parents(self, *, child_run_id: str, child_output: Dict[str, Any]) -> None:
+    def _waiting_parents_for_child(self, child_run_id: str) -> Any:
+        """Candidate parents waiting on `child_run_id`.
+
+        FAST PATH: the child's own `parent_run_id`. `start_subworkflow` always
+        records the caller as the child's parent and the wait key is
+        `subworkflow:<child_run_id>` (unique per child), so when that parent
+        is WAITING on exactly this child it is the ONLY possible waiter and
+        the scan below buys nothing. On the operator's 9.3k-run file store the
+        scan it replaces costs ~60ms of full-directory work per subflow hop,
+        paid three times per chat turn.
+
+        Any mismatch (no parent id, parent gone, parent waiting on something
+        else) falls back to the unchanged WAITING scan — the fast path can
+        only skip work, never change who gets resumed.
+        """
+        try:
+            child = self.run_store.load(child_run_id)
+        except Exception:
+            child = None
+        parent_id = str(getattr(child, "parent_run_id", "") or "").strip() if child is not None else ""
+        if parent_id:
+            try:
+                parent = self.run_store.load(parent_id)
+            except Exception:
+                parent = None
+            if parent is not None and getattr(parent, "status", None) == RunStatus.WAITING:
+                wait = getattr(parent, "waiting", None)
+                details = getattr(wait, "details", None) if wait is not None else None
+                if (
+                    wait is not None
+                    and getattr(wait, "reason", None) == WaitReason.SUBWORKFLOW
+                    and isinstance(details, dict)
+                    and details.get("sub_run_id") == child_run_id
+                ):
+                    return [parent]
         list_runs = getattr(self.run_store, "list_runs", None)
         if not callable(list_runs):
-            return
-        waiting = list_runs(status=RunStatus.WAITING, limit=2000)
+            return []
+        return list_runs(status=RunStatus.WAITING, limit=2000)
+
+    def _resume_subworkflow_parents(self, *, child_run_id: str, child_output: Dict[str, Any]) -> None:
+        waiting = self._waiting_parents_for_child(child_run_id)
         for r in waiting or []:
             wait = getattr(r, "waiting", None)
             if wait is None or getattr(wait, "reason", None) != WaitReason.SUBWORKFLOW:
@@ -2197,6 +2545,11 @@ class GatewayRunner:
                 payload=payload,
                 max_steps=0,
             )
+            # resume(max_steps=0) only clears the wait: the parent is RUNNING
+            # on its resume_to_node and needs a TICK to execute it. That tick
+            # used to wait for the next scan pass (~0.25-0.75s per subflow
+            # hop, three hops per chat turn).
+            self._queue_direct_tick(getattr(r, "run_id", None))
 
     # ---------------------------------------------------------------------
     # Scheduled workflow commands
