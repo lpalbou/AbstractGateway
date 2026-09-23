@@ -40,6 +40,69 @@ user auth enabled, the first-login token is written to
   and session prompt caches.
 - **Entities:** summoned-entity roster and management (see
   [entities.md](./entities.md)).
+- **Models:** browse models that fit this machine, download them, and delete
+  the ones you no longer need (details below).
+- **Engines:** the local engines on the gateway host (Ollama, LM Studio, MLX,
+  llama.cpp, vLLM, Hugging Face): installed or not, running or not, and a
+  one-click install (details below).
+
+### Models and Engines tabs
+
+These two tabs are AbstractCore's own Models and Engines screens, embedded in
+the gateway console. The same screens appear in `abstractcore serve`'s console
+and, as terminal screens, in both terminal consoles, so they look and behave the
+same everywhere. Everything they show and do happens **on the gateway host**:
+the machine that runs `abstractgateway serve`, not the computer your browser
+runs on.
+
+**Models** (tab id `catalog`; the older **Resources** tab keeps id `models`):
+
+- A line describing this machine (accelerator, memory the models can use, free
+  disk).
+- The catalog: model families with one row per downloadable artifact (engine,
+  quantization, download size), whether its weights are already here
+  (`installed`, `not downloaded`, `unknown`, `remote`), and a fit verdict
+  (`fits`, `tight`, `too large`, `partial offload`, `unknown`). **Fits this
+  machine** is on by default. Search, filter by engine or modality, or tick
+  **Search Hugging Face** to include hub results (slower).
+- The models already installed, per engine, with their size and location.
+- Actions: **Download** and **Delete** (with a confirmation that names the
+  model and any blocker, such as a model that is loaded right now). Downloads
+  and deletes run as jobs with progress; you can cancel them.
+
+**Engines** (tab id `engines`):
+
+- One row per engine: supported on this host, installed, version, running,
+  reachable, base URL and model count.
+- **Install** opens a confirmation that shows the exact command it will run
+  and the host it runs on, with a **Preview (dry run)** button that asks the
+  gateway what it would run without running it.
+  **Open download page** links to the vendor page (LM Studio is installed from
+  its download page).
+
+Keys (when the tab is visible and you are not typing in a field): `/` search,
+`f` fits-only on/off, `r` refresh; on a focused row `w` download, `d` delete,
+`i` install, `o` open the download page, `c` cancel the row's job.
+
+Who can do what:
+
+- Every signed-in user can browse both tabs.
+- Download, Delete, Install and Cancel are for **admins** only; the buttons are
+  disabled for other users, and the gateway refuses those calls from them.
+- Installing an engine also needs the gateway setting
+  [`allow_engine_install`](./configuration.md#allow_engine_install). It lives in
+  the runtime configuration and is on by default only when the gateway listens
+  on this machine only (`127.0.0.1`); a gateway reachable from the network
+  refuses installs until an admin turns it on. A dry run (**Preview**) is
+  always allowed.
+- Every action is recorded in the gateway's audit log, and each job card shows
+  the equivalent command, for example
+  `abstractgateway models download ollama qwen3:8b`.
+
+If the gateway's AbstractCore is older than 2.14.0, both tabs show a card saying
+so, with the version installed and the upgrade command
+(`pip install -U "abstractcore>=2.14.0"`); the rest of the console works as
+before.
 
 ## Terminal console (`abstractgateway-console`)
 

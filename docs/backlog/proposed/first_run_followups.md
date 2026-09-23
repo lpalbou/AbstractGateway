@@ -16,11 +16,9 @@ data folder, Windows runner lock).
 2. **Other `fcntl` users on Windows.** `entity_tasks.py`, `tool_grants.py` and
    `entity_replay.py` still import `fcntl` directly; only the runner singleton
    lock got the `msvcrt` branch.
-3. **Engines step.** The wizard calls `GET /api/gateway/engines` and shows a
-   download-links card while it 404s. When abstractcore ships
-   `engines_status_v1` (CONTRACTS.md §B) and the gateway mirror exists, mount the
-   AbstractCore web fragment into `#first-run-engines-body` (and the Models
-   fragment into `#first-run-model-body`).
+3. ~~**Engines step.**~~ Done in WS4b (branch `feat/inherit-core`): the gateway
+   mirrors `/engines`, `/models/*`, `/jobs/*` and the wizard mounts the
+   AbstractCore Engines and Models screens (see `models_engines_followups.md`).
 4. **App sign-in without copying a token.** The npx apps still need a Gateway user
    token. A per-app claim/device flow would remove the last copy/paste step.
 5. **`abstractgateway-config init`** still defaults `--data-dir ./runtime/gateway`

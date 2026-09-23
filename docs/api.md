@@ -881,6 +881,64 @@ installed and the configured backend can be resolved. A fresh persistent store
 does not need to exist yet; empty-store structured queries return an empty
 result rather than making Flow authoring nodes unavailable.
 
+## Models and engines
+
+The gateway serves AbstractCore's models and engines payloads unchanged
+(AbstractCore 2.14.0 or newer), under `/api/gateway`. The bodies and payloads
+are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
+`abstractgateway` render them with the same screens.
+
+| Method and path | Access | Body / query | Returns |
+|---|---|---|---|
+| `GET /host/profile` | user | `refresh=1` | `host_profile_v1` |
+| `GET /engines` | user | `probe=1` | `engines_status_v1` plus `install_allowed` and `install_policy` |
+| `GET /engines/{id}` | user | `probe=1` | one engine row plus `install_allowed`; 404 for an unknown id |
+| `POST /engines/{id}/install` | admin | `{"dry_run": bool, "force": bool}` | `host_job_v1` (kind `engine_install`) |
+| `GET /models/catalog` | user | `q`, `engine`, `fits=1`, `hub=1`, `tag` (repeatable) | `model_catalog_v1` |
+| `GET /models/installed` | user | `provider` | `models_installed_v1` |
+| `POST /models/download` | admin | `{"provider", "artifact", "dry_run", "expected_bytes"?}` or `{"recommended": true}` | `{"ok": true, "job": {...}}` |
+| `GET /models/download/{job}` | user | | `{"ok": true, "job": {...}}` |
+| `POST /models/delete` | admin | `{"provider", "artifact", "dry_run": bool, "force": bool}` | `host_job_v1` (kind `delete`) |
+| `GET /jobs` | user | `kind`, `status` | `{"schema": "host_jobs_v1", "jobs": [...], "generated_at"}`, newest first |
+| `GET /jobs/{id}` | user | | `host_job_v1`; 404 when unknown |
+| `POST /jobs/{id}/cancel` | admin | none (an empty `{}` is accepted) | `host_job_v1`; 404 when unknown |
+
+Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
+`hub` accept `1`/`0` and `true`/`false`.
+
+**Jobs.** A `host_job_v1` has `schema`, `job_id`, `kind`
+(`download | delete | engine_install`), `status`
+(`queued | running | completed | failed | cancelled`), `provider`, `artifact`,
+`engine`, `percent`, `downloaded_bytes`, `total_bytes`, `message`, `log_tail`,
+`command` (the exact argv), `dry_run`, `started_at`, `finished_at`, `error`
+(a string or `null`), `joined`, `result` and `cli_equivalent`, which names the
+`abstractgateway` command that does the same thing. A dry run finishes before
+the POST returns. On the older `/models/download` lane the job also carries
+`job` (the id), `events`, `host_status`, reports `queued` as `running`, and
+counts `joined` including the first request.
+
+**Refusals** share one body:
+`{"ok": false, "status", "reason"?, "message", "detail", "error": {"message", "type"}, ...}`.
+
+| Status | When |
+|---|---|
+| 400 `invalid` | provider or artifact missing |
+| 403 `refused` / `not_allowed` | a real engine install while `allow_engine_install` is off ([configuration.md](./configuration.md#allow_engine_install)); `install_policy` says why |
+| 403 | the caller is not an admin (every POST above) |
+| 404 `not_found` | unknown job id, engine id, or a model that is not installed |
+| 409 `busy` | an engine install is already running (`job` is the running one) |
+| 409 `refused` | the engine is not supported here or has no install command (`install` is the plan), or a delete is blocked (`delete_blockers`: `loaded`, `shared_cache:…`, `unknown_location`, `engine_not_running`, `remote_engine`; `force: true` overrides the first two) |
+| 501 `unsupported` / `abstractcore_too_old` | the installed AbstractCore predates 2.14.0; `required`, `installed` and `missing` name what to upgrade |
+| 503 `unavailable` | AbstractCore is not installed |
+
+Example:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "$GW/api/gateway/models/catalog?q=qwen3&fits=1" | jq '.rows[0].artifacts[0].fit'
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"dry_run": true}' "$GW/api/gateway/engines/ollama/install" | jq '.command, .cli_equivalent'
+```
+
 ## Host state and model residency
 
 Gateway exposes a host-level view of the execution machine — memory, GPU,

@@ -368,15 +368,68 @@ row's `model`.
 the running job instead of starting a second copy of the provider's tool; the
 returned job's `joined` counter says so.
 
-**Jobs live in the Gateway process.** A restart forgets them, and a job id
-polled across a restart returns 404. That is not a lost download — the provider
-tool owns the bytes. Re-read `/api/gateway/models/availability` to learn whether
-the weights landed.
+**Jobs run in AbstractCore's host job registry.** Downloads, deletes and
+engine installs are jobs of one kind (`host_job_v1`), readable at
+`GET /api/gateway/jobs/{id}` as well as through the older
+`GET /api/gateway/models/download/{job}` (which keeps its `{ok, job}` envelope
+and reports a queued job as `running`). AbstractCore keeps a snapshot of each
+job on disk, so jobs started by `abstractcore models download` on the same
+machine appear too. A job the gateway no longer knows returns 404; that is not
+a lost download — the provider tool owns the bytes. Re-read
+`/api/gateway/models/availability` to learn whether the weights landed.
 
 **A default whose weights are missing does not stop the Gateway.** The host
 loads, bundles register, and the failure surfaces when a run actually needs that
 model — naming the capability route that configured the pair, how to change it,
 and how to download it.
+
+### Models and engines
+
+The **Models** and **Engines** tabs of the web console, the terminal console
+and the `abstractgateway models …` / `abstractgateway engines …` commands show
+the same things AbstractCore shows (`abstractcore models …`, `abstractcore
+engines …`): the host's hardware, the local inference engines, a model catalog
+with a "fits this machine" verdict per download, the models already installed,
+and the jobs that download, delete or install. The gateway does not detect
+engines or size models itself; it serves AbstractCore's answers
+(AbstractCore 2.14.0 or newer), so both entry points always agree.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/gateway/host/profile` | This host: OS, accelerator, RAM/VRAM, how much memory a model may use, free disk per model store. |
+| `GET /api/gateway/engines?probe=1` | Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face: supported here, installed, version, running, and the exact install command. `install_allowed` says whether installs are enabled on this gateway. |
+| `POST /api/gateway/engines/{id}/install` | `{"dry_run": true}` shows the command; `{"dry_run": false}` runs it on the gateway host as a job. Admin only, and only when `allow_engine_install` is on. |
+| `GET /api/gateway/models/catalog?q=&engine=&fits=1&hub=1` | Downloadable models with presence and a fit verdict (`fits`, `tight`, `too_large`, `partial_offload`, `unknown`). |
+| `GET /api/gateway/models/installed?provider=` | Every installed model per engine, with sizes and what would block a delete. |
+| `POST /api/gateway/models/download` | Download one model as a job (see [Model weights](#model-weights)). Admin only. |
+| `POST /api/gateway/models/delete` | `{"provider", "artifact", "dry_run", "force"}`: delete one model as a job. Admin only; refuses a loaded or shared model unless `force`. |
+| `GET /api/gateway/jobs`, `GET /api/gateway/jobs/{id}`, `POST /api/gateway/jobs/{id}/cancel` | Download, delete and install jobs, newest first; cancel is admin only. |
+
+Every job carries a `cli_equivalent` you can run by hand, for example
+`abstractgateway models download ollama qwen3:8b` or
+`abstractgateway engines install ollama --yes`. Payloads and refusals are
+listed in [api.md](./api.md#models-and-engines).
+
+<a id="allow_engine_install"></a>
+#### `allow_engine_install`
+
+Installing an engine runs its vendor installer (for example
+`brew install ollama`) **on the machine that runs the gateway**, which for a
+remote gateway is not the machine of the person clicking. So installs are
+controlled by the runtime-config setting `allow_engine_install`:
+
+| Gateway bound to | Default |
+|---|---|
+| a loopback address (`127.0.0.1`, `::1`, `localhost`), which is what a bare `abstractgateway serve` and `abstractgateway service install` use | on |
+| any other address (`0.0.0.0`, a LAN IP, a host name), or started without `abstractgateway serve` | off |
+
+An admin changes it with
+`POST /api/gateway/admin/runtime-config {"allow_engine_install": true}`
+(`false` turns it off, `null` returns to the default). The current value and
+where it came from are in `GET /api/gateway/admin/runtime-config` and in
+`install_policy` on `GET /api/gateway/engines`. There is no environment
+variable for it. A dry run ("show the command") is always allowed, and every
+install is admin-only and recorded in the audit log.
 
 ### Host state and model residency
 

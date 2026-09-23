@@ -52,10 +52,31 @@ The guide has five steps. Every step is optional:
 | Step | What it shows |
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
-| Local engines | Local model engines on this machine. Engine detection (`GET /api/gateway/engines`) comes with the next AbstractCore release; until then the step links to the Ollama and LM Studio downloads |
-| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), and a **Download** button for each recommended model that is not on this machine, with progress |
+| Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
+| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), a **Download** button for each recommended model that is missing, and the model catalog filtered to models that fit this machine. Select an installed model and click **Set as default** to make it the default text model |
 | Apps | The `npx @abstractframework/{flow,code,observer,continuum,entity}` commands with copy buttons |
 | Done | How to reopen the console, the login-service status, and the CLI equivalents |
+
+A typical path from a fresh install to a working local model:
+
+1. **Local engines.** If no engine is installed, click **Install** on Ollama
+   (or open LM Studio's download page). The confirmation shows the command,
+   for example `brew install ollama` on a Mac with Homebrew, and that it runs
+   on this machine. The install runs in the background with progress; when it
+   finishes the row shows the version.
+2. **Default model.** The list opens on models that fit this machine's memory.
+   Click **Download** on the one you want; progress shows in the job card.
+3. When the download finishes, the model appears under *Installed*. Select it
+   and click **Set as default**: the gateway's text route now uses it.
+
+The same steps are available later in the **Engines** and **Models** tabs (see
+[console.md](docs/console.md#models-and-engines-tabs)) and from the command line
+(`abstractgateway engines install ollama`, `abstractgateway models download
+ollama qwen3:8b`). Installing an engine needs an admin and the
+[`allow_engine_install`](docs/configuration.md#allow_engine_install) setting, which
+is on by default for a gateway that listens on this machine only. With an
+AbstractCore older than 2.14.0 the engines step shows the Ollama and LM Studio
+download links and the upgrade command instead.
 
 The guide opens by itself once per data folder. **Finish** or **Skip setup**
 records that it ran (`POST /api/gateway/host/first-run`); clicking outside the
@@ -1055,6 +1076,64 @@ installed and the configured backend can be resolved. A fresh persistent store
 does not need to exist yet; empty-store structured queries return an empty
 result rather than making Flow authoring nodes unavailable.
 
+## Models and engines
+
+The gateway serves AbstractCore's models and engines payloads unchanged
+(AbstractCore 2.14.0 or newer), under `/api/gateway`. The bodies and payloads
+are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
+`abstractgateway` render them with the same screens.
+
+| Method and path | Access | Body / query | Returns |
+|---|---|---|---|
+| `GET /host/profile` | user | `refresh=1` | `host_profile_v1` |
+| `GET /engines` | user | `probe=1` | `engines_status_v1` plus `install_allowed` and `install_policy` |
+| `GET /engines/{id}` | user | `probe=1` | one engine row plus `install_allowed`; 404 for an unknown id |
+| `POST /engines/{id}/install` | admin | `{"dry_run": bool, "force": bool}` | `host_job_v1` (kind `engine_install`) |
+| `GET /models/catalog` | user | `q`, `engine`, `fits=1`, `hub=1`, `tag` (repeatable) | `model_catalog_v1` |
+| `GET /models/installed` | user | `provider` | `models_installed_v1` |
+| `POST /models/download` | admin | `{"provider", "artifact", "dry_run", "expected_bytes"?}` or `{"recommended": true}` | `{"ok": true, "job": {...}}` |
+| `GET /models/download/{job}` | user | | `{"ok": true, "job": {...}}` |
+| `POST /models/delete` | admin | `{"provider", "artifact", "dry_run": bool, "force": bool}` | `host_job_v1` (kind `delete`) |
+| `GET /jobs` | user | `kind`, `status` | `{"schema": "host_jobs_v1", "jobs": [...], "generated_at"}`, newest first |
+| `GET /jobs/{id}` | user | | `host_job_v1`; 404 when unknown |
+| `POST /jobs/{id}/cancel` | admin | none (an empty `{}` is accepted) | `host_job_v1`; 404 when unknown |
+
+Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
+`hub` accept `1`/`0` and `true`/`false`.
+
+**Jobs.** A `host_job_v1` has `schema`, `job_id`, `kind`
+(`download | delete | engine_install`), `status`
+(`queued | running | completed | failed | cancelled`), `provider`, `artifact`,
+`engine`, `percent`, `downloaded_bytes`, `total_bytes`, `message`, `log_tail`,
+`command` (the exact argv), `dry_run`, `started_at`, `finished_at`, `error`
+(a string or `null`), `joined`, `result` and `cli_equivalent`, which names the
+`abstractgateway` command that does the same thing. A dry run finishes before
+the POST returns. On the older `/models/download` lane the job also carries
+`job` (the id), `events`, `host_status`, reports `queued` as `running`, and
+counts `joined` including the first request.
+
+**Refusals** share one body:
+`{"ok": false, "status", "reason"?, "message", "detail", "error": {"message", "type"}, ...}`.
+
+| Status | When |
+|---|---|
+| 400 `invalid` | provider or artifact missing |
+| 403 `refused` / `not_allowed` | a real engine install while `allow_engine_install` is off ([configuration.md](docs/configuration.md#allow_engine_install)); `install_policy` says why |
+| 403 | the caller is not an admin (every POST above) |
+| 404 `not_found` | unknown job id, engine id, or a model that is not installed |
+| 409 `busy` | an engine install is already running (`job` is the running one) |
+| 409 `refused` | the engine is not supported here or has no install command (`install` is the plan), or a delete is blocked (`delete_blockers`: `loaded`, `shared_cache:…`, `unknown_location`, `engine_not_running`, `remote_engine`; `force: true` overrides the first two) |
+| 501 `unsupported` / `abstractcore_too_old` | the installed AbstractCore predates 2.14.0; `required`, `installed` and `missing` name what to upgrade |
+| 503 `unavailable` | AbstractCore is not installed |
+
+Example:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "$GW/api/gateway/models/catalog?q=qwen3&fits=1" | jq '.rows[0].artifacts[0].fit'
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"dry_run": true}' "$GW/api/gateway/engines/ollama/install" | jq '.command, .cli_equivalent'
+```
+
 ## Host state and model residency
 
 Gateway exposes a host-level view of the execution machine — memory, GPU,
@@ -1460,6 +1539,160 @@ Troubleshooting and common questions: [faq.md](docs/faq.md).
 
 ---
 
+## docs/console.md
+
+# Consoles: web (`/console`) and terminal (`abstractgateway-console`)
+
+AbstractGateway ships two operator consoles over the same admin HTTP API. Both
+edit the same stores through the same endpoints with the same request bodies, so
+a change made in one is immediately visible in the other.
+
+| | Web console | Terminal console |
+|---|---|---|
+| Delivery | served by the gateway at `GET /console` (part of the `abstractgateway` Python package) | Rust crate [`abstractgateway-console`](https://crates.io/crates/abstractgateway-console), installed with `cargo install` |
+| Sign-in | Gateway browser session (user id + token) | base URL + bearer token (`ABSTRACTGATEWAY_AUTH_TOKEN` or the Connection screen) |
+| Best for | day-to-day administration in a browser, sandbox chat with media previews | SSH sessions, headless hosts, keyboard-only setup |
+
+For how the stores behind these screens are owned (Gateway vs AbstractCore),
+see [configuration.md](docs/configuration.md). For the endpoints themselves, see
+[api.md](docs/api.md).
+
+## Web console (`/console`)
+
+Start the gateway and open `http://<host>:<port>/console`:
+
+```bash
+abstractgateway serve --host 127.0.0.1 --port 8081
+# then open http://127.0.0.1:8081/console
+```
+
+The console uses the current origin, so it never asks for a gateway URL. With
+user auth enabled, the first-login token is written to
+`<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token`. The console covers:
+
+- **Users & runtimes:** user records, token rotation, retained runtime
+  reservations, the runtime inventory with sessions, data and caches.
+- **Providers:** provider connections (OpenAI, Anthropic, OpenRouter, Portkey,
+  LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys.
+- **Multimodal capabilities:** capability route defaults, the text reasoning
+  effort, and the MTP (speculative decoding) default.
+- **Workflows:** every registered workflow with versions and entrypoints,
+  import/export/delete, and versions that are not served (with the reason).
+- **Sandbox:** quick chat and media generation against the configured defaults.
+- **Resources:** memory/GPU meters, resident models (warm up, lock, unload),
+  and session prompt caches.
+- **Entities:** summoned-entity roster and management (see
+  [entities.md](docs/entities.md)).
+- **Models:** browse models that fit this machine, download them, and delete
+  the ones you no longer need (details below).
+- **Engines:** the local engines on the gateway host (Ollama, LM Studio, MLX,
+  llama.cpp, vLLM, Hugging Face): installed or not, running or not, and a
+  one-click install (details below).
+
+### Models and Engines tabs
+
+These two tabs are AbstractCore's own Models and Engines screens, embedded in
+the gateway console. The same screens appear in `abstractcore serve`'s console
+and, as terminal screens, in both terminal consoles, so they look and behave the
+same everywhere. Everything they show and do happens **on the gateway host**:
+the machine that runs `abstractgateway serve`, not the computer your browser
+runs on.
+
+**Models** (tab id `catalog`; the older **Resources** tab keeps id `models`):
+
+- A line describing this machine (accelerator, memory the models can use, free
+  disk).
+- The catalog: model families with one row per downloadable artifact (engine,
+  quantization, download size), whether its weights are already here
+  (`installed`, `not downloaded`, `unknown`, `remote`), and a fit verdict
+  (`fits`, `tight`, `too large`, `partial offload`, `unknown`). **Fits this
+  machine** is on by default. Search, filter by engine or modality, or tick
+  **Search Hugging Face** to include hub results (slower).
+- The models already installed, per engine, with their size and location.
+- Actions: **Download** and **Delete** (with a confirmation that names the
+  model and any blocker, such as a model that is loaded right now). Downloads
+  and deletes run as jobs with progress; you can cancel them.
+
+**Engines** (tab id `engines`):
+
+- One row per engine: supported on this host, installed, version, running,
+  reachable, base URL and model count.
+- **Install** opens a confirmation that shows the exact command it will run
+  and the host it runs on, with a **Preview (dry run)** button that asks the
+  gateway what it would run without running it.
+  **Open download page** links to the vendor page (LM Studio is installed from
+  its download page).
+
+Keys (when the tab is visible and you are not typing in a field): `/` search,
+`f` fits-only on/off, `r` refresh; on a focused row `w` download, `d` delete,
+`i` install, `o` open the download page, `c` cancel the row's job.
+
+Who can do what:
+
+- Every signed-in user can browse both tabs.
+- Download, Delete, Install and Cancel are for **admins** only; the buttons are
+  disabled for other users, and the gateway refuses those calls from them.
+- Installing an engine also needs the gateway setting
+  [`allow_engine_install`](docs/configuration.md#allow_engine_install). It lives in
+  the runtime configuration and is on by default only when the gateway listens
+  on this machine only (`127.0.0.1`); a gateway reachable from the network
+  refuses installs until an admin turns it on. A dry run (**Preview**) is
+  always allowed.
+- Every action is recorded in the gateway's audit log, and each job card shows
+  the equivalent command, for example
+  `abstractgateway models download ollama qwen3:8b`.
+
+If the gateway's AbstractCore is older than 2.14.0, both tabs show a card saying
+so, with the version installed and the upgrade command
+(`pip install -U "abstractcore>=2.14.0"`); the rest of the console works as
+before.
+
+## Terminal console (`abstractgateway-console`)
+
+Install it from crates.io (Rust 1.87 or newer):
+
+```bash
+cargo install abstractgateway-console
+```
+
+Connect it to a running gateway. Pass the token through the environment rather
+than on the command line:
+
+```bash
+ABSTRACTGATEWAY_AUTH_TOKEN=... abstractgateway-console --url http://127.0.0.1:8081
+abstractgateway-console --help
+```
+
+It opens as a guided wizard on first run and as free tabs afterwards, with eight
+screens: Connection, Providers, Routes (capability defaults, including the MTP
+selector and a Test verb per route), Users & Entities, Runtimes (runs with
+cancel and steer, data homes), Workflows, Review & Test (the session's change
+journal), and Resources. Every write is verified with a follow-up read and
+recorded in the journal. Keys: `Tab` focus, `Enter` activate, `1`-`8` screens,
+`r` refresh, `q` quit; each screen lists its actions in the footer.
+
+The terminal console needs no gateway-side component beyond the admin API. The
+crate version is independent of the Python package version; see
+[`console-tui/CHANGELOG.md`](console-tui/CHANGELOG.md).
+
+## Model residency from a shell
+
+The same model routes the consoles drive are available from the Python CLI
+against a running gateway:
+
+```bash
+abstractgateway models loaded --url http://127.0.0.1:8081
+abstractgateway models load   --url http://127.0.0.1:8081 --provider ollama --model qwen3:4b
+abstractgateway models unload --url http://127.0.0.1:8081 --provider ollama --model qwen3:4b
+```
+
+The token comes from `--token` or `ABSTRACTGATEWAY_AUTH_TOKEN`, and the URL from
+`--url` or `ABSTRACTGATEWAY_URL`. The command prints the gateway's JSON answer
+and exits non-zero when the gateway reports a failure. `unload --force` unloads
+a locked model; in-flight calls on the model are cancelled first.
+
+---
+
 ## docs/configuration.md
 
 # AbstractGateway — Configuration
@@ -1832,15 +2065,68 @@ row's `model`.
 the running job instead of starting a second copy of the provider's tool; the
 returned job's `joined` counter says so.
 
-**Jobs live in the Gateway process.** A restart forgets them, and a job id
-polled across a restart returns 404. That is not a lost download — the provider
-tool owns the bytes. Re-read `/api/gateway/models/availability` to learn whether
-the weights landed.
+**Jobs run in AbstractCore's host job registry.** Downloads, deletes and
+engine installs are jobs of one kind (`host_job_v1`), readable at
+`GET /api/gateway/jobs/{id}` as well as through the older
+`GET /api/gateway/models/download/{job}` (which keeps its `{ok, job}` envelope
+and reports a queued job as `running`). AbstractCore keeps a snapshot of each
+job on disk, so jobs started by `abstractcore models download` on the same
+machine appear too. A job the gateway no longer knows returns 404; that is not
+a lost download — the provider tool owns the bytes. Re-read
+`/api/gateway/models/availability` to learn whether the weights landed.
 
 **A default whose weights are missing does not stop the Gateway.** The host
 loads, bundles register, and the failure surfaces when a run actually needs that
 model — naming the capability route that configured the pair, how to change it,
 and how to download it.
+
+### Models and engines
+
+The **Models** and **Engines** tabs of the web console, the terminal console
+and the `abstractgateway models …` / `abstractgateway engines …` commands show
+the same things AbstractCore shows (`abstractcore models …`, `abstractcore
+engines …`): the host's hardware, the local inference engines, a model catalog
+with a "fits this machine" verdict per download, the models already installed,
+and the jobs that download, delete or install. The gateway does not detect
+engines or size models itself; it serves AbstractCore's answers
+(AbstractCore 2.14.0 or newer), so both entry points always agree.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/gateway/host/profile` | This host: OS, accelerator, RAM/VRAM, how much memory a model may use, free disk per model store. |
+| `GET /api/gateway/engines?probe=1` | Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face: supported here, installed, version, running, and the exact install command. `install_allowed` says whether installs are enabled on this gateway. |
+| `POST /api/gateway/engines/{id}/install` | `{"dry_run": true}` shows the command; `{"dry_run": false}` runs it on the gateway host as a job. Admin only, and only when `allow_engine_install` is on. |
+| `GET /api/gateway/models/catalog?q=&engine=&fits=1&hub=1` | Downloadable models with presence and a fit verdict (`fits`, `tight`, `too_large`, `partial_offload`, `unknown`). |
+| `GET /api/gateway/models/installed?provider=` | Every installed model per engine, with sizes and what would block a delete. |
+| `POST /api/gateway/models/download` | Download one model as a job (see [Model weights](#model-weights)). Admin only. |
+| `POST /api/gateway/models/delete` | `{"provider", "artifact", "dry_run", "force"}`: delete one model as a job. Admin only; refuses a loaded or shared model unless `force`. |
+| `GET /api/gateway/jobs`, `GET /api/gateway/jobs/{id}`, `POST /api/gateway/jobs/{id}/cancel` | Download, delete and install jobs, newest first; cancel is admin only. |
+
+Every job carries a `cli_equivalent` you can run by hand, for example
+`abstractgateway models download ollama qwen3:8b` or
+`abstractgateway engines install ollama --yes`. Payloads and refusals are
+listed in [api.md](docs/api.md#models-and-engines).
+
+<a id="allow_engine_install"></a>
+#### `allow_engine_install`
+
+Installing an engine runs its vendor installer (for example
+`brew install ollama`) **on the machine that runs the gateway**, which for a
+remote gateway is not the machine of the person clicking. So installs are
+controlled by the runtime-config setting `allow_engine_install`:
+
+| Gateway bound to | Default |
+|---|---|
+| a loopback address (`127.0.0.1`, `::1`, `localhost`), which is what a bare `abstractgateway serve` and `abstractgateway service install` use | on |
+| any other address (`0.0.0.0`, a LAN IP, a host name), or started without `abstractgateway serve` | off |
+
+An admin changes it with
+`POST /api/gateway/admin/runtime-config {"allow_engine_install": true}`
+(`false` turns it off, `null` returns to the default). The current value and
+where it came from are in `GET /api/gateway/admin/runtime-config` and in
+`install_policy` on `GET /api/gateway/engines`. There is no environment
+variable for it. A dry run ("show the command") is always allowed, and every
+install is admin-only and recorded in the audit log.
 
 ### Host state and model residency
 
@@ -2497,6 +2783,27 @@ pick a local engine, a default model and the browser apps. A new link:
 `abstractgateway claim --open`. Start the gateway at login:
 `abstractgateway service install`. See [docs/first-run.md](docs/first-run.md).
 
+### Local models and engines
+
+The console's **Models** and **Engines** tabs (and the matching commands)
+install a local engine and download a model that fits this machine, without a
+terminal. They are AbstractCore's model browser and engine installer
+(AbstractCore 2.14.0 or newer), shown inside the gateway:
+
+```bash
+abstractgateway engines status --probe          # Ollama, LM Studio, MLX, llama.cpp, ...
+abstractgateway engines install ollama --dry-run # the exact command, nothing runs
+abstractgateway models catalog --fits           # models that fit this machine
+abstractgateway models download ollama qwen3:8b
+abstractgateway models list                     # installed models with sizes
+```
+
+The commands talk to the running gateway (admin rules and audit log apply);
+add `--local` to run them in-process instead. Engine installs run on the
+gateway host and are on by default only for a loopback gateway
+([`allow_engine_install`](docs/configuration.md#allow_engine_install)). See
+[docs/console.md](docs/console.md) and [docs/api.md](docs/api.md#models-and-engines).
+
 ## Quickstart (HTTP server, bundle mode, explicit configuration)
 
 ```bash
@@ -2602,7 +2909,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.30
+docker pull ghcr.io/lpalbou/abstractgateway:0.3.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -2610,7 +2917,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.30-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.3.0-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
@@ -3092,7 +3399,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.2.30-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.3.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -3177,7 +3484,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Target version 0.3.0. Requires AbstractRuntime 0.4.33 and AbstractCore 2.14.0
+(installed automatically).
+
 ### Added
+- **Models and Engines tabs in the web console.** Browse models that fit this
+  machine, download or delete them, and see and install local engines
+  (Ollama, LM Studio, MLX, llama.cpp, Hugging Face). These are AbstractCore's
+  own screens, embedded in the gateway, so the gateway and
+  `abstractcore serve` show the same data and the same actions. Download,
+  delete and install are admin-only; an install first shows the exact command
+  it will run on the gateway host. See [docs/console.md](docs/console.md).
+- **The first-run guide uses them.** The engines step lists the real engines
+  on this machine with an install button. The model step lists models that
+  fit, downloads one, and sets an installed model as the default text model.
+- **Routes** (same bodies and payloads as AbstractCore's `/acore/*`):
+  `GET /api/gateway/host/profile`, `GET /api/gateway/engines`,
+  `GET /api/gateway/engines/{id}`, `POST /api/gateway/engines/{id}/install`,
+  `GET /api/gateway/models/catalog`, `GET /api/gateway/models/installed`,
+  `POST /api/gateway/models/delete`, `GET /api/gateway/jobs`,
+  `GET /api/gateway/jobs/{id}` and `POST /api/gateway/jobs/{id}/cancel`.
+  Every POST is admin-only and in the audit log. An AbstractCore older than
+  2.14.0 answers 501 with the upgrade command instead of failing.
+  See [docs/api.md](docs/api.md#models-and-engines).
+- **Commands:** `abstractgateway models list|catalog|search|download|delete|jobs|cancel`
+  and `abstractgateway engines status|install|open`, with the same arguments
+  and exit codes as `abstractcore models|engines` (0 ok, 1 error, 2 refused).
+  They call the running gateway; `--local` runs them in-process instead.
+  Job cards in the consoles show these commands.
+- **`allow_engine_install`** (runtime config): engine installs from the
+  console or API run on the gateway host, so they are on by default only for
+  a gateway bound to loopback. Dry runs are always allowed. See
+  [docs/configuration.md](docs/configuration.md#allow_engine_install).
+- `abstractgateway claim` and `abstractgateway-config claim-url` accept
+  `--base-url` as another name for `--url` (the bootstrap installers use it).
 - **Zero-configuration first run.** With no auth configured, `abstractgateway serve`
   binds `127.0.0.1`, enables user auth, creates `default/admin`, and prints a
   one-time console sign-in link instead of a token. See
@@ -3202,6 +3542,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   facts.
 
 ### Changed
+- **Model downloads run in AbstractCore's job registry.** `POST /models/download`
+  and `GET /models/download/{job}` keep their `{ok, job}` envelope and
+  behaviour (a queued job reads `running`, a duplicate request joins the
+  running job), and the job is also readable at `GET /api/gateway/jobs/{id}`.
+  The job now carries AbstractCore's fields as well (`schema`, `job_id`,
+  `kind`, `log_tail`, `command`, `cli_equivalent`); `started_at` is an
+  ISO-8601 time instead of a Unix timestamp. Jobs started by the
+  `abstractcore` CLI on the same machine appear in the job list.
 - **Default data folder.** When `ABSTRACTGATEWAY_DATA_DIR` is unset, the gateway
   uses `./runtime` only if it already exists in the working directory, and
   otherwise the per-user data folder (macOS
@@ -4395,97 +4743,6 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 ---
 
-## docs/console.md
-
-# Consoles: web (`/console`) and terminal (`abstractgateway-console`)
-
-AbstractGateway ships two operator consoles over the same admin HTTP API. Both
-edit the same stores through the same endpoints with the same request bodies, so
-a change made in one is immediately visible in the other.
-
-| | Web console | Terminal console |
-|---|---|---|
-| Delivery | served by the gateway at `GET /console` (part of the `abstractgateway` Python package) | Rust crate [`abstractgateway-console`](https://crates.io/crates/abstractgateway-console), installed with `cargo install` |
-| Sign-in | Gateway browser session (user id + token) | base URL + bearer token (`ABSTRACTGATEWAY_AUTH_TOKEN` or the Connection screen) |
-| Best for | day-to-day administration in a browser, sandbox chat with media previews | SSH sessions, headless hosts, keyboard-only setup |
-
-For how the stores behind these screens are owned (Gateway vs AbstractCore),
-see [configuration.md](docs/configuration.md). For the endpoints themselves, see
-[api.md](docs/api.md).
-
-## Web console (`/console`)
-
-Start the gateway and open `http://<host>:<port>/console`:
-
-```bash
-abstractgateway serve --host 127.0.0.1 --port 8081
-# then open http://127.0.0.1:8081/console
-```
-
-The console uses the current origin, so it never asks for a gateway URL. With
-user auth enabled, the first-login token is written to
-`<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token`. The console covers:
-
-- **Users & runtimes:** user records, token rotation, retained runtime
-  reservations, the runtime inventory with sessions, data and caches.
-- **Providers:** provider connections (OpenAI, Anthropic, OpenRouter, Portkey,
-  LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys.
-- **Multimodal capabilities:** capability route defaults, the text reasoning
-  effort, and the MTP (speculative decoding) default.
-- **Workflows:** every registered workflow with versions and entrypoints,
-  import/export/delete, and versions that are not served (with the reason).
-- **Sandbox:** quick chat and media generation against the configured defaults.
-- **Resources:** memory/GPU meters, resident models (warm up, lock, unload),
-  and session prompt caches.
-- **Entities:** summoned-entity roster and management (see
-  [entities.md](docs/entities.md)).
-
-## Terminal console (`abstractgateway-console`)
-
-Install it from crates.io (Rust 1.87 or newer):
-
-```bash
-cargo install abstractgateway-console
-```
-
-Connect it to a running gateway. Pass the token through the environment rather
-than on the command line:
-
-```bash
-ABSTRACTGATEWAY_AUTH_TOKEN=... abstractgateway-console --url http://127.0.0.1:8081
-abstractgateway-console --help
-```
-
-It opens as a guided wizard on first run and as free tabs afterwards, with eight
-screens: Connection, Providers, Routes (capability defaults, including the MTP
-selector and a Test verb per route), Users & Entities, Runtimes (runs with
-cancel and steer, data homes), Workflows, Review & Test (the session's change
-journal), and Resources. Every write is verified with a follow-up read and
-recorded in the journal. Keys: `Tab` focus, `Enter` activate, `1`-`8` screens,
-`r` refresh, `q` quit; each screen lists its actions in the footer.
-
-The terminal console needs no gateway-side component beyond the admin API. The
-crate version is independent of the Python package version; see
-[`console-tui/CHANGELOG.md`](console-tui/CHANGELOG.md).
-
-## Model residency from a shell
-
-The same model routes the consoles drive are available from the Python CLI
-against a running gateway:
-
-```bash
-abstractgateway models loaded --url http://127.0.0.1:8081
-abstractgateway models load   --url http://127.0.0.1:8081 --provider ollama --model qwen3:4b
-abstractgateway models unload --url http://127.0.0.1:8081 --provider ollama --model qwen3:4b
-```
-
-The token comes from `--token` or `ABSTRACTGATEWAY_AUTH_TOKEN`, and the URL from
-`--url` or `ABSTRACTGATEWAY_URL`. The command prints the gateway's JSON answer
-and exits non-zero when the gateway reports a failure. `unload --force` unloads
-a locked model; in-flight calls on the model are cancelled first.
-
----
-
 ## docs/deployment.md
 
 # AbstractGateway deployment
@@ -4501,7 +4758,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.30
+docker pull ghcr.io/lpalbou/abstractgateway:0.3.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -4509,7 +4766,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.30-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.3.0-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -4706,7 +4963,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.2.30-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.3.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

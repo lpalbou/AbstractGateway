@@ -42,10 +42,31 @@ The guide has five steps. Every step is optional:
 | Step | What it shows |
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
-| Local engines | Local model engines on this machine. Engine detection (`GET /api/gateway/engines`) comes with the next AbstractCore release; until then the step links to the Ollama and LM Studio downloads |
-| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), and a **Download** button for each recommended model that is not on this machine, with progress |
+| Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
+| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), a **Download** button for each recommended model that is missing, and the model catalog filtered to models that fit this machine. Select an installed model and click **Set as default** to make it the default text model |
 | Apps | The `npx @abstractframework/{flow,code,observer,continuum,entity}` commands with copy buttons |
 | Done | How to reopen the console, the login-service status, and the CLI equivalents |
+
+A typical path from a fresh install to a working local model:
+
+1. **Local engines.** If no engine is installed, click **Install** on Ollama
+   (or open LM Studio's download page). The confirmation shows the command,
+   for example `brew install ollama` on a Mac with Homebrew, and that it runs
+   on this machine. The install runs in the background with progress; when it
+   finishes the row shows the version.
+2. **Default model.** The list opens on models that fit this machine's memory.
+   Click **Download** on the one you want; progress shows in the job card.
+3. When the download finishes, the model appears under *Installed*. Select it
+   and click **Set as default**: the gateway's text route now uses it.
+
+The same steps are available later in the **Engines** and **Models** tabs (see
+[console.md](./console.md#models-and-engines-tabs)) and from the command line
+(`abstractgateway engines install ollama`, `abstractgateway models download
+ollama qwen3:8b`). Installing an engine needs an admin and the
+[`allow_engine_install`](./configuration.md#allow_engine_install) setting, which
+is on by default for a gateway that listens on this machine only. With an
+AbstractCore older than 2.14.0 the engines step shows the Ollama and LM Studio
+download links and the upgrade command instead.
 
 The guide opens by itself once per data folder. **Finish** or **Skip setup**
 records that it ran (`POST /api/gateway/host/first-run`); clicking outside the

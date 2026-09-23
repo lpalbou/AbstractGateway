@@ -7,7 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Target version 0.3.0. Requires AbstractRuntime 0.4.33 and AbstractCore 2.14.0
+(installed automatically).
+
 ### Added
+- **Models and Engines tabs in the web console.** Browse models that fit this
+  machine, download or delete them, and see and install local engines
+  (Ollama, LM Studio, MLX, llama.cpp, Hugging Face). These are AbstractCore's
+  own screens, embedded in the gateway, so the gateway and
+  `abstractcore serve` show the same data and the same actions. Download,
+  delete and install are admin-only; an install first shows the exact command
+  it will run on the gateway host. See [docs/console.md](docs/console.md).
+- **The first-run guide uses them.** The engines step lists the real engines
+  on this machine with an install button. The model step lists models that
+  fit, downloads one, and sets an installed model as the default text model.
+- **Routes** (same bodies and payloads as AbstractCore's `/acore/*`):
+  `GET /api/gateway/host/profile`, `GET /api/gateway/engines`,
+  `GET /api/gateway/engines/{id}`, `POST /api/gateway/engines/{id}/install`,
+  `GET /api/gateway/models/catalog`, `GET /api/gateway/models/installed`,
+  `POST /api/gateway/models/delete`, `GET /api/gateway/jobs`,
+  `GET /api/gateway/jobs/{id}` and `POST /api/gateway/jobs/{id}/cancel`.
+  Every POST is admin-only and in the audit log. An AbstractCore older than
+  2.14.0 answers 501 with the upgrade command instead of failing.
+  See [docs/api.md](docs/api.md#models-and-engines).
+- **Commands:** `abstractgateway models list|catalog|search|download|delete|jobs|cancel`
+  and `abstractgateway engines status|install|open`, with the same arguments
+  and exit codes as `abstractcore models|engines` (0 ok, 1 error, 2 refused).
+  They call the running gateway; `--local` runs them in-process instead.
+  Job cards in the consoles show these commands.
+- **`allow_engine_install`** (runtime config): engine installs from the
+  console or API run on the gateway host, so they are on by default only for
+  a gateway bound to loopback. Dry runs are always allowed. See
+  [docs/configuration.md](docs/configuration.md#allow_engine_install).
+- `abstractgateway claim` and `abstractgateway-config claim-url` accept
+  `--base-url` as another name for `--url` (the bootstrap installers use it).
 - **Zero-configuration first run.** With no auth configured, `abstractgateway serve`
   binds `127.0.0.1`, enables user auth, creates `default/admin`, and prints a
   one-time console sign-in link instead of a token. See
@@ -32,6 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   facts.
 
 ### Changed
+- **Model downloads run in AbstractCore's job registry.** `POST /models/download`
+  and `GET /models/download/{job}` keep their `{ok, job}` envelope and
+  behaviour (a queued job reads `running`, a duplicate request joins the
+  running job), and the job is also readable at `GET /api/gateway/jobs/{id}`.
+  The job now carries AbstractCore's fields as well (`schema`, `job_id`,
+  `kind`, `log_tail`, `command`, `cli_equivalent`); `started_at` is an
+  ISO-8601 time instead of a Unix timestamp. Jobs started by the
+  `abstractcore` CLI on the same machine appear in the job list.
 - **Default data folder.** When `ABSTRACTGATEWAY_DATA_DIR` is unset, the gateway
   uses `./runtime` only if it already exists in the working directory, and
   otherwise the per-user data folder (macOS

@@ -38,6 +38,27 @@ pick a local engine, a default model and the browser apps. A new link:
 `abstractgateway claim --open`. Start the gateway at login:
 `abstractgateway service install`. See [docs/first-run.md](docs/first-run.md).
 
+### Local models and engines
+
+The console's **Models** and **Engines** tabs (and the matching commands)
+install a local engine and download a model that fits this machine, without a
+terminal. They are AbstractCore's model browser and engine installer
+(AbstractCore 2.14.0 or newer), shown inside the gateway:
+
+```bash
+abstractgateway engines status --probe          # Ollama, LM Studio, MLX, llama.cpp, ...
+abstractgateway engines install ollama --dry-run # the exact command, nothing runs
+abstractgateway models catalog --fits           # models that fit this machine
+abstractgateway models download ollama qwen3:8b
+abstractgateway models list                     # installed models with sizes
+```
+
+The commands talk to the running gateway (admin rules and audit log apply);
+add `--local` to run them in-process instead. Engine installs run on the
+gateway host and are on by default only for a loopback gateway
+([`allow_engine_install`](docs/configuration.md#allow_engine_install)). See
+[docs/console.md](docs/console.md) and [docs/api.md](docs/api.md#models-and-engines).
+
 ## Quickstart (HTTP server, bundle mode, explicit configuration)
 
 ```bash
@@ -143,7 +164,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.30
+docker pull ghcr.io/lpalbou/abstractgateway:0.3.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -151,7 +172,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.2.30-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.3.0-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
