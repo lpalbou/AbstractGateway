@@ -227,8 +227,11 @@ def test_executor_registry_is_the_ruled_four_probed_not_declared():
         # `available` is a real probe (bool), never a config-only claim.
         for e in execs.values():
             assert isinstance(e["available"], bool)
-        # abstractcode is importable in this repo -> probe finds it available.
-        assert execs["abstractcode"]["available"] is True
+        # The probe is the real PATH lookup (AbstractCode is the Rust client).
+        import shutil
+
+        for exec_id in ("codex", "claude", "cursor-agent", "abstractcode"):
+            assert execs[exec_id]["available"] is (shutil.which(exec_id) is not None)
 
 
 def test_alias_folding_is_one_rule_everywhere():

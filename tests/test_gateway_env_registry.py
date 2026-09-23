@@ -10,7 +10,6 @@ enforced invariant. New env reads must land WITH their classification row.
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -29,20 +28,17 @@ def _env_names_read_in_src() -> set[str]:
     call sites count, which keeps the pin precise.
     """
     names: set[str] = set()
-    # Pass 1: reader( "NAME" — the literal immediately after the call open.
-    out = subprocess.run(
-        ["rg", "-o", r"(?:os\.getenv|os\.environ\.get|os\.environ\.pop|_env_first|_env_bool|_env_float|_env)\(\s*[\"']([A-Z][A-Z0-9_]{3,})[\"']",
-         str(_SRC), "-r", "$1", "--no-filename"],
-        capture_output=True, text=True,
-    ).stdout
-    names.update(n for n in out.split() if n)
-    # Pass 2: the remaining keys of multi-key chains — capture full call args.
-    out2 = subprocess.run(
-        ["rg", "-o", r"(?:_env_first|_env_bool)\(([^)]*)\)", str(_SRC), "-r", "$1", "--no-filename", "-U"],
-        capture_output=True, text=True,
-    ).stdout
-    for line in out2.splitlines():
-        names.update(re.findall(r"[\"']([A-Z][A-Z0-9_]{3,})[\"']", line))
+    direct = re.compile(
+        r"(?:os\.getenv|os\.environ\.get|os\.environ\.pop|_env_first|_env_bool|_env_float|_env)\(\s*[\"']([A-Z][A-Z0-9_]{3,})[\"']"
+    )
+    chains = re.compile(r"(?:_env_first|_env_bool)\(([^)]*)\)")
+    for path in sorted(_SRC.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        # Pass 1: reader( "NAME" — the literal immediately after the call open.
+        names.update(direct.findall(text))
+        # Pass 2: the remaining keys of multi-key chains (call args may span lines).
+        for args in chains.findall(text):
+            names.update(re.findall(r"[\"']([A-Z][A-Z0-9_]{3,})[\"']", args))
     return names
 
 

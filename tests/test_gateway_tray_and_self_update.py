@@ -66,7 +66,9 @@ def test_there_is_no_tray_setting_and_the_retired_one_refuses(tmp_path: Path) ->
 def test_tray_decision_table_names_every_refusal() -> None:
     deps_ok = (True, None)
     linux_desktop = {"DISPLAY": ":0"}
-    assert tray_decision(platform="linux", env=linux_desktop, dependencies=deps_ok) == TrayDecision(True, "ok", None)
+    # Hermetic: inject the StatusNotifier probe (a real Linux runner without a
+    # tray host would otherwise answer "headless").
+    assert tray_decision(platform="linux", env=linux_desktop, dependencies=deps_ok, probes={"sni": True}) == TrayDecision(True, "ok", None)
 
     d = tray_decision(reload=True, platform="linux", env=linux_desktop, dependencies=deps_ok)
     assert d.reason == "dev_reload"
