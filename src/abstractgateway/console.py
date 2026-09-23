@@ -1,20 +1,125 @@
 from __future__ import annotations
 
+import html
 import json
+import socket
+from typing import Any, Dict
+
+
+def _script_json(value: Any) -> str:
+    """JSON that is safe inside an inline <script> (no `</script>` break-out)."""
+    return json.dumps(value, ensure_ascii=False).replace("</", "<\\/").replace("<!--", "<\\!--")
+
+
+def _core_console_parts() -> Dict[str, Any]:
+    """AbstractCore's Models/Engines screens, fetched once per render.
+
+    The screens are AbstractCore's own (`abstractcore.console.web`), reached
+    through the one seam (`core_config`) like every other Core surface: the
+    Gateway embeds them, it never re-implements them. When the installed
+    AbstractCore predates them (or is missing) the tabs render a card that
+    names the version needed instead -- an optional feature, not an error.
+    """
+    from . import core_config
+
+    try:
+        models = core_config.core_console_fragment("models")
+        engines = core_config.core_console_fragment("engines")
+        return {
+            "available": True,
+            "models_html": str(models.get("html") or ""),
+            "engines_html": str(engines.get("html") or ""),
+            # js/css are identical for both kinds: included ONCE.
+            "js": str(models.get("js") or ""),
+            "css": str(models.get("css") or ""),
+            "message": "",
+        }
+    except Exception as exc:  # CoreTooOld, RuntimeError (Core missing), anything else
+        try:
+            support = core_config.core_models_engines_support()
+        except Exception:
+            support = {}
+        installed = support.get("abstractcore_version") if isinstance(support, dict) else None
+        required = (support.get("required") if isinstance(support, dict) else None) or "2.14.0"
+        if isinstance(exc, NotImplementedError) or installed:
+            have = f"This gateway has abstractcore {installed}." if installed else "This gateway's abstractcore is older."
+        else:
+            have = f"The screens could not be loaded ({type(exc).__name__}: {exc})."
+        return {
+            "available": False,
+            "models_html": "",
+            "engines_html": "",
+            "js": "",
+            "css": "",
+            "installed": installed,
+            "required": required,
+            "message": f"Models and Engines require abstractcore \u2265 {required}. {have}",
+            "upgrade": f'pip install -U "abstractcore>={required}"',
+        }
+
+
+def _core_console_unavailable_card(parts: Dict[str, Any], what: str) -> str:
+    return (
+        '<section class="core-console-unavailable" data-core-console="unavailable">'
+        f"<h2>{html.escape(what)}</h2>"
+        f'<p class="message warn">{html.escape(str(parts.get("message") or ""))}</p>'
+        f'<p>Upgrade on the gateway host, then restart it: <code>{html.escape(str(parts.get("upgrade") or ""))}</code></p>'
+        "</section>"
+    )
 
 
 def gateway_console_html() -> str:
     """The served console page. Theme CSS + the theme list are spliced from
     `console_themes.py` — the generated verbatim copy of the abstractuic
     kit's theme.css/THEME_SPECS (console_theme_sync; uic card 0023) — so the
-    console serves exactly the framework's themes, never a local fork."""
+    console serves exactly the framework's themes, never a local fork.
+
+    AbstractCore's Models/Engines screens are spliced LAST, on placeholders
+    that are pure `str.replace` tokens (the template is never `.format`-ed),
+    so nothing in the fragment -- braces, `$`, a `</script>` in a string --
+    can re-enter the template or end the host script early."""
     from .console_themes import KIT_THEME_CSS, KIT_THEME_SPECS
 
-    return (
+    parts = _core_console_parts()
+    config = {
+        "available": bool(parts["available"]),
+        "hostName": socket.gethostname() or "gateway host",
+        "message": parts.get("message") or "",
+        "upgrade": parts.get("upgrade") or "",
+        "installed": parts.get("installed"),
+    }
+    if parts["available"]:
+        catalog_body = parts["models_html"]
+        engines_body = parts["engines_html"]
+        script = (
+            '<script id="abstractcore-console-js">\n'
+            + parts["js"].replace("</script", "<\\/script")
+            + "\n</script>"
+        )
+        css = parts["css"]
+    else:
+        catalog_body = _core_console_unavailable_card(parts, "Models")
+        engines_body = _core_console_unavailable_card(parts, "Engines")
+        script = ""
+        css = ""
+    page = (
         _CONSOLE_HTML_TEMPLATE
         .replace("/*__KIT_THEME_CSS__*/", KIT_THEME_CSS)
         .replace("__KIT_THEME_SPECS_JSON__", json.dumps(KIT_THEME_SPECS, ensure_ascii=False))
+        .replace("__CORE_CONSOLE_CONFIG_JSON__", _script_json(config))
     )
+    # Fragment content last, each placeholder exactly once.
+    for token, value in (
+        ("/*__ABSTRACTCORE_FRAGMENT_CSS__*/", css.replace("</style", "<\\/style")),
+        ("<!--__ABSTRACTCORE_CATALOG_HTML__-->", catalog_body),
+        ("<!--__ABSTRACTCORE_ENGINES_HTML__-->", engines_body),
+        ("<!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->", script),
+    ):
+        head, sep, tail = page.partition(token)
+        if not sep:
+            raise RuntimeError(f"console template lost its {token} placeholder")
+        page = head + value + tail
+    return page
 
 
 _CONSOLE_HTML_TEMPLATE = """<!doctype html>
@@ -1469,6 +1574,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      .sandbox-composer-actions { justify-content: flex-end; }
 	    }
+    /* Models / Engines tabs: AbstractCore's embedded screens (scoped under
+       .acc-root, they read the kit variables above), then the host chrome. */
+    /*__ABSTRACTCORE_FRAGMENT_CSS__*/
+    .core-console-unavailable { display: grid; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-2); }
+    .core-console-unavailable h2 { margin: 0; font-size: 1.05em; }
+    .first-run-default-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 0; }
     /* First-run wizard (2026-09-23): reuses the modal shell; ids are a
        contract for later embedding (see the FIRST RUN block in the JS). */
     .first-run-modal { width: min(760px, 100%); }
@@ -1508,6 +1619,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <button id="tab-button-defaults" class="tab-button shell_nav_item" type="button" title="Which provider/model serves each capability (vision, audio, image...)"><span class="shell_nav_icon" aria-hidden="true">◆</span><span class="shell_nav_label">Multimodal</span></button>
 	      <button id="tab-button-sandbox" class="tab-button shell_nav_item" type="button" title="Try any provider/model directly — text, image, audio, video"><span class="shell_nav_icon" aria-hidden="true">▶</span><span class="shell_nav_label">Sandbox</span></button>
 	      <button id="tab-button-models" class="tab-button shell_nav_item" type="button" title="Host resources: loaded models, memory and GPU, session caches"><span class="shell_nav_icon" aria-hidden="true">▦</span><span class="shell_nav_label">Resources</span></button>
+	      <button id="tab-button-catalog" class="tab-button shell_nav_item" type="button" title="Browse, download and delete models that fit this machine"><span class="shell_nav_icon" aria-hidden="true">▤</span><span class="shell_nav_label">Models</span></button>
+	      <button id="tab-button-engines" class="tab-button shell_nav_item" type="button" title="Local engines (Ollama, LM Studio, MLX...): status and install"><span class="shell_nav_icon icon-gear" aria-hidden="true">⚙</span><span class="shell_nav_label">Engines</span></button>
 	    </nav>
 	  </aside>
 	  <div class="shell_main">
@@ -2004,6 +2117,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          </div>
 	        </div>
 	      </div>
+	      <!-- Models (id catalog) and Engines (id engines): AbstractCore's own
+	           screens, spliced server-side and mounted on first open with the
+	           gateway's api() (CSRF) and apiBase /api/gateway. Not to be
+	           confused with Resources (id models) and Runtimes. -->
+	      <div id="tab-catalog" class="tab-panel">
+	        <div id="catalog-core-root" class="core-console-root"><!--__ABSTRACTCORE_CATALOG_HTML__--></div>
+	      </div>
+	      <div id="tab-engines" class="tab-panel">
+	        <div id="engines-core-root" class="core-console-root"><!--__ABSTRACTCORE_ENGINES_HTML__--></div>
+	      </div>
 	      <div id="tab-users" class="tab-panel">
 	        <div id="account" class="session-summary">No active session.</div>
 	        <div class="tab-grid tab-grid-wide">
@@ -2465,7 +2588,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <div id="first-run-engines-body"></div>
 	        </section>
 	        <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
-	          <div id="first-run-model-body"></div>
+	          <div id="first-run-model-body">
+	            <div id="first-run-model-recommended"></div>
+	            <p class="first-run-note">Or pick any model that fits this machine: download it, then set it as your default text model.</p>
+	            <div id="first-run-model-default" class="first-run-default-bar"></div>
+	            <div id="first-run-model-catalog"></div>
+	          </div>
 	        </section>
 	        <section id="first-run-step-apps" class="first-run-panel hidden" data-step="apps">
 	          <div id="first-run-apps-body"></div>
@@ -2652,6 +2780,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </form>
     </div>
   </div>
+  <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
 		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
@@ -2928,7 +3057,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models"];
+	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines"];
 	    // The kit's THEME_SPECS (abstractuic theme.ts), generated by
 	    // console_theme_sync — the console offers exactly the framework's
 	    // themes, never a hand-copied subset (operator catch 2026-07-15).
@@ -3129,6 +3258,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
 	      sandbox: ["Sandbox", "Try any provider/model directly — text, image, audio, video"],
 	      models: ["Resources", "Host resources: loaded models, memory and GPU, session caches"],
+	      catalog: ["Models", "Browse, download and delete models that fit this machine"],
+	      engines: ["Engines", "Local engines on the gateway host: status and install"],
 	    };
 	    function setActiveTab(tab) {
 	      // Legacy persisted tab ids fold into their new homes (entities
@@ -9684,6 +9815,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        state.activeTab = wantedTab;
 	        setActiveTab(wantedTab);
 	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
+	        if (wantedTab === "catalog" || wantedTab === "engines") openCoreTab(wantedTab);
 	      } else {
 	        setActiveTab(state.activeTab);
 	      }
@@ -10793,6 +10925,171 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      refreshDefaultSpeculationSupport();
 	    }
     // ------------------------------------------------------------------
+    // MODELS & ENGINES (2026-09-23): AbstractCore's own screens, embedded.
+    // The Gateway does not re-implement the model browser or the engine
+    // installer: the server splices AbstractCore's fragments (html in the
+    // #tab-catalog / #tab-engines panels, one shared css/js), and this code
+    // mounts them with the gateway's api() (session cookie + CSRF), apiBase
+    // /api/gateway (the gateway mirrors of /acore), the principal's admin
+    // bit, the gateway host's name and the `abstractgateway` CLI spelling.
+    // CORE_CONSOLE.available is false when the gateway's AbstractCore
+    // predates the screens: the panels then carry a server-rendered card and
+    // nothing is mounted (an optional feature, not an error).
+    // ------------------------------------------------------------------
+    const CORE_CONSOLE = __CORE_CONSOLE_CONFIG_JSON__;
+    const coreMounts = new Map();
+    const coreJobSeen = new Map();
+    function coreConsoleLib() {
+      if (!CORE_CONSOLE.available) return null;
+      try {
+        const w = typeof window !== "undefined" ? window : null;
+        const lib = w && w.AbstractCoreConsole;
+        return lib && typeof lib.mount === "function" ? lib : null;
+      } catch { return null; }
+    }
+    function coreConsoleUnavailableText() {
+      if (!CORE_CONSOLE.available) return `${CORE_CONSOLE.message || "Models and Engines require abstractcore ≥ 2.14.0."} Upgrade: ${CORE_CONSOLE.upgrade || 'pip install -U "abstractcore>=2.14.0"'}`;
+      return "The AbstractCore console screens did not load in this page; reload it.";
+    }
+    // The screens' request contract: (method, full path, plain body) ->
+    // parsed JSON, rejecting with an Error that carries `.status`. api()
+    // already does that; this adapter only lifts the message of a refusal
+    // body without a `detail` envelope ({ok:false, status, message, error})
+    // so a 403/409 reads as its reason, not as "HTTP 409".
+    async function coreConsoleRequest(method, path, body) {
+      try {
+        return await api(path, { slow: true, method: String(method || "GET").toUpperCase(), ...(body == null ? {} : { body: JSON.stringify(body) }) });
+      } catch (err) {
+        const data = err && err.data;
+        const lifted = data && typeof data === "object" && !data.detail
+          ? (data.message || (data.error && data.error.message) || "")
+          : "";
+        if (lifted) {
+          const out = new Error(String(lifted));
+          out.status = err.status;
+          out.data = data;
+          throw out;
+        }
+        throw err;
+      }
+    }
+    function coreConsoleOnJob(job) {
+      // A finished download/delete changes what the Multimodal grid and the
+      // first-run starter kit report: re-probe ONCE per job, on the edge.
+      if (!job || !job.job_id) return;
+      const done = ["completed", "failed", "cancelled"].includes(String(job.status || ""));
+      const before = coreJobSeen.get(job.job_id);
+      coreJobSeen.set(job.job_id, done);
+      if (done && before === false && (job.kind === "download" || job.kind === "delete")) {
+        void refreshAvailability({ rerender: true });
+      }
+    }
+    function coreConsoleOptions() {
+      return {
+        apiBase: "/api/gateway",
+        request: coreConsoleRequest,
+        isAdmin: () => !!(state.principal && state.principal.admin),
+        hostName: CORE_CONSOLE.hostName,
+        cliPrefix: "abstractgateway",
+        onJob: coreConsoleOnJob,
+      };
+    }
+    function mountCoreScreen(kind, el, key) {
+      // Returns the mount handle, or null when the screens are unavailable
+      // (the caller renders its own fallback). Idempotent per key: a second
+      // open refreshes the mounted screen instead of mounting it twice.
+      if (!el) return null;
+      if (coreMounts.has(key)) {
+        const h = coreMounts.get(key);
+        try { if (h && typeof h.refresh === "function") h.refresh(); } catch { /* next poll retries */ }
+        return h;
+      }
+      const lib = coreConsoleLib();
+      if (!lib) return null;
+      try {
+        const handle = lib.mount(kind, el, coreConsoleOptions());
+        coreMounts.set(key, handle);
+        // A second mount of the same kind injects the screen's markup again;
+        // its root id belongs to the tab copy, so drop it on this one.
+        if (!key.startsWith("tab-") && typeof el.querySelector === "function") {
+          const root = el.querySelector(".acc-root");
+          if (root && typeof root.removeAttribute === "function") root.removeAttribute("id");
+        }
+        return handle;
+      } catch (err) {
+        el.innerHTML = `<p class="message error">Could not open the ${esc(kind)} screen: ${esc(String((err && err.message) || err))}</p>`;
+        return null;
+      }
+    }
+    function unmountCoreScreen(key) {
+      const h = coreMounts.get(key);
+      coreMounts.delete(key);
+      try { if (h && typeof h.unmount === "function") h.unmount(); } catch { /* already gone */ }
+    }
+    function openCoreTab(tab) {
+      if (!state.principal) return;
+      if (!CORE_CONSOLE.available) return;  // the panel carries the server-rendered card
+      const kind = tab === "catalog" ? "models" : "engines";
+      const root = $(`${tab}-core-root`);
+      if (!mountCoreScreen(kind, root, `tab-${tab}`) && root) {
+        root.innerHTML = `<p class="message warn">${esc(coreConsoleUnavailableText())}</p>`;
+      }
+    }
+    // "Set as default" (first-run model step): an INSTALLED row of the
+    // embedded Models screen can become the text-generation default through
+    // the same capability-defaults write the Multimodal tab makes. The served
+    // model id is the artifact minus LM Studio's `@quant` suffix (the
+    // download reference pins a quantization, the route names the model).
+    function servedModelId(provider, artifact) {
+      const a = String(artifact || "");
+      if (String(provider || "") === "lmstudio" && a.includes("@")) return a.slice(0, a.lastIndexOf("@"));
+      return a;
+    }
+    function renderFirstRunDefaultBar(pick) {
+      const bar = $("first-run-model-default");
+      if (!bar) return;
+      const admin = !!(state.principal && state.principal.admin);
+      if (!pick) {
+        bar.innerHTML = `<span class="subtle">Select an installed model below to make it the default text model.</span>`;
+        return;
+      }
+      const model = servedModelId(pick.provider, pick.artifact);
+      bar.innerHTML = `<button id="first-run-set-default" class="secondary"${admin ? "" : " disabled"}>Set as default</button>`
+        + `<span>Use <code>${esc(pick.provider)} / ${esc(model)}</code> as the default text model</span>`
+        + `<span class="subtle">CLI: <code>abstractgateway-config defaults</code></span>`;
+      const btn = $("first-run-set-default");
+      if (btn) btn.onclick = () => setFirstRunDefault(pick.provider, model, btn);
+    }
+    async function setFirstRunDefault(provider, model, btn) {
+      if (btn) btn.disabled = true;
+      try {
+        await api("/api/gateway/config/capability-defaults/output/text", { slow: true, method: "PUT", body: JSON.stringify({ provider, model }) });
+        $("first-run-message").textContent = `Default text model: ${provider} / ${model}.`;
+        $("first-run-message").className = "message ok";
+        try { await renderDefaults(await api("/api/gateway/config/capability-defaults")); } catch { /* the write landed; the grid refreshes on next visit */ }
+        renderFirstRunModel();
+      } catch (err) {
+        $("first-run-message").textContent = `Could not set the default: ${String(err.message || err)}`;
+        $("first-run-message").className = "message error";
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+    function wireFirstRunDefaultBar() {
+      const catalog = $("first-run-model-catalog");
+      renderFirstRunDefaultBar(null);
+      if (!catalog || catalog.dataset.defaultBarWired === "1" || typeof catalog.addEventListener !== "function") return;
+      catalog.dataset.defaultBarWired = "1";
+      const pickFrom = (target) => {
+        const row = target && typeof target.closest === "function" ? target.closest('tr[data-acc-row="installed"]') : null;
+        if (row && row.dataset && row.dataset.provider && row.dataset.artifact) {
+          renderFirstRunDefaultBar({ provider: row.dataset.provider, artifact: row.dataset.artifact });
+        }
+      };
+      catalog.addEventListener("click", (e) => pickFrom(e.target));
+      catalog.addEventListener("focusin", (e) => pickFrom(e.target));
+    }
+    // ------------------------------------------------------------------
     // FIRST RUN (2026-09-23). A fresh install reaches this console through a
     // one-time link printed by `abstractgateway serve` / `abstractgateway
     // claim` (`/console#claim=<code>`): the code is redeemed for an ADMIN
@@ -10885,6 +11182,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function closeFirstRunWizard() {
       firstRun.open = false;
       $("first-run-backdrop").classList.add("hidden");
+      // The wizard's copies stop polling and release their key handlers; the
+      // Models/Engines tabs keep theirs.
+      unmountCoreScreen("first-run-engines");
+      unmountCoreScreen("first-run-models");
     }
     async function completeFirstRun(outcome) {
       try {
@@ -10951,49 +11252,35 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         ["Starts at login", esc(svc.installed ? `yes (${svc.mechanism})` : "no — run `abstractgateway service install`")],
       ]);
     }
-    async function loadFirstRunEngines() {
+    function loadFirstRunEngines() {
+      // AbstractCore's Engines screen, mounted in place: detection, versions,
+      // Install (admin; the confirmation shows the exact command and the host
+      // it runs on) and Open download page. Without the screens (an older
+      // AbstractCore) the card says so and keeps the two download links.
       const box = $("first-run-engines-body");
-      box.innerHTML = `<p class="subtle">Looking for local engines...</p>`;
-      let payload = null;
-      try {
-        payload = await api("/api/gateway/engines");
-        firstRun.enginesMissing = false;
-      } catch (err) {
-        if (err && err.status === 404) {
-          firstRun.enginesMissing = true;
-        } else {
-          firstRun.enginesError = String(err.message || err);
-        }
-      }
-      if (payload && Array.isArray(payload.engines)) {
-        const rows = payload.engines.map((e) => {
-          const status = e.installed === true ? (e.running ? "running" : "installed") : (e.installed === false ? "not installed" : "unknown");
-          const cls = e.installed === true ? "ok" : "off";
-          const link = (e.install && e.install.url) || e.docs_url || "";
-          return `<tr><td>${esc(e.name || e.id)}</td><td><span class="state-pill ${cls}">${esc(status)}</span></td><td>${esc(e.version || "")}</td>`
-            + `<td>${link ? `<a href="${esc(link)}" target="_blank" rel="noopener">download page</a>` : ""}</td></tr>`;
-        }).join("");
-        box.innerHTML = `<table class="first-run-table"><thead><tr><th>Engine</th><th>Status</th><th>Version</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
-        return;
-      }
+      if (mountCoreScreen("engines", box, "first-run-engines")) return;
       const cards = FIRST_RUN_ENGINE_LINKS.map((e) =>
         `<div class="first-run-card"><strong>${esc(e.name)}</strong><span>${esc(e.note)}</span>`
         + `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.url)}</a></div>`).join("");
-      const lead = firstRun.enginesMissing
-        ? "Engine detection arrives with the next AbstractCore release. Until then, install a local engine yourself if you want models on this machine (cloud providers work without one):"
-        : `Engine detection failed (${esc(firstRun.enginesError)}). You can still install a local engine yourself:`;
-      box.innerHTML = `<p class="first-run-note" id="first-run-engines-fallback">${lead}</p><div class="first-run-cards">${cards}</div>`
+      box.innerHTML = `<p class="first-run-note" id="first-run-engines-fallback">${esc(coreConsoleUnavailableText())} Until then, install a local engine yourself if you want models on this machine (cloud providers work without one):</p><div class="first-run-cards">${cards}</div>`
         + `<p class="subtle">Cloud keys (OpenAI, Anthropic, OpenRouter...) go in the Providers tab.</p>`;
     }
     async function loadFirstRunModel() {
-      const box = $("first-run-model-body");
+      const box = $("first-run-model-recommended");
       box.innerHTML = `<p class="subtle">Checking the recommended starter models...</p>`;
+      // AbstractCore's Models screen below the starter kit: "Fits this
+      // machine" is on by default, so the list opens on what can run here.
+      const catalog = $("first-run-model-catalog");
+      if (!mountCoreScreen("models", catalog, "first-run-models")) {
+        catalog.innerHTML = `<p class="subtle" id="first-run-model-catalog-unavailable">${esc(coreConsoleUnavailableText())}</p>`;
+      }
+      wireFirstRunDefaultBar();
       await refreshAvailability({ rerender: false });
       renderFirstRunModel();
     }
     function renderFirstRunModel() {
       if (!firstRun.open || firstRun.step !== "model") return;
-      const box = $("first-run-model-body");
+      const box = $("first-run-model-recommended");
       const plan = state.availabilityPlan || {};
       const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
       const text = (state.defaults || []).find((r) => r && r.key === "output.text")
@@ -11100,6 +11387,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (state.activeTab === "users") loadEntities();
       if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached; no fold since 2026-08-19)
       if (state.activeTab === "models") { loadHostState(); startHostStatePoll(); }
+      if (state.activeTab === "catalog" || state.activeTab === "engines") openCoreTab(state.activeTab);
       try {
         await loadEndpointProfiles();
       } catch (err) {
@@ -11552,6 +11840,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // the chain dies the moment another tab goes active or the user signs
 	    // out; re-entering the tab starts a fresh chain).
 	    $("tab-button-models").onclick = () => { setActiveTab("models"); loadHostState(); startHostStatePoll(); };
+	    $("tab-button-catalog").onclick = () => { setActiveTab("catalog"); openCoreTab("catalog"); };
+	    $("tab-button-engines").onclick = () => { setActiveTab("engines"); openCoreTab("engines"); };
 	    $("models-refresh").onclick = () => { loadHostState(); startHostStatePoll(); };
 	    $("gateway-host-pause").onclick = toggleGatewayPause;
 	    $("gateway-host-restart").onclick = restartGateway;

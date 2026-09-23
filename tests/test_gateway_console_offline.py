@@ -619,3 +619,16 @@ console.log(JSON.stringify(results));
     moved, current = _node(harness)
     assert moved["paintsAfterMove"] == 0, "a stale lookup repainted the reopened modal"
     assert current["paintsWhenCurrent"] == 1, "the guard also blocked the legitimate paint"
+
+
+def test_embedded_models_and_engines_requests_ride_the_slow_budget() -> None:
+    """AbstractCore's embedded screens call the gateway through `api()`: a
+    catalog with a Hugging Face search or an engine probe may take longer than
+    the default budget, so the adapter opts into the slow lane — bounded,
+    never unbounded — and keeps api()'s error contract (`.status`)."""
+    source = _console_script()
+    adapter = _slice_function(source, "coreConsoleRequest")
+    assert "await api(path, { slow: true," in adapter
+    assert "timeoutMs: 0" not in adapter
+    assert "out.status = err.status;" in adapter
+    assert "throw err;" in adapter

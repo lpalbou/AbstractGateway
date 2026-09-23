@@ -2477,3 +2477,19 @@ console.log(JSON.stringify(results));
     assert switched["active"] == ["mlx", ""], (
         "the warm-up row must read as mlx with nothing chosen, not mlx/qwen3-a3b"
     )
+
+
+def test_models_and_engines_tabs_do_not_reuse_existing_ids() -> None:
+    """"Models" is id `catalog` and "Engines" is id `engines`; "Resources"
+    keeps id `models` and "Runtimes" keeps `runtimes` (naming rule of the
+    install mission: the new tabs never take over an existing id)."""
+    html = gateway_console_html()
+    assert re.search(r'id="tab-button-models"[^>]*>.*?Resources</span>', html)
+    assert re.search(r'id="tab-button-runtimes"[^>]*>.*?Runtimes</span>', html)
+    assert re.search(r'id="tab-button-catalog"[^>]*>.*?Models</span>', html)
+    assert re.search(r'id="tab-button-engines"[^>]*>.*?Engines</span>', html)
+    assert '$("tab-button-catalog").onclick = () => { setActiveTab("catalog"); openCoreTab("catalog"); };' in html
+    assert '$("tab-button-engines").onclick = () => { setActiveTab("engines"); openCoreTab("engines"); };' in html
+    # A `#catalog` / `#engines` deep link and a restored landing tab mount too.
+    assert 'if (wantedTab === "catalog" || wantedTab === "engines") openCoreTab(wantedTab);' in html
+    assert 'if (state.activeTab === "catalog" || state.activeTab === "engines") openCoreTab(state.activeTab);' in html

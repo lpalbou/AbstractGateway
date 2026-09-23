@@ -3,9 +3,11 @@
 Pins the DOM contract later workstreams embed into, and drives the real
 console JavaScript in a node VM: a `#claim=` link is stripped from the URL
 BEFORE it is redeemed, redemption opens the wizard, every step renders from
-the gateway's payloads (including the graceful "engine detection arrives with
-the next AbstractCore release" card when `/engines` 404s), and Finish records
-the first-run state with the CSRF header.
+the gateway's payloads, and Finish records the first-run state with the CSRF
+header. The Engines and Model steps mount AbstractCore's embedded screens
+(`window.AbstractCoreConsole`, stubbed here) with the gateway's options; the
+"Set as default" bar writes the text route through the capability-defaults
+endpoint; an AbstractCore older than 2.14.0 shows a card instead.
 """
 
 from __future__ import annotations
@@ -79,6 +81,9 @@ class Element {
   get options() { return this.children; }
   get selectedOptions() { return this.children.filter((c) => c.selected); }
   append(...items) { this.children.push(...items); }
+  addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
+  dispatch(type, event) { for (const fn of (this.listeners[type] || [])) fn(event); }
+  get listeners() { if (!this._listeners) this._listeners = {}; return this._listeners; }
 }
 const elements = new Map();
 const initialClasses = __CLASSES__;
@@ -119,6 +124,8 @@ async function fetch(path, options = {}) {
     gateway: { data_dir: "/Users/u/Library/Application Support/AbstractGateway", data_dir_source: "os_default", auth_mode: "users", service: { installed: false, mechanism: "launchd-agent" }, url: "http://127.0.0.1:18080" },
   });
   if (path === "/api/gateway/engines") return res(404, { detail: "Not Found" });
+  if (path === "/api/gateway/models/delete") return res(409, { ok: false, status: "refused", message: "refusing to delete: loaded (send force=true to override)", delete_blockers: ["loaded"], error: { message: "refusing to delete: loaded (send force=true to override)", type: "host_action_refused" } });
+  if (path.startsWith("/api/gateway/config/capability-defaults/") && method === "PUT") return res(200, { ok: true });
   if (path === "/api/gateway/models/availability") return res(200, {
     routes: [],
     recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
@@ -130,7 +137,18 @@ async function fetch(path, options = {}) {
   if (path === "/api/gateway/discovery/providers") return res(200, { items: [] });
   return res(200, {});
 }
+// AbstractCore's embedded screens, stubbed: records every mount/refresh/unmount.
+const mounts = [];
+const coreLib = {
+  mount(kind, rootEl, options) {
+    const rec = { kind, id: rootEl.id, options, refreshed: 0, unmounted: 0 };
+    mounts.push(rec);
+    return { kind, refresh() { rec.refreshed += 1; }, unmount() { rec.unmounted += 1; } };
+  },
+};
+const windowStub = scenario.coreStub ? { AbstractCoreConsole: coreLib } : {};
 const context = vm.createContext({
+  window: windowStub,
   document, fetch, Headers, localStorage, location, history, console, Blob,
   URL: { createObjectURL: () => "blob:x", revokeObjectURL() {} },
   Intl, navigator: { languages: ["en-US"], language: "en-US" },
@@ -157,13 +175,59 @@ if (scenario.name === "claim") {
   for (const want of ["Apple M5 Max", "os_default", "Application Support", "32.0 GiB"]) if (!welcome.includes(want)) fail("welcome missing " + want + ": " + welcome);
 
   context.firstRunStep(1); await settle();
-  const engines = el("first-run-engines-body").innerHTML;
-  for (const want of ["Engine detection arrives with the next AbstractCore release", "https://ollama.com/download", "https://lmstudio.ai/download"]) if (!engines.includes(want)) fail("engines missing " + want);
   if (hidden("first-run-step-engines") || !hidden("first-run-step-welcome")) fail("step panels did not switch");
+  if (scenario.expectMount) {
+    const m = mounts.find((x) => x.id === "first-run-engines-body");
+    if (!m || m.kind !== "engines") fail("engines step did not mount the Engines screen: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
+    const o = m.options;
+    if (o.apiBase !== "/api/gateway" || o.cliPrefix !== "abstractgateway") fail("mount options wrong: " + JSON.stringify(o));
+    if (!o.hostName || typeof o.hostName !== "string") fail("mount carried no host name");
+    if (o.isAdmin() !== true) fail("isAdmin must read the admin principal");
+    if (typeof o.onJob !== "function") fail("mount carried no onJob");
+    // The request adapter: CSRF on writes, `.status` and the refusal's own
+    // message on a 409 whose body has no `detail` envelope.
+    let refused = null;
+    try { await o.request("POST", "/api/gateway/models/delete", { provider: "ollama", artifact: "qwen3:8b" }); } catch (err) { refused = err; }
+    if (!refused || refused.status !== 409) fail("adapter must reject with .status 409");
+    if (!String(refused.message).startsWith("refusing to delete: loaded")) fail("adapter lost the refusal message: " + refused.message);
+    const del = calls.find((c) => c.path === "/api/gateway/models/delete");
+    if (!del || del.csrf !== "agcsrf_wizard" || JSON.parse(del.body).artifact !== "qwen3:8b") fail("adapter POST carried no CSRF/body: " + JSON.stringify(del));
+    const got = await o.request("GET", "/api/gateway/host/first-run");
+    if (!got || got.ok !== true) fail("adapter GET did not resolve to parsed JSON");
+    // Going back and forth refreshes the mounted screen, never re-mounts it.
+    context.firstRunStep(-1); await settle(); context.firstRunStep(1); await settle();
+    if (mounts.filter((x) => x.id === "first-run-engines-body").length !== 1 || m.refreshed < 1) fail("engines screen re-mounted instead of refreshed");
+  } else {
+    const engines = el("first-run-engines-body").innerHTML;
+    for (const want of scenario.enginesWant) if (!engines.includes(want)) fail("engines fallback missing " + want + ": " + engines);
+  }
 
   context.firstRunStep(1); await settle();
-  const model = el("first-run-model-body").innerHTML;
+  const model = el("first-run-model-recommended").innerHTML;
   for (const want of ["qwen/qwen3.5-9b@4bit", "not downloaded", "Use recommended defaults", "first-run-download"]) if (!model.includes(want)) fail("model step missing " + want + ": " + model);
+  if (scenario.expectMount) {
+    const m = mounts.find((x) => x.id === "first-run-model-catalog");
+    if (!m || m.kind !== "models" || m.options.apiBase !== "/api/gateway") fail("model step did not mount the Models screen");
+    // Selecting an installed row offers "Set as default"; it PUTs the text
+    // route with the SERVED id (LM Studio's @quant suffix dropped) + CSRF.
+    const row = { dataset: { provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit" } };
+    el("first-run-model-catalog").dispatch("click", { target: { closest: (sel) => (sel.includes('data-acc-row="installed"') ? row : null) } });
+    if (!el("first-run-model-default").innerHTML.includes("first-run-set-default")) fail("installed row did not offer Set as default: " + el("first-run-model-default").innerHTML);
+    el("first-run-model-default").innerHTML = "";
+    el("first-run-model-catalog").dispatch("click", { target: { closest: () => null } });
+    if (el("first-run-model-default").innerHTML.includes("first-run-set-default")) fail("a non-installed click must not offer Set as default");
+    el("first-run-model-catalog").dispatch("focusin", { target: { closest: (sel) => (sel.includes('data-acc-row="installed"') ? row : null) } });
+    await el("first-run-set-default").onclick(); await settle();
+    const put = calls.find((c) => c.method === "PUT" && c.path.startsWith("/api/gateway/config/capability-defaults/"));
+    if (!put || put.path !== "/api/gateway/config/capability-defaults/output/text") fail("Set as default hit the wrong route: " + JSON.stringify(put));
+    const body = JSON.parse(put.body);
+    if (body.provider !== "lmstudio" || body.model !== "qwen/qwen3.5-9b") fail("Set as default body wrong: " + put.body);
+    if (put.csrf !== "agcsrf_wizard") fail("Set as default PUT carried no CSRF header");
+    if (!el("first-run-message").textContent.includes("qwen/qwen3.5-9b")) fail("no confirmation after Set as default");
+  } else {
+    const cat = el("first-run-model-catalog").innerHTML;
+    if (!cat.includes(scenario.enginesWant[0])) fail("model step must explain why the catalog is missing: " + cat);
+  }
 
   context.firstRunStep(1); await settle();
   const apps = el("first-run-apps-body").innerHTML;
@@ -180,6 +244,27 @@ if (scenario.name === "claim") {
   if (JSON.parse(post.body).outcome !== "finished") fail("finish outcome wrong: " + post.body);
   if (post.csrf !== "agcsrf_wizard") fail("finish POST carried no CSRF header");
   if (!hidden("first-run-backdrop")) fail("wizard stayed open after finish");
+  if (scenario.expectMount) {
+    for (const id of ["first-run-engines-body", "first-run-model-catalog"]) {
+      const m = mounts.find((x) => x.id === id);
+      if (!m || m.unmounted !== 1) fail("closing the wizard must unmount " + id);
+    }
+    // The Models / Engines tabs mount on first open, refresh on re-open.
+    el("tab-button-catalog").onclick(); await settle();
+    el("tab-button-engines").onclick(); await settle();
+    el("tab-button-catalog").onclick(); await settle();
+    const tabModels = mounts.filter((x) => x.id === "catalog-core-root");
+    const tabEngines = mounts.filter((x) => x.id === "engines-core-root");
+    if (tabModels.length !== 1 || tabModels[0].kind !== "models") fail("Models tab did not mount once: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
+    if (tabEngines.length !== 1 || tabEngines[0].kind !== "engines") fail("Engines tab did not mount once");
+    if (tabModels[0].refreshed !== 1) fail("re-opening the Models tab must refresh it");
+    if (tabModels[0].options.cliPrefix !== "abstractgateway" || tabModels[0].options.apiBase !== "/api/gateway") fail("tab mount options wrong");
+    if (!String(el("tab-catalog").className).includes("active")) fail("Models tab panel not active");
+  } else {
+    el("tab-button-catalog").onclick(); await settle();
+    el("tab-button-engines").onclick(); await settle();
+    if (mounts.length) fail("nothing may mount without the AbstractCore screens");
+  }
 }
 
 if (scenario.name === "completed") {
@@ -196,16 +281,16 @@ console.log("OK");
 """
 
 
-def _run(scenario: dict) -> subprocess.CompletedProcess:
+def _run(scenario: dict, html: str | None = None) -> subprocess.CompletedProcess:
     node = shutil.which("node")
     if not node:
         pytest.skip("node is required for the console wizard smoke")
-    html = gateway_console_html()
+    html = html if html is not None else gateway_console_html()
     scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
     # Stub elements start with the classes the REAL markup gives them (the
     # wizard backdrop and the Setup button start `hidden`).
     classes = {}
-    for element_id in WIZARD_IDS:
+    for element_id in WIZARD_IDS + ["tab-catalog", "tab-engines"]:
         tag = re.search(r'<[^>]*\bid="%s"[^>]*>' % re.escape(element_id), html)
         cls = re.search(r'\bclass="([^"]*)"', tag.group(0)) if tag else None
         classes[element_id] = cls.group(1) if cls else ""
@@ -222,9 +307,44 @@ def _run(scenario: dict) -> subprocess.CompletedProcess:
 
 def test_claim_link_signs_in_opens_and_completes_the_wizard() -> None:
     code = "agclaim_" + "A" * 43
-    result = _run({"name": "claim", "hash": f"#claim={code}", "code": code, "completed": False})
+    result = _run({"name": "claim", "hash": f"#claim={code}", "code": code, "completed": False, "coreStub": True, "expectMount": True})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
+
+
+def test_wizard_without_the_screens_script_explains_and_keeps_download_links() -> None:
+    # Server has the screens, but the page's AbstractCore script did not run.
+    code = "agclaim_" + "B" * 43
+    result = _run({
+        "name": "claim", "hash": f"#claim={code}", "code": code, "completed": False, "coreStub": False,
+        "enginesWant": ["did not load", "https://ollama.com/download", "https://lmstudio.ai/download", "first-run-engines-fallback"],
+    })
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_wizard_with_an_older_abstractcore_shows_the_upgrade_card(monkeypatch) -> None:
+    from abstractgateway import core_config
+
+    def too_old(kind):
+        raise core_config.CoreTooOld("The embeddable console screens", "2.13.42")
+
+    monkeypatch.setattr(core_config, "core_console_fragment", too_old)
+    monkeypatch.setattr(
+        core_config,
+        "core_models_engines_support",
+        lambda: {"available": False, "abstractcore_version": "2.13.42", "required": "2.14.0", "missing": ["abstractcore.console.web"]},
+    )
+    html = gateway_console_html()
+    assert "abstractcore-console-js" not in html
+    code = "agclaim_" + "C" * 43
+    result = _run({
+        "name": "claim", "hash": f"#claim={code}", "code": code, "completed": False, "coreStub": True,
+        "enginesWant": ["require abstractcore \u2265 2.14.0", "2.13.42", 'pip install -U &quot;abstractcore&gt;=2.14.0&quot;', "https://ollama.com/download"],
+    }, html=html)
+    # A global that happens to exist is ignored when the server said the
+    # screens are unavailable: the page never mounts (expectMount False).
+    assert result.returncode == 0, result.stderr + result.stdout
 
 
 def test_completed_data_dir_does_not_auto_open_but_setup_reopens() -> None:
