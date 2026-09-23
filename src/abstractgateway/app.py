@@ -9,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import __version__
 from .console import gateway_console_html
 
 from .routes import entities_router, entity_replay_router, gateway_router, triage_router
@@ -58,7 +57,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(
     title="AbstractGateway",
     description="Durable Run Gateway for AbstractRuntime (commands + ledger replay/stream).",
-    version=__version__,
+    version="0.3.0",
     lifespan=_lifespan,
     docs_url=None,
     redoc_url=None,
