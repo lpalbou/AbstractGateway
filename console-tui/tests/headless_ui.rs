@@ -1288,11 +1288,11 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
     );
     assert!(s.contains("reasoning"), "the reasoning row renders:\n{s}");
 
-    // Tab: mode → provider → model → base URL → reasoning → options →
+    // Tab: mode → provider → model → base URL → reasoning → options → MTP →
     // [Save]. Nothing is edited: the pair the row already carries is
     // re-sent (this form's mode radio requires it), and every other
     // owned field goes out explicitly.
-    for _ in 0..6 {
+    for _ in 0..7 {
         h.key(b"\t");
         h.turn();
     }
@@ -1316,6 +1316,42 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
             assert_eq!(body["options"], serde_json::json!({}), "same for options");
         }
         other => panic!("expected PutRoute, got {other:?}"),
+    }
+}
+
+#[test]
+fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
+    for value in [json!(false), json!({"mode":"native_mtp", "num_draft_tokens":4, "require_acceleration":false})] {
+        let mut h = harness();
+        h.connect_as_admin();
+        h.goto_screen(2);
+        let mut routes = routes_fixture();
+        routes.rows[0].options = Some(json!({"speculation":value}));
+        h.store.routes.set(Loadable::Ready(routes));
+        h.store.providers.set(Loadable::Ready(providers_fixture()));
+        h.store.models.update(|models| {
+            models.insert("lmstudio".into(), Loadable::Ready(vec!["test-model-a".into()]));
+        });
+        h.turns(2);
+        h.type_text("e");
+        let screen = h.turns(3);
+        assert!(screen.contains("MTP default"), "MTP policy control must be visible: {screen}");
+        // mode -> provider -> model -> URL -> reasoning -> options -> MTP -> Save -> Test
+        for _ in 0..8 { h.key(b"\t"); h.turn(); }
+        h.type_text("\r");
+        h.turns(2);
+        match h.find_cmd(|command| matches!(command, Cmd::TestRoute { .. })) {
+            Some(Cmd::TestRoute { controls, .. }) => {
+                assert_eq!(controls["reasoning"], "medium");
+                if value == json!(false) {
+                    assert_eq!(controls["speculation"], false);
+                } else {
+                    assert_eq!(controls["speculation"]["num_draft_tokens"], 4);
+                    assert_eq!(controls["speculation"]["require_acceleration"], true);
+                }
+            }
+            other => panic!("expected MTP audition command, got {other:?}"),
+        }
     }
 }
 
@@ -5841,5 +5877,3 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         "workflows screen never wears Review's sandbox hints:\n{s}"
     );
 }
-
-

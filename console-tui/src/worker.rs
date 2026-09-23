@@ -277,6 +277,7 @@ pub enum Cmd {
         model: String,
         /// options.voice for the voice lane (None = provider default).
         voice: Option<String>,
+        controls: Value,
         /// Session-scoped run id for the voice lane, minted UI-side
         /// from the connected principal — the same id shape the web
         /// console uses, so both UIs share one test-run plane.
@@ -1666,6 +1667,7 @@ fn handle(
             provider,
             model,
             voice,
+            controls,
             voice_run_id,
         } => {
             let s = *store;
@@ -1694,12 +1696,13 @@ fn handle(
                         }
                         c.run_voice_tts(&voice_run_id, &body)
                     } else {
-                        c.sandbox_generate(
+                        c.sandbox_generate_with_controls(
                             &key,
                             &provider,
                             &model,
                             "Reply with the single word: ready.",
                             16,
+                            &controls,
                         )
                     }
                 },
@@ -1739,9 +1742,16 @@ fn handle(
                         .chars()
                         .take(120)
                         .collect();
+                    let mtp = match v.get("speculation") {
+                        Some(outcome) if outcome.get("used").and_then(Value::as_bool) == Some(true) => {
+                            format!("MTP used{}", outcome.get("num_draft_tokens").map(|n| format!(" (depth {n})")).unwrap_or_default())
+                        }
+                        Some(outcome) if !outcome.is_null() => format!("MTP not used{}", outcome.get("reason").and_then(Value::as_str).map(|reason| format!(": {reason}")).unwrap_or_default()),
+                        _ => "MTP execution not reported".to_string(),
+                    };
                     RouteTestOutcome {
                         ok,
-                        summary: format!("responded in {secs:.1}s with {pair}"),
+                        summary: format!("responded in {secs:.1}s with {pair} · {mtp}"),
                         detail: err.or(if response.is_empty() {
                             Some("(empty response)".into())
                         } else {

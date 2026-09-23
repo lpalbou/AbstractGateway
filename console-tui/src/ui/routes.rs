@@ -619,6 +619,16 @@ fn applies_now(t: &TokenSet, row: &RouteRow) -> View {
         if let Some(r) = &row.reasoning {
             spans.push(span(format!("  · reasoning {r}"), t.ok));
         }
+        if let Some(options) = &row.options {
+            if let Some(value) = options.get("speculation") {
+                let label = match speculation_index(options) {
+                    1 => "off".to_string(),
+                    n @ 2..=5 => format!("depth {n}"),
+                    _ => value.to_string(),
+                };
+                spans.push(span(format!("  · MTP default {label}"), t.text_muted));
+            }
+        }
         if let Some(by) = &row.covered_by {
             spans.push(span(format!("  (covered by {by})"), t.info));
         } else {
@@ -780,6 +790,76 @@ fn options_voice(options_json: &str) -> Option<String> {
         })
 }
 
+/// A selector is an editor for options.speculation, never a second setting.
+fn speculation_index(options: &Value) -> usize {
+    match options.get("speculation") {
+        None | Some(Value::Null) => 0,
+        Some(Value::Bool(false)) => 1,
+        Some(value) if value.get("mode").and_then(Value::as_str) == Some("off") => 1,
+        Some(value) => value.get("num_draft_tokens").and_then(Value::as_u64)
+            .filter(|n| (2..=5).contains(n)).map(|n| n as usize).unwrap_or(6),
+    }
+}
+
+fn speculation_options(text: &str, ix: usize) -> Result<String, String> {
+    let mut options = if text.trim().is_empty() {
+        serde_json::Map::new()
+    } else {
+        match serde_json::from_str::<Value>(text) {
+            Ok(Value::Object(value)) => value,
+            _ => return Err("options JSON does not parse — fix it before picking MTP".into()),
+        }
+    };
+    match ix {
+        0 => { options.remove("speculation"); }
+        1 => { options.insert("speculation".into(), Value::Bool(false)); }
+        2..=5 => {
+            let mut control = options.get("speculation").and_then(Value::as_object).cloned().unwrap_or_default();
+            control.insert("mode".into(), json!("native_mtp"));
+            control.insert("num_draft_tokens".into(), json!(ix));
+            control.insert("require_acceleration".into(), json!(false));
+            options.insert("speculation".into(), Value::Object(control));
+        }
+        _ => {} // A custom stored value is preserved until the operator edits it.
+    }
+    Ok(if options.is_empty() { String::new() } else { Value::Object(options).to_string() })
+}
+
+#[cfg(test)]
+mod speculation_tests {
+    use super::*;
+
+    #[test]
+    fn selector_keeps_off_distinct_from_inherit_and_preserves_options() {
+        let off: Value = serde_json::from_str(&speculation_options(r#"{"temperature":0.2}"#, 1).unwrap()).unwrap();
+        assert_eq!(off["speculation"], false);
+        assert_eq!(off["temperature"], 0.2);
+        assert_eq!(speculation_index(&off), 1);
+        let inherited: Value = serde_json::from_str(&speculation_options(&off.to_string(), 0).unwrap()).unwrap();
+        assert!(inherited.get("speculation").is_none());
+        assert_eq!(inherited["temperature"], 0.2);
+    }
+
+    #[test]
+    fn depth_edit_preserves_matching_head_and_uses_optional_default_policy() {
+        let value: Value = serde_json::from_str(&speculation_options(r#"{"speculation":{"drafter":"matching/head","num_draft_tokens":2},"seed":7}"#, 4).unwrap()).unwrap();
+        assert_eq!(value["speculation"]["num_draft_tokens"], 4);
+        assert_eq!(value["speculation"]["drafter"], "matching/head");
+        assert_eq!(value["speculation"]["require_acceleration"], false);
+        assert_eq!(value["seed"], 7);
+        assert_eq!(speculation_index(&value), 4);
+    }
+
+    #[test]
+    fn malformed_and_custom_options_are_not_silently_overwritten() {
+        assert!(speculation_options("{", 2).is_err());
+        assert!(speculation_options("[]", 2).is_err());
+        let input = json!({"speculation":{"mode":"native_mtp","num_draft_tokens":7}});
+        assert_eq!(speculation_index(&input), 6);
+        assert_eq!(serde_json::from_str::<Value>(&speculation_options(&input.to_string(), 6).unwrap()).unwrap(), input);
+    }
+}
+
 pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
     let store = ctx.store;
     let providers = super::providers::provider_names(&store);
@@ -847,6 +927,14 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                 .map(|o| o.to_string())
                 .unwrap_or_default(),
         );
+        let speculation_ix = mcx.signal(speculation_index(row.options.as_ref().unwrap_or(&Value::Null)));
+        mcx.effect(move || {
+            if let Ok(options) = serde_json::from_str::<Value>(&options_json.get()) {
+                speculation_ix.set(speculation_index(&options));
+            } else if options_json.get().trim().is_empty() {
+                speculation_ix.set(0);
+            }
+        });
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
         let esc_armed = mcx.signal(false);
@@ -1373,6 +1461,25 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                 .element(gcx, &t)
                                 .build(),
                         ))
+                        .child(if is_text {
+                            field(
+                                &t,
+                                "MTP default",
+                                Select::new(["inherit", "off", "depth 2", "depth 3", "depth 4", "depth 5", "custom (JSON)"]
+                                    .iter().map(|label| SelectOption::new(*label)).collect::<Vec<_>>())
+                                    .value(speculation_ix)
+                                    .on_change(move |ix| {
+                                        match speculation_options(&options_json.get_untracked(), ix) {
+                                            Ok(value) => { options_json.set(value); form_error.set(None); }
+                                            Err(error) => form_error.set(Some(error)),
+                                        }
+                                    })
+                                    .layout(LayoutStyle::default().w(28).h(1).shrink(0.0))
+                                    .element(gcx, &t).build(),
+                            )
+                        } else {
+                            Element::new().style(LayoutStyle::default().h(0)).build()
+                        })
                         .build()
                 })
             })
@@ -1580,12 +1687,31 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                     } else {
                                         None
                                     };
+                                    let mut controls = json!({});
+                                    if row_t.is_text_generation() {
+                                        let text = options_json.get_untracked();
+                                        let parsed = if text.trim().is_empty() { Ok(json!({})) } else { serde_json::from_str::<Value>(&text) };
+                                        let options = match parsed {
+                                            Ok(value) if value.is_object() => value,
+                                            _ => { form_error.set(Some("options must be a JSON object before testing".into())); return; }
+                                        };
+                                        if let Some(value) = options.get("speculation") {
+                                            controls["speculation"] = value.clone();
+                                            if value.is_object() && value.get("mode").and_then(Value::as_str) != Some("off") {
+                                                controls["speculation"]["require_acceleration"] = json!(true);
+                                            }
+                                        }
+                                        if let Some(level) = crate::store::REASONING_LEVELS.get(reasoning_ix.get_untracked().wrapping_sub(1)) {
+                                            controls["reasoning"] = json!(level);
+                                        }
+                                    }
                                     ctx_t.store.route_test.set(Loadable::Loading);
                                     ctx_t.send(Cmd::TestRoute {
                                         key: row_t.key.clone(),
                                         provider,
                                         model,
                                         voice,
+                                        controls,
                                         voice_run_id: voice_test_run_id(&ctx_t.store),
                                     });
                                 })

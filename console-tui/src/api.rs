@@ -982,16 +982,32 @@ impl GatewayClient {
         prompt: &str,
         max_tokens: u32,
     ) -> ApiResult<Value> {
+        self.sandbox_generate_with_controls(capability, provider, model, prompt, max_tokens, &json!({}))
+    }
+
+    /// Request controls belong to the current audition, not a separate store.
+    pub fn sandbox_generate_with_controls(
+        &self,
+        capability: &str,
+        provider: &str,
+        model: &str,
+        prompt: &str,
+        max_tokens: u32,
+        controls: &Value,
+    ) -> ApiResult<Value> {
+        let mut body = json!({
+            "capability": capability, "provider": provider, "model": model,
+            "prompt": prompt, "max_tokens": max_tokens,
+        });
+        for key in ["reasoning", "speculation"] {
+            if let Some(value) = controls.get(key).filter(|value| !value.is_null()) {
+                body[key] = value.clone();
+            }
+        }
         self.send(
             "POST",
             "/sandbox/generate",
-            &json!({
-                "capability": capability,
-                "provider": provider,
-                "model": model,
-                "prompt": prompt,
-                "max_tokens": max_tokens,
-            }),
+            &body,
             true,
         )
     }
