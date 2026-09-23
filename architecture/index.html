@@ -16,14 +16,14 @@
         <link rel="prev" href="../api/">
       
       
-        <link rel="next" href="../security/">
+        <link rel="next" href="../entities/">
       
       
         
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -286,6 +286,60 @@
     
   
     Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
   
 
     
@@ -582,6 +636,60 @@
   
   
     <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -854,7 +962,7 @@
 <h1 id="abstractgateway-architecture">AbstractGateway — Architecture<a class="headerlink" href="#abstractgateway-architecture" title="Permanent link">&para;</a></h1>
 <blockquote>
 <p>Status: implemented (main branch)
-Last reviewed: 2026-05-23</p>
+Last reviewed: 2026-08-27</p>
 </blockquote>
 <p>AbstractGateway is a <strong>durable run gateway</strong> for AbstractRuntime:
 - <strong>Start runs</strong> (and optionally schedule them)
@@ -868,21 +976,21 @@ Last reviewed: 2026-05-23</p>
 - AbstractRuntime + transitive capability packages (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated image/video/voice/audio/music capabilities, and KG-backed bundle execution (<code>src/abstractgateway/hosts/bundle_host.py</code>)</p>
 <h2 id="high-level-shape">High-level shape<a class="headerlink" href="#high-level-shape" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart LR
-  subgraph Clients[&quot;Clients (thin/stateless UIs)&quot;]
-    UI[&quot;Web/PWA / TUI / 3rd-party&quot;]
+  subgraph Clients["Clients (thin/stateless UIs)"]
+    UI["Web/PWA / TUI / 3rd-party"]
   end
 
-  subgraph GW[&quot;AbstractGateway (this package)&quot;]
-    Sec[&quot;GatewaySecurityMiddleware\n(auth + origin + limits)&quot;]
-    API[&quot;FastAPI routes\n/api/gateway/*&quot;]
-    Runner[&quot;GatewayRunner\npoll commands + tick runs&quot;]
-    Host[&quot;Workflow host\n(bundle mode)&quot;]
-    Stores[&quot;Durable stores\nruns + ledger + commands + artifacts&quot;]
+  subgraph GW["AbstractGateway (this package)"]
+    Sec["GatewaySecurityMiddleware\n(auth + origin + limits)"]
+    API["FastAPI routes\n/api/gateway/*"]
+    Runner["GatewayRunner\npoll commands + tick runs"]
+    Host["Workflow host\n(bundle mode)"]
+    Stores["Durable stores\nruns + ledger + commands + artifacts"]
   end
 
-  subgraph RT[&quot;AbstractRuntime&quot;]
-    Runtime[&quot;Runtime.tick(...)&quot;]
-    Registry[&quot;WorkflowRegistry / WorkflowSpec&quot;]
+  subgraph RT["AbstractRuntime"]
+    Runtime["Runtime.tick(...)"]
+    Registry["WorkflowRegistry / WorkflowSpec"]
   end
 
   UI --&gt;|HTTP| Sec --&gt; API
@@ -918,7 +1026,7 @@ Last reviewed: 2026-05-23</p>
     them, and direct private-bundle routes reject catalog-internal ids.</li>
 <li><strong>Runner worker</strong>:</li>
 <li>Polls the durable command inbox and applies commands; ticks RUNNING runs forward (<code>src/abstractgateway/runner.py</code>).</li>
-<li>A filesystem lock (<code>gateway_runner.lock</code>) prevents double-ticking in split-process deployments.</li>
+<li>A filesystem lock (<code>gateway_runner.lock</code>) prevents double-ticking in split-process deployments. Refused acquisition is retried continuously (never one-shot), a live wrong holder is asked to yield via a one-shot takeover request (<code>gateway_runner.takeover</code>, newest process wins), the holder heartbeats the lock file mtime, and lock state is surfaced on <code>GET /api/health</code> plus <code>StartRunResponse.runner_warning</code> when nobody provably ticks the data dir.</li>
 </ul>
 <h2 id="durable-contract-replay-first">Durable contract (replay-first)<a class="headerlink" href="#durable-contract-replay-first" title="Permanent link">&para;</a></h2>
 <p>The gateway is intentionally <strong>replay-first</strong>:
@@ -931,7 +1039,9 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:</p>
 <ul>
 <li><code>GET /api/gateway/discovery/capabilities</code> exposes a versioned shared contract
   for run input/history access, media endpoints, voice contracts, prompt-cache
-  surfaces, and model residency truth.</li>
+  surfaces, host state, session-cache enumeration, and model residency truth
+  (<code>common.model_residency</code> with <code>row_schema</code> and the canonical <code>modality_ui</code>
+  color map, <code>common.host_state</code>, <code>common.session_caches</code>).</li>
 <li>Provider/model catalogs are intentionally routed through Gateway. The legacy
   lower-layer payload fields are preserved, but Gateway now adds a stable
   <code>gateway_catalog_v1</code> envelope plus canonical <code>items</code> so higher apps can stop
@@ -945,9 +1055,22 @@ AbstractFlow, AbstractAssistant, and AbstractObserver:</p>
 <li>Voice listen is intentionally a host-capture contract, not a server-side
   microphone transport. Gateway tells clients how to emit or upload captured
   audio; clients keep ownership of live capture UX.</li>
-<li>Model residency, prompt-cache lifecycle, durable blocs, and discovery
-  catalogs are server-owned control-plane surfaces so higher apps do not have
-  to import Runtime/Core packages directly.</li>
+<li>Model residency, host state/metrics, session prompt-cache enumeration,
+  prompt-cache lifecycle, durable blocs, and discovery catalogs are
+  server-owned control-plane surfaces so higher apps do not have to import
+  Runtime/Core packages directly.</li>
+<li>Model residency truth is Runtime/provider-owned and Gateway-normalized:
+  <code>GET /models/loaded</code> and <code>GET /host/state</code> relay Runtime's host facade
+  records and add frozen <code>model_residency_row_v1</code> rows in which provider
+  residency booleans outrank runtime lease booleans, state strings can only
+  confirm residency (never deny it), and unknown values stay <code>null</code>. Gateway
+  never fabricates residency, memory, or GPU truth; unavailable sections
+  degrade in-band instead of failing the snapshot.</li>
+<li>Host and residency surfaces follow a read/mutation authorization split:
+  reads (<code>/models/loaded</code>, <code>/models/context_estimate</code>, <code>/host/state</code>,
+  <code>/host/metrics/*</code>, <code>GET /sessions/prompt_cache</code>) serve any authenticated
+  principal, while mutations (<code>/models/load|unload|lock|unlock|download</code>,
+  prompt-cache mutations including <code>clear_all</code>) require an admin principal.</li>
 <li>The shared contract is principal-aware for high-trust actions. Regular users
   see admin-only workspace artifact import/export and provider prompt-cache
   controls as unavailable in discovery, while ordinary run/ledger/artifact
@@ -1085,7 +1208,7 @@ in their hash to avoid cross-user key collisions. See <a href="../security/">sec
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

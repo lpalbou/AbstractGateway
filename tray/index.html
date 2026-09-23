@@ -1,0 +1,1114 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/tray/">
+      
+      
+        <link rel="prev" href="../entities/">
+      
+      
+        <link rel="next" href="../security/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Desktop Tray - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#abstractgateway-desktop-tray-icon" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Desktop Tray
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-the-icon-appears" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When the icon appears
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pause" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pause
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#restart-and-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Restart and update
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#licensing-note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Licensing note
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-the-icon-appears" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When the icon appears
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pause" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pause
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#restart-and-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Restart and update
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#licensing-note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Licensing note
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="abstractgateway-desktop-tray-icon">AbstractGateway — Desktop tray icon<a class="headerlink" href="#abstractgateway-desktop-tray-icon" title="Permanent link">&para;</a></h1>
+<p><code>abstractgateway serve</code> can show a small icon in the macOS menu bar, the
+Windows system tray or a Linux panel. It exists so that anyone running a
+gateway on their own computer — including people who never open a terminal —
+can see what it is doing and act on it in one click:</p>
+<ul>
+<li><strong>Open Console</strong> — the web console (<code>/console</code>). One door: every other
+  console entry point in the menu is a deep link to a tab of it.</li>
+<li><strong>Workflows</strong> — the last 24 hours of runs, newest first: a state badge
+  (🟢 running, 🟡 waiting, ✅ completed, ❌ failed, ⚪️ cancelled), the step
+  count and how long each took, under a one-line tally. Rows are information;
+  <strong>Open Runs in Console</strong> at the bottom is the way in. Root runs only — a
+  deep-research run spawns dozens of children and this is a glance. The list
+  is <strong>host-wide</strong> (<code>GET /api/gateway/host/runs</code>), not per-principal: memory,
+  GPU and loaded models on this menu describe the machine, and the run list
+  has to describe the same machine. Catalog-published workflows are shown
+  under the name you know them by (their run id encodes scope and tenant in
+  base64) and are not mistaken for the gateway's own bookkeeping runs. Entity planes are the one exception and
+  the payload names them — reaching one goes through the entity registry,
+  which opens homes and wires embedders, and that must not ride a poll.</li>
+<li><strong>Pause / Resume Workflows</strong> — the one high-level control over all of that:
+  stop new workflow steps from running to free the machine or to look at what
+  is going on (the gateway keeps answering; work queues until you resume).</li>
+<li><strong>Loaded Models</strong> — every model currently in memory with its size; click
+  one to unload it and free the memory.</li>
+<li><strong>Show Activity Window</strong> — two live graphs (memory, GPU) and the model list
+  in a small window (needs <code>tkinter</code>; see below).</li>
+<li><strong>Check for Updates / Restart / Quit / About / Help.</strong></li>
+</ul>
+<p>The icon itself is a live gauge: the outer ring fills with system memory in
+use (blue), the inner ring with GPU load (amber). A green dot in the centre
+means a workflow step is executing right now; pause bars mean paused; a red
+ring with <code>!</code> means the gateway is not answering.</p>
+<p>Everything works offline except <em>Documentation</em>, <em>Report a Problem</em> and
+<em>Check for Updates</em>, which open a website or ask pypi.org. Menu items name what
+they open and nothing else — a "(needs internet)" suffix on every second line
+is noise the reader steps over, and the browser says so the one time it
+matters. (The human docs live online: the wheel ships <code>llms.txt</code> for
+docs-grounded Q&amp;A, not a browsable copy of this site.)</p>
+<h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
+<p>The tray is an optional extra so servers never pull GUI libraries:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"abstractgateway[tray]"</span><span class="w">      </span><span class="c1"># pystray + Pillow</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>What else is needed</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>macOS</td>
+<td>nothing (pystray installs the <code>pyobjc</code> Cocoa bindings)</td>
+<td>Retina-crisp icon; native alerts.</td>
+</tr>
+<tr>
+<td>Windows</td>
+<td>nothing</td>
+<td>The icon may start in the tray <em>overflow</em> (the <code>^</code> chevron); drag it out to pin it.</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td>the GTK/AppIndicator bindings: <code>sudo apt install python3-gi gir1.2-ayatanaappindicator3-0.1</code> (Debian/Ubuntu)</td>
+<td>GNOME needs the <em>AppIndicator and KStatusNotifierItem</em> extension; KDE, XFCE, Cinnamon work out of the box. Pure Wayland sessions without a status-notifier host have no tray.</td>
+</tr>
+</tbody>
+</table>
+<p>The Activity window uses <code>tkinter</code> from the Python standard library. Some
+Python builds ship without it (Homebrew: <code>brew install python-tk</code>; Debian:
+<code>sudo apt install python3-tk</code>; pyenv builds need the Tk headers at build
+time). When it is missing, the item is simply absent — the console's Resources
+tab shows the same graphs, and a second menu entry pointing at the same browser
+page is one choice too many.</p>
+<h2 id="when-the-icon-appears">When the icon appears<a class="headerlink" href="#when-the-icon-appears" title="Permanent link">&para;</a></h2>
+<p>At <code>abstractgateway serve</code> time the gateway decides, and says why on stderr:</p>
+<p><strong>While the gateway runs, the icon is there.</strong> There is no setting to turn it
+off and no <em>Hide</em> item in its menu: the icon is how someone who never opens a
+terminal reaches their gateway, and a switch whose only effect is to remove
+that entry point is a way to lose the product. Every reason it can be absent
+is a fact about the machine, not a preference:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>abstractgateway[tray]</code> not installed</td>
+<td>not started; the install hint is printed</td>
+</tr>
+<tr>
+<td>No display (SSH session, container, Windows service, macOS daemon, CI)</td>
+<td>not started, silently</td>
+</tr>
+<tr>
+<td><code>serve --reload</code> (development)</td>
+<td>not started (the app runs in uvicorn's reloader child)</td>
+</tr>
+<tr>
+<td>A runner-only process (<code>abstractgateway runner</code>)</td>
+<td>not started; the tray belongs to the process that serves the console</td>
+</tr>
+<tr>
+<td>Otherwise</td>
+<td>started; <code>Desktop tray: started (pid …)</code></td>
+</tr>
+</tbody>
+</table>
+<p>The console's <strong>Resources → Gateway</strong> card reports which of these applies, as
+plain text. If the helper itself crashed, <code>POST /api/gateway/host/tray/show</code>
+(admin) retries it without restarting the gateway.</p>
+<p>Everything the tray shows is also in the console's <strong>Resources</strong> tab: the
+Gateway card (pause/resume, update, restart, quit), the memory and GPU meters,
+and the model table with unload buttons. A paused gateway shows a banner on
+every console tab with a <em>Resume</em> button.</p>
+<h2 id="pause">Pause<a class="headerlink" href="#pause" title="Permanent link">&para;</a></h2>
+<p>Pausing is process-wide and <strong>persists across restarts</strong>: a laptop paused to
+get its GPU back does not silently resume after a reboot or an update. While
+paused:</p>
+<ul>
+<li>no new workflow step starts — runs, schedules and bridge-started work are
+  accepted and wait;</li>
+<li>a step already inside an LLM or tool call finishes first (the menu says
+  "Finishing N runs at the next step");</li>
+<li>the console, the API and connected apps keep answering; cancelling a run
+  still works;</li>
+<li>summoned entities' own-time loops are <strong>not</strong> affected (they are separate
+  processes with their own lifecycle controls);</li>
+<li><code>GET /api/health</code> carries <code>"paused": true</code> while <code>status</code> stays
+  <code>"healthy"</code> — a supervisor must never recycle a paused gateway.</li>
+</ul>
+<p>Pause reaches inside a tick: an AbstractRuntime that ships
+<code>Runtime.tick(step_gate=…)</code> (the release after 0.4.31) consults the gateway's
+gate at every step boundary. With an older runtime the pause takes effect at
+tick boundaries (up to <code>tick_max_steps</code> steps later); <code>GET /host/runner</code>
+reports <code>step_gate_supported</code> and the menu says so.</p>
+<p>In the split layout (<code>serve --no-runner</code> + <code>abstractgateway runner</code>) the
+pause is written to <code>&lt;data_dir&gt;/gateway_paused.json</code> and the runner process
+picks it up within about two seconds.</p>
+<h2 id="restart-and-update">Restart and update<a class="headerlink" href="#restart-and-update" title="Permanent link">&para;</a></h2>
+<p><strong>Restart</strong> asks uvicorn for its normal graceful shutdown (runner drain,
+entity close), then relaunches the same command in the same environment
+(<code>python -m abstractgateway …</code>). On macOS and Linux the process keeps its PID
+and terminal; on Windows a new process is spawned on the same console. Restart
+is refused (HTTP 409, greyed out in the tray) under <code>serve --reload</code>, when the
+server was not started by <code>abstractgateway serve</code>, or while an update is
+being installed.</p>
+<p><strong>Check for Updates</strong> asks pypi.org for the latest release (5 s timeout, one
+check per hour). Offline is a normal answer, not an error. The one-click
+<strong>Update</strong> is offered only when the gateway can reproduce its own install:</p>
+<table>
+<thead>
+<tr>
+<th>Install</th>
+<th>Upgrade command used</th>
+<th>One-click?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pip</code> in a virtual environment</td>
+<td><code>python -m pip install --upgrade "abstractgateway[&lt;your extras&gt;]"</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>uv venv</code> / <code>uv pip</code></td>
+<td><code>uv pip install --python … --upgrade …</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>pipx</code></td>
+<td><code>pipx upgrade abstractgateway</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>uv tool</code></td>
+<td><code>uv tool upgrade abstractgateway</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td>editable checkout (<code>pip install -e .</code>)</td>
+<td>— update with <code>git pull</code></td>
+<td>no</td>
+</tr>
+<tr>
+<td>Docker image</td>
+<td>— pull the newer image</td>
+<td>no</td>
+</tr>
+<tr>
+<td>system Python (PEP 668 "externally managed")</td>
+<td>— use pipx or a venv</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p>The installed extras (<code>apple</code>, <code>gpu</code>, <code>embeddings</code>) are detected and kept.
+The upgrade runs in the background (log tail on the console's Gateway card);
+when it finishes the tray offers <strong>Restart to finish the update</strong>. Restarting
+is what makes the new version run — until then the process keeps serving the
+old code.</p>
+<h2 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h2>
+<p>The tray talks to the gateway over loopback HTTP with a <strong>per-process
+ephemeral admin token</strong> handed over on the helper's stdin — never on the
+command line, never in the environment, never on disk. The token is accepted
+only from a loopback socket peer (<code>127.0.0.0/8</code>, <code>::1</code>) and dies with the
+process. Audit-log entries made through it carry
+<code>source: loopback-ephemeral:desktop-tray</code>.</p>
+<p><code>FORWARDED_ALLOW_IPS=*</code> (uvicorn's proxy setting) would let any client rewrite
+its peer address; the gateway warns at boot when it sees that with a tray
+running. Use a concrete proxy IP.</p>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>"Desktop tray: not started (missing_dependency …)"</strong> — install the extra
+  (and, on Linux, the GTK/AppIndicator bindings).</li>
+<li><strong>The helper starts then disappears</strong> — read <code>&lt;data_dir&gt;/logs/tray.log</code>;
+  <code>GET /api/gateway/host/tray</code> reports <code>exit_code</code> and the readiness failure.
+  Two crashes in a row stop automatic restarts until the setting is toggled
+  or <code>POST /api/gateway/host/tray/show</code> is used.</li>
+<li><strong>The icon says "Not responding"</strong> — the gateway is restarting, stopped or
+  wedged. <em>Force Quit</em> in that state sends the gateway process SIGTERM and,
+  after five seconds, kills it.</li>
+<li><strong>GNOME shows no icon</strong> — install the AppIndicator extension; the gateway
+  reports <code>headless: no system tray on this desktop</code> when it can tell.</li>
+</ul>
+<h2 id="licensing-note">Licensing note<a class="headerlink" href="#licensing-note" title="Permanent link">&para;</a></h2>
+<p><code>pystray</code> is LGPL-3.0 and <code>python-xlib</code> (Linux) is LGPL-2.1. AbstractGateway
+imports them dynamically as ordinary dependencies, which is compatible with
+its MIT license. A frozen single-file build (PyInstaller and the like) would
+have to honour the LGPL relinking terms.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

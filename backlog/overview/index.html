@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -27,7 +27,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -301,6 +301,60 @@
   
   
     <li class="md-nav__item">
+      <a href="../../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../deployment/" class="md-nav__link">
         
   
@@ -363,6 +417,60 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
   
 
     
@@ -631,12 +739,21 @@ provider/runtime concerns server-side, and expose stable contracts that clients
 can trust without importing local gateway packages.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Planned: 0</li>
-<li>Proposed: 3</li>
-<li>Completed: 20</li>
+<li>Planned: 2</li>
+<li>Proposed: 38</li>
+<li>Completed: 22</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
+<!-- Counts recomputed from the directories on 2026-08-29 while filing
+     0234. They had drifted (planned 0→1, proposed 30→38, completed
+     20→22) across earlier passes that added items without updating this
+     block; the skill treats count drift as a real backlog bug to fix in
+     the same pass rather than carry. The Proposed Items table below
+     still lists fewer rows than the directory holds — untabled items
+     are a separate hygiene pass, flagged rather than silently
+     backfilled. -->
+
 <h2 id="priority-bands">Priority Bands<a class="headerlink" href="#priority-bands" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Completed: 010 capability discovery and thin-client feature gating.</li>
@@ -652,14 +769,39 @@ can trust without importing local gateway packages.</p>
 <li>Completed: Gateway-owned thin-client surface readiness summary.</li>
 </ul>
 <h2 id="next-recommended-work">Next Recommended Work<a class="headerlink" href="#next-recommended-work" title="Permanent link">&para;</a></h2>
-<p>No active planned item is currently open in this backlog. Runtime-backed
-exposure of the latest Core/Vision image upscaling, adapter discovery, and
-richer media parameters is completed.</p>
-<p>The main Runtime-owned boundary work is now done for Gateway's prompt-cache,
-durable bloc, residency, workspace/comms/Telegram, operator snapshot, direct
-music, direct image edit, STT/listen contract surfaces, thin-client catalog
-normalization, and thin-client surface readiness summary. The remaining
-proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
+<p>A 2026-07-05 adversarial review (three code/security/product reviewers plus
+dedicated design reviews of the ops suite and SSE streaming) produced a phased
+roadmap now captured as proposed items <code>0059</code>-<code>0081</code>. The prior inward
+contract/boundary work is largely complete; the review's finding is that effort
+should shift to (a) restoring truth the code has drifted from, (b) making the
+already-shipped hosted multi-user mode safe and durable, (c) unblocking velocity
+and shrinking the trust surface, and (d) letting external clients cross the
+contract boundary.</p>
+<p>Recommended sequencing:</p>
+<ul>
+<li>Phase 0 (truth and footguns): <code>0059</code> import boundary + abstractcore regression,
+  <code>0060</code> fail-closed auth/network defaults, <code>0061</code> documentation/contract truth.</li>
+<li>Phase 1 (safe + durable hosted multi-user): <code>0084</code> per-user RBAC + workspace
+  grants, <code>0062</code> tenant execution isolation tiers (depends on <code>0084</code>), <code>0063</code>
+  eager run rehydration + runner lock-retry, <code>0064</code> per-principal quotas +
+  retention, <code>0065</code> auth DoS hardening, <code>0079</code> secret-at-rest + ledger-redaction,
+  <code>0080</code> audit reads/integrity + session signature.</li>
+<li>Phase 2 (velocity + trust surface): <code>0066</code> decompose the router, <code>0067</code> ops
+  suite boundary + durable execution (layer C with <code>0083</code>), <code>0068</code> externalize
+  console, <code>0069</code> unified settings + generated config docs, <code>0070</code> authorization
+  contract test + exception audit (COMPLETED 2026-07-21), <code>0081</code> failure-mode
+  test suite, <code>0083</code> agentic orchestration parity to retire codex.</li>
+<li>Phase 3 (adoptability): <code>0071</code> client SDKs, <code>0072</code> conformance kit + frozen
+  event vocabulary, <code>0073</code> webhooks/event egress, <code>0074</code> OpenAI-compatible
+  facade, <code>0082</code> ledger replay integrity + durable cursor (prerequisite spike),
+  then <code>0075</code> event-driven ledger streaming.</li>
+<li>Phase 4 (scale + hosted viability, behind explicit triggers): <code>0076</code> scale-out
+  runner leasing + durable-log tail, <code>0077</code> usage metering/analytics, <code>0078</code>
+  premium-control-plane SLOs + deprecation policy.</li>
+</ul>
+<p>The pre-existing deeper provider/backend truth item (<code>0055</code>) and the three
+older proposed items remain valid and are folded into the phases above where
+relevant.</p>
 <h2 id="planned-items">Planned Items<a class="headerlink" href="#planned-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -670,8 +812,12 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
 </thead>
 <tbody>
 <tr>
-<td>None</td>
-<td>No active planned Gateway backlog item.</td>
+<td><a href="../planned/0846_publish_promote_must_not_rebuild_every_service/">0846_publish_promote_must_not_rebuild_every_service.md</a></td>
+<td>Publish/promote reloads only what changed, on the existing runtime, for the affected service only; no model reload, no prompt-cache loss, <code>/api/health</code> never misses a supervisor probe.</td>
+</tr>
+<tr>
+<td><a href="../planned/0233_real_run_cancellation/">0233_real_run_cancellation.md</a></td>
+<td>Cancel aborts the in-flight generation (cross-package; see the framework-root master item).</td>
 </tr>
 </tbody>
 </table>
@@ -690,7 +836,7 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
 </tr>
 <tr>
 <td><a href="../proposed/2026-05-13_shared_identity_context/">2026-05-13_shared_identity_context.md</a></td>
-<td>Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work.</td>
+<td>Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work. Related: <code>0062</code>, <code>0064</code>.</td>
 </tr>
 <tr>
 <td><a href="../proposed/0055_gateway_provider_backend_readiness_truth_for_thin_clients/">0055_gateway_provider_backend_readiness_truth_for_thin_clients.md</a></td>
@@ -699,6 +845,114 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
 <tr>
 <td><a href="../proposed/offline_first_gateway_connectivity/">offline_first_gateway_connectivity.md</a></td>
 <td>Promote when offline-first connectivity guarantees become a near-term product commitment.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0059_enforce_gateway_import_boundary_and_fix_abstractcore_regression/">0059_enforce_gateway_import_boundary_and_fix_abstractcore_regression.md</a></td>
+<td>Phase 0. Promote now for the CI guard + ledger correction; facade migration when Runtime adds a config facade.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0060_fail_closed_auth_and_network_defaults/">0060_fail_closed_auth_and_network_defaults.md</a></td>
+<td>Phase 0. Promote now; catastrophic-downside, near-zero-cost footguns.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0061_documentation_truth_and_contract_consistency/">0061_documentation_truth_and_contract_consistency.md</a></td>
+<td>Phase 0. Promote now; cheapest trust repairs.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0062_tenant_execution_isolation_tiers/">0062_tenant_execution_isolation_tiers.md</a></td>
+<td>Phase 1. Promote Tier 1 with 0084 (safety floor for shipped multi-user); Tier 2/3 sandboxing with untrusted-tenant commitment. Admins run unsandboxed; regular users sandboxed.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0084_user_rbac_and_workspace_grants/">0084_user_rbac_and_workspace_grants.md</a></td>
+<td>Phase 1 foundation. Promote with 0062 Tier 1 — per-user rwx workspace grants are the policy ceiling execution isolation enforces.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0063_eager_run_rehydration_and_runner_lease_retry/">0063_eager_run_rehydration_and_runner_lease_retry.md</a></td>
+<td>Phase 1. Promote lock-retry now; eager rehydration with per-principal lifecycle work.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0064_per_principal_quotas_and_nondraft_retention/">0064_per_principal_quotas_and_nondraft_retention.md</a></td>
+<td>Phase 1. Promote with 0062 Tier 1.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0065_auth_dos_hardening_token_index_and_rate_limits/">0065_auth_dos_hardening_token_index_and_rate_limits.md</a></td>
+<td>Phase 1. Promote with hosted multi-user hardening.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0066_decompose_gateway_router_god_module/">0066_decompose_gateway_router_god_module.md</a></td>
+<td>Phase 2. Promote after Phase 0; unblocks most other work.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0067_self_hosting_ops_suite_boundary/">0067_self_hosting_ops_suite_boundary.md</a></td>
+<td>Phase 2. Promote layer A (trust-domain) now; B with 0066; C with 0083 when durable self-evolution is prioritized.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0068_externalize_console_static_assets/">0068_externalize_console_static_assets.md</a></td>
+<td>Phase 2. Promote with/after 0066.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0069_unified_gateway_settings_and_generated_config_docs/">0069_unified_gateway_settings_and_generated_config_docs.md</a></td>
+<td>Phase 2. Promote after 0066 or independently.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0071_official_client_sdks_render_kit/">0071_official_client_sdks_render_kit.md</a></td>
+<td>Phase 3. Promote after/with 0072.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0072_client_conformance_kit_and_frozen_event_vocabulary/">0072_client_conformance_kit_and_frozen_event_vocabulary.md</a></td>
+<td>Phase 3. Promote with or just before 0071.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0073_run_lifecycle_webhooks_event_egress/">0073_run_lifecycle_webhooks_event_egress.md</a></td>
+<td>Phase 3. Promote after 0075 (efficient triggering) or with a poll-based trigger.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0074_openai_compatible_facade/">0074_openai_compatible_facade.md</a></td>
+<td>Phase 3. Promote after 0071/0072 or as a demo spike.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0075_event_driven_ledger_streaming/">0075_event_driven_ledger_streaming.md</a></td>
+<td>Phase 3. Promote AFTER 0082; then single-node design; multi-worker bridge follows demand (0076 triggers).</td>
+</tr>
+<tr>
+<td><a href="../proposed/0082_ledger_replay_integrity_and_durable_cursor/">0082_ledger_replay_integrity_and_durable_cursor.md</a></td>
+<td>Phase 3 prerequisite. Promote FIRST, before 0075/0076 — pins the durable cursor + replay-equivalence invariants so streaming cannot break replay.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0083_agentic_orchestration_parity_to_retire_codex/">0083_agentic_orchestration_parity_to_retire_codex.md</a></td>
+<td>Phase 2/3 enabler. Promote when durable self-evolution (0067-C) is prioritized; primarily AbstractRuntime/AbstractAgent work that lets the framework retire the codex subprocess.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0076_scale_out_runner_leasing_and_durable_log_tail/">0076_scale_out_runner_leasing_and_durable_log_tail.md</a></td>
+<td>Phase 4. Promote only when explicit scale triggers are measured.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0077_usage_metering_quotas_analytics/">0077_usage_metering_quotas_analytics.md</a></td>
+<td>Phase 4. Promote when hosted use goes beyond trusted teams.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0078_premium_control_plane_slos_and_deprecation_policy/">0078_premium_control_plane_slos_and_deprecation_policy.md</a></td>
+<td>Phase 4. Promote early once 0075 yields real single-node numbers.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0079_secret_at_rest_encryption_and_ledger_redaction_audit/">0079_secret_at_rest_encryption_and_ledger_redaction_audit.md</a></td>
+<td>Phase 1. Promote with hosted multi-user hardening.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0080_audit_reads_integrity_and_session_signature/">0080_audit_reads_integrity_and_session_signature.md</a></td>
+<td>Phase 1. Promote with hosted multi-user hardening.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0081_failure_mode_test_suite/">0081_failure_mode_test_suite.md</a></td>
+<td>Phase 2. Promote alongside 0063/0075 or incrementally now.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0085_runner_lock_adversary_followups/">0085_runner_lock_adversary_followups.md</a></td>
+<td>Hardening residue of the 2026-07-11 runner-lock handover (adversary F3-F13, non-blocking; P0/P1 already fixed + pinned). Runner items (F3-F8) promotable any time — each is small + testable; launcher items (F9-F13) need observer/flow coordination on their duplicated script copies.</td>
+</tr>
+<tr>
+<td><a href="../proposed/0234_deny_verb_for_run_tool_policy/">0234_deny_verb_for_run_tool_policy.md</a></td>
+<td>Promote when a thin client commits to shipping the default-stance permission model — AbstractCode has asked (2026-08-28) and its client half is blocked on this. Verified gap: the run policy's two lists are both allow-shaped (<code>require_approval_tools</code> means ASK, not REFUSE), so "deny all", "deny + whitelist" and "approve + blacklist" are not expressible on the wire.</td>
 </tr>
 </tbody>
 </table>
@@ -714,6 +968,13 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td>Route authorization contract test + exception-swallowing audit</td>
+<td><code>proposed/0070_route_authorization_contract_test_and_exception_audit.md</code></td>
+<td><a href="../completed/0070_route_authorization_contract_test_and_exception_audit/">completed/0070_route_authorization_contract_test_and_exception_audit.md</a></td>
+<td>Whole-app authorization invariant pinned in three layers (boundary, per-write decision, served-surface proof); 13 durability-relevant silent exception swallows now log with context and consequence. Accepted by laurent 2026-07-21 ("a route can never ship unprotected").</td>
+<td><code>pytest -q tests/test_gateway_route_authorization_contract.py tests/test_gateway_runner_swallow_audit.py</code>; full suite 857 passed.</td>
+</tr>
 <tr>
 <td>Swagger UI bearer auth docs</td>
 <td>N/A</td>
@@ -975,7 +1236,7 @@ proposed work is deeper provider/backend truth rather than boundary cleanup.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

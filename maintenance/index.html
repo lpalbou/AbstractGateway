@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -305,6 +305,60 @@
   
   
     <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -367,6 +421,60 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
   
 
     
@@ -815,14 +923,14 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 <h2 id="backlog-browsingediting-repo-dependent">Backlog browsing/editing (repo-dependent)<a class="headerlink" href="#backlog-browsingediting-repo-dependent" title="Permanent link">&para;</a></h2>
 <p>The gateway also exposes endpoints that read/write backlog Markdown files in a repository layout that includes <code>docs/backlog/*</code>.</p>
 <p>To enable these endpoints, set the repo root:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</span><span class="o">=</span><span class="s2">&quot;/path/to/your/repo&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</span><span class="o">=</span><span class="s2">"/path/to/your/repo"</span>
 </code></pre></div>
 <p>Evidence: repo-root checks in <code>src/abstractgateway/routes/gateway.py</code> (process manager + backlog endpoints) and in <code>src/abstractgateway/maintenance/backlog_exec_runner.py</code>.</p>
 <h2 id="backlog-execution-runner-high-risk-disabled-by-default">Backlog execution runner (high risk; disabled by default)<a class="headerlink" href="#backlog-execution-runner-high-risk-disabled-by-default" title="Permanent link">&para;</a></h2>
 <p>The backlog exec runner consumes queued execution requests under <code>&lt;DATA_DIR&gt;/backlog_exec_queue/</code> and executes them (optionally using the <code>codex</code> CLI).</p>
 <p>Enable:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER</span><span class="o">=</span><span class="m">1</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_BACKLOG_EXECUTOR</span><span class="o">=</span><span class="s2">&quot;none&quot;</span><span class="w">   </span><span class="c1"># none|codex_cli|workflow_bundle</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_BACKLOG_EXECUTOR</span><span class="o">=</span><span class="s2">"none"</span><span class="w">   </span><span class="c1"># none|codex_cli|workflow_bundle</span>
 </code></pre></div>
 <p>Additional knobs (see <code>BacklogExecRunnerConfig.from_env()</code>):
 - <code>ABSTRACTGATEWAY_BACKLOG_EXEC_POLL_S</code>
@@ -842,10 +950,10 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER</span><span class="o">=</span><span class="m">1</span>
 
 <span class="c1"># Optional (process control only): the AbstractFramework checkout root</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</span><span class="o">=</span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">"</span>
 </code></pre></div>
 <p>Optional config path:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_PROCESS_MANAGER_CONFIG</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway/processes.json&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_PROCESS_MANAGER_CONFIG</span><span class="o">=</span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway/processes.json"</span>
 </code></pre></div>
 <p>Endpoints:
 - <code>GET /api/gateway/processes</code> (requires <code>ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</code>)
@@ -874,7 +982,7 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 <p>Note: <code>/api/gateway/files/*</code> + <code>/api/gateway/attachments/ingest</code> ignore client-provided scope overrides unless client overrides are enabled.</p>
 <p>Server-side workspace mounts (operator-controlled):</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># newline-separated: name=/absolute/path</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_WORKSPACE_MOUNTS</span><span class="o">=</span><span class="s1">$&#39;repo=/abs/path/to/repo\\ndata=/abs/path/to/data&#39;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_WORKSPACE_MOUNTS</span><span class="o">=</span><span class="s1">$'repo=/abs/path/to/repo\\ndata=/abs/path/to/data'</span>
 </code></pre></div>
 <p>Evidence: <code>_workspace_mounts()</code> and related policy helpers in <code>src/abstractgateway/routes/gateway.py</code>, tests in <code>tests/test_gateway_workspace_policy_enforcement.py</code>.</p>
 <h2 id="bridges-telegram-email">Bridges (Telegram, email)<a class="headerlink" href="#bridges-telegram-email" title="Permanent link">&para;</a></h2>
@@ -978,7 +1086,7 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

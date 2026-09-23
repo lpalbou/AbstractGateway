@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -27,7 +27,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -301,6 +301,60 @@
   
   
     <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -363,6 +417,60 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
   
 
     
@@ -566,7 +674,7 @@ Silicon Mac. It uses PyPI packages, not a source checkout.</p>
 python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>pip
 </code></pre></div>
 <h2 id="2-install-gateway-and-flow">2. Install Gateway and Flow<a class="headerlink" href="#2-install-gateway-and-flow" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;abstractgateway[apple]&quot;</span><span class="w"> </span>abstractflow
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"abstractgateway[apple]"</span><span class="w"> </span>abstractflow
 </code></pre></div>
 <p><code>abstractgateway[apple]</code> is the native Apple profile. It cascades into the local
 AbstractCore, AbstractRuntime, AbstractVision, and AbstractVoice capability
@@ -575,22 +683,22 @@ packages needed by Gateway.</p>
 <p>Use Gateway env vars for Gateway internals, then set framework model defaults through capability
 routes owned by the execution host.</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_USER_AUTH</span><span class="o">=</span><span class="m">1</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_DATA_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.abstractgateway-local&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_DATA_DIR</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.abstractgateway-local"</span>
 
 <span class="c1"># Local image generation on MPS through AbstractVision/Diffusers.</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VISION_BACKEND</span><span class="o">=</span><span class="s2">&quot;diffusers&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VISION_MODEL_ID</span><span class="o">=</span><span class="s2">&quot;runwayml/stable-diffusion-v1-5&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VISION_DIFFUSERS_DEVICE</span><span class="o">=</span><span class="s2">&quot;mps&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VISION_BACKEND</span><span class="o">=</span><span class="s2">"diffusers"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VISION_MODEL_ID</span><span class="o">=</span><span class="s2">"runwayml/stable-diffusion-v1-5"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VISION_DIFFUSERS_DEVICE</span><span class="o">=</span><span class="s2">"mps"</span>
 
 <span class="c1"># Alternative: Apple-local MLX-Gen through AbstractVision q4 presets.</span>
 <span class="c1"># Pre-download with: abstractvision download flux2-klein-4b --provider mlx-gen</span>
-<span class="c1"># export ABSTRACTGATEWAY_VISION_BACKEND=&quot;mlx-gen&quot;</span>
-<span class="c1"># export ABSTRACTGATEWAY_VISION_MODEL_ID=&quot;mlx-gen/flux2-klein-4b&quot;</span>
+<span class="c1"># export ABSTRACTGATEWAY_VISION_BACKEND="mlx-gen"</span>
+<span class="c1"># export ABSTRACTGATEWAY_VISION_MODEL_ID="mlx-gen/flux2-klein-4b"</span>
 
 <span class="c1"># Local voice generation and transcription through AbstractVoice.</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_TTS_ENGINE</span><span class="o">=</span><span class="s2">&quot;piper&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_STT_ENGINE</span><span class="o">=</span><span class="s2">&quot;faster_whisper&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_STT_MODEL</span><span class="o">=</span><span class="s2">&quot;base&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_TTS_ENGINE</span><span class="o">=</span><span class="s2">"piper"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_STT_ENGINE</span><span class="o">=</span><span class="s2">"faster_whisper"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_VOICE_STT_MODEL</span><span class="o">=</span><span class="s2">"base"</span>
 </code></pre></div>
 <p>Set the default text route:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>input.text<span class="w"> </span><span class="se">\</span>
@@ -607,23 +715,23 @@ abstractvoice-prefetch<span class="w"> </span>--stt<span class="w"> </span>base
 </code></pre></div>
 <p>In another terminal with the same venv:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">source</span><span class="w"> </span>~/.venvs/abstractframework-local/bin/activate
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_DATA_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.abstractgateway-local&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">GATEWAY_ADMIN_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">/auth/bootstrap-admin-token&quot;</span><span class="k">)</span><span class="s2">&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_DATA_DIR</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.abstractgateway-local"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">GATEWAY_ADMIN_TOKEN</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span><span class="s2">"</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">/auth/bootstrap-admin-token"</span><span class="k">)</span><span class="s2">"</span>
 </code></pre></div>
 <p>Check that catalogs are not just defaults:</p>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>http://127.0.0.1:8080/api/gateway/voice/voices
 
-curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>http://127.0.0.1:8080/api/gateway/audio/speech/models
 
-curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>http://127.0.0.1:8080/api/gateway/audio/transcriptions/models
 
-curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span><span class="s2">&quot;http://127.0.0.1:8080/api/gateway/vision/provider_models?task=text_to_image&quot;</span>
+curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"http://127.0.0.1:8080/api/gateway/vision/provider_models?task=text_to_image"</span>
 
-curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$GATEWAY_ADMIN_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>http://127.0.0.1:8080/api/gateway/vision/models
 </code></pre></div>
 <p>If these return only <code>gateway_static</code> defaults, stop the Gateway process and
@@ -699,7 +807,7 @@ installed <code>abstractgateway serve --port 8080</code> process running.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

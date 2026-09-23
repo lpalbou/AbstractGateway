@@ -2,146 +2,318 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/api/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/apple-local-gateway-flow/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/architecture/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/configuration/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/console/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/deep-research/</loc>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/deployment/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/entities/</loc>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/faq/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/getting-started/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/maintenance/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/security/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/shipped-workflows/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/tray/</loc>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/overview/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/001_openapi_swagger_auth/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0050_gateway_runtime_boundary_cleanup_for_workspace_comms_and_telegram/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0051_model_residency_provider_task_contract_truth_regression/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0052_gateway_music_generation_contract_for_thin_clients/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0053_gateway_thin_client_catalog_and_readiness_contract_polish/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0054_gateway_catalog_envelope_contract_for_thin_clients/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0056_gateway_pdf_runtime_floor_and_e2e_contract/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0057_gateway_runtime_core_vision_upscale_surface/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0058_gateway_vision_adapter_and_batch_surface/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0070_route_authorization_contract_test_and_exception_audit/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/0087_run_start_skills_mcp_resolution/</loc>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/010_versioned_client_capability_contract/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/020_abstractflow_gateway_first_editor_contract/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/030_gateway_session_prompt_cache_lifecycle/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/040_generated_media_gateway_contract/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-08_gateway_install_profiles_and_config_entrypoint/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-08_gateway_memory_store_resolver_and_triplestore_abstraction/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-08_voice_profile_discovery_endpoint/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-19_model_residency_gateway_control_plane/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-20_gateway_durable_bloc_prompt_cache_contract/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-20_gateway_prompt_cache_save_load_via_runtime/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/completed/2026-05-20_truthful_media_residency_gateway_contract/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/planned/0233_real_run_cancellation/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/planned/0846_publish_promote_must_not_rebuild_every_service/</loc>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0055_gateway_provider_backend_readiness_truth_for_thin_clients/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0059_enforce_gateway_import_boundary_and_fix_abstractcore_regression/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0060_fail_closed_auth_and_network_defaults/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0061_documentation_truth_and_contract_consistency/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0062_tenant_execution_isolation_tiers/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0063_eager_run_rehydration_and_runner_lease_retry/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0064_per_principal_quotas_and_nondraft_retention/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0065_auth_dos_hardening_token_index_and_rate_limits/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0066_decompose_gateway_router_god_module/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0067_self_hosting_ops_suite_boundary/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0068_externalize_console_static_assets/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0069_unified_gateway_settings_and_generated_config_docs/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0071_official_client_sdks_render_kit/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0072_client_conformance_kit_and_frozen_event_vocabulary/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0073_run_lifecycle_webhooks_event_egress/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0074_openai_compatible_facade/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0075_event_driven_ledger_streaming/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0076_scale_out_runner_leasing_and_durable_log_tail/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0077_usage_metering_quotas_analytics/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0078_premium_control_plane_slos_and_deprecation_policy/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0079_secret_at_rest_encryption_and_ledger_redaction_audit/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0080_audit_reads_integrity_and_session_signature/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0081_failure_mode_test_suite/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0082_ledger_replay_integrity_and_durable_cursor/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0083_agentic_orchestration_parity_to_retire_codex/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0084_user_rbac_and_workspace_grants/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0085_runner_lock_adversary_followups/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0086_voice_capabilities_format_honesty/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0088_phase_v4_door_lanes/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0089_admin_users_lane_unguarded_on_entity_principals/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0090_entity_principal_adoption_of_precreated_human_records/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0091_summon_visit_queue_on_top_of_one_life_one_visit/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0092_entity_sessions_listing_for_admin_surfaces/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0093_multi_machine_model_resource_pool/</loc>
+         <lastmod>2026-09-23</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/0234_deny_verb_for_run_tool_policy/</loc>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/2026-05-13_shared_identity_context/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AbstractGateway/backlog/proposed/offline_first_gateway_connectivity/</loc>
-         <lastmod>2026-06-14</lastmod>
+         <lastmod>2026-09-23</lastmod>
     </url>
 </urlset>
