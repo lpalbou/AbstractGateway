@@ -212,9 +212,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             super::confirm_danger(
                 cx,
                 ctx2.ui,
-                format!(
-                    "{p}/{m} is locked — the gateway refused the unload. Force unload anyway?"
-                ),
+                format!("{p}/{m} is locked — the gateway refused the unload. Force unload anyway?"),
                 "Force unload",
                 "Keep it loaded",
                 move || {
@@ -402,8 +400,7 @@ fn body(cx: Scope, t: &TokenSet, ui: super::UiState, d: &HostStateData, autofocu
         // losing lines that would otherwise have fitted.
         1 + d.models.len().clamp(1, 4)
     };
-    let detail_cap =
-        body_h.saturating_sub(head.len() + TABS_BAR + ROW_DETAIL + table_floor);
+    let detail_cap = body_h.saturating_sub(head.len() + TABS_BAR + ROW_DETAIL + table_floor);
 
     // The window. `detail_cap - 1` because the affordance owns a row of the
     // budget; below 2 rows there is nothing left to window and only the
@@ -486,8 +483,7 @@ fn body(cx: Scope, t: &TokenSet, ui: super::UiState, d: &HostStateData, autofocu
                 .element(cx, t)
                 .build(),
         )
-        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move |
-        | {
+        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
             // The selected row's detail: the toned modality BADGE (a
             // Table cell is a string, so the chip lives here), the
             // full identifiers the columns may have cut, and the state
@@ -564,13 +560,12 @@ fn body(cx: Scope, t: &TokenSet, ui: super::UiState, d: &HostStateData, autofocu
 fn head_rows(t: &TokenSet, d: &HostStateData) -> Vec<View> {
     let mut rows: Vec<View> = Vec::new();
     if let Some(ram) = &d.ram {
-        let frac = ram
-            .percent
-            .map(|p| (p / 100.0) as f32)
-            .or_else(|| match (ram.used_bytes, ram.total_bytes) {
+        let frac = ram.percent.map(|p| (p / 100.0) as f32).or_else(|| {
+            match (ram.used_bytes, ram.total_bytes) {
                 (Some(u), Some(total)) if total > 0 => Some(u as f32 / total as f32),
                 _ => None,
-            });
+            }
+        });
         if let Some(frac) = frac {
             let mut text = format!("{:.0}%", f64::from(frac) * 100.0);
             if let (Some(u), Some(total)) = (ram.used_bytes, ram.total_bytes) {
@@ -1060,12 +1055,7 @@ fn open_warmup_form(cx: Scope, ctx: &Ctx) {
         // usize::MAX = "resolve the prefilled model against the list the
         // moment it lands" (the routes.rs sentinel).
         let model_ix = mcx.signal(if prefill.is_some() { usize::MAX } else { 0 });
-        let model_custom = mcx.signal(
-            prefill
-                .as_ref()
-                .map(|(_, m)| m.clone())
-                .unwrap_or_default(),
-        );
+        let model_custom = mcx.signal(prefill.as_ref().map(|(_, m)| m.clone()).unwrap_or_default());
         let lock_after = mcx.signal(false);
         let form_error = mcx.signal(Option::<String>::None);
 
@@ -1275,12 +1265,13 @@ fn open_warmup_form(cx: Scope, ctx: &Ctx) {
                     .element(mcx, &t0)
                     .build(),
             ))
-            .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                match form_error.get() {
+            .child(dyn_view(
+                LayoutStyle::line(1).shrink(0.0),
+                move || match form_error.get() {
                     Some(e) => line(vec![span_bold(format!("✗ {e}"), t0.error)]),
                     None => line(vec![span(String::new(), t0.text)]),
-                }
-            }))
+                },
+            ))
             .child(
                 Element::new()
                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
@@ -1297,8 +1288,7 @@ fn open_warmup_form(cx: Scope, ctx: &Ctx) {
                                     model_custom,
                                 ) else {
                                     form_error.set(Some(
-                                        "pick a provider and a model — both name the target"
-                                            .into(),
+                                        "pick a provider and a model — both name the target".into(),
                                     ));
                                     return;
                                 };
@@ -1425,9 +1415,7 @@ fn clear_caches_selected(cx: Scope, ctx: &Ctx) {
     super::confirm_danger(
         cx,
         ctx.ui,
-        format!(
-            "Clear ALL prompt caches for session '{sid}'? Cached prompts rebuild on next use."
-        ),
+        format!("Clear ALL prompt caches for session '{sid}'? Cached prompts rebuild on next use."),
         "Clear the caches",
         "Keep them",
         move || {
@@ -1517,7 +1505,10 @@ mod tests {
         let cells = model_row_cells(&swept);
         assert_eq!(cells[4], "~93.0 GiB", "estimated size is marked with ~");
         assert_eq!(cells[5], "2.0 GiB");
-        assert_eq!(cells[7], "", "lockable:true is not LOCKED — the cell stays blank");
+        assert_eq!(
+            cells[7], "",
+            "lockable:true is not LOCKED — the cell stays blank"
+        );
         assert_eq!(
             lock_action(&swept),
             LockAction::Lock { adopt: true },
@@ -1543,7 +1534,13 @@ mod tests {
         };
         assert_eq!(
             cache_row_cells(&r),
-            vec!["agw.pc.v1.s-sess1:session", "sess1", "qwen", "4.0 KiB", "100"]
+            vec![
+                "agw.pc.v1.s-sess1:session",
+                "sess1",
+                "qwen",
+                "4.0 KiB",
+                "100"
+            ]
         );
         let bare = SessionCacheRow {
             key: "k".into(),
@@ -1563,7 +1560,8 @@ mod tests {
             totals_line(&d),
             "totals: 0 resident / 0 model row(s) · — · 0 session cache(s) · —"
         );
-        d.models.push(row(serde_json::json!({"provider": "p", "model": "m",
+        d.models
+            .push(row(serde_json::json!({"provider": "p", "model": "m",
                                              "size_bytes": 1024u64})));
         d.caches.push(SessionCacheRow {
             key: "k".into(),
@@ -1577,7 +1575,8 @@ mod tests {
             totals_line(&d),
             "totals: 0 resident / 1 model row(s) · 1.0 KiB · 1 session cache(s) · 2.0 KiB"
         );
-        d.models.push(row(serde_json::json!({"provider": "p", "model": "m2",
+        d.models
+            .push(row(serde_json::json!({"provider": "p", "model": "m2",
                                              "resident": true})));
         d.recount();
         assert_eq!(

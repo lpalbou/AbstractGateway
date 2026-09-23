@@ -375,8 +375,7 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
                             // never from the viewport — over-budgeting
                             // here would clamp the last columns to
                             // nothing.
-                            let vw = RESV_MODAL_W
-                                .min(abstracttui::app::use_viewport(gcx).get().w)
+                            let vw = RESV_MODAL_W.min(abstracttui::app::use_viewport(gcx).get().w)
                                 - RESV_MODAL_CHROME;
                             let mut table_rows: Vec<Vec<String>> = rows
                                 .iter()
@@ -405,12 +404,12 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
                             ];
                             let cols = widths::columns(&rules, &mut table_rows, vw);
                             Table::new(cols)
-                            .rows(table_rows)
-                            .selection(ui.resv_sel)
-                            .layout(LayoutStyle::default().grow(1.0))
-                            .element(gcx, &t)
-                            .autofocus()
-                            .build()
+                                .rows(table_rows)
+                                .selection(ui.resv_sel)
+                                .layout(LayoutStyle::default().grow(1.0))
+                                .element(gcx, &t)
+                                .autofocus()
+                                .build()
                         }
                     }
                 }

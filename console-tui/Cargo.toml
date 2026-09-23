@@ -1,11 +1,11 @@
 [package]
 name = "abstractgateway-console"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 # MSRV floor comes from the engine (abstracttui 0.3.6 still declares 1.87).
 rust-version = "1.87"
 license = "MIT"
-description = "An intuitive terminal wizard to configure AbstractGateway — connection, providers, multimodal capability routes, users & entities — rendered by AbstractTUI."
+description = "An intuitive terminal wizard to configure AbstractGateway — connection, providers, multimodal capability routes, users & entities, models and local engines — rendered by AbstractTUI."
 repository = "https://github.com/lpalbou/abstractgateway"
 homepage = "https://github.com/lpalbou/abstractgateway/tree/main/console-tui"
 readme = "README.md"
@@ -13,8 +13,17 @@ keywords = ["abstractgateway", "tui", "terminal", "llm", "configuration"]
 categories = ["command-line-utilities"]
 # Published to crates.io from the gateway repository's release workflow
 # (`cargo install abstractgateway-console`). Only the crate sources, the
-# README and the changelog ship; dev scripts and backlog notes stay in git.
-include = ["src/**/*.rs", "tests/**/*.rs", "Cargo.toml", "Cargo.lock", "README.md", "CHANGELOG.md"]
+# test fixtures, the README and the changelog ship; dev scripts and
+# backlog notes stay in git.
+include = [
+    "src/**/*.rs",
+    "tests/**/*.rs",
+    "tests/fixtures/*.json",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "CHANGELOG.md",
+]
 
 [lib]
 name = "abstractgateway_console"
@@ -37,6 +46,13 @@ path = "src/main.rs"
 # wherever the terminal proves UTF-8 + color, instead of pinned half blocks.
 # The artifact preview is the whole reason this console draws bitmaps.
 abstracttui = "0.3.6"
+# The shared Models (catalog/download/delete) and Engines (detect/install)
+# screens, implemented ONCE in AbstractCore's console crate and mounted
+# here as screens 9 and 0 over an HTTP transport to the gateway's
+# `/api/gateway/models/*` + `/engines/*` mirrors. It builds on the same
+# abstracttui 0.3.6: both crates MUST resolve one abstracttui (one
+# reactive runtime, one widget set) — the lockfile pins it.
+abstractcore-console = "0.2.0"
 # HTTP client (blocking, small): fits the background-thread + posted-closure
 # model. "tls" is rustls (remote HTTPS gateways work with zero system
 # OpenSSL), "gzip" matches server defaults — the abstractcode-tui precedent.

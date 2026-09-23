@@ -10,13 +10,18 @@
 //! proven live by scripts/pty_smoke.py rather than headless.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 use abstracttui::app::Driver;
 use abstracttui::prelude::*;
 use abstracttui::testing::CaptureTerm;
-use serde_json::json;
+use serde_json::{json, Value};
+
+use abstractcore_console::screens::{ScreensCtx, ScreensOptions, ScreensStore};
+use abstractcore_console::{ConsoleTransport, TransportError};
 
 use abstractgateway_console::store::{
     entities_from_payload, host_state_from_payload, runtimes_from_payload, users_from_payload,
@@ -38,6 +43,11 @@ struct Harness {
     tx: mpsc::Sender<Cmd>,
     /// The Ctx prober slot: tests install a recorder here.
     prober: ui::ProberSlot,
+    /// The shared Models/Engines screens' backend: AbstractCore's
+    /// contract fixtures + a call log (the gateway routes are pinned
+    /// separately, in tests/http_transport.rs).
+    mock: Arc<MockTransport>,
+    screens: ScreensStore,
 }
 
 fn harness() -> Harness {
@@ -57,11 +67,33 @@ fn harness_sized(size: Size) -> Harness {
     let store_out = store_slot.clone();
     let ui_slot: Rc<RefCell<Option<UiState>>> = Rc::new(RefCell::new(None));
     let ui_out = ui_slot.clone();
+    let mock = Arc::new(MockTransport::default());
+    let mock_mount = mock.clone();
+    let screens_slot: Rc<RefCell<Option<ScreensStore>>> = Rc::new(RefCell::new(None));
+    let screens_out = screens_slot.clone();
     app.mount(move |cx| {
         let store = Store::create(cx);
         *store_out.borrow_mut() = Some(store);
         let ui_state = UiState::create(cx, "http://127.0.0.1:8080".to_string(), String::new());
         *ui_out.borrow_mut() = Some(ui_state);
+        let transport: Arc<dyn ConsoleTransport> = mock_mount.clone();
+        let screens = ScreensCtx::new(
+            cx,
+            transport.clone(),
+            overlays.clone(),
+            ScreensOptions {
+                // The same wiring as lib.rs: outcomes toast through the
+                // gateway console's own notice lane.
+                notice: Some(store.notice),
+                // Fast polls: a job walks running → completed in a few
+                // frames instead of seconds.
+                poll_interval: Duration::from_millis(10),
+                // Never a real browser from a test.
+                opener: Some(Rc::new(|_url: &str| Ok(()))),
+                ..ScreensOptions::default()
+            },
+        );
+        *screens_out.borrow_mut() = Some(screens.store);
         let ctx = Ctx {
             tx: tx.clone(),
             overlays: overlays.clone(),
@@ -72,6 +104,8 @@ fn harness_sized(size: Size) -> Harness {
             entity_drawer: Rc::new(RefCell::new(None)),
             env_token_set: false,
             prober: prober_slot.clone(),
+            screens,
+            screens_transport: transport,
         };
         ui::root(cx, ctx)
     })
@@ -95,6 +129,7 @@ fn harness_sized(size: Size) -> Harness {
     let driver = Driver::new(&mut app, &mut term, cfg).expect("driver");
     let store = store_slot.borrow().expect("store created");
     let ui = ui_slot.borrow().expect("ui state created");
+    let screens = screens_slot.borrow().expect("screens created");
     Harness {
         app,
         term,
@@ -104,6 +139,8 @@ fn harness_sized(size: Size) -> Harness {
         rx,
         tx: tx_keep,
         prober: prober_keep,
+        mock,
+        screens,
     }
 }
 
@@ -1277,7 +1314,10 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
     // Row 0 = input.text, configured with reasoning "medium".
     h.type_text("e");
     let s = h.turns(3);
-    assert!(s.contains("Route — Text Input (input.text)"), "editor:\n{s}");
+    assert!(
+        s.contains("Route — Text Input (input.text)"),
+        "editor:\n{s}"
+    );
     assert!(
         s.contains("Applies now: lmstudio / test-model-a"),
         "the stored pair leads the form:\n{s}"
@@ -1321,7 +1361,10 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
 
 #[test]
 fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
-    for value in [json!(false), json!({"mode":"native_mtp", "num_draft_tokens":4, "require_acceleration":false})] {
+    for value in [
+        json!(false),
+        json!({"mode":"native_mtp", "num_draft_tokens":4, "require_acceleration":false}),
+    ] {
         let mut h = harness();
         h.connect_as_admin();
         h.goto_screen(2);
@@ -1330,14 +1373,23 @@ fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
         h.store.routes.set(Loadable::Ready(routes));
         h.store.providers.set(Loadable::Ready(providers_fixture()));
         h.store.models.update(|models| {
-            models.insert("lmstudio".into(), Loadable::Ready(vec!["test-model-a".into()]));
+            models.insert(
+                "lmstudio".into(),
+                Loadable::Ready(vec!["test-model-a".into()]),
+            );
         });
         h.turns(2);
         h.type_text("e");
         let screen = h.turns(3);
-        assert!(screen.contains("MTP default"), "MTP policy control must be visible: {screen}");
+        assert!(
+            screen.contains("MTP default"),
+            "MTP policy control must be visible: {screen}"
+        );
         // mode -> provider -> model -> URL -> reasoning -> options -> MTP -> Save -> Test
-        for _ in 0..8 { h.key(b"\t"); h.turn(); }
+        for _ in 0..8 {
+            h.key(b"\t");
+            h.turn();
+        }
         h.type_text("\r");
         h.turns(2);
         match h.find_cmd(|command| matches!(command, Cmd::TestRoute { .. })) {
@@ -1540,6 +1592,8 @@ fn forbidden_users_render_admin_hint() {
         .set(Loadable::Failed(abstractgateway_console::api::ApiError {
             kind: abstractgateway_console::api::ApiErrorKind::Forbidden,
             message: "admin role required".into(),
+            body: None,
+            timed_out: false,
         }));
     let s = h.turns(2);
     assert!(s.contains("forbidden (403)"), "403 state:\n{s}");
@@ -2050,6 +2104,8 @@ fn review_screen_renders_whole_at_both_sizes() {
                         .set(Loadable::Failed(abstractgateway_console::api::ApiError {
                             kind: abstractgateway_console::api::ApiErrorKind::Http(500),
                             message: "model exploded".into(),
+                            body: None,
+                            timed_out: false,
                         }))
                 }
                 _ => {}
@@ -2328,6 +2384,8 @@ fn route_editor_saved_pair_only_under_saved_provider() {
             Loadable::Failed(abstractgateway_console::api::ApiError {
                 kind: abstractgateway_console::api::ApiErrorKind::Http(404),
                 message: "no models route for supertonic".into(),
+                body: None,
+                timed_out: false,
             }),
         );
     });
@@ -2689,10 +2747,12 @@ fn title_bar_and_separator_survive_content_pressure() {
     h.store
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     for wizard in [true, false] {
         h.ui.wizard.set(wizard);
-        for screen in 0..8 {
+        for screen in 0..ui::SCREENS.len() {
             h.ui.screen.set(screen);
             let scr = h.turns(3);
             let lines: Vec<&str> = scr.lines().collect();
@@ -2709,7 +2769,7 @@ fn title_bar_and_separator_survive_content_pressure() {
             // "the ACTIVE tab's title sits on row 2", which holds at
             // every screen; "1 Connection" is honestly behind ‹ when
             // the window has slid right.
-            let want = format!("{} {}", screen + 1, ui::SCREENS[screen]);
+            let want = format!("{} {}", ui::screen_key(screen), ui::SCREENS[screen]);
             assert!(
                 lines[2].contains(&want),
                 "tab bar at row 2 shows '{want}' (wizard={wizard} screen={screen}):\n{scr}"
@@ -2741,6 +2801,8 @@ fn health_authority_verifies_then_retries_once() {
     let net_err = || abstractgateway_console::api::ApiError {
         kind: abstractgateway_console::api::ApiErrorKind::Unreachable,
         message: "GET /x: Network Error: Connection reset by peer".into(),
+        body: None,
+        timed_out: false,
     };
     h.store.providers.set(Loadable::Failed(net_err()));
     let s = h.turns(3);
@@ -2802,6 +2864,8 @@ fn health_authority_settles_down_with_one_story() {
         .set(Loadable::Failed(abstractgateway_console::api::ApiError {
             kind: abstractgateway_console::api::ApiErrorKind::Unreachable,
             message: "boom".into(),
+            body: None,
+            timed_out: false,
         }));
     h.turns(3);
     let gen = h.store.probe_gen.get_untracked();
@@ -2812,6 +2876,8 @@ fn health_authority_settles_down_with_one_story() {
         Err(abstractgateway_console::api::ApiError {
             kind: abstractgateway_console::api::ApiErrorKind::Unreachable,
             message: "connect refused".into(),
+            body: None,
+            timed_out: false,
         }),
     );
     let s = h.turns(2);
@@ -3316,7 +3382,8 @@ fn data_tab_lazy_load_and_attribution() {
     h.ui.rt_tab.set(2);
     h.turns(2);
     assert!(
-        h.find_cmd(|c| matches!(c, Cmd::LoadDataHomes { .. })).is_some(),
+        h.find_cmd(|c| matches!(c, Cmd::LoadDataHomes { .. }))
+            .is_some(),
         "first look at the Data tab loads the registry"
     );
     h.store.data_homes.set(Loadable::Ready(
@@ -3732,7 +3799,11 @@ fn busy_tick_does_not_steal_focus_from_the_tabs_bar() {
     h.turns(1);
     h.key(b"\x1b[C"); // Right → Data & cache
     h.turns(2);
-    assert_eq!(h.ui.rt_tab.get_untracked(), 1, "tabs bar reachable via Tab; Right switches");
+    assert_eq!(
+        h.ui.rt_tab.get_untracked(),
+        1,
+        "tabs bar reachable via Tab; Right switches"
+    );
     h.key(b"\x1b[D"); // Left → Sessions
     h.turns(2);
     assert_eq!(h.ui.rt_tab.get_untracked(), 0);
@@ -3806,10 +3877,7 @@ fn runtimes_inspector_fits_at_80x24() {
         s.contains("Runtime knobs"),
         "knobs disclosure header survives at 80x24:\n{s}"
     );
-    assert!(
-        s.contains("focus"),
-        "footer hints survive at 80x24:\n{s}"
-    );
+    assert!(s.contains("focus"), "footer hints survive at 80x24:\n{s}");
 }
 
 /// Honesty pin: a user plane the gateway lists with `data_dir: null`
@@ -3820,14 +3888,16 @@ fn unmaterialized_plane_data_dir_renders_a_dash() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(4);
-    h.store.runtimes.set(Loadable::Ready(runtimes_from_payload(&json!({
-        "runtimes": [
-            {"kind": "default", "tenant_id": "default", "runtime_id": "default",
-             "label": "Gateway default runtime", "data_dir": "/tmp/runtime"},
-            {"kind": "user", "tenant_id": "default", "runtime_id": "ghost",
-             "label": "default/ghost", "data_dir": null, "materialized": false}
-        ]
-    }))));
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&json!({
+            "runtimes": [
+                {"kind": "default", "tenant_id": "default", "runtime_id": "default",
+                 "label": "Gateway default runtime", "data_dir": "/tmp/runtime"},
+                {"kind": "user", "tenant_id": "default", "runtime_id": "ghost",
+                 "label": "default/ghost", "data_dir": null, "materialized": false}
+            ]
+        }))));
     h.turns(2);
     h.key(b"\x1b[B"); // choose the unmaterialized user plane
     h.turns(2);
@@ -3875,7 +3945,10 @@ fn home_plane_index_duplicate_dirs_first_wins() {
         "duplicate data_dirs: first plane in payload order wins (documented)"
     );
     // Empty data_dir never owns anything.
-    let planes2 = vec![plane("user", "ghost", ""), plane("default", "default", "/tmp/runtime")];
+    let planes2 = vec![
+        plane("user", "ghost", ""),
+        plane("default", "default", "/tmp/runtime"),
+    ];
     assert_eq!(home_plane_index(&planes2, "/tmp/runtime/x"), Some(1));
 }
 
@@ -4034,7 +4107,6 @@ fn sandbox_pane_survives_a_response_that_shrinks() {
     );
 }
 
-
 // =======================================================================
 // WEIGHTS: the `d` verb (model downloads on the execution host)
 // =======================================================================
@@ -4062,8 +4134,14 @@ fn routes_screen_shows_weight_availability_and_no_banner_when_every_route_is_ans
         !s.contains("no model yet") && !s.contains("recommended:"),
         "a fully routed host is never told it is short of a model:\n{s}"
     );
-    assert!(s.contains("not downloaded"), "absent weights read plainly:\n{s}");
-    assert!(s.contains("installed"), "present weights read plainly:\n{s}");
+    assert!(
+        s.contains("not downloaded"),
+        "absent weights read plainly:\n{s}"
+    );
+    assert!(
+        s.contains("installed"),
+        "present weights read plainly:\n{s}"
+    );
     assert!(s.contains("weights"), "the column is labelled:\n{s}");
     assert!(
         s.contains("download weights"),
@@ -4252,7 +4330,10 @@ fn w_refuses_with_a_reason_instead_of_guessing() {
     h.key(b"w");
     let s = h.turns(2);
     assert!(s.contains("already installed"), "installed refusal:\n{s}");
-    assert!(h.drain_cmds().is_empty(), "no download for an installed model");
+    assert!(
+        h.drain_cmds().is_empty(),
+        "no download for an installed model"
+    );
 
     h.ui.route_sel.set(5); // output.image.text_to_image — unknown
     h.key(b"w");
@@ -4261,7 +4342,10 @@ fn w_refuses_with_a_reason_instead_of_guessing() {
         s.contains("availability is unknown"),
         "unknown is never treated as absent:\n{s}"
     );
-    assert!(h.drain_cmds().is_empty(), "no download on an unknown answer");
+    assert!(
+        h.drain_cmds().is_empty(),
+        "no download on an unknown answer"
+    );
 
     h.ui.route_sel.set(6); // input.sound — unconfigured, no weights row
     h.key(b"w");
@@ -4286,17 +4370,22 @@ fn a_running_download_takes_over_the_banner() {
     h.store
         .availability
         .set(Loadable::Ready(availability_fixture()));
-    h.store.download.set(Some(DownloadStatus::from_value_for_test(
-        "job1",
-        "lmstudio",
-        "qwen/qwen3.5-9b@4bit",
-        "running",
-        "pulling layer",
-        Some(42.0),
-        12.0,
-    )));
+    h.store
+        .download
+        .set(Some(DownloadStatus::from_value_for_test(
+            "job1",
+            "lmstudio",
+            "qwen/qwen3.5-9b@4bit",
+            "running",
+            "pulling layer",
+            Some(42.0),
+            12.0,
+        )));
     let s = h.turns(2);
-    assert!(s.contains("download:"), "the live line takes the banner:\n{s}");
+    assert!(
+        s.contains("download:"),
+        "the live line takes the banner:\n{s}"
+    );
     assert!(s.contains("42%"), "progress is shown:\n{s}");
     assert!(s.contains("pulling layer"), "the gateway's own words:\n{s}");
 }
@@ -4430,7 +4519,6 @@ fn narrow_routes_grid_keeps_the_discriminating_tail() {
     );
 }
 
-
 /// WEB-CONSOLE PARITY (operator 2026-08-19: "exactly the same design and
 /// parity with the console-tui for runtime"). The four tabs each carry a
 /// toolbar line: the active filter, the query, the page position, and the
@@ -4466,7 +4554,10 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
         rows: runs_fixture_rows(3, "running"),
     }));
     let s = h.turns(2);
-    assert!(s.contains("status=running"), "status filter on the line:\n{s}");
+    assert!(
+        s.contains("status=running"),
+        "status filter on the line:\n{s}"
+    );
     assert!(s.contains("q=\"coder\""), "query on the line:\n{s}");
     assert!(s.contains("101–103"), "page position on the line:\n{s}");
     // Gestures are taught once, in the footer hint bar (repeating them on
@@ -4501,7 +4592,10 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
     let s = h.turns(2);
     assert!(s.contains("hero.png"), "artifact row renders:\n{s}");
     assert!(s.contains("type=image"), "type filter named:\n{s}");
-    assert!(s.contains("of 79147"), "the real total, never a 'newest N' cap:\n{s}");
+    assert!(
+        s.contains("of 79147"),
+        "the real total, never a 'newest N' cap:\n{s}"
+    );
 
     // --- Logs tab: FILES (not homes), with the filter line ---
     h.ui.rt_tab.set(3);
@@ -4564,7 +4658,6 @@ fn cache_tab_lists_caches_and_stale_rows_only() {
     );
 }
 
-
 /// OPERATOR BUGS (2026-08-19): (a) every list tab capped at the THIRD row
 /// because Artifacts/Logs borrowed `home_sel`, whose clamp is sized by the
 /// CACHE row count; (b) the filter dropdown and search box were invisible
@@ -4608,8 +4701,14 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
     h.store.logs.set(Loadable::Ready(files));
     h.ui.rt_tab.set(3);
     let s = h.turns(3);
-    assert!(s.contains("all log homes"), "the filter DROPDOWN is visible:\n{s}");
-    assert!(s.contains("search log files"), "the SEARCH box is visible:\n{s}");
+    assert!(
+        s.contains("all log homes"),
+        "the filter DROPDOWN is visible:\n{s}"
+    );
+    assert!(
+        s.contains("search log files"),
+        "the SEARCH box is visible:\n{s}"
+    );
 
     // Reach past the old ceiling. The CLAMP is what capped the operator at
     // line 3 (three caches -> max index 2 -> the third row), so the pin
@@ -4652,8 +4751,14 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
     }));
     h.ui.rt_tab.set(1);
     let s = h.turns(3);
-    assert!(s.contains("all types"), "artifacts filter dropdown visible:\n{s}");
-    assert!(s.contains("search artifacts"), "artifacts search box visible:\n{s}");
+    assert!(
+        s.contains("all types"),
+        "artifacts filter dropdown visible:\n{s}"
+    );
+    assert!(
+        s.contains("search artifacts"),
+        "artifacts search box visible:\n{s}"
+    );
     h.ui.rt_art_sel.set(4);
     h.turns(3);
     assert_eq!(
@@ -4670,7 +4775,6 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
         "the artifacts clamp is sized by the artifacts rows"
     );
 }
-
 
 /// IMAGES PREVIEW IN THE TERMINAL (operator 2026-08-19: "you should be
 /// able to preview images thanks to abstracttui"). The engine decodes
@@ -4723,7 +4827,8 @@ fn image_artifact_previews_as_a_bitmap() {
         "images are no longer refused:\n{s}"
     );
     assert!(
-        h.find_cmd(|c| matches!(c, Cmd::LoadArtifactImage { .. })).is_some(),
+        h.find_cmd(|c| matches!(c, Cmd::LoadArtifactImage { .. }))
+            .is_some(),
         "the modal requests the image bytes for decoding"
     );
 
@@ -4745,7 +4850,6 @@ fn image_artifact_previews_as_a_bitmap() {
         "the placeholder gives way to the picture:\n{s}"
     );
 }
-
 
 /// LONG TEXT SCROLLS (operator 2026-08-19: "how come i can't scroll
 /// through the log file content"). `CodeView` windows its draw but takes
@@ -4781,7 +4885,10 @@ fn log_tail_scrolls_through_its_content() {
     h.store.log_text.set(Some(body));
     let s = h.turns(3);
     assert!(s.contains("line-001"), "the first line renders:\n{s}");
-    assert!(!s.contains("line-055"), "a deep line is off-screen at first:\n{s}");
+    assert!(
+        !s.contains("line-055"),
+        "a deep line is off-screen at first:\n{s}"
+    );
     assert!(s.contains("line 1/60"), "the position is stated:\n{s}");
 
     // End jumps to the bottom — the content MOVES.
@@ -4845,25 +4952,40 @@ fn a_filetype_glob_filters_the_cache_tab() {
         })),
     ));
     let all = h.turns(2);
-    assert!(all.contains("shots") && all.contains("blocs"), "both rows:\n{all}");
+    assert!(
+        all.contains("shots") && all.contains("blocs"),
+        "both rows:\n{all}"
+    );
 
     // The reported defect: a filetype pattern must SELECT, not empty the
     // table. `*` crosses `/`, so it reaches into the stored path.
     h.ui.rt_cache_query.set("*.jpg".into());
     let jpg = h.turns(2);
-    assert!(jpg.contains("shots"), "the .jpg row survives `*.jpg`:\n{jpg}");
-    assert!(!jpg.contains("blocs"), "the .db row is filtered out:\n{jpg}");
+    assert!(
+        jpg.contains("shots"),
+        "the .jpg row survives `*.jpg`:\n{jpg}"
+    );
+    assert!(
+        !jpg.contains("blocs"),
+        "the .db row is filtered out:\n{jpg}"
+    );
 
     // The substring half is untouched — this is what shipped before.
     h.ui.rt_cache_query.set("blocs".into());
     let sub = h.turns(2);
-    assert!(sub.contains("blocs") && !sub.contains("shots"), "substring:\n{sub}");
+    assert!(
+        sub.contains("blocs") && !sub.contains("shots"),
+        "substring:\n{sub}"
+    );
 
     // A glob that matches nothing empties the table rather than matching
     // everything (the failure mode a broken anchor would produce).
     h.ui.rt_cache_query.set("*.png".into());
     let none = h.turns(2);
-    assert!(!none.contains("shots") && !none.contains("blocs"), "no rows:\n{none}");
+    assert!(
+        !none.contains("shots") && !none.contains("blocs"),
+        "no rows:\n{none}"
+    );
 }
 
 /// The search modal states the rule ONCE, above the field — the glob half
@@ -4907,9 +5029,7 @@ fn the_search_modal_teaches_the_glob_half() {
 /// at open and the worker drops anything else.
 #[test]
 fn a_stale_preview_result_never_paints_under_the_next_artifact() {
-    use abstractgateway_console::store::{
-        artifact_preview_key, ArtifactRow, ArtifactsData,
-    };
+    use abstractgateway_console::store::{artifact_preview_key, ArtifactRow, ArtifactsData};
 
     let art = |id: &str, name: &str| ArtifactRow {
         name: name.into(),
@@ -4953,7 +5073,8 @@ fn a_stale_preview_result_never_paints_under_the_next_artifact() {
     h.type_text("o");
     h.turns(2);
     assert!(
-        h.store.preview_wanted(&artifact_preview_key("run-1", "a-slow")),
+        h.store
+            .preview_wanted(&artifact_preview_key("run-1", "a-slow")),
         "the open modal claims its own artifact"
     );
     h.press_escape(); // bare-ESC needs its disambiguation deadline
@@ -4962,16 +5083,21 @@ fn a_stale_preview_result_never_paints_under_the_next_artifact() {
     h.turns(2);
     h.type_text("o");
     let s = h.turns(2);
-    assert!(s.contains("lpa.jpeg"), "the second artifact is on screen:\n{s}");
+    assert!(
+        s.contains("lpa.jpeg"),
+        "the second artifact is on screen:\n{s}"
+    );
 
     // The first artifact's result lost its race and must be DROPPED —
     // this is the predicate the worker consults before publishing.
     assert!(
-        !h.store.preview_wanted(&artifact_preview_key("run-1", "a-slow")),
+        !h.store
+            .preview_wanted(&artifact_preview_key("run-1", "a-slow")),
         "a result for the artifact left behind is no longer wanted"
     );
     assert!(
-        h.store.preview_wanted(&artifact_preview_key("run-1", "a-wanted")),
+        h.store
+            .preview_wanted(&artifact_preview_key("run-1", "a-wanted")),
         "the artifact actually on screen still is"
     );
 
@@ -4994,7 +5120,10 @@ fn a_stale_preview_result_never_paints_under_the_next_artifact() {
         !s.contains("cannot decode this image here"),
         "the guarded publish drops a result the screen no longer wants:\n{s}"
     );
-    assert!(s.contains("decoding image"), "and leaves the real one alone:\n{s}");
+    assert!(
+        s.contains("decoding image"),
+        "and leaves the real one alone:\n{s}"
+    );
 
     // Publishing WITHOUT asking is precisely the reported defect — pinned
     // here so the assertion above cannot pass for the wrong reason.
@@ -5018,10 +5147,7 @@ fn a_stale_preview_result_never_paints_under_the_next_artifact() {
 fn modal_frame(screen: &str) -> (usize, usize) {
     let rows: Vec<Vec<char>> = screen.lines().map(|l| l.chars().collect()).collect();
     for (top, line) in rows.iter().enumerate() {
-        let Some(col) = line
-            .windows(2)
-            .position(|w| w[0] == '╭' && w[1] == '─')
-        else {
+        let Some(col) = line.windows(2).position(|w| w[0] == '╭' && w[1] == '─') else {
             continue;
         };
         let width = line[col + 1..].iter().take_while(|c| **c == '─').count() + 2;
@@ -5034,7 +5160,6 @@ fn modal_frame(screen: &str) -> (usize, usize) {
     }
     (0, 0)
 }
-
 
 /// Operator 2026-08-20: "use more space for the previews", then "use at
 /// most 66% width and 66% height". The artifact preview and the log tail
@@ -5090,7 +5215,10 @@ fn previews_take_two_thirds_of_each_axis() {
     // inside it loses the Modal's own 1-cell padding on each side.
     for (cols, rows) in [(170, 40), (120, 36), (240, 60)] {
         let s = open_preview(cols, rows);
-        assert!(s.contains("lpa.jpeg"), "the preview opened at {cols}x{rows}:\n{s}");
+        assert!(
+            s.contains("lpa.jpeg"),
+            "the preview opened at {cols}x{rows}:\n{s}"
+        );
         let (w, h) = modal_frame(&s);
         let want_w = (cols * 2 / 3) as usize;
         let want_h = (rows * 2 / 3) as usize;
@@ -5163,7 +5291,9 @@ fn models_tab_renders_gauges_and_table_from_fixture() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
     // Memory strip: the RAM gauge's facts and the backend-labeled
     // device gauge.
@@ -5226,7 +5356,9 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     let mut h = harness_sized(Size::new(80, 24));
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
 
     // 1. THE TABLE IS THERE AT REST, with the columns the operator came for.
@@ -5286,7 +5418,8 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
          accelerator figure readable:\n{s}"
     );
     assert!(
-        s.lines().any(|l| l.contains("qwen3-32b") && l.contains("yes")),
+        s.lines()
+            .any(|l| l.contains("qwen3-32b") && l.contains("yes")),
         "and the model rows are still there at the tail:\n{s}"
     );
 
@@ -5357,9 +5490,14 @@ fn models_tab_resident_null_renders_the_third_state() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
-    assert!(s.contains("mystery-model"), "the null-resident row renders:\n{s}");
+    assert!(
+        s.contains("mystery-model"),
+        "the null-resident row renders:\n{s}"
+    );
     assert!(
         s.contains("unknown"),
         "null resident renders the distinct third state:\n{s}"
@@ -5381,7 +5519,9 @@ fn models_tab_locked_row_shows_the_lock_marker() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
     // The TABLE row (the breakdown above also names mlx/qwen3-32b —
     // only the table row carries the tri-state residency cell).
@@ -5389,10 +5529,7 @@ fn models_tab_locked_row_shows_the_lock_marker() {
         .lines()
         .find(|l| l.contains("qwen3-32b") && l.contains("mlx") && l.contains("yes"))
         .expect("locked model row renders");
-    assert!(
-        row.contains('\u{2298}'),
-        "the locked row carries ⊘:\n{row}"
-    );
+    assert!(row.contains('\u{2298}'), "the locked row carries ⊘:\n{row}");
     assert!(
         !s.contains('\u{1F512}'),
         "never the padlock emoji (column-advance hazard):\n{s}"
@@ -5415,7 +5552,9 @@ fn models_tab_unload_confirms_then_emits_the_cmd() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
     h.type_text("u");
     let s = h.turns(2);
@@ -5476,7 +5615,9 @@ fn models_tab_locked_refusal_offers_force_unload() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
     // The worker's 409 arm posts the pair; simulate it.
     h.store
@@ -5513,7 +5654,9 @@ fn models_tab_device_meter_shows_the_host_figure_not_the_process_zero() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
     assert!(
         s.contains("Accelerator heap · metal (all processes)"),
@@ -5546,9 +5689,14 @@ fn models_tab_breaks_down_what_is_consuming_memory() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
-    assert!(s.contains("consuming memory:"), "the breakdown header:\n{s}");
+    assert!(
+        s.contains("consuming memory:"),
+        "the breakdown header:\n{s}"
+    );
     let line_of = |needle: &str| -> String {
         s.lines()
             .find(|l| l.contains(needle))
@@ -5579,7 +5727,10 @@ fn models_tab_breaks_down_what_is_consuming_memory() {
     assert!(line_of("gateway process RSS").contains("1.0 GiB"));
     // The references live behind their rule, and are NOT summable with
     // the items above them.
-    assert!(strip.contains("NOT summable with the items above"), "{strip}");
+    assert!(
+        strip.contains("NOT summable with the items above"),
+        "{strip}"
+    );
     assert!(line_of("Σ model weights").contains("~95.0 GiB"));
     assert!(line_of("RAM used").contains("80.0 GiB / 128.0 GiB"));
     assert!(
@@ -5601,7 +5752,9 @@ fn models_tab_states_the_gateway_process_rss_exactly_once() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
     // The strip, from the first meter down to the tables.
     let strip: Vec<&str> = s
@@ -5625,7 +5778,10 @@ fn models_tab_states_the_gateway_process_rss_exactly_once() {
         stated[0]
     );
     // The host identity is not a duplicate: it stays.
-    assert!(s.contains("host: studio.local"), "the host id survives:\n{s}");
+    assert!(
+        s.contains("host: studio.local"),
+        "the host id survives:\n{s}"
+    );
 }
 
 /// SPEC PART B3: when the itemized weights EXCEED the accelerator heap —
@@ -5670,7 +5826,9 @@ fn models_tab_locks_an_externally_loaded_sweep_row() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
     // Down twice: qwen3-32b → mystery-model → glm-4.6-gguf (the sweep).
     h.key(b"\x1b[B");
@@ -5755,7 +5913,9 @@ fn models_tab_warmup_form_picks_provider_and_model_from_the_catalogs() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(7);
-    h.store.host_state.set(Loadable::Ready(host_state_fixture()));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
     h.type_text("w");
@@ -5842,7 +6002,7 @@ fn digit_8_jumps_to_the_models_tab() {
     );
 }
 
-/// The footer hint arms must stay in LOCKSTEP with the 8-screen array:
+/// The footer hint arms must stay in LOCKSTEP with the screen array:
 /// the Workflows wave drifted them once (Review's sandbox hints
 /// rendered on the Workflows screen; Review showed none). One
 /// distinctive per-screen verb each, on a terminal wide enough that
@@ -5860,6 +6020,9 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         (5, "drafts"),
         (6, "run the test"),
         (7, "context estimate"),
+        // The shared screens' own verbs (abstractcore-console HINTS).
+        (8, "fits only"),
+        (9, "open download page"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(2);
@@ -5876,4 +6039,567 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         !s.contains("run the test"),
         "workflows screen never wears Review's sandbox hints:\n{s}"
     );
+}
+
+// ---- AbstractCore's shared Models (9) / Engines (0) screens -------------
+//
+// The screens are the published `abstractcore-console` crate's; what is
+// pinned here is the GATEWAY's wiring of them: tabs 9/0, the `0` root
+// key, the shared notice lane (toasts), the footer, the reconnect reset,
+// the `q` refusal, and the host label the confirms print. The fixtures
+// are AbstractCore's contract documents (tests/fixtures, copied from
+// the crate's own suite).
+
+fn fixture(name: &str) -> Value {
+    let text = match name {
+        "host_profile" => include_str!("fixtures/host_profile.json"),
+        "engines_status" => include_str!("fixtures/engines_status.json"),
+        "model_catalog" => include_str!("fixtures/model_catalog.json"),
+        "models_installed" => include_str!("fixtures/models_installed.json"),
+        "job_running" => include_str!("fixtures/job_running.json"),
+        "job_completed" => include_str!("fixtures/job_completed.json"),
+        other => panic!("no fixture {other}"),
+    };
+    serde_json::from_str(text).expect("fixture parses")
+}
+
+/// The contract backend in memory: fixtures for every read (the
+/// catalog filtered the way the gateway filters it), a call log, and
+/// jobs walked through `polls`.
+#[derive(Default)]
+struct MockTransport {
+    calls: Mutex<Vec<String>>,
+    /// Successive `job()` answers; empty = the last job, completed.
+    polls: Mutex<VecDeque<Value>>,
+    last_job: Mutex<Option<Value>>,
+    cancelled: Mutex<bool>,
+    /// When set, `delete_model` refuses with this error.
+    refuse_delete: Mutex<Option<TransportError>>,
+}
+
+impl MockTransport {
+    fn record(&self, call: String) {
+        self.calls.lock().unwrap().push(call);
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    fn called(&self, prefix: &str) -> bool {
+        self.calls().iter().any(|c| c.starts_with(prefix))
+    }
+
+    fn count(&self, prefix: &str) -> usize {
+        self.calls()
+            .iter()
+            .filter(|c| c.starts_with(prefix))
+            .count()
+    }
+
+    fn job_doc(kind: &str, status: &str, extra: Value) -> Value {
+        let mut j = fixture("job_running");
+        j["kind"] = json!(kind);
+        j["status"] = json!(status);
+        j["job_id"] = json!(format!("{kind}_1"));
+        if kind != "download" {
+            j["log_tail"] = json!([]);
+            j["downloaded_bytes"] = Value::Null;
+            j["total_bytes"] = Value::Null;
+        }
+        if let Value::Object(m) = extra {
+            for (k, v) in m {
+                j[k] = v;
+            }
+        }
+        j
+    }
+
+    fn started(&self, doc: Value) -> Result<Value, TransportError> {
+        *self.last_job.lock().unwrap() = Some(doc.clone());
+        Ok(doc)
+    }
+}
+
+impl ConsoleTransport for MockTransport {
+    fn host_profile(&self) -> Result<Value, TransportError> {
+        self.record("host_profile".into());
+        Ok(fixture("host_profile"))
+    }
+    fn engines_status(&self, probe: bool) -> Result<Value, TransportError> {
+        self.record(format!("engines_status probe={probe}"));
+        Ok(fixture("engines_status"))
+    }
+    fn models_catalog(
+        &self,
+        q: &str,
+        engine: Option<&str>,
+        fits_only: bool,
+    ) -> Result<Value, TransportError> {
+        self.record(format!(
+            "catalog q={q} engine={} fits={fits_only}",
+            engine.unwrap_or("-")
+        ));
+        let mut c = fixture("model_catalog");
+        let q = q.to_lowercase();
+        let rows: Vec<Value> = c["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| q.is_empty() || r["id"].as_str().unwrap().contains(&q))
+            .map(|r| {
+                let mut r = r.clone();
+                let arts: Vec<Value> = r["artifacts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|a| engine.is_none_or(|e| a["provider"] == e))
+                    .filter(|a| {
+                        !fits_only || matches!(a["fit"]["verdict"].as_str(), Some("fits" | "tight"))
+                    })
+                    .cloned()
+                    .collect();
+                r["artifacts"] = json!(arts);
+                r
+            })
+            .collect();
+        c["rows"] = json!(rows);
+        Ok(c)
+    }
+    fn models_installed(&self, provider: Option<&str>) -> Result<Value, TransportError> {
+        self.record(format!("installed provider={}", provider.unwrap_or("-")));
+        Ok(fixture("models_installed"))
+    }
+    fn start_download(&self, provider: &str, artifact: &str) -> Result<Value, TransportError> {
+        self.record(format!("download {provider} {artifact}"));
+        self.started(Self::job_doc(
+            "download",
+            "running",
+            json!({"provider": provider, "artifact": artifact, "percent": 0.0,
+                   "downloaded_bytes": 0, "message": "pulling manifest"}),
+        ))
+    }
+    fn delete_model(
+        &self,
+        provider: &str,
+        artifact: &str,
+        force: bool,
+    ) -> Result<Value, TransportError> {
+        self.record(format!("delete {provider} {artifact} force={force}"));
+        if let Some(e) = self.refuse_delete.lock().unwrap().clone() {
+            return Err(e);
+        }
+        self.started(Self::job_doc(
+            "delete",
+            "completed",
+            json!({"provider": provider, "artifact": artifact, "percent": 100.0,
+                   "command": ["lms", "rm", artifact]}),
+        ))
+    }
+    fn engine_install(&self, id: &str, dry_run: bool) -> Result<Value, TransportError> {
+        self.record(format!("install {id} dry_run={dry_run}"));
+        let command = json!(["brew", "install", id]);
+        if dry_run {
+            return self.started(Self::job_doc(
+                "engine_install",
+                "completed",
+                json!({"provider": null, "artifact": null, "engine": id, "dry_run": true,
+                       "command": command, "percent": null}),
+            ));
+        }
+        self.started(Self::job_doc(
+            "engine_install",
+            "running",
+            json!({"provider": null, "artifact": null, "engine": id, "command": command,
+                   "percent": null, "message": "==> Downloading ollama"}),
+        ))
+    }
+    fn job(&self, id: &str) -> Result<Value, TransportError> {
+        self.record(format!("job {id}"));
+        let last = self
+            .last_job
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("a job started");
+        if *self.cancelled.lock().unwrap() {
+            let mut j = last;
+            j["status"] = json!("cancelled");
+            return Ok(j);
+        }
+        if let Some(next) = self.polls.lock().unwrap().pop_front() {
+            return Ok(next);
+        }
+        let mut j = last;
+        j["status"] = json!("completed");
+        j["percent"] = json!(100.0);
+        Ok(j)
+    }
+    fn cancel_job(&self, id: &str) -> Result<Value, TransportError> {
+        self.record(format!("cancel {id}"));
+        *self.cancelled.lock().unwrap() = true;
+        let mut j = self
+            .last_job
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("a job started");
+        j["status"] = json!("cancelled");
+        Ok(j)
+    }
+    /// What the gateway transport says (transport_http::label_for).
+    fn host_label(&self) -> String {
+        "gateway host studio (10.0.0.5:8080)".into()
+    }
+}
+
+impl Harness {
+    /// Turn frames until `pred` holds on the screen text (the screens'
+    /// worker answers asynchronously); panics with the last frame.
+    fn settle_until(&mut self, what: &str, pred: impl Fn(&str) -> bool) -> String {
+        let mut last = String::new();
+        for _ in 0..400 {
+            last = self.turn();
+            if pred(&last) {
+                return last;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("never saw {what}:\n{last}\ncalls: {:?}", self.mock.calls());
+    }
+
+    fn settle_until_contains(&mut self, needle: &str) -> String {
+        let n = needle.to_string();
+        self.settle_until(needle, move |s| s.contains(&n))
+    }
+
+    fn wait_for_call(&mut self, what: &str, pred: impl Fn(&[String]) -> bool) {
+        for _ in 0..400 {
+            if pred(&self.mock.calls()) {
+                return;
+            }
+            self.turn();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("never saw {what}: {:?}", self.mock.calls());
+    }
+
+    /// Connected, browse mode, on the Workflows screen (the Connection
+    /// screen's URL field owns the keyboard — digits would be typed).
+    fn browse_connected(&mut self) {
+        self.connect_as_admin();
+        self.ui.wizard.set(false);
+        self.ui.screen.set(ui::SCREEN_WORKFLOWS);
+        self.turns(2);
+    }
+
+    fn open_models(&mut self) -> String {
+        self.key(b"9");
+        self.settle_until("the catalog rows", |s| {
+            s.contains("Qwen3 8B") && s.contains("Apple M5 Max")
+        })
+    }
+
+    fn open_engines(&mut self) -> String {
+        self.key(b"0");
+        self.settle_until("the engines table", |s| {
+            s.contains("Ollama") && s.contains("llama.cpp")
+        })
+    }
+
+    fn select_artifact(&mut self, artifact: &str) -> String {
+        let idx = self
+            .screens
+            .catalog
+            .with_untracked(|c| {
+                c.ready()
+                    .and_then(|d| d.rows.iter().position(|r| r.artifact == artifact))
+            })
+            .unwrap_or_else(|| panic!("{artifact} is not in the catalog fixture"));
+        self.screens.catalog_sel.set(idx);
+        self.turns(2)
+    }
+
+    fn select_engine(&mut self, id: &str) -> String {
+        let idx = self
+            .screens
+            .engines
+            .with_untracked(|e| {
+                e.ready()
+                    .and_then(|d| d.engines.iter().position(|r| r.id == id))
+            })
+            .unwrap_or_else(|| panic!("{id} is not in the engines fixture"));
+        self.screens.engine_sel.set(idx);
+        self.turns(2)
+    }
+}
+
+#[test]
+fn models_tab_9_renders_the_shared_catalog_once() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.browse_connected();
+    let s = h.open_models();
+    assert!(s.contains("9 Models"), "tab 9 is Models:\n{s}");
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
+    // Contract G vocabulary, rendered by the shared screen.
+    for word in ["fits", "too large", "not downloaded", "installed"] {
+        assert!(s.contains(word), "{word} rendered:\n{s}");
+    }
+    assert!(
+        s.contains("ollama: unreachable"),
+        "installed errors shown:\n{s}"
+    );
+    // The gateway footer: the new digit range + the screen's own verbs.
+    assert!(s.contains("1-9,0"), "{s}");
+    assert!(s.contains("download") && s.contains("filter"), "{s}");
+    // Entering read host, catalog and installed ONCE each — the gateway's
+    // connected-entry effect and the screen's mount effect must not
+    // double-send.
+    assert_eq!(h.mock.count("catalog"), 1, "{:?}", h.mock.calls());
+    assert_eq!(h.mock.count("host_profile"), 1, "{:?}", h.mock.calls());
+    assert_eq!(h.mock.count("installed"), 1, "{:?}", h.mock.calls());
+    // Leave and come back: no re-read. `r` re-reads.
+    h.key(b"6");
+    h.turns(3);
+    h.key(b"9");
+    h.turns(3);
+    assert_eq!(h.mock.count("catalog"), 1);
+    h.key(b"r");
+    h.wait_for_call("a second catalog read", |calls| {
+        calls.iter().filter(|c| c.starts_with("catalog")).count() == 2
+    });
+    h.settle_until_contains("Qwen3 8B");
+    // `r` on the shared screen is ITS refresh, never a gateway command.
+    assert!(
+        h.drain_cmds()
+            .iter()
+            .all(|c| !matches!(c, Cmd::PollHostState { .. })),
+        "no gateway-lane reload for the shared screen"
+    );
+}
+
+#[test]
+fn zero_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.browse_connected();
+    let s = h.open_engines();
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_ENGINES);
+    assert!(s.contains("0 Engines"), "{s}");
+    assert!(
+        s.contains("gateway host studio"),
+        "the engines screen names the gateway host:\n{s}"
+    );
+    assert!(h.mock.called("engines_status probe=false"));
+    assert!(s.contains("open download page"), "engines footer:\n{s}");
+    // Wizard: digits are refused WITH a reason, 0 included.
+    h.ui.wizard.set(true);
+    h.ui.screen.set(1);
+    h.turns(2);
+    h.key(b"0");
+    let s = h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 1, "wizard does not jump");
+    assert!(s.contains("digit jumps work in browse mode"), "{s}");
+}
+
+#[test]
+fn wizard_walks_on_to_models_and_engines_with_their_goals() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_CATALOG);
+    let s = h.settle_until_contains("Qwen3 8B");
+    assert!(
+        s.contains("Step goal:") && s.contains("w downloads a model"),
+        "{s}"
+    );
+    h.ui.screen.set(ui::SCREEN_ENGINES);
+    let s = h.settle_until_contains("llama.cpp");
+    assert!(s.contains("i installs a local engine"), "{s}");
+}
+
+#[test]
+fn models_filter_slash_requeries_through_the_transport() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.browse_connected();
+    h.open_models();
+    h.key(b"/");
+    let s = h.turns(2);
+    assert!(s.contains("Filter models"), "the filter input opens:\n{s}");
+    h.type_text("gemma");
+    h.turns(1);
+    h.key(b"\r");
+    let s = h.settle_until("only gemma", |s| {
+        s.contains("Gemma 3 27B") && !s.contains("Qwen3 8B")
+    });
+    assert!(s.contains("filter \"gemma\""), "{s}");
+    assert!(h.mock.called("catalog q=gemma engine=- fits=false"));
+    h.key(b"f");
+    h.wait_for_call("the fits-only re-query", |c| {
+        c.iter().any(|c| c == "catalog q=gemma engine=- fits=true")
+    });
+}
+
+#[test]
+fn download_progress_reaches_the_gateway_toast_lane() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.browse_connected();
+    h.open_models();
+    h.mock
+        .polls
+        .lock()
+        .unwrap()
+        .extend([fixture("job_running"), fixture("job_running")]);
+    h.select_artifact("qwen3:8b");
+    h.key(b"w");
+    let s = h.settle_until("the job at 42%", |s| s.contains("42%"));
+    assert!(s.contains("download ollama qwen3:8b"), "{s}");
+    assert!(s.contains("c cancels"), "{s}");
+    // The outcome lands on the GATEWAY's notice signal (shared lane):
+    // the footer mirrors it and the toast effect shows it.
+    h.settle_until("the completion notice", |s| {
+        s.contains("✓ download ollama qwen3:8b completed")
+    });
+    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    assert!(
+        notice.contains("download ollama qwen3:8b completed"),
+        "the gateway notice carries it: {notice}"
+    );
+    assert!(!h.screens.job_active());
+}
+
+#[test]
+fn delete_refusal_shows_the_gateways_blockers() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.browse_connected();
+    h.open_models();
+    h.key(b"v");
+    h.settle_until_contains("3 installed");
+    let idx = h
+        .screens
+        .installed
+        .with_untracked(|i| {
+            i.ready()
+                .and_then(|d| d.rows.iter().position(|r| r.provider == "mlx"))
+        })
+        .unwrap();
+    h.screens.installed_sel.set(idx);
+    h.turns(2);
+    h.key(b"d");
+    let s = h.turns(2);
+    assert!(
+        s.contains("loaded in memory right now"),
+        "blocker spelled out:\n{s}"
+    );
+    assert!(
+        s.contains("gateway host studio"),
+        "the delete names where it runs:\n{s}"
+    );
+    // The gateway refuses (409 + body) — what HttpTransport hands over.
+    *h.mock.refuse_delete.lock().unwrap() = Some(TransportError::refused(
+        "model is loaded",
+        Some(json!({"ok": false, "status": "refused", "delete_blockers": ["loaded"]})),
+    ));
+    h.key(b"1");
+    h.turns(1);
+    h.key(b"\r");
+    let s = h.settle_until_contains("refused: model is loaded");
+    assert!(s.contains("(loaded)"), "the blockers ride along:\n{s}");
+    assert!(h
+        .mock
+        .called("delete mlx mlx-community/gpt-oss-20b-4bit force=true"));
+}
+
+#[test]
+fn install_confirm_shows_argv_and_the_gateway_host() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.browse_connected();
+    h.open_engines();
+    h.select_engine("ollama");
+    h.key(b"i");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Install Ollama on gateway host studio (10.0.0.5:8080)?"),
+        "{s}"
+    );
+    assert!(
+        s.contains("command   brew install ollama"),
+        "the exact argv:\n{s}"
+    );
+    assert!(s.contains("runs on   gateway host studio"), "{s}");
+    assert!(s.contains("Dry run"), "{s}");
+    // Default = cancel; nothing is sent.
+    h.key(b"\r");
+    h.settle_until_contains("install cancelled — nothing ran");
+    assert!(!h.mock.called("install"));
+    // Dry run asks the gateway, runs nothing.
+    h.key(b"i");
+    h.turns(2);
+    h.key(b"2");
+    h.turns(1);
+    h.key(b"\r");
+    h.settle_until_contains("dry run: install ollama would run `brew install ollama`");
+    assert!(h.mock.called("install ollama dry_run=true"));
+}
+
+#[test]
+fn a_running_install_blocks_q_and_c_cancels_it() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.browse_connected();
+    h.open_engines();
+    h.mock.polls.lock().unwrap().extend((0..400).map(|_| {
+        MockTransport::job_doc(
+            "engine_install",
+            "running",
+            json!({"engine": "ollama", "provider": null, "artifact": null,
+                   "percent": null, "message": "==> Downloading ollama"}),
+        )
+    }));
+    h.select_engine("ollama");
+    h.key(b"i");
+    h.turns(2);
+    h.key(b"1");
+    h.turns(1);
+    h.key(b"\r");
+    h.settle_until_contains("Downloading ollama");
+    assert!(h.screens.job_active());
+    // Browse-mode q refuses while the gateway job runs.
+    h.key(b"q");
+    h.settle_until_contains("models/engines job is running on the gateway");
+    h.key(b"c");
+    let s = h.settle_until_contains("⊘ install ollama cancelled");
+    assert!(s.contains("cancelled"), "{s}");
+    assert!(h.mock.called("cancel engine_install_1"));
+    assert!(!h.screens.job_active());
+}
+
+#[test]
+fn a_reconnect_forgets_the_old_gateways_models_and_reloads() {
+    use abstractcore_console::screens::Remote;
+    let mut h = harness_sized(Size::new(150, 40));
+    h.browse_connected();
+    h.open_models();
+    assert_eq!(h.mock.count("catalog"), 1);
+    // The worker's probe path: Probing (+ Store::reset_domains).
+    h.store.conn.set(ConnPhase::Probing);
+    h.turns(2);
+    assert!(
+        h.screens.catalog.with_untracked(Remote::is_not_asked)
+            && h.screens.installed.with_untracked(Remote::is_not_asked)
+            && h.screens.host.with_untracked(Remote::is_not_asked),
+        "Probing resets the shared screens' reads"
+    );
+    // No read while not connected.
+    h.turns(3);
+    assert_eq!(h.mock.count("catalog"), 1, "{:?}", h.mock.calls());
+    // Connected again, still on the Models tab: it reloads by itself.
+    h.connect_as_admin();
+    h.wait_for_call("the post-reconnect catalog read", |c| {
+        c.iter().filter(|c| c.starts_with("catalog")).count() == 2
+    });
+    h.settle_until_contains("Qwen3 8B");
+    // The UI-side reset (Connect button) clears them too.
+    h.screens.engines.set(Remote::Loading);
+    let ctx_reset = h.screens;
+    abstractgateway_console::ui::reset_screens(&ctx_reset);
+    assert!(h.screens.engines.with_untracked(Remote::is_not_asked));
 }

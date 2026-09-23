@@ -330,3 +330,78 @@ fn wizard_writes_verify_and_clean_up() {
         println!("input.text not configured — sandbox test skipped");
     }
 }
+
+/// The Models/Engines seam against a REAL gateway, read-only (no
+/// download, no delete, no install — only a DRY-RUN install plan).
+///
+/// Opt-in twice: `--ignored` AND an explicit URL — this case never
+/// falls back to `http://127.0.0.1:8080`, which is usually the
+/// operator's own gateway:
+///   ABSTRACTGATEWAY_MODELS_E2E_URL=http://127.0.0.1:<port> \
+///   ABSTRACTGATEWAY_AUTH_TOKEN=... \
+///   cargo test --test live_e2e models_engines -- --ignored --nocapture
+/// Without the URL it skips (passes) with a note.
+#[test]
+#[ignore = "talks to a live gateway; run with --ignored"]
+fn models_engines_routes_answer_the_contract_documents() {
+    use abstractcore_console::{ConsoleTransport, TransportErrorKind};
+    use abstractgateway_console::transport_http::{client_slot, publish, HttpTransport};
+
+    let Ok(url) = std::env::var("ABSTRACTGATEWAY_MODELS_E2E_URL") else {
+        eprintln!("skipped: set ABSTRACTGATEWAY_MODELS_E2E_URL (never defaults to :8080)");
+        return;
+    };
+    let token = std::env::var("ABSTRACTGATEWAY_AUTH_TOKEN").ok();
+    let client = GatewayClient::new(&url, token.as_deref());
+    client.ping().expect("the gateway answers /ping");
+    let slot = client_slot();
+    publish(&slot, Some(client));
+    let t = HttpTransport::new(slot, url.clone());
+
+    let hp = t.host_profile().expect("GET /host/profile");
+    assert_eq!(hp["schema"], "host_profile_v1", "{hp}");
+    let en = t.engines_status(false).expect("GET /engines");
+    assert_eq!(en["schema"], "engines_status_v1", "{en}");
+    assert!(
+        en["engines"].as_array().is_some_and(|a| !a.is_empty()),
+        "{en}"
+    );
+    let cat = t
+        .models_catalog("qwen", None, false)
+        .expect("GET /models/catalog");
+    assert_eq!(cat["schema"], "model_catalog_v1");
+    let inst = t.models_installed(None).expect("GET /models/installed");
+    assert_eq!(inst["schema"], "models_installed_v1");
+    println!(
+        "host {} · {} engines · {} catalog rows · {} installed",
+        hp["accelerator"],
+        en["engines"].as_array().map_or(0, Vec::len),
+        cat["rows"].as_array().map_or(0, Vec::len),
+        inst["rows"].as_array().map_or(0, Vec::len),
+    );
+
+    // A dry-run install plan for the first engine that offers one: the
+    // gateway answers a job with `dry_run: true` and the argv — or
+    // refuses (403 when installs are disabled). Either way nothing runs.
+    if let Some(id) = en["engines"].as_array().and_then(|a| {
+        a.iter()
+            .find(|e| e["install"]["available"] == true && e["installed"] == false)
+            .and_then(|e| e["id"].as_str())
+    }) {
+        match t.engine_install(id, true) {
+            Ok(job) => {
+                assert_eq!(job["dry_run"], true, "{job}");
+                println!("dry run {id}: {}", job["command"]);
+            }
+            Err(e) => {
+                assert_eq!(e.kind, TransportErrorKind::Refused, "{e:?}");
+                println!("install refused (as configured): {e}");
+            }
+        }
+    }
+
+    // An unknown job is "not found", never a crash.
+    let e = t.job("no-such-job-e2e").unwrap_err();
+    assert_eq!(e.kind, TransportErrorKind::NotFound, "{e:?}");
+    println!("label: {}", t.host_label());
+}

@@ -38,6 +38,40 @@ pub struct ApiError {
     /// Verbatim `detail` text when the gateway sent one (its messages
     /// are actionable by design), else a transport description.
     pub message: String,
+    /// The response's JSON body when an HTTP error carried one — the
+    /// whole document, not just `detail`. A refusal (403/409) explains
+    /// itself there: `delete_blockers`, `reason`, the `install` plan.
+    /// FastAPI's `{"detail": {...}}` envelope is unwrapped when its
+    /// detail is an object. `None` for transport failures and for
+    /// non-JSON bodies.
+    pub body: Option<Value>,
+    /// The request died on a connect/read TIMEOUT (a transport failure
+    /// that is neither "refused" nor "reset"). Rides beside
+    /// `Unreachable` so the existing honest-state matches keep their
+    /// exhaustive shape.
+    pub timed_out: bool,
+}
+
+impl ApiError {
+    /// A body-less error of `kind` (the common constructor).
+    pub fn new(kind: ApiErrorKind, message: impl Into<String>) -> ApiError {
+        ApiError {
+            kind,
+            message: message.into(),
+            body: None,
+            timed_out: false,
+        }
+    }
+
+    /// The HTTP status when the gateway answered with one.
+    pub fn status(&self) -> Option<u16> {
+        match self.kind {
+            ApiErrorKind::Unauthorized => Some(401),
+            ApiErrorKind::Forbidden => Some(403),
+            ApiErrorKind::Http(c) => Some(c),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for ApiError {
@@ -101,13 +135,42 @@ fn io_death(e: &ureq::Error) -> bool {
     false
 }
 
+/// `{"detail": {...}}` (FastAPI's `HTTPException(detail=dict)`) → the
+/// inner object, so a refusal's `delete_blockers` sit at the top level
+/// whichever way the route raised it. Anything else is kept whole.
+fn unwrap_detail_object(v: Value) -> Value {
+    match v.get("detail") {
+        Some(d @ Value::Object(_)) => d.clone(),
+        _ => v,
+    }
+}
+
+/// A transport failure caused by a deadline (connect or read timeout):
+/// the io kind on the source chain, else ureq's own wording.
+fn transport_timed_out(t: &ureq::Transport) -> bool {
+    let mut src = std::error::Error::source(t);
+    while let Some(s) = src {
+        if let Some(ioe) = s.downcast_ref::<std::io::Error>() {
+            if matches!(
+                ioe.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            ) {
+                return true;
+            }
+        }
+        src = s.source();
+    }
+    t.to_string().to_ascii_lowercase().contains("timed out")
+}
+
 fn err_from_ureq(label: &str, e: ureq::Error) -> ApiError {
     match e {
         ureq::Error::Status(code, resp) => {
             let body = resp.into_string().unwrap_or_default();
+            let parsed = serde_json::from_str::<Value>(&body).ok();
             // FastAPI errors are {"detail": "..."} — surface detail verbatim.
-            let detail = serde_json::from_str::<Value>(&body)
-                .ok()
+            let detail = parsed
+                .clone()
                 .and_then(|v| {
                     v.get("detail")
                         .and_then(Value::as_str)
@@ -134,12 +197,19 @@ fn err_from_ureq(label: &str, e: ureq::Error) -> ApiError {
             ApiError {
                 kind,
                 message: detail,
+                body: parsed.map(unwrap_detail_object),
+                timed_out: false,
             }
         }
-        ureq::Error::Transport(t) => ApiError {
-            kind: ApiErrorKind::Unreachable,
-            message: t.to_string(),
-        },
+        ureq::Error::Transport(t) => {
+            let timed_out = transport_timed_out(&t);
+            ApiError {
+                kind: ApiErrorKind::Unreachable,
+                message: t.to_string(),
+                body: None,
+                timed_out,
+            }
+        }
     }
 }
 
@@ -191,6 +261,22 @@ impl GatewayClient {
         &self.base_url
     }
 
+    /// The same client with a different READ deadline on both agents
+    /// (connect stays 5 s). For tests and for callers that must fail
+    /// fast; production uses [`GatewayClient::new`]'s 60 s / 300 s.
+    pub fn with_read_timeout(mut self, read: Duration) -> GatewayClient {
+        let build = || {
+            ureq::AgentBuilder::new()
+                .timeout_connect(Duration::from_secs(5))
+                .timeout_read(read)
+                .timeout_write(Duration::from_secs(30))
+                .build()
+        };
+        self.agent = build();
+        self.slow_agent = build();
+        self
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}/api/gateway{}", self.base_url, path)
     }
@@ -206,10 +292,14 @@ impl GatewayClient {
         let body = resp.into_string().map_err(|e| ApiError {
             kind: ApiErrorKind::Unreachable,
             message: format!("{label}: read failed: {e}"),
+            body: None,
+            timed_out: false,
         })?;
         serde_json::from_str(&body).map_err(|e| ApiError {
             kind: ApiErrorKind::Protocol,
             message: format!("{label}: invalid JSON: {e}"),
+            body: None,
+            timed_out: false,
         })
     }
 
@@ -246,6 +336,8 @@ impl GatewayClient {
         std::io::Read::read_to_end(&mut resp.into_reader(), &mut out).map_err(|e| ApiError {
             kind: ApiErrorKind::Unreachable,
             message: format!("failed reading bundle bytes: {e}"),
+            body: None,
+            timed_out: false,
         })?;
         Ok(out)
     }
@@ -265,6 +357,8 @@ impl GatewayClient {
             error: ApiError {
                 kind: ApiErrorKind::Unreachable,
                 message: format!("{path}: read failed: {e}"),
+                body: None,
+                timed_out: false,
             },
         })?;
         serde_json::from_str(&body).map_err(|e| AttemptFail {
@@ -272,6 +366,8 @@ impl GatewayClient {
             error: ApiError {
                 kind: ApiErrorKind::Protocol,
                 message: format!("{path}: invalid JSON: {e}"),
+                body: None,
+                timed_out: false,
             },
         })
     }
@@ -447,6 +543,105 @@ impl GatewayClient {
         self.get("/host/state", true)
     }
 
+    // ---- Models & Engines (the AbstractCore contracts A–E, mirrored) ---
+    //
+    // The shared Models/Engines screens (crate `abstractcore-console`)
+    // read these through `transport_http::HttpTransport`. Bodies are the
+    // contract documents verbatim; nothing here interprets them.
+
+    /// Contract A: `host_profile_v1` of the machine the gateway runs on.
+    pub fn host_profile(&self) -> ApiResult<Value> {
+        self.get("/host/profile", false)
+    }
+
+    /// Contract B: `engines_status_v1`. `probe` contacts local servers.
+    pub fn engines_status(&self, probe: bool) -> ApiResult<Value> {
+        self.get(
+            &format!("/engines?probe={}", if probe { 1 } else { 0 }),
+            probe,
+        )
+    }
+
+    /// Contract C: `model_catalog_v1`, filtered server-side. Slow agent:
+    /// presence and size enrichment can touch every engine and the HF
+    /// cache.
+    pub fn models_catalog(&self, q: &str, engine: Option<&str>, fits: bool) -> ApiResult<Value> {
+        let mut path = format!("/models/catalog?q={}", urlencode(q));
+        if let Some(e) = engine.filter(|e| !e.is_empty()) {
+            path.push_str(&format!("&engine={}", urlencode(e)));
+        }
+        path.push_str(if fits { "&fits=1" } else { "&fits=0" });
+        self.get(&path, true)
+    }
+
+    /// Contract D: `models_installed_v1`.
+    pub fn models_installed(&self, provider: Option<&str>) -> ApiResult<Value> {
+        let path = match provider.filter(|p| !p.is_empty()) {
+            Some(p) => format!("/models/installed?provider={}", urlencode(p)),
+            None => "/models/installed".to_string(),
+        };
+        self.get(&path, true)
+    }
+
+    /// Contract E: start (or join) a download; answers a `host_job_v1`.
+    pub fn models_download(
+        &self,
+        provider: &str,
+        artifact: &str,
+        dry_run: bool,
+    ) -> ApiResult<Value> {
+        self.send(
+            "POST",
+            "/models/download",
+            &json!({"provider": provider, "artifact": artifact, "dry_run": dry_run}),
+            false,
+        )
+    }
+
+    /// Contract E: delete an installed artifact; answers a `host_job_v1`
+    /// or refuses (409 with `delete_blockers`).
+    pub fn models_delete(
+        &self,
+        provider: &str,
+        artifact: &str,
+        dry_run: bool,
+        force: bool,
+    ) -> ApiResult<Value> {
+        self.send(
+            "POST",
+            "/models/delete",
+            &json!({"provider": provider, "artifact": artifact,
+                    "dry_run": dry_run, "force": force}),
+            false,
+        )
+    }
+
+    /// Contract E: install an engine ON THE GATEWAY HOST (admin; 403
+    /// unless the gateway allows it, 409 while a job runs).
+    pub fn engine_install(&self, id: &str, dry_run: bool) -> ApiResult<Value> {
+        self.send(
+            "POST",
+            &format!("/engines/{}/install", urlencode(id)),
+            &json!({"dry_run": dry_run}),
+            false,
+        )
+    }
+
+    /// Contract E: one host job (download / delete / engine_install).
+    pub fn host_job(&self, id: &str) -> ApiResult<Value> {
+        self.get(&format!("/jobs/{}", urlencode(id)), false)
+    }
+
+    /// Contract E: cancel a host job; answers the job after the request.
+    pub fn cancel_host_job(&self, id: &str) -> ApiResult<Value> {
+        self.send(
+            "POST",
+            &format!("/jobs/{}/cancel", urlencode(id)),
+            &json!({}),
+            false,
+        )
+    }
+
     /// The resident-model rows alone (row_v1 under "rows") — the
     /// verify read after a model mutation (cheaper than the full
     /// host-state GPU probe).
@@ -505,10 +700,7 @@ impl GatewayClient {
     pub fn clear_session_prompt_caches(&self, session_id: &str) -> ApiResult<Value> {
         self.send(
             "POST",
-            &format!(
-                "/sessions/{}/prompt_cache/clear_all",
-                urlencode(session_id)
-            ),
+            &format!("/sessions/{}/prompt_cache/clear_all", urlencode(session_id)),
             &json!({}),
             false,
         )
@@ -839,7 +1031,12 @@ impl GatewayClient {
     /// Artifact bytes as TEXT, hard-capped. The content route streams the
     /// whole file with no ceiling, and `get()` always JSON-parses — so a
     /// preview needs its own bounded reader (design adversary BLOCKER-5).
-    pub fn artifact_text(&self, run_id: &str, artifact_id: &str, max_bytes: usize) -> ApiResult<String> {
+    pub fn artifact_text(
+        &self,
+        run_id: &str,
+        artifact_id: &str,
+        max_bytes: usize,
+    ) -> ApiResult<String> {
         use std::io::Read;
         let url = format!(
             "{}/api/gateway/runs/{}/artifacts/{}/content?access=preview",
@@ -851,7 +1048,9 @@ impl GatewayClient {
         if let Some(tok) = &self.token {
             req = req.set("Authorization", &format!("Bearer {tok}"));
         }
-        let resp = req.call().map_err(|e| err_from_ureq("artifact content", e))?;
+        let resp = req
+            .call()
+            .map_err(|e| err_from_ureq("artifact content", e))?;
         let mut buf = String::new();
         resp.into_reader()
             .take(max_bytes as u64)
@@ -859,6 +1058,8 @@ impl GatewayClient {
             .map_err(|e| ApiError {
                 kind: ApiErrorKind::Protocol,
                 message: format!("artifact content unreadable: {e}"),
+                body: None,
+                timed_out: false,
             })?;
         Ok(buf)
     }
@@ -882,7 +1083,9 @@ impl GatewayClient {
         if let Some(tok) = &self.token {
             req = req.set("Authorization", &format!("Bearer {tok}"));
         }
-        let resp = req.call().map_err(|e| err_from_ureq("artifact content", e))?;
+        let resp = req
+            .call()
+            .map_err(|e| err_from_ureq("artifact content", e))?;
         let mut buf: Vec<u8> = Vec::new();
         resp.into_reader()
             .take(max_bytes as u64)
@@ -890,6 +1093,8 @@ impl GatewayClient {
             .map_err(|e| ApiError {
                 kind: ApiErrorKind::Protocol,
                 message: format!("artifact content unreadable: {e}"),
+                body: None,
+                timed_out: false,
             })?;
         Ok(buf)
     }
@@ -982,7 +1187,14 @@ impl GatewayClient {
         prompt: &str,
         max_tokens: u32,
     ) -> ApiResult<Value> {
-        self.sandbox_generate_with_controls(capability, provider, model, prompt, max_tokens, &json!({}))
+        self.sandbox_generate_with_controls(
+            capability,
+            provider,
+            model,
+            prompt,
+            max_tokens,
+            &json!({}),
+        )
     }
 
     /// Request controls belong to the current audition, not a separate store.
@@ -1004,12 +1216,7 @@ impl GatewayClient {
                 body[key] = value.clone();
             }
         }
-        self.send(
-            "POST",
-            "/sandbox/generate",
-            &body,
-            true,
-        )
+        self.send("POST", "/sandbox/generate", &body, true)
     }
 }
 

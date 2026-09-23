@@ -178,8 +178,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             } else {
                                 format!("  ·  {routes}")
                             };
-                            let mut spans =
-                                vec![span_bold(head.clone(), t.warn), span(routes.clone(), t.text)];
+                            let mut spans = vec![
+                                span_bold(head.clone(), t.warn),
+                                span(routes.clone(), t.text),
+                            ];
                             const LABEL: &str = "  ·  recommended: ";
                             const VERB: &str = "  ·  w downloads the selected route's weights";
                             let list = a
@@ -251,9 +253,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 // setting for someone who wants one image model.
                 .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
                     let t = tt;
-                    let row: Option<RouteRow> = store
-                        .routes
-                        .with(|d| d.ready().and_then(|d| d.rows.get(ui.route_sel.get()).cloned()));
+                    let row: Option<RouteRow> = store.routes.with(|d| {
+                        d.ready()
+                            .and_then(|d| d.rows.get(ui.route_sel.get()).cloned())
+                    });
                     match row {
                         Some(r) => {
                             let mut spans = vec![span_bold(format!(" {} ", r.key), t.accent)];
@@ -543,19 +546,25 @@ fn download_selected(cx: Scope, ctx: &Ctx) {
             } else {
                 weights.instruction.clone()
             };
-            ctx.store
-                .notice
-                .set(Some(format!("{}: availability is unknown — {hint}", row.key)));
+            ctx.store.notice.set(Some(format!(
+                "{}: availability is unknown — {hint}",
+                row.key
+            )));
             return;
         }
         _ => {}
     }
     if !weights.downloadable {
-        ctx.store.notice.set(Some(if weights.instruction.is_empty() {
-            format!("{} has no download tool on the execution host", weights.provider)
-        } else {
-            weights.instruction.clone()
-        }));
+        ctx.store
+            .notice
+            .set(Some(if weights.instruction.is_empty() {
+                format!(
+                    "{} has no download tool on the execution host",
+                    weights.provider
+                )
+            } else {
+                weights.instruction.clone()
+            }));
         return;
     }
 
@@ -796,8 +805,12 @@ fn speculation_index(options: &Value) -> usize {
         None | Some(Value::Null) => 0,
         Some(Value::Bool(false)) => 1,
         Some(value) if value.get("mode").and_then(Value::as_str) == Some("off") => 1,
-        Some(value) => value.get("num_draft_tokens").and_then(Value::as_u64)
-            .filter(|n| (2..=5).contains(n)).map(|n| n as usize).unwrap_or(6),
+        Some(value) => value
+            .get("num_draft_tokens")
+            .and_then(Value::as_u64)
+            .filter(|n| (2..=5).contains(n))
+            .map(|n| n as usize)
+            .unwrap_or(6),
     }
 }
 
@@ -811,10 +824,18 @@ fn speculation_options(text: &str, ix: usize) -> Result<String, String> {
         }
     };
     match ix {
-        0 => { options.remove("speculation"); }
-        1 => { options.insert("speculation".into(), Value::Bool(false)); }
+        0 => {
+            options.remove("speculation");
+        }
+        1 => {
+            options.insert("speculation".into(), Value::Bool(false));
+        }
         2..=5 => {
-            let mut control = options.get("speculation").and_then(Value::as_object).cloned().unwrap_or_default();
+            let mut control = options
+                .get("speculation")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
             control.insert("mode".into(), json!("native_mtp"));
             control.insert("num_draft_tokens".into(), json!(ix));
             control.insert("require_acceleration".into(), json!(false));
@@ -822,42 +843,11 @@ fn speculation_options(text: &str, ix: usize) -> Result<String, String> {
         }
         _ => {} // A custom stored value is preserved until the operator edits it.
     }
-    Ok(if options.is_empty() { String::new() } else { Value::Object(options).to_string() })
-}
-
-#[cfg(test)]
-mod speculation_tests {
-    use super::*;
-
-    #[test]
-    fn selector_keeps_off_distinct_from_inherit_and_preserves_options() {
-        let off: Value = serde_json::from_str(&speculation_options(r#"{"temperature":0.2}"#, 1).unwrap()).unwrap();
-        assert_eq!(off["speculation"], false);
-        assert_eq!(off["temperature"], 0.2);
-        assert_eq!(speculation_index(&off), 1);
-        let inherited: Value = serde_json::from_str(&speculation_options(&off.to_string(), 0).unwrap()).unwrap();
-        assert!(inherited.get("speculation").is_none());
-        assert_eq!(inherited["temperature"], 0.2);
-    }
-
-    #[test]
-    fn depth_edit_preserves_matching_head_and_uses_optional_default_policy() {
-        let value: Value = serde_json::from_str(&speculation_options(r#"{"speculation":{"drafter":"matching/head","num_draft_tokens":2},"seed":7}"#, 4).unwrap()).unwrap();
-        assert_eq!(value["speculation"]["num_draft_tokens"], 4);
-        assert_eq!(value["speculation"]["drafter"], "matching/head");
-        assert_eq!(value["speculation"]["require_acceleration"], false);
-        assert_eq!(value["seed"], 7);
-        assert_eq!(speculation_index(&value), 4);
-    }
-
-    #[test]
-    fn malformed_and_custom_options_are_not_silently_overwritten() {
-        assert!(speculation_options("{", 2).is_err());
-        assert!(speculation_options("[]", 2).is_err());
-        let input = json!({"speculation":{"mode":"native_mtp","num_draft_tokens":7}});
-        assert_eq!(speculation_index(&input), 6);
-        assert_eq!(serde_json::from_str::<Value>(&speculation_options(&input.to_string(), 6).unwrap()).unwrap(), input);
-    }
+    Ok(if options.is_empty() {
+        String::new()
+    } else {
+        Value::Object(options).to_string()
+    })
 }
 
 pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
@@ -927,7 +917,9 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                 .map(|o| o.to_string())
                 .unwrap_or_default(),
         );
-        let speculation_ix = mcx.signal(speculation_index(row.options.as_ref().unwrap_or(&Value::Null)));
+        let speculation_ix = mcx.signal(speculation_index(
+            row.options.as_ref().unwrap_or(&Value::Null),
+        ));
         mcx.effect(move || {
             if let Ok(options) = serde_json::from_str::<Value>(&options_json.get()) {
                 speculation_ix.set(speculation_index(&options));
@@ -1746,4 +1738,53 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
             ))
             .build()
     });
+}
+
+#[cfg(test)]
+mod speculation_tests {
+    use super::*;
+
+    #[test]
+    fn selector_keeps_off_distinct_from_inherit_and_preserves_options() {
+        let off: Value =
+            serde_json::from_str(&speculation_options(r#"{"temperature":0.2}"#, 1).unwrap())
+                .unwrap();
+        assert_eq!(off["speculation"], false);
+        assert_eq!(off["temperature"], 0.2);
+        assert_eq!(speculation_index(&off), 1);
+        let inherited: Value =
+            serde_json::from_str(&speculation_options(&off.to_string(), 0).unwrap()).unwrap();
+        assert!(inherited.get("speculation").is_none());
+        assert_eq!(inherited["temperature"], 0.2);
+    }
+
+    #[test]
+    fn depth_edit_preserves_matching_head_and_uses_optional_default_policy() {
+        let value: Value = serde_json::from_str(
+            &speculation_options(
+                r#"{"speculation":{"drafter":"matching/head","num_draft_tokens":2},"seed":7}"#,
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["speculation"]["num_draft_tokens"], 4);
+        assert_eq!(value["speculation"]["drafter"], "matching/head");
+        assert_eq!(value["speculation"]["require_acceleration"], false);
+        assert_eq!(value["seed"], 7);
+        assert_eq!(speculation_index(&value), 4);
+    }
+
+    #[test]
+    fn malformed_and_custom_options_are_not_silently_overwritten() {
+        assert!(speculation_options("{", 2).is_err());
+        assert!(speculation_options("[]", 2).is_err());
+        let input = json!({"speculation":{"mode":"native_mtp","num_draft_tokens":7}});
+        assert_eq!(speculation_index(&input), 6);
+        assert_eq!(
+            serde_json::from_str::<Value>(&speculation_options(&input.to_string(), 6).unwrap())
+                .unwrap(),
+            input
+        );
+    }
 }

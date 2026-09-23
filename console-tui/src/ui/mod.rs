@@ -1,5 +1,7 @@
 //! UI root: one shell, two modes (wizard steps / browse tabs) over the
-//! same six screens. Screens are plain component functions; durable UI
+//! same screens — eight of this crate's, then AbstractCore's shared
+//! Models (9) and Engines (0) screens from the `abstractcore-console`
+//! crate. Screens are plain component functions; durable UI
 //! state (form fields, selections) lives in [`UiState`] created at the
 //! root so screen remounts on tab switches lose nothing.
 
@@ -10,10 +12,10 @@ pub mod providers;
 pub mod review;
 pub mod routes;
 pub mod runtimes;
-mod workflows;
 pub mod users;
 pub mod util;
 pub mod widths;
+mod workflows;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -27,9 +29,10 @@ use abstracttui::widgets::PageHost;
 
 use crate::store::{ConnPhase, Loadable, Store};
 use crate::worker::Cmd;
+use abstractcore_console::screens::Remote;
 use util::{hints, line, span, span_bold};
 
-pub const SCREENS: [&str; 8] = [
+pub const SCREENS: [&str; 10] = [
     "Connection",
     "Providers",
     "Routes",
@@ -40,6 +43,11 @@ pub const SCREENS: [&str; 8] = [
     // APPEND ONLY: tests and muscle memory key on the digit order.
     // User-visible label only — SCREEN_IDS keeps the stable "models" id.
     "Resources",
+    // AbstractCore's shared screens (crate `abstractcore-console`),
+    // served here over the gateway's HTTP mirrors (transport_http.rs):
+    // the model catalog / downloads / deletes, and the local engines.
+    abstractcore_console::screens::CATALOG_TITLE,
+    abstractcore_console::screens::ENGINES_TITLE,
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
@@ -50,11 +58,25 @@ pub const SCREEN_USERS: usize = 3;
 pub const SCREEN_WORKFLOWS: usize = 5;
 pub const SCREEN_REVIEW: usize = 6;
 pub const SCREEN_MODELS: usize = 7;
+/// AbstractCore's shared "Models" screen (page id `catalog`), key `9`.
+pub const SCREEN_CATALOG: usize = 8;
+/// AbstractCore's shared "Engines" screen (page id `engines`), key `0`.
+pub const SCREEN_ENGINES: usize = 9;
+
+/// The digit that jumps to screen `i` in browse mode: 1-9, then 0 for
+/// the tenth (PageHost's own number jump covers 1-9 only).
+pub fn screen_key(i: usize) -> char {
+    if i == 9 {
+        '0'
+    } else {
+        char::from_digit(i as u32 + 1, 10).expect("screens 1-9")
+    }
+}
 
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 8] = [
+pub const SCREEN_IDS: [&str; 10] = [
     "connection",
     "providers",
     "routes",
@@ -63,6 +85,10 @@ pub const SCREEN_IDS: [&str; 8] = [
     "workflows",
     "review",
     "models",
+    // Never "models"/"runtimes": those ids are taken (Resources and the
+    // execution planes). The shared contract names these two.
+    abstractcore_console::screens::CATALOG_ID,
+    abstractcore_console::screens::ENGINES_ID,
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -244,13 +270,51 @@ pub struct Ctx {
     /// headless harness installs a recorder (or nothing) and calls
     /// `health::settle` directly — no network near tests.
     pub prober: ProberSlot,
+    /// AbstractCore's shared Models/Engines screens: their store, their
+    /// own worker lane (over `screens_transport`) and their confirms.
+    /// Created ONCE in the mount scope with this app's notice signal, so
+    /// their outcomes toast and footer through the same lane as ours.
+    pub screens: abstractcore_console::screens::ScreensCtx,
+    /// The transport behind `screens` — asked for the host label each
+    /// time a screen mounts (the gateway it names can change on
+    /// reconnect; production is `transport_http::HttpTransport`).
+    pub screens_transport: std::sync::Arc<dyn abstractcore_console::ConsoleTransport>,
 }
 
 /// The injected probe launcher: (url, token, generation).
 pub type Prober = Box<dyn Fn(String, Option<String>, u64)>;
 pub type ProberSlot = Rc<RefCell<Option<Prober>>>;
 
+/// Forget everything the shared screens read from the previous gateway
+/// (the same law as `Store::reset_domains`: a new gateway or principal
+/// never renders under the old one's catalog). The job strip survives —
+/// like `Store::download`, it is the only record of a job on the OLD
+/// host, and its watch ends by itself.
+pub fn reset_screens(s: &abstractcore_console::screens::ScreensStore) {
+    use abstractcore_console::screens::Remote;
+    s.host.set(Remote::NotAsked);
+    s.engines.set(Remote::NotAsked);
+    s.catalog.set(Remote::NotAsked);
+    s.installed.set(Remote::NotAsked);
+    s.engine_filter.set(None);
+    s.providers_seen.set(Vec::new());
+    s.catalog_sel.set(0);
+    s.installed_sel.set(0);
+    s.engine_sel.set(0);
+    // Late answers from the old gateway die on the generation gate.
+    s.catalog_gen.update(|g| *g += 1);
+}
+
 impl Ctx {
+    /// The shared screens' context for a page mount, labelled with the
+    /// gateway host as the transport sees it NOW ("runs on gateway host
+    /// …" in the install/delete confirms).
+    pub fn screens_for_page(&self) -> abstractcore_console::screens::ScreensCtx {
+        let mut s = self.screens.clone();
+        s.host_label = std::rc::Rc::from(self.screens_transport.host_label());
+        s
+    }
+
     pub fn send(&self, cmd: Cmd) {
         // A dropped worker only happens at quit; ignore then.
         let _ = self.tx.send(cmd);
@@ -320,6 +384,10 @@ impl Ctx {
     /// copies each missed the seven newest slots).
     pub fn reset_domains(&self) {
         self.store.reset_domains();
+        // The shared Models/Engines screens' reads are gateway data too.
+        // (The worker-side reset for the boot auto-probe reaches them via
+        // the Probing transition — see install_effects.)
+        reset_screens(&self.screens.store);
         // The chosen runtime is REMOTE data (a cloned RuntimeRow) that
         // happens to live in UiState: surviving a gateway/principal
         // reset would make the sessions effect load the OLD plane
@@ -418,6 +486,11 @@ impl Ctx {
                 s.host_poll_gen.set(gen);
                 self.send(Cmd::PollHostState { gen, first: true });
             }
+            // The shared screens own their reads; these are their own
+            // `r` verbs (host profile + catalog + installed; a PROBING
+            // engines read), reached when the root `r` handles the key.
+            SCREEN_CATALOG => self.screens.refresh_catalog(),
+            SCREEN_ENGINES => self.screens.refresh_engines(),
             _ => {}
         }
     }
@@ -743,6 +816,17 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             // q quits from browse; in wizard it is refused WITH A REASON
             // (a swallowed key is a dead-action experience — F3).
             if !ui.wizard.get_untracked() {
+                // A Models/Engines job runs ON THE GATEWAY and survives
+                // us, but the console is its only live progress view —
+                // quitting mid-download is a decision, not a keystroke.
+                if ctx_q.screens.store.job_active() {
+                    ctx_q.store.notice.set(Some(
+                        "a models/engines job is running on the gateway — c on Models/Engines \
+                         cancels it (Ctrl+C quits anyway; the gateway keeps running it)"
+                            .into(),
+                    ));
+                    return;
+                }
                 quit.quit();
             } else {
                 ctx_q.store.notice.set(Some(
@@ -782,7 +866,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 // provider picker is live data.)
                 if matches!(s, SCREEN_CONNECTION) {
                     ctx_refresh.store.notice.set(Some(
-                        "nothing to refresh here — r reloads live data on screens 2-8".into(),
+                        "nothing to refresh here — r reloads live data on screens 2-9 and 0".into(),
                     ));
                     return;
                 }
@@ -810,20 +894,24 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         .shortcut(KeyChord::new(Mods::CTRL, Key::Char('l')), |_| {
             abstracttui::app::request_full_redraw();
         });
-    // Digit REFUSALS (wizard only): PageHost owns digit jumps in browse
-    // (its number_jump surface); the wizard's refusal-with-a-reason
-    // stays a root shortcut so a swallowed digit never reads as a dead
-    // app (F3). In browse this handler deliberately does nothing —
-    // the host's deeper shortcut consumed the key already.
+    // Digit keys at the root. Wizard: a REFUSAL with a reason, so a
+    // swallowed digit never reads as a dead app (F3). Browse: PageHost
+    // owns digit jumps (its number_jump surface), but its shortcut rides
+    // the FOCUSED path — on a page where nothing holds focus (a table
+    // still loading) the digit reaches this root handler instead, which
+    // then performs the jump itself. `0` is always ours: PageHost's
+    // number surface is 1-9, and the tenth screen (Engines) needs a key.
     for i in 0..SCREENS.len() {
         let ctx_i = ctx.clone();
-        let key = char::from_digit(i as u32 + 1, 10).unwrap();
+        let key = screen_key(i);
         root_el = root_el.shortcut(KeyChord::plain(Key::Char(key)), move |_| {
             if ctx_i.ui.wizard.get_untracked() {
                 ctx_i.store.notice.set(Some(
                     "digit jumps work in browse mode — walk the wizard with Ctrl+N and Finish on the Review step"
                         .into(),
                 ));
+            } else if ctx_i.ui.screen.get_untracked() != i {
+                ctx_i.ui.screen.set(i);
             }
         });
     }
@@ -831,7 +919,8 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     // §1 bridge: ui.screen (usize, the wizard gate's truth) ⇄ PageHost's
     // string `active`. Both effects are equality-guarded — one hop, no
     // oscillation.
-    let active = cx.signal(SCREEN_IDS[ui.screen.get_untracked().min(SCREEN_IDS.len() - 1)].to_string());
+    let active =
+        cx.signal(SCREEN_IDS[ui.screen.get_untracked().min(SCREEN_IDS.len() - 1)].to_string());
     cx.effect(move || {
         let id = SCREEN_IDS[ui.screen.get().min(SCREEN_IDS.len() - 1)];
         if active.with_untracked(|a| a != id) {
@@ -874,6 +963,8 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         let c5 = host_ctx.clone();
         let c6 = host_ctx.clone();
         let c7 = host_ctx.clone();
+        let c8 = host_ctx.clone();
+        let c9 = host_ctx.clone();
         PageHost::new()
             .page(SCREEN_IDS[0], "1 Connection", move |gcx| {
                 connection::view(gcx, &c0, &theme.get().tokens)
@@ -898,6 +989,13 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             })
             .page(SCREEN_IDS[7], "8 Resources", move |gcx| {
                 models::view(gcx, &c7, &theme.get().tokens)
+            })
+            // AbstractCore's screens, inherited — not re-implemented.
+            .page(SCREEN_IDS[8], "9 Models", move |gcx| {
+                abstractcore_console::screens::catalog(gcx, &c8.screens_for_page())
+            })
+            .page(SCREEN_IDS[9], "0 Engines", move |gcx| {
+                abstractcore_console::screens::engines(gcx, &c9.screens_for_page())
             })
             .active(active)
             .number_jump(!wizard_now)
@@ -1008,6 +1106,12 @@ fn wizard_goal(screen: usize) -> &'static str {
         SCREEN_MODELS => {
             "nothing to configure — live models, memory & caches; Finish lives on Review."
         }
+        SCREEN_CATALOG => {
+            "optional — w downloads a model that fits this gateway host; f shows only those."
+        }
+        SCREEN_ENGINES => {
+            "optional — i installs a local engine (Ollama, MLX…) on the gateway host, after a confirm."
+        }
         _ => "",
     }
 }
@@ -1060,6 +1164,20 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 // catalog (a browse digit-jump straight to 7 must not
                 // land on an empty picker).
                 6 => matches!(store.providers.get(), Loadable::NotAsked),
+                // The shared screens: whatever the (re)connection reset
+                // to NotAsked. Their own mount effect asks too, but it
+                // runs once per mount — possibly before the connection
+                // existed — so the connected transition asks again.
+                SCREEN_CATALOG => {
+                    let s = ctx.screens.store;
+                    s.host.with(Remote::is_not_asked)
+                        || s.catalog.with(Remote::is_not_asked)
+                        || s.installed.with(Remote::is_not_asked)
+                }
+                SCREEN_ENGINES => {
+                    let s = ctx.screens.store;
+                    s.engines.with(Remote::is_not_asked) || s.host.with(Remote::is_not_asked)
+                }
                 // Deliberately NOT keyed here: host-state freshness is
                 // owned end-to-end by the poll-lifecycle effect below
                 // (a second trigger lane would race it into double
@@ -1067,7 +1185,13 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 _ => false,
             };
             if needs {
-                ctx.refresh_screen(screen);
+                match screen {
+                    // Only what was never asked (ensure_*), never a full
+                    // refresh: entering must not re-probe the engines.
+                    SCREEN_CATALOG => ctx.screens.ensure_catalog(),
+                    SCREEN_ENGINES => ctx.screens.ensure_engines(),
+                    _ => ctx.refresh_screen(screen),
+                }
             }
         });
     }
@@ -1086,8 +1210,7 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
         let ctx = ctx.clone();
         let was_on = Rc::new(std::cell::Cell::new(false));
         cx.effect(move || {
-            let on = ui.screen.get() == SCREEN_MODELS
-                && store.conn.with(ConnPhase::is_connected);
+            let on = ui.screen.get() == SCREEN_MODELS && store.conn.with(ConnPhase::is_connected);
             if on && !was_on.get() {
                 let first = matches!(store.host_state.get_untracked(), Loadable::NotAsked);
                 if first {
@@ -1101,6 +1224,22 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 store.host_poll_gen.update(|g| *g += 1);
             }
             was_on.set(on);
+        });
+    }
+
+    // The worker's reset for a probe (boot auto-probe included) posts
+    // `Probing` with `Store::reset_domains`, which cannot reach the
+    // shared screens' store — so the transition resets them here. ONE
+    // edge: entering Probing.
+    {
+        let screens = ctx.screens.store;
+        let was_probing = Rc::new(std::cell::Cell::new(false));
+        cx.effect(move || {
+            let probing = store.conn.with(|c| matches!(c, ConnPhase::Probing));
+            if probing && !was_probing.get() {
+                reset_screens(&screens);
+            }
+            was_probing.set(probing);
         });
     }
 
@@ -1404,7 +1543,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 pairs.push(("Ctrl+P/Esc", "back"));
                 pairs.push(("Ctrl+C", "quit"));
             } else {
-                pairs.push(("1-8", "screens"));
+                pairs.push(("1-9,0", "screens"));
                 pairs.push(("Ctrl+N/P", "next/prev"));
                 pairs.push(("q/Ctrl+C", "quit"));
             }
@@ -1481,6 +1620,14 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     // rest of them.
                     pairs.push(("m", "more memory detail"));
                     pairs.push(("r", "refresh"));
+                }
+                // The shared screens publish their own verbs.
+                SCREEN_CATALOG => {
+                    pairs.extend_from_slice(abstractcore_console::screens::catalog::HINTS);
+                    pairs.push(("r", "refresh"));
+                }
+                SCREEN_ENGINES => {
+                    pairs.extend_from_slice(abstractcore_console::screens::engines::HINTS);
                 }
                 _ => {}
             }

@@ -41,6 +41,12 @@ Target version 0.3.0. Requires AbstractRuntime 0.4.33 and AbstractCore 2.14.0
   [docs/configuration.md](docs/configuration.md#allow_engine_install).
 - `abstractgateway claim` and `abstractgateway-config claim-url` accept
   `--base-url` as another name for `--url` (the bootstrap installers use it).
+- **console-tui (crate `abstractgateway-console` 0.7.0, versioned separately):**
+  the terminal console gains screens 9 **Models** and 0 **Engines**, which are
+  AbstractCore's shared screens from the `abstractcore-console` crate mounted
+  over the gateway's `/api/gateway/models/*`, `/engines/*`, `/host/profile`
+  and `/jobs/*` routes. See
+  [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
 - **Zero-configuration first run.** With no auth configured, `abstractgateway serve`
   binds `127.0.0.1`, enables user auth, creates `default/admin`, and prints a
   one-time console sign-in link instead of a token. See
