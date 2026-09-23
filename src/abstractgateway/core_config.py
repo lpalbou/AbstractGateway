@@ -755,6 +755,174 @@ def core_model_download(
 
 
 # ---------------------------------------------------------------------------
+# Models & engines -- AbstractCore's model browser and engine installer, inherited
+# ---------------------------------------------------------------------------
+#
+# ONE IMPLEMENTATION, TWO ENTRY POINTS. AbstractCore (>= 2.14.0) owns the host
+# profile, local-engine detection and installs, the model catalog and its fit
+# verdicts, the installed-model listing, deletes, and the host job registry.
+# The Gateway re-exposes those payloads UNCHANGED (routes, CLI, console tabs)
+# through this door and adds only what is Gateway-proper: who may act (admin
+# rows, `allow_engine_install`), the audit trail, and the CLI spelling on job
+# cards. There is no `shutil.which` / subprocess / engine logic here or in any
+# other Gateway module -- a second opinion is exactly the drift this seam
+# prevents.
+#
+# ERRORS ARE TYPED BY THE RUNTIME FACADE, NOT BY ABSTRACTCORE: `CoreTooOld`
+# (installed AbstractCore predates these modules -> 501), `RuntimeError`
+# (AbstractCore missing -> 503) and `HostActionRefused` (a refusal with its HTTP
+# status and body). Routes import them from here.
+
+CoreTooOld = config_facade.AbstractCoreTooOld
+HostActionRefused = config_facade.HostActionRefused
+
+#: The CLI that job cards and `cli_equivalent` name on this entry point.
+GATEWAY_CLI = "abstractgateway"
+_CORE_CLI_PREFIX = "abstractcore "
+
+
+def gateway_cli_equivalent(job: Any) -> Any:
+    """Rewrite a Core job's `cli_equivalent` to the `abstractgateway …` twin.
+
+    AbstractCore composes `abstractcore models download ollama qwen3:8b`; the
+    Gateway CLI takes the same verbs and arguments (`abstractgateway models
+    download ollama qwen3:8b`), so the rewrite is the program name only. Jobs
+    started elsewhere on the host (a core CLI job read back from its persisted
+    snapshot) are rewritten too: the Gateway twin does the same thing here.
+    """
+
+    if not isinstance(job, dict):
+        return job
+    out = dict(job)
+    cli = out.get("cli_equivalent")
+    if isinstance(cli, str) and cli.startswith(_CORE_CLI_PREFIX):
+        out["cli_equivalent"] = GATEWAY_CLI + " " + cli[len(_CORE_CLI_PREFIX):]
+    return out
+
+
+def core_models_engines_support() -> Dict[str, Any]:
+    """`{available, abstractcore_version, required, missing}`; never raises."""
+
+    try:
+        return dict(config_facade.models_engines_support())
+    except Exception as exc:  # an older Runtime facade without the probe
+        return {"available": False, "abstractcore_version": None, "required": "2.14.0", "missing": [str(exc)]}
+
+
+def core_host_profile(*, refresh: bool = False) -> Dict[str, Any]:
+    """Contract A (`host_profile_v1`)."""
+
+    return config_facade.host_profile(refresh=refresh)
+
+
+def core_engine_inventory(*, probe: bool = False) -> Dict[str, Any]:
+    """Contract B (`engines_status_v1`)."""
+
+    return config_facade.engine_inventory(probe=probe)
+
+
+def core_engine_status(engine_id: str, *, probe: bool = False) -> Dict[str, Any]:
+    """One contract-B row (404 `HostActionRefused` for an unknown id)."""
+
+    return config_facade.engine_status(engine_id, probe=probe)
+
+
+def core_engine_install_plan(engine_id: str) -> Dict[str, Any]:
+    return config_facade.engine_install_plan(engine_id)
+
+
+def core_engine_download_url(engine_id: str) -> str:
+    return config_facade.engine_download_url(engine_id)
+
+
+def core_engine_install(
+    engine_id: str,
+    *,
+    dry_run: bool = False,
+    force: bool = False,
+    allow: bool,
+    run_inline: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Start an engine install job. `allow` is the Gateway's `allow_engine_install`."""
+
+    job = config_facade.engine_install(engine_id, dry_run=dry_run, force=force, allow=allow, run_inline=run_inline)
+    return gateway_cli_equivalent(job)
+
+
+def core_model_catalog(
+    q: Optional[str] = None,
+    *,
+    engine: Optional[str] = None,
+    fits_only: bool = False,
+    hub: bool = False,
+    tags: Optional[list] = None,
+) -> Dict[str, Any]:
+    """Contract C (`model_catalog_v1`)."""
+
+    return config_facade.model_catalog(q, engine=engine, fits_only=fits_only, hub=hub, tags=tags)
+
+
+def core_installed_models(provider: Optional[str] = None) -> Dict[str, Any]:
+    """Contract D (`models_installed_v1`)."""
+
+    return config_facade.list_installed_models(provider)
+
+
+def core_model_delete(
+    provider: str,
+    artifact: str,
+    *,
+    dry_run: bool = False,
+    force: bool = False,
+    run_inline: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Start a delete job; blockers are checked first (409 / 404 `HostActionRefused`)."""
+
+    job = config_facade.delete_model_artifact(provider, artifact, dry_run=dry_run, force=force, run_inline=run_inline)
+    return gateway_cli_equivalent(job)
+
+
+def core_start_model_download(
+    provider: str,
+    artifact: str,
+    *,
+    dry_run: bool = False,
+    expected_bytes: Optional[int] = None,
+    run_inline: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Start (or join) a download job in AbstractCore's host job registry."""
+
+    job = config_facade.start_model_download_job(
+        provider, artifact, dry_run=dry_run, expected_bytes=expected_bytes, run_inline=run_inline
+    )
+    return gateway_cli_equivalent(job)
+
+
+def core_host_jobs(*, kind: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
+    """`host_jobs_v1`: every host job, newest first (this process and persisted ones)."""
+
+    payload = dict(config_facade.host_jobs_list(kind=kind, status=status))
+    payload["jobs"] = [gateway_cli_equivalent(job) for job in (payload.get("jobs") or [])]
+    return payload
+
+
+def core_host_job(job_id: str) -> Optional[Dict[str, Any]]:
+    job = config_facade.host_job(job_id)
+    return gateway_cli_equivalent(job) if job is not None else None
+
+
+def core_host_job_cancel(job_id: str) -> Optional[Dict[str, Any]]:
+    job = config_facade.host_job_cancel(job_id)
+    return gateway_cli_equivalent(job) if job is not None else None
+
+
+def core_console_fragment(kind: str) -> Dict[str, str]:
+    """AbstractCore's embeddable console screen (`models` | `engines`): `{html, js, css}`."""
+
+    return config_facade.console_fragment(kind)
+
+
+# ---------------------------------------------------------------------------
 # Provider endpoint profiles -- provider config, therefore Core-owned
 # ---------------------------------------------------------------------------
 #

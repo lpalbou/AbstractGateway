@@ -35,7 +35,14 @@ def _apply_data_dir_flag(data_dir: Optional[str]) -> None:
 
 
 def add_claim_arguments(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--url", default=None, help="Gateway base URL (default: the running gateway for this data dir, else http://127.0.0.1:<port>)")
+    p.add_argument(
+        "--url",
+        "--base-url",
+        dest="url",
+        default=None,
+        help="Gateway base URL (default: the running gateway for this data dir, else http://127.0.0.1:<port>). "
+        "`--base-url` is the same flag (the bootstrap installers pass it).",
+    )
     p.add_argument("--host", default="127.0.0.1", help="Host for the link when --port is given (default: 127.0.0.1)")
     p.add_argument("--port", type=int, default=None, help="Port for the link (default: the running gateway's port, else the installed service's, else 8080)")
     p.add_argument("--data-dir", default=None, help="Gateway data dir (default: same resolution as `serve`)")

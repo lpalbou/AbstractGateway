@@ -112,6 +112,23 @@ _SEAM_EXPORTS = frozenset(
         "gateway_model_availability_payload",
         "core_model_download",
         "recommended_core_model_downloads",
+        # Models & engines (AbstractCore >= 2.14.0): host profile, engines,
+        # catalog, installed models, deletes, host jobs, console screens.
+        "core_models_engines_support",
+        "core_host_profile",
+        "core_engine_inventory",
+        "core_engine_status",
+        "core_engine_install_plan",
+        "core_engine_download_url",
+        "core_engine_install",
+        "core_model_catalog",
+        "core_installed_models",
+        "core_model_delete",
+        "core_start_model_download",
+        "core_host_jobs",
+        "core_host_job",
+        "core_host_job_cancel",
+        "core_console_fragment",
     }
 )
 

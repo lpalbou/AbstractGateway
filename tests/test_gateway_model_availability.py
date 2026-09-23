@@ -25,13 +25,40 @@ import pytest
 pytestmark = pytest.mark.basic
 
 
-@pytest.fixture(autouse=True)
-def _clean_jobs():
-    from abstractgateway import model_downloads
+class _Outcome(dict):
+    """What AbstractCore's `model_materializer.download` returns: `.to_dict()` + `.command`."""
 
-    model_downloads.reset_for_tests()
-    yield
-    model_downloads.reset_for_tests()
+    command: list = []
+
+    def to_dict(self):
+        return dict(self)
+
+
+@pytest.fixture(autouse=True)
+def core_jobs(monkeypatch):
+    """A fresh, in-memory AbstractCore job registry per test (what a new process has).
+
+    Since AbstractCore 2.14.0 the Gateway's download jobs run in Core's host job
+    registry, reached through the seam. These tests drive that REAL registry
+    end to end and replace only the provider tool (`model_materializer.download`)
+    with `core_jobs.install(fake)`, so single-flight, progress, crash handling
+    and slot release are pinned on the path the Gateway actually takes.
+    """
+    from types import SimpleNamespace
+
+    from abstractcore.config import host_jobs, model_materializer
+
+    registry = host_jobs.HostJobRegistry(persist_dir=None)
+    host_jobs.set_default_registry(registry)
+
+    def install(fake):
+        def download(provider, artifact, *, progress_cb=None, base_url=None, dry_run=False, expected_bytes=None):
+            return _Outcome(fake(provider, artifact, progress_cb=progress_cb, dry_run=dry_run) or {})
+
+        monkeypatch.setattr(model_materializer, "download", download)
+
+    yield SimpleNamespace(registry=registry, install=install, host_jobs=host_jobs)
+    host_jobs.set_default_registry(None)
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +132,7 @@ def test_availability_survives_a_failed_probe(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_download_job_runs_off_the_caller_and_reports_progress(monkeypatch):
+def test_download_job_runs_off_the_caller_and_reports_progress(monkeypatch, core_jobs):
     from abstractgateway import model_downloads
 
     released = threading.Event()
@@ -124,7 +151,7 @@ def test_download_job_runs_off_the_caller_and_reports_progress(monkeypatch):
         released.wait(5)
         return {"provider": provider, "artifact": artifact, "ok": True, "status": "completed", "message": "pulled"}
 
-    monkeypatch.setattr(model_downloads, "core_model_download", fake_download)
+    core_jobs.install(fake_download)
 
     started = model_downloads.start_download("ollama", "tiny:1b")
     assert started["status"] == "running"
@@ -139,8 +166,11 @@ def test_download_job_runs_off_the_caller_and_reports_progress(monkeypatch):
     job = model_downloads.get_job(started["job"])
     assert job["percent"] in (50.0, 51.0)
     assert job["downloaded_bytes"] == 5 and job["total_bytes"] == 10
-    # A byte counter that repeats its message must not repeat in the buffer.
-    assert job["events"] == ["pulling manifest", "pulling layer"]
+    # Only STATE lines earn an event; byte-counter ticks update `message` and
+    # `percent` without growing the buffer (AbstractCore's job registry rule).
+    assert job["events"] == ["pulling manifest"]
+    assert job["message"] == "pulling layer"
+    assert job["cli_equivalent"] == "abstractgateway models download ollama tiny:1b"
 
     released.set()
     for _ in range(200):
@@ -153,7 +183,7 @@ def test_download_job_runs_off_the_caller_and_reports_progress(monkeypatch):
     assert job["percent"] == 100.0
 
 
-def test_second_request_for_the_same_artifact_joins_the_running_job(monkeypatch):
+def test_second_request_for_the_same_artifact_joins_the_running_job(monkeypatch, core_jobs):
     from abstractgateway import model_downloads
 
     calls = []
@@ -164,7 +194,7 @@ def test_second_request_for_the_same_artifact_joins_the_running_job(monkeypatch)
         released.wait(5)
         return {"ok": True, "status": "completed"}
 
-    monkeypatch.setattr(model_downloads, "core_model_download", fake_download)
+    core_jobs.install(fake_download)
 
     first = model_downloads.start_download("lmstudio", "qwen/qwen3.5-9b@4bit")
     second = model_downloads.start_download("lmstudio", "qwen/qwen3.5-9b@4bit")
@@ -178,7 +208,7 @@ def test_second_request_for_the_same_artifact_joins_the_running_job(monkeypatch)
     assert calls == [("lmstudio", "qwen/qwen3.5-9b@4bit")], f"one invocation, got {calls}"
 
 
-def test_a_finished_job_frees_the_single_flight_slot(monkeypatch):
+def test_a_finished_job_frees_the_single_flight_slot(monkeypatch, core_jobs):
     """A FAILED pull is worth retrying; the slot must not hold a corpse."""
 
     from abstractgateway import model_downloads
@@ -189,7 +219,7 @@ def test_a_finished_job_frees_the_single_flight_slot(monkeypatch):
         calls.append(artifact)
         return {"ok": False, "status": "failed", "message": "boom"}
 
-    monkeypatch.setattr(model_downloads, "core_model_download", fake_download)
+    core_jobs.install(fake_download)
     first = model_downloads.start_download("ollama", "tiny:1b")
     for _ in range(200):
         if model_downloads.get_job(first["job"])["status"] != "running":
@@ -201,13 +231,13 @@ def test_a_finished_job_frees_the_single_flight_slot(monkeypatch):
     assert len(calls) == 2
 
 
-def test_a_crashing_downloader_fails_the_job_instead_of_hanging_it(monkeypatch):
+def test_a_crashing_downloader_fails_the_job_instead_of_hanging_it(monkeypatch, core_jobs):
     from abstractgateway import model_downloads
 
     def fake_download(*a, **kw):
         raise RuntimeError("the tool vanished")
 
-    monkeypatch.setattr(model_downloads, "core_model_download", fake_download)
+    core_jobs.install(fake_download)
     job = model_downloads.start_download("ollama", "tiny:1b")
     for _ in range(200):
         snapshot = model_downloads.get_job(job["job"])
@@ -218,7 +248,7 @@ def test_a_crashing_downloader_fails_the_job_instead_of_hanging_it(monkeypatch):
     assert "the tool vanished" in snapshot["message"]
 
 
-def test_recommended_action_starts_exactly_the_recommended_artifacts(monkeypatch):
+def test_recommended_action_starts_exactly_the_recommended_artifacts(monkeypatch, core_jobs):
     from abstractgateway import model_downloads
 
     monkeypatch.setattr(
@@ -235,7 +265,7 @@ def test_recommended_action_starts_exactly_the_recommended_artifacts(monkeypatch
         asked.append((provider, artifact, dry_run))
         return {"ok": True, "status": "planned" if dry_run else "completed"}
 
-    monkeypatch.setattr(model_downloads, "core_model_download", fake_download)
+    core_jobs.install(fake_download)
     jobs = model_downloads.start_recommended_downloads(dry_run=True)
     assert len(jobs) == 2
     for _ in range(200):
@@ -287,7 +317,7 @@ def test_console_renders_weights_from_the_availability_endpoint():
     assert 'evidence === "route not configured"' in html
 
 
-def test_single_flight_holds_under_a_concurrent_stampede(monkeypatch):
+def test_single_flight_holds_under_a_concurrent_stampede(monkeypatch, core_jobs):
     """Twenty threads asking at once must still produce ONE provider invocation.
 
     The sequential test proves the happy path; this one proves the LOCK. Two
@@ -307,7 +337,7 @@ def test_single_flight_holds_under_a_concurrent_stampede(monkeypatch):
         released.wait(10)
         return {"ok": True, "status": "completed"}
 
-    monkeypatch.setattr(model_downloads, "core_model_download", fake_download)
+    core_jobs.install(fake_download)
 
     seen = []
     seen_lock = threading.Lock()
@@ -335,7 +365,7 @@ def test_single_flight_holds_under_a_concurrent_stampede(monkeypatch):
         time.sleep(0.02)
 
 
-def test_distinct_artifacts_download_concurrently_without_crossing_state(monkeypatch):
+def test_distinct_artifacts_download_concurrently_without_crossing_state(monkeypatch, core_jobs):
     """Single-flight is per ARTIFACT, not a global queue.
 
     Two different models must download at the same time, and neither job may
@@ -361,7 +391,7 @@ def test_distinct_artifacts_download_concurrently_without_crossing_state(monkeyp
         released.wait(10)
         return {"ok": True, "status": "completed", "message": f"pulled {artifact}"}
 
-    monkeypatch.setattr(model_downloads, "core_model_download", fake_download)
+    core_jobs.install(fake_download)
 
     first = model_downloads.start_download("ollama", "a:1b")
     second = model_downloads.start_download("ollama", "b:1b")
@@ -385,7 +415,7 @@ def test_distinct_artifacts_download_concurrently_without_crossing_state(monkeyp
     assert model_downloads.get_job(second["job"])["result"]["message"] == "pulled b:1b"
 
 
-def test_a_worker_that_cannot_start_fails_the_job_and_frees_the_slot(monkeypatch):
+def test_a_worker_that_cannot_start_fails_the_job_and_frees_the_slot(monkeypatch, core_jobs):
     """A job whose thread never started would wedge the artifact forever.
 
     It would sit at `running` holding the single-flight slot, so every later
@@ -395,28 +425,24 @@ def test_a_worker_that_cannot_start_fails_the_job_and_frees_the_slot(monkeypatch
 
     from abstractgateway import model_downloads
 
-    real_thread = threading.Thread
+    real_thread = core_jobs.host_jobs.threading.Thread
 
     class _Refuses(real_thread):
         def start(self):
             raise RuntimeError("can't start new thread")
 
-    monkeypatch.setattr(model_downloads.threading, "Thread", _Refuses)
+    monkeypatch.setattr(core_jobs.host_jobs.threading, "Thread", _Refuses)
     job = model_downloads.start_download("ollama", "tiny:1b")
     assert job["status"] == "failed"
-    assert "could not start the download worker" in job["message"]
+    assert "could not start the job worker" in job["message"]
 
-    monkeypatch.setattr(model_downloads.threading, "Thread", real_thread)
-    monkeypatch.setattr(
-        model_downloads,
-        "core_model_download",
-        lambda *a, **kw: {"ok": True, "status": "completed"},
-    )
+    monkeypatch.setattr(core_jobs.host_jobs.threading, "Thread", real_thread)
+    core_jobs.install(lambda *a, **kw: {"ok": True, "status": "completed"})
     retry = model_downloads.start_download("ollama", "tiny:1b")
     assert retry["job"] != job["job"], "the wedged slot must not survive"
 
 
-def test_a_restarted_gateway_reports_no_phantom_running_job():
+def test_a_restarted_gateway_reports_no_phantom_running_job(monkeypatch, core_jobs):
     """Jobs live in this process. A restart must forget them, not fake them.
 
     A job id that survived a restart as `running` would have a console polling
@@ -426,13 +452,15 @@ def test_a_restarted_gateway_reports_no_phantom_running_job():
 
     from abstractgateway import model_downloads
 
-    model_downloads._JOBS["ghost"] = model_downloads._Job(
-        id="ghost", provider="ollama", artifact="x:1b", dry_run=False
-    )
-    model_downloads._BY_KEY["ollama/x:1b"] = "ghost"
-    assert model_downloads.get_job("ghost")["status"] == "running"
+    released = __import__("threading").Event()
+    core_jobs.install(lambda *a, **kw: (released.wait(5), {"ok": True})[1])
+    job = model_downloads.start_download("ollama", "x:1b")
+    assert model_downloads.get_job(job["job"])["status"] == "running"
+    assert model_downloads.active_job_for("ollama", "x:1b")["job"] == job["job"]
 
-    model_downloads.reset_for_tests()  # what a fresh process looks like
-    assert model_downloads.get_job("ghost") is None
+    # What a fresh process looks like: a new, empty registry.
+    core_jobs.host_jobs.set_default_registry(core_jobs.host_jobs.HostJobRegistry(persist_dir=None))
+    released.set()
+    assert model_downloads.get_job(job["job"]) is None
     assert model_downloads.list_jobs() == []
     assert model_downloads.active_job_for("ollama", "x:1b") is None

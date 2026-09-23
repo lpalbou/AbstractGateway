@@ -593,9 +593,10 @@ def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
     _argv0 = (list(argv) if argv is not None else sys.argv[1:])[:1]
-    if _argv0 not in (["claim"], ["service"]):
-        # The local-only first-run verbs never load a model; the reservation
-        # (and its CPU-fallback warning) is noise for them.
+    if _argv0 not in (["claim"], ["service"], ["models"], ["engines"]):
+        # The first-run verbs and the models/engines verbs never load a model
+        # in this process; the reservation (and its CPU-fallback warning) is
+        # noise for them.
         _reserve_gguf_metal()
     parser = argparse.ArgumentParser(prog="abstractgateway", description="AbstractGateway (Run Gateway host)")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -706,7 +707,10 @@ def main(argv: list[str] | None = None) -> None:
     # Model residency from a shell (2026-09-23): the SAME routes the web console,
     # the console TUI and the tray drive (GET /models/loaded, POST /models/load,
     # POST /models/unload) — list, warm, eject — against a RUNNING gateway.
-    models_cmd = sub.add_parser("models", help="List / load / eject models on a running gateway (console routes)")
+    models_cmd = sub.add_parser(
+        "models",
+        help="Models on the gateway host: installed, catalog, download, delete, jobs; load / eject (console routes)",
+    )
     models_sub = models_cmd.add_subparsers(dest="models_cmd", required=True)
     for _name, _help in (
         ("loaded", "What is resident (every local provider the gateway can see)"),
@@ -723,6 +727,14 @@ def main(argv: list[str] | None = None) -> None:
                         help="HTTP timeout for this call (explicit; a model load can take minutes)")
         if _name == "unload":
             _p.add_argument("--force", action="store_true", help="Unload even a locked model")
+
+    # The Models and Engines tabs from a shell (AbstractCore >= 2.14.0 through
+    # the seam): the same verbs and arguments as `abstractcore models|engines`,
+    # so a console job card's `cli_equivalent` runs here as printed.
+    from .models_engines_cli import add_engines_subparser, add_models_verbs
+
+    add_models_verbs(models_sub)
+    add_engines_subparser(sub)
 
     from .firstrun_cli import add_claim_arguments, add_service_subparser
 
@@ -750,7 +762,7 @@ def main(argv: list[str] | None = None) -> None:
         os.environ["ABSTRACTGATEWAY_DATA_DIR"] = str(_pathlib.Path(args.data_dir).expanduser().resolve())
         os.environ.pop(DATA_DIR_SOURCE_ENV, None)
 
-    if args.cmd != "models":
+    if args.cmd not in ("models", "engines"):
         # ONE data dir for this process and every child it spawns: an unset
         # ABSTRACTGATEWAY_DATA_DIR is resolved here (./runtime in a checkout,
         # else the per-OS user data dir) and exported with its provenance.
@@ -761,7 +773,16 @@ def main(argv: list[str] | None = None) -> None:
             _stderr(describe_resolution(_data_dir_resolution))
 
     if args.cmd == "models":
+        from .models_engines_cli import MODELS_VERBS, run_models_verb
+
+        if args.models_cmd in MODELS_VERBS:
+            raise SystemExit(run_models_verb(args))
         raise SystemExit(_run_models_command(args))
+
+    if args.cmd == "engines":
+        from .models_engines_cli import run_engines_command
+
+        raise SystemExit(run_engines_command(args))
 
     if args.cmd == "entity":
         from .entity_cli import run_entity_command
@@ -791,6 +812,11 @@ def main(argv: list[str] | None = None) -> None:
 
         if not getattr(args, "host", None):
             args.host = default_bind_host()
+        # The bind host decides host-safety defaults inside the app (engine
+        # installs are allowed by default only on a loopback bind).
+        from .runtime_config import BIND_HOST_ENV
+
+        os.environ[BIND_HOST_ENV] = str(args.host)
         if apply_loopback_auth_default(str(args.host)):
             _stderr(
                 f"Gateway auth: user auth enabled automatically (bound to loopback {args.host}, no auth configured). "

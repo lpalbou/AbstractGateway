@@ -136,7 +136,29 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
             "/api/gateway/models/download",
             "/api/gateway/models/lock",
             "/api/gateway/models/unlock",
+            # Deleting weights frees (or destroys) someone else's disk on the
+            # shared host: the same operator class as download.
+            "/api/gateway/models/delete",
         ),
+    ),
+    # Installing a local engine (Ollama, LM Studio's CLI, MLX, llama.cpp) runs
+    # a vendor installer on the GATEWAY HOST -- the most privileged act in the
+    # models & engines surface. Admin here, AND the runtime-config knob
+    # `allow_engine_install` in the handler (default on only for a loopback
+    # bind). Cancelling a host job stops a process tree on the host. The reads
+    # (`GET /engines`, `/models/catalog`, `/models/installed`, `/jobs`,
+    # `/host/profile`) stay user-level visibility, like `/host/state`.
+    GatewayRoutePolicy(
+        resource="engines",
+        reason_code="admin_required",
+        pattern=r"^/api/gateway/engines/[^/]+/install$",
+        methods=("POST",),
+    ),
+    GatewayRoutePolicy(
+        resource="host",
+        reason_code="admin_required",
+        pattern=r"^/api/gateway/jobs/[^/]+/cancel$",
+        methods=("POST",),
     ),
     # The HOST's capability-defaults store: which provider/model serves each
     # modality for everyone on this gateway. `apply-recommended` writes that

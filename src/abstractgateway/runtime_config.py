@@ -576,6 +576,55 @@ def _trust_client_launch_folder_payload(stored: Dict[str, Any]) -> Dict[str, Any
     return {"value": True, "source": "default"}
 
 
+BIND_HOST_ENV = "ABSTRACTGATEWAY_BIND_HOST"
+
+
+def gateway_bind_host() -> Optional[str]:
+    """The host this Gateway process was told to bind (`serve --host`), or None.
+
+    `abstractgateway serve` records it in `ABSTRACTGATEWAY_BIND_HOST` before
+    uvicorn starts; a process launched some other way (a bare
+    `uvicorn abstractgateway.app:app`, a test client) has no record, and an
+    unknown bind counts as NOT loopback wherever that matters.
+    """
+    raw = str(os.getenv(BIND_HOST_ENV) or "").strip()
+    return raw or None
+
+
+def _bind_is_loopback(host: Optional[str]) -> bool:
+    raw = str(host or "").strip().strip("[]").lower()
+    if not raw:
+        return False
+    if raw == "localhost":
+        return True
+    try:
+        import ipaddress
+
+        return ipaddress.ip_address(raw).is_loopback
+    except ValueError:
+        return False
+
+
+def _allow_engine_install_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
+    """May an admin install a local engine (Ollama, LM Studio CLI, MLX, …) on
+    THIS host from the console / API? An engine install runs a vendor
+    installer on the machine that runs the Gateway, which for a remote
+    Gateway is not the machine of the person clicking. So the default is ON
+    only when the Gateway is bound to loopback (the person at the keyboard IS
+    the host) and OFF for any other or unknown bind. A stored choice wins
+    either way. No env rung (stored > default, like trust_client_launch_folder).
+    Dry runs ("show the command") never need this permission."""
+    bind = gateway_bind_host()
+    loopback = _bind_is_loopback(bind)
+    if "allow_engine_install" in stored and stored["allow_engine_install"] is not None:
+        return {"value": _bool(stored["allow_engine_install"], loopback), "source": "stored", "bind_host": bind, "loopback_bind": loopback}
+    return {"value": loopback, "source": "default", "bind_host": bind, "loopback_bind": loopback}
+
+
+def resolve_allow_engine_install(data_dir: Path) -> bool:
+    return bool(_allow_engine_install_payload(_read_store(data_dir))["value"])
+
+
 def _user_workspace_policies_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
     if "user_workspace_policies" in stored and stored["user_workspace_policies"] is not None:
         policies = _normalize_user_workspace_policies(stored.get("user_workspace_policies"), strict=False)
@@ -735,6 +784,7 @@ def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, A
         "executors": executor_registry(),
         "operator_email": operator_email,
         "stop_kill_switch_s": _stop_kill_switch_seconds_payload(stored),
+        "allow_engine_install": _allow_engine_install_payload(stored),
     }
 
 
@@ -999,6 +1049,15 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
             stored["stop_kill_switch_s"] = seconds
             applied["stop_kill_switch_s"] = seconds
 
+    if "allow_engine_install" in changes:
+        raw_allow = changes["allow_engine_install"]
+        if raw_allow is None or (isinstance(raw_allow, str) and not raw_allow.strip()):
+            stored.pop("allow_engine_install", None)  # clear = default (on only for a loopback bind)
+            applied["allow_engine_install"] = None
+        else:
+            stored["allow_engine_install"] = _bool(raw_allow, False)
+            applied["allow_engine_install"] = stored["allow_engine_install"]
+
     if not applied:
         raise RuntimeConfigError(
             "no recognized config keys in the request (one of: process_manager, "
@@ -1006,7 +1065,7 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
             "workspace_allowed_paths, workspace_blocked_paths, "
             "client_workspace_scope_overrides, trust_client_launch_folder, "
             "workspace_default_mode, user_workspace_policies, executor, operator_email, "
-            "stop_kill_switch_s)"
+            "stop_kill_switch_s, allow_engine_install)"
         )
 
     stored["_last_changed_by"] = str(actor)

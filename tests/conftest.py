@@ -29,6 +29,11 @@ def _isolate_gateway_runtime_env(monkeypatch: pytest.MonkeyPatch, tmp_path_facto
     # 2026-09-23); a test that ran serve must not leak them into the next.
     monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_MODE_SOURCE", raising=False)
     monkeypatch.delenv("ABSTRACTGATEWAY_DATA_DIR_SOURCE", raising=False)
+    monkeypatch.delenv("ABSTRACTGATEWAY_BIND_HOST", raising=False)
+    # AbstractCore's host job registry persists job snapshots under the user's
+    # ~/.abstractcore by default; a test that reaches the real registry keeps
+    # its jobs in memory instead.
+    monkeypatch.setenv("ABSTRACTCORE_JOBS_PERSIST", "0")
 
     # Provide safe defaults so tests that forget to set these still write only under tmp.
     base = Path(str(tmp_path_factory.mktemp("abstractgateway-test-env")))

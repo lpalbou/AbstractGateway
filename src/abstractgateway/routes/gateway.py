@@ -24577,6 +24577,7 @@ class _GatewayModelDownloadRequest(BaseModel):
     artifact: Optional[str] = Field(default=None, max_length=400, description="Exact artifact reference, quantization included.")
     recommended: bool = Field(default=False, description="Fetch every MISSING model of the recommended fresh-install set.")
     dry_run: bool = Field(default=False, description="Resolve the command and report it without downloading.")
+    expected_bytes: Optional[int] = Field(default=None, ge=0, description="Known download size (from the catalog) for the disk pre-check.")
 
 
 @router.get("/models/availability")
@@ -24615,9 +24616,13 @@ async def model_download_start(req: _GatewayModelDownloadRequest) -> Dict[str, A
     if not (req.provider and req.artifact):
         raise HTTPException(status_code=400, detail="`provider` and `artifact` are required (or pass `recommended`).")
     try:
-        job = await asyncio.to_thread(start_download, req.provider, req.artifact, dry_run=req.dry_run)
+        job = await _core_host_call(
+            start_download, req.provider, req.artifact, dry_run=req.dry_run, expected_bytes=req.expected_bytes
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if isinstance(job, JSONResponse):
+        return job
     return {"ok": True, "job": job}
 
 
@@ -24631,7 +24636,9 @@ async def model_download_status(job_id: str) -> Dict[str, Any]:
     """
     from ..model_downloads import get_job
 
-    job = get_job(job_id)
+    job = await _core_host_call(get_job, job_id)
+    if isinstance(job, JSONResponse):
+        return job
     if job is None:
         raise HTTPException(
             status_code=404,
@@ -24648,7 +24655,241 @@ async def model_downloads_list() -> Dict[str, Any]:
     """Every download job this Gateway process knows about, newest first."""
     from ..model_downloads import list_jobs
 
-    return {"ok": True, "jobs": list_jobs()}
+    jobs = await _core_host_call(list_jobs)
+    if isinstance(jobs, JSONResponse):
+        return jobs
+    return {"ok": True, "jobs": jobs}
+
+
+# ---------------------------------------------------------------------------
+# Models & engines, inherited from AbstractCore (contracts A-F)
+# ---------------------------------------------------------------------------
+#
+# The same payloads, bodies and refusals as AbstractCore's own `/acore/host|
+# engines|models|jobs` routes, served under `/api/gateway` through the one
+# seam (`core_config` -> Runtime `config_facade` -> AbstractCore). The Gateway
+# adds only what is Gateway-proper: every POST is admin-only (policy rows in
+# `security/authorization.py` AND `_require_admin_principal`), engine installs
+# also need the runtime-config knob `allow_engine_install` (default on only for
+# a loopback bind), each request is in the audit log (middleware), and job
+# `cli_equivalent` strings name `abstractgateway`.
+#
+#   GET  /host/profile                               contract A
+#   GET  /engines?probe=                             contract B (+ install_allowed)
+#   GET  /engines/{id}?probe=                        one contract-B row
+#   POST /engines/{id}/install {dry_run, force}      contract E job   403 / 404 / 409
+#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=  contract C
+#   GET  /models/installed?provider=                 contract D
+#   POST /models/delete {provider, artifact, dry_run, force}   job   404 / 409 (delete_blockers)
+#   GET  /jobs?kind=&status=                         host_jobs_v1, newest first
+#   GET  /jobs/{id}                                  host_job_v1      404
+#   POST /jobs/{id}/cancel                           host_job_v1      404
+#   (POST /models/download and GET /models/download/{job} above keep their
+#    `{ok, job}` envelope and now run in the same AbstractCore job registry.)
+#
+# AbstractCore older than 2.14.0 -> 501 `abstractcore_too_old` with the upgrade
+# command; AbstractCore missing -> 503.
+
+
+def _host_action_error(status_code: int, status: str, message: str, **extra: Any) -> JSONResponse:
+    body: Dict[str, Any] = {"ok": False, "status": status, "message": message}
+    body.update({k: v for k, v in extra.items() if v is not None})
+    body["error"] = {"message": message, "type": f"host_action_{status}"}
+    body["detail"] = message
+    return JSONResponse(status_code=int(status_code), content=jsonable_encoder(body))
+
+
+async def _core_host_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run one seam call off the event loop; map the facade's typed errors to HTTP."""
+    from ..core_config import CoreTooOld, HostActionRefused
+
+    try:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+    except HostActionRefused as exc:
+        body = exc.payload()
+        message = str(body.pop("message", "") or exc)
+        status = str(body.pop("status", "refused") or "refused")
+        body.pop("ok", None)
+        return _host_action_error(exc.status_code, status, message, **body)
+    except CoreTooOld as exc:
+        return _host_action_error(
+            501,
+            "unsupported",
+            str(exc),
+            reason="abstractcore_too_old",
+            required=getattr(exc, "required", None),
+            installed=getattr(exc, "installed", None),
+            missing=getattr(exc, "missing", None),
+        )
+    except RuntimeError as exc:
+        return _host_action_error(503, "unavailable", str(exc), reason="abstractcore_unavailable")
+
+
+def _engine_install_policy() -> Dict[str, Any]:
+    from ..runtime_config import read_runtime_config
+
+    try:
+        return dict(read_runtime_config(gateway_data_dir_from_env())["allow_engine_install"])
+    except Exception:
+        return {"value": False, "source": "error"}
+
+
+class _GatewayEngineInstallRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"dry_run": True, "force": False}]})
+
+    dry_run: bool = Field(default=False, description="Resolve the install command and report it without running it.")
+    force: bool = Field(default=False, description="Run the installer even when the engine is already installed.")
+
+
+class _GatewayModelDeleteRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"provider": "ollama", "artifact": "qwen3:8b", "dry_run": True, "force": False}]},
+    )
+
+    provider: str = Field(..., max_length=120, description="ollama | lmstudio | mlx | huggingface | ...")
+    artifact: str = Field(..., max_length=400, description="The installed artifact, as `GET /models/installed` names it.")
+    dry_run: bool = Field(default=False, description="Report what would be deleted and the command, without deleting.")
+    force: bool = Field(default=False, description="Delete even a loaded model or a shared cache entry.")
+
+
+@router.get("/host/profile")
+async def host_profile_get(refresh: bool = Query(False, description="Measure again instead of the few-seconds cache.")) -> Any:
+    """This host's hardware as AbstractCore sees it (contract A, `host_profile_v1`)."""
+    from ..core_config import core_host_profile
+
+    return await _core_host_call(core_host_profile, refresh=refresh)
+
+
+@router.get("/engines")
+async def engines_list(probe: bool = Query(False, description="GET each local engine server once (short timeouts).")) -> Any:
+    """Local inference engines: installed, running, and how to install them (contract B).
+
+    `install_allowed` says whether an admin may run an install from this
+    Gateway (`allow_engine_install`); dry runs are always allowed."""
+    from ..core_config import core_engine_inventory
+
+    payload = await _core_host_call(core_engine_inventory, probe=probe)
+    if isinstance(payload, dict):
+        policy = _engine_install_policy()
+        payload["install_allowed"] = bool(policy.get("value"))
+        payload["install_policy"] = policy
+    return payload
+
+
+@router.get("/engines/{engine_id}")
+async def engine_get(engine_id: str, probe: bool = Query(False)) -> Any:
+    """One engine row (contract B); 404 for an unknown engine id."""
+    from ..core_config import core_engine_status
+
+    row = await _core_host_call(core_engine_status, engine_id, probe=probe)
+    if isinstance(row, dict):
+        row["install_allowed"] = bool(_engine_install_policy().get("value"))
+    return row
+
+
+@router.post("/engines/{engine_id}/install")
+async def engine_install_start(engine_id: str, request: Request, req: Optional[_GatewayEngineInstallRequest] = None) -> Any:
+    """Install a local engine on the GATEWAY HOST as a job (admin only).
+
+    `dry_run: true` returns the finished job with the exact command it would
+    run and never needs permission. A real install needs the runtime-config
+    knob `allow_engine_install` (403 otherwise; on by default only when the
+    Gateway is bound to loopback). 409 when an engine install is already
+    running, or the engine is unsupported / has no install command here."""
+    from ..core_config import core_engine_install
+
+    _require_admin_principal(request)
+    body = req or _GatewayEngineInstallRequest()
+    policy = _engine_install_policy()
+    allowed = bool(policy.get("value"))
+    if not allowed and not body.dry_run:
+        bind = policy.get("bind_host")
+        return _host_action_error(
+            403,
+            "refused",
+            "engine installs are disabled on this gateway (allow_engine_install is off"
+            + (f"; bound to {bind}" if bind else "")
+            + "). An admin can enable them with "
+            "`POST /api/gateway/admin/runtime-config {\"allow_engine_install\": true}`, "
+            "or run the command shown by a dry run on the gateway host; a dry run is always allowed.",
+            reason="not_allowed",
+            install_policy=policy,
+        )
+    return await _core_host_call(core_engine_install, engine_id, dry_run=body.dry_run, force=body.force, allow=allowed)
+
+
+@router.get("/models/catalog")
+async def models_catalog_get(
+    q: Optional[str] = Query(None, description="Free text; every token must match."),
+    engine: Optional[str] = Query(None, description="Keep only artifacts for this engine/provider."),
+    fits: bool = Query(False, description="Keep only artifacts that fit this host (fits or tight)."),
+    hub: bool = Query(False, description="Enrich from the Hugging Face API (cached 24 h) and add hub search rows."),
+    tag: Optional[List[str]] = Query(None, description="Keep rows carrying every tag."),
+) -> Any:
+    """Downloadable models with presence and a fit verdict for this host (contract C)."""
+    from ..core_config import core_model_catalog
+
+    # An empty `q` / `engine` (the terminal console always sends `q`) means "no filter".
+    return await _core_host_call(
+        core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None
+    )
+
+
+@router.get("/models/installed")
+async def models_installed_get(provider: Optional[str] = Query(None, description="Only this engine/provider.")) -> Any:
+    """Every model the local engines hold on this host, with sizes (contract D)."""
+    from ..core_config import core_installed_models
+
+    return await _core_host_call(core_installed_models, (provider or "").strip() or None)
+
+
+@router.post("/models/delete")
+async def models_delete_start(req: _GatewayModelDeleteRequest, request: Request) -> Any:
+    """Delete one installed model from the gateway host as a job (admin only).
+
+    404 when it is not installed; 409 with `delete_blockers` when it is loaded
+    or shares a cache (send `force: true` to override) or when it cannot be
+    deleted safely at all. `dry_run: true` returns the finished job naming what
+    would be removed and the command."""
+    from ..core_config import core_model_delete
+
+    _require_admin_principal(request)
+    return await _core_host_call(core_model_delete, req.provider, req.artifact, dry_run=req.dry_run, force=req.force)
+
+
+@router.get("/jobs")
+async def host_jobs_list_get(
+    kind: Optional[str] = Query(None, description="download | delete | engine_install"),
+    status: Optional[str] = Query(None, description="queued | running | completed | failed | cancelled"),
+) -> Any:
+    """Host jobs, newest first (`host_jobs_v1`), including jobs started by the CLI."""
+    from ..core_config import core_host_jobs
+
+    return await _core_host_call(core_host_jobs, kind=kind, status=status)
+
+
+@router.get("/jobs/{job_id}")
+async def host_job_get(job_id: str) -> Any:
+    """One host job (`host_job_v1`); 404 when unknown."""
+    from ..core_config import core_host_job
+
+    job = await _core_host_call(core_host_job, job_id)
+    if job is None:
+        return _host_action_error(404, "not_found", f"no job {job_id}")
+    return job
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def host_job_cancel_post(job_id: str, request: Request) -> Any:
+    """Cancel a host job (admin only): stops its process tree. 404 when unknown."""
+    from ..core_config import core_host_job_cancel
+
+    _require_admin_principal(request)
+    job = await _core_host_call(core_host_job_cancel, job_id)
+    if job is None:
+        return _host_action_error(404, "not_found", f"no job {job_id}")
+    return job
 
 
 @router.get("/models/loaded")
