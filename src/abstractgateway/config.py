@@ -333,7 +333,11 @@ class GatewayHostConfig:
     def from_env() -> "GatewayHostConfig":
         # NOTE: We intentionally use ABSTRACTGATEWAY_* as the canonical namespace.
         # For a transition period, we accept legacy ABSTRACTFLOW_* names as fallbacks.
-        data_dir_raw = _env("ABSTRACTGATEWAY_DATA_DIR", "ABSTRACTFLOW_RUNTIME_DIR") or "./runtime"
+        # Unset = host_paths resolution: ./runtime when it exists in the CWD
+        # (developer checkout), else the per-OS user data directory.
+        from .host_paths import default_data_dir
+
+        data_dir_raw = _env("ABSTRACTGATEWAY_DATA_DIR", "ABSTRACTFLOW_RUNTIME_DIR") or str(default_data_dir())
         flows_dir_raw = (
             _env("ABSTRACTGATEWAY_FLOWS_DIR")
             or _env("ABSTRACTFRAMEWORK_WORKFLOWS_DIR")

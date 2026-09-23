@@ -735,19 +735,18 @@ class GatewayRunner:
         handshake for a live-but-wrong holder. Content is diagnostics only —
         the flock itself is the single source of mutual-exclusion truth.
         """
-        try:
-            import fcntl  # Unix only
-        except Exception:  # pragma: no cover
+        locker = _singleton_file_locker()
+        if locker is None:  # pragma: no cover - neither fcntl nor msvcrt
             with self._state_lock:
                 self._lock_held = True
                 self._lock_refused_flag = False
-                self._last_lock_error = "flock unsupported on this platform (no mutual exclusion)"
+                self._last_lock_error = "no file locking on this platform (no mutual exclusion)"
             return True
         try:
             self._singleton_lock_path.parent.mkdir(parents=True, exist_ok=True)
             fh = self._singleton_lock_path.open("a", encoding="utf-8")
             try:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locker.acquire(fh)
             except Exception:
                 # Read holder diagnostics from the file we just failed to lock.
                 holder_pid = self._read_lock_holder_pid()
@@ -795,6 +794,9 @@ class GatewayRunner:
     def _release_singleton_lock(self) -> None:
         try:
             if self._singleton_lock_fh is not None:
+                locker = _singleton_file_locker()
+                if locker is not None:
+                    locker.release(self._singleton_lock_fh)
                 self._singleton_lock_fh.close()
         except Exception:
             pass
@@ -3004,3 +3006,52 @@ class GatewayRunner:
                 self.run_store.save(run)
             except Exception:
                 logger.debug("GatewayRunner: failed to record auto-compact error marker", exc_info=True)
+
+
+class _SingletonFileLocker:
+    """Exclusive, non-blocking, process-scoped file lock: `flock` on POSIX,
+    `msvcrt.locking` on Windows (first-run, 2026-09-23 — Windows used to run
+    with NO mutual exclusion, so two gateways on one data dir double-ticked).
+
+    Both are released by the OS when the holding process dies, which is the
+    property the runner's staleness handling relies on (a dead holder never
+    blocks the next acquisition). `acquire` raises when another live process
+    holds the lock."""
+
+    def __init__(self, kind: str, module: Any) -> None:
+        self.kind = kind
+        self._mod = module
+
+    def acquire(self, fh: Any) -> None:
+        if self.kind == "fcntl":
+            self._mod.flock(fh.fileno(), self._mod.LOCK_EX | self._mod.LOCK_NB)
+            return
+        # msvcrt locks a BYTE RANGE from the current position: always byte 0,
+        # length 1 (locking past EOF is allowed, so an empty file works).
+        fh.seek(0)
+        self._mod.locking(fh.fileno(), self._mod.LK_NBLCK, 1)
+
+    def release(self, fh: Any) -> None:
+        try:
+            if self.kind == "fcntl":
+                self._mod.flock(fh.fileno(), self._mod.LOCK_UN)
+            else:
+                fh.seek(0)
+                self._mod.locking(fh.fileno(), self._mod.LK_UNLCK, 1)
+        except Exception:
+            pass
+
+
+def _singleton_file_locker() -> Optional[_SingletonFileLocker]:
+    try:
+        import fcntl  # POSIX
+
+        return _SingletonFileLocker("fcntl", fcntl)
+    except ImportError:
+        pass
+    try:
+        import msvcrt  # Windows
+
+        return _SingletonFileLocker("msvcrt", msvcrt)
+    except ImportError:  # pragma: no cover
+        return None

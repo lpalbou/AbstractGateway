@@ -315,6 +315,49 @@ async def gateway_me(request: Request) -> Dict[str, Any]:
     }
 
 
+def _issue_gateway_browser_session(
+    request: Request,
+    response: Response,
+    principal: GatewayPrincipal,
+    *,
+    remember: bool,
+) -> Dict[str, Any]:
+    """Create a browser session (httponly session cookie + readable CSRF
+    cookie) for `principal` — ONE implementation for `/session/login` and the
+    first-run `/session/claim`, so both sessions are indistinguishable."""
+    ttl_s = gateway_session_ttl_s()
+    if bool(remember):
+        try:
+            ttl_s = int(os.getenv("ABSTRACTGATEWAY_REMEMBER_SESSION_TTL_S") or (30 * 24 * 60 * 60))
+        except Exception:
+            ttl_s = 30 * 24 * 60 * 60
+        ttl_s = max(60, min(90 * 24 * 60 * 60, ttl_s))
+
+    session_value, csrf_token, record = GatewaySessionStore().create_session(principal, ttl_s=ttl_s)
+    response.set_cookie(
+        gateway_session_cookie_name(),
+        session_value,
+        **_session_cookie_kwargs(request, max_age=ttl_s if bool(remember) else None, httponly=True),
+    )
+    response.set_cookie(
+        gateway_csrf_cookie_name(),
+        csrf_token,
+        **_session_cookie_kwargs(request, max_age=ttl_s if bool(remember) else None, httponly=False),
+    )
+    return {
+        "ok": True,
+        "principal": principal.public_dict(),
+        "auth": {"mode": "users", "user_auth_enabled": True, "session": "gateway-browser-session"},
+        "routing": {
+            "mode": "per-principal" if gateway_multi_user_enabled() else "single-user",
+            "one_user_one_runtime": bool(gateway_multi_user_enabled()),
+        },
+        "session": {
+            "expires_at": record.expires_at,
+        },
+    }
+
+
 @router.post("/session/login")
 async def gateway_session_login(
     request: Request,
@@ -330,38 +373,78 @@ async def gateway_session_login(
             status_code=401,
             detail=f"Gateway token resolved to user '{principal.user_id or 'unknown'}', not '{expected_user}'.",
         )
+    return _issue_gateway_browser_session(request, response, principal, remember=bool(payload.remember))
 
-    ttl_s = gateway_session_ttl_s()
-    if bool(payload.remember):
-        try:
-            ttl_s = int(os.getenv("ABSTRACTGATEWAY_REMEMBER_SESSION_TTL_S") or (30 * 24 * 60 * 60))
-        except Exception:
-            ttl_s = 30 * 24 * 60 * 60
-        ttl_s = max(60, min(90 * 24 * 60 * 60, ttl_s))
 
-    session_value, csrf_token, record = GatewaySessionStore().create_session(principal, ttl_s=ttl_s)
-    response.set_cookie(
-        gateway_session_cookie_name(),
-        session_value,
-        **_session_cookie_kwargs(request, max_age=ttl_s if bool(payload.remember) else None, httponly=True),
-    )
-    response.set_cookie(
-        gateway_csrf_cookie_name(),
-        csrf_token,
-        **_session_cookie_kwargs(request, max_age=ttl_s if bool(payload.remember) else None, httponly=False),
-    )
-    return {
-        "ok": True,
-        "principal": principal.public_dict(),
-        "auth": {"mode": "users", "user_auth_enabled": True, "session": "gateway-browser-session"},
-        "routing": {
-            "mode": "per-principal" if gateway_multi_user_enabled() else "single-user",
-            "one_user_one_runtime": bool(gateway_multi_user_enabled()),
-        },
-        "session": {
-            "expires_at": record.expires_at,
-        },
-    }
+class GatewaySessionClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(..., min_length=8, max_length=256, description="One-time first-run claim code (from `abstractgateway-config claim-url`).")
+    remember: bool = Field(default=False)
+
+
+# A request carrying any of these came through a proxy: its socket peer is the
+# proxy, not the browser, so "loopback" would prove nothing about who asks.
+_CLAIM_FORWARDING_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded")
+
+
+@router.post("/session/claim")
+async def gateway_session_claim(
+    request: Request,
+    response: Response,
+    payload: GatewaySessionClaimRequest,
+) -> Dict[str, Any]:
+    """Redeem a one-time first-run claim code for an ADMIN browser session.
+
+    Codes are minted by the local CLI (`abstractgateway-config claim-url`,
+    `abstractgateway claim`, or printed once by `serve` on a first run), last
+    10 minutes and work once. Redemption is accepted ONLY from a loopback
+    socket peer with no proxy forwarding headers: the claim link is for the
+    person sitting at this machine, never for a remote browser."""
+    from ..first_run import ClaimError, first_run_state, redeem_claim
+    from ..security.gateway_security import _is_loopback_ip
+
+    peer = str(getattr(getattr(request, "client", None), "host", "") or "")
+    forwarded = [h for h in _CLAIM_FORWARDING_HEADERS if request.headers.get(h)]
+    if not _is_loopback_ip(peer) or forwarded:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "reason_code": "claim_loopback_only",
+                "message": "First-run links can only be redeemed from a browser on the gateway's own machine "
+                "(loopback, not through a proxy). Sign in with a Gateway user token instead.",
+            },
+        )
+    if not gateway_user_auth_enabled():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason_code": "claim_requires_user_auth",
+                "message": "This gateway runs without user auth (static token mode); first-run links need user auth. "
+                "Restart it without ABSTRACTGATEWAY_AUTH_TOKEN on 127.0.0.1, or with ABSTRACTGATEWAY_USER_AUTH=1.",
+            },
+        )
+    data_dir = gateway_data_dir_from_env()
+    try:
+        record = redeem_claim(payload.code, data_dir=data_dir)
+    except ClaimError as e:
+        raise HTTPException(status_code=401, detail={"reason_code": e.reason_code, "message": e.message}) from None
+    user = GatewayUserRegistry().get_user(str(record.get("user_id") or "admin"), tenant_id=str(record.get("tenant_id") or "default"))
+    if user is None or not user.enabled:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": "claim_user_unavailable", "message": "The admin user this link was minted for is missing or disabled."},
+        )
+    principal = user.to_principal()
+    if not principal.is_admin():
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": "claim_user_not_admin", "message": "The user this link was minted for is not an admin."},
+        )
+    out = _issue_gateway_browser_session(request, response, principal, remember=bool(payload.remember))
+    out["claimed"] = True
+    out["first_run"] = first_run_state(data_dir)
+    return out
 
 
 @router.post("/session/logout")
@@ -3774,10 +3857,9 @@ def _sanitize_run_workspace_policy(
     # Always allow gateway-owned per-run workspaces (even when the data_dir is outside the
     # operator workspace root). This enables safe follow-ups to reuse the same workspace.
     try:
-        data_dir_raw = str(os.getenv("ABSTRACTGATEWAY_DATA_DIR") or os.getenv("ABSTRACTFLOW_RUNTIME_DIR") or "").strip()
-        if data_dir_raw:
-            data_dir = Path(data_dir_raw).expanduser().resolve()
-            allowed_roots.append(data_dir / "workspaces")
+        # The resolved data dir (env, legacy ./runtime or the per-OS default):
+        # an unset env var no longer means "no per-run workspaces allowed".
+        allowed_roots.append(gateway_data_dir_from_env() / "workspaces")
     except Exception:
         pass
     root_for_rel = base
@@ -15994,7 +16076,7 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
 def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
     abstractmemory = caps.get("abstractmemory") if isinstance(caps.get("abstractmemory"), dict) else {}
     try:
-        base_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime")).expanduser().resolve()
+        base_dir = gateway_data_dir_from_env()
         cfg = resolve_memory_store_config(base_dir=base_dir)
         backend = cfg.backend
         embedding_error = ""
@@ -26198,6 +26280,70 @@ async def host_state() -> Dict[str, Any]:
     return await asyncio.to_thread(_host_state_payload)
 
 
+def _gateway_install_block() -> Dict[str, Any]:
+    """Where this gateway keeps its data (and why), how it authenticates,
+    whether it starts at login, and whether the first-run wizard ran.
+    Cheap and subprocess-free: file reads only. Never raises."""
+    from ..first_run import auth_mode_summary, first_run_state, pending_claims
+    from ..host_paths import resolve_data_dir
+    from ..os_service import service_status
+
+    out: Dict[str, Any] = {}
+    try:
+        res = resolve_data_dir()
+        out.update(res.public_dict())
+        auth = auth_mode_summary()
+        out["auth_mode"] = auth["mode"]
+        out["auth"] = auth
+        out["first_run"] = first_run_state(res.path)
+        out["claims"] = pending_claims(res.path)
+        out["service"] = service_status(data_dir=res.path, probe=False)
+        try:
+            from ..tray_supervisor import serve_context
+
+            ctx = serve_context()
+            if ctx.get("base_url"):
+                out["url"] = str(ctx.get("base_url"))
+                out["console_url"] = str(ctx.get("base_url")) + "/console"
+            if ctx.get("version"):
+                out["version"] = str(ctx.get("version"))
+        except Exception:
+            pass
+    except Exception as e:  # noqa: BLE001 - decoration over a snapshot that must answer
+        out["error"] = f"{type(e).__name__}: {e}"
+    return out
+
+
+@router.get("/host/first-run")
+async def host_first_run_get(request: Request) -> Dict[str, Any]:
+    """First-run wizard state for this data dir (any authenticated principal)."""
+    _principal_from_request(request)
+    from ..first_run import first_run_state
+
+    return {"ok": True, **first_run_state(gateway_data_dir_from_env())}
+
+
+class _FirstRunCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: str = Field(default="finished", description="finished | skipped")
+
+
+@router.post("/host/first-run")
+async def host_first_run_complete(request: Request, req: Optional[_FirstRunCompleteRequest] = None) -> Dict[str, Any]:
+    """Mark the first-run wizard done for this data dir, so it no longer opens
+    by itself (the console's Setup button still reopens it). Admin only."""
+    principal = _require_admin_principal(request)
+    from ..first_run import mark_first_run_complete
+
+    state = mark_first_run_complete(
+        gateway_data_dir_from_env(),
+        by=_host_control_actor(principal),
+        outcome=(req.outcome if req else "finished"),
+    )
+    return {"ok": True, **state}
+
+
 def _host_state_payload() -> Dict[str, Any]:
     degraded: list[str] = []
     reasons: Dict[str, str] = {}
@@ -26281,6 +26427,9 @@ def _host_state_payload() -> Dict[str, Any]:
         "ok": True,
         "ts": time.time(),
         **({"host": host_block} if host_block is not None else {}),
+        # Install facts (first-run, 2026-09-23): which data dir and why, the
+        # auth posture, the login service, the first-run wizard state.
+        "gateway": _gateway_install_block(),
         "memory": memory,
         "gpu": gpu,
         "models": models,

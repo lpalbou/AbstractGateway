@@ -25,6 +25,10 @@ def _isolate_gateway_runtime_env(monkeypatch: pytest.MonkeyPatch, tmp_path_facto
     # fail under a launcher shell that exported it (env-poisoning class;
     # adversary finding, 2026-07-17).
     monkeypatch.delenv("ABSTRACTGATEWAY_USER_AUTH", raising=False)
+    # `serve` exports these provenance markers into os.environ (first-run,
+    # 2026-09-23); a test that ran serve must not leak them into the next.
+    monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_MODE_SOURCE", raising=False)
+    monkeypatch.delenv("ABSTRACTGATEWAY_DATA_DIR_SOURCE", raising=False)
 
     # Provide safe defaults so tests that forget to set these still write only under tmp.
     base = Path(str(tmp_path_factory.mktemp("abstractgateway-test-env")))

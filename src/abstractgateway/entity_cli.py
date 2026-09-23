@@ -126,9 +126,12 @@ def add_entity_subparser(sub: Any) -> None:
 
 def _registry(args: Any) -> EntityRegistry:
     raw = getattr(args, "data_dir", None)
-    data_dir = Path(str(raw)).expanduser().resolve() if raw else Path(
-        os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime")
-    ).expanduser().resolve()
+    if raw:
+        data_dir = Path(str(raw)).expanduser().resolve()
+    else:
+        from .users import gateway_data_dir_from_env
+
+        data_dir = gateway_data_dir_from_env()
     return EntityRegistry(data_dir=data_dir)
 
 

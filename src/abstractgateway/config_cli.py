@@ -45,6 +45,44 @@ def _env_bool(name: str, *, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+STATUS_SCHEMA = "gateway_config_status_v1"
+
+
+def _install_status(data_dir: Path) -> Dict[str, Any]:
+    """The first-run / doctor block of `status --json` (schema
+    `gateway_config_status_v1`; `abstractframework doctor` consumes these keys,
+    so they are ADDITIVE-ONLY: never rename or retype one).
+
+    - `data_dir_source`: env | legacy_cwd_runtime | os_default (+ `data_dir_reason`)
+    - `auth_mode`: users | token | users+token | open | loopback_auto (+ `auth`)
+    - `service`: the per-user login service (file presence + record; no subprocess)
+    - `claim_pending`: an unexpired, unredeemed first-run link exists (+ `claims`)
+    - `first_run`: whether the console's first-run wizard was completed
+    - `serve`: the running gateway's serve record for this data dir, or null
+    """
+    from .first_run import auth_mode_summary, first_run_state, pending_claims, read_serve_record
+    from .host_paths import resolve_data_dir
+    from .os_service import service_status
+
+    res = resolve_data_dir()
+    auth = auth_mode_summary()
+    claims = pending_claims(data_dir)
+    serve = read_serve_record(data_dir)
+    return {
+        "schema": STATUS_SCHEMA,
+        "data_dir": str(data_dir),
+        "data_dir_source": res.source,
+        "data_dir_reason": res.reason,
+        "auth_mode": auth["mode"],
+        "auth": auth,
+        "service": service_status(data_dir=data_dir, probe=False),
+        "claim_pending": bool(claims.get("pending")),
+        "claims": claims,
+        "first_run": first_run_state(data_dir),
+        "serve": serve,
+    }
+
+
 def _status_payload() -> Dict[str, Any]:
     cfg = GatewayHostConfig.from_env()
     memory_cfg = resolve_memory_store_config(base_dir=cfg.data_dir)
@@ -57,6 +95,7 @@ def _status_payload() -> Dict[str, Any]:
     )
 
     return {
+        **_install_status(cfg.data_dir),
         "gateway": {
             "data_dir": str(cfg.data_dir),
             "flows_dir": str(cfg.flows_dir),
@@ -335,7 +374,19 @@ def _cmd_status(args: argparse.Namespace) -> None:
     mem = payload["memory"]
     core = payload["core_server"]
     print("AbstractGateway configuration status")
-    print(f"- data_dir: {gw['data_dir']}")
+    print(f"- data_dir: {gw['data_dir']} ({payload['data_dir_source']}: {payload['data_dir_reason']})")
+    auth = payload.get("auth") or {}
+    auth_note = {
+        "loopback_auto": "nothing configured: `serve` on 127.0.0.1 enables user auth automatically",
+    }.get(str(payload.get("auth_mode")), f"source: {auth.get('source')}")
+    print(f"- auth_mode: {payload.get('auth_mode')} ({auth_note})")
+    svc = payload.get("service") or {}
+    print(f"- service: {'installed' if svc.get('installed') else 'not installed'} ({svc.get('mechanism')}: {svc.get('unit_path')})")
+    serve = payload.get("serve") or None
+    if serve and serve.get("alive") is not False:
+        print(f"- running: {serve.get('console_url')} (pid {serve.get('pid')})")
+    fr = payload.get("first_run") or {}
+    print(f"- first_run: {'completed' if fr.get('completed') else 'not completed'}; claim link pending: {bool(payload.get('claim_pending'))}")
     print(f"- flows_dir: {gw['flows_dir']}")
     print(f"- store_backend: {gw['store_backend']}")
     print(f"- runner_enabled: {gw['runner_enabled']}")
@@ -357,6 +408,12 @@ def _cmd_status(args: argparse.Namespace) -> None:
             print(f"  - {key}: {provider}/{model} ({source})")
     print("")
     print("Use Gateway Console /console for provider connections, API keys, endpoint base URLs, users, and defaults.")
+
+
+def _cmd_claim_url(args: argparse.Namespace) -> None:
+    from .firstrun_cli import run_claim
+
+    raise SystemExit(run_claim(args))
 
 
 def _cmd_init(args: argparse.Namespace) -> None:
@@ -478,6 +535,15 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     status.set_defaults(func=_cmd_status)
 
+    claim = sub.add_parser(
+        "claim-url",
+        help="Mint a one-time console sign-in link (10 min, single use, this machine only) and print it",
+    )
+    from .firstrun_cli import add_claim_arguments
+
+    add_claim_arguments(claim)
+    claim.set_defaults(func=_cmd_claim_url)
+
     init = sub.add_parser("init", help="Create a local Gateway .env file")
     init.add_argument("--env-file", default=".env", help="Output env file path (default: .env)")
     init.add_argument("--force", action="store_true", help="Overwrite an existing env file")
@@ -536,6 +602,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Same data dir as `serve` would use from here (env, ./runtime in a
+    # checkout, else the per-OS user data dir), exported for this process.
+    from .host_paths import apply_data_dir_default
+
+    apply_data_dir_default()
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "cmd", None):

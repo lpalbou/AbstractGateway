@@ -95,12 +95,15 @@ def test_runner_module_does_not_import_fastapi() -> None:
 
 @pytest.mark.basic
 def test_cli_serve_requires_auth_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A NON-loopback bind without any auth configuration still refuses
+    # (first-run 2026-09-23 made only the loopback case automatic).
     from abstractgateway import cli as gateway_cli
 
     monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_TOKEN", raising=False)
     with pytest.raises(SystemExit) as e:
-        gateway_cli.main(["serve", "--host", "127.0.0.1", "--port", "9999", "--no-runner"])
+        gateway_cli.main(["serve", "--host", "0.0.0.0", "--port", "9999", "--no-runner"])
     assert "Missing gateway auth token" in str(e.value)
+    assert "--host 127.0.0.1" in str(e.value)
 
 
 @pytest.mark.basic
@@ -141,7 +144,32 @@ def test_cli_serve_user_auth_bootstraps_admin_without_legacy_token(
     assert "Gateway user auth: enabled." in err
     assert "Gateway admin user: default/admin" in err
     assert "Gateway admin token file:" in err
-    assert f"Gateway admin token: {token}" in err
+    # The raw token is no longer printed (it lands in service logs); a
+    # one-time claim link is printed instead on a first run.
+    assert token not in err
+    assert "First run: open http://127.0.0.1:9999/console#claim=agclaim_" in err
+
+
+@pytest.mark.basic
+def test_cli_serve_prints_raw_token_only_when_asked(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from abstractgateway import cli as gateway_cli
+
+    uvicorn = types.ModuleType("uvicorn")
+    uvicorn.run = lambda app, **kwargs: None  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "uvicorn", uvicorn)
+    monkeypatch.setattr(gateway_cli, "_resolve_default_console_level", lambda: logging.ERROR)
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+
+    gateway_cli.main(["serve", "--host", "127.0.0.1", "--port", "9999", "--no-runner"])
+
+    token = (tmp_path / "runtime" / "auth" / "bootstrap-admin-token").read_text(encoding="utf-8").strip()
+    assert f"Gateway admin token: {token}" in capsys.readouterr().err
 
 
 @pytest.mark.basic

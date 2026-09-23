@@ -72,6 +72,10 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # session it destroys.
     ("POST", "/api/gateway/session/login"),
     ("POST", "/api/gateway/session/logout"),
+    # First-run claim (2026-09-23): the second public write. It mints a
+    # session only for a one-time code written by the LOCAL CLI into the data
+    # dir, and the route itself refuses any non-loopback or proxied peer.
+    ("POST", "/api/gateway/session/claim"),
     # --- self-service surfaces: the caller acts only on itself -------------
     # A polite dequeue of the CALLER from a queue it joined (interaction
     # surface, same class as chat/visit/summon).
@@ -235,23 +239,33 @@ def test_every_route_is_behind_the_security_middleware_or_explicitly_public() ->
         )
 
 
+PUBLIC_WRITES = {
+    ("POST", "/api/gateway/session/login"),
+    # First-run claim (2026-09-23): loopback-peer-only, one-time code from the
+    # local CLI; see test_gateway_first_run.py for the peer/replay pins.
+    ("POST", "/api/gateway/session/claim"),
+}
+
+
 def test_the_public_write_exemption_is_exactly_session_login() -> None:
-    """Inside the boundary, exactly ONE write skips authentication: the login
-    that mints credentials. Widening `_public_auth_path` widens the
-    unauthenticated surface — it must never happen silently."""
+    """Inside the boundary, exactly TWO writes skip authentication: the login
+    that mints credentials and the first-run claim that redeems a one-time
+    local code. Widening `_public_auth_path` widens the unauthenticated
+    surface — it must never happen silently."""
     from abstractgateway.security import load_gateway_auth_policy_from_env
     from abstractgateway.security.gateway_security import GatewaySecurityMiddleware
 
     middleware = GatewaySecurityMiddleware(lambda *_: None, policy=load_gateway_auth_policy_from_env())
-    assert middleware._public_auth_path("/api/gateway/session/login", "POST") is True
+    for method, path in PUBLIC_WRITES:
+        assert middleware._public_auth_path(path, method) is True
     for method, path in sorted(_live_route_table()):
         if not path.startswith("/api/gateway"):
             continue
-        if (method, path) == ("POST", "/api/gateway/session/login"):
+        if (method, path) in PUBLIC_WRITES:
             continue
         assert middleware._public_auth_path(_concrete(path), method) is False, (
             f"{method} {path} is exempted from authentication by _public_auth_path — "
-            "only session/login may be public inside the boundary"
+            "only session/login and session/claim may be public inside the boundary"
         )
 
 

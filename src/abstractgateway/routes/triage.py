@@ -80,7 +80,9 @@ async def triage_action_apply(token: str, request: Request):
     days = payload.get("days")
     defer_days = int(days) if isinstance(days, int) and days > 0 else None
 
-    data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser().resolve()
+    from ..users import gateway_data_dir_from_env
+
+    data_dir = gateway_data_dir_from_env()
     # Honor the admin runtime-config store (continuum c1550): stored triage
     # root beats env beats none — a launcher losing the env no longer blanks
     # the backlog surface when the operator persisted it (c1526).

@@ -73,8 +73,11 @@ def gateway_data_dir_from_env() -> Path:
         os.getenv("ABSTRACTGATEWAY_DATA_DIR")
         or os.getenv("ABSTRACTFLOW_RUNTIME_DIR")
         or os.getenv("ABSTRACTFLOW_GATEWAY_DATA_DIR")
-        or "./runtime"
     )
+    if not raw or not str(raw).strip():
+        from .host_paths import default_data_dir
+
+        return default_data_dir()
     return Path(str(raw)).expanduser().resolve()
 
 

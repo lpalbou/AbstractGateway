@@ -112,6 +112,15 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
             "/api/gateway/host/update/start",
         ),
     ),
+    # Marking the first-run wizard done is a host-level act (it stops the
+    # wizard opening for every admin of this data dir); reading the state is
+    # visibility.
+    GatewayRoutePolicy(
+        resource="host",
+        reason_code="admin_required",
+        exact=("/api/gateway/host/first-run",),
+        methods=("POST",),
+    ),
     GatewayRoutePolicy(
         resource="models",
         reason_code="admin_required",

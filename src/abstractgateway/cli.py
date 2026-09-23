@@ -194,7 +194,13 @@ def _env_falsey(name: str, *, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"0", "false", "no", "n", "off"}
 
 
-def _maybe_bootstrap_user_auth_admin(*, host: str) -> None:
+def _maybe_bootstrap_user_auth_admin(*, host: str, port: int | None = None) -> None:
+    """Ensure `default/admin` exists and say how to get in.
+
+    The raw token is NEVER printed unless ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1
+    (first-run, 2026-09-23): stderr ends up in service logs. It stays in the
+    0600 token file; on a loopback bind whose first run is not done yet, a
+    one-time claim link (10 min, single use) is printed instead."""
     if _env_falsey("ABSTRACTGATEWAY_BOOTSTRAP_ADMIN") or _env_falsey("ABSTRACTGATEWAY_AUTO_BOOTSTRAP_ADMIN"):
         _stderr("Gateway user auth: enabled; admin auto-bootstrap disabled by env.")
         return
@@ -209,9 +215,7 @@ def _maybe_bootstrap_user_auth_admin(*, host: str) -> None:
     runtime_id = str(user.get("runtime_id") or user_id)
     token_path = str(payload.get("token_file") or "")
     token = str(payload.get("token") or "").strip()
-    can_print_raw_token = bool(token) and (
-        _env_truthy("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN") or _is_loopback_host(host)
-    )
+    can_print_raw_token = bool(token) and _env_truthy("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN")
 
     _stderr("Gateway user auth: enabled.")
     _stderr(f"Gateway admin user: {tenant_id}/{user_id} (runtime: {runtime_id})")
@@ -220,9 +224,32 @@ def _maybe_bootstrap_user_auth_admin(*, host: str) -> None:
     if can_print_raw_token:
         _stderr(f"Gateway admin token: {token}")
     elif token_path:
-        _stderr(f"Gateway admin token: read with `cat {token_path}`")
+        _stderr(f"Gateway admin token: in {token_path} (0600; not printed)")
     else:
         _stderr("Gateway admin token: unavailable; run `abstractgateway-config bootstrap-admin --rotate-token --print-token`.")
+
+    if port is None:
+        return
+    try:
+        from .first_run import browser_base_url, claim_url, first_run_state, mint_claim
+        from .users import gateway_data_dir_from_env
+
+        data_dir = gateway_data_dir_from_env()
+        base = browser_base_url(host, int(port))
+        if first_run_state(data_dir).get("completed"):
+            _stderr(f"Console: {base}/console  (one-time sign-in link: `abstractgateway claim`)")
+            return
+        if not (_is_loopback_host(host) or _is_public_bind_host(host)):
+            # Bound to one specific non-loopback address: a claim link needs a
+            # loopback peer, which that bind cannot serve.
+            _stderr(f"Console: {base}/console  (sign in with the admin token file above)")
+            return
+        minted = mint_claim(data_dir=data_dir, tenant_id=tenant_id, user_id=user_id, created_by="serve")
+        _stderr(f"First run: open {claim_url(base, minted['code'])}")
+        _stderr("           (one-time link, valid 10 minutes, works from this machine only; "
+                "a fresh one: `abstractgateway claim --open`)")
+    except Exception as exc:  # noqa: BLE001 - the link is a convenience; never block boot
+        _stderr(f"[WARN] could not mint a first-run link ({exc}); run `abstractgateway claim`.")
 
 
 def _is_weak_token(token: str) -> bool:
@@ -321,9 +348,9 @@ def _run_data_command(args: Any) -> None:
 
 
 def _default_data_dir() -> Path:
-    import os as _os
+    from .users import gateway_data_dir_from_env
 
-    return Path(_os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser()
+    return gateway_data_dir_from_env()
 
 
 def _reserve_gguf_metal() -> None:
@@ -505,6 +532,37 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         raise SystemExit(int(_startup_failure))
 
 
+def _record_serve_start(args: Any) -> None:
+    """`<data>/run/gateway-serve.json`: how to reach THIS gateway (host, port,
+    URL, auth mode). `abstractgateway claim` reads it to build its link."""
+    try:
+        from .first_run import auth_mode_summary, write_serve_record
+        from .host_paths import resolve_data_dir
+        from .self_update import installed_version
+
+        res = resolve_data_dir()
+        write_serve_record(
+            data_dir=res.path,
+            host=str(args.host),
+            port=int(args.port),
+            auth=auth_mode_summary(),
+            data_dir_source=res.source,
+            version=installed_version(),
+        )
+    except Exception as exc:  # noqa: BLE001 - diagnostics only
+        _stderr(f"[WARN] could not write the serve record: {exc}")
+
+
+def _record_serve_stop() -> None:
+    try:
+        from .first_run import clear_serve_record
+        from .host_paths import resolve_data_dir
+
+        clear_serve_record(resolve_data_dir().path)
+    except Exception:
+        pass
+
+
 def _run_models_command(args: argparse.Namespace) -> int:
     """`abstractgateway models loaded|load|unload` -> the console's routes. Prints
     the gateway's JSON answer; exit 0 only when the gateway says it worked."""
@@ -539,13 +597,23 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     serve = sub.add_parser("serve", help="Run the AbstractGateway HTTP/SSE server")
-    serve.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    serve.add_argument(
+        "--host",
+        default=None,
+        help="Bind host (default: 127.0.0.1 when no auth is configured, so a bare `serve` starts with "
+        "user auth on; 0.0.0.0 when an auth token or user auth is configured, as before)",
+    )
     serve.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
     serve.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
     serve.add_argument(
         "--no-runner",
         action="store_true",
         help="Serve the HTTP API without starting the runner (use `abstractgateway runner` in another process).",
+    )
+    serve.add_argument(
+        "--data-dir",
+        default=None,
+        help="Data dir (default: $ABSTRACTGATEWAY_DATA_DIR, else ./runtime if it exists, else the per-OS user data dir)",
     )
 
     runner = sub.add_parser("runner", help="Run the AbstractGateway runner worker (no HTTP)")
@@ -562,7 +630,7 @@ def main(argv: list[str] | None = None) -> None:
     mig.add_argument(
         "--data-dir",
         default=None,
-        help="Source data dir (defaults to ABSTRACTGATEWAY_DATA_DIR or ./runtime)",
+        help="Source data dir (default: the gateway data dir, see `abstractgateway-config status`)",
     )
     mig.add_argument(
         "--db-path",
@@ -575,7 +643,7 @@ def main(argv: list[str] | None = None) -> None:
     triage.add_argument(
         "--data-dir",
         default=None,
-        help="Gateway data dir (defaults to ABSTRACTGATEWAY_DATA_DIR or ./runtime/gateway)",
+        help="Gateway data dir (default: the gateway data dir, see `abstractgateway-config status`)",
     )
     triage.add_argument(
         "--repo-root",
@@ -595,7 +663,7 @@ def main(argv: list[str] | None = None) -> None:
     triage_apply.add_argument(
         "--data-dir",
         default=None,
-        help="Gateway data dir (defaults to ABSTRACTGATEWAY_DATA_DIR or ./runtime/gateway)",
+        help="Gateway data dir (default: the gateway data dir, see `abstractgateway-config status`)",
     )
     triage_apply.add_argument(
         "--repo-root",
@@ -607,7 +675,7 @@ def main(argv: list[str] | None = None) -> None:
     be.add_argument(
         "--data-dir",
         default=None,
-        help="Gateway data dir (defaults to ABSTRACTGATEWAY_DATA_DIR or ./runtime/gateway)",
+        help="Gateway data dir (default: the gateway data dir, see `abstractgateway-config status`)",
     )
     be.add_argument(
         "--repo-root",
@@ -652,7 +720,39 @@ def main(argv: list[str] | None = None) -> None:
         if _name == "unload":
             _p.add_argument("--force", action="store_true", help="Unload even a locked model")
 
+    from .firstrun_cli import add_claim_arguments, add_service_subparser
+
+    claim = sub.add_parser("claim", help="Print a one-time console sign-in link for this machine (first run)")
+    add_claim_arguments(claim)
+    add_service_subparser(sub)
+
     args = parser.parse_args(argv)
+
+    if args.cmd == "claim":
+        from .firstrun_cli import run_claim
+
+        raise SystemExit(run_claim(args))
+
+    if args.cmd == "service":
+        from .firstrun_cli import run_service
+
+        raise SystemExit(run_service(args))
+
+    if args.cmd == "serve" and getattr(args, "data_dir", None):
+        from .host_paths import DATA_DIR_SOURCE_ENV
+
+        os.environ["ABSTRACTGATEWAY_DATA_DIR"] = str(Path(args.data_dir).expanduser().resolve())
+        os.environ.pop(DATA_DIR_SOURCE_ENV, None)
+
+    if args.cmd != "models":
+        # ONE data dir for this process and every child it spawns: an unset
+        # ABSTRACTGATEWAY_DATA_DIR is resolved here (./runtime in a checkout,
+        # else the per-OS user data dir) and exported with its provenance.
+        from .host_paths import apply_data_dir_default, describe_resolution
+
+        _data_dir_resolution = apply_data_dir_default()
+        if args.cmd == "serve":
+            _stderr(describe_resolution(_data_dir_resolution))
 
     if args.cmd == "models":
         raise SystemExit(_run_models_command(args))
@@ -677,6 +777,21 @@ def main(argv: list[str] | None = None) -> None:
         _migrate_legacy_core_config_store()
 
         # ------------------------------------------------------------------
+        # First run (2026-09-23): an unconfigured `serve` binds loopback and
+        # turns user auth on, so it STARTS; explicit configuration always wins
+        # and a non-loopback bind without auth still refuses below.
+        # ------------------------------------------------------------------
+        from .first_run import apply_loopback_auth_default, default_bind_host
+
+        if not getattr(args, "host", None):
+            args.host = default_bind_host()
+        if apply_loopback_auth_default(str(args.host)):
+            _stderr(
+                f"Gateway auth: user auth enabled automatically (bound to loopback {args.host}, no auth configured). "
+                "Set ABSTRACTGATEWAY_USER_AUTH or ABSTRACTGATEWAY_AUTH_TOKEN to choose explicitly."
+            )
+
+        # ------------------------------------------------------------------
         # Startup security self-checks (fail-fast on missing auth token).
         # ------------------------------------------------------------------
         try:
@@ -696,6 +811,8 @@ def main(argv: list[str] | None = None) -> None:
             ):
                 raise SystemExit(
                     "Missing gateway auth token.\n\n"
+                    f"Binding {host or '0.0.0.0'} (not loopback) requires explicit auth. For a local, single-machine "
+                    "gateway, bind loopback instead: `abstractgateway serve --host 127.0.0.1` needs no configuration.\n\n"
                     "Set a strong shared secret before starting the gateway:\n"
                     '  export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c \'import secrets; print(secrets.token_urlsafe(32))\')"\n'
                     "\n"
@@ -707,7 +824,7 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
             if bool(getattr(policy, "user_auth_enabled", False)):
-                _maybe_bootstrap_user_auth_admin(host=host)
+                _maybe_bootstrap_user_auth_admin(host=host, port=int(args.port))
 
             if _is_public_bind_host(host):
                 _stderr(
@@ -797,8 +914,10 @@ def main(argv: list[str] | None = None) -> None:
             if log_config:
                 run_kwargs["log_config"] = log_config
 
+            _record_serve_start(args)
             _serve_with_host_controls(uvicorn=uvicorn, args=args, run_kwargs=run_kwargs, argv=list(argv if argv is not None else sys.argv[1:]))
         finally:
+            _record_serve_stop()
             if prev_runner_env is None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
             else:
@@ -901,7 +1020,7 @@ def main(argv: list[str] | None = None) -> None:
 
         data_dir = Path(str(args.data_dir or "")).expanduser().resolve() if args.data_dir else None
         if data_dir is None:
-            data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime")).expanduser().resolve()
+            data_dir = _default_data_dir()
         db_path = Path(str(args.db_path or "")).expanduser().resolve() if args.db_path else (data_dir / "gateway.sqlite3")
 
         if str(args.src).strip().lower() != "file" or str(args.dst).strip().lower() != "sqlite":
@@ -921,7 +1040,7 @@ def main(argv: list[str] | None = None) -> None:
 
         data_dir = Path(str(args.data_dir or "")).expanduser().resolve() if args.data_dir else None
         if data_dir is None:
-            data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser().resolve()
+            data_dir = _default_data_dir()
 
         repo_root = Path(str(args.repo_root)).expanduser().resolve() if args.repo_root else None
 
@@ -1011,7 +1130,7 @@ def main(argv: list[str] | None = None) -> None:
 
         data_dir = Path(str(args.data_dir or "")).expanduser().resolve() if args.data_dir else None
         if data_dir is None:
-            data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser().resolve()
+            data_dir = _default_data_dir()
 
         repo_root = Path(str(args.repo_root)).expanduser().resolve() if args.repo_root else None
         if repo_root is None:
@@ -1061,7 +1180,7 @@ def main(argv: list[str] | None = None) -> None:
 
         data_dir = Path(str(args.data_dir or "")).expanduser().resolve() if args.data_dir else None
         if data_dir is None:
-            data_dir = Path(os.getenv("ABSTRACTGATEWAY_DATA_DIR", "./runtime/gateway")).expanduser().resolve()
+            data_dir = _default_data_dir()
         repo_root = Path(str(args.repo_root)).expanduser().resolve() if args.repo_root else None
 
         decision, err = apply_decision_action(

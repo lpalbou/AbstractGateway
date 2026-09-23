@@ -166,9 +166,12 @@ def _audit_data_dir_from_env() -> Path:
         os.getenv("ABSTRACTGATEWAY_DATA_DIR")
         or os.getenv("ABSTRACTFLOW_RUNTIME_DIR")
         or os.getenv("ABSTRACTFLOW_GATEWAY_DATA_DIR")
-        or "./runtime"
     )
     try:
+        if not raw or not str(raw).strip():
+            from ..host_paths import default_data_dir
+
+            return default_data_dir()
         return Path(str(raw)).expanduser().resolve()
     except Exception:
         return Path("./runtime").resolve()
@@ -728,7 +731,8 @@ class GatewaySecurityMiddleware:
         return principal, session_id
 
     def _public_auth_path(self, path: str, method: str) -> bool:
-        if method == "POST" and path.rstrip("/") == "/api/gateway/session/login":
+        if method == "POST" and path.rstrip("/") in {"/api/gateway/session/login", "/api/gateway/session/claim"}:
+            # /session/claim enforces its own loopback-peer rule in the route.
             return True
         return False
 
