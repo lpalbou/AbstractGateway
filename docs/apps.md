@@ -334,9 +334,9 @@ Python environment as the gateway; a gateway-only install may not.
 - **Install** installs `abstractassistant` into the gateway's own Python as a
   job (`uv pip install --python <gateway python> abstractassistant`, or pip
   when there is no uv), with every `abstract*` package the gateway runs
-  pinned to its current version by a constraints file, so installing the
-  Assistant never changes the gateway. The same rule as the other installs
-  decides who may install (see [Who may install](#who-may-install)).
+  pinned to its current version (`name==version` requirements in the same
+  command), so installing the Assistant never changes the gateway. The same
+  rule as the other installs decides who may install (see [Who may install](#who-may-install)).
 - **Open** starts it on the gateway's computer: `open -a AbstractAssistant.app`
   when the app exists, otherwise its command, as a separate process with none
   of the gateway's tokens, secrets or keys in its environment. A running
@@ -359,7 +359,7 @@ All routes are under `/api/gateway/apps` and need a signed-in principal.
 |---|---|---|
 | `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}`) and `console_tui` (the gateway console's terminal app). `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
-| `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (constraints keep every `abstract*` package as it is). |
+| `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. |
 | `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, `{ok, app, already_running, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
 | `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |

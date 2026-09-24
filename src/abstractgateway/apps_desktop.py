@@ -41,8 +41,11 @@ that saved sign-in for the session (abstractassistant controller.py
 
 Installing = `uv pip install abstractassistant` (or `python -m pip install`)
 into the gateway's own Python, as an apps job, with every `abstract*` package
-the gateway runs pinned by a constraints file (the way engines_install.py
-protects the gateway when it installs an engine).
+the gateway runs pinned to its installed version as `name==version`
+requirements in the same command (the way engines_install.py protects the
+gateway when it installs an engine). The pins are never a constraints file:
+uv 0.11 splits a `--constraint` path at whitespace even when it is one argv
+element, and the macOS data folder (`Application Support`) always has a space.
 """
 
 from __future__ import annotations
@@ -331,12 +334,32 @@ def pip_install_argv(package: str, *, python: str, uv: Optional[str], has_pip: b
     return None
 
 
+# `-I` (isolated): the probe sees the environment's own site-packages only,
+# never a checkout's `*.egg-info` in the gateway's working directory or a
+# PYTHONPATH entry - pins become requirements, so a stray one would be installed.
+ABSTRACT_PINS_PROBE = "import importlib.metadata as m, json; print(json.dumps({d.metadata['Name']: d.version for d in m.distributions() if (d.metadata['Name'] or '').lower().startswith('abstract')}))"
+
+
+def abstract_pins_argv(python: str) -> List[str]:
+    return [python, "-I", "-c", ABSTRACT_PINS_PROBE]
+
+
+def pin_requirements(pins: Dict[str, str]) -> List[str]:
+    """`name==version` for every pin, as requirements for the SAME install
+    command. Never a `--constraint <file>`: uv splits that path at whitespace
+    even when it arrives as one argv element, so any data folder with a space
+    in its path (macOS `Application Support`, a Windows user name) breaks the
+    install. Pinning an installed package to its own version changes nothing
+    and makes the installer report a plain conflict when the new package
+    needs other versions."""
+    return [f"{name}=={version}" for name, version in sorted(pins.items())]
+
+
 def abstract_pins(python: str, *, run: Optional[Callable[..., Any]] = None) -> Dict[str, str]:
     """{name: version} of every installed `abstract*` distribution in `python`."""
     runner = run or subprocess.run
-    code = "import importlib.metadata as m, json; print(json.dumps({d.metadata['Name']: d.version for d in m.distributions() if (d.metadata['Name'] or '').lower().startswith('abstract')}))"
     try:
-        cp = runner([python, "-c", code], capture_output=True, text=True, timeout=60)
+        cp = runner(abstract_pins_argv(python), capture_output=True, text=True, timeout=60)
     except Exception:
         return {}
     if getattr(cp, "returncode", 1) != 0:

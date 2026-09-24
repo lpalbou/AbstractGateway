@@ -1087,23 +1087,25 @@ class EngineInstaller:
         return fn(ctx)
 
     # wheels -------------------------------------------------------------------------------
-    def _abstract_constraints(self, ctx: _JobContext) -> List[str]:
-        """Keep every `abstract*` package the gateway runs exactly as it is."""
+    def _abstract_pins(self, ctx: _JobContext) -> List[str]:
+        """Keep every `abstract*` package the gateway runs exactly as it is:
+        `name==version` requirements for the same install command (never a
+        `--constraint <file>`; see apps_desktop.pin_requirements for why)."""
 
-        rc, out = self.system.run([self.python, "-c", "import importlib.metadata as m, json; print(json.dumps({d.metadata['Name']: d.version for d in m.distributions() if (d.metadata['Name'] or '').lower().startswith('abstract')}))"], timeout=30)
+        from .apps_desktop import abstract_pins_argv, pin_requirements
+
+        rc, out = self.system.run(abstract_pins_argv(self.python), timeout=30)
         if rc != 0:
             return []
         try:
             pins = json.loads(out.strip().splitlines()[-1])
         except Exception:
             return []
-        if not pins:
+        if not isinstance(pins, dict) or not pins:
             return []
-        path = self.cache_dir / f"constraints-{ctx.job.id}.txt"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("".join(f"{name}=={ver}\n" for name, ver in sorted(pins.items())), encoding="utf-8")
-        ctx.log(f"keeping the gateway's own packages as they are: {', '.join(f'{k}=={v}' for k, v in sorted(pins.items()))}")
-        return ["--constraint", str(path)]
+        reqs = pin_requirements({str(k): str(v) for k, v in pins.items()})
+        ctx.log(f"keeping the gateway's own packages as they are: {', '.join(reqs)}")
+        return reqs
 
     def _pip_phases(self, ctx: _JobContext, lo: float, hi: float) -> Callable[[str], None]:
         def on_line(text: str) -> None:
@@ -1143,12 +1145,12 @@ class EngineInstaller:
     def _install_llamacpp(self, ctx: _JobContext) -> Dict[str, Any]:
         h = self.host
         wheel = self._llama_wheel()
-        constraints = self._abstract_constraints(ctx)
+        pins = self._abstract_pins(ctx)
         wheel_error = ""
         if wheel:
             pin, backend, links = wheel
             ctx.state("downloading", f"Installing the prebuilt llama.cpp {backend} wheel {pin}", percent=5)
-            rc, out = self._pip(ctx, [*self._llama_wheel_argv(pin, links), *constraints], lo=5, hi=90)
+            rc, out = self._pip(ctx, [*self._llama_wheel_argv(pin, links), *pins], lo=5, hi=90)
             if rc == 0:
                 info = self._verify_import(ctx, "import json, llama_cpp; print(json.dumps({'version': llama_cpp.__version__, 'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload())}))", "llama.cpp")
                 if h.os_id == "darwin" and h.arch == "arm64" and not info.get("gpu_offload"):
@@ -1165,7 +1167,7 @@ class EngineInstaller:
         ctx.require_tools(self._compiler_present, self._tools_prompt(tools_reason))
         ctx.state("installing", why + ". Building llama.cpp from source instead (5-15 minutes).", percent=20)
         env = {"CMAKE_ARGS": "-DGGML_METAL=on"} if h.os_id == "darwin" and h.arch == "arm64" else {}
-        rc, out = self._pip(ctx, [*self.pip_prefix(), "llama-cpp-python", *constraints], lo=20, hi=92, env=env)
+        rc, out = self._pip(ctx, [*self.pip_prefix(), "llama-cpp-python", *pins], lo=20, hi=92, env=env)
         if rc != 0:
             raise InstallFailed(
                 why + ", and building it from source failed: " + (_last_error_line(out) or "see the log") + ". The full build log is in the details.",
@@ -1177,7 +1179,7 @@ class EngineInstaller:
 
     def _install_mlx(self, ctx: _JobContext) -> Dict[str, Any]:
         ctx.state("downloading", "Installing MLX (prebuilt wheels)", percent=5)
-        rc, out = self._pip(ctx, [*self._mlx_argv(), *self._abstract_constraints(ctx)], lo=5, hi=90)
+        rc, out = self._pip(ctx, [*self._mlx_argv(), *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
             raise InstallFailed("MLX could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, mlx.core as mx, importlib.metadata as m; print(json.dumps({'version': m.version('mlx'), 'mlx_lm': m.version('mlx-lm'), 'device': str(mx.default_device())}))", "MLX")
@@ -1188,7 +1190,7 @@ class EngineInstaller:
         rc, out = self.system.run([self.python, "-c", "import importlib.metadata as m; print(m.version('abstractcore'))"], timeout=30)
         spec = f"abstractcore[huggingface]=={out.strip().splitlines()[-1]}" if rc == 0 and out.strip() else "abstractcore[huggingface]"
         ctx.state("downloading", "Installing transformers and PyTorch (several GB)", percent=5)
-        rc, out = self._pip(ctx, [*self.pip_prefix(), spec, *self._abstract_constraints(ctx)], lo=5, hi=90)
+        rc, out = self._pip(ctx, [*self.pip_prefix(), spec, *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
             raise InstallFailed("The Hugging Face stack could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, importlib.metadata as m; import transformers; print(json.dumps({'version': m.version('transformers')}))", "transformers")
@@ -1197,7 +1199,7 @@ class EngineInstaller:
 
     def _install_vllm(self, ctx: _JobContext) -> Dict[str, Any]:
         ctx.state("downloading", "Installing vLLM (PyTorch + CUDA wheels, several GB)", percent=5)
-        rc, out = self._pip(ctx, [*self.plan("vllm").command_preview, *self._abstract_constraints(ctx)], lo=5, hi=90)
+        rc, out = self._pip(ctx, [*self.plan("vllm").command_preview, *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
             raise InstallFailed("vLLM could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, importlib.metadata as m; import vllm; print(json.dumps({'version': m.version('vllm')}))", "vLLM")

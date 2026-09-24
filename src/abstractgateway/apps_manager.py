@@ -3015,9 +3015,10 @@ class AppsManager:
 
     def start_desktop_install(self, app_id: str, *, run_inline: bool = False, same_machine: bool = False) -> Tuple[Job, bool]:
         """Install a desktop app's package into the gateway's own Python, as a
-        job; every `abstract*` package already there is pinned by a
-        constraints file so the gateway itself never changes."""
-        from .apps_desktop import DESKTOP_BY_ID, launch_command_text
+        job; every `abstract*` package already there is pinned to its
+        installed version as a requirement of the same command, so the
+        gateway itself never changes."""
+        from .apps_desktop import DESKTOP_BY_ID, launch_command_text, pin_requirements
 
         spec = DESKTOP_BY_ID[str(app_id)]
         self._require_install_allowed(same_machine=same_machine)
@@ -3036,11 +3037,8 @@ class AppsManager:
             pins = self.desktop_pins(self.desktop_python) or {}
             full = list(argv)
             if pins:
-                path = self.apps_root / "jobs" / f"constraints-{job.id}.txt"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("".join(f"{k}=={v}\n" for k, v in sorted(pins.items())), encoding="utf-8")
-                job.log("keeping the gateway's own packages as they are: " + ", ".join(f"{k}=={v}" for k, v in sorted(pins.items())))
-                full += ["--constraint", str(path)]
+                job.log("keeping the gateway's own packages as they are: " + ", ".join(pin_requirements(pins)))
+                full += pin_requirements(pins)
             job.step("install", f"Downloading and installing {spec.name}…")
             job.log("$ " + (launch_command_text(full) or ""))
             job.percent = max(job.percent, 5.0)

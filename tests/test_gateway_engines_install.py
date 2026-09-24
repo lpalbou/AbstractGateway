@@ -329,6 +329,34 @@ def test_llamacpp_installs_the_metal_wheel_without_a_compiler(tmp_path) -> None:
     assert ["xcode-select", "-p"] not in sysd.calls  # no compiler question when a wheel exists
 
 
+def test_engine_installs_pin_the_gateway_packages_when_the_cache_path_has_a_space(tmp_path) -> None:
+    """uv splits a `--constraint` path at whitespace (a Windows cache under a
+    user name with a space); the pins are requirements of the same command."""
+    sysd = FakeSystem(tmp_path)
+    pins = {"abstractgateway": "0.4.2", "AbstractRuntime": "0.4.34", "abstractcore": "2.15.1"}
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "startswith('abstract')" in a[-1], lambda a: (0, json.dumps(pins)) if "-I" in a else (0, json.dumps({**pins, "abstractstray": "9.9.9"})))
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "mlx.core" in a[-1], lambda a: (0, '__AG_VERIFY__{"version": "0.30.0", "mlx_lm": "0.28.0", "device": "Device(gpu, 0)"}'))
+
+    def fake_uv(a):
+        for i, x in enumerate(a):
+            if x == "--constraint" and not Path(a[i + 1].split()[0]).exists():
+                return 2, f"error: File not found: `{a[i + 1].split()[0]}`"
+        return 0, "Installed 2 packages in 1s"
+
+    sysd.on(lambda a: a[:3] == ["/fake/uv", "pip", "install"], fake_uv)
+    inst = ei.EngineInstaller(
+        system=sysd, host=MAC, python="/gw/bin/python", cache_dir=tmp_path / "Users" / "Jane Doe" / "AppData" / "Local" / "AbstractGateway",
+        home=tmp_path / "home", system_apps_dir=tmp_path / "Applications", tools_poll_s=0.01, tools_wait_s=2.0, start_timeout_s=2.0,
+    )
+    reg = _registry(inst, tmp_path)
+    snap, _ = reg.start("mlx", force=True, run_inline=True)
+    job = reg.get(snap["job_id"]).snapshot()
+    assert job["state"] == "done", job
+    pip = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
+    assert pip == [["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "mlx-lm", "--only-binary", "mlx",
+                    "AbstractRuntime==0.4.34", "abstractcore==2.15.1", "abstractgateway==0.4.2"]]
+
+
 def test_an_importable_engine_is_already_installed_unless_forced(tmp_path) -> None:
     sysd = FakeSystem(tmp_path)
     sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "llama_cpp" in a[-1] and "gpu_offload" not in a[-1], lambda a: (0, '__AG_VERIFY__{"version": "0.3.35"}'))

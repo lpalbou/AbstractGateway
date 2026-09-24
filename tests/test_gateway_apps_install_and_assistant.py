@@ -305,8 +305,7 @@ def test_install_job_pins_the_gateway_packages_and_checks_the_result(amgr) -> No
 
     def runner(argv, *, on_line, cancelled, env=None):
         ran.append(list(argv))
-        c = argv[argv.index("--constraint") + 1]
-        pins_seen.append(Path(c).read_text(encoding="utf-8"))
+        pins_seen.extend(argv[6:])
         for line in ("Resolved 12 packages in 0.4s", "Downloading pyside6", "Installed 3 packages in 1.2s", " + abstractassistant==0.5.0"):
             on_line(line)
         state["files"] = {state["script"]}
@@ -318,10 +317,77 @@ def test_install_job_pins_the_gateway_packages_and_checks_the_result(amgr) -> No
     job, created = m.start_install("assistant", run_inline=True, same_machine=True)
     d = job.to_dict()
     assert created and d["state"] == "succeeded", d
+    log = job.log_path.read_text(encoding="utf-8")
     assert ran[0][:5] == ["/fake/uv", "pip", "install", "--python", "/venv/bin/python"] and ran[0][5] == "abstractassistant"
-    assert pins_seen == ["abstractcore==2.15.0\nabstractgateway==0.4.1\n"]
+    assert pins_seen == ["abstractcore==2.15.0", "abstractgateway==0.4.1"]  # requirements of the same command
+    assert "--constraint" not in ran[0]
+    assert "$ /fake/uv pip install --python /venv/bin/python abstractassistant abstractcore==2.15.0 abstractgateway==0.4.1" in log
     assert d["message"] == "Assistant 0.5.0 is installed." and d["result"]["location"] == state["script"]
     assert m.desktop_row("assistant")["installed"]
+
+
+# uv 0.11 splits a `--constraint` value at whitespace even when it is ONE argv
+# element, so a constraints file under `~/Library/Application Support/...`
+# failed with "File not found: `/Users/<name>/Library/Application`". This
+# stand-in behaves the same way, and records what it was given.
+_FAKE_UV = """#!{python}
+import json, os, sys
+args = sys.argv[1:]
+for i, a in enumerate(args):
+    if a == "--constraint" or a.startswith("--constraint="):
+        value = args[i + 1] if a == "--constraint" else a.split("=", 1)[1]
+        first = value.split()[0]
+        if not os.path.exists(first):
+            print("error: File not found: `" + first + "`")
+            sys.exit(2)
+with open({record!r}, "w", encoding="utf-8") as fh:
+    json.dump(args, fh)
+print("Resolved 3 packages in 0.1s")
+print("Installed 1 package in 0.2s")
+print(" + abstractassistant==0.5.0")
+"""
+
+
+def test_install_works_when_the_data_folder_path_has_a_space(tmp_path: Path, home: Path, fake_cli) -> None:
+    import sys
+
+    data = tmp_path / "Library" / "Application Support" / "AbstractGateway"
+    record = tmp_path / "uv-argv.json"
+    uv = fake_cli("uv", _FAKE_UV.format(python=sys.executable, record=str(record)))
+    m = am.AppsManager(data, urlopen=FakeNet())
+    state: Dict[str, Any] = {"files": set()}
+    script = str(tmp_path / "venv" / "bin" / "abstractassistant")
+    m.desktop_probes = lambda: _probes(tmp_path, files=state["files"], version="0.5.0" if state["files"] else None, plist=None)
+    m.desktop_find_uv = lambda: str(uv)
+    m.desktop_python = str(tmp_path / "Python Env" / "bin" / "python")
+    m.desktop_pins = lambda python: {"abstractgateway": "0.4.2", "abstractcore": "2.15.1"}
+
+    def runner(argv, *, on_line, cancelled, env=None):
+        code = desk.stream_command(argv, on_line=on_line, cancelled=cancelled, env=env)  # the real runner: Popen(list)
+        if code == 0:
+            state["files"] = {script}
+        return code
+
+    m.desktop_pip_runner = runner
+    d = m.start_install("assistant", run_inline=True, same_machine=True)[0].to_dict()
+    assert d["state"] == "succeeded", d
+    argv = json.loads(record.read_text(encoding="utf-8"))
+    assert argv == ["pip", "install", "--python", m.desktop_python, "abstractassistant", "abstractcore==2.15.1", "abstractgateway==0.4.2"]
+    assert not list(data.rglob("constraints-*"))
+
+
+def test_the_pins_probe_sees_only_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pins are installed as requirements, so the probe must not pick up a
+    checkout's `*.egg-info` from the gateway's working directory."""
+    import sys
+
+    info = tmp_path / "abstractstray.egg-info"
+    info.mkdir()
+    (info / "PKG-INFO").write_text("Metadata-Version: 2.1\nName: abstractstray\nVersion: 9.9.9\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    pins = desk.abstract_pins(sys.executable)
+    assert pins.get("abstractgateway")  # the probe works: the package under test is installed here
+    assert "abstractstray" not in pins, pins
 
 
 def test_install_job_failure_and_cancel(amgr) -> None:

@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - When the Models and Engines tabs cannot load, their card names AbstractCore
   2.15.1 as the version to install (it said 2.14.0, which lacks the cancel
   attribution the gateway uses).
+- Installing the Assistant (and engines) into the gateway's Python works when
+  the data folder's path contains a space, such as the macOS
+  `Application Support` folder.
 
 ## [0.4.2] - 2026-09-24
 
