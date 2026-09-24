@@ -438,7 +438,7 @@ def test_fresh_install_loads_with_no_provider_and_old_runtimes_keep_the_loud_ref
 
 
 def test_fresh_install_loads_when_the_seeded_default_has_no_weights_yet(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli
 ) -> None:
     """A CONFIGURED default whose weights are absent must not stop the host booting.
 
@@ -471,6 +471,35 @@ def test_fresh_install_loads_when_the_seeded_default_has_no_weights_yet(
     data = tmp_path / "runtime"
     data.mkdir()
 
+    # "LM Studio running, weights absent", on a fake: a loopback server whose
+    # /v1/models lists nothing. Without it the eager client build queried the
+    # operator's LIVE LM Studio on :1234 (network guard finding, 2026-09-24).
+    import http.server
+    import threading
+
+    class _EmptyModels(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - http.server API
+            body = json.dumps({"object": "list", "data": []}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    fake = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _EmptyModels)
+    threading.Thread(target=fake.serve_forever, daemon=True).start()
+    monkeypatch.setenv("LMSTUDIO_BASE_URL", f"http://127.0.0.1:{fake.server_address[1]}/v1")
+    # The weights probe behind the refusal's download hint runs `lms ls --json`.
+    # Without a stand-in it ran the operator's REAL `lms` (found on PATH under
+    # ~/.lmstudio/bin), a child process the socket guard cannot see (subprocess
+    # guard finding, mission FF 2026-09-24). The fake reports an empty library.
+    lms_calls = tmp_path / "lms-calls.txt"
+    lms = fake_cli("lms", f"#!/bin/sh\necho \"$@\" >> {lms_calls}\necho '[]'\n")
+    monkeypatch.setenv("ABSTRACTCORE_LMS_CLI", str(lms))
+
     # A configured default that cannot possibly build here: the exact shape of
     # "the seed named a model whose weights are not on this machine".
     monkeypatch.setenv("ABSTRACTGATEWAY_PROVIDER", "lmstudio")
@@ -497,6 +526,8 @@ def test_fresh_install_loads_when_the_seeded_default_has_no_weights_yet(
     assert "not found for LMStudio provider" in err, "the provider's own words survive"
     assert "configured default for text generation" in err
     assert "abstractcore config set-default" in err
+    fake.shutdown()
+    fake.server_close()
 
 
 def test_the_default_route_refusal_offers_the_download_when_weights_are_what_is_missing(

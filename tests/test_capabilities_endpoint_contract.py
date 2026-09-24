@@ -606,6 +606,15 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     import abstractgateway.routes.gateway as gateway_routes
 
     monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+    # "core.test" stands for a remote AbstractCore server that is not there.
+    # Answer "unavailable" here instead of resolving it on the real network
+    # (network guard finding, 2026-09-24).
+    import abstractgateway.core_config as _core_config
+
+    def _unreachable_core_server(method, path, body=None):
+        raise RuntimeError("AbstractCore config route unavailable: core.test is a stand-in")
+
+    monkeypatch.setattr(_core_config, "_core_server_json", _unreachable_core_server)
     # Image availability is defined by the configured `output.image` route only;
     # the remote core server env is NOT an image configuration.
     monkeypatch.setattr(

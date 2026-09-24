@@ -801,6 +801,15 @@ def _make_remote_client(
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+    # "core.test" stands for a remote AbstractCore server that is not there.
+    # Answer "unavailable" here instead of resolving it on the real network
+    # (network guard finding, 2026-09-24).
+    import abstractgateway.core_config as _core_config
+
+    def _unreachable_core_server(method, path, body=None):
+        raise RuntimeError("AbstractCore config route unavailable: core.test is a stand-in")
+
+    monkeypatch.setattr(_core_config, "_core_server_json", _unreachable_core_server)
     monkeypatch.delenv("ABSTRACTGATEWAY_PROVIDER", raising=False)
     monkeypatch.delenv("ABSTRACTGATEWAY_MODEL", raising=False)
 

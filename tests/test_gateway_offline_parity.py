@@ -448,14 +448,20 @@ def test_web_console_renders_every_capability_route_the_tui_does() -> None:
     assert 'id="modal-default-model-custom"' in gateway_console_html()
 
 # --------------------------------------------------------------------------
-# 7. Live API-level parity (skipped unless a gateway is reachable)
+# 7. Live API-level parity (opt-in: runs only against PARITY_GATEWAY_URL)
 # --------------------------------------------------------------------------
 
-_GW = os.environ.get("PARITY_GATEWAY_URL", "http://127.0.0.1:8080")
+# OPT-IN ONLY. This section used to default to http://127.0.0.1:8080 -- the
+# operator's live gateway -- so every plain suite run queried it (network guard
+# finding, 2026-09-24). It now runs only against a gateway named explicitly.
+_GW = os.environ.get("PARITY_GATEWAY_URL", "").strip().rstrip("/")
 _TOKEN = os.environ.get("PARITY_GATEWAY_TOKEN", "")
+_LIVE_PARITY = pytest.mark.network("live API parity against the gateway named by PARITY_GATEWAY_URL")
 
 
 def _live(path: str, timeout: float = 20.0):
+    if not _GW:
+        pytest.skip("live parity runs only against a gateway named by PARITY_GATEWAY_URL")
     req = urllib.request.Request(_GW + path, method="GET")
     req.add_header("Accept", "application/json")
     if _TOKEN:
@@ -481,6 +487,7 @@ def _live(path: str, timeout: float = 20.0):
         pytest.skip(f"no reachable gateway at {_GW}: {exc}")
 
 
+@_LIVE_PARITY
 @pytest.mark.parametrize(
     "path",
     ["/api/gateway/config/capability-defaults", "/api/gateway/config/provider-endpoint-profiles"],
@@ -494,6 +501,7 @@ def test_live_config_payloads_name_the_one_store(path: str) -> None:
     assert payload["authority"] == "abstractcore.local"
 
 
+@_LIVE_PARITY
 def test_live_unreachable_provider_discovery_is_bounded_and_honest() -> None:
     """Offline discovery must answer, not hang, and must not fake an empty catalog.
 

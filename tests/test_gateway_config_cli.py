@@ -39,6 +39,15 @@ def test_gateway_config_status_reports_boundaries(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "gateway-token")
     monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
+    # "core.test" stands for a remote AbstractCore server that is not there.
+    # Answer "unavailable" here instead of resolving it on the real network
+    # (network guard finding, 2026-09-24).
+    import abstractgateway.core_config as _core_config
+
+    def _unreachable_core_server(method, path, body=None):
+        raise RuntimeError("AbstractCore config route unavailable: core.test is a stand-in")
+
+    monkeypatch.setattr(_core_config, "_core_server_json", _unreachable_core_server)
     monkeypatch.setenv("ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_AUTH_TOKEN", "core-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_MEMORY_STORE_BACKEND", "sqlite")
 
