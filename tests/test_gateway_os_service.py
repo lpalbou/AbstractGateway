@@ -45,7 +45,8 @@ def test_launchd_plist(tmp_path: Path) -> None:
     assert plan.files[0]["path"] == str(home / "Library" / "LaunchAgents" / "ai.abstractframework.gateway.plist")
     pl = plistlib.loads(plan.files[0]["content"].encode("utf-8"))
     assert pl["Label"] == "ai.abstractframework.gateway"
-    assert pl["ProgramArguments"] == [*_exe(home), "serve", "--host", "127.0.0.1", "--port", "8080"]
+    # Plain `serve`: the Network setting binds it (2026-09-24, mission T).
+    assert pl["ProgramArguments"] == [*_exe(home), "serve"]
     assert Path(pl["ProgramArguments"][0]).is_absolute()
     assert pl["RunAtLoad"] is True and pl["KeepAlive"] == {"SuccessfulExit": False}
     env = pl["EnvironmentVariables"]
@@ -68,7 +69,7 @@ def test_systemd_user_unit(tmp_path: Path) -> None:
     plan = os_service.build_install_plan(platform="linux", home=home, host="127.0.0.1", port=8081, data_dir=data, exe_argv=_exe(home), env={})
     assert plan.files[0]["path"] == str(home / ".config" / "systemd" / "user" / "abstractgateway.service")
     unit = plan.files[0]["content"]
-    assert "ExecStart=%h/.local/bin/abstractgateway serve --host 127.0.0.1 --port 8081" in unit
+    assert "ExecStart=%h/.local/bin/abstractgateway serve\n" in unit
     assert "Environment=ABSTRACTGATEWAY_DATA_DIR=%h/.local/share/abstractgateway" in unit
     assert "Environment=PATH=%h/.local/bin:%h/.lmstudio/bin:/usr/local/bin" in unit
     assert "Restart=on-failure" in unit and "WantedBy=default.target" in unit
@@ -90,24 +91,46 @@ def test_systemd_quotes_paths_with_spaces(tmp_path: Path) -> None:
     assert 'WorkingDirectory="/srv/My Data/gw"' in unit
 
 
-def test_windows_startup_shortcut_is_experimental_and_hidden(tmp_path: Path) -> None:
+def test_windows_run_value_is_experimental_hidden_and_replaces_the_old_shortcut(tmp_path: Path) -> None:
     home = tmp_path / "Users" / "u"
     appdata = str(tmp_path / "Roaming")
-    data = tmp_path / "Local" / "AbstractGateway"
+    data = tmp_path / "Local" / "My Data" / "AbstractGateway"
     exe = [str(tmp_path / "venv" / "Scripts" / "python.exe"), "-m", "abstractgateway"]
     plan = os_service.build_install_plan(platform="win32", home=home, host="127.0.0.1", port=8080, data_dir=data, exe_argv=exe, env={"APPDATA": appdata})
-    assert plan.experimental is True
+    assert plan.experimental is True and plan.mechanism == "registry-run"
     assert plan.files == []
-    ps = plan.commands[0]
-    assert ps[:2] == ["powershell", "-NoProfile"] and "Bypass" in ps
-    script = ps[-1]
+    set_op, approved_op = plan.registry
+    assert set_op["op"] == "set" and set_op["key"] == r"Software\Microsoft\Windows\CurrentVersion\Run" and set_op["name"] == "AbstractGateway"
+    argv = os_service.windows_split(set_op["value"])
+    assert argv[0].endswith("pythonw.exe") and argv[1:4] == ["-m", "abstractgateway.os_service", "launch"]
+    assert argv[argv.index("--data-dir") + 1] == str(data)  # a path with a space survives the round trip
+    assert argv[-2:] == ["--", "serve"]
+    assert approved_op == {"op": "delete", "key": r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", "name": "AbstractGateway", "missing_ok": True}
     shortcut = str(Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "AbstractGateway.lnk")
-    assert shortcut in script
-    assert "pythonw.exe" in script and "abstractgateway.os_service launch" in script
-    assert "--port 8080" in script
-    start = plan.commands[1]
+    assert shortcut in plan.remove, "an older Startup shortcut would start a second gateway"
+    start = plan.commands[0]
     assert start[0] == "@start-detached" and start[1].endswith("pythonw.exe")
     assert any("EXPERIMENTAL" in n for n in plan.notes)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["C:\\Program Files\\Py\\pythonw.exe", "-m", "x", "--log-file", "C:\\Users\\A B\\log.txt"],
+        ["C:\\p.exe", 'say "hi"', "trailing\\", "a\\\\b", ""],
+        ["C:\\dir with space\\", "x"],
+    ],
+)
+def test_windows_command_line_round_trips(argv: List[str]) -> None:
+    assert os_service.windows_split(os_service.windows_join(argv)) == argv
+
+
+def test_xdg_exec_round_trips_quotes_dollars_and_percent(tmp_path: Path) -> None:
+    argv = ["/usr/bin/env", "PATH=/a b:/c", "/opt/py $x/bin/python", "-m", "m", "--data-dir", '/srv/"q"/100%']
+    content = os_service.render_xdg_desktop(launch_argv=argv)
+    exec_line = next(line for line in content.splitlines() if line.startswith("Exec="))
+    assert "100%%" in exec_line
+    assert os_service.desktop_exec_split(exec_line[len("Exec="):]) == argv
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
@@ -168,8 +191,9 @@ def test_no_start_keeps_registration_but_skips_starting(tmp_path: Path) -> None:
         plan = os_service.build_install_plan(platform=platform, home=home, host="127.0.0.1", port=8080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501, env={})
         assert os_service.without_start(plan) == expected
     wplan = os_service.build_install_plan(platform="win32", home=home, host="127.0.0.1", port=8080, data_dir=tmp_path / "d", exe_argv=_exe(home), env={"APPDATA": str(tmp_path)})
-    kept = os_service.without_start(wplan)
-    assert len(kept) == 1 and kept[0][0] == "powershell"
+    assert os_service.without_start(wplan) == [] and wplan.registry, "the Run value is the registration; only the start is skipped"
+    xplan = os_service.build_install_plan(platform="linux", home=home, host="127.0.0.1", port=8080, data_dir=tmp_path / "d", exe_argv=_exe(home), env={}, linux_mechanism="xdg")
+    assert os_service.without_start(xplan) == [] and xplan.files
 
 
 def test_port_choice_prefers_flag_then_persisted_then_first_free() -> None:
@@ -183,9 +207,10 @@ def test_port_choice_prefers_flag_then_persisted_then_first_free() -> None:
         os_service.choose_port(host="127.0.0.1", requested=None, persisted=None, free=lambda _h, _p: False)
 
 
-def test_non_loopback_install_warns_about_auth(tmp_path: Path) -> None:
-    plan = os_service.build_install_plan(platform="linux", home=tmp_path, host="0.0.0.0", port=8080, data_dir=tmp_path / "d", exe_argv=_exe(tmp_path), env={})
+def test_non_loopback_pinned_install_warns_about_auth(tmp_path: Path) -> None:
+    plan = os_service.build_install_plan(platform="linux", home=tmp_path, host="0.0.0.0", port=8080, data_dir=tmp_path / "d", exe_argv=_exe(tmp_path), env={}, pinned=True)
     assert any("refuses to start without explicit auth" in n for n in plan.notes)
+    assert any("--pin-command-line" in n and "does NOT apply" in n for n in plan.notes)
 
 
 def test_windows_launcher_redirects_output_and_runs_the_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -214,3 +239,163 @@ def test_windows_launcher_redirects_output_and_runs_the_cli(tmp_path: Path, monk
 def test_current_gateway_argv_is_absolute() -> None:
     argv = os_service.current_gateway_argv()
     assert Path(argv[0]).is_absolute()
+
+
+# ---------------------------------------------------------------------------
+# Mission T (2026-09-24): the login item runs plain `serve`; the bind is the
+# Network setting, seeded at install/enable; --pin-command-line is the old shape.
+# ---------------------------------------------------------------------------
+
+
+def _setting(data: Path) -> dict:
+    from abstractgateway.runtime_config import resolve_network_setting
+
+    return resolve_network_setting(data, env={})
+
+
+_QUIET = {"discover": lambda: ([], "test"), "hostname_fn": lambda: None}
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux", "linux-xdg", "win32"])
+def test_every_os_registers_plain_serve_unless_pinned(tmp_path: Path, platform: str) -> None:
+    home = tmp_path / "home"
+    plat, lm = ("linux", "xdg") if platform == "linux-xdg" else (platform, None)
+    env = {"APPDATA": str(tmp_path / "Roaming")}
+
+    def served(plan) -> List[str]:
+        if plan.registry:
+            argv = os_service.windows_split(plan.registry[0]["value"])
+        elif plan.files[0]["path"].endswith(".plist"):
+            argv = plistlib.loads(plan.files[0]["content"].encode())["ProgramArguments"]
+        elif plan.files[0]["path"].endswith(".desktop"):
+            line = next(x for x in plan.files[0]["content"].splitlines() if x.startswith("Exec="))
+            argv = os_service.desktop_exec_split(line[5:])
+        else:
+            line = next(x for x in plan.files[0]["content"].splitlines() if x.startswith("ExecStart="))
+            argv = line[len("ExecStart="):].split(" ")
+        return argv[argv.index("serve"):]
+
+    kw = dict(platform=plat, home=home, host="127.0.0.1", port=18871, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501, env=env, linux_mechanism=lm)
+    plain = os_service.build_install_plan(**kw)
+    assert served(plain) == ["serve"]
+    assert plain.public_dict()["bind_source"] == "network_setting" and plain.public_dict()["serve_args"] == ["serve"]
+    pinned = os_service.build_install_plan(**kw, pinned=True)
+    assert served(pinned) == ["serve", "--host", "127.0.0.1", "--port", "18871"]
+    assert pinned.public_dict()["pinned_command_line"] is True
+
+
+def test_resolve_seeds_localhost_on_the_first_free_port_like_the_old_default(tmp_path: Path) -> None:
+    free = lambda _h, p: p != 8080  # noqa: E731
+    bind = os_service.resolve_service_bind(tmp_path, env={}, free=free)
+    assert bind["pinned"] is False and bind["host"] == "127.0.0.1" and bind["port"] == 8081
+    assert bind["mode"] == "localhost" and bind["mode_source"] == "default" and bind["busy_skipped"] == [8080]
+    assert bind["seed"] == {"mode": "localhost", "port": 8081}
+    out = os_service.seed_network_setting(tmp_path, bind, actor="test", env={}, status_kwargs=_QUIET)
+    assert out["action"] == "seeded"
+    st = _setting(tmp_path)
+    assert (st["mode"], st["source"], st["port"], st["port_source"]) == ("localhost", "stored", 8081, "stored")
+    # Stored now: a second resolve has nothing to write.
+    again = os_service.resolve_service_bind(tmp_path, env={}, free=free)
+    assert again["seed"] is None and again["port_source"] == "stored"
+    assert os_service.seed_network_setting(tmp_path, again, actor="test", env={})["action"] == "unchanged"
+
+
+def test_resolve_keeps_a_stored_lan_and_its_port(tmp_path: Path) -> None:
+    from abstractgateway.network_exposure import apply_network_change
+
+    assert apply_network_change(tmp_path, mode="lan", port=18872, actor="t", env={}, in_process=False, status_kwargs=_QUIET)[0] == 200
+    bind = os_service.resolve_service_bind(tmp_path, running_port=9999, env={}, free=lambda *_: pytest.fail("no probe"))
+    assert (bind["mode"], bind["host"], bind["port"], bind["seed"]) == ("lan", "0.0.0.0", 18872, None)
+
+
+def test_host_and_port_flags_go_into_the_setting(tmp_path: Path) -> None:
+    from abstractgateway.network_exposure import apply_network_change
+
+    apply_network_change(tmp_path, mode="lan", port=18872, actor="t", env={}, in_process=False, status_kwargs=_QUIET)
+    bind = os_service.resolve_service_bind(tmp_path, host="127.0.0.1", port=18873, env={})
+    assert bind["seed"] == {"mode": "localhost", "port": 18873} and bind["mode_source"] == "flag"
+    os_service.seed_network_setting(tmp_path, bind, actor="t", env={}, status_kwargs=_QUIET)
+    assert (_setting(tmp_path)["mode"], _setting(tmp_path)["port"]) == ("localhost", 18873)
+    wild = os_service.resolve_service_bind(tmp_path, host="0.0.0.0", env={})
+    assert wild["mode"] == "lan" and wild["port"] == 18873
+    with pytest.raises(SystemExit) as e:
+        os_service.resolve_service_bind(tmp_path, host="192.168.1.20", env={})
+    assert "--pin-command-line" in str(e.value)
+
+
+def test_pin_command_line_never_touches_the_setting(tmp_path: Path) -> None:
+    bind = os_service.resolve_service_bind(tmp_path, host="192.168.1.20", port=18874, pin_command_line=True, env={})
+    assert bind["pinned"] is True and bind["seed"] is None and (bind["host"], bind["port"]) == ("192.168.1.20", 18874)
+    assert os_service.seed_network_setting(tmp_path, bind, actor="t", env={})["action"] == "pinned"
+    assert _setting(tmp_path)["source"] == "default"
+
+
+def test_a_refused_mode_is_loud_and_writes_nothing(tmp_path: Path) -> None:
+    # A token-only posture stated by the operator: `lan` needs user auth.
+    env = {"ABSTRACTGATEWAY_AUTH_TOKEN": "x" * 40, "ABSTRACTGATEWAY_USER_AUTH": "0"}
+    bind = os_service.resolve_service_bind(tmp_path, host="0.0.0.0", env=env)
+    with pytest.raises(SystemExit) as e:
+        os_service.seed_network_setting(tmp_path, bind, actor="t", env=env, status_kwargs=_QUIET)
+    assert "refused 'lan'" in str(e.value) and "Nothing was registered" in str(e.value)
+    assert _setting(tmp_path)["source"] == "default"
+
+
+def _install_args(**over):
+    import argparse
+
+    base = dict(service_cmd="install", data_dir=None, json=True, host=None, port=18875, pin_command_line=False, dry_run=False, no_start=False, no_wait=True, wait_s=1.0, no_claim=True)
+    base.update(over)
+    return argparse.Namespace(**base)
+
+
+def test_cli_install_seeds_the_setting_and_records_the_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from abstractgateway import network_exposure
+    from abstractgateway.firstrun_cli import run_service
+
+    home, data = tmp_path / "home", tmp_path / "data"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
+    monkeypatch.setattr(network_exposure, "discover_interfaces", _QUIET["discover"])
+    monkeypatch.setattr(network_exposure, "bonjour_hostname", _QUIET["hostname_fn"])
+    rec = _Recorder({("launchctl", "bootout"): 36})
+    monkeypatch.setattr(os_service, "_default_runner", rec)
+    monkeypatch.setattr(os_service, "current_gateway_argv", lambda platform=None: _exe(home))
+
+    assert run_service(_install_args(), platform="darwin", home=home) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["serve_args"] == ["serve"] and out["network_seed"]["action"] == "seeded"
+    pl = plistlib.loads(Path(out["files"][0]["path"]).read_bytes())
+    assert pl["ProgramArguments"][1:] == ["serve"]
+    assert (_setting(data)["mode"], _setting(data)["port"]) == ("localhost", 18875)
+    assert os_service.read_service_record(data)["pinned"] is False
+
+    assert run_service(_install_args(port=18876, host="127.0.0.1", pin_command_line=True), platform="darwin", home=home) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["serve_args"] == ["serve", "--host", "127.0.0.1", "--port", "18876"]
+    assert out["network_seed"]["action"] == "pinned" and _setting(data)["port"] == 18875
+    assert os_service.read_service_record(data)["pinned"] is True
+
+
+def test_cli_dry_run_reports_the_seed_and_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from abstractgateway.firstrun_cli import run_service
+
+    home, data = tmp_path / "home", tmp_path / "data"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
+    monkeypatch.setattr(os_service, "_default_runner", lambda argv: pytest.fail(f"dry-run ran {argv}"))
+    assert run_service(_install_args(dry_run=True, json=False), platform="linux", home=home) == 0
+    text = capsys.readouterr().out
+    assert "Network setting: stores 'localhost'" in text and "on port 18875" in text
+    assert " serve --host" not in text and not data.exists()
+
+
+def test_service_parser_accepts_pin_command_line_and_defaults_host_to_none() -> None:
+    import argparse
+
+    from abstractgateway.firstrun_cli import add_service_subparser
+
+    parser = argparse.ArgumentParser()
+    add_service_subparser(parser.add_subparsers(dest="cmd"))
+    for verb in ("install", "enable"):
+        ns = parser.parse_args(["service", verb])
+        assert ns.host is None and ns.port is None and ns.pin_command_line is False
+        ns = parser.parse_args(["service", verb, "--host", "0.0.0.0", "--port", "9", "--pin-command-line"])
+        assert (ns.host, ns.port, ns.pin_command_line) == ("0.0.0.0", 9, True)

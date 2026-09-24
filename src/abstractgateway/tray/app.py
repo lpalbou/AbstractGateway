@@ -13,6 +13,7 @@ instead (updating it is harmless everywhere).
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -22,35 +23,49 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional
 
-from . import dialogs, platform as plat
+from . import apps as tray_apps, dialogs, menu_model, platform as plat
 from .client import GatewayClient, Result
 from .icons import icon_signature, master_size_for_platform, render_icon
-from .sampler import ModelRow, RunRow, Sampler, Snapshot, fmt_bytes, fmt_pct
+from .menu_model import (  # noqa: F401 - re-exported: the copy helpers live with the pure menu model
+    APP_NAME,
+    DOCS_URL,
+    ISSUES_URL,
+    MENU_RUN_ROWS,
+    RUN_BADGE_UNKNOWN,
+    RUN_BADGES,
+    STATE_WORDS,
+    AutostartView,
+    MenuInputs,
+    ModelsView,
+    Node,
+    fmt_duration,
+    model_row_label,
+    run_row_label,
+    run_tally,
+    state_lines,
+)
+from .menu_model import middle_ellipsis as _middle_ellipsis  # noqa: F401
+from .menu_model import provider_label as _provider_label  # noqa: F401
+from .menu_model import workflow_menu_name as _workflow_menu_name  # noqa: F401
+from .sampler import ModelRow, RunRow, Sampler, Snapshot, fmt_bytes, fmt_pct  # noqa: F401 - RunRow re-exported
 
 logger = logging.getLogger("abstractgateway.tray")
 
-APP_NAME = "AbstractGateway"
-DOCS_URL = "https://www.lpalbou.info/AbstractGateway/"
-ISSUES_URL = "https://github.com/lpalbou/abstractgateway/issues"
 TWO_STEP_SECONDS = 8.0
 MENU_VALUE_REBUILD_MIN_S = 15.0
-MENU_RUN_ROWS = 8  # a menu is a glance; the console is the list
 MEMORY_WARN_PCT = 90.0
 MEMORY_WARN_SUSTAIN_S = 30
 MEMORY_WARN_COOLDOWN_S = 3600.0
-
-STATE_WORDS = {
-    "running": "Running",
-    "pausing": "Pausing…",
-    "paused": "Paused",
-    "starting": "Starting…",
-    "restarting": "Restarting…",
-    "updating": "Updating…",
-    "stopping": "Quitting…",
-    "unreachable": "Not responding",
-}
+# The Apps / Models / Start-at-login data (the "extras") refresh on their own
+# slow clock — none of it drives the icon, and /models/installed walks the
+# whole HF cache and asks LM Studio/Ollama.
+EXTRAS_APPS_EVERY_S = 30.0
+EXTRAS_MODELS_EVERY_S = 300.0
+EXTRAS_AUTOSTART_EVERY_S = 60.0
+EXTRAS_NETWORK_EVERY_S = 30.0
+APP_READY_TIMEOUT_S = 30.0
 
 
 def _ready_line(ready: bool, *, reason: Optional[str] = None, hint: Optional[str] = None) -> None:
@@ -65,136 +80,6 @@ def _ready_line(ready: bool, *, reason: Optional[str] = None, hint: Optional[str
         sys.stdout.flush()
     except Exception:
         pass
-
-
-def _middle_ellipsis(text: str, limit: int = 32) -> str:
-    s = str(text)
-    if len(s) <= limit:
-        return s
-    keep = limit - 1
-    head = keep // 2
-    tail = keep - head
-    return s[:head] + "…" + s[-tail:]
-
-
-def _provider_label(provider: str) -> str:
-    p = str(provider or "").strip()
-    names = {"lmstudio": "LM Studio", "ollama": "Ollama", "mlx": "MLX", "huggingface": "Hugging Face", "openai": "OpenAI", "anthropic": "Anthropic", "vllm": "vLLM", "llamacpp": "llama.cpp"}
-    return names.get(p.lower(), p)
-
-
-def model_row_label(row: ModelRow) -> str:
-    bits = [_middle_ellipsis(row.name), fmt_bytes(row.size_bytes) if row.size_bytes is not None else "size unknown", _provider_label(row.provider)]
-    if row.locked:
-        bits.append("kept in memory")
-    return " · ".join(bits)
-
-
-# A tray menu item is PLAIN TEXT on every platform pystray supports — there is
-# no per-item colour to set. An emoji is the only badge that actually renders,
-# and these five read at a glance without needing the word next to them.
-RUN_BADGES = {
-    "running": "🟢",
-    "waiting": "🟡",
-    "completed": "✅",
-    "failed": "❌",
-    "cancelled": "⚪️",
-}
-RUN_BADGE_UNKNOWN = "◦"
-
-
-def fmt_duration(seconds: Optional[float]) -> str:
-    """Coarse on purpose: a glance wants "2m 13s", never "133.42 s"."""
-    if seconds is None or seconds < 0:
-        return ""
-    total = int(seconds)
-    if total < 60:
-        return f"{total}s"
-    if total < 3600:
-        return f"{total // 60}m {total % 60:02d}s"
-    return f"{total // 3600}h {(total % 3600) // 60:02d}m"
-
-
-def _workflow_menu_name(workflow_id: str) -> str:
-    """What a person calls this workflow.
-
-    The gateway already decoded the catalog id, so what arrives is
-    `bundle:flow`. A flow id that is a bare hex hash (`c53b1579`) is generated,
-    not named — it identifies nothing to a reader and costs nine characters
-    the bundle name needs, so it goes; a NAMED flow (`react-coding:coder`)
-    stays, because there it is the half that says what ran.
-
-    The trim keeps the HEAD: for a workflow the identity is the front of the
-    name, unlike a model id where the `@4bit` tail is what tells builds apart.
-    """
-    name = str(workflow_id or "").strip()
-    bundle, sep, flow = name.partition(":")
-    if sep and flow and len(flow) >= 6 and all(c in "0123456789abcdef" for c in flow.lower()):
-        name = bundle
-    return name if len(name) <= 34 else name[:33] + "…"
-
-
-def run_row_label(row: RunRow) -> str:
-    """`✅ coding-agent:coder · 12 steps · 2m 13s`.
-
-    The workflow name is the elastic part: it is what tells two runs apart, but
-    the badge, the step count and the duration are what the operator came for,
-    so they are never squeezed out by a long bundle name.
-    """
-    badge = RUN_BADGES.get(row.status, RUN_BADGE_UNKNOWN)
-    bits = [f"{badge} {_workflow_menu_name(row.workflow_id)}"]
-    if row.steps is not None:
-        bits.append(f"{row.steps} step" + ("" if row.steps == 1 else "s"))
-    duration = fmt_duration(row.duration_s)
-    if duration:
-        bits.append(duration if row.status != "running" else f"{duration} so far")
-    return " · ".join(bits)
-
-
-def run_tally(rows: Sequence[RunRow]) -> str:
-    """The submenu's first line: what the last day amounted to."""
-    if not rows:
-        return "No runs in the last 24 hours"
-    counts: Dict[str, int] = {}
-    for row in rows:
-        counts[row.status] = counts.get(row.status, 0) + 1
-    order = ("running", "waiting", "completed", "failed", "cancelled")
-    words = {"running": "running", "waiting": "waiting", "completed": "done", "failed": "failed", "cancelled": "cancelled"}
-    parts = [f"{counts[st]} {words[st]}" for st in order if counts.get(st)]
-    parts += [f"{n} {st}" for st, n in sorted(counts.items()) if st not in order]
-    return f"Last 24 hours — {' · '.join(parts)}"
-
-
-def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Optional[str] = None) -> tuple[str, str]:
-    """(header, detail) — the two disabled lines at the top of the menu."""
-    st = snap.gateway_state
-    header = f"{APP_NAME} — {STATE_WORDS.get(st, st.title())}"
-    if st == "running":
-        n = len(snap.models)
-        if n == 0:
-            detail = "Ready · no models loaded"
-        else:
-            total = f" · {fmt_bytes(snap.models_total_bytes)}" if snap.models_total_bytes else ""
-            detail = f"Ready · {n} model{'s' if n != 1 else ''} loaded{total}"
-        if snap.inflight_ticks > 0:
-            detail = f"Working on {snap.inflight_ticks} step{'s' if snap.inflight_ticks != 1 else ''}" + (f" · {n} model{'s' if n != 1 else ''} loaded" if n else "")
-    elif st == "pausing":
-        n = snap.inflight_ticks
-        if snap.step_gate_supported is False:
-            detail = f"Finishing {n} run{'s' if n != 1 else ''} (older runtime: up to 100 steps each), then pausing"
-        else:
-            detail = f"Finishing {n} run{'s' if n != 1 else ''} at the next step, then pausing"
-    elif st == "paused":
-        detail = "Still running — workflows wait until you resume"
-    elif st in {"starting", "restarting"}:
-        detail = "Usually a few seconds"
-    elif st == "updating":
-        detail = f"Installing {update_latest or 'the update'} · workflows keep running"
-    elif st == "stopping":
-        detail = "Stopping workflows and the console"
-    else:
-        detail = "Can't reach it on this computer · retrying"
-    return header, detail
 
 
 def tooltip_text(snap: Snapshot) -> str:
@@ -215,8 +100,9 @@ def tooltip_text(snap: Snapshot) -> str:
     return text[:120]
 
 
-def menu_signature(snap: Snapshot, *, update_phase: str, pending: Optional[str], tk_available: bool) -> tuple:
-    """When this changes, the menu is rebuilt (see the module docstring)."""
+def menu_signature(snap: Snapshot, *, update_phase: str, pending: Optional[str], tk_available: bool, extras: tuple = ()) -> tuple:
+    """When this changes, the menu is rebuilt (see the module docstring).
+    `extras` = the Apps / Models / Start-at-login data (`TrayApp._extras_signature`)."""
     mem_bucket = None if snap.mem_pct is None else int(snap.mem_pct // 5)
     gpu_bucket = None if snap.gpu_pct is None else int(snap.gpu_pct // 10)
     mem_total_bucket = None if not snap.mem_total else int(snap.mem_total // (1 << 30))
@@ -239,6 +125,7 @@ def menu_signature(snap: Snapshot, *, update_phase: str, pending: Optional[str],
         update_phase,
         pending,
         tk_available,
+        extras,
     )
 
 
@@ -251,9 +138,65 @@ def tkinter_available(python: Optional[str] = None) -> bool:
         return False
 
 
+def _host_port(base_url: str) -> tuple:
+    """(host, port) of the gateway this tray belongs to — what start-at-login registers."""
+    import urllib.parse
+
+    u = urllib.parse.urlsplit(base_url)
+    return (u.hostname or "127.0.0.1"), int(u.port or (443 if u.scheme == "https" else 80))
+
+
+def _app_name(app_id: str) -> str:
+    if app_id == tray_apps.ASSISTANT_ID:
+        return tray_apps.ASSISTANT_NAME
+    try:
+        return tray_apps.web_app_spec(app_id)[1]
+    except StopIteration:
+        return app_id
+
+
+def _load_failure_detail(r: Result) -> str:
+    """The FULL reason a load failed: the in-band `{success: false, error}`
+    envelope as well as an HTTP error (ADR-0026: failures carry the reason)."""
+    d = r.data if isinstance(r.data, dict) else {}
+    bits: List[str] = []
+    err = d.get("error")
+    if isinstance(err, dict):
+        bits += [str(err.get(k)) for k in ("message", "detail", "code") if err.get(k)]
+    elif isinstance(err, str) and err.strip():
+        bits.append(err.strip())
+    for k in ("message", "detail", "reason"):
+        v = d.get(k)
+        if isinstance(v, str) and v.strip() and v.strip() not in bits:
+            bits.append(v.strip())
+    if not bits:
+        bits.append(r.detail)
+    return " — ".join(bits)
+
+
+def _wait_http(url: str, proc: Any, timeout_s: float) -> bool:
+    """Bounded readiness poll of a process we started (any HTTP answer = up)."""
+    import urllib.error
+    import urllib.request
+
+    deadline = time.monotonic() + float(timeout_s)
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return False
+        try:
+            with urllib.request.urlopen(url, timeout=2.0):  # noqa: S310 - loopback URL we just started
+                return True
+        except urllib.error.HTTPError:
+            return True
+        except Exception:
+            time.sleep(0.5)
+    return False
+
+
 class Prefs:
     """Tiny per-machine helper preferences (NOT gateway settings): whether the
-    pause explanation was shown once, and the memory warning switch."""
+    pause explanation was shown once, the memory warning switch, and
+    `flat_menu` (no submenus — for Linux panels that drop them)."""
 
     def __init__(self, data_dir: Optional[Path]) -> None:
         self._path = (Path(data_dir) / "tray" / "prefs.json") if data_dir else None
@@ -308,6 +251,22 @@ class TrayApp:
         self._last_title: Optional[str] = None
         self._last_state: Optional[str] = None
         self._last_menu_rebuild_at = 0.0
+        # Extras: Apps / Models / Start at login (see _extras_loop).
+        self._extras_wake = threading.Event()
+        self._autostart: Optional[AutostartView] = None
+        self._autostart_busy = False
+        self._apps: tuple = ()
+        self._apps_fetched = False
+        self._app_launches: Dict[str, Any] = {}  # argv per app id (global web apps, Assistant)
+        self._global_procs: Dict[str, tuple] = {}  # app id -> (Popen, url) for global web apps started here
+        self._models_view = ModelsView()
+        self._loading: Dict[str, str] = {}  # provider/model -> label, while a load runs
+        self._ejecting: set = set()
+        self._menu_has_menu = True  # pystray backend draws a menu at all (xorg does not)
+        self._network = menu_model.NetworkView()
+        self._network_busy = False
+        self._npm_root: Optional[str] = None
+        self._npm_root_at = -1e9
 
     # ------------------------------------------------------------------ run
 
@@ -340,22 +299,33 @@ class TrayApp:
             logger.error("tray icon could not be created: %s", exc)
             _ready_line(False, reason=f"no system tray available here ({type(exc).__name__}: {exc})")
             return 4
+        self._menu_has_menu = bool(getattr(self._icon, "HAS_MENU", True))
         self.sampler.add_listener(self._on_snapshot)
         self.sampler.start()
         threading.Thread(target=self._watchdog, name="tray-watchdog", daemon=True).start()
         threading.Thread(target=self._stdin_watch, name="tray-stdin", daemon=True).start()
+        threading.Thread(target=self._extras_loop, name="tray-extras", daemon=True).start()
         self._install_signals()
 
         def _setup(icon: Any) -> None:
             icon.visible = True
             _ready_line(True)
+            if not self._menu_has_menu:
+                # pystray's xorg backend has no menu at all: say where the controls are.
+                self._notify(
+                    f"{APP_NAME} is running",
+                    "This desktop's tray shows no menu: click the icon to open the console. Start at login, apps and models: "
+                    "`abstractgateway service enable`, `abstractgateway apps`, `abstractgateway models`.",
+                )
 
         try:
             self._icon.run(setup=_setup)
         finally:
             self._stopping = True
+            self._extras_wake.set()
             self.sampler.stop()
             self._close_activity_window()
+            self._stop_global_apps()
         return 0
 
     def _stdin_watch(self) -> None:
@@ -491,7 +461,7 @@ class TrayApp:
         # Menu (rebuilt only on coarse changes; value-only changes are
         # additionally rate-limited off macOS, where a rebuild closes an
         # open menu under the cursor)
-        msig = menu_signature(snap, update_phase=self._update_phase, pending=(self._pending or {}).get("key"), tk_available=self._tk)
+        msig = menu_signature(snap, update_phase=self._update_phase, pending=(self._pending or {}).get("key"), tk_available=self._tk, extras=self._extras_signature())
         rebuild = False
         if msig != self._last_menu_sig:
             structural = (msig[:4] + msig[7:]) != ((self._last_menu_sig or ())[:4] + (self._last_menu_sig or ())[7:]) if self._last_menu_sig else True
@@ -548,8 +518,8 @@ class TrayApp:
                 self._mem_warned_at = now
                 # Names a place that EXISTS on this machine: the Activity
                 # window is only in the menu where tkinter can draw it, and
-                # "Loaded Models" is always there.
-                self._notify("Memory is almost full", "Unloading a model or closing other apps will help. The menu's Loaded Models list shows what is using it.")
+                # "Models" is always there.
+                self._notify("Memory is almost full", "Ejecting a model or closing other apps will help. The menu's Models list shows what is using it.")
         else:
             self._mem_high_since = None
 
@@ -562,130 +532,561 @@ class TrayApp:
 
     # ------------------------------------------------------------- the menu
 
-    def _menu_items(self):
-        import pystray
-
-        MI, SEP = pystray.MenuItem, pystray.Menu.SEPARATOR
+    def menu_inputs(self) -> MenuInputs:
+        """Everything the pure menu model reads, as one immutable value."""
         snap = self._snap or self.sampler.snapshot()
-        st = snap.gateway_state
-        reachable = st not in {"unreachable", "starting", "restarting", "stopping"}
-        header, detail = state_lines(snap, update_phase=self._update_phase, update_latest=self._update_latest)
-
-        yield MI(header, None, enabled=False)
-        yield MI(detail, None, enabled=False)
-        if self._pending:
-            yield SEP
-            yield MI(f"Confirm: {self._pending['label']}", self._act(self._run_pending))
-        yield SEP
-        # ONE door to the console (operator ruling 2026-09-06). "Show Activity
-        # in Console" was a second item that opened the same browser at a
-        # different anchor — two entries for one destination, and the first
-        # thing a new user has to choose between. The Activity WINDOW is a
-        # different thing (a native window, no browser) and stays where tkinter
-        # can render it.
-        yield MI("Open Console", self._act(self.open_console), default=True, enabled=reachable or st == "unreachable")
-        if self._tk:
-            yield MI("Show Activity Window…", self._act(self.show_activity))
-        yield SEP
-        # WORKFLOWS: what this machine has been doing, then the one control
-        # over it. Pause/Resume is deliberately the LAST item of this group —
-        # it is the high-level "stop everything and let me look" lever, and it
-        # reads as one only next to the list of what would stop.
-        yield MI("Workflows", pystray.Menu(self._workflow_items), enabled=reachable)
-        if snap.paused or st == "pausing":
-            yield MI("Resume Workflows", self._act(self.resume), enabled=reachable)
-        else:
-            yield MI("Pause Workflows", self._act(self.pause), enabled=reachable)
-        yield SEP
-        if snap.mem_supported and (snap.mem_used is not None and snap.mem_total):
-            yield MI(f"Memory   {fmt_bytes(snap.mem_used)} of {fmt_bytes(snap.mem_total)} ({fmt_pct(snap.mem_pct)})", None, enabled=False)
-        elif snap.mem_pct is not None:
-            yield MI(f"Memory   {fmt_pct(snap.mem_pct)}", None, enabled=False)
-        if snap.gpu_supported and snap.gpu_pct is not None:
-            yield MI(f"GPU   {fmt_pct(snap.gpu_pct)} busy", None, enabled=False)
-        yield MI(f"Loaded Models ({len(snap.models)})", pystray.Menu(self._model_items), enabled=reachable)
-        yield SEP
-        yield MI(self._update_label(), self._act(self.check_or_apply_update), enabled=reachable and self._update_phase not in {"checking", "updating"} and not snap.update_job_running)
-        yield MI(f"Restart {APP_NAME}…", self._act(self.restart), enabled=reachable and snap.can_restart)
-        yield MI(
-            "Help",
-            pystray.Menu(
-                # NO "(needs internet)" / "(on this computer)" suffixes
-                # (operator ruling 2026-09-06). A menu item names the thing it
-                # opens; annotating where it lives is noise the reader has to
-                # step over every time, and the browser says so anyway the one
-                # time it matters.
-                MI("Documentation", self._act(lambda: plat.open_url(DOCS_URL))),
-                MI("Report a Problem…", self._act(lambda: plat.open_url(ISSUES_URL))),
-                MI("Developer API Reference", self._act(lambda: plat.open_url(self.base_url + "/docs"))),
-                MI("Copy Console Link", self._act(self.copy_console_link)),
-                MI("Warn when memory is almost full", self._act(self.toggle_memory_warn), checked=lambda _i: bool(self.prefs.data.get("memory_warn", True))),
-                SEP,
-                MI(f"About {APP_NAME}…", self._act(self.about)),
+        mv = self._models_view
+        return MenuInputs(
+            snap=snap,
+            update_phase=self._update_phase,
+            update_latest=self._update_latest,
+            pending_label=(self._pending or {}).get("label"),
+            tk_available=self._tk,
+            memory_warn=bool(self.prefs.data.get("memory_warn", True)),
+            autostart=(dataclasses.replace(self._autostart, busy=True) if (self._autostart is not None and self._autostart_busy) else self._autostart),
+            apps=tuple(self._apps),
+            apps_fetched=self._apps_fetched,
+            models=ModelsView(
+                installed=mv.installed,
+                installed_error=mv.installed_error,
+                defaults=mv.defaults,
+                fetched=mv.fetched,
+                loading=tuple(sorted(self._loading)),
+                ejecting=tuple(sorted(self._ejecting)),
             ),
+            base_url=self.base_url,
+            network=dataclasses.replace(self._network, busy=self._network_busy),
         )
-        yield SEP
-        # NO "Hide the icon" ITEM (operator ruling 2026-09-06). The icon IS
-        # the gateway's presence on the desktop: while it runs, it is there.
-        # An icon a user can make disappear is an icon a user loses — and the
-        # only way back was a console setting they had no reason to look for.
-        if st == "unreachable":
-            yield MI(f"Force Quit {APP_NAME}…", self._act(self.force_quit))
+
+    def _menu_items(self):
+        """pystray asks for the items on every rebuild: build the pure model,
+        render it. `flat_menu` (tray prefs) is the explicit degrade for panels
+        that drop submenus."""
+        nodes = menu_model.build_menu(self.menu_inputs())
+        if self.prefs.data.get("flat_menu"):
+            nodes = menu_model.flatten(nodes)
+        for item in self._render_nodes(nodes):
+            yield item
+
+    def _render_nodes(self, nodes) -> List[Any]:
+        import pystray
+
+        out: List[Any] = []
+        for n in nodes:
+            if n.separator:
+                out.append(pystray.Menu.SEPARATOR)
+                continue
+            kw: Dict[str, Any] = {"enabled": bool(n.enabled)}
+            if n.default:
+                kw["default"] = True
+            if n.radio:
+                kw["radio"] = True
+            if n.checked is not None:
+                kw["checked"] = (lambda value: (lambda _i: value))(bool(n.checked))
+            if n.children is not None:
+                out.append(pystray.MenuItem(n.label, pystray.Menu(*self._render_nodes(n.children)), **kw))
+            elif n.action is not None:
+                out.append(pystray.MenuItem(n.label, self._act((lambda a: (lambda: self.dispatch(a)))(n.action)), **kw))
+            else:
+                kw["enabled"] = False
+                out.append(pystray.MenuItem(n.label, None, **kw))
+        return out
+
+    def dispatch(self, action: tuple) -> None:
+        """Menu node action → method. An unknown action is a bug: loud."""
+        name, args = action[0], tuple(action[1:])
+        fn = self.dispatch_table().get(str(name))
+        if fn is None:
+            raise KeyError(f"tray: no handler for menu action {action!r}")
+        fn(*args)
+
+    def dispatch_table(self) -> Dict[str, Callable[..., Any]]:
+        return {
+            "open_console": self.open_console,
+            "open_console_tab": self.open_console_tab,
+            "show_activity": self.show_activity,
+            "open_runs": self.open_runs,
+            "pause": self.pause,
+            "resume": self.resume,
+            "confirm_pending": self._run_pending,
+            "check_update": self.check_or_apply_update,
+            "restart": self.restart,
+            "toggle_autostart": self.toggle_autostart,
+            "open_url": plat.open_url,
+            "copy_console_link": self.copy_console_link,
+            "toggle_memory_warn": self.toggle_memory_warn,
+            "about": self.about,
+            "quit": self.quit_gateway,
+            "force_quit": self.force_quit,
+            "eject": self.eject,
+            "load": self.load_model,
+            "app_open": self.app_open,
+            "app_launch": self.app_launch,
+            "app_install": self.app_install,
+            "app_launch_global": self.app_launch_global,
+            "app_open_url": self.app_open_url,
+            "app_launch_tui": self.app_launch_tui,
+            "assistant_launch": self.assistant_launch,
+            "network_set": self.network_set,
+            "network_restart": self.network_restart,
+            "copy_address": self.copy_address,
+        }
+
+    # --------------------------------------------------------------- extras
+
+    def _extras_signature(self) -> tuple:
+        a = self._autostart
+        return (
+            (a.state, a.summary, a.problems) if a is not None else None,
+            self._autostart_busy,
+            self._apps_fetched,
+            tuple((e.id, e.status, e.source, e.url, e.install_available, e.last_error, int(e.job_percent or 0) // 10, e.tui_installed, e.tui_launch_available) for e in self._apps),
+            self._models_view.fetched,
+            tuple((m.key, m.size_bytes) for m in self._models_view.installed),
+            self._models_view.installed_error,
+            tuple((d.key, d.task, d.status) for d in self._models_view.defaults),
+            tuple(sorted(self._loading)),
+            tuple(sorted(self._ejecting)),
+            bool(self.prefs.data.get("flat_menu")),
+            self._network,
+            self._network_busy,
+        )
+
+    def _extras_loop(self) -> None:
+        """Slow, independent refreshes of what the Apps / Models / Start-at-login
+        rows show. A failed read keeps the last good data and records why."""
+        last = {"apps": 0.0, "models": 0.0, "autostart": 0.0, "network": 0.0}
+        while not self._stopping:
+            now = time.monotonic()
+            changed = False
+            if now - last["autostart"] >= EXTRAS_AUTOSTART_EVERY_S:
+                last["autostart"] = now
+                changed |= self._refresh_autostart()
+            if now - last["network"] >= EXTRAS_NETWORK_EVERY_S:
+                last["network"] = now
+                changed |= self._refresh_network()
+            if now - last["apps"] >= EXTRAS_APPS_EVERY_S:
+                last["apps"] = now
+                changed |= self._refresh_apps()
+            if now - last["models"] >= EXTRAS_MODELS_EVERY_S and (self._snap is None or self._snap.reachable):
+                last["models"] = now
+                changed |= self._refresh_models()
+            if changed:
+                self._force_menu_rebuild()
+            self._extras_wake.wait(timeout=5.0)
+            if self._extras_wake.is_set():
+                self._extras_wake.clear()
+                # poke_extras() asked for everything now
+                last = {"apps": 0.0, "models": 0.0, "autostart": 0.0, "network": 0.0}
+
+    def poke_extras(self) -> None:
+        self._extras_wake.set()
+
+    def _refresh_autostart(self) -> bool:
+        from .. import autostart
+
+        if self.data_dir is None:
+            view = AutostartView("unknown", "this tray was started without a data folder")
         else:
-            yield MI(f"Quit {APP_NAME}…", self._act(self.quit_gateway), enabled=snap.can_shutdown or not reachable)
+            try:
+                st = autostart.autostart_status(data_dir=self.data_dir)
+                view = AutostartView(st["state"], st.get("summary") or "", tuple(st.get("problems") or ()), False, bool(st.get("experimental")))
+            except Exception as exc:  # noqa: BLE001
+                view = AutostartView("unknown", f"{type(exc).__name__}: {exc}")
+        before = self._autostart
+        self._autostart = view
+        return before != view
 
-    def _workflow_items(self):
-        """The last day of runs: a tally, then the runs themselves.
+    def _refresh_network(self) -> bool:
+        r = self.client.network()
+        if r.ok and isinstance(r.data, dict):
+            view = menu_model.parse_network(r.data)
+        elif r.status == 404:
+            view = menu_model.NetworkView(available=False, error="Needs a newer gateway (no /api/gateway/network)")
+        elif self._network.available:
+            return False  # a blip keeps the last good answer
+        else:
+            view = menu_model.NetworkView(available=False, error=f"network settings unavailable: {r.detail}")
+        before = self._network
+        self._network = view
+        return before != view
 
-        Every row is INFORMATION, not an action. There is no per-run page to
-        deep-link to, and a list where each row opens the same console tab
-        would be five buttons pretending to be five destinations — so the one
-        real action sits at the bottom, once.
-        """
-        import pystray
+    def _refresh_apps(self) -> bool:
+        probes = tray_apps.Probes()
+        # `npm root -g` starts node: once per 10 minutes is plenty.
+        if (time.monotonic() - self._npm_root_at) > 600.0:
+            try:
+                self._npm_root = probes.npm_root()
+            except Exception:
+                self._npm_root = None
+            self._npm_root_at = time.monotonic()
+        npm_root = self._npm_root
+        globals_found = {spec[0]: tray_apps.detect_global_web_app(spec[0], probes, npm_root=npm_root) for spec in tray_apps.WEB_APPS}
+        assistant = tray_apps.detect_assistant(probes)
+        r = self.client.apps()
+        payload = r.data if (r.ok and isinstance(r.data, dict)) else None
+        # Global web apps this tray started: alive?
+        running = {}
+        for app_id, (proc, url) in list(self._global_procs.items()):
+            if proc.poll() is None:
+                running[app_id] = url
+            else:
+                self._global_procs.pop(app_id, None)
+        entries = tray_apps.build_app_entries(payload, None if payload else (r.detail or "the apps list is unavailable"), globals_found=globals_found, assistant=assistant, local_running=running)
+        self._app_launches = {k: v.get("launch") for k, v in globals_found.items()}
+        self._app_launches["assistant"] = assistant.get("launch")
+        before = (self._apps, self._apps_fetched)
+        self._apps, self._apps_fetched = entries, True
+        return before != (entries, True)
 
-        MI, SEP = pystray.MenuItem, pystray.Menu.SEPARATOR
+    def _refresh_models(self) -> bool:
+        inst = self.client.models_installed()
+        avail = self.client.model_availability()
+        if inst.ok:
+            installed, err = menu_model.parse_installed(inst.data)
+        else:
+            installed, err = self._models_view.installed, f"installed models unavailable: {inst.detail}"
+        defaults = menu_model.parse_defaults(avail.data) if avail.ok else self._models_view.defaults
+        view = ModelsView(installed=installed, installed_error=err, defaults=defaults, fetched=True)
+        before = self._models_view
+        self._models_view = view
+        return before != view
+
+    # -------------------------------------------------------- menu actions
+
+    def toggle_autostart(self) -> None:
+        """The checkbox: on → off, anything else → on (repair / replace)."""
+        from .. import autostart
+
+        view = self._autostart
+        if self.data_dir is None or view is None:
+            self._info("Start at login is unavailable", "This tray was started without its gateway's data folder, so it cannot register it.", style="warning")
+            return
+        turning_on = view.state != "on"
+        if turning_on and view.state == "other":
+            if dialogs.confirm(
+                "Replace the other gateway?",
+                f"{view.summary}. Starting THIS gateway at login replaces that registration.",
+                ok_label="Replace",
+                danger=True,
+            ) is not True:
+                return
+        # No host/port: the registration runs plain `serve` and the Network
+        # setting binds it (2026-09-24). Passing this tray's URL would write
+        # 127.0.0.1 INTO the setting and undo a "Local network" choice.
+
+        def _do() -> None:
+            self._autostart_busy = True
+            self._force_menu_rebuild()
+            try:
+                if turning_on:
+                    out = autostart.enable_autostart(data_dir=self.data_dir, actor="tray")
+                else:
+                    out = autostart.disable_autostart(data_dir=self.data_dir)
+            finally:
+                self._autostart_busy = False
+            self._refresh_autostart()
+            self._force_menu_rebuild()
+            after = out.get("after") or {}
+            if out.get("ok"):
+                if turning_on:
+                    self._notify("Starts at login", f"{APP_NAME} will start when you log in ({after.get('summary')}).")
+                else:
+                    self._notify("No longer starts at login", f"{APP_NAME} keeps running now; it will not start at your next login.")
+            else:
+                self._info("Couldn't change Start at login", str(out.get("error") or after.get("summary") or "unknown error"), style="warning")
+
+        self._bg(_do, "tray-autostart")
+
+    def eject(self, key: str) -> None:
         snap = self._snap or self.sampler.snapshot()
-        rows = snap.runs
-        if snap.runs_error and not rows:
-            yield MI("Run list unavailable", None, enabled=False)
-            yield MI(_middle_ellipsis(str(snap.runs_error), 44), None, enabled=False)
+        row = next((r for r in snap.models if r.key == key), None)
+        if row is None:
+            self._info("Already unloaded", "That model is no longer in memory.")
             return
-        yield MI(run_tally(rows), None, enabled=False)
-        if rows:
-            yield SEP
-            for row in rows[:MENU_RUN_ROWS]:
-                yield MI(run_row_label(row), None, enabled=False)
-            if len(rows) > MENU_RUN_ROWS:
-                yield MI(f"…and {len(rows) - MENU_RUN_ROWS} more", None, enabled=False)
-        yield SEP
-        yield MI("Open Runs in Console", self._act(self.open_runs), enabled=snap.reachable)
+        self.unload(row)
 
-    def _model_items(self):
-        import pystray
-
-        MI = pystray.MenuItem
+    def load_model(self, provider: str, model: str, task: str = "text_generation") -> None:
+        key = f"{provider}/{model}"
+        if key in self._loading:
+            self._notify("Already loading", model)
+            return
         snap = self._snap or self.sampler.snapshot()
-        if snap.models_error and not snap.models:
-            yield MI("Model list unavailable", None, enabled=False)
-            return
-        if not snap.models:
-            yield MI("No models loaded", None, enabled=False)
-            return
-        for row in snap.models:
-            yield MI(model_row_label(row), self._act(lambda r=row: self.unload(r)))
+        m = next((x for x in self._models_view.installed if x.key == key), None)
+        size = m.size_bytes if m else None
+        free = (snap.mem_total - snap.mem_used) if (snap.mem_total and snap.mem_used is not None) else None
+        name = menu_model.short_model_name(model)
 
-    def _update_label(self) -> str:
-        p = self._update_phase
-        if p == "checking":
-            return "Checking for Updates…"
-        if p == "available" and self._update_latest:
-            return f"Update to {self._update_latest}…"
-        if p == "updating":
-            return "Updating…"
-        if p == "installed":
-            return "Restart to Finish Update…"
-        return "Check for Updates…"
+        def _go() -> None:
+            self._loading[key] = name
+            self._force_menu_rebuild()
+            self._notify(f"Loading {name}", f"{menu_model.provider_label(provider)} · {fmt_bytes(size) if size is not None else 'size unknown'} — this can take a while for a big model.")
+            t0 = time.monotonic()
+            before_rss = (self._snap or snap).process_rss
+            try:
+                r = self.client.load_model(provider=provider, model=model, task=task)
+            finally:
+                self._loading.pop(key, None)
+            self.sampler.poke()
+            self._force_menu_rebuild()
+            took = time.monotonic() - t0
+            ok = r.ok and isinstance(r.data, dict) and r.data.get("success") is not False
+            if ok:
+                logger.info("tray: loaded %s in %.1fs (gateway rss before %s)", key, took, before_rss)
+                self._notify(f"Loaded {name}", f"In memory after {took:.0f} s · {fmt_bytes(size) if size is not None else 'size unknown'} · {menu_model.provider_label(provider)}")
+            else:
+                self._info(f"Couldn't load {name}", _load_failure_detail(r), style="warning")
+
+        if size is not None and free is not None and size > free:
+            self._confirm(
+                f"load:{key}",
+                f"Load {menu_model.middle_ellipsis(name, 24)}",
+                f"Load {name}?",
+                f"It needs about {fmt_bytes(size)} and {fmt_bytes(free)} is free now. The system may slow down or swap. Eject another model first to make room.",
+                ok_label="Load Anyway",
+                danger=True,
+                action=lambda: self._bg(_go, "tray-load"),
+            )
+            return
+        self._bg(_go, "tray-load")
+
+    # -- network (mission R's /api/gateway/network)
+
+    def network_set(self, mode: str) -> None:
+        words = menu_model.NETWORK_WORDS.get(mode, mode)
+        nv = self._network
+
+        def _go(ack: bool) -> None:
+            self._network_busy = True
+            self._force_menu_rebuild()
+            try:
+                r = self.client.set_network(mode, acknowledge_internet=ack)
+            finally:
+                self._network_busy = False
+            self._refresh_network()
+            self._force_menu_rebuild()
+            data = r.data if isinstance(r.data, dict) else {}
+            if r.status == 404:
+                self._info("Network settings unavailable", "This gateway has no network settings yet (it needs the version with /api/gateway/network).", style="warning")
+                return
+            if not r.ok or data.get("ok") is False:
+                auth = data.get("auth") if isinstance(data.get("auth"), dict) else {}
+                fix = auth.get("fix") or self._network.auth_fix
+                reason = str(data.get("refused_reason") or r.detail)
+                self._info(f"Couldn't switch to {words}", reason + (f"\n\nTo fix: {fix}" if fix else ""), style="warning")
+                return
+            if data.get("restart_required"):
+                self._notify(f"Network: {words}", "Restart to apply — the menu's Network item has \"Restart to apply\".")
+            else:
+                self._notify(f"Network: {words}", "Applied.")
+
+        if mode == "internet":
+            warnings = " ".join(f"• {w}" for w in nv.warnings) if nv.warnings else ""
+            body = (
+                "Anyone who can reach this computer from the internet will reach the gateway's sign-in page. "
+                "Use it only behind your own firewall rules or a tunnel you control, with strong passwords."
+                + (f"\n\n{warnings}" if warnings else "")
+            )
+            self._confirm("network:internet", "Expose to the Internet", "Open the gateway to the internet?", body, ok_label="I Understand — Expose It", danger=True, action=lambda: self._bg(lambda: _go(True), "tray-network"))
+            return
+        self._bg(lambda: _go(False), "tray-network")
+
+    def network_restart(self) -> None:
+        """Apply a pending network change: the gateway's own network restart
+        when it has one, else the normal restart (same confirmation)."""
+
+        def _do() -> None:
+            self.sampler.set_override("restarting")
+
+            def _go() -> None:
+                r = self.client.network_restart()
+                if r.status == 404:
+                    r = self.client.restart(reason="network")
+                if not r.ok:
+                    self.sampler.set_override(None)
+                    self._info("Couldn't restart", r.detail, style="warning")
+
+            self._bg(_go, "tray-network-restart")
+
+        self._confirm("restart", f"Restart {APP_NAME}", f"Restart {APP_NAME} to apply the network change?", "Running workflows pause at their next step and continue after the restart. The console is unavailable for a few seconds.", ok_label="Restart", danger=False, action=_do)
+
+    def copy_address(self, url: str) -> None:
+        if plat.copy_to_clipboard(url):
+            self._notify(f"Copied {url}", "Paste it in a browser on a device that can reach this computer.")
+        else:
+            self._info("Address", url)
+
+    # -- apps
+
+    def _open_signed_in(self, rel_or_abs: str) -> None:
+        url = rel_or_abs if rel_or_abs.startswith("http") else self.base_url + rel_or_abs
+        if not plat.open_url(url):
+            self._info("Couldn't open the browser", url, style="warning")
+
+    def app_open(self, app_id: str) -> None:
+        def _do() -> None:
+            r = self.client.app_open(app_id)
+            if r.ok and isinstance(r.data, dict) and r.data.get("open_url"):
+                self._open_signed_in(str(r.data["open_url"]))
+            else:
+                self._info(f"Couldn't open {_app_name(app_id)}", r.detail, style="warning")
+                self.poke_extras()
+
+        self._bg(_do, "tray-app-open")
+
+    def app_launch(self, app_id: str) -> None:
+        name = _app_name(app_id)
+
+        def _do() -> None:
+            self._notify(f"Starting {name}", "It opens in your browser when it is ready.")
+            r = self.client.app_launch(app_id)
+            self.poke_extras()
+            if not r.ok:
+                self._info(f"Couldn't start {name}", r.detail, style="warning")
+                return
+            o = self.client.app_open(app_id)
+            if o.ok and isinstance(o.data, dict) and o.data.get("open_url"):
+                self._open_signed_in(str(o.data["open_url"]))
+            else:
+                self._info(f"{name} started, but couldn't open it", o.detail, style="warning")
+
+        self._bg(_do, "tray-app-launch")
+
+    def app_launch_tui(self, app_id: str) -> None:
+        """"Open <app> in Terminal": the gateway opens the window (the same
+        route as the console's button), signed in through a one-time code."""
+        name = _app_name(app_id)
+
+        def _do() -> None:
+            r = self.client.app_launch_tui(app_id)
+            if r.ok and isinstance(r.data, dict) and r.data.get("ok"):
+                self._notify(f"{name} is opening in {r.data.get('terminal') or 'a terminal'}", "Signed in to this gateway.")
+            else:
+                self._info(f"Couldn't open {name} in a terminal", r.detail, style="warning")
+                self.poke_extras()
+
+        self._bg(_do, "tray-app-launch-tui")
+
+    def app_install(self, app_id: str) -> None:
+        name = _app_name(app_id)
+        body = f"{APP_NAME} downloads {name} from the npm registry (and Node.js the first time, about 56 MB), then starts it and opens it signed in. Progress shows here."
+        self._confirm(f"install:{app_id}", f"Install {name}", f"Install {name}?", body, ok_label="Install", danger=False, action=lambda: self._bg(lambda: self._install_now(app_id), "tray-app-install"))
+
+    def _install_now(self, app_id: str) -> None:
+        name = _app_name(app_id)
+        r = self.client.app_install(app_id, launch=True)
+        if not r.ok or not isinstance(r.data, dict) or not isinstance(r.data.get("job"), dict):
+            self._info(f"Couldn't install {name}", r.detail, style="warning")
+            return
+        job_id = str(r.data["job"].get("id") or "")
+        self._notify(f"Installing {name}", "Downloading… this takes a minute or two.")
+        self.poke_extras()
+        last_step = ""
+        deadline = time.monotonic() + 1800.0
+        while not self._stopping and time.monotonic() < deadline:
+            time.sleep(1.0)
+            j = self.client.apps_job(job_id)
+            if not (j.ok and isinstance(j.data, dict)):
+                continue
+            job = j.data.get("job") if isinstance(j.data.get("job"), dict) else j.data
+            state = str(job.get("state") or "")
+            step = str(job.get("message") or "")
+            if step and step != last_step and state == "running":
+                last_step = step
+                logger.info("tray: %s install: %s", app_id, step)
+            if state in {"queued", "running"}:
+                continue
+            self.poke_extras()
+            if state == "succeeded":
+                self._notify(f"{name} is installed", "Opening it in your browser, signed in.")
+                o = self.client.app_open(app_id)
+                if o.ok and isinstance(o.data, dict) and o.data.get("open_url"):
+                    self._open_signed_in(str(o.data["open_url"]))
+                else:
+                    self._info(f"{name} is installed, but couldn't open it", o.detail, style="warning")
+            else:
+                err = job.get("error") if isinstance(job.get("error"), dict) else {}
+                reason = " ".join(str(x) for x in (err.get("message"), err.get("hint")) if x) or step or state
+                self._info(f"{name} didn't install", f"{reason} (log: {job.get('log_path') or 'the gateway logs'})", style="warning")
+            return
+        self._info(f"{name} is still installing", "It keeps going in the gateway; the Apps menu shows it when it is done.")
+
+    def app_launch_global(self, app_id: str) -> None:
+        """A global npm/PATH install the gateway does not manage: start it here
+        (scrubbed env, the gateway URL passed in), open it when it answers.
+        It is stopped when this tray exits."""
+        spec = tray_apps.web_app_spec(app_id)
+        argv = self._app_launches.get(app_id)
+        name = spec[1]
+        if not argv:
+            self._info(f"Couldn't start {name}", "The global install was not found any more.", style="warning")
+            self.poke_extras()
+            return
+
+        def _do() -> None:
+            port = tray_apps.free_port(spec[4])
+            if port is None:
+                self._info(f"Couldn't start {name}", f"No free port from {spec[4]}.", style="warning")
+                return
+            env = tray_apps.scrubbed_env(os.environ)
+            env.update({"PORT": str(port), "HOST": "127.0.0.1", spec[5]: self.base_url})
+            log = (self.data_dir / "logs" / "apps" / f"{app_id}-global.log") if self.data_dir else None
+            try:
+                proc = tray_apps.spawn_detached(argv, env=env, log_path=log)
+            except OSError as exc:
+                self._info(f"Couldn't start {name}", f"{argv[0]}: {exc}", style="warning")
+                return
+            url = f"http://127.0.0.1:{port}/"
+            if not _wait_http(url, proc, APP_READY_TIMEOUT_S):
+                code = proc.poll()
+                why = f"it exited with code {code}" if code is not None else f"it did not answer on {url} within {int(APP_READY_TIMEOUT_S)} s"
+                self._info(f"{name} didn't start", f"{why}. Log: {log or 'none'}", style="warning")
+                return
+            self._global_procs[app_id] = (proc, url)
+            self.poke_extras()
+            self._notify(f"{name} is running", "Global install: sign in inside the app. Install it from this menu instead to have it open signed in.")
+            plat.open_url(url)
+
+        self._bg(_do, "tray-app-global")
+
+    def app_open_url(self, app_id: str) -> None:
+        entry = self._global_procs.get(app_id)
+        if entry is None:
+            self.poke_extras()
+            return
+        plat.open_url(entry[1])
+
+    def _stop_global_apps(self) -> None:
+        for _app_id, (proc, _url) in list(self._global_procs.items()):
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except Exception:
+                pass
+        self._global_procs.clear()
+
+    def assistant_launch(self) -> None:
+        argv = self._app_launches.get("assistant")
+        if not argv:
+            self._info("Couldn't launch the Assistant", "AbstractAssistant was not found any more.", style="warning")
+            self.poke_extras()
+            return
+
+        def _do() -> None:
+            log = (self.data_dir / "logs" / "assistant-launch.log") if self.data_dir else None
+            try:
+                proc = tray_apps.spawn_detached(argv, env=tray_apps.scrubbed_env(os.environ), log_path=log)
+            except OSError as exc:
+                self._info("Couldn't launch the Assistant", f"{argv[0]}: {exc}", style="warning")
+                return
+            time.sleep(2.0)
+            code = proc.poll()
+            if code not in (None, 0):
+                self._info("The Assistant didn't start", f"`{' '.join(argv[:3])}` exited with code {code}. Log: {log or 'none'}", style="warning")
+                return
+            self._notify("Assistant launched", "AbstractAssistant is starting (it lives in your menu bar / tray).")
+
+        self._bg(_do, "tray-assistant")
 
     def _act(self, fn: Callable[[], Any]) -> Callable[..., None]:
         """Wrap a menu action: swallow + log, never let a callback raise into the GUI loop."""
@@ -735,13 +1136,35 @@ class TrayApp:
     # --------------------------------------------------------------- actions
 
     def open_console(self) -> None:
-        plat.open_url(self.base_url + self.console_path)
+        self.open_console_tab(None)
+
+    def open_console_tab(self, tab: Optional[str]) -> None:
+        """Open the console SIGNED IN (a one-time claim link minted locally, as
+        `abstractgateway claim` does), so an expired 8-hour session never
+        greets the user with a token prompt. Minting touches a file, so it runs
+        off the GUI thread; a plain URL is opened (and the reason shown) when a
+        claim is impossible."""
+
+        def _do() -> None:
+            from .signin import console_link
+
+            link = console_link(self.base_url, self.console_path, self.data_dir, tab=tab)
+            if not plat.open_url(link.url):
+                self._info("Couldn't open the browser", self.base_url + self.console_path, style="warning")
+                return
+            if not link.signed_in and link.note:
+                logger.info("tray: console opened without a sign-in link: %s", link.note)
+                self._notify("Console opened", f"Not signed in automatically: {link.note}.")
+
+        self._bg(_do, "tray-open-console")
 
     def open_runs(self) -> None:
         """The console's Runtimes tab, where runs actually live."""
-        plat.open_url(self.base_url + self.console_path + "#runtimes")
+        self.open_console_tab("runtimes")
 
     def copy_console_link(self) -> None:
+        # The PLAIN URL on purpose: a claim link is a credential and does not
+        # belong on a clipboard that other apps can read.
         url = self.base_url + self.console_path
         if plat.copy_to_clipboard(url):
             self._notify("Console link copied", url)
@@ -784,35 +1207,46 @@ class TrayApp:
     def unload(self, row: ModelRow) -> None:
         size = fmt_bytes(row.size_bytes) if row.size_bytes is not None else "its memory"
         frees = f"This frees {size} of memory." if row.size_bytes is not None else "This frees the memory it uses."
+        snap = self._snap or self.sampler.snapshot()
+        # Eject semantics (mission I): calls running on the model are cancelled
+        # first; the next request that needs it loads it again. Say so when
+        # something IS running, because that is when it matters.
+        busy = " Work running on it right now is stopped first." if snap.inflight_ticks > 0 else ""
         if row.locked:
             title = f"{row.name} is kept in memory"
-            body = f"It was locked so it stays loaded. Unload it anyway? It frees {size} and loads again the next time it's needed."
-            ok = "Unload Anyway"
+            body = f"It was locked so it stays loaded. Eject it anyway? It frees {size} and loads again the next time it's needed.{busy}"
+            ok = "Eject Anyway"
         else:
-            title = f"Unload {row.name}?"
-            body = f"{frees} The next time something needs this model it loads again from disk, which can take a while."
-            ok = "Unload"
+            title = f"Eject {row.name}?"
+            body = f"{frees}{busy} The next time something needs this model it loads again from disk, which can take a while."
+            ok = "Eject"
 
         def _do() -> None:
             self._bg(lambda: self._unload_now(row, force=row.locked), "tray-unload")
 
-        self._confirm(f"unload:{row.key}", f"Unload {_middle_ellipsis(row.name, 24)}", title, body, ok_label=ok, danger=True, action=_do)
+        self._confirm(f"unload:{row.key}", f"Eject {_middle_ellipsis(row.name, 24)}", title, body, ok_label=ok, danger=True, action=_do)
 
     def _unload_now(self, row: ModelRow, *, force: bool) -> None:
-        r = self.client.unload_model(row.target, force=force)
-        if not r.ok and r.model_locked and not force:
-            # The lock surfaced only now: ask once more, with the locked copy.
-            body = f"It was locked so it stays loaded. Unload it anyway? It frees {fmt_bytes(row.size_bytes) if row.size_bytes is not None else 'its memory'}."
-            if dialogs.confirm(f"{row.name} is kept in memory", body, ok_label="Unload Anyway", danger=True) is True:
-                r = self.client.unload_model(row.target, force=True)
-            else:
-                return
+        self._ejecting.add(row.key)
+        self._force_menu_rebuild()
+        try:
+            r = self.client.unload_model(row.target, force=force)
+            if not r.ok and r.model_locked and not force:
+                # The lock surfaced only now: ask once more, with the locked copy.
+                body = f"It was locked so it stays loaded. Eject it anyway? It frees {fmt_bytes(row.size_bytes) if row.size_bytes is not None else 'its memory'}."
+                if dialogs.confirm(f"{row.name} is kept in memory", body, ok_label="Eject Anyway", danger=True) is True:
+                    r = self.client.unload_model(row.target, force=True)
+                else:
+                    return
+        finally:
+            self._ejecting.discard(row.key)
+            self._force_menu_rebuild()
         self.sampler.poke()
-        if r.ok:
+        if r.ok and not (isinstance(r.data, dict) and r.data.get("success") is False):
             freed = f" · freed {fmt_bytes(row.size_bytes)}" if row.size_bytes is not None else ""
-            self._notify("Model unloaded", f"{row.name}{freed}")
+            self._notify("Model ejected", f"{row.name}{freed}")
         else:
-            self._info(f"Couldn't unload {row.name}", r.detail, style="warning")
+            self._info(f"Couldn't eject {row.name}", _load_failure_detail(r), style="warning")
 
     def restart(self) -> None:
         def _do() -> None:

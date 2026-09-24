@@ -27,14 +27,16 @@ class Result:
     def detail(self) -> str:
         """Best human-readable message for a failure."""
         if isinstance(self.data, dict):
+            hint = self.data.get("hint")
+            tail = f" {hint.strip()}" if isinstance(hint, str) and hint.strip() else ""
             for key in ("detail", "error", "message", "reason"):
                 value = self.data.get(key)
                 if isinstance(value, str) and value.strip():
-                    return value.strip()
+                    return value.strip() + tail
                 if isinstance(value, dict):
                     inner = value.get("detail") or value.get("error") or value.get("message")
                     if isinstance(inner, str) and inner.strip():
-                        return inner.strip()
+                        return inner.strip() + tail
         return str(self.error or f"HTTP {self.status}")
 
     @property
@@ -127,7 +129,57 @@ class GatewayClient:
             timeout=8.0,
         )
 
+    def models_installed(self) -> Result:
+        """Every model the local engines hold, with sizes (`models_installed_v1`).
+        Walks the HF cache and asks LM Studio/Ollama: slow on a big machine."""
+        return self._request("GET", "/models/installed", timeout=60.0)
+
+    def model_availability(self) -> Result:
+        """Configured capability routes (the defaults) + local availability."""
+        return self._request("GET", "/models/availability", timeout=60.0)
+
+    def apps(self) -> Result:
+        """Mission O's apps overview; `latest=false` keeps the npm registry out of a poll."""
+        return self._request("GET", "/apps?latest=false", timeout=15.0)
+
+    def network(self) -> Result:
+        """Mission R's network settings + every address this gateway answers on."""
+        return self._request("GET", "/network", timeout=6.0)
+
     # -- actions -------------------------------------------------------------
+
+    def set_network(self, mode: str, *, port: Optional[int] = None, acknowledge_internet: bool = False) -> Result:
+        body: Dict[str, Any] = {"mode": str(mode)}
+        if port is not None:
+            body["port"] = int(port)
+        if acknowledge_internet:
+            body["acknowledge_internet"] = True
+        return self._request("POST", "/network", body=body, timeout=15.0)
+
+    def network_restart(self) -> Result:
+        return self._request("POST", "/network/restart", body={}, timeout=10.0)
+
+    def load_model(self, *, provider: str, model: str, task: str = "text_generation", timeout_s: float = 900.0) -> Result:
+        """Preload one model (the gateway pins it resident). Big models take minutes."""
+        return self._request("POST", "/models/load", body={"provider": provider, "model": model, "task": task}, timeout=timeout_s)
+
+    def app_launch(self, app_id: str) -> Result:
+        return self._request("POST", f"/apps/{app_id}/launch", body={}, timeout=45.0)
+
+    def app_open(self, app_id: str) -> Result:
+        """A one-time signed-in handover link (`open_url`, relative to the gateway)."""
+        return self._request("POST", f"/apps/{app_id}/open", body={"remember": True}, timeout=15.0)
+
+    def app_launch_tui(self, app_id: str) -> Result:
+        """Mission Y: a new terminal window on this machine, the app's
+        terminal version signed in through a one-time handover."""
+        return self._request("POST", f"/apps/{app_id}/launch-tui", body={}, timeout=30.0)
+
+    def app_install(self, app_id: str, *, launch: bool = True) -> Result:
+        return self._request("POST", f"/apps/{app_id}/install", body={"launch": bool(launch)}, timeout=30.0)
+
+    def apps_job(self, job_id: str) -> Result:
+        return self._request("GET", f"/apps/jobs/{job_id}", timeout=10.0)
 
     def pause(self, reason: Optional[str] = None) -> Result:
         return self._request("POST", "/host/pause", body={"reason": reason} if reason else {}, timeout=6.0)

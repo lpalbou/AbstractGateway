@@ -288,11 +288,12 @@ def test_a_changed_run_list_rebuilds_the_menu_but_a_ticking_duration_does_not() 
     assert sig((a,)) != sig(()), "runs appearing or vanishing is worth a rebuild"
 
 
-def test_the_menu_has_one_console_door_a_workflows_section_and_unannotated_help() -> None:
-    """The three parts of the ruling, read off the built menu.
+def test_the_menu_has_one_console_door_a_workflows_section_and_unannotated_help(tmp_path) -> None:
+    """The three parts of the ruling, read off the menu as RENDERED.
 
-    pystray is not imported here (no display in CI): the menu generators are
-    exercised through a stub that records what they yield.
+    pystray is not imported here (no display in CI): a stub records what the
+    real render path (`TrayApp._menu_items` → pure model → `_render_nodes`)
+    hands it, submenus included.
     """
     import sys
     import types
@@ -311,46 +312,25 @@ def test_the_menu_has_one_console_door_a_workflows_section_and_unannotated_help(
         SEPARATOR = object()
 
         def __init__(self, *items):
-            # A submenu is passed as a generator: drain it so its items land
-            # in `captured` too.
-            for item in items:
-                if callable(item):
-                    list(item())
+            self.items = items
 
     stub = types.ModuleType("pystray")
     stub.MenuItem = _MenuItem  # type: ignore[attr-defined]
     stub.Menu = _Menu  # type: ignore[attr-defined]
 
-    class _App:
-        _snap = _snap(
-            runs=(
-                RunRow("1", "coding-agent:coder", "running", 4, 133.0, 1.0),
-                RunRow("2", "deep-research:main", "completed", 31, 724.0, 1.0),
-            )
+    app = tray_app.TrayApp({"base_url": "http://127.0.0.1:8080", "token": "", "data_dir": str(tmp_path)})
+    app._snap = _snap(
+        runs=(
+            RunRow("1", "coding-agent:coder", "running", 4, 133.0, 1.0),
+            RunRow("2", "deep-research:main", "completed", 31, 724.0, 1.0),
         )
-        _pending = None
-        _tk = False
-        _update_phase = "idle"
-        _update_latest = None
-        base_url = "http://127.0.0.1:8080"
-        sampler = None
-        prefs = types.SimpleNamespace(data={})
-
-        _menu_items = tray_app.TrayApp._menu_items
-        _workflow_items = tray_app.TrayApp._workflow_items
-        _model_items = tray_app.TrayApp._model_items
-        _update_label = tray_app.TrayApp._update_label
-
-        def _act(self, fn):
-            return fn
-
-        def __getattr__(self, name):  # every action the menu binds
-            return lambda *a, **k: None
+    )
+    app._tk = False
 
     saved = sys.modules.get("pystray")
     sys.modules["pystray"] = stub
     try:
-        list(_App()._menu_items())
+        list(app._menu_items())
     finally:
         if saved is None:
             sys.modules.pop("pystray", None)

@@ -180,6 +180,7 @@ class Monitor:
         self.client = GatewayClient(self.base_url, str(handshake.get("token") or ""))
         self.sampler = Sampler(self.client, version=self.version)
         self.prefs = _Prefs(handshake.get("data_dir"))
+        self.data_dir = Path(handshake["data_dir"]) if handshake.get("data_dir") else None
         dark = plat.system_prefers_dark()
         self.pal = DARK if (dark is None or dark) else LIGHT
         self._last_models_key: Optional[tuple] = None
@@ -222,7 +223,7 @@ class Monitor:
         self.state_dot.pack(side="left", padx=(0, 6))
         self.state_lbl = tk.Label(head, text="Starting…", bg=pal["bg"], fg=pal["text"], font=("TkDefaultFont", 13, "bold"))
         self.state_lbl.pack(side="left")
-        self.console_btn = ttk.Button(head, text="Open Console", style="Tray.TButton", command=lambda: plat.open_url(self.base_url + self.console_path))
+        self.console_btn = ttk.Button(head, text="Open Console", style="Tray.TButton", command=self._open_console)
         self.console_btn.pack(side="right")
         self.pause_btn = ttk.Button(head, text="Pause Workflows", style="Tray.TButton", command=self._toggle_pause)
         self.pause_btn.pack(side="right", padx=(0, 8))
@@ -281,6 +282,17 @@ class Monitor:
         tk.Label(row, text="1 min ago", bg=pal["bg"], fg=pal["muted"], font=("TkDefaultFont", 10)).pack()
 
     # ------------------------------------------------------------- actions
+
+    def _open_console(self) -> None:
+        """Signed in, like the tray's "Open Console" (a one-time claim link);
+        minted off the Tk thread."""
+
+        def _go() -> None:
+            from .signin import console_link
+
+            plat.open_url(console_link(self.base_url, self.console_path, self.data_dir).url)
+
+        threading.Thread(target=_go, name="monitor-open-console", daemon=True).start()
 
     def _toggle_pause(self) -> None:
         if self._busy:
