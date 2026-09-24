@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-09-24
+## [0.4.1] - 2026-09-24
 
 This release requires AbstractCore 2.15.0 and AbstractRuntime 0.4.33
-(installed automatically). The terminal console ships as
-`abstractgateway-console` 0.8.0 (see `console-tui/CHANGELOG.md`).
+(installed automatically). The `v0.4.0` tag exists but 0.4.0 was never
+published: its release run stopped at the test job (Linux-only test
+failures, fixed below), so 0.4.1 is the first release of this wave. The
+terminal console ships as `abstractgateway-console` 0.8.0 (see
+`console-tui/CHANGELOG.md`).
 
 ### Added
 - **A fresh gateway has a working backlog; the backlog folder and the exec
@@ -440,6 +443,12 @@ This release requires AbstractCore 2.15.0 and AbstractRuntime 0.4.33
   unit file exists (it used to fail on a machine with nothing installed).
 
 ### Fixed
+- **A leftover browser app from a gateway that died is stopped again on
+  Linux.** The reaper recognises the app by its install path in the process
+  command line, read with `ps`; Linux `ps` cut that line at 80 columns when
+  not writing to a terminal, so the path never matched, the leftover was not
+  stopped and kept its port ("No free port for the app"). It now reads the
+  whole line (`ps -ww`).
 - **`abstractgateway --version`** prints `abstractgateway <version>` (the
   flag did not exist).
 - **No false "PyTorch was imported" GGUF warning.** Every command printed
@@ -593,6 +602,14 @@ This release requires AbstractCore 2.15.0 and AbstractRuntime 0.4.33
   dropped or restored. Every other variable passes through unchanged.
 
 ### Tests
+- **The suite passes on a headless Linux runner (CI).** The local engines'
+  default addresses (`LMSTUDIO_BASE_URL`, `OLLAMA_BASE_URL`, `OLLAMA_HOST`)
+  point at a closed loopback port for every test and the whole session: off
+  Apple silicon a gateway with no provider builds an LM Studio client that
+  lists models at localhost:1234. The engine-install fakes answer
+  `xcode-select -p` with a folder that exists; the apps tests use valid port
+  ranges and build the terminal command as on a Mac instead of needing a
+  desktop session.
 - The conftest's network guard now also refuses 127.0.0.1:3000-3007 (the
   operator's browser apps), and an autouse fixture empties the external-app
   probe's port list: a test names its own scratch ports (mission HH).

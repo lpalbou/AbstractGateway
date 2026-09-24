@@ -2,7 +2,7 @@
 
 ## 0.8.0 (2026-09-24) — Network exposure, reverse proxy and apps settings
 
-Needs AbstractGateway 0.4.0 for the Network panel and the apps settings
+Needs AbstractGateway 0.4.1 for the Network panel and the apps settings
 (`GET/POST /api/gateway/network`, `apps.*` runtime-config keys). Against an
 older gateway the panel says "not found" and the other screens work as
 before.

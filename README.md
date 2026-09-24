@@ -165,7 +165,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.1
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -173,7 +173,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.1-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
