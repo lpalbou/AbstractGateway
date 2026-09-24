@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The documentation site no longer publishes the backlog: planning notes
+  under `docs/backlog/` stay in the repository and are left out of the site
+  build. The one API page that cited a backlog item links to it on GitHub.
+
 ## [0.4.2] - 2026-09-24
 
 Requires AbstractCore 2.15.1 and AbstractRuntime 0.4.34 (installed

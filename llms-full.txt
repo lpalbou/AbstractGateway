@@ -3655,7 +3655,7 @@ One snapshot with `memory`, `gpu`, `models`, and `session_caches` sections:
   one. Together with the per-row `host_id`/`host_name` fields below, this is
   the seam a multi-machine resource pool would aggregate on; one gateway
   binds one runtime host, and the pool design is proposed in
-  [backlog 0093](docs/backlog/proposed/0093_multi_machine_model_resource_pool.md).
+  [backlog 0093](https://github.com/lpalbou/abstractgateway/blob/main/docs/backlog/proposed/0093_multi_machine_model_resource_pool.md).
 
 ### `GET /host/metrics/memory`
 
