@@ -475,8 +475,9 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     host_control.register_server(server, restartable=True, relaunch_argv=list(argv))
     if str(os.getenv("FORWARDED_ALLOW_IPS") or "").strip() == "*":
         _stderr(
-            "[WARN] FORWARDED_ALLOW_IPS=* lets any client rewrite its peer address through X-Forwarded-For; "
-            "the desktop tray's loopback-only token is no longer bound to this machine. Use a concrete proxy IP."
+            "[WARN] This gateway was started with FORWARDED_ALLOW_IPS=* (uvicorn's proxy trust) in its environment: "
+            "any client can rewrite its peer address through X-Forwarded-For, so the desktop tray's loopback-only "
+            "token is no longer bound to this machine. A concrete proxy address there keeps it bound."
         )
 
     tray = get_tray_supervisor()
@@ -569,6 +570,55 @@ def _record_serve_stop() -> None:
         pass
 
 
+def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
+    """`serve --backlog-root PATH` / `--exec-runner on|off` (mission II).
+
+    Validated like every other door (a refusal stops the start with the
+    plain sentence), then recorded for this run under <data dir>/run/ so the
+    resolver — in this process, `--reload` workers, and `config get` —
+    reports them as `source: flag`. Without flags the record is removed, so
+    an earlier run's flag never outlives it. No environment variable is set.
+    """
+    from .runtime_config import RuntimeConfigError, record_launch_settings, validate_backlog_root
+
+    values: dict[str, object] = {}
+    raw_root = getattr(args, "backlog_root", None)
+    if raw_root:
+        try:
+            values["triage_repo_root"] = str(validate_backlog_root(raw_root, data_dir, what="--backlog-root"))
+        except RuntimeConfigError as exc:
+            raise SystemExit(f"Refusing to start: {exc}")
+        _stderr(f"Backlog folder: {values['triage_repo_root']} (from --backlog-root, for this run)")
+    raw_runner = getattr(args, "exec_runner", None)
+    if raw_runner:
+        values["backlog_exec_runner"] = str(raw_runner).strip().lower() == "on"
+    record_launch_settings(data_dir, values)
+
+
+def _clear_backlog_launch_flags(data_dir: Path) -> None:
+    try:
+        from .runtime_config import clear_launch_settings
+
+        clear_launch_settings(data_dir)
+    except Exception:
+        pass
+
+
+def _backlog_exec_repo_root(args: Any, data_dir: Path) -> Path:
+    """`backlog-exec-runner`: `--repo-root` > the backlog-folder resolution."""
+    from .runtime_config import RuntimeConfigError, resolve_backlog_root, validate_backlog_root
+
+    if getattr(args, "repo_root", None):
+        try:
+            return validate_backlog_root(args.repo_root, data_dir, what="--repo-root")
+        except RuntimeConfigError as exc:
+            raise SystemExit(str(exc))
+    res = resolve_backlog_root(data_dir, ensure=True)
+    if not res.get("available"):
+        raise SystemExit(f"The backlog folder {res.get('value')} is not available: {res.get('reason')}.")
+    return Path(str(res["value"]))
+
+
 def _run_models_command(args: argparse.Namespace) -> int:
     """`abstractgateway models loaded|load|unload` -> the console's routes. Prints
     the gateway's JSON answer; exit 0 only when the gateway says it worked."""
@@ -599,7 +649,7 @@ def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
     _argv0 = (list(argv) if argv is not None else sys.argv[1:])[:1]
-    if _argv0 not in (["claim"], ["service"], ["models"], ["engines"]):
+    if _argv0 not in (["claim"], ["service"], ["models"], ["engines"], ["apps"], ["network"]):
         # The first-run verbs and the models/engines verbs never load a model
         # in this process; the reservation (and its CPU-fallback warning) is
         # noise for them.
@@ -611,10 +661,16 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument(
         "--host",
         default=None,
-        help="Bind host (default: 127.0.0.1 when no auth is configured, so a bare `serve` starts with "
-        "user auth on; 0.0.0.0 when an auth token or user auth is configured, as before)",
+        help="Bind host; overrides the network exposure setting (`abstractgateway network`). Default: the "
+        "setting (localhost 127.0.0.1, lan/internet 0.0.0.0); with none stored, 127.0.0.1 when no auth is "
+        "configured (a bare `serve` starts with user auth on), 0.0.0.0 when an auth token or user auth is configured",
     )
-    serve.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
+    serve.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Bind port; overrides the network setting's port (default: the setting's, else 8080)",
+    )
     serve.add_argument(
         "--print-token",
         action=argparse.BooleanOptionalAction,
@@ -633,6 +689,21 @@ def main(argv: list[str] | None = None) -> None:
         "--data-dir",
         default=None,
         help="Data dir (default: $ABSTRACTGATEWAY_DATA_DIR, else ./runtime if it exists, else the per-OS user data dir)",
+    )
+    serve.add_argument(
+        "--backlog-root",
+        default=None,
+        metavar="PATH",
+        help="Backlog folder for this run: a folder containing docs/backlog (Continuum's Board and Backlog read it). "
+        "Wins over the saved setting (`abstractgateway config set triage_repo_root PATH`) until the gateway stops. "
+        "Default: the saved setting, else the gateway's own folder <data dir>/backlog, created on first use.",
+    )
+    serve.add_argument(
+        "--exec-runner",
+        default=None,
+        choices=["on", "off"],
+        help="Run queued backlog executions on this machine for this run (wins over the saved setting "
+        "`abstractgateway config set backlog_exec_runner on|off`). Default: the saved setting, else off.",
     )
 
     runner = sub.add_parser("runner", help="Run the AbstractGateway runner worker (no HTTP)")
@@ -699,7 +770,8 @@ def main(argv: list[str] | None = None) -> None:
     be.add_argument(
         "--repo-root",
         default=None,
-        help="Repo root containing docs/backlog (defaults to ABSTRACTGATEWAY_TRIAGE_REPO_ROOT or CWD)",
+        help="Folder containing docs/backlog (default: the gateway's backlog folder setting, "
+        "`abstractgateway config get triage_repo_root`)",
     )
 
     from .entity_cli import add_entity_subparser
@@ -717,6 +789,12 @@ def main(argv: list[str] | None = None) -> None:
     data_purge.add_argument("name", help="Registered row name (see `data list`)")
     data_purge.add_argument("--dry-run", action="store_true", help="Account without deleting")
     data_purge.add_argument("--yes", action="store_true", help="Confirm the real purge (required without --dry-run)")
+
+    # Network exposure (2026-09-24): the tray/console/TUI setting from a shell,
+    # through the same functions as GET/POST /api/gateway/network.
+    from .network_exposure import add_network_subparser
+
+    add_network_subparser(sub)
 
     # Model residency from a shell (2026-09-23): the SAME routes the web console,
     # the console TUI and the tray drive (GET /models/loaded, POST /models/load,
@@ -756,7 +834,19 @@ def main(argv: list[str] | None = None) -> None:
     add_claim_arguments(claim)
     add_service_subparser(sub)
 
+    # Browser apps (Node.js for the user, npm installs, supervised app
+    # servers): the console's Apps page from a shell, through the running
+    # gateway's /api/gateway/apps routes.
+    from .apps_cli import add_apps_subparser
+
+    add_apps_subparser(sub)
+
     args = parser.parse_args(argv)
+
+    if args.cmd == "apps":
+        from .apps_cli import run_apps_command
+
+        raise SystemExit(run_apps_command(args))
 
     if args.cmd == "claim":
         from .firstrun_cli import run_claim
@@ -768,7 +858,7 @@ def main(argv: list[str] | None = None) -> None:
 
         raise SystemExit(run_service(args))
 
-    if args.cmd == "serve" and getattr(args, "data_dir", None):
+    if args.cmd in ("serve", "network") and getattr(args, "data_dir", None):
         from .host_paths import DATA_DIR_SOURCE_ENV
 
         import pathlib as _pathlib  # `Path` is function-local in main() (later branches import it)
@@ -808,6 +898,11 @@ def main(argv: list[str] | None = None) -> None:
         _run_data_command(args)
         return
 
+    if args.cmd == "network":
+        from .network_exposure import run_network_command
+
+        raise SystemExit(run_network_command(args))
+
     if args.cmd == "serve":
         # ------------------------------------------------------------------
         # ONE STORE (operator ruling 2026-08-01). A legacy Gateway-scoped
@@ -822,19 +917,36 @@ def main(argv: list[str] | None = None) -> None:
         # turns user auth on, so it STARTS; explicit configuration always wins
         # and a non-loopback bind without auth still refuses below.
         # ------------------------------------------------------------------
-        from .first_run import apply_loopback_auth_default, default_bind_host
+        from .first_run import apply_loopback_auth_default
 
-        if not getattr(args, "host", None):
-            args.host = default_bind_host()
+        # Network exposure (2026-09-24): host/port = `--host/--port` > the
+        # stored setting (localhost / lan / internet, runtime-config key
+        # `network`) > the historical default. Every override, auth export
+        # and refusal is printed here and reported by GET /api/gateway/network.
+        from .host_paths import resolve_data_dir
+        from .network_exposure import prepare_serve_bind, record_serve_bind
+
+        _serve_data_dir = resolve_data_dir().path
+        _bind = prepare_serve_bind(
+            cli_host=getattr(args, "host", None) or None,
+            cli_port=getattr(args, "port", None),
+            data_dir=_serve_data_dir,
+        )
+        args.host, args.port = _bind.host, _bind.port
+        for _msg in _bind.messages:
+            _stderr(_msg)
+        record_serve_bind(_serve_data_dir, _bind)
+        _apply_backlog_launch_flags(args, _serve_data_dir)
         # The bind host decides host-safety defaults inside the app (engine
-        # installs are allowed by default only on a loopback bind).
+        # installs are allowed by default on a loopback bind, and otherwise
+        # only for a caller on this machine).
         from .runtime_config import BIND_HOST_ENV
 
         os.environ[BIND_HOST_ENV] = str(args.host)
         if apply_loopback_auth_default(str(args.host)):
             _stderr(
-                f"Gateway auth: user auth enabled automatically (bound to loopback {args.host}, no auth configured). "
-                "Set ABSTRACTGATEWAY_USER_AUTH or ABSTRACTGATEWAY_AUTH_TOKEN to choose explicitly."
+                f"Gateway auth: user auth enabled automatically (bound to loopback {args.host}, no auth posture in "
+                "this gateway's environment): every person signs in with an account."
             )
 
         # ------------------------------------------------------------------
@@ -856,17 +968,15 @@ def main(argv: list[str] | None = None) -> None:
                 and not bool(getattr(policy, "user_auth_enabled", False))
             ):
                 raise SystemExit(
-                    "Missing gateway auth token.\n\n"
-                    f"Binding {host or '0.0.0.0'} (not loopback) requires explicit auth. For a local, single-machine "
-                    "gateway, bind loopback instead: `abstractgateway serve --host 127.0.0.1` needs no configuration.\n\n"
-                    "Set a strong shared secret before starting the gateway:\n"
-                    '  export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c \'import secrets; print(secrets.token_urlsafe(32))\')"\n'
+                    "Refusing to start: no sign-in would protect this gateway.\n\n"
+                    f"--host {host or '0.0.0.0'} listens beyond this computer, and this gateway was started with "
+                    "neither accounts (user auth) nor a token.\n\n"
+                    "Choose who can reach it with the network setting instead of --host (accounts are turned on "
+                    "for you):\n"
+                    "  abstractgateway network set lan      # or: internet --acknowledge-internet\n"
+                    "  abstractgateway serve\n"
                     "\n"
-                    "Alternatively enable Gateway user auth and create an admin user:\n"
-                    "  export ABSTRACTGATEWAY_USER_AUTH=1\n"
-                    "  abstractgateway-config bootstrap-admin --print-token\n"
-                    "\n"
-                    "This is required for security, especially if you bind to 0.0.0.0 or expose the gateway via ngrok."
+                    "Or keep it on this computer only: `abstractgateway serve --host 127.0.0.1`."
                 )
 
             if bool(getattr(policy, "user_auth_enabled", False)):
@@ -879,41 +989,49 @@ def main(argv: list[str] | None = None) -> None:
                     "[WARN] Gateway is binding to 0.0.0.0/:: (non-loopback). "
                     "If you expose this service (ngrok/LAN), ensure you use strong Gateway auth and restrict origins."
                 )
-                _stderr("       Example hardening:")
+                # Mission Z: hardening steps are settings and commands, never
+                # environment variables (operator rule 2026-09-24).
+                _stderr("       Hardening:")
                 if bool(getattr(policy, "user_auth_enabled", False)):
-                    _stderr("         export ABSTRACTGATEWAY_USER_AUTH=1")
-                    _stderr("         abstractgateway-config bootstrap-admin --print-token")
+                    _stderr("         every person signs in with their own account (console: Users); create the")
+                    _stderr("         admin if there is none: abstractgateway-config bootstrap-admin --print-token")
                 else:
-                    _stderr(
-                        '         export ABSTRACTGATEWAY_AUTH_TOKEN="$(python -c \'import secrets; print(secrets.token_urlsafe(32))\')"'
-                    )
-                _stderr("         export ABSTRACTGATEWAY_ALLOWED_ORIGINS=https://<your-subdomain>.ngrok-free.app")
-                _stderr("         export ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER=0   # unless explicitly needed")
+                    _stderr("         this gateway was started with a shared token and no accounts: whoever holds")
+                    _stderr("         the token is its admin, so it must be long and random")
+                _stderr("         browser origins behind a proxy or tunnel: console Network -> Reverse proxy, or")
+                _stderr("           abstractgateway network set --allowed-origins https://<your public origin>")
+                _stderr("         keep the backlog exec runner off unless needed (runtime setting backlog_exec_runner)")
                 if any(_is_weak_token(t) for t in tuple(policy.tokens or ())):
                     raise SystemExit(
                         "Refusing to start: weak auth token detected while binding to a non-loopback host.\n"
-                        "Set a stronger token (>=15 chars, random) and try again."
+                        "The shared token this gateway was started with is weak (fewer than 15 characters, or guessable); "
+                        "it needs a long random one."
                     )
 
             origins = tuple(getattr(policy, "allowed_origins", ()) or ())
             public_wildcard_origins = any(_looks_like_public_origin_pattern(o) for o in origins)
             if public_wildcard_origins:
                 _stderr(
-                    "[WARN] ABSTRACTGATEWAY_ALLOWED_ORIGINS contains public wildcard origin patterns. "
-                    "This weakens browser-origin protections."
+                    "[WARN] The browser origins this gateway was started with (its environment) contain public "
+                    "wildcard patterns. This weakens browser-origin protections."
                 )
                 if not _is_loopback_host(host) and any(_is_weak_token(t) for t in tuple(policy.tokens or ())):
                     raise SystemExit(
                         "Refusing to start: weak auth token detected while using public wildcard origins.\n"
-                        "Set a stronger token (>=15 chars, random) and try again."
+                        "The shared token this gateway was started with is weak (fewer than 15 characters, or guessable); "
+                        "it needs a long random one."
                     )
 
-            # Backlog exec runner can run code/tools; warn loudly when enabled.
-            runner_enabled = str(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER") or os.getenv("ABSTRACT_BACKLOG_EXEC_RUNNER") or "").strip()
-            if runner_enabled.lower() in {"1", "true", "yes", "on"}:
+            # Backlog exec runner can run code/tools; warn loudly when enabled
+            # (THE resolution: --exec-runner > saved setting > legacy env > off).
+            from .runtime_config import resolve_exec_runner
+
+            _runner = resolve_exec_runner(_serve_data_dir)
+            if _runner.get("value"):
+                _why = {"flag": "from --exec-runner", "stored": "the saved setting", "env": "set by the environment"}
                 _stderr(
-                    "[WARN] Backlog exec runner is enabled. It can execute queued backlog tasks on this machine. "
-                    "Only enable this in trusted environments."
+                    f"[WARN] Backlog exec runner is enabled ({_why.get(str(_runner.get('source')), _runner.get('source'))}). "
+                    "It can execute queued backlog tasks on this machine. Only enable this in trusted environments."
                 )
 
         if str(os.getenv("ABSTRACTGATEWAY_SILENCE_GPU_METRICS_ACCESS_LOG", "1")).strip().lower() in {"1", "true", "yes", "on"}:
@@ -966,6 +1084,7 @@ def main(argv: list[str] | None = None) -> None:
             _serve_with_host_controls(uvicorn=uvicorn, args=args, run_kwargs=run_kwargs, argv=list(argv if argv is not None else sys.argv[1:]))
         finally:
             _record_serve_stop()
+            _clear_backlog_launch_flags(_serve_data_dir)
             if prev_runner_env is None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
             else:
@@ -1180,11 +1299,10 @@ def main(argv: list[str] | None = None) -> None:
         if data_dir is None:
             data_dir = _default_data_dir()
 
-        repo_root = Path(str(args.repo_root)).expanduser().resolve() if args.repo_root else None
-        if repo_root is None:
-            rr = os.getenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT") or os.getenv("ABSTRACT_TRIAGE_REPO_ROOT") or ""
-            repo_root = Path(rr).expanduser().resolve() if rr.strip() else Path.cwd().expanduser().resolve()
-        os.environ["ABSTRACTGATEWAY_TRIAGE_REPO_ROOT"] = str(repo_root)
+        # The folder flows as an ARGUMENT (mission II): `--repo-root` > THE
+        # backlog-folder resolution (saved setting > legacy env > the
+        # gateway's own folder). Nothing is written to os.environ.
+        repo_root = _backlog_exec_repo_root(args, data_dir)
 
         cfg = BacklogExecRunnerConfig.from_env()
         cfg = BacklogExecRunnerConfig(
@@ -1212,7 +1330,7 @@ def main(argv: list[str] | None = None) -> None:
         except Exception:
             pass
 
-        runner = BacklogExecRunner(gateway_data_dir=data_dir, cfg=cfg)
+        runner = BacklogExecRunner(gateway_data_dir=data_dir, cfg=cfg, repo_root=repo_root)
         runner.start()
         try:
             while not stop.is_set():

@@ -102,8 +102,11 @@ def test_cli_serve_requires_auth_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_TOKEN", raising=False)
     with pytest.raises(SystemExit) as e:
         gateway_cli.main(["serve", "--host", "0.0.0.0", "--port", "9999", "--no-runner"])
-    assert "Missing gateway auth token" in str(e.value)
+    assert "Refusing to start: no sign-in would protect this gateway" in str(e.value)
+    assert "abstractgateway network set lan" in str(e.value)
     assert "--host 127.0.0.1" in str(e.value)
+    # Operator rule (mission Z): no "export ABSTRACTGATEWAY_…" instruction.
+    assert "export " not in str(e.value) and "ABSTRACTGATEWAY_" not in str(e.value)
 
 
 @pytest.mark.basic
