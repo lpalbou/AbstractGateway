@@ -104,6 +104,36 @@ def user_data_dir(
     return base / "abstractgateway"
 
 
+def user_cache_dir(
+    *,
+    system: Optional[str] = None,
+    env: Optional[Mapping[str, str]] = None,
+    home: Optional[Path] = None,
+) -> Path:
+    """The per-OS, per-user CACHE directory for AbstractGateway (not created).
+
+    Re-creatable downloads (engine installers, wheels, staging) belong here,
+    not in the data directory:
+
+    - macOS ``~/Library/Caches/AbstractGateway``
+    - Linux ``$XDG_CACHE_HOME/abstractgateway`` (``~/.cache/abstractgateway``)
+    - Windows ``%LOCALAPPDATA%\\AbstractGateway\\Cache``
+    """
+    env = os.environ if env is None else env
+    home = Path(home) if home is not None else Path.home()
+    plat = normalize_platform(system)
+    if plat == "darwin":
+        return home / "Library" / "Caches" / "AbstractGateway"
+    if plat == "windows":
+        local = str(env.get("LOCALAPPDATA") or "").strip()
+        base = Path(local) if local else home / "AppData" / "Local"
+        return base / "AbstractGateway" / "Cache"
+    xdg = str(env.get("XDG_CACHE_HOME") or "").strip()
+    # The XDG spec: a relative XDG_CACHE_HOME is invalid and must be ignored.
+    base = Path(xdg) if xdg and Path(xdg).is_absolute() else home / ".cache"
+    return base / "abstractgateway"
+
+
 def _platform_label(system: Optional[str]) -> str:
     return {"darwin": "macOS", "windows": "Windows", "linux": "Linux"}[normalize_platform(system)]
 

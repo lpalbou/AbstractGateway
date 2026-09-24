@@ -66,13 +66,53 @@ def _job(job_id: str = "dl_1", kind: str = "download", status: str = "queued", *
 
 
 @pytest.fixture()
-def facade(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """Replace every models & engines facade function with a recorder."""
+def facade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> SimpleNamespace:
+    """Replace every models & engines facade function with a recorder.
+
+    Engine installs run in the Gateway's own job registry
+    (`abstractgateway.engines_install`); it is swapped for one whose installer
+    records the call instead of touching the host (the real installer paths
+    are tested in test_gateway_engines_install.py)."""
+    import threading
+
     from abstractgateway import core_config
+    from abstractgateway import engines_install as ei
 
     real = core_config.config_facade
     calls: Dict[str, List[Any]] = {}
-    state = SimpleNamespace(calls=calls, raise_on={}, jobs={})
+    state = SimpleNamespace(calls=calls, raise_on={}, jobs={}, installs=[], install_gate=None)
+
+    class _NoHost(ei.System):
+        def which(self, name):
+            return None
+
+        def run(self, argv, **kw):
+            calls.setdefault("host_run", []).append(list(argv))
+            return 0, ""
+
+        def writable_dir(self, path):
+            return True
+
+        def http_json(self, url, timeout=2.0):
+            return None
+
+    class _RecordingInstaller(ei.EngineInstaller):
+        def install(self, eid, ctx):
+            state.installs.append({"engine": eid, "force": ctx.job.force, "location": ctx.job.location})
+            if state.install_gate is not None:
+                state.install_gate.wait(10)
+            return {"installed": True, "version": "9.9"}
+
+    host = ei.HostFacts(os_id="darwin", arch="arm64", accelerator="metal", macos_version=(15, 0))
+
+    def make(**_kw):
+        return _RecordingInstaller(system=_NoHost(), host=host, python="/nonexistent/python", cache_dir=tmp_path / "engines",
+                                   home=tmp_path / "home", system_apps_dir=tmp_path / "Applications")
+
+    state.registry = ei.EngineJobRegistry(make, log_dir=tmp_path / "engines" / "jobs")
+    state.gate = threading.Event
+    monkeypatch.setattr(ei, "default_installer", make)
+    ei.reset_default_registry_for_tests(state.registry)
 
     def rec(name: str, value: Any):
         def fn(*args: Any, **kwargs: Any) -> Any:
@@ -99,7 +139,8 @@ def facade(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     rec("host_job_cancel", lambda job_id: (dict(state.jobs[job_id], status="cancelled") if job_id in state.jobs else None))
     rec("models_engines_support", {"available": True, "abstractcore_version": "2.14.0", "required": "2.14.0", "missing": []})
     state.real = real
-    return state
+    yield state
+    ei.reset_default_registry_for_tests(None)
 
 
 def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, user_auth: bool = False) -> tuple[TestClient, dict]:
@@ -133,7 +174,8 @@ def test_reads_serve_the_core_payloads_with_their_arguments(facade, tmp_path, mo
         got = client.get("/api/gateway/engines?probe=1", headers=h)
         assert got.status_code == 200
         body = got.json()
-        assert body["schema"] == "engines_status_v1"
+        assert body["schema"] == "gateway_engines_v2" and body["core_schema"] == "engines_status_v1"
+        assert [e["id"] for e in body["engines"]] == ["ollama", "lmstudio", "mlx", "llamacpp", "vllm", "huggingface"]
         assert body["install_allowed"] is False  # unknown bind (a test client): not loopback
         assert body["install_policy"]["source"] == "default"
         assert facade.calls["engine_inventory"][-1][1] == {"probe": True}
@@ -199,12 +241,12 @@ def test_engine_install_needs_the_knob_except_for_dry_runs(facade, tmp_path, mon
         assert "allow_engine_install" in body["message"]
         assert "engine_install" not in facade.calls
 
-        # A dry run is always allowed, and Core is told the policy.
+        # A dry run is always allowed and runs nothing.
         dry = client.post("/api/gateway/engines/ollama/install", headers=h, json={"dry_run": True})
         assert dry.status_code == 200, dry.text
-        assert dry.json()["dry_run"] is True
+        assert dry.json()["dry_run"] is True and dry.json()["plan"]["method"] == "app"
         assert dry.json()["cli_equivalent"] == "abstractgateway engines install ollama --yes"
-        assert facade.calls["engine_install"][-1] == (("ollama",), {"dry_run": True, "force": False, "allow": False, "run_inline": None})
+        assert facade.installs == [] and "engine_install" not in facade.calls
 
         # No body at all is a real install with defaults.
         assert client.post("/api/gateway/engines/ollama/install", headers=h).status_code == 403
@@ -216,8 +258,11 @@ def test_engine_install_needs_the_knob_except_for_dry_runs(facade, tmp_path, mon
         assert on.json()["allow_engine_install"]["source"] == "stored"
         started = client.post("/api/gateway/engines/ollama/install", headers=h, json={"dry_run": False, "force": True})
         assert started.status_code == 200, started.text
-        assert started.json()["status"] == "queued"
-        assert facade.calls["engine_install"][-1][1] == {"dry_run": False, "force": True, "allow": True, "run_inline": None}
+        assert started.json()["schema"] == "engine_install_job_v1" and started.json()["job_id"].startswith("eng_")
+        facade.registry.get(started.json()["job_id"]).thread.join(5)
+        assert facade.installs[-1] == {"engine": "ollama", "force": True, "location": "auto"}
+        done = client.get(f"/api/gateway/engines/jobs/{started.json()['job_id']}", headers=h).json()
+        assert done["state"] == "done" and done["percent"] == 100.0
         assert client.get("/api/gateway/engines", headers=h).json()["install_allowed"] is True
 
 
@@ -227,7 +272,7 @@ def test_loopback_bind_allows_installs_by_default_and_a_stored_off_wins(facade, 
     with client:
         engines = client.get("/api/gateway/engines", headers=h).json()
         assert engines["install_allowed"] is True
-        assert engines["install_policy"] == {"value": True, "source": "default", "bind_host": "127.0.0.1", "loopback_bind": True}
+        assert engines["install_policy"] == {"value": True, "source": "default", "bind_host": "127.0.0.1", "loopback_bind": True, "caller_on_this_machine": False}
         assert client.post("/api/gateway/engines/ollama/install", headers=h, json={}).status_code == 200
 
         assert client.post("/api/gateway/admin/runtime-config", headers=h, json={"allow_engine_install": False}).status_code == 200
@@ -247,25 +292,59 @@ def test_a_non_loopback_bind_defaults_installs_off(facade, tmp_path, monkeypatch
         assert client.post("/api/gateway/engines/ollama/install", headers=h, json={}).status_code == 403
 
 
-def test_core_refusals_keep_their_status_and_body(facade, tmp_path, monkeypatch) -> None:
-    from abstractgateway import core_config
+@pytest.mark.parametrize(
+    "peer,headers,allowed",
+    [
+        ("192.168.1.175", {}, True),  # the person at the gateway machine, through its LAN address
+        ("127.0.0.1", {}, True),  # the same person through loopback
+        ("192.168.1.50", {}, False),  # another computer on the LAN
+        ("127.0.0.1", {"X-Forwarded-For": "203.0.113.9"}, False),  # a proxy on this host, for someone else
+    ],
+)
+def test_a_lan_bound_gateway_lets_the_person_at_the_machine_install_engines(facade, tmp_path, monkeypatch, peer, headers, allowed) -> None:
+    """Mission HH (2026-09-24): same rule as the apps (security/same_machine.py)."""
+    from abstractgateway.security import same_machine
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_BIND_HOST", "0.0.0.0")
+    monkeypatch.setattr(same_machine, "own_addresses", lambda **kw: frozenset({"127.0.0.1", "::1", "192.168.1.175"}))
+    base, _h = _client(tmp_path, monkeypatch)
+    client = TestClient(base.app, client=(peer, 50321))
+    h = {"Authorization": f"Bearer {TOKEN}", **headers}
+    with client:
+        got = client.get("/api/gateway/engines", headers=h)
+        engines = got.json()
+        assert got.status_code == 200 and engines["install_allowed"] is allowed, got.text
+        assert engines["install_policy"]["caller_on_this_machine"] is allowed
+        assert engines["install_policy"]["source"] == ("default_same_machine" if allowed else "default")
+        r = client.post("/api/gateway/engines/ollama/install", headers=h, json={})
+        assert r.status_code == (200 if allowed else 403), r.text
+
+
+def test_install_refusals_keep_their_status_and_body(facade, tmp_path, monkeypatch) -> None:
+    import threading
 
     monkeypatch.setenv("ABSTRACTGATEWAY_BIND_HOST", "localhost")
-    busy = core_config.HostActionRefused("an engine install is already running", status_code=409, status="busy", reason="busy", extra={"job": {"job_id": "eng_0"}})
-    facade.raise_on["engine_install"] = busy
+    facade.install_gate = threading.Event()
     client, h = _client(tmp_path, monkeypatch)
     with client:
+        first = client.post("/api/gateway/engines/lmstudio/install", headers=h, json={})
+        assert first.status_code == 200, first.text
+        # The same engine joins its running job; another engine is refused while it runs.
+        again = client.post("/api/gateway/engines/lmstudio/install", headers=h, json={})
+        assert again.json()["job_id"] == first.json()["job_id"] and again.json()["joined"] is True
         got = client.post("/api/gateway/engines/ollama/install", headers=h, json={})
         assert got.status_code == 409
         body = got.json()
-        assert body["ok"] is False and body["status"] == "busy" and body["reason"] == "busy"
-        assert body["job"] == {"job_id": "eng_0"}
-        assert body["error"] == {"message": "an engine install is already running", "type": "host_action_busy"}
+        assert body["ok"] is False and body["reason"] == "busy" and first.json()["job_id"] in body["message"]
+        assert body["error"]["type"] == "host_action_refused"
+        facade.install_gate.set()
 
-        facade.raise_on["engine_install"] = core_config.HostActionRefused(
-            "unknown engine 'x'", status_code=404, status="refused", reason="unknown_engine"
-        )
         assert client.post("/api/gateway/engines/x/install", headers=h, json={"dry_run": True}).status_code == 404
+        assert client.post("/api/gateway/engines/x/install", headers=h, json={}).status_code == 404
+        # vLLM on a Mac: a refusal with the reason, never a job.
+        vllm = client.post("/api/gateway/engines/vllm/install", headers=h, json={})
+        assert vllm.status_code == 409 and vllm.json()["reason"] == "unsupported_on_this_machine"
+        assert "macOS" in vllm.json()["message"]
 
 
 # ---------------------------------------------------------------------------
@@ -381,9 +460,14 @@ def test_policy_rows_name_every_new_post() -> None:
 
     if gated("/api/gateway/models/delete") is None:
         pytest.skip("policy rows expose no matcher here; covered end to end above")
-    for path in ("/api/gateway/models/delete", "/api/gateway/engines/ollama/install", "/api/gateway/jobs/dl_1/cancel"):
+    for path in (
+        "/api/gateway/models/delete", "/api/gateway/engines/ollama/install", "/api/gateway/jobs/dl_1/cancel",
+        "/api/gateway/engines/ollama/start", "/api/gateway/engines/lmstudio/stop",
+        "/api/gateway/engines/jobs/eng_1/continue", "/api/gateway/engines/jobs/eng_1/cancel",
+    ):
         assert gated(path), path
-    for path in ("/api/gateway/engines", "/api/gateway/models/catalog", "/api/gateway/models/installed", "/api/gateway/jobs/dl_1", "/api/gateway/host/profile"):
+    for path in ("/api/gateway/engines", "/api/gateway/models/catalog", "/api/gateway/models/installed", "/api/gateway/jobs/dl_1",
+                 "/api/gateway/host/profile", "/api/gateway/engines/jobs/eng_1", "/api/gateway/engines/jobs"):
         assert not gated(path, "GET"), path
 
 
@@ -417,7 +501,6 @@ def test_an_older_abstractcore_is_501_and_a_missing_one_503(facade, tmp_path, mo
             ("GET", "/api/gateway/host/profile", None),
             ("GET", "/api/gateway/engines?probe=1", None),
             ("GET", "/api/gateway/engines/ollama", None),
-            ("POST", "/api/gateway/engines/ollama/install", {"dry_run": True}),
             ("GET", "/api/gateway/models/catalog?fits=1", None),
             ("GET", "/api/gateway/models/installed", None),
             ("POST", "/api/gateway/models/delete", {"provider": "ollama", "artifact": "x", "dry_run": True}),
@@ -541,7 +624,8 @@ def test_cli_destructive_verbs_need_yes_and_refusals_exit_2(cli_over_testclient,
     assert rc == 0 and json.loads(out)["kind"] == "delete"
 
     rc, out, _ = _run_cli(["engines", "install", "ollama", "--json"], capsys)
-    assert rc == 2 and json.loads(out)["install"]["argv"] == ["brew", "install", "ollama"]
+    assert rc == 2 and json.loads(out)["install"]["method"] == "app"
+    assert f.installs == []
 
     # The gateway's own refusal (knob off on an unknown bind) is exit 2 as well.
     rc, out, err = _run_cli(["engines", "install", "ollama", "--yes"], capsys)
@@ -551,7 +635,7 @@ def test_cli_destructive_verbs_need_yes_and_refusals_exit_2(cli_over_testclient,
     assert rc == 0 and json.loads(out)["dry_run"] is True
 
     rc, out, _ = _run_cli(["engines", "open", "lmstudio", "--no-browser"], capsys)
-    assert rc == 0 and out.strip() == "https://lmstudio.example/download"
+    assert rc == 0 and out.strip() == "https://lmstudio.ai/download"
 
 
 def test_cli_local_mode_uses_the_seam_without_a_gateway(facade, tmp_path, monkeypatch, capsys) -> None:
@@ -560,8 +644,11 @@ def test_cli_local_mode_uses_the_seam_without_a_gateway(facade, tmp_path, monkey
     assert rc == 0
     job = json.loads(out)
     assert job["cli_equivalent"] == "abstractgateway engines install ollama --yes"
+    assert job["dry_run"] is True and facade.installs == []
     # The person at the terminal is on the host: allowed, foreground.
-    assert facade.calls["engine_install"][-1][1] == {"dry_run": True, "force": False, "allow": True, "run_inline": True}
+    rc, out, _ = _run_cli(["engines", "install", "mlx", "--yes", "--local", "--json"], capsys)
+    assert rc == 0, out
+    assert json.loads(out)["state"] == "done" and facade.installs[-1]["engine"] == "mlx"
 
     rc, out, _ = _run_cli(["models", "catalog", "--fits", "--local", "--json"], capsys)
     assert rc == 0 and facade.calls["model_catalog"][-1][1]["fits_only"] is True
@@ -669,4 +756,8 @@ def test_the_console_crate_request_shapes_are_accepted(facade, tmp_path, monkeyp
         assert rm["schema"] == "host_job_v1"
         monkeypatch.setenv("ABSTRACTGATEWAY_BIND_HOST", "127.0.0.1")
         ins = client.post("/api/gateway/engines/ollama/install", headers=h, json={"dry_run": False}).json()
-        assert ins["schema"] == "host_job_v1"
+        # The engine job (contract engine_install_job_v1) still carries the host_job_v1
+        # fields the console crate reads, and the older /jobs/{id} lane serves it.
+        assert ins["schema"] == "engine_install_job_v1" and ins["job_id"] and ins["status"] in {"queued", "running", "completed"}
+        legacy = client.get(f"/api/gateway/jobs/{ins['job_id']}", headers=h).json()
+        assert legacy["schema"] == "host_job_v1" and legacy["kind"] == "engine_install" and legacy["engine"] == "ollama"

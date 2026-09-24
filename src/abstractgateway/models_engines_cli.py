@@ -8,7 +8,10 @@
     abstractgateway models jobs [JOB_ID] [--kind K] [--status S]
     abstractgateway models cancel JOB_ID
     abstractgateway engines status [--probe]
-    abstractgateway engines install ENGINE [--yes] [--force] [--dry-run] [--no-wait]
+    abstractgateway engines install ENGINE [--yes] [--force] [--dry-run] [--no-wait] [--location auto|user|system]
+    abstractgateway engines continue JOB_ID [--action approve_admin|install_tools|recheck] [--no-wait]
+    abstractgateway engines cancel JOB_ID
+    abstractgateway engines start|stop ENGINE
     abstractgateway engines open ENGINE [--no-browser]
 
 The verbs, arguments and exit codes are AbstractCore's (`abstractcore models …`,
@@ -122,13 +125,29 @@ def add_engines_subparser(sub: Any) -> None:
     p.add_argument("--probe", action="store_true", help="Also ask each local server whether it answers (one GET each)")
     _connection_args(p)
 
-    p = esub.add_parser("install", help="Install an engine on the gateway host with its vendor's command (admin)")
+    p = esub.add_parser("install", help="Install an engine on the gateway host, user-level first (admin)")
     p.add_argument("engine", help="ollama | lmstudio | mlx | llamacpp | vllm | huggingface")
     p.add_argument("--yes", action="store_true", help="Do not ask for confirmation")
-    p.add_argument("--dry-run", action="store_true", help="Only show the exact command")
+    p.add_argument("--dry-run", action="store_true", help="Only show the plan (steps, command preview, admin/tools needs)")
     p.add_argument("--force", action="store_true", help="Run even when the engine is already installed")
     p.add_argument("--no-wait", action="store_true", help="Start the job and exit")
+    p.add_argument("--location", default="auto", choices=["auto", "user", "system"], help="Apps on macOS: auto (/Applications when writable, else ~/Applications), user, system")
     _connection_args(p)
+
+    p = esub.add_parser("continue", help="Resume an install waiting for tools or an administrator (admin)")
+    p.add_argument("job_id")
+    p.add_argument("--action", default=None, choices=["approve_admin", "install_tools", "recheck"], help="Default: the job's first continue action")
+    p.add_argument("--no-wait", action="store_true", help="Resume and exit")
+    _connection_args(p)
+
+    p = esub.add_parser("cancel", help="Cancel an engine install job (admin)")
+    p.add_argument("job_id")
+    _connection_args(p)
+
+    for verb in ("start", "stop"):
+        p = esub.add_parser(verb, help=f"{verb.capitalize()} a local engine server: ollama | lmstudio (admin)")
+        p.add_argument("engine")
+        _connection_args(p)
 
     p = esub.add_parser("open", help="Print (and open) an engine's download page")
     p.add_argument("engine")
@@ -238,21 +257,45 @@ class _Local:
         parts = [p for p in parsed.path.split("/") if p]
         truthy = lambda v: str(v or "").lower() in {"1", "true", "yes", "on"}  # noqa: E731
         body = dict(body or {})
+        from . import engines_install as ei
+
         try:
-            if parts == ["engines"]:
-                data = seam.core_engine_inventory(probe=truthy(query.get("probe")))
-                data["install_allowed"] = True
-                return _Answer(200, data)
-            if len(parts) == 2 and parts[0] == "engines":
-                return _Answer(200, seam.core_engine_status(parts[1], probe=truthy(query.get("probe"))))
-            if len(parts) == 3 and parts[0] == "engines" and parts[2] == "install":
-                # The person at this terminal is on the host: the local path is
-                # allowed, like `abstractcore engines install`, and runs in the
-                # foreground.
-                job = seam.core_engine_install(
-                    parts[1], dry_run=bool(body.get("dry_run")), force=bool(body.get("force")), allow=True, run_inline=True
-                )
-                return _Answer(200, job)
+            if parts[:1] == ["engines"]:
+                # The person at this terminal is on the host: installs are
+                # allowed, like `abstractcore engines install`, and run in the
+                # foreground (a job that needs tools/admin pauses and returns).
+                reg = ei.default_registry()
+                if parts == ["engines"] or (len(parts) == 2 and parts[1] != "jobs"):
+                    core = seam.core_engine_inventory(probe=truthy(query.get("probe")))
+                    accel = (core.get("host") or {}).get("accelerator")
+                    data = ei.engines_payload(ei.default_installer(accelerator=accel), core, reg, install_allowed=True)
+                    data["install_allowed"] = True
+                    if parts == ["engines"]:
+                        return _Answer(200, data)
+                    for row in data["engines"]:
+                        if row.get("id") == parts[1]:
+                            return _Answer(200, row)
+                    return _Answer(404, {"ok": False, "status": "refused", "reason": "unknown_engine", "message": f"unknown engine {parts[1]!r}"})
+                if len(parts) == 3 and parts[2] == "install":
+                    if body.get("dry_run"):
+                        return _Answer(200, ei.dry_run_payload(ei.default_installer(), parts[1], location=str(body.get("location") or "auto")))
+                    snap, _ = reg.start(parts[1], force=bool(body.get("force")), location=str(body.get("location") or "auto"), run_inline=True)
+                    job = reg.get(snap["job_id"])
+                    return _Answer(200, job.snapshot() if job else snap)
+                if len(parts) == 3 and parts[1] == "jobs":
+                    job = reg.get(parts[2])
+                    return _Answer(200, job.snapshot()) if job else _Answer(404, {"ok": False, "status": "not_found", "message": f"no job {parts[2]}"})
+                if len(parts) == 4 and parts[1] == "jobs" and parts[3] == "continue":
+                    reg.continue_job(parts[2], body.get("action"), run_inline=True)
+                    job = reg.get(parts[2])
+                    return _Answer(200, job.snapshot() if job else {})
+                if len(parts) == 4 and parts[1] == "jobs" and parts[3] == "cancel":
+                    snap = reg.cancel(parts[2])
+                    return _Answer(200, snap) if snap else _Answer(404, {"ok": False, "status": "not_found", "message": f"no job {parts[2]}"})
+                if len(parts) == 3 and parts[2] in {"start", "stop"} and parts[1] in ei.SERVER_ENGINES:
+                    inst = reg.service_installer()
+                    fn = getattr(inst, f"{parts[2]}_{parts[1]}")
+                    return _Answer(200, {"ok": True, "engine": parts[1], "action": parts[2], **fn()})
             if parts == ["models", "catalog"]:
                 data = seam.core_model_catalog(
                     query.get("q") or None, engine=query.get("engine") or None, fits_only=truthy(query.get("fits")),
@@ -280,6 +323,10 @@ class _Local:
             if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "cancel":
                 job = seam.core_host_job_cancel(parts[1])
                 return _Answer(200, job) if job is not None else _Answer(404, {"ok": False, "status": "not_found", "message": f"no job {parts[1]}"})
+        except ei.JobStateError as exc:
+            return _Answer(exc.status_code, {"ok": False, "status": "refused", "reason": exc.reason, "message": str(exc)})
+        except ei.InstallFailed as exc:
+            return _Answer(502, {"ok": False, "status": "failed", "reason": exc.code, "message": exc.message})
         except seam.HostActionRefused as exc:
             return _Answer(exc.status_code, exc.payload())
         except seam.CoreTooOld as exc:
@@ -531,8 +578,8 @@ def _engines_status(args: argparse.Namespace, t: Any) -> int:
         return EXIT_OK
     print(f"Local engines on {t.url}" + (" (probed)" if args.probe else "") + ("" if payload.get("install_allowed", True) else "  [installs disabled: allow_engine_install is off]"))
     for e in payload.get("engines") or []:
-        if not e.get("supported_on_host"):
-            state = f"not for this host: {e.get('unsupported_reason')}"
+        if not e.get("supported", e.get("supported_on_host")):
+            state = f"not for this machine: {e.get('support_reason') or e.get('unsupported_reason')}"
         elif e.get("installed"):
             state = f"installed {e.get('version') or ''}".strip()
             if e.get("running") is True:
@@ -541,8 +588,12 @@ def _engines_status(args: argparse.Namespace, t: Any) -> int:
                 state += f", {e['models_count']} models"
         else:
             plan = e.get("install") or {}
-            how = " ".join(plan.get("argv") or []) or plan.get("url") or "no install command"
-            state = f"not installed (install: {how})"
+            how = plan.get("notes") or " ".join(plan.get("argv") or []) or plan.get("url") or "no install command"
+            flags = [f for f, on in (("needs administrator", plan.get("needs_admin")), ("needs tools", plan.get("needs_tools"))) if on]
+            state = f"not installed -- {plan.get('method') or '?'}" + (f" [{', '.join(flags)}]" if flags else "") + f": {how}"
+        job = e.get("active_job")
+        if job:
+            state += f"  (install job {job.get('job_id')}: {job.get('state')})"
         print(f"  {e.get('name', e.get('id')):<14} {state}")
     return EXIT_OK
 
@@ -551,8 +602,8 @@ def _engines_install(args: argparse.Namespace, t: Any) -> int:
     if not args.yes and not args.dry_run:
         plan_answer = t.call("GET", f"/engines/{urllib.parse.quote(args.engine, safe='')}")
         plan = ((plan_answer.data or {}).get("install") or {}) if plan_answer.ok else {}
-        argv = " ".join(plan.get("argv") or []) or "(no install command)"
-        question = f"Install {args.engine} on the gateway host ({t.url}) by running: {argv}?"
+        argv = plan.get("notes") or " ".join(plan.get("argv") or []) or "(no install command)"
+        question = f"Install {args.engine} on the gateway host ({t.url})? {argv}"
         if args.json or not _confirm(question):
             payload = {
                 "ok": False, "status": "refused", "reason": "not_confirmed", "engine": args.engine, "install": plan or None,
@@ -560,11 +611,91 @@ def _engines_install(args: argparse.Namespace, t: Any) -> int:
             }
             _print_json(payload) if args.json else print(f"abstractgateway engines install: {payload['message']}", file=sys.stderr)
             return EXIT_REFUSED
-    body = {"dry_run": bool(args.dry_run), "force": bool(args.force)}
+    body = {"dry_run": bool(args.dry_run), "force": bool(args.force), "location": getattr(args, "location", "auto") or "auto"}
     answer = t.call("POST", f"/engines/{urllib.parse.quote(args.engine, safe='')}/install", body)
     if not answer.ok:
         return _fail(args, answer, "engines install")
-    return _finish_job(args, t, answer.data, "engines install")
+    if answer.data.get("dry_run"):
+        return _finish_job(args, t, answer.data, "engines install")
+    return _finish_engine_job(args, t, answer.data)
+
+
+_ENGINE_TERMINAL = {"done", "failed", "cancelled"}
+_ENGINE_PAUSED = {"needs_admin", "needs_tools"}
+
+
+def _finish_engine_job(args: argparse.Namespace, t: Any, job: Dict[str, Any]) -> int:
+    """Follow `/engines/jobs/{id}`; a job waiting for tools/admin stops here with what to do next."""
+
+    last = None
+    try:
+        while not getattr(args, "no_wait", False) and str(job.get("state")) not in _ENGINE_TERMINAL | _ENGINE_PAUSED:
+            line = (job.get("state"), job.get("message"))
+            if not args.json and line != last:
+                pct = f"{job['percent']:.0f}% " if isinstance(job.get("percent"), (int, float)) else ""
+                print(f"  {pct}{job.get('message') or job.get('state')}", file=sys.stderr)
+                last = line
+            time.sleep(_POLL_S)
+            answer = t.call("GET", f"/engines/jobs/{urllib.parse.quote(str(job['job_id']), safe='')}")
+            if not answer.ok:
+                print(f"  (lost the job: {answer.message()})", file=sys.stderr)
+                return EXIT_ERROR
+            job = answer.data
+    except KeyboardInterrupt:
+        print(f"\nStopped watching; the job keeps running. Follow it: abstractgateway engines status -- cancel: abstractgateway engines cancel {job.get('job_id')}", file=sys.stderr)
+    state = str(job.get("state"))
+    if args.json:
+        _print_json(job)
+    else:
+        print(f"{state}: {job.get('message') or ''}".rstrip())
+        prompt = job.get("admin_prompt") or {}
+        tools = job.get("tools_prompt") or {}
+        if state == "needs_admin":
+            print(f"  why: {prompt.get('reason')}")
+            print(f"  it will run, as administrator: {prompt.get('command')}")
+            print(f"  continue (shows the password dialog on {prompt.get('where')}): abstractgateway engines continue {job.get('job_id')}")
+        elif state == "needs_tools":
+            action = tools.get("action") or {}
+            print(f"  needs: {tools.get('tools')} -- {tools.get('reason')}")
+            if action.get("available"):
+                print(f"  install them (Apple's own installer dialog): abstractgateway engines continue {job.get('job_id')} --action install_tools")
+            else:
+                print(f"  install them on the host: {action.get('command')}")
+            print(f"  then: abstractgateway engines continue {job.get('job_id')} --action recheck")
+        elif state == "failed" and job.get("details"):
+            print(f"  full log: {job.get('log_path') or '(in the job details: --json)'}")
+    if state == "done" or (getattr(args, "no_wait", False) and state not in {"failed", "cancelled"}):
+        return EXIT_OK
+    return EXIT_REFUSED if state in _ENGINE_PAUSED else EXIT_ERROR
+
+
+def _engines_continue(args: argparse.Namespace, t: Any) -> int:
+    body = {"action": args.action} if args.action else {}
+    answer = t.call("POST", f"/engines/jobs/{urllib.parse.quote(args.job_id, safe='')}/continue", body, timeout=max(args.timeout_s, 900.0))
+    if not answer.ok:
+        return _fail(args, answer, "engines continue")
+    return _finish_engine_job(args, t, answer.data)
+
+
+def _engines_cancel(args: argparse.Namespace, t: Any) -> int:
+    answer = t.call("POST", f"/engines/jobs/{urllib.parse.quote(args.job_id, safe='')}/cancel")
+    if not answer.ok:
+        return _fail(args, answer, "engines cancel")
+    _print_json(answer.data) if args.json else print(f"{answer.data.get('state')}: {answer.data.get('message')}")
+    return EXIT_OK
+
+
+def _engines_server(args: argparse.Namespace, t: Any) -> int:
+    answer = t.call("POST", f"/engines/{urllib.parse.quote(args.engine, safe='')}/{args.engines_cmd}", timeout=max(args.timeout_s, 180.0))
+    if not answer.ok:
+        return _fail(args, answer, f"engines {args.engines_cmd}")
+    data = answer.data or {}
+    if args.json:
+        _print_json(data)
+    else:
+        state = "running" if data.get("running") else ("stopped" if data.get("running") is False else "unknown")
+        print(f"{args.engine}: {state}" + (f" at {data.get('base_url')}" if data.get("base_url") else "") + (f" -- {data['message']}" if data.get("message") else ""))
+    return EXIT_OK if (data.get("running") is True) == (args.engines_cmd == "start") else EXIT_ERROR
 
 
 def _engines_open(args: argparse.Namespace, t: Any) -> int:
@@ -612,6 +743,10 @@ _MODELS: Dict[str, Callable[[argparse.Namespace, Any], int]] = {
 _ENGINES: Dict[str, Callable[[argparse.Namespace, Any], int]] = {
     "status": _engines_status,
     "install": _engines_install,
+    "continue": _engines_continue,
+    "cancel": _engines_cancel,
+    "start": _engines_server,
+    "stop": _engines_server,
     "open": _engines_open,
 }
 
