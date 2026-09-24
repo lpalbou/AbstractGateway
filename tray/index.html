@@ -1019,9 +1019,11 @@ can see what it is doing and act on it in one click:</p>
   is a deep link to a tab of it.</li>
 <li><strong>Apps</strong> — the six AbstractFramework apps, one short line each: <strong>Open X</strong>
   (running, whoever started it, or installed: started first), <strong>Install X…</strong>
-  (installs through the gateway, starts it and opens it signed in, with
-  progress notifications), <strong>Launch Assistant</strong> (the desktop app), otherwise
-  the app's name, greyed. See <em>Apps</em> below.</li>
+  (installs through the gateway, with progress notifications: the same
+  install as the console's Install button, so Code's terminal app comes with
+  it; nothing opens by itself, the menu then offers <strong>Open X</strong>), <strong>Launch
+  Assistant</strong> (the desktop app), otherwise the app's name, greyed. See <em>Apps</em>
+  below.</li>
 <li><strong>Workflows</strong> — the last 24 hours of runs, newest first: a state badge
   (🟢 running, 🟡 waiting, ✅ completed, ❌ failed, ⚪️ cancelled), the step
   count and how long each took, under a one-line tally. Rows are information;
@@ -1219,7 +1221,7 @@ not depend on its apps:</p>
 <tr>
 <td>Observer, Continuum, Code, Entity, Flow</td>
 <td>the gateway (<code>GET /api/gateway/apps</code>): its own installs, and apps started outside it (the dev stack, <code>npx</code>, a service) found on their usual port</td>
-<td><strong>Open X</strong> when running, whoever started it (a one-time signed-in handover); <strong>Open X</strong> when installed and stopped (starts it, then opens it); <strong>Install X…</strong> when it can be installed (install + start + open, with progress); otherwise <strong>X</strong>, greyed</td>
+<td><strong>Open X</strong> when running, whoever started it (a one-time signed-in handover); <strong>Open X</strong> when installed and stopped (starts it, then opens it); <strong>Install X…</strong> when it can be installed (the browser app and, for Code when a ready-made download exists for this computer, its terminal app, as one job; a notification when it is done, then <strong>Open X</strong>); otherwise <strong>X</strong>, greyed</td>
 </tr>
 <tr>
 <td>the same, installed globally</td>
@@ -1228,8 +1230,8 @@ not depend on its apps:</p>
 </tr>
 <tr>
 <td>Assistant</td>
-<td><code>AbstractAssistant.app</code> in /Applications or ~/Applications, the <code>abstractassistant</code> command (PATH or this Python's scripts folder), or the package in this Python (<code>importlib.util.find_spec</code>)</td>
-<td><strong>Launch Assistant</strong></td>
+<td>the same detection as the console's Assistant card (<code>apps_desktop.detect_assistant</code>): <code>AbstractAssistant.app</code> in /Applications or ~/Applications, the <code>abstractassistant</code> command (this Python's scripts folder, or PATH), or the package in this Python (<code>importlib.util.find_spec</code>, without importing it)</td>
+<td><strong>Launch Assistant</strong> when found (also while it runs); <strong>Install Assistant…</strong> when the gateway can install it into its own Python (the console's Install); otherwise <strong>Assistant</strong>, greyed</td>
 </tr>
 <tr>
 <td>Code's terminal version (the only app with one today)</td>

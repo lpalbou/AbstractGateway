@@ -962,9 +962,9 @@ files that later read as installed.</p>
 <td><code>{"ok": true, "jobs": [...]}</code>, newest first; parents are listed, and each child names its parent in <code>parent_job</code></td>
 </tr>
 <tr>
-<td><code>POST /models/download/{job_id}/cancel</code></td>
+<td><code>POST /models/download/{job_id}/cancel</code> <code>{"via": "console"}</code>?</td>
 <td>admin</td>
-<td><code>{"ok": true, "job": {...}}</code> with <code>cancel_requested: true</code>; the job turns <code>cancelled</code> when the tool has stopped (normally &lt; 1 s); a parent cancels every running child; 404 when unknown</td>
+<td><code>{"ok": true, "job": {...}}</code> with <code>cancel_requested: true</code> and <code>cancelled_by</code>; the job turns <code>cancelled</code> when the tool has stopped (normally &lt; 1 s); a parent cancels every running child; 404 when unknown. A console sends <code>{"via": "console"}</code> when a person clicked Cancel; without it the cancel is recorded as <code>api</code></td>
 </tr>
 <tr>
 <td><code>GET /models/downloads/stream</code></td>
@@ -973,7 +973,7 @@ files that later read as installed.</p>
 </tr>
 </tbody>
 </table>
-<p>The request bodies are unchanged from before this contract.</p>
+<p>The request bodies are unchanged from before this contract (the cancel body is optional).</p>
 <h3 id="the-event-stream">The event stream<a class="headerlink" href="#the-event-stream" title="Permanent link">&para;</a></h3>
 <p><code>GET /models/downloads/stream</code> sends <code>event: downloads</code> with
 <code>data: {"jobs": [...]}</code> (the same list as <code>GET /models/downloads</code>) each time
@@ -1048,7 +1048,11 @@ final state). Polling keeps working; the stream is optional.</p>
 </tr>
 <tr>
 <td><code>error</code></td>
-<td>the full reason when <code>failed</code></td>
+<td>the full reason when <code>failed</code> (the tool's own words)</td>
+</tr>
+<tr>
+<td><code>ended_reason</code></td>
+<td>when <code>failed</code> or <code>cancelled</code>: one plain sentence saying what happened and what a new download reuses, e.g. "The connection to Hugging Face dropped after 200 MB of 266 MB. Check the network connection, then download it again; the files that finished are kept, and the file that was in progress starts over." or "Cancelled in the console by admin at 21:15 after 105 MB of 275 MB. ..."</td>
 </tr>
 <tr>
 <td><code>stall_after_s</code>, <code>stalled_for_s</code></td>
@@ -1063,6 +1067,10 @@ final state). Polling keeps working; the stream is optional.</p>
 <td><code>true</code> from the cancel request until the job ends</td>
 </tr>
 <tr>
+<td><code>cancelled_by</code>, <code>cancelled_by_user</code></td>
+<td>who asked for the cancel: <code>console</code> (a person clicked Cancel in a console), <code>api</code> (any other HTTP cancel), <code>cli</code> (<code>abstractcore models cancel</code>, Ctrl-C), <code>other_process</code> (a cancel marker from another program); the signed-in account when known. <code>null</code> unless a cancel was requested</td>
+</tr>
+<tr>
 <td><code>parent_job</code></td>
 <td>on a child of a parent job</td>
 </tr>
@@ -1071,7 +1079,7 @@ final state). Polling keeps working; the stream is optional.</p>
 <p>A parent (<code>download_group</code>) adds <code>children</code> (the full child jobs),
 <code>child_job_ids</code> and <code>label</code>, and uses <code>files</code> for one row per model. Its
 bytes, percent and speed add up its children; models already installed count
-as done with nothing to fetch. It is <code>stalled</code> only when every running child
+as done with nothing to fetch. Its <code>ended_reason</code> joins its children's. It is <code>stalled</code> only when every running child
 is stalled, <code>failed</code> when every child ended and one failed (<code>error</code> names
 which, with its reason), <code>cancelled</code> when one was cancelled, and <code>done</code> when
 all are.</p>
@@ -1087,7 +1095,11 @@ all are.</p>
   <code>transitions</code>.</li>
 <li><code>verifying</code>: checking what arrived (Ollama's sha256, every Hugging Face file whole).</li>
 <li><code>installing</code>: moving into the library (Ollama "writing manifest", LM Studio "Finalizing download...").</li>
-<li><code>done</code>, <code>failed</code>, <code>cancelled</code>: finished.</li>
+<li><code>done</code>, <code>failed</code>, <code>cancelled</code>: finished. <code>cancelled</code> ONLY follows a cancel request
+  (<code>cancelled_by</code> says whose); a download that stops on its own -- a dropped
+  connection, a Hub error, a full disk, the Gateway restarting (the job then
+  reads <code>failed</code> from its saved snapshot, and the transfer stops with it) -- is
+  <code>failed</code>, with <code>ended_reason</code>.</li>
 </ul>
 <p><code>verifying</code> and <code>installing</code> never count as stalls.</p>
 <h3 id="real-examples">Real examples<a class="headerlink" href="#real-examples" title="Permanent link">&para;</a></h3>

@@ -1088,11 +1088,15 @@ button rows of the cards side by side are always at the same height.</p>
 <tbody>
 <tr>
 <td>not installed</td>
-<td><strong>Install and open</strong> (installs Node.js first when the gateway needs it, then the app, starts it and opens it)</td>
+<td><strong>Install</strong> (installs Node.js first when the gateway needs it, then the app and, for Code when a ready-made download exists for this computer, its terminal app too; nothing opens by itself)</td>
 </tr>
 <tr>
 <td>installing</td>
-<td>a progress bar above the row, and <strong>Cancel</strong></td>
+<td>a progress bar above the row (with one row per part: "Code in the browser", "Code in the terminal"), and <strong>Cancel</strong> (it stops both)</td>
+</tr>
+<tr>
+<td>an install failed</td>
+<td>the reason, <strong>Show details</strong>, and <strong>Install</strong> again</td>
 </tr>
 <tr>
 <td>installed and running</td>
@@ -1104,12 +1108,19 @@ button rows of the cards side by side are always at the same height.</p>
 </tr>
 </tbody>
 </table>
-<p>Code has a terminal version too. Next to Code's primary button: <strong>Open in
-Terminal</strong> when the terminal version is installed and the browser is on the
-gateway machine (a new terminal window opens there, signed in), or a quiet
-<strong>Install for Terminal</strong> when a ready-made download exists for this
-computer. When the terminal version needs the Rust toolchain, or when the
-browser is on another computer, the plain view shows no terminal button.</p>
+<p>Code has a terminal version too. Next to Code's Open: <strong>Open in Terminal</strong>
+when the terminal version is installed and the browser is on the gateway
+machine (a new terminal window opens there, signed in). The plain view never
+installs the terminal version on its own: Code's Install installs both. When
+the terminal version needs the Rust toolchain, or when the browser is on
+another computer, the plain view shows no terminal button (the commands are
+under Technical details, as is "Install terminal app" for a browser app that
+is installed without it).</p>
+<p>The last card is the <strong>Assistant</strong>, the desktop app: <strong>Install</strong> when it is
+not on the gateway's computer, then <strong>Open</strong> (it starts in the menu bar of the
+gateway's computer, or comes to the front when it already runs). From another
+computer the card says "The Assistant runs on the gateway's computer: open it
+there." with no button. See <a href="../apps/#the-assistant-a-desktop-app">apps.md</a>.</p>
 <p>A result box appears only after something you did ("Code opened in a new
 Terminal window, signed in to this gateway.", "Flow Editor opened in a new
 tab.") and closes itself after a few seconds. A failure stays, with the

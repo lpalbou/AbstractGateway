@@ -68,7 +68,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#browser-apps" class="md-skip">
+        <a href="#apps" class="md-skip">
           Skip to content
         </a>
       
@@ -551,6 +551,17 @@
     <span class="md-ellipsis">
       
         Command line
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-assistant-a-desktop-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Assistant (a desktop app)
       
     </span>
   </a>
@@ -1066,6 +1077,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-assistant-a-desktop-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Assistant (a desktop app)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#http-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1096,11 +1118,41 @@
   
 
 
-<h1 id="browser-apps">Browser apps<a class="headerlink" href="#browser-apps" title="Permanent link">&para;</a></h1>
+<h1 id="apps">Apps<a class="headerlink" href="#apps" title="Permanent link">&para;</a></h1>
 <p>The five browser apps (Observer, Continuum, Code, Entity and Flow Editor) can be
 installed, started, stopped and updated from the gateway: from the console's
 Apps page, from the HTTP API below, or with <code>abstractgateway apps</code>. Nobody has
-to open a terminal or install Node.js by hand.</p>
+to open a terminal or install Node.js by hand. The Apps page also lists the
+desktop app, the <strong>Assistant</strong> (see <a href="#the-assistant-a-desktop-app">The Assistant</a>).</p>
+<p>On a card, a plain user sees one button for the state the app is in:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Buttons</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Not installed</td>
+<td><strong>Install</strong></td>
+</tr>
+<tr>
+<td>Installing</td>
+<td>a progress bar (one row per part, e.g. "Code in the browser" and "Code in the terminal") and <strong>Cancel</strong></td>
+</tr>
+<tr>
+<td>Installed (running or not)</td>
+<td><strong>Open</strong>, and <strong>Open in Terminal</strong> right beside it when the app's terminal version is installed</td>
+</tr>
+<tr>
+<td>Failed</td>
+<td>the reason, <strong>Show details</strong>, and <strong>Install</strong> again</td>
+</tr>
+</tbody>
+</table>
+<p>Stop, Show log, Update, versions, addresses and commands are under
+<strong>Technical details</strong>.</p>
 <h2 id="what-happens-when-you-click-install">What happens when you click Install<a class="headerlink" href="#what-happens-when-you-click-install" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Node.js.</strong> The apps are small Node.js servers. If the gateway finds
@@ -1115,9 +1167,23 @@ to open a terminal or install Node.js by hand.</p>
    registry's sha512 integrity hash. Apps that need other npm packages get them
    through npm (with its cache in <code>&lt;data dir&gt;/apps/npm-cache/</code>); Code needs
    none and is unpacked directly.</li>
-<li><strong>Start.</strong> With "Install and open", the gateway starts the app on a free
-   port, waits until it answers, and opens it in a new tab, already signed in.</li>
+<li><strong>The terminal app, too.</strong> When the app also runs in a terminal and a
+   ready-made download exists for this computer (Code today, see
+   <a href="#terminal-versions">Terminal versions</a>), the same Install installs it
+   right after the browser app: ONE job whose <code>parts</code> are the two rows the
+   card shows (<code>install</code> then <code>install-tui</code>, each <code>waiting</code>, <code>running</code>,
+   <code>done</code>, <code>failed</code>, <code>cancelled</code> or <code>skipped</code>). Cancel stops both. If the
+   terminal part fails, the browser app stays installed and the job says so
+   ("Code is installed for the browser, but its terminal app did not install:
+   …"); with Technical details on, the card offers "Install terminal app" to
+   try that part again. Without a ready-made download for this computer,
+   Install installs the browser app only and the terminal app's command stays
+   under Technical details. The row's <code>install_parts</code> (<code>["web"]</code> or
+   <code>["web", "tui"]</code>) says in advance what Install covers.</li>
 </ol>
+<p>Install only installs: nothing starts and no tab opens. The card then shows
+<strong>Open</strong>, which starts the app on a free port when it is stopped, waits until
+it answers, and opens it in a new tab, already signed in.</p>
 <p>Every step is a job with a percentage, downloaded bytes and a plain message.
 When a step fails, the job says why in one sentence and carries the full log
 in its <code>details</code> field (<code>&lt;data dir&gt;/apps/jobs/&lt;job&gt;.log</code>).</p>
@@ -1228,7 +1294,8 @@ second entry of kind <code>"tui"</code>:</p>
 <li><strong>Install (<code>install_method</code>).</strong> <code>release_binary</code>: Code publishes prebuilt
   binaries for macOS (Apple silicon and Intel), Linux (x86_64 and arm64,
   glibc) and Windows (x86_64) on its GitHub release, with a <code>SHA256SUMS</code> file.
-  "Install for Terminal" downloads the archive for this computer, checks it
+  The card's Install (and <code>install-tui</code> on its own) downloads the archive for
+  this computer, checks it
   against <code>SHA256SUMS</code> and against the sha256 digest GitHub reports for the
   file (both must agree), unpacks the single binary into <code>&lt;data dir&gt;/apps/bin/</code>,
   makes it executable and runs <code>--version</code> before it replaces anything.
@@ -1378,7 +1445,10 @@ running one (as themselves).</p>
 <h2 id="command-line">Command line<a class="headerlink" href="#command-line" title="Permanent link">&para;</a></h2>
 <p>The same actions, through the running gateway:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>apps<span class="w"> </span>list<span class="w">                 </span><span class="c1"># Node.js, every app, installed/latest, URL</span>
-abstractgateway<span class="w"> </span>apps<span class="w"> </span>install<span class="w"> </span>code<span class="w"> </span>--launch
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>install<span class="w"> </span>code<span class="w">            </span><span class="c1"># the browser app and, where available, its terminal app</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>install<span class="w"> </span>code<span class="w"> </span>--launch<span class="w">   </span><span class="c1"># ... and start it</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>install<span class="w"> </span>assistant<span class="w">       </span><span class="c1"># the desktop Assistant, into the gateway's Python</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>launch<span class="w"> </span>assistant<span class="w">        </span><span class="c1"># open it on this computer</span>
 abstractgateway<span class="w"> </span>apps<span class="w"> </span>launch<span class="w"> </span>observer
 abstractgateway<span class="w"> </span>apps<span class="w"> </span>open<span class="w"> </span>observer<span class="w">        </span><span class="c1"># prints a one-time signed-in link</span>
 abstractgateway<span class="w"> </span>apps<span class="w"> </span>logs<span class="w"> </span>observer<span class="w"> </span>--tail<span class="w"> </span><span class="m">50</span>
@@ -1392,6 +1462,44 @@ abstractgateway<span class="w"> </span>apps<span class="w"> </span><span class="
 <p><code>--url</code>, <code>--token</code> and <code>--data-dir</code> work as for <code>abstractgateway models</code>: by
 default the command finds the gateway running for this data dir and uses its
 admin token on a loopback URL.</p>
+<h2 id="the-assistant-a-desktop-app">The Assistant (a desktop app)<a class="headerlink" href="#the-assistant-a-desktop-app" title="Permanent link">&para;</a></h2>
+<p>AbstractAssistant (PyPI <code>abstractassistant</code>) is the framework's desktop
+companion: a menu-bar app with a chat palette and hands-free voice
+conversations. It is a Python app, not a browser app, so its card
+(<code>kind: "desktop"</code>, id <code>assistant</code>, after the five browser apps) has no address
+or port. The full <code>abstractframework</code> install already includes it, in the same
+Python environment as the gateway; a gateway-only install may not.</p>
+<ul>
+<li><strong>Found by presence</strong> (nothing is imported or started to find it): the
+  <code>abstractassistant</code> command next to the gateway's own Python (or on <code>PATH</code>),
+  the installed package (<code>importlib.util.find_spec</code>, without importing it; a
+  folder that merely has the package's name does not count), and on macOS
+  <code>AbstractAssistant.app</code> in <code>/Applications</code> or <code>~/Applications</code>. The version
+  comes from the package, else from the app's <code>Info.plist</code>. It is <strong>Running</strong>
+  when a process on this computer is the Assistant (its command, <code>python -m
+  abstractassistant…</code>, or the app's own program). The tray's "Launch
+  Assistant" uses the same detection (<code>apps_desktop.detect_assistant</code>), so
+  the tray and the console always agree.</li>
+<li><strong>Install</strong> installs <code>abstractassistant</code> into the gateway's own Python as a
+  job (<code>uv pip install --python &lt;gateway python&gt; abstractassistant</code>, or pip
+  when there is no uv), with every <code>abstract*</code> package the gateway runs
+  pinned to its current version by a constraints file, so installing the
+  Assistant never changes the gateway. The same rule as the other installs
+  decides who may install (see <a href="#who-may-install">Who may install</a>).</li>
+<li><strong>Open</strong> starts it on the gateway's computer: <code>open -a AbstractAssistant.app</code>
+  when the app exists, otherwise its command, as a separate process with none
+  of the gateway's tokens, secrets or keys in its environment. A running
+  Assistant is not started twice: the app is brought to the front (or, when
+  it was started from its command, the card says its icon is in the menu
+  bar). The Assistant keeps its own connection settings (its Settings window,
+  Connection): the gateway passes it no address and no token, and it has no
+  one-time sign-in handover yet.</li>
+<li><strong>From another computer</strong> the card says "The Assistant runs on the gateway's
+  computer: open it there." with no button: it is a desktop app for that
+  computer's screen.</li>
+<li><strong>Technical details</strong> show its version, where it was found and the launch
+  command (or the install command when it is not installed).</li>
+</ul>
 <h2 id="http-api">HTTP API<a class="headerlink" href="#http-api" title="Permanent link">&para;</a></h2>
 <p>All routes are under <code>/api/gateway/apps</code> and need a signed-in principal.</p>
 <table>
@@ -1406,7 +1514,7 @@ admin token on a loopback URL.</p>
 <tr>
 <td><code>GET /apps?latest=true</code></td>
 <td>any user</td>
-<td>Node.js status, one row per app (with <code>interfaces[]</code>, see "Terminal versions") and <code>console_tui</code> (the gateway console's terminal app). <code>latest=false</code> skips the npm registry and GitHub release lookups (cached 10 minutes).</td>
+<td>Node.js status, one row per app (<code>kind</code> <code>web</code> with <code>interfaces[]</code>, see "Terminal versions", and <code>install_parts</code>; then the Assistant, <code>kind</code> <code>desktop</code> with <code>desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}</code>) and <code>console_tui</code> (the gateway console's terminal app). <code>latest=false</code> skips the npm registry and GitHub release lookups (cached 10 minutes).</td>
 </tr>
 <tr>
 <td><code>POST /apps/runtime/install</code></td>
@@ -1414,9 +1522,9 @@ admin token on a loopback URL.</p>
 <td>Install Node.js (a job), or <code>job: null</code> when one is already usable.</td>
 </tr>
 <tr>
-<td><code>POST /apps/{id}/install</code> <code>{"version"?, "launch"?}</code></td>
+<td><code>POST /apps/{id}/install</code> <code>{"version"?, "launch"?, "with_terminal"?}</code></td>
 <td>admin</td>
-<td>A job: Node.js if needed, download, check, dependencies, and with <code>launch: true</code> start the app.</td>
+<td>ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's <code>install_parts</code> has <code>"tui"</code> (<code>with_terminal: false</code> skips it); the job's <code>parts</code> are its child rows. Starts nothing unless <code>launch: true</code>. For <code>assistant</code>: installs <code>abstractassistant</code> into the gateway's Python (constraints keep every <code>abstract*</code> package as it is).</td>
 </tr>
 <tr>
 <td><code>POST /apps/{id}/update</code> <code>{"version"?}</code></td>
@@ -1426,7 +1534,7 @@ admin token on a loopback URL.</p>
 <tr>
 <td><code>POST /apps/{id}/launch</code></td>
 <td>admin</td>
-<td>Start the app (waits until it answers) and mark it enabled.</td>
+<td>Start the app (waits until it answers) and mark it enabled. For <code>assistant</code>: open it on the gateway's computer, <code>{ok, app, already_running, message}</code>; from another computer 409 <code>not_on_gateway_machine</code>, and nothing starts.</td>
 </tr>
 <tr>
 <td><code>POST /apps/{id}/stop</code></td>
@@ -1436,7 +1544,7 @@ admin token on a loopback URL.</p>
 <tr>
 <td><code>POST /apps/{id}/open</code> <code>{"remember"?, "path"?}</code></td>
 <td>any user</td>
-<td>A one-time <code>open_url</code> (relative to the gateway) that opens the running app signed in, at <code>path</code> inside the app when given (e.g. <code>/#new</code>). 400 <code>invalid_app_path</code> for anything that is not a path inside the app.</td>
+<td>A one-time <code>open_url</code> (relative to the gateway) that opens the running app signed in, at <code>path</code> inside the app when given (e.g. <code>/#new</code>). 400 <code>invalid_app_path</code> for anything that is not a path inside the app. 409 <code>desktop_app</code> for the Assistant (use <code>/launch</code>).</td>
 </tr>
 <tr>
 <td><code>GET /apps/{id}/logs?tail=200</code></td>
@@ -1446,7 +1554,7 @@ admin token on a loopback URL.</p>
 <tr>
 <td><code>GET /apps/jobs</code>, <code>GET /apps/jobs/{job}</code></td>
 <td>any user</td>
-<td>Jobs: <code>state</code> (queued, running, succeeded, failed, cancelled), <code>percent</code>, <code>bytes_done</code>, <code>bytes_total</code>, <code>message</code>, <code>steps</code>, <code>details</code> (full log on failure).</td>
+<td>Jobs: <code>state</code> (queued, running, succeeded, failed, cancelled), <code>percent</code>, <code>bytes_done</code>, <code>bytes_total</code>, <code>message</code>, <code>steps</code>, <code>parts</code> (the child rows of an Install that covers two parts), <code>details</code> (full log on failure).</td>
 </tr>
 <tr>
 <td><code>POST /apps/jobs/{job}/cancel</code></td>
