@@ -174,11 +174,10 @@ def tray_decision(
     probes: Optional[Dict[str, Any]] = None,
 ) -> TrayDecision:
     """Every reason to say no is a FACT about this process or this desktop --
-    never a preference (operator ruling 2026-09-06). The icon is the gateway's
-    presence on the desktop: while it serves, it is there. There used to be a
-    `desktop_tray` setting and a `disabled_by_setting` answer here; a switch
-    whose only effect is to remove the one entry point a non-technical user
-    knows is a way to lose the product, not a preference worth keeping."""
+    never a preference. The icon is the gateway's presence on the desktop:
+    while it serves, it is there. No setting hides it, because the icon is the
+    one entry point a non-technical user knows (the runtime config refuses the
+    retired `desktop_tray` key with a plain message)."""
 
     if runner_only:
         return TrayDecision(False, "runner_only", "the tray belongs to the process that serves the console")

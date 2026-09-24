@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import functools
 import html
 import json
+import re
 import socket
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 
 def _script_json(value: Any) -> str:
@@ -68,6 +70,99 @@ def _core_console_unavailable_card(parts: Dict[str, Any], what: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Source comments stay in the source
+# ---------------------------------------------------------------------------
+#
+# The console's HTML, CSS and JS carry maintainer comments (design reasons,
+# review findings, dates). They explain the code to whoever edits it and mean
+# nothing to a browser, so the page is served without them. Only whole
+# comments are removed: an HTML `<!-- ... -->`, a CSS `/* ... */`, and a JS
+# comment that starts its own line (`// ...`, or a `/* ... */` block). A JS
+# comment after code on the same line is left alone, because telling it apart
+# from `//` inside a string or a regex needs a JS parser. The splice
+# placeholders (`<!--__NAME__-->`, `/*__NAME__*/`) are kept.
+
+_PLACEHOLDER_HTML = re.compile(r"<!--__[A-Z_]+__-->")
+_PLACEHOLDER_BLOCK = re.compile(r"/\*__[A-Z_]+__\*/")
+_HTML_COMMENT = re.compile(r"<!--(?!__[A-Z_]+__-->).*?-->", re.S)
+_CSS_COMMENT = re.compile(r"/\*(?!__[A-Z_]+__\*/).*?\*/", re.S)
+_BLANK_RUN = re.compile(r"\n(?:[ \t]*\n)+")
+_SCRIPT_BLOCK = re.compile(r"(<script\b[^>]*>)(.*?)(</script>)", re.S)
+_STYLE_BLOCK = re.compile(r"(<style\b[^>]*>)(.*?)(</style>)", re.S)
+
+
+def _strip_css_comments(css: str) -> str:
+    return _BLANK_RUN.sub("\n", _CSS_COMMENT.sub("", css))
+
+
+def _strip_js_line_comments(js: str) -> str:
+    out = []
+    in_block = False
+    for line in js.splitlines(keepends=True):
+        text = line.strip()
+        if in_block:
+            if "*/" in line:
+                in_block = False
+                rest = line.split("*/", 1)[1]
+                if rest.strip():
+                    out.append(rest)
+            continue
+        if text.startswith("//"):
+            continue
+        if text.startswith("/*") and not _PLACEHOLDER_BLOCK.fullmatch(text):
+            if "*/" not in text[2:]:
+                in_block = True
+                continue
+            rest = text[2:].split("*/", 1)[1]
+            if rest.strip():
+                out.append(line[: len(line) - len(line.lstrip())] + rest.strip() + "\n")
+            continue
+        out.append(line)
+    return "".join(out)
+
+
+def _strip_html_comments(page: str) -> str:
+    """HTML comments outside scripts, CSS comments in styles, JS line comments in scripts."""
+
+    def markup(chunk: str) -> str:
+        def style(m: "re.Match[str]") -> str:
+            return m.group(1) + _strip_css_comments(m.group(2)) + m.group(3)
+
+        pieces = []
+        last = 0
+        for m in _STYLE_BLOCK.finditer(chunk):
+            pieces.append(_HTML_COMMENT.sub("", chunk[last:m.start()]))
+            pieces.append(style(m))
+            last = m.end()
+        pieces.append(_HTML_COMMENT.sub("", chunk[last:]))
+        return _BLANK_RUN.sub("\n", "".join(pieces))
+
+    pieces = []
+    last = 0
+    for m in _SCRIPT_BLOCK.finditer(page):
+        pieces.append(markup(page[last:m.start()]))
+        pieces.append(m.group(1) + _strip_js_line_comments(m.group(2)) + m.group(3))
+        last = m.end()
+    pieces.append(markup(page[last:]))
+    return "".join(pieces)
+
+
+@functools.lru_cache(maxsize=1)
+def _console_owned_sources() -> Tuple[str, str, str, str]:
+    """(template, theme CSS, UI CSS, UI JS) without their source comments."""
+    from .console_catalog import CATALOG_CSS, CATALOG_JS
+    from .console_themes import KIT_THEME_CSS
+    from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
+
+    return (
+        _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
+        _strip_css_comments(KIT_THEME_CSS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS),
+    )
+
+
 def gateway_console_html() -> str:
     """The served console page. Theme CSS + the theme list are spliced from
     `console_themes.py` — the generated verbatim copy of the abstractuic
@@ -78,10 +173,10 @@ def gateway_console_html() -> str:
     that are pure `str.replace` tokens (the template is never `.format`-ed),
     so nothing in the fragment -- braces, `$`, a `</script>` in a string --
     can re-enter the template or end the host script early."""
-    from .console_islands import ISLANDS_CSS, ISLANDS_JS, ISLANDS_PROVENANCE
-    from .console_themes import KIT_THEME_CSS, KIT_THEME_SPECS
-    from .console_catalog import CATALOG_CSS, CATALOG_JS
-    from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
+    from .console_islands import ISLANDS_CSS, ISLANDS_JS
+    from .console_themes import KIT_THEME_SPECS
+
+    template, theme_css, ui_css, ui_js = _console_owned_sources()
 
     parts = _core_console_parts()
     config = {
@@ -106,8 +201,8 @@ def gateway_console_html() -> str:
         script = ""
         css = ""
     page = (
-        _CONSOLE_HTML_TEMPLATE
-        .replace("/*__KIT_THEME_CSS__*/", KIT_THEME_CSS)
+        template
+        .replace("/*__KIT_THEME_CSS__*/", theme_css)
         .replace("__KIT_THEME_SPECS_JSON__", json.dumps(KIT_THEME_SPECS, ensure_ascii=False))
         .replace("__CORE_CONSOLE_CONFIG_JSON__", _script_json(config))
     )
@@ -122,9 +217,8 @@ def gateway_console_html() -> str:
         ("/*__AF_KIT_CSS__*/", ISLANDS_CSS.replace("</style", "<\\/style")),
         # The model catalog cards (console_catalog.py) ride with the UI layer:
         # same sheet, same script scope.
-        ("/*__CONSOLE_UI_CSS__*/", CONSOLE_UI_CSS + CATALOG_CSS),
-        ("/*__CONSOLE_UI_JS__*/", CONSOLE_UI_JS + CATALOG_JS),
-        ("__AF_ISLANDS_VERSION__", html.escape(str(ISLANDS_PROVENANCE.get("kit_version") or ""))),
+        ("/*__CONSOLE_UI_CSS__*/", ui_css),
+        ("/*__CONSOLE_UI_JS__*/", ui_js),
         ("/*__AF_CONSOLE_ISLANDS_JS__*/", islands_js),
         ("/*__ABSTRACTCORE_FRAGMENT_CSS__*/", css.replace("</style", "<\\/style")),
         ("<!--__ABSTRACTCORE_CATALOG_HTML__-->", catalog_body),
@@ -1864,7 +1958,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="runtime-panel-artifacts" class="hidden">
 	                <div class="list-toolbar">
 	                  <select id="runtime-artifacts-modality" title="Filter artifacts by type" aria-label="Artifact type filter"><option value="">all types</option><option value="image">image</option><option value="video">video</option><option value="audio,voice,music,sound">audio</option><option value="text,markdown,json,code,html">text</option><option value="binary,document">other</option></select>
-	                  <input id="runtime-artifacts-search" type="search" spellcheck="false" placeholder="Search artifacts — name, kind, tags, date (2026-06-13)…" aria-label="Search artifacts" title="Search artifact metadata">
+	                  <input id="runtime-artifacts-search" type="search" spellcheck="false" placeholder="Search artifacts — name, kind, tags, date (YYYY-MM-DD)…" aria-label="Search artifacts" title="Search artifact metadata">
 	                </div>
 	                <div id="runtime-artifacts-message" class="message"></div>
 	                <div class="table-scroll">
@@ -2828,7 +2922,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </form>
     </div>
   </div>
-  <!-- abstractuic ui-kit __AF_ISLANDS_VERSION__ console islands: the kit's React
+  <!-- abstractuic ui-kit console islands (the bundle's first line names the
+       kit version): the kit's React
        AfTopBarActions + AfAppearanceDialog, bundled by ui-kit
        scripts/build_islands.mjs, vendored + drift-pinned by
        console_islands_sync.py. Defines window.AfConsoleIslands. -->
@@ -11718,7 +11813,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // catch: they sat at the end of a six-round-trip sequential chain, so
       // the first painted screen still showed the pre-login error row).
       if (state.activeTab === "users") loadEntities();
-      if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached; no fold since 2026-08-19)
+      if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached)
       if (state.activeTab === "models") { loadHostState(); startHostStatePoll(); }
       if (state.activeTab === "catalog" || state.activeTab === "engines" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);
       try {

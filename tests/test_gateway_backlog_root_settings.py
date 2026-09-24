@@ -481,7 +481,7 @@ def test_console_apps_tab_carries_the_backlog_settings_card() -> None:
     assert 'mountBacklogSettings($("backlog-settings-root"))' in html
     assert "Advanced: backlog settings (Continuum)" in html
     assert "Use the gateway's own folder" in html
-    start = html.index("// ---- Backlog settings (mission II)")
+    start = html.index("const backlogSetStore = ")
     card = html[start : html.index("function mountBacklogSettings", start)]
     assert "ABSTRACTGATEWAY_" not in card
 

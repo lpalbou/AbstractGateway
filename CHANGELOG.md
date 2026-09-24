@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The documentation site no longer publishes the backlog: planning notes
   under `docs/backlog/` stay in the repository and are left out of the site
   build. The one API page that cited a backlog item links to it on GitHub.
+- The web console page no longer carries the source code's maintainer
+  comments (design notes, review references, dates); it is about 11% smaller
+  (1.25 MB to 1.12 MB). The artifact search box shows `YYYY-MM-DD` as its
+  date example.
 
 ## [0.4.2] - 2026-09-24
 
