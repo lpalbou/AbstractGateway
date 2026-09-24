@@ -24,6 +24,11 @@ def _gateway_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", _TOKEN)
 
 
+def _vs(knob: dict) -> dict:
+    """{value, source} of a knob (the payload also carries label/help/cli)."""
+    return {"value": knob.get("value"), "source": knob.get("source")}
+
+
 def _client() -> TestClient:
     from abstractgateway.app import app
 
@@ -41,14 +46,18 @@ def test_source_chain_stored_beats_env_beats_default(monkeypatch: pytest.MonkeyP
         assert r.status_code == 200, r.text
         cfg = r.json()
         assert cfg["writable"] is True  # admin principal (continuum c1563 amendment)
-        assert cfg["process_manager"] == {"value": False, "source": "default"}
-        assert cfg["triage_repo_root"] == {"value": None, "source": "default"}
+        assert _vs(cfg["process_manager"]) == {"value": False, "source": "default"}
+        # Mission II: the default backlog folder is the gateway's own
+        # (<data dir>/backlog), usable on a fresh install.
+        assert cfg["triage_repo_root"]["source"] == "default"
+        assert cfg["triage_repo_root"]["value"] == cfg["triage_repo_root"]["default_path"]
+        assert cfg["triage_repo_root"]["available"] is True
         assert cfg["executor"]["value"] == "codex"
 
         # Env set: env wins over default, source says env.
         monkeypatch.setenv("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER", "1")
         cfg2 = client.get("/api/gateway/admin/runtime-config").json()
-        assert cfg2["process_manager"] == {"value": True, "source": "env"}
+        assert _vs(cfg2["process_manager"]) == {"value": True, "source": "env"}
 
         # Stored set: stored wins over env, source says stored, survives.
         w = client.post("/api/gateway/admin/runtime-config", json={"process_manager": False})
@@ -56,7 +65,7 @@ def test_source_chain_stored_beats_env_beats_default(monkeypatch: pytest.MonkeyP
         assert w.json()["applied"]["process_manager"] is False
         assert w.json()["changed_by"] == "person:admin"
         cfg3 = client.get("/api/gateway/admin/runtime-config").json()
-        assert cfg3["process_manager"] == {"value": False, "source": "stored"}  # beats the env=1
+        assert _vs(cfg3["process_manager"]) == {"value": False, "source": "stored"}  # beats the env=1
 
 
 def test_corrupt_store_refuses_write_without_wiping_other_knobs(tmp_path, monkeypatch: pytest.MonkeyPatch):
@@ -113,7 +122,7 @@ def test_write_validates_before_persist(monkeypatch: pytest.MonkeyPatch):
         # A non-existent triage root refuses (the backlog surface reads under it).
         bad = client.post("/api/gateway/admin/runtime-config", json={"triage_repo_root": "/no/such/dir/xyz"})
         assert bad.status_code == 400
-        assert "not an existing directory" in bad.json()["detail"]
+        assert "cannot be the backlog folder: the folder does not exist" in bad.json()["detail"]
 
         # An unknown executor refuses naming the roster.
         bad2 = client.post("/api/gateway/admin/runtime-config", json={"executor": "ghost-runner"})
@@ -384,6 +393,7 @@ def test_non_admin_read_redacts_the_triage_path(monkeypatch: pytest.MonkeyPatch,
     server path never leaks to a non-admin."""
     from abstractgateway.runtime_config import read_runtime_config, write_runtime_config
 
+    (tmp_path / "docs" / "backlog").mkdir(parents=True)  # a backlog folder holds docs/backlog
     write_runtime_config(tmp_path, {"triage_repo_root": str(tmp_path)}, actor="person:admin")
 
     admin_view = read_runtime_config(tmp_path, is_admin=True)
@@ -392,7 +402,10 @@ def test_non_admin_read_redacts_the_triage_path(monkeypatch: pytest.MonkeyPatch,
 
     user_view = read_runtime_config(tmp_path, is_admin=False)
     assert user_view["writable"] is False
-    assert user_view["triage_repo_root"] == {"configured": True, "source": "stored"}
+    assert user_view["triage_repo_root"]["configured"] is True
+    assert user_view["triage_repo_root"]["source"] == "stored"
+    assert user_view["triage_repo_root"]["available"] is True
+    assert not any(k in user_view["triage_repo_root"] for k in ("default_path", "backlog_dir"))
     assert "value" not in user_view["triage_repo_root"]  # path never leaks
 
 

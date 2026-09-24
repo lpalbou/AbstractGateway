@@ -83,12 +83,11 @@ async def triage_action_apply(token: str, request: Request):
     from ..users import gateway_data_dir_from_env
 
     data_dir = gateway_data_dir_from_env()
-    # Honor the admin runtime-config store (continuum c1550): stored triage
-    # root beats env beats none — a launcher losing the env no longer blanks
-    # the backlog surface when the operator persisted it (c1526).
+    # THE backlog-folder resolution (mission II): `serve --backlog-root` >
+    # stored setting > legacy env > the gateway's own folder.
     from ..runtime_config import resolve_triage_repo_root
 
-    repo_root_raw = resolve_triage_repo_root(data_dir) or _env("ABSTRACT_TRIAGE_REPO_ROOT", "ABSTRACTGATEWAY_TRIAGE_REPO_ROOT")
+    repo_root_raw = resolve_triage_repo_root(data_dir)
     repo_root = Path(repo_root_raw).expanduser().resolve() if repo_root_raw else None
 
     decision, err2 = apply_decision_action(

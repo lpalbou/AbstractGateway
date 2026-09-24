@@ -37,28 +37,33 @@ Notification helpers used by `triage-reports --notify`:
 
 Evidence: CLI wiring in `src/abstractgateway/cli.py`.
 
-## Backlog browsing/editing (repo-dependent)
+## Backlog browsing/editing
 
-The gateway also exposes endpoints that read/write backlog Markdown files in a repository layout that includes `docs/backlog/*`.
+The gateway also exposes endpoints that read/write backlog Markdown files in a folder that contains `docs/backlog/*`.
 
-To enable these endpoints, set the repo root:
+They work out of the box: without a setting the gateway uses its own folder, `<data dir>/backlog/`, created with a starter overview and item template on first use. To point it at a project checkout:
 
 ```bash
-export ABSTRACTGATEWAY_TRIAGE_REPO_ROOT="/path/to/your/repo"
+abstractgateway config set triage_repo_root /path/to/your/repo   # saved; or Continuum Settings, or the console
+abstractgateway serve --backlog-root /path/to/your/repo          # this run only
 ```
 
-Evidence: repo-root checks in `src/abstractgateway/routes/gateway.py` (process manager + backlog endpoints) and in `src/abstractgateway/maintenance/backlog_exec_runner.py`.
+See [configuration.md](configuration.md#backlog-folder-exec-runner-and-process-manager-continuum) for the resolution order and the three doors.
+
+Evidence: `resolve_backlog_root` in `src/abstractgateway/runtime_config.py`, used by `src/abstractgateway/routes/gateway.py` (process manager + backlog endpoints) and `src/abstractgateway/maintenance/backlog_exec_runner.py`.
 
 ## Backlog execution runner (high risk; disabled by default)
 
 The backlog exec runner consumes queued execution requests under `<DATA_DIR>/backlog_exec_queue/` and executes them (optionally using the `codex` CLI).
 
-Enable:
+Enable (applies at once on a running gateway):
 
 ```bash
-export ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER=1
-export ABSTRACTGATEWAY_BACKLOG_EXECUTOR="none"   # none|codex_cli|workflow_bundle
+abstractgateway config set backlog_exec_runner on
+abstractgateway config set executor codex        # codex | claude | cursor-agent | abstractcode
 ```
+
+or `abstractgateway serve --exec-runner on` for one run, or Continuum → Settings → Gateway administration.
 
 Additional knobs (see `BacklogExecRunnerConfig.from_env()`):
 - `ABSTRACTGATEWAY_BACKLOG_EXEC_POLL_S`
@@ -82,11 +87,13 @@ Notes:
 Enable:
 
 ```bash
-export ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1
+abstractgateway config set process_manager on
 
-# Optional (process control only): the AbstractFramework checkout root
-export ABSTRACTGATEWAY_TRIAGE_REPO_ROOT="$PWD"
+# Process control only: the AbstractFramework checkout it manages
+abstractgateway config set triage_repo_root "$PWD"
 ```
+
+Process control stays off while the backlog folder is the gateway's own default folder (it is not a checkout).
 
 Optional config path:
 
@@ -95,7 +102,7 @@ export ABSTRACTGATEWAY_PROCESS_MANAGER_CONFIG="$PWD/runtime/gateway/processes.js
 ```
 
 Endpoints:
-- `GET /api/gateway/processes` (requires `ABSTRACTGATEWAY_TRIAGE_REPO_ROOT`)
+- `GET /api/gateway/processes` (requires the backlog folder set to a checkout: `triage_repo_root`)
 - `POST /api/gateway/processes/{id}/start|stop|restart|redeploy`
 - `GET /api/gateway/processes/{id}/logs/tail`
 - `GET /api/gateway/processes/env` (metadata only; never returns values; does not require repo root)
@@ -108,7 +115,7 @@ Evidence: `src/abstractgateway/routes/gateway.py` (endpoint guards) and `src/abs
 Env var editing is allowlist-only and values are write-only (they are never returned to the client). Overrides are persisted on the gateway host under:
 - `<ABSTRACTGATEWAY_DATA_DIR>/process_manager/env_overrides.json`
 
-When the gateway starts and `ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1`, it loads and applies persisted overrides to its own `os.environ` (best-effort).
+When the gateway starts with the process manager on (`process_manager` setting), it loads and applies persisted overrides to its own `os.environ` (best-effort).
 
 To extend the allowlist, update:
 - `src/abstractgateway/maintenance/process_manager.py` → `managed_env_var_allowlist()`

@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import stat
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -128,7 +129,8 @@ def _status_payload() -> Dict[str, Any]:
         "next_steps": [
             "Use Gateway Console /console for provider connections, API keys, endpoint base URLs, users, and defaults.",
             "Use ABSTRACTVOICE_* and ABSTRACTVISION_* only for capability-package backend settings.",
-            "For browser apps, enable ABSTRACTGATEWAY_USER_AUTH=1 and sign in with a Gateway user token.",
+            "Browser apps sign in with a Gateway account token. With user accounts on, every account "
+            "signs in to its own runtime; with user accounts off, only admin accounts can sign in.",
         ],
     }
 
@@ -524,6 +526,185 @@ def _add_default_scope_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--runtime", default=None, help="Runtime id override for --scope user")
 
 
+
+# ---- `abstractgateway config get|set|unset` (mission II) -------------------
+# The runtime settings from a terminal: the same store and the same
+# validation as the console form and Continuum's Settings (the one door,
+# runtime_config.write_runtime_config). When a gateway is serving THIS data
+# dir (its serve record is live) the change goes through its HTTP door, so
+# it applies at once (the exec runner starts/stops) and lands in its audit
+# log; otherwise the store is written directly and the next start reads it.
+
+_SOURCE_WORDS = {
+    "flag": "launch flag",
+    "stored": "saved setting",
+    "env": "environment (legacy)",
+    "default": "default",
+    "account": "account",
+}
+
+
+def _runtime_data_dir(args: argparse.Namespace) -> Path:
+    if getattr(args, "data_dir", None):
+        return Path(str(args.data_dir)).expanduser().resolve()
+    from .host_paths import resolve_data_dir
+
+    return resolve_data_dir().path
+
+
+def _setting_row(cfg: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
+    if key.startswith("apps."):
+        row = (cfg.get("apps") or {}).get(key[len("apps."):])
+        return row if isinstance(row, dict) else None
+    row = cfg.get(key)
+    return row if isinstance(row, dict) else None
+
+
+def _format_value(value: Any) -> str:
+    if value is True:
+        return "on"
+    if value is False:
+        return "off"
+    if value in (None, ""):
+        return "(none)"
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _print_setting(key: str, row: Dict[str, Any]) -> None:
+    value = row.get("value") if "value" in row else row.get("configured")
+    source = str(row.get("source") or "")
+    print(f"{key} = {_format_value(value)}  [{_SOURCE_WORDS.get(source, source)}]")
+    if row.get("label"):
+        print(f"  {row['label']}: {row.get('help') or ''}".rstrip())
+    if row.get("available") is False:
+        print(f"  NOT AVAILABLE: {row.get('reason')}")
+    if row.get("source") == "default" and row.get("default_path") and row.get("exists") is False:
+        print("  (the gateway creates this folder with a starter overview and template on first use)")
+    if row.get("env_shadowed"):
+        print(f"  note: {row.get('env_name') or 'an environment value'} is also set; the {_SOURCE_WORDS.get(source, source)} wins")
+    if source == "flag":
+        print("  note: the running gateway was started with a launch flag for this; a saved value applies once it restarts without it")
+
+
+def _live_gateway(data_dir: Path) -> Optional[Dict[str, str]]:
+    """{url, token} of a gateway serving THIS data dir on this machine, or
+    None. Only a live serve record counts (never a guessed default port: a
+    CLI must not write into some other gateway)."""
+    try:
+        from .first_run import read_serve_record
+
+        rec = read_serve_record(data_dir)
+    except Exception:
+        return None
+    if not rec or rec.get("alive") is not True or not rec.get("url"):
+        return None
+    url = str(rec["url"]).rstrip("/")
+    host = url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].strip("[]")
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        return None
+    try:
+        token = (Path(data_dir) / "auth" / "bootstrap-admin-token").read_text(encoding="utf-8").strip()
+    except Exception:
+        token = ""
+    if not token:
+        return None
+    return {"url": url, "token": token}
+
+
+def _post_runtime_config(live: Dict[str, str], change: Dict[str, Any]) -> tuple:
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        live["url"] + "/api/gateway/admin/runtime-config",
+        data=json.dumps(change).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {live['token']}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - loopback URL from this data dir's serve record
+            return int(resp.status), json.loads(resp.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8") or "{}")
+        except Exception:
+            body = {}
+        return int(exc.code), body
+    except Exception as exc:  # noqa: BLE001 - unreachable: fall back to the store
+        return 0, {"detail": str(exc)}
+
+
+def _apply_runtime_change(args: argparse.Namespace, change: Dict[str, Any]) -> int:
+    import getpass
+
+    from .runtime_config import RuntimeConfigError, RuntimeConfigStoreCorrupt, write_runtime_config
+
+    data_dir = _runtime_data_dir(args)
+    key = next(iter(change))
+    live = _live_gateway(data_dir)
+    out: Optional[Dict[str, Any]] = None
+    how = ""
+    if live is not None:
+        status, body = _post_runtime_config(live, change)
+        if status == 200:
+            out, how = body, f"applied by the running gateway ({live['url']})"
+        elif status in (400, 409):
+            print(f"refused: {body.get('detail') or body}", file=sys.stderr)
+            return 2
+        else:
+            how = f"the running gateway at {live['url']} did not take it ({status or 'unreachable'}: {body.get('detail') or ''}); "
+    if out is None:
+        try:
+            login = getpass.getuser() or "operator"
+        except Exception:
+            login = "operator"
+        try:
+            out = write_runtime_config(data_dir, change, actor=f"cli/{login}")
+        except (RuntimeConfigError, RuntimeConfigStoreCorrupt) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+        how += "saved in " + str(data_dir / "config" / "runtime_config.json")
+        if key in ("backlog_exec_runner", "executor") and live is None:
+            how += " (a running gateway for this data dir starts or stops the exec runner at its next start)"
+    if bool(getattr(args, "json", False)):
+        print(json.dumps({"applied": out.get("applied"), "setting": _setting_row(out, key)}, indent=2, default=str))
+        return 0
+    row = _setting_row(out, key)
+    if row is not None:
+        _print_setting(key, row)
+    print(how, file=sys.stderr)
+    return 0
+
+
+def _cmd_runtime_get(args: argparse.Namespace) -> None:
+    from .runtime_config import BACKLOG_SETTINGS, read_runtime_config
+
+    cfg = read_runtime_config(_runtime_data_dir(args))
+    keys = [args.key] if args.key else [row["key"] for row in BACKLOG_SETTINGS]
+    rows: Dict[str, Any] = {}
+    for key in keys:
+        row = _setting_row(cfg, key)
+        if row is None:
+            known = sorted(k for k, v in cfg.items() if isinstance(v, dict) and k != "apps")
+            raise SystemExit(f"unknown setting {key!r}; one of {known} or apps.<name>")
+        rows[key] = row
+    if bool(args.json):
+        print(json.dumps(rows if not args.key else rows[args.key], indent=2, default=str))
+        return
+    for key, row in rows.items():
+        _print_setting(key, row)
+
+
+def _cmd_runtime_set(args: argparse.Namespace) -> None:
+    raise SystemExit(_apply_runtime_change(args, {args.key: args.value}))
+
+
+def _cmd_runtime_unset(args: argparse.Namespace) -> None:
+    raise SystemExit(_apply_runtime_change(args, {args.key: None}))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="abstractgateway-config",
@@ -597,6 +778,36 @@ def build_parser() -> argparse.ArgumentParser:
     clear_default.add_argument("route", help="Capability route, e.g. output.text")
     _add_default_scope_args(clear_default)
     clear_default.set_defaults(func=_cmd_clear_default)
+
+    # Runtime settings (mission II): the console / Continuum settings door
+    # from a terminal. Keys: triage_repo_root (the backlog folder),
+    # backlog_exec_runner, process_manager, executor, ... and apps.<name>.
+    rt_get = sub.add_parser(
+        "get",
+        help="Show a runtime setting with its value and where it comes from "
+        "(default: the backlog folder, the exec runner and the process manager)",
+    )
+    rt_get.add_argument("key", nargs="?", default=None, help="e.g. triage_repo_root, backlog_exec_runner, process_manager")
+    rt_get.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    rt_get.add_argument("--data-dir", default=None, help="Gateway data dir (default: same resolution as `serve`)")
+    rt_get.set_defaults(func=_cmd_runtime_get)
+
+    rt_set = sub.add_parser(
+        "set",
+        help="Save a runtime setting (validated like the console and Continuum; applied at once when this "
+        "data dir's gateway is running)",
+    )
+    rt_set.add_argument("key", help="e.g. triage_repo_root, backlog_exec_runner, process_manager")
+    rt_set.add_argument("value", help="the new value: a folder path, or on/off for a switch")
+    rt_set.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    rt_set.add_argument("--data-dir", default=None, help="Gateway data dir (default: same resolution as `serve`)")
+    rt_set.set_defaults(func=_cmd_runtime_set)
+
+    rt_unset = sub.add_parser("unset", help="Remove a saved runtime setting (back to the launch flag, environment or default)")
+    rt_unset.add_argument("key")
+    rt_unset.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    rt_unset.add_argument("--data-dir", default=None, help="Gateway data dir (default: same resolution as `serve`)")
+    rt_unset.set_defaults(func=_cmd_runtime_unset)
 
     return parser
 

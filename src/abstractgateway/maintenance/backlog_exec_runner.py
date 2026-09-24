@@ -104,14 +104,18 @@ def parse_codex_model_spec(raw: Any) -> Tuple[str, Optional[str]]:
     return (model_id.strip() or "gpt-5.2"), effort
 
 
-def _triage_repo_root_from_env() -> Optional[Path]:
-    raw = str(os.getenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT") or os.getenv("ABSTRACT_TRIAGE_REPO_ROOT") or "").strip()
-    if not raw:
-        return None
+def _resolved_backlog_root(gateway_data_dir: Path) -> Optional[Path]:
+    """THE backlog folder (runtime_config.resolve_backlog_root: launch flag >
+    stored setting > legacy env > the gateway's own folder), or None when it
+    is not available. Mission II: this read only the environment before, so
+    the runner ignored the stored setting."""
     try:
-        return Path(raw).expanduser().resolve()
+        from ..runtime_config import resolve_triage_repo_root
+
+        raw = resolve_triage_repo_root(Path(gateway_data_dir))
     except Exception:
         return None
+    return Path(raw).expanduser().resolve() if raw else None
 
 
 def _backlog_exec_run_id(request_id: str) -> str:
@@ -1807,9 +1811,13 @@ def _notify_backlog_exec_done(*, req: Dict[str, Any]) -> None:
 
 
 class BacklogExecRunner:
-    def __init__(self, *, gateway_data_dir: Path, cfg: BacklogExecRunnerConfig):
+    def __init__(self, *, gateway_data_dir: Path, cfg: BacklogExecRunnerConfig, repo_root: Optional[Path] = None):
         self.gateway_data_dir = Path(gateway_data_dir).expanduser().resolve()
         self.cfg = cfg
+        # An explicit folder (`abstractgateway backlog-exec-runner --repo-root`)
+        # wins; otherwise each poll resolves the setting, so a change applies
+        # without restarting the runner.
+        self.repo_root = Path(repo_root).expanduser().resolve() if repo_root is not None else None
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._last_error: Optional[str] = None
@@ -1847,14 +1855,13 @@ class BacklogExecRunner:
         return any(t.is_alive() for t in self._threads)
 
     def _run(self) -> None:
-        repo_root = _triage_repo_root_from_env()
-        if repo_root is None:
-            # Can't run without repo root; stay idle.
-            while not self._stop.wait(self.cfg.poll_interval_s):
-                continue
-            return
-
         while not self._stop.is_set():
+            repo_root = self.repo_root or _resolved_backlog_root(self.gateway_data_dir)
+            if repo_root is None:
+                # No usable backlog folder right now (a vanished stored path):
+                # stay idle and look again next poll.
+                self._stop.wait(self.cfg.poll_interval_s)
+                continue
             try:
                 processed, _rid = process_next_backlog_exec_request(
                     gateway_data_dir=self.gateway_data_dir, repo_root=repo_root, cfg=self.cfg

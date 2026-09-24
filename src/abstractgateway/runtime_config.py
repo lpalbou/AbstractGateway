@@ -621,8 +621,315 @@ def _allow_engine_install_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
     return {"value": loopback, "source": "default", "bind_host": bind, "loopback_bind": loopback}
 
 
-def resolve_allow_engine_install(data_dir: Path) -> bool:
-    return bool(_allow_engine_install_payload(_read_store(data_dir))["value"])
+def resolve_allow_engine_install(data_dir: Path, *, caller_on_this_machine: bool = False) -> bool:
+    return bool(allow_engine_install_for_caller(_allow_engine_install_payload(_read_store(data_dir)), caller_on_this_machine=caller_on_this_machine)["value"])
+
+
+def allow_engine_install_for_caller(policy: Dict[str, Any], *, caller_on_this_machine: bool) -> Dict[str, Any]:
+    """The host policy above, applied to ONE caller (mission HH, 2026-09-24).
+
+    With no stored choice, a caller on the gateway machine itself (loopback
+    peer or one of this host's own addresses, no proxy headers:
+    `security/same_machine.py`) may install whatever the bind: the person at
+    the keyboard IS the host, also when the gateway listens on the LAN. A
+    remote caller keeps needing the explicit setting (or a loopback bind). A
+    stored choice wins either way (a stored OFF is off for everyone)."""
+    out = dict(policy)
+    out["caller_on_this_machine"] = bool(caller_on_this_machine)
+    if out.get("source") == "default" and not out.get("value") and caller_on_this_machine:
+        out["value"] = True
+        out["source"] = "default_same_machine"
+    return out
+
+
+# ---- Network exposure (network_exposure.py owns the semantics) -------------
+# Stored as {"network": {"exposure": "localhost|lan|internet", "port": int,
+# "internet_acknowledged": {"at", "by"} | absent, "allowed_origins": [origin],
+# "trust_proxy": bool}}. No env rung for the mode/port (dm#177): the only other
+# door is `serve --host/--port`, reported as a CLI override. The two
+# reverse-proxy fields keep their historical env names as a DEPLOYMENT
+# override (the security carve-out): reported as `overridden_by_env`.
+
+
+def _network_payload(stored: Dict[str, Any], env: Optional[Any] = None) -> Dict[str, Any]:
+    from .network_exposure import DEFAULT_PORT, MODE_BIND_HOST, NetworkSettingError, normalize_mode, validate_port
+
+    raw = stored.get("network") if isinstance(stored.get("network"), dict) else {}
+    out: Dict[str, Any] = {}
+    mode = None
+    if raw.get("exposure") is not None:
+        try:
+            mode = normalize_mode(raw.get("exposure"))
+        except NetworkSettingError:
+            out["invalid_exposure"] = raw.get("exposure")
+    if mode is not None:
+        out.update({"mode": mode, "source": "stored"})
+    else:
+        from .first_run import default_bind_host
+
+        host = default_bind_host(env)
+        out.update({"mode": "localhost" if _bind_is_loopback(host) else "lan", "source": "default", "default_bind_host": host})
+    port = None
+    if raw.get("port") is not None:
+        try:
+            port = validate_port(raw.get("port"))
+        except NetworkSettingError:
+            out["invalid_port"] = raw.get("port")
+    out.update({"port": port, "port_source": "stored"} if port is not None else {"port": DEFAULT_PORT, "port_source": "default"})
+    ack = raw.get("internet_acknowledged")
+    out["internet_acknowledged"] = dict(ack) if isinstance(ack, dict) and out["mode"] == "internet" else None
+    out["bind_host"] = out.get("default_bind_host") or MODE_BIND_HOST[out["mode"]]
+    # Reverse proxy (mission Z): browser origins allowed on top of the
+    # built-in localhost ones, and whether X-Forwarded-For names the client.
+    # Stored values only here; network_exposure.reverse_proxy_status adds the
+    # env override and the effective values the middleware applies.
+    from .network_exposure import normalize_origin
+
+    origins_raw = raw.get("allowed_origins")
+    if isinstance(origins_raw, list):
+        good: List[str] = []
+        bad: List[Dict[str, str]] = []
+        for item in origins_raw:
+            try:
+                o = normalize_origin(item)
+            except NetworkSettingError as exc:
+                bad.append({"value": str(item), "error": str(exc)})
+                continue
+            if o not in good:
+                good.append(o)
+        out["allowed_origins"] = good
+        out["allowed_origins_source"] = "stored"
+        if bad:
+            out["invalid_allowed_origins"] = bad
+    else:
+        out["allowed_origins"] = []
+        out["allowed_origins_source"] = "default"
+    if isinstance(raw.get("trust_proxy"), bool):
+        out["trust_proxy"] = bool(raw["trust_proxy"])
+        out["trust_proxy_source"] = "stored"
+    else:
+        out["trust_proxy"] = False
+        out["trust_proxy_source"] = "default"
+    return out
+
+
+def resolve_network_setting(data_dir: Path, *, env: Optional[Any] = None) -> Dict[str, Any]:
+    """{mode, source, port, port_source, internet_acknowledged, bind_host}: the
+    stored network exposure, or the historical `serve` default."""
+    return _network_payload(_read_store(data_dir), env=env)
+
+
+def write_network_setting(
+    data_dir: Path,
+    *,
+    mode: Optional[str],
+    port: Optional[int],
+    internet_acknowledged: Optional[Dict[str, Any]],
+    actor: str,
+    allowed_origins: Optional[List[str]] = None,
+    trust_proxy: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Persist a VALIDATED network change (network_exposure.apply_network_change
+    is the only caller: it owns the auth and acknowledgement refusals).
+    `port=None` keeps the stored port; `mode=None` keeps the stored mode (a
+    reverse-proxy-only change). `allowed_origins` / `trust_proxy`: None keeps
+    the stored value; a list / a bool replaces it (already validated); `[]`
+    clears the list back to the default (built-in origins only)."""
+    from datetime import datetime, timezone
+
+    stored = _read_store(data_dir, strict=True)
+    net = dict(stored.get("network") or {}) if isinstance(stored.get("network"), dict) else {}
+    if mode is not None:
+        net["exposure"] = str(mode)
+        if internet_acknowledged:
+            net["internet_acknowledged"] = dict(internet_acknowledged)
+        else:
+            net.pop("internet_acknowledged", None)
+    if port is not None:
+        net["port"] = int(port)
+    if allowed_origins is not None:
+        if allowed_origins:
+            net["allowed_origins"] = [str(o) for o in allowed_origins]
+        else:
+            net.pop("allowed_origins", None)  # [] = back to the default (built-in origins only)
+    if trust_proxy is not None:
+        net["trust_proxy"] = bool(trust_proxy)
+    stored["network"] = net
+    stored["_last_changed_by"] = str(actor)
+    stored["_last_changed_at"] = datetime.now(timezone.utc).isoformat()
+    _write_store(data_dir, stored)
+    return _network_payload(stored)
+
+
+# ---- Browser apps (apps_manager.py reads these through resolve_apps_setting) --
+# Mission Z (operator 2026-09-24: "i explicitly told you i don't like env
+# vars"): the five ABSTRACTGATEWAY_APPS_* knobs mission O added become stored
+# settings `apps.<name>`, written through the generic runtime-config door
+# (POST /api/gateway/admin/runtime-config {"apps.host": ...}) and the CLI
+# `abstractgateway apps config get|set`. Precedence is the ruled law of this
+# module (dm#194): stored > env > default; the env name is a labeled fallback
+# (`source: env`), and an env value a stored one shadows is reported
+# (`env_shadowed`). `APPS_SETTINGS` is the registry the console's settings
+# card and the CLI render (label + help + default), so a new knob is one row.
+
+APPS_SETTINGS: List[Dict[str, Any]] = [
+    {
+        "name": "node", "key": "apps.node", "env": "ABSTRACTGATEWAY_APPS_NODE", "default": "auto",
+        "label": "Node.js for apps",
+        "help": "auto: the Node.js 18+ found on this computer, else the one the gateway installs for you. "
+                "managed: always the gateway's own. system: only the one on this computer. "
+                "Or the full path of a node program.",
+        "placeholder": "auto",
+    },
+    {
+        "name": "ports", "key": "apps.ports", "env": "ABSTRACTGATEWAY_APPS_PORTS", "default": "",
+        "label": "Ports for apps",
+        "help": "A port or a range, e.g. 3100-3199. Empty: each app's usual port, else the next free one in 3100-3199.",
+        "placeholder": "3100-3199",
+    },
+    {
+        "name": "host", "key": "apps.host", "env": "ABSTRACTGATEWAY_APPS_HOST", "default": "127.0.0.1",
+        "label": "Where apps listen",
+        "help": "127.0.0.1 = this computer only. 0.0.0.0 = every network this computer is on (other machines can "
+                "open the apps; put them behind your own access control). Applies when an app next starts.",
+        "placeholder": "127.0.0.1",
+    },
+    {
+        "name": "npm_registry", "key": "apps.npm_registry", "env": "ABSTRACTGATEWAY_APPS_NPM_REGISTRY",
+        "default": "https://registry.npmjs.org",
+        "label": "npm registry",
+        "help": "Where apps are downloaded from (a company mirror, for example).",
+        "placeholder": "https://registry.npmjs.org",
+    },
+    {
+        "name": "pypi_url", "key": "apps.pypi_url", "env": "ABSTRACTGATEWAY_APPS_PYPI_URL",
+        "default": "https://pypi.org/pypi",
+        "label": "Node.js download index",
+        "help": "The Python package index the gateway looks up its own Node.js build on (a mirror, for example).",
+        "placeholder": "https://pypi.org/pypi",
+    },
+]
+_APPS_BY_NAME: Dict[str, Dict[str, Any]] = {row["name"]: row for row in APPS_SETTINGS}
+_APPS_NODE_MODES = ("auto", "managed", "system")
+
+
+def _validate_apps_value(name: str, raw: Any) -> str:
+    """One apps setting, validated; raises RuntimeConfigError in words."""
+    text = str(raw if raw is not None else "").strip()
+    key = f"apps.{name}"
+    if name == "node":
+        if text in _APPS_NODE_MODES:
+            return text
+        path = Path(text).expanduser()
+        if not path.is_absolute():
+            raise RuntimeConfigError(f"{key} is auto, managed, system, or the full path of a node program (got {text!r})")
+        if not path.is_file():
+            raise RuntimeConfigError(f"{key}: no file at {text}")
+        return str(path)
+    if name == "ports":
+        m = re.match(r"^(\d{1,5})\s*-\s*(\d{1,5})$", text)
+        if m:
+            lo, hi = int(m.group(1)), int(m.group(2))
+        elif text.isdigit():
+            lo = hi = int(text)
+        else:
+            raise RuntimeConfigError(f"{key} is a port or a range like 3100-3199 (got {text!r})")
+        if not (1 <= lo <= hi <= 65535):
+            raise RuntimeConfigError(f"{key}: {text!r} is not a valid port range (1-65535, low-high)")
+        return f"{lo}-{hi}" if lo != hi else str(lo)
+    if name == "host":
+        h = text.strip("[]")
+        try:
+            import ipaddress
+
+            return str(ipaddress.ip_address(h))
+        except ValueError:
+            pass
+        if h.lower() == "localhost" or re.match(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$", h):
+            return h.lower()
+        raise RuntimeConfigError(f"{key} is an IP address or a host name, e.g. 127.0.0.1 or 0.0.0.0 (got {text!r})")
+    if name in ("npm_registry", "pypi_url"):
+        from urllib.parse import urlsplit
+
+        u = urlsplit(text)
+        if u.scheme not in ("http", "https") or not u.hostname or u.query or u.fragment:
+            raise RuntimeConfigError(f"{key} is an http(s) URL, e.g. {_APPS_BY_NAME[name]['default']} (got {text!r})")
+        return text.rstrip("/")
+    raise RuntimeConfigError(f"unknown apps setting {key!r}; known: {sorted(r['key'] for r in APPS_SETTINGS)}")
+
+
+def _apps_setting_payload(stored: Dict[str, Any], name: str, env: Optional[Any] = None) -> Dict[str, Any]:
+    row = _APPS_BY_NAME[name]  # KeyError on an unknown name: callers name a registered knob
+    env = os.environ if env is None else env
+    apps_stored = stored.get("apps") if isinstance(stored.get("apps"), dict) else {}
+    env_raw = env.get(row["env"])
+    env_set = env_raw is not None and str(env_raw).strip() != ""
+    out: Dict[str, Any] = {
+        "key": row["key"], "label": row["label"], "help": row["help"], "placeholder": row["placeholder"],
+        "default": row["default"], "env_name": row["env"],
+    }
+    if name in apps_stored and apps_stored[name] is not None:
+        try:
+            out.update({"value": _validate_apps_value(name, apps_stored[name]), "source": "stored"})
+            if env_set:
+                out["env_shadowed"] = True
+                out["note"] = f"the stored value wins over {row['env']} in this gateway's environment"
+            return out
+        except RuntimeConfigError as exc:
+            out["invalid_stored"] = f"{apps_stored[name]!r}: {exc}"
+    if env_set:
+        try:
+            out.update({"value": _validate_apps_value(name, env_raw), "source": "env"})
+            out["note"] = f"from {row['env']} in the environment this gateway was started with; a saved value replaces it"
+            return out
+        except RuntimeConfigError as exc:
+            out["invalid_env"] = f"{row['env']}={env_raw!r}: {exc}"
+    out.update({"value": row["default"], "source": "default"})
+    return out
+
+
+def _apps_settings_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
+    return {row["name"]: _apps_setting_payload(stored, row["name"]) for row in APPS_SETTINGS}
+
+
+def resolve_apps_setting(data_dir: Path, name: str) -> Dict[str, Any]:
+    """{value, source, ...} for one browser-apps setting (stored > env >
+    default). THE read apps_manager uses; an unknown `name` raises KeyError
+    (a typo must fail loudly, never read as the default). An invalid stored or
+    env value falls to the next rung and says so (`invalid_stored` /
+    `invalid_env`). Read at each use, so a change applies to the next action
+    (an app's next start for `host`/`ports`, the next download for the URLs)."""
+    if name not in _APPS_BY_NAME:
+        raise KeyError(f"unknown apps setting {name!r}; known: {sorted(_APPS_BY_NAME)}")
+    return _apps_setting_payload(_read_store(data_dir), name)
+
+
+def _write_apps_changes(stored: Dict[str, Any], changes: Dict[str, Any], applied: Dict[str, Any]) -> None:
+    """`apps.<name>` keys (flat) or {"apps": {name: value}} (nested) -> stored["apps"]."""
+    pairs: List[tuple] = []
+    for k, v in changes.items():
+        if isinstance(k, str) and k.startswith("apps."):
+            pairs.append((k[len("apps."):], v))
+    if isinstance(changes.get("apps"), dict):
+        pairs.extend(changes["apps"].items())
+    elif "apps" in changes:
+        raise RuntimeConfigError("apps must be an object {name: value} (or use flat keys like \"apps.host\")")
+    if not pairs:
+        return
+    apps_stored = dict(stored.get("apps") or {}) if isinstance(stored.get("apps"), dict) else {}
+    for name, raw in pairs:
+        if name not in _APPS_BY_NAME:
+            raise RuntimeConfigError(f"unknown apps setting 'apps.{name}'; known: {sorted(r['key'] for r in APPS_SETTINGS)}")
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            apps_stored.pop(name, None)  # clear = fall back to env/default
+            applied[f"apps.{name}"] = None
+        else:
+            apps_stored[name] = _validate_apps_value(name, raw)
+            applied[f"apps.{name}"] = apps_stored[name]
+    if apps_stored:
+        stored["apps"] = apps_stored
+    else:
+        stored.pop("apps", None)
 
 
 def _user_workspace_policies_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
@@ -728,6 +1035,355 @@ def executor_registry() -> List[Dict[str, Any]]:
     return out
 
 
+# ---- Backlog folder + exec runner (mission II, operator 2026-09-24: "fix
+# continuum for a new fresh install ... handled with proper settings and
+# --param_name") ----------------------------------------------------------
+#
+# ONE resolution, used by every consumer (the backlog routes, the process
+# manager, the exec runner, triage, the settings surfaces):
+#
+#   backlog folder (key `triage_repo_root`):
+#       `serve --backlog-root PATH`  (source "flag")
+#     > the stored setting            (source "stored")
+#     > the legacy environment        (source "env" — reported, never taught)
+#     > <data dir>/backlog            (source "default"; the standard skeleton
+#                                      is created there on first use)
+#
+#   exec runner (key `backlog_exec_runner`):
+#       `serve --exec-runner on|off` > stored > legacy env > off
+#
+# The launch flags reach the resolver through a small record the serving
+# process writes under <data dir>/run/ (and removes when it stops): the value
+# must reach `serve --reload` workers and the CLI's `config get` without an
+# environment variable. A record whose process is gone is ignored.
+
+_ENV_TRIAGE_ROOT_LEGACY = ("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", "ABSTRACT_TRIAGE_REPO_ROOT")
+_ENV_EXEC_RUNNER_LEGACY = ("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER", "ABSTRACT_BACKLOG_EXEC_RUNNER")
+BACKLOG_DEFAULT_DIRNAME = "backlog"
+BACKLOG_SUBPATH = ("docs", "backlog")
+BACKLOG_FOLDERS = ("planned", "proposed", "completed")
+_LAUNCH_SETTINGS_RELPATH = ("run", "launch-settings.json")
+_LAUNCH_KEYS = ("triage_repo_root", "backlog_exec_runner")
+
+# Labels and help for the settings surfaces (console, Continuum, CLI) — one
+# row per knob so every door says the same thing.
+BACKLOG_SETTINGS: List[Dict[str, Any]] = [
+    {
+        "key": "triage_repo_root",
+        "label": "Backlog folder",
+        "help": "The folder whose docs/backlog holds the backlog items Continuum shows. Empty: the gateway's own "
+                "folder (<data dir>/backlog), created with a starter overview and template on first use. "
+                "Another folder must already contain docs/backlog.",
+        "flag": "--backlog-root",
+        "cli": "abstractgateway config set triage_repo_root PATH",
+    },
+    {
+        "key": "backlog_exec_runner",
+        "label": "Backlog exec runner",
+        "help": "Runs the backlog items queued for execution (Continuum's Execute) on this machine with the chosen "
+                "agent. Off by default: only turn it on for a gateway you trust with running code.",
+        "flag": "--exec-runner on|off",
+        "cli": "abstractgateway config set backlog_exec_runner on|off",
+    },
+    {
+        "key": "process_manager",
+        "label": "Process manager",
+        "help": "Powers Continuum's Services page (start, stop and redeploy the framework's processes). "
+                "Whoever reaches Services can redeploy: keep it off unless you need it.",
+        "flag": None,
+        "cli": "abstractgateway config set process_manager on|off",
+    },
+]
+_BACKLOG_SETTINGS_BY_KEY: Dict[str, Dict[str, Any]] = {row["key"]: row for row in BACKLOG_SETTINGS}
+
+
+def _strict_bool(key: str, raw: Any) -> bool:
+    """on/off for a switch written through a door; garbage refuses in words
+    (the lenient `_bool` would store `False` for a typo like "of")."""
+    if isinstance(raw, bool):
+        return raw
+    s = str(raw if raw is not None else "").strip().lower()
+    if s in {"1", "true", "yes", "on"}:
+        return True
+    if s in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeConfigError(f"{key} is on or off (got {raw!r})")
+
+
+def default_backlog_root(data_dir: Path) -> Path:
+    """The gateway's own backlog folder: <data dir>/backlog."""
+    return Path(data_dir).expanduser().resolve() / BACKLOG_DEFAULT_DIRNAME
+
+
+def _skeleton_source(name: str) -> str:
+    from importlib import resources
+
+    return (resources.files("abstractgateway") / "assets" / "backlog_skeleton" / name).read_text(encoding="utf-8")
+
+
+def ensure_backlog_skeleton(root: Path) -> List[str]:
+    """Create <root>/docs/backlog with overview.md, template.md and the three
+    state folders. Never overwrites: only what is missing is created. Returns
+    the created paths (relative to root)."""
+    created: List[str] = []
+    backlog = Path(root).joinpath(*BACKLOG_SUBPATH)
+    if not backlog.is_dir():
+        backlog.mkdir(parents=True, exist_ok=True)
+        created.append("/".join(BACKLOG_SUBPATH))
+    for folder in BACKLOG_FOLDERS:
+        p = backlog / folder
+        if not p.is_dir():
+            p.mkdir(parents=True, exist_ok=True)
+            created.append("/".join((*BACKLOG_SUBPATH, folder)))
+    for name in ("overview.md", "template.md"):
+        p = backlog / name
+        if not p.exists():
+            p.write_text(_skeleton_source(name), encoding="utf-8")
+            created.append("/".join((*BACKLOG_SUBPATH, name)))
+    return created
+
+
+def _launch_settings_path(data_dir: Path) -> Path:
+    return Path(data_dir).joinpath(*_LAUNCH_SETTINGS_RELPATH)
+
+
+def _pid_alive(pid: Any) -> bool:
+    try:
+        n = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if n <= 0:
+        return False
+    try:
+        os.kill(n, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def record_launch_settings(data_dir: Path, values: Dict[str, Any], *, pid: Optional[int] = None) -> None:
+    """Called by `serve` with the launch flags it was given (only the keys it
+    was given). No flags = the record is removed, so a previous launch's flag
+    never outlives it."""
+    path = _launch_settings_path(data_dir)
+    clean = {k: v for k, v in (values or {}).items() if k in _LAUNCH_KEYS and v is not None}
+    if not clean:
+        clear_launch_settings(data_dir)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".json.{os.getpid()}-{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(json.dumps({"pid": int(pid or os.getpid()), "values": clean}, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def clear_launch_settings(data_dir: Path, *, pid: Optional[int] = None) -> None:
+    """Remove the launch-flag record; with `pid`, only when that process
+    wrote it (the app's shutdown hook: SIGTERM never reaches the CLI's
+    `finally`, and a stale record is ignored anyway by its pid check)."""
+    path = _launch_settings_path(data_dir)
+    if pid is not None:
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(rec, dict) or int(rec.get("pid") or -1) != int(pid):
+            return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def read_launch_settings(data_dir: Path) -> Dict[str, Any]:
+    """The live serving process's launch flags ({} when none, or when the
+    process that wrote them is gone)."""
+    path = _launch_settings_path(data_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        import logging
+
+        logging.getLogger("abstractgateway.runtime_config").warning(
+            "#FALLBACK launch-settings record unreadable (%s) — launch flags ignored", path
+        )
+        return {}
+    if not isinstance(data, dict) or not _pid_alive(data.get("pid")):
+        return {}
+    values = data.get("values")
+    return {k: v for k, v in values.items() if k in _LAUNCH_KEYS} if isinstance(values, dict) else {}
+
+
+def _legacy_env(names: tuple) -> Optional[tuple]:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is not None and str(raw).strip():
+            return name, str(raw).strip()
+    return None
+
+
+def backlog_root_problem(path: Path, data_dir: Path, *, require_backlog: bool = True) -> Optional[str]:
+    """Why `path` cannot serve as the backlog folder (None = it can). The
+    gateway's own folder always can: its skeleton is created on use.
+
+    `require_backlog` (the WRITE doors: settings, `--backlog-root`) also
+    demands docs/backlog. The READ side only needs the folder to exist: a
+    folder whose docs/backlog is missing lists no items, and the process
+    manager uses the same folder as its repo root (which need not hold a
+    backlog)."""
+    p = Path(path).expanduser()
+    try:
+        if p.resolve() == default_backlog_root(data_dir):
+            return None
+    except Exception:
+        pass
+    if not p.exists():
+        return "the folder does not exist"
+    if not p.is_dir():
+        return "it is a file, not a folder"
+    if require_backlog and not p.joinpath(*BACKLOG_SUBPATH).is_dir():
+        return "it has no docs/backlog folder"
+    return None
+
+
+def validate_backlog_root(raw: Any, data_dir: Path, *, what: str = "triage_repo_root") -> Path:
+    """The validation every door uses (settings write, `serve --backlog-root`,
+    `config set`). Returns the resolved path; refuses in a plain sentence
+    naming what is missing and the one-step alternative."""
+    text = str(raw if raw is not None else "").strip()
+    if not text:
+        raise RuntimeConfigError(f"{what} needs a folder path")
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    problem = backlog_root_problem(path, data_dir)
+    if problem:
+        raise RuntimeConfigError(
+            f"{what} {text!r} cannot be the backlog folder: {problem}. "
+            f"Choose a folder that contains docs/backlog, or use the gateway's own folder "
+            f"{default_backlog_root(data_dir)} (created for you)."
+        )
+    resolved = path.resolve()
+    if resolved == default_backlog_root(data_dir):
+        ensure_backlog_skeleton(resolved)
+    return resolved
+
+
+def resolve_backlog_root(
+    data_dir: Path,
+    *,
+    stored: Optional[Dict[str, Any]] = None,
+    launch: Optional[Dict[str, Any]] = None,
+    ensure: bool = True,
+) -> Dict[str, Any]:
+    """THE backlog-folder resolution (flag > stored > legacy env > default).
+
+    Returns {value, source, available, reason, default_path, backlog_dir,
+    env_shadowed?, env_name?, created?}. `available` False carries a plain
+    `reason` (the path is in `value`, never in `reason`, so the reason can be
+    shown to non-admins). `ensure` creates the default folder's skeleton —
+    the "first use" — and is what every consumer passes; the settings read
+    passes False (a GET never writes)."""
+    data_dir = Path(data_dir)
+    if stored is None:
+        stored = _read_store(data_dir)
+    if launch is None:
+        launch = read_launch_settings(data_dir)
+    default_path = default_backlog_root(data_dir)
+    env_hit = _legacy_env(_ENV_TRIAGE_ROOT_LEGACY)
+    raw: Optional[str] = None
+    source = "default"
+    if launch.get("triage_repo_root"):
+        raw, source = str(launch["triage_repo_root"]), "flag"
+    elif stored.get("triage_repo_root"):
+        raw, source = str(stored["triage_repo_root"]), "stored"
+    elif env_hit is not None:
+        raw, source = env_hit[1], "env"
+    out: Dict[str, Any] = {"source": source, "default_path": str(default_path)}
+    if source == "flag" and stored.get("triage_repo_root"):
+        out["stored_value"] = str(stored["triage_repo_root"])  # saved, applies once the flag is gone
+    if env_hit is not None:
+        out["env_name"] = env_hit[0]
+        if source in ("flag", "stored"):
+            out["env_shadowed"] = True
+    if raw is None:
+        path = default_path
+    else:
+        try:
+            path = Path(raw).expanduser().resolve()
+        except Exception:
+            path = Path(raw).expanduser()
+    out["value"] = str(path)
+    out["backlog_dir"] = str(path.joinpath(*BACKLOG_SUBPATH))
+    if path == default_path:
+        if ensure:
+            try:
+                created = ensure_backlog_skeleton(path)
+            except OSError as exc:
+                out.update({"available": False, "reason": f"the gateway could not create its backlog folder ({exc.strerror or exc})"})
+                return out
+            if created:
+                out["created"] = created
+            out.update({"available": True, "reason": None})
+        else:
+            exists = path.joinpath(*BACKLOG_SUBPATH).is_dir()
+            out.update({"available": True, "reason": None, "exists": exists})
+        return out
+    problem = backlog_root_problem(path, data_dir, require_backlog=False)
+    rung = {"flag": "the --backlog-root launch flag", "stored": "the saved setting", "env": "the environment"}[source]
+    if problem:
+        out.update({"available": False, "reason": f"{problem} (set by {rung})"})
+    else:
+        out.update({"available": True, "reason": None})
+    return out
+
+
+def resolve_exec_runner(data_dir: Path, *, stored: Optional[Dict[str, Any]] = None, launch: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """{value, source} for the backlog exec runner (flag > stored > legacy env > off)."""
+    if stored is None:
+        stored = _read_store(Path(data_dir))
+    if launch is None:
+        launch = read_launch_settings(Path(data_dir))
+    env_hit = _legacy_env(_ENV_EXEC_RUNNER_LEGACY)
+    out: Dict[str, Any]
+    if "backlog_exec_runner" in launch and launch["backlog_exec_runner"] is not None:
+        out = {"value": _bool(launch["backlog_exec_runner"], False), "source": "flag"}
+    elif "backlog_exec_runner" in stored and stored["backlog_exec_runner"] is not None:
+        out = {"value": _bool(stored["backlog_exec_runner"], False), "source": "stored"}
+    elif env_hit is not None:
+        out = {"value": _bool(env_hit[1], False), "source": "env"}
+    else:
+        out = {"value": False, "source": "default"}
+    if out["source"] == "flag" and stored.get("backlog_exec_runner") is not None:
+        out["stored_value"] = _bool(stored["backlog_exec_runner"], False)  # saved, applies once the flag is gone
+    if env_hit is not None:
+        out["env_name"] = env_hit[0]
+        if out["source"] in ("flag", "stored"):
+            out["env_shadowed"] = True
+    return out
+
+
+def _with_setting_meta(entry: Dict[str, Any], key: str) -> Dict[str, Any]:
+    row = _BACKLOG_SETTINGS_BY_KEY[key]
+    out = dict(entry)
+    out.update({"key": key, "label": row["label"], "help": row["help"], "cli": row["cli"]})
+    if row.get("flag"):
+        out["flag"] = row["flag"]
+    return out
+
+
+def _redact_backlog_root(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Non-admin view: posture without server paths."""
+    keep = {k: entry[k] for k in ("source", "available", "reason", "key", "label", "help", "cli", "flag") if k in entry}
+    keep["configured"] = bool(entry.get("value"))
+    return keep
+
+
 def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, Any]:
     """The authoritative runtime-config posture (continuum c1550 ask 1).
     Each knob carries {value, source}; the executor also carries the
@@ -742,7 +1398,10 @@ def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, A
     for this surface). POST stays admin-gated regardless — this only widens
     the read to a labeled read-only posture."""
     stored = _read_store(data_dir)
-    triage = _resolve(stored, "triage_repo_root", _ENV_TRIAGE_ROOT, None)
+    launch = read_launch_settings(data_dir)
+    triage = _with_setting_meta(
+        resolve_backlog_root(data_dir, stored=stored, launch=launch, ensure=False), "triage_repo_root"
+    )
     workspace_root = _workspace_root_payload(stored)
     workspace_mounts = _workspace_mounts_payload(stored)
     workspace_allowed_paths = _workspace_allowed_paths_payload(stored)
@@ -750,7 +1409,7 @@ def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, A
     user_workspace_policies = _user_workspace_policies_payload(stored)
     if not is_admin:
         # Redact the path; keep the posture (configured + which rung won).
-        triage = {"configured": bool(triage.get("value")), "source": triage["source"]}
+        triage = _redact_backlog_root(triage)
         workspace_root = {"configured": bool(workspace_root.get("value")), "source": workspace_root["source"]}
         workspace_mounts = {"configured": bool((workspace_mounts.get("entries") or [])), "source": workspace_mounts["source"]}
         workspace_allowed_paths = {"configured": bool((workspace_allowed_paths.get("paths") or [])), "source": workspace_allowed_paths["source"]}
@@ -769,7 +1428,9 @@ def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, A
         operator_email = {"configured": bool(operator_email.get("value")), "source": operator_email["source"]}
     return {
         "writable": bool(is_admin),
-        "process_manager": _resolve(stored, "process_manager", _ENV_PROCESS_MANAGER, False, as_bool=True),
+        "process_manager": _with_setting_meta(
+            _resolve(stored, "process_manager", _ENV_PROCESS_MANAGER, False, as_bool=True), "process_manager"
+        ),
         "triage_repo_root": triage,
         "workspace_root": workspace_root,
         "workspace_mounts": workspace_mounts,
@@ -779,12 +1440,20 @@ def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, A
         "trust_client_launch_folder": _trust_client_launch_folder_payload(stored),
         "workspace_default_mode": _workspace_default_mode_payload(stored),
         "user_workspace_policies": user_workspace_policies,
-        "backlog_exec_runner": _resolve(stored, "backlog_exec_runner", _ENV_EXEC_RUNNER, False, as_bool=True),
+        "backlog_exec_runner": _with_setting_meta(
+            resolve_exec_runner(data_dir, stored=stored, launch=launch), "backlog_exec_runner"
+        ),
         "executor": _resolve(stored, "executor", _ENV_EXECUTOR, _DEFAULT_EXECUTOR),
         "executors": executor_registry(),
         "operator_email": operator_email,
         "stop_kill_switch_s": _stop_kill_switch_seconds_payload(stored),
         "allow_engine_install": _allow_engine_install_payload(stored),
+        # Read-only here: GET/POST /api/gateway/network is the door (auth and
+        # acknowledgement refusals, addresses, restart story).
+        "network": _network_payload(stored),
+        # Browser apps: {name: {value, source, key, label, help, default,
+        # env_name, ...}} (registry APPS_SETTINGS); written as "apps.<name>".
+        "apps": _apps_settings_payload(stored),
     }
 
 
@@ -878,12 +1547,24 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
     stored = _read_store(data_dir, strict=True)
     applied: Dict[str, Any] = {}
 
-    if "process_manager" in changes:
-        stored["process_manager"] = _bool(changes["process_manager"], False)
-        applied["process_manager"] = stored["process_manager"]
-    if "backlog_exec_runner" in changes:
-        stored["backlog_exec_runner"] = _bool(changes["backlog_exec_runner"], False)
-        applied["backlog_exec_runner"] = stored["backlog_exec_runner"]
+    if any(k in changes for k in ("network", "network_exposure", "network_port", "allowed_origins", "trust_proxy")):
+        # One door for exposure changes: it refuses a network mode without
+        # user auth and `internet` without an acknowledgement, and validates
+        # origins; this generic write would store any of them silently.
+        raise RuntimeConfigError(
+            "network exposure and the reverse-proxy settings are changed through POST /api/gateway/network "
+            "{mode?, port?, acknowledge_internet?, allowed_origins?, trust_proxy?} (or `abstractgateway network set`), "
+            "which checks the auth the mode requires and validates every origin"
+        )
+    for _switch in ("process_manager", "backlog_exec_runner"):
+        if _switch in changes:
+            raw_switch = changes[_switch]
+            if raw_switch is None or (isinstance(raw_switch, str) and not raw_switch.strip()):
+                stored.pop(_switch, None)  # clear = fall back to the launch flag / env / default
+                applied[_switch] = None
+            else:
+                stored[_switch] = _strict_bool(_switch, raw_switch)
+                applied[_switch] = stored[_switch]
     if "desktop_tray" in changes:
         # RETIRED (operator ruling 2026-09-06): the menu bar / tray icon is the
         # gateway's presence on the desktop, so while it serves, it is there.
@@ -899,16 +1580,12 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
     if "triage_repo_root" in changes:
         raw = changes["triage_repo_root"]
         if raw is None or str(raw).strip() == "":
-            stored.pop("triage_repo_root", None)  # clear = fall back to env/default
+            stored.pop("triage_repo_root", None)  # clear = fall back to the launch flag / env / default
             applied["triage_repo_root"] = None
         else:
-            path = Path(str(raw)).expanduser()
-            if not path.is_dir():
-                raise RuntimeConfigError(
-                    f"triage_repo_root {str(raw)!r} is not an existing directory — "
-                    "the backlog surface reads docs/backlog under it"
-                )
-            stored["triage_repo_root"] = str(path.resolve())
+            # One validation for every door (mission II): an existing folder
+            # holding docs/backlog, or the gateway's own folder (created).
+            stored["triage_repo_root"] = str(validate_backlog_root(raw, data_dir))
             applied["triage_repo_root"] = stored["triage_repo_root"]
     if "workspace_root" in changes:
         raw = changes["workspace_root"]
@@ -1052,11 +1729,13 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
     if "allow_engine_install" in changes:
         raw_allow = changes["allow_engine_install"]
         if raw_allow is None or (isinstance(raw_allow, str) and not raw_allow.strip()):
-            stored.pop("allow_engine_install", None)  # clear = default (on only for a loopback bind)
+            stored.pop("allow_engine_install", None)  # clear = default (on for a loopback bind or a caller on this machine)
             applied["allow_engine_install"] = None
         else:
             stored["allow_engine_install"] = _bool(raw_allow, False)
             applied["allow_engine_install"] = stored["allow_engine_install"]
+
+    _write_apps_changes(stored, changes, applied)
 
     if not applied:
         raise RuntimeConfigError(
@@ -1065,7 +1744,9 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
             "workspace_allowed_paths, workspace_blocked_paths, "
             "client_workspace_scope_overrides, trust_client_launch_folder, "
             "workspace_default_mode, user_workspace_policies, executor, operator_email, "
-            "stop_kill_switch_s, allow_engine_install)"
+            "stop_kill_switch_s, allow_engine_install, "
+            + ", ".join(r["key"] for r in APPS_SETTINGS)
+            + ")"
         )
 
     stored["_last_changed_by"] = str(actor)
@@ -1130,12 +1811,15 @@ def resolve_process_manager_enabled(data_dir: Path) -> bool:
 
 
 def resolve_triage_repo_root(data_dir: Path) -> Optional[str]:
-    v = read_runtime_config(data_dir)["triage_repo_root"]["value"]
-    return str(v) if v else None
+    """The backlog folder every consumer uses, or None when it is not
+    available (a vanished stored path, for example — resolve_backlog_root
+    says why). Creates the gateway's own folder on first use."""
+    res = resolve_backlog_root(Path(data_dir), ensure=True)
+    return str(res["value"]) if res.get("available") else None
 
 
 def resolve_backlog_exec_runner_enabled(data_dir: Path) -> bool:
-    return bool(read_runtime_config(data_dir)["backlog_exec_runner"]["value"])
+    return bool(resolve_exec_runner(Path(data_dir))["value"])
 
 
 def resolve_workspace_root(data_dir: Path) -> Path:
