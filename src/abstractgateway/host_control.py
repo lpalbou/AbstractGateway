@@ -476,21 +476,85 @@ def build_relaunch_command(*, argv: Optional[List[str]] = None, executable: Opti
     return [_relaunch_python(executable), "-m", "abstractgateway", *args]
 
 
-def relaunch_process(command: Optional[List[str]] = None) -> None:  # pragma: no cover - replaces/ends the process
-    """Replace this process with a fresh gateway (POSIX ``execv``) or spawn
+# The Hugging Face offline trio as found when THIS module was imported. A
+# relaunch must hand the new process the environment the operator started the
+# gateway with, not flags written in-process since (a library's load-time
+# override, the old MLX / HF-provider import writes): the new process records
+# its start-up values as the OPERATOR's choice
+# (`abstractcore.config.manager.operator_hf_offline_env`), and an
+# operator-set HF_HUB_OFFLINE=1 refuses every explicit download by name.
+_HF_OFFLINE_ENV_NAMES = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE")
+_START_HF_OFFLINE_ENV: Dict[str, Optional[str]] = {name: os.environ.get(name) for name in _HF_OFFLINE_ENV_NAMES}
+
+
+def _operator_hf_offline_env() -> Dict[str, Optional[str]]:
+    """The operator's pre-start values of the offline trio (None = unset).
+
+    Two start-up snapshots can exist: AbstractCore's (taken when
+    `abstractcore.config.manager` was imported) and this module's. A value
+    counts as the operator's only when every snapshot taken saw it -- a flag
+    one of them missed was written in-process before the other was taken.
+    AbstractCore's snapshot is read only if that module is ALREADY imported:
+    importing it now would snapshot the current, possibly polluted, environment.
+    """
+    snapshots = [dict(_START_HF_OFFLINE_ENV)]
+    core_manager = sys.modules.get("abstractcore.config.manager")
+    reader = getattr(core_manager, "operator_hf_offline_env", None) if core_manager is not None else None
+    if callable(reader):
+        snapshots.append(dict(reader()))
+    out: Dict[str, Optional[str]] = {}
+    for name in _HF_OFFLINE_ENV_NAMES:
+        values = {snap.get(name) for snap in snapshots}
+        out[name] = values.pop() if len(values) == 1 else None
+    return out
+
+
+def relaunch_env(base: Optional[Dict[str, str]] = None) -> tuple:
+    """`(env, changed)` for the relaunched gateway: `base` (default the live
+    `os.environ`) with the HF offline trio reset to the operator's pre-start
+    values (`_operator_hf_offline_env`). `changed` maps each variable whose
+    live value was dropped or restored to `"<live> -> <relaunch>"`, where
+    `<unset>` marks an absent variable; the caller logs it. Every other
+    variable passes through unchanged.
+    """
+    env = dict(os.environ if base is None else base)
+    changed: Dict[str, str] = {}
+    for name, operator_value in _operator_hf_offline_env().items():
+        live = env.pop(name, None)
+        if operator_value is not None:
+            env[name] = operator_value
+        if live != operator_value:
+            changed[name] = f"{'<unset>' if live is None else live} -> {'<unset>' if operator_value is None else operator_value}"
+    return env, changed
+
+
+def relaunch_process(command: Optional[List[str]] = None) -> None:
+    """Replace this process with a fresh gateway (POSIX ``execve``) or spawn
     one and exit (Windows, where exec is emulated as spawn+terminate anyway
-    and would detach the console). Never returns."""
+    and would detach the console). Never returns.
+
+    The new process gets `relaunch_env()`: the live environment, except that
+    the Hugging Face offline trio is reset to what the operator started this
+    gateway with -- an offline flag written in-process during the run must not
+    become the next process's "operator-set" environment. What was reset is
+    logged by name."""
     cmd = list(command or build_relaunch_command())
+    env, changed = relaunch_env()
     logger.warning("gateway relaunching: %s", " ".join(cmd))
+    if changed:
+        logger.warning(
+            "gateway relaunch: Hugging Face offline variables reset to their values at start (set in-process during the run): %s",
+            ", ".join(f"{k}: {v}" for k, v in sorted(changed.items())),
+        )
     try:
         sys.stdout.flush()
         sys.stderr.flush()
     except Exception:
         pass
     if os.name == "nt":
-        subprocess.Popen(cmd, close_fds=True)
+        subprocess.Popen(cmd, close_fds=True, env=env)
         os._exit(0)
-    os.execv(cmd[0], cmd)
+    os.execve(cmd[0], cmd, env)
 
 
 def _reset_for_tests() -> None:

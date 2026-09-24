@@ -63,6 +63,10 @@ class EnvVarSpec:
     console_path: str = ""           # planned console/CLI section (phase 1+)
     alias_of: str = ""               # for legacy_alias rows
     note: str = ""
+    # The stored setting that replaces this env var (mission Z): where a user
+    # changes it (console/TUI/CLI). The env var stays readable as the labeled
+    # fallback (behavior rows) or override (deployment carve-out rows).
+    superseded_by: str = ""
 
     def __post_init__(self) -> None:
         if self.klass not in _CLASSES:
@@ -184,6 +188,17 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     # --- PROCESS-ROLE + diagnostics (deployment) ---
     _spec("ABSTRACTGATEWAY_RUNNER", DEPLOYMENT, scope="process",
           note="process-role: the CLI flips it per process (API vs runner)"),
+    # Written by `serve` for the app it hosts (network_exposure.py): the bind
+    # this process was given and where each half came from. Never operator input;
+    # the network exposure SETTING lives in the runtime-config store (no env rung).
+    _spec("ABSTRACTGATEWAY_BIND_HOST", DEPLOYMENT, scope="process", note="serve export: the bound host"),
+    _spec("ABSTRACTGATEWAY_BIND_PORT", DEPLOYMENT, scope="process", note="serve export: the bound port"),
+    _spec("ABSTRACTGATEWAY_BIND_SOURCE", DEPLOYMENT, scope="process",
+          note="serve export: host=cli|setting|default;port=cli|setting|default"),
+    _spec("ABSTRACTGATEWAY_NETWORK_EXPORTS", DEPLOYMENT, scope="process",
+          note="serve export: env names set for the network setting, forgotten and re-derived at every start"),
+    _spec("ABSTRACTGATEWAY_AUTH_MODE_SOURCE", DEPLOYMENT, scope="process",
+          note="serve export: loopback_default | network_setting (why user auth was turned on)"),
     _spec("ABSTRACTGATEWAY_LOG_LEVEL", DEPLOYMENT, scope="process"),
     _spec("ABSTRACTGATEWAY_CONSOLE_LOG_LEVEL", DEPLOYMENT, scope="process"),
     _spec("ABSTRACTGATEWAY_REQUEST_TIMING", DEPLOYMENT, scope="process", note="diagnostics"),
@@ -225,8 +240,12 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     _spec("ABSTRACTGATEWAY_DEV_READ_NO_AUTH", DEPLOYMENT,
           note="dev posture; security-inversion carve-out — a config write must not weaken auth"),
     _spec("ABSTRACTGATEWAY_ALLOWED_ORIGINS", DEPLOYMENT,
-          note="browser-origin security; deployment per the carve-out"),
-    _spec("ABSTRACTGATEWAY_TRUST_PROXY", DEPLOYMENT),
+          superseded_by="network.allowed_origins (POST /api/gateway/network; `abstractgateway network set --allowed-origins`)",
+          note="browser-origin security; the stored setting is the door, the env var an explicit start-time override "
+               "reported as overridden_by_env (security carve-out)"),
+    _spec("ABSTRACTGATEWAY_TRUST_PROXY", DEPLOYMENT,
+          superseded_by="network.trust_proxy (POST /api/gateway/network; `abstractgateway network set --trust-proxy`)",
+          note="start-time override reported as overridden_by_env"),
     _spec("ABSTRACTGATEWAY_PROTECT_READ", DEPLOYMENT, note="auth topology"),
     _spec("ABSTRACTGATEWAY_PROTECT_WRITE", DEPLOYMENT, note="auth topology"),
     _spec("ABSTRACTGATEWAY_SESSION_COOKIE", DEPLOYMENT),
@@ -239,6 +258,20 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     _spec("ABSTRACTGATEWAY_LOCKOUT_AFTER", BEHAVIOR, console_path="security.lockout"),
     _spec("ABSTRACTGATEWAY_LOCKOUT_BASE_S", BEHAVIOR, console_path="security.lockout"),
     _spec("ABSTRACTGATEWAY_LOCKOUT_MAX_S", BEHAVIOR, console_path="security.lockout"),
+    # Browser apps (apps_manager.py): which Node.js, where the apps listen, and
+    # the package mirrors. Service policy => BEHAVIOR (console section "apps").
+    _spec("ABSTRACTGATEWAY_APPS_NODE", BEHAVIOR, console_path="apps",
+          superseded_by="runtime-config apps.node (`abstractgateway apps config set node`)",
+          note="auto | managed | system | /path/to/node"),
+    _spec("ABSTRACTGATEWAY_APPS_PORTS", BEHAVIOR, console_path="apps",
+          superseded_by="runtime-config apps.ports (`abstractgateway apps config set ports`)"),
+    _spec("ABSTRACTGATEWAY_APPS_HOST", BEHAVIOR, console_path="apps",
+          superseded_by="runtime-config apps.host (`abstractgateway apps config set host`)",
+          note="default 127.0.0.1; anything else exposes the apps"),
+    _spec("ABSTRACTGATEWAY_APPS_NPM_REGISTRY", BEHAVIOR, console_path="apps",
+          superseded_by="runtime-config apps.npm_registry (`abstractgateway apps config set npm_registry`)"),
+    _spec("ABSTRACTGATEWAY_APPS_PYPI_URL", BEHAVIOR, console_path="apps",
+          superseded_by="runtime-config apps.pypi_url (`abstractgateway apps config set pypi_url`)"),
     # Request/limit knobs: change request outcomes => BEHAVIOR.
     _spec("ABSTRACTGATEWAY_MAX_BODY_BYTES", BEHAVIOR, console_path="limits"),
     _spec("ABSTRACTGATEWAY_MAX_UPLOAD_BODY_BYTES", BEHAVIOR, console_path="limits"),
@@ -303,6 +336,27 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
           effective="restart-required", note="bridge enable toggle"),
     _spec("ABSTRACT_TELEGRAM_STATE_PATH", DEPLOYMENT, note="state file path"),
     _spec("ABSTRACT_EMAIL_ACCOUNTS_CONFIG", DEPLOYMENT, note="config file path"),
+    # Desktop session + per-OS user directories (READS OF THE OS, not settings):
+    # the gateway asks the operating system where the user's session and
+    # directories are. Nothing here is a gateway knob and nothing migrates to
+    # the console; DEPLOYMENT keeps them out of the boot scanner's warnings.
+    _spec("DISPLAY", DEPLOYMENT, owner="desktop-session", scope="process",
+          note="desktop session read (default: unset = no X11 session); engines_install.detect_host "
+               "(gui_session), apps_manager (can a browser open), tray_supervisor (can a tray icon show)"),
+    _spec("WAYLAND_DISPLAY", DEPLOYMENT, owner="desktop-session", scope="process",
+          note="desktop session read (default: unset = no Wayland session); same readers as DISPLAY"),
+    _spec("XDG_CACHE_HOME", DEPLOYMENT, owner="desktop-session", scope="process",
+          note="per-user directory read, Linux (default ~/.cache; relative values ignored per the XDG spec); "
+               "host_paths.user_cache_dir -> engine installer downloads"),
+    _spec("XDG_DATA_HOME", DEPLOYMENT, owner="desktop-session", scope="process",
+          note="per-user directory read, Linux (default ~/.local/share); host_paths.user_data_dir"),
+    _spec("XDG_CONFIG_HOME", DEPLOYMENT, owner="desktop-session", scope="process",
+          note="per-user directory read, Linux (default ~/.config); os_service autostart entry path"),
+    _spec("LOCALAPPDATA", DEPLOYMENT, owner="desktop-session", scope="process",
+          note="per-user directory read, Windows (default ~/AppData/Local); host_paths data + cache dirs, "
+               "apps_manager Node.js lookup"),
+    _spec("APPDATA", DEPLOYMENT, owner="desktop-session", scope="process",
+          note="per-user directory read, Windows (default ~/AppData/Roaming); os_service legacy Startup shortcut"),
     # Foreign singles.
     _spec("OPENAI_BASE_URL", FOREIGN, owner="core", note="provider base url; core owns execution"),
     _spec("ANTHROPIC_BASE_URL", FOREIGN, owner="core"),
@@ -379,5 +433,7 @@ def registry_rows(names: List[str]) -> List[Dict[str, str]]:
             row["alias_of"] = spec.alias_of
         if spec.note:
             row["note"] = spec.note
+        if spec.superseded_by:
+            row["superseded_by"] = spec.superseded_by
         out.append(row)
     return out
