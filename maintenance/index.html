@@ -332,6 +332,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -603,10 +684,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#backlog-browsingediting-repo-dependent" class="md-nav__link">
+  <a href="#backlog-browsingediting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Backlog browsing/editing (repo-dependent)
+        Backlog browsing/editing
       
     </span>
   </a>
@@ -780,10 +861,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#backlog-browsingediting-repo-dependent" class="md-nav__link">
+  <a href="#backlog-browsingediting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Backlog browsing/editing (repo-dependent)
+        Backlog browsing/editing
       
     </span>
   </a>
@@ -920,18 +1001,21 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 - Email recipients: <code>ABSTRACT_BACKLOG_EMAIL_TO</code> or <code>ABSTRACT_TRIAGE_EMAIL_TO</code>
 - Optional email account override: <code>ABSTRACT_BACKLOG_EMAIL_ACCOUNT</code> or <code>ABSTRACT_TRIAGE_EMAIL_ACCOUNT</code></p>
 <p>Evidence: CLI wiring in <code>src/abstractgateway/cli.py</code>.</p>
-<h2 id="backlog-browsingediting-repo-dependent">Backlog browsing/editing (repo-dependent)<a class="headerlink" href="#backlog-browsingediting-repo-dependent" title="Permanent link">&para;</a></h2>
-<p>The gateway also exposes endpoints that read/write backlog Markdown files in a repository layout that includes <code>docs/backlog/*</code>.</p>
-<p>To enable these endpoints, set the repo root:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</span><span class="o">=</span><span class="s2">"/path/to/your/repo"</span>
+<h2 id="backlog-browsingediting">Backlog browsing/editing<a class="headerlink" href="#backlog-browsingediting" title="Permanent link">&para;</a></h2>
+<p>The gateway also exposes endpoints that read/write backlog Markdown files in a folder that contains <code>docs/backlog/*</code>.</p>
+<p>They work out of the box: without a setting the gateway uses its own folder, <code>&lt;data dir&gt;/backlog/</code>, created with a starter overview and item template on first use. To point it at a project checkout:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>config<span class="w"> </span><span class="nb">set</span><span class="w"> </span>triage_repo_root<span class="w"> </span>/path/to/your/repo<span class="w">   </span><span class="c1"># saved; or Continuum Settings, or the console</span>
+abstractgateway<span class="w"> </span>serve<span class="w"> </span>--backlog-root<span class="w"> </span>/path/to/your/repo<span class="w">          </span><span class="c1"># this run only</span>
 </code></pre></div>
-<p>Evidence: repo-root checks in <code>src/abstractgateway/routes/gateway.py</code> (process manager + backlog endpoints) and in <code>src/abstractgateway/maintenance/backlog_exec_runner.py</code>.</p>
+<p>See <a href="../configuration/#backlog-folder-exec-runner-and-process-manager-continuum">configuration.md</a> for the resolution order and the three doors.</p>
+<p>Evidence: <code>resolve_backlog_root</code> in <code>src/abstractgateway/runtime_config.py</code>, used by <code>src/abstractgateway/routes/gateway.py</code> (process manager + backlog endpoints) and <code>src/abstractgateway/maintenance/backlog_exec_runner.py</code>.</p>
 <h2 id="backlog-execution-runner-high-risk-disabled-by-default">Backlog execution runner (high risk; disabled by default)<a class="headerlink" href="#backlog-execution-runner-high-risk-disabled-by-default" title="Permanent link">&para;</a></h2>
 <p>The backlog exec runner consumes queued execution requests under <code>&lt;DATA_DIR&gt;/backlog_exec_queue/</code> and executes them (optionally using the <code>codex</code> CLI).</p>
-<p>Enable:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER</span><span class="o">=</span><span class="m">1</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_BACKLOG_EXECUTOR</span><span class="o">=</span><span class="s2">"none"</span><span class="w">   </span><span class="c1"># none|codex_cli|workflow_bundle</span>
+<p>Enable (applies at once on a running gateway):</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>config<span class="w"> </span><span class="nb">set</span><span class="w"> </span>backlog_exec_runner<span class="w"> </span>on
+abstractgateway<span class="w"> </span>config<span class="w"> </span><span class="nb">set</span><span class="w"> </span>executor<span class="w"> </span>codex<span class="w">        </span><span class="c1"># codex | claude | cursor-agent | abstractcode</span>
 </code></pre></div>
+<p>or <code>abstractgateway serve --exec-runner on</code> for one run, or Continuum → Settings → Gateway administration.</p>
 <p>Additional knobs (see <code>BacklogExecRunnerConfig.from_env()</code>):
 - <code>ABSTRACTGATEWAY_BACKLOG_EXEC_POLL_S</code>
 - <code>ABSTRACTGATEWAY_BACKLOG_EXEC_WORKERS</code>
@@ -947,16 +1031,17 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 - <strong>Process control</strong> (<code>/api/gateway/processes</code>, start/stop, log tail) is <strong>repo-root scoped</strong> for safety and assumes a monorepo-style checkout (scripts like <code>./build.sh</code>, <code>./agw-uat.sh</code>, …).
 - <strong>Env-var management</strong> (<code>/api/gateway/processes/env</code>) is <strong>repo-root independent</strong> and works in packaged installs (it persists under <code>ABSTRACTGATEWAY_DATA_DIR</code>).</p>
 <p>Enable:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER</span><span class="o">=</span><span class="m">1</span>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>config<span class="w"> </span><span class="nb">set</span><span class="w"> </span>process_manager<span class="w"> </span>on
 
-<span class="c1"># Optional (process control only): the AbstractFramework checkout root</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</span><span class="o">=</span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">"</span>
+<span class="c1"># Process control only: the AbstractFramework checkout it manages</span>
+abstractgateway<span class="w"> </span>config<span class="w"> </span><span class="nb">set</span><span class="w"> </span>triage_repo_root<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">"</span>
 </code></pre></div>
+<p>Process control stays off while the backlog folder is the gateway's own default folder (it is not a checkout).</p>
 <p>Optional config path:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_PROCESS_MANAGER_CONFIG</span><span class="o">=</span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway/processes.json"</span>
 </code></pre></div>
 <p>Endpoints:
-- <code>GET /api/gateway/processes</code> (requires <code>ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</code>)
+- <code>GET /api/gateway/processes</code> (requires the backlog folder set to a checkout: <code>triage_repo_root</code>)
 - <code>POST /api/gateway/processes/{id}/start|stop|restart|redeploy</code>
 - <code>GET /api/gateway/processes/{id}/logs/tail</code>
 - <code>GET /api/gateway/processes/env</code> (metadata only; never returns values; does not require repo root)
@@ -965,7 +1050,7 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 <h3 id="env-var-allowlist-write-only">Env var allowlist (write-only)<a class="headerlink" href="#env-var-allowlist-write-only" title="Permanent link">&para;</a></h3>
 <p>Env var editing is allowlist-only and values are write-only (they are never returned to the client). Overrides are persisted on the gateway host under:
 - <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/process_manager/env_overrides.json</code></p>
-<p>When the gateway starts and <code>ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1</code>, it loads and applies persisted overrides to its own <code>os.environ</code> (best-effort).</p>
+<p>When the gateway starts with the process manager on (<code>process_manager</code> setting), it loads and applies persisted overrides to its own <code>os.environ</code> (best-effort).</p>
 <p>To extend the allowlist, update:
 - <code>src/abstractgateway/maintenance/process_manager.py</code> → <code>managed_env_var_allowlist()</code></p>
 <h2 id="file-attachment-helpers-thin-client-support">File + attachment helpers (thin-client support)<a class="headerlink" href="#file-attachment-helpers-thin-client-support" title="Permanent link">&para;</a></h2>

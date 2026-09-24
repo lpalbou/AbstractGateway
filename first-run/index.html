@@ -328,6 +328,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -723,9 +804,9 @@ First run: open http://127.0.0.1:8080/console#claim=agclaim_...
 </code></pre></div>
 <p>Open the <code>First run</code> link in a browser on the same machine. The console signs
 you in as the admin and opens the <strong>first-run guide</strong>.</p>
-<p>The admin token is not printed. It is kept in
-<code>&lt;data dir&gt;/auth/bootstrap-admin-token</code> (file mode <code>0600</code>). Set
-<code>ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1</code> if you want it printed.</p>
+<p>The admin token is printed just above the link, and kept in
+<code>&lt;data dir&gt;/auth/bootstrap-admin-token</code> (file mode <code>0600</code>). Start with
+<code>abstractgateway serve --no-print-token</code> to keep it out of the output.</p>
 <h2 id="2-the-first-run-guide">2. The first-run guide<a class="headerlink" href="#2-the-first-run-guide" title="Permanent link">&para;</a></h2>
 <p>The guide has five steps. Every step is optional:</p>
 <table>
@@ -746,18 +827,49 @@ you in as the admin and opens the <strong>first-run guide</strong>.</p>
 </tr>
 <tr>
 <td>Default model</td>
-<td>The text model currently configured, <strong>Use recommended defaults</strong> (the same action as the Multimodal tab's <em>Apply recommended</em>), a <strong>Download</strong> button for each recommended model that is missing, and the model catalog filtered to models that fit this machine. Select an installed model and click <strong>Set as default</strong> to make it the default text model</td>
+<td>The text model currently configured, <strong>Use recommended defaults</strong> (the same action as the Multimodal tab's <em>Apply recommended</em>), a <strong>Download</strong> button for each recommended model that is missing, and the Models tab's catalog cards with <strong>Fits this computer</strong> on (one card per model, every 4-bit and 8-bit build, filters, <strong>Open in the Models tab</strong>). A downloaded text model's <strong>Use as default</strong> makes it the default text model</td>
 </tr>
 <tr>
 <td>Apps</td>
-<td>The <code>npx @abstractframework/{flow,code,observer,continuum,entity}</code> commands with copy buttons</td>
+<td>One card per browser app (Flow Editor, Code, Observer, Continuum, Entity): name, status, one line of description and one row of buttons at the same height on every card: <strong>Install and open</strong> or <strong>Open</strong> (Open also starts a stopped app), plus <strong>Open in Terminal</strong> or <strong>Install for Terminal</strong> on Code. Stop, Show log, Update, versions and commands appear with <strong>Technical details</strong> (see <a href="../console/#apps-tab">console.md</a>)</td>
 </tr>
 <tr>
 <td>Done</td>
-<td>How to reopen the console, the login-service status, and the CLI equivalents</td>
+<td>How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with <strong>Technical details</strong>) the CLI equivalents and the terminal console's install and open commands</td>
 </tr>
 </tbody>
 </table>
+<p><strong>What "recommended" means on this computer.</strong> AbstractCore picks the
+recommended text model; the gateway shows that pick and holds no list of its
+own. On a Mac with Apple silicon the pick is an MLX build chosen by the
+computer's memory:</p>
+<table>
+<thead>
+<tr>
+<th>Memory</th>
+<th>Recommended text model</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>less than 24 GB</td>
+<td><code>mlx-community/Qwen3.5-9B-MLX-4bit</code> (Qwen3.5 9B)</td>
+</tr>
+<tr>
+<td>24 GB up to, but not including, 128 GB</td>
+<td><code>mlx-community/Qwen3.8-27B-4bit</code> (Qwen3.8 27B)</td>
+</tr>
+<tr>
+<td>128 GB or more</td>
+<td><code>mlx-community/Qwen3.8-Flash-Next-4bit</code> (Qwen3.8 Flash-Next)</td>
+</tr>
+</tbody>
+</table>
+<p>LM Studio and Ollama builds stay in the catalog and can be downloaded, but on
+a Mac they are not the recommendation. Other computers keep the LM Studio
+build <code>qwen/qwen3.5-9b@4bit</code>. When AbstractCore's memory estimate says the
+recommended model may not fit, the <strong>Chat and text</strong> card says so with the
+estimate; the recommendation does not quietly switch to another model.</p>
 <p>A typical path from a fresh install to a working local model:</p>
 <ol>
 <li><strong>Local engines.</strong> If no engine is installed, click <strong>Install</strong> on Ollama
@@ -765,10 +877,11 @@ you in as the admin and opens the <strong>first-run guide</strong>.</p>
    for example <code>brew install ollama</code> on a Mac with Homebrew, and that it runs
    on this machine. The install runs in the background with progress; when it
    finishes the row shows the version.</li>
-<li><strong>Default model.</strong> The list opens on models that fit this machine's memory.
-   Click <strong>Download</strong> on the one you want; progress shows in the job card.</li>
-<li>When the download finishes, the model appears under <em>Installed</em>. Select it
-   and click <strong>Set as default</strong>: the gateway's text route now uses it.</li>
+<li><strong>Default model.</strong> The catalog opens on models that fit this machine's
+   memory, one card per model with its 4-bit and 8-bit builds. Click
+   <strong>Download</strong> on the build you want; its progress bar shows on the row.</li>
+<li>When the download finishes, the row reads <em>Downloaded</em>. Click <strong>Use as
+   default</strong>: the gateway's text route now uses it.</li>
 </ol>
 <p>The same steps are available later in the <strong>Engines</strong> and <strong>Models</strong> tabs (see
 <a href="../console/#models-and-engines-tabs">console.md</a>) and from the command line
@@ -803,13 +916,27 @@ deployment), because that gateway would refuse the link.</p>
   <code>X-Forwarded-Host</code>, <code>X-Real-IP</code>, <code>Forwarded</code>);</li>
 <li>the console removes the code from the address bar before sending it;</li>
 <li>the result is the same browser session as a normal sign-in (session cookie +
-  CSRF cookie).</li>
+  CSRF cookie). The response's <code>claim.created_by</code> says who minted the link
+  (<code>serve</code>, <code>cli</code>, <code>tray</code>, or <code>null</code> for an older link). This lets the
+  console treat a tray sign-in differently from a first run.</li>
 </ul>
 <h2 id="4-start-the-gateway-at-login-optional">4. Start the gateway at login (optional)<a class="headerlink" href="#4-start-the-gateway-at-login-optional" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>service<span class="w"> </span>install<span class="w">      </span><span class="c1"># install and start</span>
-abstractgateway<span class="w"> </span>service<span class="w"> </span>status<span class="w">       </span><span class="c1"># installed? loaded?</span>
+abstractgateway<span class="w"> </span>service<span class="w"> </span>status<span class="w">       </span><span class="c1"># on | off | broken | other, and why</span>
+abstractgateway<span class="w"> </span>service<span class="w"> </span><span class="nb">enable</span><span class="w">       </span><span class="c1"># start THIS gateway at the next login (starts nothing now)</span>
+abstractgateway<span class="w"> </span>service<span class="w"> </span>disable<span class="w">      </span><span class="c1"># stop starting it at login (the running gateway keeps running)</span>
 abstractgateway<span class="w"> </span>service<span class="w"> </span>uninstall<span class="w">    </span><span class="c1"># stop and remove (your data is kept)</span>
 </code></pre></div>
+<p>The desktop tray's <strong>Start AbstractGateway at login</strong> item is the same switch
+(<code>enable</code>/<code>disable</code>, shared module <code>abstractgateway.autostart</code>). <code>status</code>
+reports <code>broken</code> when a registration exists that would not start — the
+program it points at is gone (a moved or reinstalled gateway), the file is
+unreadable, the unit is not enabled, or launchd / Task Manager / the desktop
+switched it off — and <code>other</code> when it belongs to another data folder. It also
+reports <code>broken</code> with <strong>needs repair</strong> when a registration starts the gateway
+but pins <code>--host/--port</code> on its command line (every registration written
+before 2026-09-24): "pinned to 127.0.0.1:N by the login item — run
+<code>abstractgateway service enable</code> again to let the Network setting apply".</p>
 <table>
 <thead>
 <tr>
@@ -830,8 +957,13 @@ abstractgateway<span class="w"> </span>service<span class="w"> </span>uninstall<
 <td><code>journalctl --user -u abstractgateway.service</code></td>
 </tr>
 <tr>
+<td>Linux without a systemd user manager</td>
+<td>XDG autostart entry <code>~/.config/autostart/abstractgateway.desktop</code> (starts at graphical login)</td>
+<td><code>&lt;data dir&gt;/logs/gateway.log</code></td>
+</tr>
+<tr>
 <td>Windows (experimental)</td>
-<td>Startup-folder shortcut <code>AbstractGateway.lnk</code> that starts the gateway with <code>pythonw.exe</code> (no console window)</td>
+<td>per-user Run entry <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway</code> that starts the gateway with <code>pythonw.exe</code> (no console window, no admin); an older <code>AbstractGateway.lnk</code> Startup shortcut is removed</td>
 <td><code>&lt;data dir&gt;\logs\gateway.log</code></td>
 </tr>
 </tbody>
@@ -842,9 +974,17 @@ abstractgateway<span class="w"> </span>service<span class="w"> </span>uninstall<
   and sets <code>PATH</code> itself (including <code>~/.local/bin</code>, <code>~/.lmstudio/bin</code>,
   <code>/opt/homebrew/bin</code>, <code>/usr/local/bin</code>), because service managers do not read
   your shell profile.</li>
-<li>The port is <code>--port</code> when given, else the port of a previous install, else
-  the first free port from 8080 upwards. The choice is stored in
-  <code>&lt;data dir&gt;/service.json</code>.</li>
+<li>The login item runs plain <code>abstractgateway serve</code>: the host and port come
+  from the <a href="../configuration/#network-exposure-localhost--local-network--internet">Network setting</a>
+  (<code>abstractgateway network set localhost|lan|internet [--port N]</code>, the tray's
+  Network menu, the console) at every start. <code>install</code>/<code>enable</code> store it
+  first: a stored mode and port are kept; otherwise the mode is <code>localhost</code>
+  (127.0.0.1, as before) and the port is <code>--port</code> when given, else the running
+  gateway's (<code>enable</code>), else a previous install's, else the first free port
+  from 8080 upwards. <code>--host 127.0.0.1|0.0.0.0</code> and <code>--port</code> are written into
+  that setting and printed. <code>--pin-command-line</code> puts <code>--host/--port</code> on the
+  command line instead (for technical setups; the Network setting then does
+  not apply). The registration is recorded in <code>&lt;data dir&gt;/service.json</code>.</li>
 <li>After starting, <code>install</code> waits up to 60 seconds for <code>/api/health</code>
   (<code>--wait-s</code>, <code>--no-wait</code>) and, on a first run, prints a sign-in link
   (<code>--no-claim</code> to skip).</li>

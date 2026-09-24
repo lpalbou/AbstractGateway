@@ -332,6 +332,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -549,6 +630,61 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-at-login" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start at login
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network-and-addresses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network and addresses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#menus-without-submenus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Menus without submenus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#pause" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -741,6 +877,61 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-at-login" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start at login
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network-and-addresses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network and addresses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#menus-without-submenus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Menus without submenus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#pause" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -821,8 +1012,16 @@ Windows system tray or a Linux panel. It exists so that anyone running a
 gateway on their own computer — including people who never open a terminal —
 can see what it is doing and act on it in one click:</p>
 <ul>
-<li><strong>Open Console</strong> — the web console (<code>/console</code>). One door: every other
-  console entry point in the menu is a deep link to a tab of it.</li>
+<li><strong>Open Console</strong> — the web console (<code>/console</code>), <strong>already signed in</strong>:
+  the tray mints a one-time sign-in link locally (the same code as
+  <code>abstractgateway claim</code>; see <em>Security</em>) so an expired browser session never
+  ends on a token prompt. One door: every other console entry point in the menu
+  is a deep link to a tab of it.</li>
+<li><strong>Apps</strong> — the six AbstractFramework apps, one short line each: <strong>Open X</strong>
+  (running, whoever started it, or installed: started first), <strong>Install X…</strong>
+  (installs through the gateway, starts it and opens it signed in, with
+  progress notifications), <strong>Launch Assistant</strong> (the desktop app), otherwise
+  the app's name, greyed. See <em>Apps</em> below.</li>
 <li><strong>Workflows</strong> — the last 24 hours of runs, newest first: a state badge
   (🟢 running, 🟡 waiting, ✅ completed, ❌ failed, ⚪️ cancelled), the step
   count and how long each took, under a one-line tally. Rows are information;
@@ -838,12 +1037,46 @@ can see what it is doing and act on it in one click:</p>
 <li><strong>Pause / Resume Workflows</strong> — the one high-level control over all of that:
   stop new workflow steps from running to free the machine or to look at what
   is going on (the gateway keeps answering; work queues until you resume).</li>
-<li><strong>Loaded Models</strong> — every model currently in memory with its size; click
-  one to unload it and free the memory.</li>
+<li><strong>Models</strong> — what is in memory, what can be loaded, and the way to either:
+  eject a loaded model, or preload an installed one. See <em>Models</em> below.</li>
 <li><strong>Show Activity Window</strong> — two live graphs (memory, GPU) and the model list
   in a small window (needs <code>tkinter</code>; see below).</li>
+<li><strong>Start AbstractGateway at login</strong> — a check item that shows whether this
+  gateway WOULD start at your next login, and switches it. See <em>Start at login</em>.</li>
 <li><strong>Check for Updates / Restart / Quit / About / Help.</strong></li>
 </ul>
+<p>The menu as shipped (macOS, a machine with 151 installed models; <code>[…]</code> is a
+greyed information line, <code>▸</code> a submenu, <code>☐/☑</code> the check item):</p>
+<div class="highlight"><pre><span></span><code>[AbstractGateway — Running]
+[Ready · 1 model loaded · 249 MB]
+[http://127.0.0.1:8080 · localhost only]
+Open Console
+Apps ▸              Open Observer | Open Continuum | Install Code… | … | Launch Assistant | Manage Apps in Console…
+Copy Address ▸      http://127.0.0.1:8080 | http://192.168.1.23:8080 (Wi-Fi) | http://mymac.local:8080
+Workflows ▸
+Pause Workflows
+[Memory   82.8 GB of 128 GB (65%)]
+[GPU   0% busy]
+Models ▸
+    [Loaded: 1 · 249 MB · 45.2 GB free]
+    ✓ Qwen1.5-0.5B-Chat-4bit · 249 MB · MLX ▸
+        Eject — frees 249 MB
+    Load a Model ▸
+        [Your defaults]
+        ☑ Text: Qwen1.5-0.5B-Chat-4bit · 260 MB · MLX · loaded
+        MLX (11) ▸         recognised models first, then A–Z
+        LM Studio (13) ▸
+        Ollama (1) ▸
+        Hugging Face (126) ▸   Recognised models (3) ▸ | A – F (30) ▸ | F – Q (30) ▸ | …
+        Download Models in Console…
+    Manage Models in Console…
+Check for Updates…
+Restart AbstractGateway…
+☐ Start AbstractGateway at login
+Network ▸           [Now: localhost only · 127.0.0.1:8080] | ● Localhost only | ○ Local network | ○ Internet…
+Help ▸
+Quit AbstractGateway…
+</code></pre></div>
 <p>The icon itself is a live gauge: the outer ring fills with system memory in
 use (blue), the inner ring with GPU load (amber). A green dot in the centre
 means a workflow step is executing right now; pause bars mean paused; a red
@@ -934,6 +1167,167 @@ plain text. If the helper itself crashed, <code>POST /api/gateway/host/tray/show
 Gateway card (pause/resume, update, restart, quit), the memory and GPU meters,
 and the model table with unload buttons. A paused gateway shows a banner on
 every console tab with a <em>Resume</em> button.</p>
+<h2 id="models">Models<a class="headerlink" href="#models" title="Permanent link">&para;</a></h2>
+<p><strong>Models ▸</strong> leads with what is in memory — a header (<code>Loaded: N · size ·
+free memory</code>), then one row per loaded model. Each loaded row is a submenu
+whose one action is <strong>Eject — frees N GB</strong>: a click on a check-marked row
+never unloads by surprise. Eject asks first; when work is running on the
+gateway it says so, because eject stops the calls running on that model first
+and the next request that needs it loads it again (the gateway's eject
+semantics). A locked model ("kept in memory") asks again before it goes.</p>
+<p><strong>Load a Model ▸</strong> preloads an installed model (<code>POST
+/api/gateway/models/load</code>; the gateway pins it resident):</p>
+<ol>
+<li><strong>Your defaults</strong> — the models your capability routes name (Text, Image,
+   Voice, Speech to text, Music), loaded under that route's task. A default
+   that is not downloaded is shown greyed with its status, never offered as a
+   click that fails.</li>
+<li><strong>One submenu per engine</strong> — MLX, LM Studio, Ollama, Hugging Face — with
+   every model the engines hold on this machine (<code>GET /models/installed</code>),
+   size on disk included. Models the catalog recognises come first, then A–Z.
+   A list longer than 30 is split into ranges (<code>A – F (30) ▸</code>); nothing is
+   ever left out. A model larger than the free memory says so, and loading it
+   asks first. Embedding models are listed greyed ("load on use"): the
+   residency API has no embedding task.</li>
+</ol>
+<p>Every load shows <em>Loading X</em> while it runs (a notification and a greyed row),
+then <em>Loaded X after N s</em> — or a dialog with the gateway's full reason when it
+fails.</p>
+<p>Why engines and not capabilities (text / image / voice / music)? Because the
+engine is always known and it is what decides how a model loads, while the
+capability of an installed artifact mostly is not: on the reference machine
+136 of 151 installed artifacts carry no capability metadata, and a menu
+grouped by guesses would put LoRAs, encoders and adapters under confident
+headings. Capabilities appear where they are facts — the routes you configured.</p>
+<p>The model lists refresh every 5 minutes and after each load or eject; the
+Activity window and the console's Models tab show the same data live.</p>
+<h2 id="apps">Apps<a class="headerlink" href="#apps" title="Permanent link">&para;</a></h2>
+<p>The <strong>Apps</strong> submenu lists Observer, Continuum, Code, Entity, Flow (the
+stack order and ports of <code>scripts/start-local.sh</code>: 3001-3005) and Assistant,
+one short line each and never a reason: the full reason lives in the
+console's Apps tab. Presence is detected, never imported — the gateway does
+not depend on its apps:</p>
+<table>
+<thead>
+<tr>
+<th>App</th>
+<th>Detected by</th>
+<th>Line</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Observer, Continuum, Code, Entity, Flow</td>
+<td>the gateway (<code>GET /api/gateway/apps</code>): its own installs, and apps started outside it (the dev stack, <code>npx</code>, a service) found on their usual port</td>
+<td><strong>Open X</strong> when running, whoever started it (a one-time signed-in handover); <strong>Open X</strong> when installed and stopped (starts it, then opens it); <strong>Install X…</strong> when it can be installed (install + start + open, with progress); otherwise <strong>X</strong>, greyed</td>
+</tr>
+<tr>
+<td>the same, installed globally</td>
+<td>the app's command on PATH (<code>abstractobserver</code>, <code>abstractflow-editor</code>, <code>abstractcode-web</code>, <code>abstractcontinuum</code>, <code>abstractentity</code>) or the package under <code>npm root -g</code></td>
+<td><strong>Open X</strong> — started by the tray with the gateway URL passed in and stopped when the tray exits; sign in inside the app (install it here instead for the one-click sign-in)</td>
+</tr>
+<tr>
+<td>Assistant</td>
+<td><code>AbstractAssistant.app</code> in /Applications or ~/Applications, the <code>abstractassistant</code> command (PATH or this Python's scripts folder), or the package in this Python (<code>importlib.util.find_spec</code>)</td>
+<td><strong>Launch Assistant</strong></td>
+</tr>
+<tr>
+<td>Code's terminal version (the only app with one today)</td>
+<td>the gateway's presence check, reported as <code>interfaces[kind="tui"]</code> on the app row: its own copy in <code>&lt;data dir&gt;/apps/bin/</code>, <code>abstractcode</code> on PATH, or <code>~/.cargo/bin</code></td>
+<td><strong>Open Code in Terminal</strong> — a new terminal window on this machine, signed in through a one-time code (<code>POST /api/gateway/apps/code/launch-tui</code>, the same route as the console's button). Shown only when the gateway reports it installed; greyed when the gateway would refuse (the console says why)</td>
+</tr>
+</tbody>
+</table>
+<p>When an app cannot be installed from here, ONE line near the bottom says so:
+"Installs are off for this gateway · Console → Apps" (the gateway's install
+setting refuses this caller), or "Installs unavailable now · Console → Apps"
+(for example the npm registry is unreachable). The tray is on the gateway
+machine, so with the default setting its installs are allowed whatever
+address the gateway listens on. <strong>Manage Apps in Console…</strong> at the bottom
+opens the console's Apps tab (updates, logs, stop, and the full reasons).</p>
+<p>The tray talks to its gateway over loopback (<code>http://127.0.0.1:&lt;port&gt;</code>) for
+every network mode; the network address in the menu's header and in
+<strong>Copy Address</strong> is for other devices.</p>
+<p>A folder called <code>abstractassistant</code> in the gateway's working directory (a
+source checkout) resolves as a <em>namespace package</em>; it is not an install and
+is ignored. Apps started by the tray get an environment with every token,
+secret, password and key removed, like the apps the gateway runs itself.</p>
+<h2 id="start-at-login">Start at login<a class="headerlink" href="#start-at-login" title="Permanent link">&para;</a></h2>
+<p><strong>Start AbstractGateway at login</strong> is checked only when THIS gateway (its data
+folder) would really start at your next login. Toggling it registers or
+removes the same per-user login item as the CLI and the installers:</p>
+<table>
+<thead>
+<tr>
+<th>OS</th>
+<th>Mechanism (per user, no admin)</th>
+<th>"On" means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>macOS</td>
+<td>LaunchAgent <code>~/Library/LaunchAgents/ai.abstractframework.gateway.plist</code> (<code>RunAtLoad</code>)</td>
+<td>the plist parses, the program it starts exists, and <code>launchctl print-disabled</code> does not list it as disabled</td>
+</tr>
+<tr>
+<td>Linux (systemd)</td>
+<td>user unit <code>~/.config/systemd/user/abstractgateway.service</code></td>
+<td>the program exists and <code>systemctl --user is-enabled</code> says <code>enabled</code></td>
+</tr>
+<tr>
+<td>Linux (no systemd user manager)</td>
+<td>XDG autostart entry <code>~/.config/autostart/abstractgateway.desktop</code> (graphical login)</td>
+<td>the program exists and the entry is not switched off (<code>X-GNOME-Autostart-enabled=false</code>, <code>Hidden=true</code>)</td>
+</tr>
+<tr>
+<td>Windows (experimental)</td>
+<td><code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway</code> → <code>pythonw -m abstractgateway.os_service launch …</code></td>
+<td>the program exists and Task Manager's <em>Startup apps</em> has not disabled it</td>
+</tr>
+</tbody>
+</table>
+<p>The item reads <strong>— needs repair</strong> when a registration exists but would not
+start (the gateway was moved or reinstalled elsewhere, the file is unreadable,
+the unit is disabled); the line under it says why, and a click repairs it. It
+reads <strong>(another gateway is registered)</strong> when the login item belongs to
+another data folder; a click asks before replacing it. A registration that
+pins <code>--host/--port</code> on its command line (written before 2026-09-24) also
+reads <strong>— needs repair</strong> ("pinned to 127.0.0.1:N by the login item …"): it
+starts, but the <strong>Network</strong> choice can never apply to it. The click rewrites
+it to plain <code>serve</code> and keeps the stored network mode.</p>
+<p>Turning it on registers for the <strong>next</strong> login: it never starts a second copy
+of the gateway that is already running. Turning it off only unregisters: the
+gateway keeps running now. The same switch from a terminal:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>service<span class="w"> </span>status<span class="w">      </span><span class="c1"># on | off | broken | other, and why</span>
+abstractgateway<span class="w"> </span>service<span class="w"> </span><span class="nb">enable</span><span class="w">      </span><span class="c1"># this gateway at next login; the Network setting binds it</span>
+abstractgateway<span class="w"> </span>service<span class="w"> </span>disable<span class="w">     </span><span class="c1"># the running gateway keeps running</span>
+abstractgateway<span class="w"> </span>service<span class="w"> </span>install<span class="w">     </span><span class="c1"># enable + start now + wait for health (installers)</span>
+abstractgateway<span class="w"> </span>service<span class="w"> </span>uninstall<span class="w">   </span><span class="c1"># disable + stop it</span>
+</code></pre></div>
+<h2 id="network-and-addresses">Network and addresses<a class="headerlink" href="#network-and-addresses" title="Permanent link">&para;</a></h2>
+<p>The line under the status header is the address to share and the network
+mode, e.g. <code>http://127.0.0.1:8080 · localhost only</code> (<code>· restart required</code>
+while a change waits for a restart). <strong>Network ▸</strong> shows what runs now
+(<code>Now: local network · 0.0.0.0:8080</code>) and three choices — <strong>Localhost only</strong>,
+<strong>Local network</strong>, <strong>Internet…</strong> — whose mark is what is <em>set</em>. Choosing one
+saves it (<code>POST /api/gateway/network</code>); when it needs a restart, <strong>Restart to
+apply</strong> appears (and the headers say <em>restart required</em>). <strong>Internet…</strong> first
+shows what exposing the gateway means, with the gateway's own warnings, and
+posts only after you acknowledge it. A refusal (for example sign-in not set up
+for that mode) opens a dialog with the reason and the fix. <strong>Copy Address ▸</strong>
+lists every address the gateway answers on (loopback, each network interface,
+the machine's <code>.local</code> name) and copies the one you click.</p>
+<p>A gateway without the network settings route says so in the Network submenu,
+and Copy Address still offers the address the tray talks to.</p>
+<h2 id="menus-without-submenus">Menus without submenus<a class="headerlink" href="#menus-without-submenus" title="Permanent link">&para;</a></h2>
+<p>pystray draws submenus and check marks on macOS, Windows and Linux
+(AppIndicator). Some Linux panels drop submenus: set <code>"flat_menu": true</code> in
+<code>&lt;data_dir&gt;/tray/prefs.json</code> and restart the gateway — every row is kept,
+prefixed with its path (<code>Models › Load a Model › MLX › …</code>). pystray's plain
+X11 backend (<code>xorg</code>) has no menu at all: clicking the icon opens the console,
+and a notification at start names the CLI equivalents (<code>abstractgateway
+service …</code>, <code>apps …</code>, <code>models …</code>).</p>
 <h2 id="pause">Pause<a class="headerlink" href="#pause" title="Permanent link">&para;</a></h2>
 <p>Pausing is process-wide and <strong>persists across restarts</strong>: a laptop paused to
 get its GPU back does not silently resume after a reboot or an update. While
@@ -1027,6 +1421,15 @@ command line, never in the environment, never on disk. The token is accepted
 only from a loopback socket peer (<code>127.0.0.0/8</code>, <code>::1</code>) and dies with the
 process. Audit-log entries made through it carry
 <code>source: loopback-ephemeral:desktop-tray</code>.</p>
+<p><strong>Signed-in links.</strong> <em>Open Console</em> does not ask the gateway to sign anyone
+in — there is no such endpoint, by design. The tray writes a one-time claim
+code under <code>&lt;data_dir&gt;/auth/claims/</code> (only someone who can write the data
+folder can), valid 2 minutes, and opens <code>/console#claim=&lt;code&gt;</code>; the console
+redeems it once, from a loopback browser only. A gateway running with a static
+token (no user accounts) cannot redeem claims, so the plain URL opens and a
+notification says why. <em>Copy Console Link</em> copies the plain URL: a sign-in
+link does not belong on a clipboard. App links use the gateway's one-time
+handover (<code>POST /api/gateway/apps/{id}/open</code>, 2 minutes, single use).</p>
 <p><code>FORWARDED_ALLOW_IPS=*</code> (uvicorn's proxy setting) would let any client rewrite
 its peer address; the gateway warns at boot when it sees that with a tray
 running. Use a concrete proxy IP.</p>

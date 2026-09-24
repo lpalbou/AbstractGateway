@@ -332,6 +332,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -2385,7 +2466,7 @@ are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractc
 <td><code>GET /engines</code></td>
 <td>user</td>
 <td><code>probe=1</code></td>
-<td><code>engines_status_v1</code> plus <code>install_allowed</code> and <code>install_policy</code></td>
+<td><code>gateway_engines_v2</code> rows (AbstractCore's detection plus the install plan and actions) with <code>install_allowed</code> and <code>install_policy</code>; see <a href="../engines/">engines.md</a></td>
 </tr>
 <tr>
 <td><code>GET /engines/{id}</code></td>
@@ -2396,8 +2477,26 @@ are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractc
 <tr>
 <td><code>POST /engines/{id}/install</code></td>
 <td>admin</td>
-<td><code>{"dry_run": bool, "force": bool}</code></td>
-<td><code>host_job_v1</code> (kind <code>engine_install</code>)</td>
+<td><code>{"dry_run": bool, "force": bool, "location": "auto"\|"user"\|"system"}</code></td>
+<td>an <code>engine_install_job_v1</code> job (user-level first; pauses in <code>needs_admin</code> / <code>needs_tools</code>), see <a href="../engines/">engines.md</a></td>
+</tr>
+<tr>
+<td><code>GET /engines/jobs</code>, <code>GET /engines/jobs/{id}</code></td>
+<td>user</td>
+<td></td>
+<td>engine install jobs</td>
+</tr>
+<tr>
+<td><code>POST /engines/jobs/{id}/continue</code>, <code>/cancel</code></td>
+<td>admin</td>
+<td><code>{"action"?}</code></td>
+<td>the job</td>
+</tr>
+<tr>
+<td><code>POST /engines/{id}/start</code>, <code>/stop</code></td>
+<td>admin</td>
+<td></td>
+<td>Ollama / LM Studio server state</td>
 </tr>
 <tr>
 <td><code>GET /models/catalog</code></td>
@@ -2415,13 +2514,31 @@ are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractc
 <td><code>POST /models/download</code></td>
 <td>admin</td>
 <td><code>{"provider", "artifact", "dry_run", "expected_bytes"?}</code> or <code>{"recommended": true}</code></td>
-<td><code>{"ok": true, "job": {...}}</code></td>
+<td><code>{"ok": true, "job": {...}}</code>; with <code>recommended</code>, <code>{"ok": true, "recommended": true, "jobs": [...], "group": {...}}</code></td>
 </tr>
 <tr>
 <td><code>GET /models/download/{job}</code></td>
 <td>user</td>
 <td></td>
-<td><code>{"ok": true, "job": {...}}</code></td>
+<td><code>{"ok": true, "job": {...}}</code> (a <code>grp_...</code> id returns the parent job)</td>
+</tr>
+<tr>
+<td><code>GET /models/downloads</code></td>
+<td>user</td>
+<td></td>
+<td><code>{"ok": true, "jobs": [...]}</code>, newest first, parents included</td>
+</tr>
+<tr>
+<td><code>POST /models/download/{job}/cancel</code></td>
+<td>admin</td>
+<td>none</td>
+<td><code>{"ok": true, "job": {...}}</code>; stops the transfer within about a second; a <code>grp_...</code> id cancels every running child; 404 when unknown</td>
+</tr>
+<tr>
+<td><code>GET /models/downloads/stream</code></td>
+<td>user</td>
+<td><code>job_id</code>, <code>until_idle=1</code></td>
+<td>Server-Sent Events of the same dicts, see <a href="../model-downloads/">model-downloads.md</a></td>
 </tr>
 <tr>
 <td><code>POST /models/delete</code></td>
@@ -2451,6 +2568,22 @@ are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractc
 </table>
 <p>Empty query values (<code>q=</code>, <code>engine=</code>) mean "no filter". <code>probe</code>, <code>fits</code> and
 <code>hub</code> accept <code>1</code>/<code>0</code> and <code>true</code>/<code>false</code>.</p>
+<p><strong>Catalog artifacts.</strong> <code>model_catalog_v1</code> is AbstractCore's payload, served
+unchanged (field reference: AbstractCore <code>docs/models.md</code>, "The catalog").
+Besides <code>quant</code> (the artifact's own label, lowercased, or <code>null</code>) and <code>bits</code>
+(effective bits per weight), every artifact carries <code>quant_class</code>, one of
+<code>2bit</code>, <code>3bit</code>, <code>4bit</code>, <code>5bit</code>, <code>6bit</code>, <code>8bit</code>, <code>16bit</code>, <code>full</code>, <code>unknown</code>,
+for filtering by quantization: <code>q4_k_m</code>, <code>4bit</code>, <code>mxfp4</code> and <code>oq4e</code> are
+<code>4bit</code>; <code>q8_0</code> and <code>8bit</code> are <code>8bit</code>; <code>bf16</code> and <code>f16</code> are <code>16bit</code>; <code>f32</code> is
+<code>full</code>. <code>quant_class_source</code> is <code>stated</code> (the reference names its quant),
+<code>assumed</code> (a bare Ollama tag such as <code>qwen3.5:9b</code> or LM Studio id: the class of
+the engine's default build, which the fit estimate assumes too) or <code>null</code> (no
+quant information; the class is <code>unknown</code>). <code>options</code> holds the route options a
+recommendation copies with the artifact (<code>{}</code> for most); <code>companions</code> lists
+repos downloaded with it (an MLX build's MTP drafter, from AbstractCore's
+drafter registry; <code>[]</code> for most), <code>companion_bytes</code> is their size, and
+<code>download_bytes</code> already includes it; <code>note</code> is one sentence about the build. On Apple silicon the text rows pre-select the
+memory tier's MLX build and exactly one text row is the <code>starter</code>.</p>
 <p><strong>Jobs.</strong> A <code>host_job_v1</code> has <code>schema</code>, <code>job_id</code>, <code>kind</code>
 (<code>download | delete | engine_install</code>), <code>status</code>
 (<code>queued | running | completed | failed | cancelled</code>), <code>provider</code>, <code>artifact</code>,
@@ -2461,6 +2594,16 @@ are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractc
 the POST returns. On the older <code>/models/download</code> lane the job also carries
 <code>job</code> (the id), <code>events</code>, <code>host_status</code>, reports <code>queued</code> as <code>running</code>, and
 counts <code>joined</code> including the first request.</p>
+<p><strong>Download progress.</strong> A download job also carries <code>state</code>
+(<code>queued | resolving | downloading | verifying | installing | done | failed |
+cancelled | stalled</code>), <code>bytes_done</code>, <code>bytes_total</code>, <code>size_unknown</code>,
+<code>size_note</code>, <code>bytes_per_second</code>, <code>eta_s</code>, <code>updated_at</code>, <code>files</code>
+(<code>[{name, bytes_done, bytes_total, state}]</code>), <code>current_file</code>, a one-sentence
+<code>message</code>, the tool's own <code>detail</code>, and <code>transitions</code>. "Use recommended
+defaults" (<code>{"recommended": true}</code>) returns one parent job (<code>kind:
+"download_group"</code>, id <code>grp_...</code>) whose bytes, percent, speed and time left
+add up its children. The full contract, one real example per state and what
+each source reports: <a href="../model-downloads/">model-downloads.md</a>.</p>
 <p><strong>Refusals</strong> share one body:
 <code>{"ok": false, "status", "reason"?, "message", "detail", "error": {"message", "type"}, ...}</code>.</p>
 <table>

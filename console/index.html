@@ -16,7 +16,7 @@
         <link rel="prev" href="../configuration/">
       
       
-        <link rel="next" href="../shipped-workflows/">
+        <link rel="next" href="../apps/">
       
       
         
@@ -387,6 +387,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#apps-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps tab
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -435,6 +446,87 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -731,6 +823,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#apps-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps tab
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -855,29 +958,86 @@ user auth enabled, the first-login token is written to
 <li><strong>Engines:</strong> the local engines on the gateway host (Ollama, LM Studio, MLX,
   llama.cpp, vLLM, Hugging Face): installed or not, running or not, and a
   one-click install (details below).</li>
+<li><strong>Apps:</strong> the browser apps (Flow Editor, Code, Observer, Continuum, Entity):
+  install, open, and Code's terminal version (details below).</li>
 </ul>
 <h3 id="models-and-engines-tabs">Models and Engines tabs<a class="headerlink" href="#models-and-engines-tabs" title="Permanent link">&para;</a></h3>
-<p>These two tabs are AbstractCore's own Models and Engines screens, embedded in
-the gateway console. The same screens appear in <code>abstractcore serve</code>'s console
-and, as terminal screens, in both terminal consoles, so they look and behave the
-same everywhere. Everything they show and do happens <strong>on the gateway host</strong>:
-the machine that runs <code>abstractgateway serve</code>, not the computer your browser
-runs on.</p>
-<p><strong>Models</strong> (tab id <code>catalog</code>; the older <strong>Resources</strong> tab keeps id <code>models</code>):</p>
+<p>Everything these two tabs show and do happens <strong>on the gateway host</strong>: the
+machine that runs <code>abstractgateway serve</code>, not the computer your browser runs
+on. The catalog data, the presence checks and the fit verdicts come from
+AbstractCore (<code>GET /api/gateway/models/catalog</code>, contract <code>model_catalog_v1</code>);
+downloads are the gateway's own jobs (see <a href="../model-downloads/">Model downloads</a>).</p>
+<p><strong>Models</strong> (tab id <code>catalog</code>; the older <strong>Resources</strong> tab keeps id <code>models</code>)
+shows the catalog as <strong>one card per model</strong>:</p>
 <ul>
-<li>A line describing this machine (accelerator, memory the models can use, free
-  disk).</li>
-<li>The catalog: model families with one row per downloadable artifact (engine,
-  quantization, download size), whether its weights are already here
-  (<code>installed</code>, <code>not downloaded</code>, <code>unknown</code>, <code>remote</code>), and a fit verdict
-  (<code>fits</code>, <code>tight</code>, <code>too large</code>, <code>partial offload</code>, <code>unknown</code>). <strong>Fits this
-  machine</strong> is on by default. Search, filter by engine or modality, or tick
-  <strong>Search Hugging Face</strong> to include hub results (slower).</li>
-<li>The models already installed, per engine, with their size and location.</li>
-<li>Actions: <strong>Download</strong> and <strong>Delete</strong> (with a confirmation that names the
-  model and any blocker, such as a model that is loaded right now). Downloads
-  and deletes run as jobs with progress; you can cancel them.</li>
+<li>The card header: the model's name, organisation, parameter count and
+  licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
+  Voice, Image) and a <strong>Starter</strong> badge for the models of the recommended
+  starter set.</li>
+<li>The card body: one row per downloadable build (artifact) of that model: the
+  provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
+  ids are shortened with "..."; hover to read the whole id, click it to copy
+  it), the quantization (4-bit, 8-bit, 16-bit, ... and its bits per weight),
+  the download size ("about" when the size is estimated from the parameter
+  count), whether the weights are already here (Downloaded, Not downloaded,
+  Unknown, Remote) and whether it fits this machine (Fits, Tight, Partial
+  offload, Too large; hover the pill for the numbers behind it). The build
+  recommended for this computer comes first and is marked; the others are
+  quieter.</li>
+<li>One action per row: <strong>Download</strong> (a download shows its progress bar with
+  bytes, speed and time left, and <strong>Cancel</strong>, the same progress display as the
+  setup guide), then <strong>Use as default</strong> once a text model is downloaded (it
+  sets the default text model, like the Multimodal tab).</li>
+<li>Many models have 8-bit builds next to the 4-bit ones when upstream publishes
+  them (MLX <code>-8bit</code> repositories, Ollama <code>-q8_0</code> tags, GGUF <code>Q8_0</code> files, LM
+  Studio <code>@8bit</code>). Every build the catalog knows is listed; nothing is cut off.</li>
 </ul>
+<p>The filter bar above the cards:</p>
+<ul>
+<li><strong>Search</strong> matches model names, organisations and artifact ids (every word
+  must match). <strong>Escape</strong> clears it.</li>
+<li><strong>Quantization</strong>: All, 4-bit, 8-bit, Other (every other class: 16-bit, full
+  precision, 2/3/5/6-bit and builds whose reference names no quantization).
+  The classes come from AbstractCore's <code>quant_class</code> field. A gateway whose
+  AbstractCore is older than that field shows the notice "This gateway's
+  catalog does not report quant_class yet", and the quantization filter stays
+  off until AbstractCore is updated on the gateway host; every build is still
+  listed.</li>
+<li><strong>Catalog / Hugging Face</strong>: the switch left of the search box. In
+  <strong>Hugging Face</strong> mode, type a name and press <strong>Enter</strong> (or <strong>Search</strong>): the
+  gateway searches the Hugging Face Hub (answers are cached for 24 hours) and
+  the results show as the same cards, with a <strong>Hugging Face</strong> badge: provider,
+  artifact id, quantization when the result names one ("Not stated"
+  otherwise, never guessed), size from the Hub, fit, and <strong>Download</strong> with
+  the same progress bar. Capabilities of a Hub result are unknown until it is
+  installed, so it offers no <strong>Use as default</strong> from here. When the Hub has
+  nothing for the query the view says so; when the gateway host cannot reach
+  the Hub it says "Hugging Face could not be searched right now" (the raw
+  reason sits behind <strong>Show details</strong>), and results the Hub only partly
+  answered carry a warning. The query is part of the address:
+  <code>/console#catalog?hf=smollm</code>.</li>
+<li><strong>Provider</strong>, <strong>Capability</strong> and <strong>Status</strong> (Downloaded, Not downloaded)
+  chips, each with the number of builds it would show.</li>
+<li><strong>Fits this computer</strong> hides the builds that do not fit (only Fits and Tight
+  remain).</li>
+<li>A live count: "12 of 77 models · 31 artifacts shown". The row with the search
+  box, the count and the filters in use stays under the header while you
+  scroll; <strong>Filters</strong> brings the chips back into view. When nothing matches,
+  <strong>Clear filters</strong> resets them.</li>
+<li>The filters are part of the address: <code>/console#catalog?quant=8bit&amp;provider=mlx&amp;fits=1</code>
+  opens the tab with exactly that view, so a link reproduces it. The keys are
+  <code>q</code>, <code>quant</code> (<code>4bit</code>, <code>8bit</code>, <code>other</code>), <code>provider</code>, <code>cap</code>, <code>status</code>
+  (<code>downloaded</code>, <code>not_downloaded</code>), <code>fits=1</code> and <code>hf</code> (Hugging Face mode and
+  its query).</li>
+</ul>
+<p>Below the cards, <strong>On this computer</strong> is AbstractCore's own list of the models
+the local engines hold (including models that are not in the catalog), with
+their size and location, and <strong>Delete</strong> (with a confirmation that names the
+model and any blocker, such as a model that is loaded right now).</p>
+<p>The setup guide's <strong>Default model</strong> step shows the same catalog cards with
+<strong>Fits this computer</strong> already on; <strong>Open in the Models tab</strong> carries the
+filters over. An engine card's <strong>Browse models</strong> opens the tab filtered to that
+engine's builds.</p>
 <p><strong>Engines</strong> (tab id <code>engines</code>):</p>
 <ul>
 <li>One row per engine: supported on this host, installed, version, running,
@@ -898,10 +1058,11 @@ runs on.</p>
   disabled for other users, and the gateway refuses those calls from them.</li>
 <li>Installing an engine also needs the gateway setting
   <a href="../configuration/#allow_engine_install"><code>allow_engine_install</code></a>. It lives in
-  the runtime configuration and is on by default only when the gateway listens
-  on this machine only (<code>127.0.0.1</code>); a gateway reachable from the network
-  refuses installs until an admin turns it on. A dry run (<strong>Preview</strong>) is
-  always allowed.</li>
+  the runtime configuration and is on by default when the gateway listens on
+  this machine only (<code>127.0.0.1</code>), and, whatever it listens on, for someone
+  using the console on the gateway machine itself. A browser on another
+  computer is refused until an admin turns the setting on. A dry run
+  (<strong>Preview</strong>) is always allowed.</li>
 <li>Every action is recorded in the gateway's audit log, and each job card shows
   the equivalent command, for example
   <code>abstractgateway models download ollama qwen3:8b</code>.</li>
@@ -910,6 +1071,70 @@ runs on.</p>
 so, with the version installed and the upgrade command
 (<code>pip install -U "abstractcore&gt;=2.14.0"</code>); the rest of the console works as
 before.</p>
+<h3 id="apps-tab">Apps tab<a class="headerlink" href="#apps-tab" title="Permanent link">&para;</a></h3>
+<p>The Apps tab and the setup guide's Apps step show the same cards (the apps
+themselves are described in <a href="../apps/">apps.md</a>). What a plain user sees on
+each card: the app's mark, name and status pill (Not installed, Installed,
+Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
+description (hover it for the whole sentence), and one row of buttons. The
+button rows of the cards side by side are always at the same height.</p>
+<table>
+<thead>
+<tr>
+<th>The app is</th>
+<th>The action row</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>not installed</td>
+<td><strong>Install and open</strong> (installs Node.js first when the gateway needs it, then the app, starts it and opens it)</td>
+</tr>
+<tr>
+<td>installing</td>
+<td>a progress bar above the row, and <strong>Cancel</strong></td>
+</tr>
+<tr>
+<td>installed and running</td>
+<td><strong>Open</strong> (a new tab, already signed in)</td>
+</tr>
+<tr>
+<td>installed but stopped, or crashed</td>
+<td><strong>Open</strong> (starts it, then opens it); a crash also shows the reason, with <strong>Show details</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Code has a terminal version too. Next to Code's primary button: <strong>Open in
+Terminal</strong> when the terminal version is installed and the browser is on the
+gateway machine (a new terminal window opens there, signed in), or a quiet
+<strong>Install for Terminal</strong> when a ready-made download exists for this
+computer. When the terminal version needs the Rust toolchain, or when the
+browser is on another computer, the plain view shows no terminal button.</p>
+<p>A result box appears only after something you did ("Code opened in a new
+Terminal window, signed in to this gateway.", "Flow Editor opened in a new
+tab.") and closes itself after a few seconds. A failure stays, with the
+gateway's reason and <strong>Show details</strong> (the full response or log).</p>
+<p>The <strong>Technical details</strong> switch (bottom left of the console, and in the
+guide) adds a secondary line under each card's buttons, and removes it again
+when switched off:</p>
+<ul>
+<li><strong>Stop</strong> (a running app), <strong>Start</strong> (start without opening), <strong>Show log</strong> /
+  <strong>Hide log</strong> (the app's log, the log file's path, <strong>Show more</strong> up to 5000
+  lines), <strong>Update to X</strong> when a newer version is published, and the version.</li>
+<li>For Code's terminal version: its version, <strong>Update terminal app to X</strong>, and
+  the exact command to copy (one line, <strong>Copy</strong>): the command that opens it,
+  <code>cargo install abstractcode</code> when it needs the Rust toolchain, or, for a
+  browser on another computer, the command to run there and the one-time
+  <code>abstractcode login</code> line.</li>
+<li>The app's local address, the <code>npx @abstractframework/&lt;app&gt;</code> line, and the
+  log of a finished install.</li>
+<li>For an app started outside the gateway (the development stack, <code>npx</code>, a
+  service): "Started outside the gateway on port 3001" instead of Stop,
+  Start, Show log and Update; the card shows the Running pill and <strong>Open</strong>
+  like any running app (<a href="../apps/#apps-started-outside-the-gateway">apps.md</a>).</li>
+</ul>
+<p>Installing, starting, stopping and updating need an admin; other users see the
+buttons disabled with the reason on hover.</p>
 <h2 id="terminal-console-abstractgateway-console">Terminal console (<code>abstractgateway-console</code>)<a class="headerlink" href="#terminal-console-abstractgateway-console" title="Permanent link">&para;</a></h2>
 <p>Install it from crates.io (Rust 1.87 or newer):</p>
 <div class="highlight"><pre><span></span><code>cargo<span class="w"> </span>install<span class="w"> </span>abstractgateway-console

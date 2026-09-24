@@ -332,6 +332,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -608,6 +689,17 @@
     <span class="md-ellipsis">
       
         Origin allowlist (browser/origin defense)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network-exposure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network exposure
       
     </span>
   </a>
@@ -941,6 +1033,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#network-exposure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network exposure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#workspace-filesystem-scope-blacklistwhitelist" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1216,6 +1319,32 @@ X-AbstractGateway-CSRF: &lt;csrf token&gt;
 </code></pre></div>
 <p><code>POST /api/gateway/session/logout</code> revokes the session. Disabling, deleting, or
 rotating the Gateway user invalidates existing browser sessions for that user.</p>
+<p><strong>Who can sign in depends on whether user accounts are on.</strong> With user
+accounts on, every registry account (admin or not) can sign in, and each one
+works in its own runtime (below). With user accounts off the gateway runs one
+runtime, the operator's, so every signed-in person would share the operator's
+runtime, capability defaults, endpoint profiles and workflows. In that mode
+only accounts with the <code>admin</code> role can hold a browser session:</p>
+<ul>
+<li><code>POST /api/gateway/session/login</code> answers <code>401</code> for a non-admin account, with
+  <code>reason_code: "user_accounts_off_admin_only"</code> and a message naming the two
+  ways out: the gateway operator turns user accounts on, or the person signs
+  in with an admin account.</li>
+<li>A session that already exists for a non-admin account (minted by an older
+  gateway, or while user accounts were on) is refused and removed at its next
+  use. Every session path applies the same rule (<code>principal_barred_from_shared_runtime</code>
+  in <code>security/sessions.py</code>), including the browser-app sign-in handover.</li>
+<li><code>POST /api/gateway/admin/users</code> answers <code>409</code> (same <code>reason_code</code>) instead of
+  creating a non-admin account that could never sign in, and
+  <code>PATCH /api/gateway/admin/users/{user_id}</code> refuses to remove the <code>admin</code> role
+  from an admin account in this mode.</li>
+</ul>
+<p>Admin accounts sign in in both modes. The rule reads the same setting the
+service routing reads, so the two cannot disagree.</p>
+<p><strong>The last admin account is protected.</strong> <code>DELETE /api/gateway/admin/users/{user_id}</code>,
+and a <code>PATCH</code> that disables it or removes its <code>admin</code> role, answer <code>409</code> with
+<code>reason_code: "last_admin"</code> when the target is the only enabled admin account
+left (entity principals never count). Create or enable another admin first.</p>
 <p>When user auth is active, the Gateway service composition root routes each
 principal to an isolated service/data plane under:</p>
 <div class="highlight"><pre><span></span><code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/users/&lt;tenant_id&gt;/&lt;runtime_id&gt;/runtime
@@ -1282,9 +1411,13 @@ the shared set every user can see and run, so changing it requires an admin
 principal.</p>
 <p>One check covers every route that writes a registry — <code>POST /bundles/upload</code>,
 <code>DELETE /bundles/{bundle_id}</code>, <code>POST /bundles/reload</code>,
-<code>POST /bundles/{bundle_id}/deprecate</code> and <code>POST /visualflows/{flow_id}/publish</code>
-— so a shared workflow cannot be replaced through one route while another is
-restricted. <code>POST /visualflows/{flow_id}/publish</code> accepts a caller-supplied
+<code>POST /bundles/{bundle_id}/deprecate</code>, <code>POST /bundles/{bundle_id}/undeprecate</code>
+and <code>POST /visualflows/{flow_id}/publish</code> — so a shared workflow cannot be
+replaced through one route while another is restricted. The check runs before
+the route looks the bundle up, so a non-admin gets <code>403</code> for a bundle that
+does not exist as well. (Until 2026-09-24 the two deprecation routes skipped
+it.) Since a non-admin account cannot be signed in while user accounts are off
+(above), this check is the second, independent line of defence. <code>POST /visualflows/{flow_id}/publish</code> accepts a caller-supplied
 <code>bundle_id</code>, <code>bundle_version</code> and <code>overwrite</code>, and installs into the same
 registry as <code>upload</code>; it is gated on the same rule. Non-admin requests against
 the shared registry return <code>403</code>. Read routes are unchanged.</p>
@@ -1315,15 +1448,80 @@ workflow catalog:</p>
 <code>/api/gateway/admin/workflow-catalog/*</code>. User-visible catalog discovery is
 available at <code>GET /api/gateway/workflow-catalog</code>.</p>
 <h2 id="origin-allowlist-browserorigin-defense">Origin allowlist (browser/origin defense)<a class="headerlink" href="#origin-allowlist-browserorigin-defense" title="Permanent link">&para;</a></h2>
-<p>If the request includes an <code>Origin</code> header, the middleware enforces <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> using glob-style patterns (fnmatch).</p>
-<p>Examples:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_ALLOWED_ORIGINS</span><span class="o">=</span><span class="s2">"http://localhost:*,http://127.0.0.1:*"</span>
-<span class="c1"># or (example) an ngrok domain:</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_ALLOWED_ORIGINS</span><span class="o">=</span><span class="s2">"https://*.ngrok-free.app"</span>
-</code></pre></div>
-<p>Evidence: <code>GatewayAuthPolicy.allowed_origins</code> and <code>_origin_allowed()</code> in <code>src/abstractgateway/security/gateway_security.py</code>.</p>
+<p>If the request includes an <code>Origin</code> header, the middleware allows it only when
+it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
+<code>http://localhost:*</code> and <code>http://127.0.0.1:*</code>, the gateway's own LAN origins in
+a network mode, plus the <strong><code>allowed_origins</code> setting</strong> (console: Network →
+<em>Advanced: reverse proxy</em>; TUI: Connection screen; CLI:
+<code>abstractgateway network set --allowed-origins https://gateway.example.com</code>).
+The setting is read per request: a change applies to the next request, no
+restart. Each origin is validated (<code>scheme://host[:port]</code>, no path, no trailing
+slash); <code>*</code> and wildcard patterns are accepted only as typed and are flagged.
+See <a href="../configuration/#reverse-proxy-allowed-origins-and-trust-proxy">configuration.md</a>.</p>
+<p>A gateway started with <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> in its environment
+uses that list instead (a deployment pin): every surface says "This gateway was
+started with ABSTRACTGATEWAY_ALLOWED_ORIGINS in its environment" and reports
+<code>overridden_by_env: true</code>; the saved setting applies once it starts without it.</p>
+<p>Evidence: <code>GatewayAuthPolicy.allowed_origins</code>, <code>_effective_allowed_origins()</code> and
+<code>_origin_allowed()</code> in <code>src/abstractgateway/security/gateway_security.py</code>;
+<code>live_reverse_proxy()</code> in <code>src/abstractgateway/network_exposure.py</code>.</p>
 <p>Important nuance:
-- FastAPI’s CORS middleware in <code>src/abstractgateway/app.py</code> is permissive, but <strong>origin enforcement for gateway endpoints is done by this security middleware</strong>.</p>
+- FastAPI’s CORS middleware in <code>src/abstractgateway/app.py</code> is permissive, but <strong>origin enforcement for gateway endpoints is done by this security middleware</strong>.
+- In a network exposure mode from the settings store, <code>serve</code> adds the
+  gateway's own discovered LAN origins (IP literals and <code>&lt;name&gt;.local</code>). A
+  foreign origin, including a DNS-rebinding name that resolves to your LAN IP,
+  is still refused (403) unless it is in <code>allowed_origins</code>.</p>
+<h2 id="network-exposure">Network exposure<a class="headerlink" href="#network-exposure" title="Permanent link">&para;</a></h2>
+<p>The network exposure setting (<a href="../configuration/#network-exposure-localhost--local-network--internet">configuration.md</a>)
+chooses <code>localhost</code>, <code>lan</code> or <code>internet</code>. What changes for someone else on
+your network:</p>
+<ul>
+<li><strong><code>localhost</code></strong> (default for a first run): the gateway listens on
+  <code>127.0.0.1</code> only. Nobody else can open a connection; every local process of
+  every local user still can, which is why user auth stays on.</li>
+<li><strong><code>lan</code></strong>: the gateway listens on every IPv4 interface. Anyone on the same
+  network (and anyone on a VPN such as Tailscale whose address is listed) can
+  reach the sign-in page and the API. The gate is authentication: <code>lan</code> is
+  refused unless user auth will be on at the next start; unauthenticated
+  requests answer 401, failed credentials are locked out per client address
+  with a growing wait, and a browser page from a foreign origin is refused
+  (403). <code>lan</code> and <code>internet</code> are also refused when the gateway was started
+  with read protection off (<code>ABSTRACTGATEWAY_PROTECT_READ=0</code>: unauthenticated
+  reads would be answered as the admin). What <code>lan</code> does NOT give you:</li>
+<li><strong>encryption</strong>: it is plain HTTP. Passwords, bearer tokens and the
+    session cookie cross the network in clear; the session cookie is
+    <code>HttpOnly; SameSite=Lax</code> but not <code>Secure</code> over HTTP. Anyone who can sniff
+    the network (shared Wi-Fi, a compromised router) can capture and replay a
+    session. Use <code>lan</code> on networks you trust, or use a TLS proxy / VPN.</li>
+<li><strong>a smaller attack surface</strong>: every admin route is reachable to whoever
+    holds an admin credential. Give each person their own account, keep the
+    admin token off other machines, and prefer non-admin accounts for daily use.</li>
+<li><strong>exposure of the browser apps</strong>: apps started from the Apps page stay
+    bound to <code>127.0.0.1</code> (the <code>apps.host</code> setting, <em>Where apps listen</em>), and the sign-in
+    handover (<code>/apps/handover/{code}</code>) only works on the host it was minted
+    for and refuses a loopback-only app to a browser on another machine.</li>
+<li><strong>engine and app installs for remote admins</strong>: <code>allow_engine_install</code>
+    defaults to off on a non-loopback bind for callers on other computers.
+    Someone at the gateway machine itself can still install: the request's
+    socket peer is loopback or one of this host's own addresses, and it
+    carries no proxy header (<code>Forwarded</code>, <code>X-Forwarded-For</code>,
+    <code>X-Forwarded-Host</code>, <code>X-Real-IP</code>). A remote computer cannot use this
+    host's own address as the source of an established TCP connection (the
+    handshake reply never reaches it, and the kernel drops outside packets
+    with a local source address); a reverse proxy on this host would make
+    every visitor look local, which is why a proxied request never counts.</li>
+<li><strong><code>internet</code></strong>: the same bind plus an explicit acknowledgement. The gateway
+  does <strong>not</strong> terminate TLS and does not configure your router or firewall.
+  Put a TLS reverse proxy (Caddy, nginx, Traefik) or a tunnel (Cloudflare
+  Tunnel, Tailscale Funnel, ngrok) in front and expose that; add the public
+  <code>https://</code> origin under <em>Reverse proxy</em> (<code>allowed_origins</code>), turn on <em>Trust
+  the proxy's client address</em> (<code>trust_proxy</code>) only when your own proxy is in
+  front of every request, and rate-limit at the proxy. Forwarding the raw port
+  means plain HTTP on the internet: do not.</li>
+</ul>
+<p>The mode is applied at the next start and <code>serve --host/--port</code> override it;
+<code>GET /api/gateway/network</code> always says what is configured, what is running,
+and why they differ.</p>
 <h2 id="workspace-filesystem-scope-blacklistwhitelist">Workspace filesystem scope (blacklist/whitelist)<a class="headerlink" href="#workspace-filesystem-scope-blacklistwhitelist" title="Permanent link">&para;</a></h2>
 <p>AbstractGateway supports “thin clients” (browser UIs, bridges) that can trigger <strong>filesystem-ish tools</strong> (e.g. <code>list_files</code>, <code>read_file</code>, <code>write_file</code>). To avoid a thin client expanding server filesystem access, the gateway enforces a <strong>workspace policy</strong>.</p>
 <p>Key point: the <strong>main configuration</strong> for filesystem allowlisting/denylisting is set when you <strong>launch the gateway</strong> (operator-controlled env vars). Thin clients can only request broader scopes when the gateway is started in a permissive mode.</p>
@@ -1422,13 +1620,20 @@ Runtime execution.</p>
 </ul>
 <h3 id="reverse-proxies">Reverse proxies<a class="headerlink" href="#reverse-proxies" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>ABSTRACTGATEWAY_TRUST_PROXY=1|0</code><br />
-  If enabled, <code>X-Forwarded-For</code> is used for IP attribution and lockout tracking.</li>
+<li>The <code>trust_proxy</code> setting (console: Network → <em>Advanced: reverse proxy</em> →
+  <em>Trust the proxy's client address</em>; TUI: Connection screen checkbox; CLI:
+  <code>abstractgateway network set --trust-proxy on|off</code>). On: <code>X-Forwarded-For</code> is
+  used for IP attribution (audit log) and lockout tracking. Read per request:
+  it applies to the next request. Only when your own proxy sits in front of
+  every request; otherwise any client chooses the address the gateway sees.
+  The ephemeral tray token never honours it (raw socket peer only).</li>
+<li>A gateway started with <code>ABSTRACTGATEWAY_TRUST_PROXY</code> in its environment uses
+  that value instead; the status reports <code>overridden_by_env: true</code>.</li>
 </ul>
 <h2 id="production-checklist-minimal">Production checklist (minimal)<a class="headerlink" href="#production-checklist-minimal" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Run behind TLS (reverse proxy) and bind <code>--host 127.0.0.1</code> (proxy in front) or lock down your network if binding <code>0.0.0.0</code>.</li>
-<li>Use a strong random token and set exact <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> (avoid public wildcards).</li>
+<li>Use a strong random token and list exact origins in <code>allowed_origins</code> (avoid public wildcards).</li>
 <li>Keep <code>ABSTRACTGATEWAY_SECURITY=1</code>.</li>
 </ul>
 <h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>

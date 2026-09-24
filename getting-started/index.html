@@ -522,6 +522,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -1013,9 +1094,10 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--host<span 
 </code></pre></div>
 <p>On first local start, Gateway creates <code>default/admin</code>, writes the browser-login
 token to <code>$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token</code> (mode <code>0600</code>),
-and prints a one-time console sign-in link instead of the token (set
-<code>ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1</code> to print the token). Use the token
-file with user <code>admin</code> for browser apps. <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> remains available for legacy server/operator
+prints that token, and prints a one-time console sign-in link. Use the token
+with user <code>admin</code> for browser apps. <code>abstractgateway serve --no-print-token</code>
+keeps the token out of the startup output (it stays in the file); on a
+non-loopback bind it is hidden by default and <code>--print-token</code> shows it. <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> remains available for legacy server/operator
 bearer-token deployments, but it is not a browser sign-in token.</p>
 <p>OpenAPI docs (Swagger UI): <code>http://127.0.0.1:8080/docs</code> (use <strong>Authorize</strong> with a Gateway user token)</p>
 <p>Smoke checks:</p>
@@ -1082,7 +1164,7 @@ require <code>abstractgateway[embeddings]</code>.</p>
 customization.</p>
 <p>On first start, the container creates <code>default/admin</code> and writes the token to
 <code>runtime/auth/bootstrap-admin-token</code>. NVIDIA hosts can try
-<code>ghcr.io/lpalbou/abstractgateway:0.3.0-gpu</code> with the compose overlay in
+<code>ghcr.io/lpalbou/abstractgateway:0.4.1-gpu</code> with the compose overlay in
 <code>docker/abstractgateway-server/compose.nvidia.yml</code>.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

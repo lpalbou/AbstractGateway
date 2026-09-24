@@ -1,0 +1,1550 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/apps/">
+      
+      
+        <link rel="prev" href="../console/">
+      
+      
+        <link rel="next" href="../engines/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Browser & Terminal Apps - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#browser-apps" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Browser & Terminal Apps
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-happens-when-you-click-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens when you click Install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running apps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apps-started-outside-the-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps started outside the gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#who-may-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who may install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opening-an-app-signed-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opening an app signed in
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Opening an app signed in">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#landing-somewhere-inside-the-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Landing somewhere inside the app
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-app-with-nothing-in-it-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An app with nothing in it yet
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#terminal-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Terminal versions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Terminal versions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#signed-in-without-a-token-anywhere-it-could-leak" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signed in, without a token anywhere it could leak
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from-a-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From a terminal
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-gateway-runs-each-apps-own-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why the gateway runs each app's own server
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#without-internet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Without internet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Command line
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#http-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HTTP API
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-happens-when-you-click-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens when you click Install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running apps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apps-started-outside-the-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps started outside the gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#who-may-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who may install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opening-an-app-signed-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opening an app signed in
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Opening an app signed in">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#landing-somewhere-inside-the-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Landing somewhere inside the app
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-app-with-nothing-in-it-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An app with nothing in it yet
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#terminal-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Terminal versions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Terminal versions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#signed-in-without-a-token-anywhere-it-could-leak" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signed in, without a token anywhere it could leak
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from-a-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From a terminal
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-gateway-runs-each-apps-own-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why the gateway runs each app's own server
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#without-internet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Without internet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Command line
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#http-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HTTP API
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="browser-apps">Browser apps<a class="headerlink" href="#browser-apps" title="Permanent link">&para;</a></h1>
+<p>The five browser apps (Observer, Continuum, Code, Entity and Flow Editor) can be
+installed, started, stopped and updated from the gateway: from the console's
+Apps page, from the HTTP API below, or with <code>abstractgateway apps</code>. Nobody has
+to open a terminal or install Node.js by hand.</p>
+<h2 id="what-happens-when-you-click-install">What happens when you click Install<a class="headerlink" href="#what-happens-when-you-click-install" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Node.js.</strong> The apps are small Node.js servers. If the gateway finds
+   Node.js 18 or newer on the machine, it uses it. Otherwise it installs
+   Node.js 24 for you in its own data folder (<code>&lt;data dir&gt;/runtime/node/</code>,
+   about 56 MB to download, no administrator rights). This is the Node.js
+   build published on PyPI as <code>nodejs-wheel-binaries</code>, the same one the
+   installer's <code>--with-apps</code> option gets with <code>uv tool install nodejs-wheel</code>.
+   The download is checked against PyPI's sha256 checksum.</li>
+<li><strong>The app.</strong> The gateway downloads <code>@abstractframework/&lt;name&gt;</code> from the npm
+   registry into <code>&lt;data dir&gt;/apps/&lt;app&gt;/&lt;version&gt;/</code> and checks it against the
+   registry's sha512 integrity hash. Apps that need other npm packages get them
+   through npm (with its cache in <code>&lt;data dir&gt;/apps/npm-cache/</code>); Code needs
+   none and is unpacked directly.</li>
+<li><strong>Start.</strong> With "Install and open", the gateway starts the app on a free
+   port, waits until it answers, and opens it in a new tab, already signed in.</li>
+</ol>
+<p>Every step is a job with a percentage, downloaded bytes and a plain message.
+When a step fails, the job says why in one sentence and carries the full log
+in its <code>details</code> field (<code>&lt;data dir&gt;/apps/jobs/&lt;job&gt;.log</code>).</p>
+<h2 id="running-apps">Running apps<a class="headerlink" href="#running-apps" title="Permanent link">&para;</a></h2>
+<ul>
+<li>An app started from the gateway is a child process of the gateway. It stops
+  when the gateway stops (even if the gateway is killed: the app watches the
+  pipe the gateway holds open and exits when it closes).</li>
+<li>An app you started stays <strong>enabled</strong>: the next time the gateway starts, it
+  starts the app again, on the same port when that port is free. Stop the app
+  to turn this off (the console's <strong>Stop</strong> is under <strong>Technical details</strong>, or
+  <code>abstractgateway apps stop &lt;app&gt;</code>). Nothing is registered with launchd, systemd or the login
+  items; the gateway itself starts the apps.</li>
+<li>If an app exits unexpectedly, the gateway restarts it (after 1, 2 then 4
+  seconds). After more than 3 crashes in a minute it stops trying and shows
+  "crash_loop" with the app's log.</li>
+<li>Each app writes its output to <code>&lt;data dir&gt;/logs/apps/&lt;app&gt;.log</code>.</li>
+<li>Apps listen on <code>127.0.0.1</code> only. Ports: the app's usual port when it is
+  free, else the first free port in 3100-3199. The usual ports are the
+  framework's stack port map (<code>scripts/start-local.sh</code>): Observer 3001,
+  Continuum 3002, Code 3003, Entity 3004, Flow 3005.</li>
+</ul>
+<h2 id="apps-started-outside-the-gateway">Apps started outside the gateway<a class="headerlink" href="#apps-started-outside-the-gateway" title="Permanent link">&para;</a></h2>
+<p>An app can also run without the gateway having started it: the framework's
+development stack (<code>scripts/start-local.sh</code>), <code>npx @abstractframework/observer</code>,
+a global npm install, a service. The gateway finds such an app by asking the
+usual ports on this machine (3001-3005, then 3000 and 3007, which older
+launch scripts used) for their start page and reading its title
+("AbstractObserver", "AbstractContinuum", "AbstractCode", "AbstractEntity",
+"AbstractFlow"). None of the apps has an address that says who it is without
+a gateway sign-in, and the start page is plain HTML, so this costs one short
+local request per port (half a second at most, all ports at once, remembered
+for 5 seconds). The version is read from the <code>package.json</code> of the program
+listening on the port, when this computer shows which program that is.</p>
+<p>Such an app is listed as installed and running, with <code>source: "external"</code>,
+<code>managed: false</code>, its <code>url</code>, <code>port</code> and <code>version</code>, and one action: <strong>Open</strong>.
+Opening it works exactly like opening an app the gateway started (the
+one-time sign-in link below): the app's server reads the same sign-in
+cookies whoever started it. The gateway does not stop, update or show the
+log of an app it did not start; the console's <strong>Technical details</strong> says
+"Started outside the gateway on port 3001" instead, and <code>POST /apps/{id}/stop</code>
+answers 409 <code>started_outside_gateway</code>. Starting the gateway's own copy while
+an outside one runs does nothing (the app is already running).</p>
+<h2 id="who-may-install">Who may install<a class="headerlink" href="#who-may-install" title="Permanent link">&para;</a></h2>
+<p>Installing an app (or Node.js, or a terminal version) runs software on the
+gateway machine, so it follows the gateway's <code>allow_engine_install</code> setting.
+With no saved choice, installs are allowed for someone at the gateway machine
+itself, whatever address the gateway listens on (a browser or the tray on that
+machine, including one that uses its network address), and for everyone when
+the gateway listens on this machine only. A browser on another computer needs
+an admin to turn the setting on. How "at the gateway machine" is decided is
+in <a href="../configuration/#allow_engine_install">configuration.md</a>.</p>
+<h2 id="opening-an-app-signed-in">Opening an app signed in<a class="headerlink" href="#opening-an-app-signed-in" title="Permanent link">&para;</a></h2>
+<p>The console asks the gateway for a one-time link
+(<code>POST /api/gateway/apps/{id}/open</code>) and opens it in a new tab. The link
+(<code>/apps/handover/&lt;code&gt;</code>) works once, for two minutes, and only on the address
+it was made for. The gateway creates a browser session for the person who
+clicked, puts it in the app's own sign-in cookies, and redirects to the app.
+Browsers keep cookies per machine name, not per port, so the app's server finds
+the session and the app opens connected. The gateway token never appears in
+the page, the link or the browser's storage.</p>
+<p>A browser on another computer cannot reach an app that listens on
+<code>127.0.0.1</code>; the gateway says so instead of producing a broken link.</p>
+<h3 id="landing-somewhere-inside-the-app">Landing somewhere inside the app<a class="headerlink" href="#landing-somewhere-inside-the-app" title="Permanent link">&para;</a></h3>
+<p><code>POST /api/gateway/apps/{id}/open</code> accepts an optional <code>path</code>: where inside
+the app the browser lands after the handover, for example <code>/#new</code>, Entity's
+creation form. The path is bound to the one-time code when the link is made
+(the link itself carries nothing), and it must stay inside the app: it starts
+with a single <code>/</code>, and a second leading slash (<code>//host</code>), a full address, a
+backslash, a space or a control character is refused with 400
+<code>invalid_app_path</code> before any link is made. Without <code>path</code> the browser lands
+on the app's start page, as before.</p>
+<h3 id="an-app-with-nothing-in-it-yet">An app with nothing in it yet<a class="headerlink" href="#an-app-with-nothing-in-it-yet" title="Permanent link">&para;</a></h3>
+<p>Each app row carries <code>content_summary</code>: a small fact about what the app holds
+on this gateway, or <code>null</code> for apps that report nothing. Today only Entity
+has one, <code>{"entities_count": n}</code>: the number of entries
+<code>GET /api/gateway/entities</code> lists (counted from the same entity registry,
+without reading any entity), <code>null</code> when it cannot be known, including for an
+Entity started outside the gateway whose page names another gateway. When the
+count is exactly 0, the Entity card's button reads <strong>Create your first
+entity</strong> and opens the app on <code>/#new</code> through the handover above; with one
+entity or more, or an unknown count, it reads <strong>Open</strong>. The guide's Apps step
+shows the same card.</p>
+<h2 id="terminal-versions">Terminal versions<a class="headerlink" href="#terminal-versions" title="Permanent link">&para;</a></h2>
+<p>Some apps also run in a terminal. Today that is <strong>Code</strong> (<code>abstractcode</code>, a
+Rust terminal app from the abstractcode repository); Flow Editor, Observer,
+Continuum and Entity are browser apps only. The gateway's own console also
+has a terminal twin, <code>abstractgateway-console</code>, which the console's Done step
+mentions once.</p>
+<p>Every app row therefore lists its interfaces: <code>interfaces[0]</code> is the browser
+app (it mirrors the row's own fields), and apps with a terminal version have a
+second entry of kind <code>"tui"</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"tui"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Code in the terminal"</span><span class="p">,</span><span class="w"> </span><span class="nt">"binary"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abstractcode"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"installed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gateway"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;data dir&gt;/apps/bin/abstractcode"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"latest_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"update_available"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"install_available"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"install_method"</span><span class="p">:</span><span class="w"> </span><span class="s2">"release_binary"</span><span class="p">,</span><span class="w"> </span><span class="nt">"install_blocked_reason"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"install_command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cargo install abstractcode"</span><span class="p">,</span><span class="w"> </span><span class="nt">"download_page"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://github.com/lpalbou/abstractcode/releases"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"launch_available"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"launch_blocked_reason"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"launch_mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"terminal"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;data dir&gt;/apps/bin/abstractcode --gateway http://127.0.0.1:8080"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"signin_command"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"active_job"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><strong>Found by presence.</strong> The gateway never imports or runs an app to detect
+  it: it looks for the binary in <code>&lt;data dir&gt;/apps/bin/</code>, on <code>PATH</code> and in
+  <code>~/.cargo/bin</code>, and accepts it only when its <code>--help</code> names the program
+  (PyPI's unrelated Python package <code>abstractcode</code> installs a script with the
+  same name). <code>source</code> says where it was found (<code>gateway</code> or <code>path</code>).</li>
+<li><strong>Install (<code>install_method</code>).</strong> <code>release_binary</code>: Code publishes prebuilt
+  binaries for macOS (Apple silicon and Intel), Linux (x86_64 and arm64,
+  glibc) and Windows (x86_64) on its GitHub release, with a <code>SHA256SUMS</code> file.
+  "Install for Terminal" downloads the archive for this computer, checks it
+  against <code>SHA256SUMS</code> and against the sha256 digest GitHub reports for the
+  file (both must agree), unpacks the single binary into <code>&lt;data dir&gt;/apps/bin/</code>,
+  makes it executable and runs <code>--version</code> before it replaces anything.
+  About 3 MB, no administrator rights, no terminal. <code>cargo</code>: there is no
+  prebuilt binary for this computer (musl Linux, Windows on ARM, other CPUs),
+  or the program is published as source only (the gateway console, crates.io).
+  Then <code>install_available</code> is <code>false</code>, <code>install_blocked_reason</code> starts with
+  "Needs the Rust toolchain" and <code>install_command</code> is the exact command to
+  copy; the console shows no Install button.</li>
+<li><strong>Open (<code>launch_mode</code>).</strong> <code>terminal</code>: the caller is an admin on the gateway
+  machine itself, and "Open in Terminal" opens a new terminal window there
+  (macOS Terminal; on Linux the first of <code>x-terminal-emulator</code>,
+  <code>gnome-terminal</code>, <code>konsole</code>, <code>xfce4-terminal</code>, <code>kitty</code>, <code>alacritty</code>, <code>xterm</code>
+  when a desktop session exists; Windows <code>cmd</code>). <code>copy</code>: the browser is on
+  another computer (or the caller is not an admin); with <strong>Technical
+  details</strong> on, the card shows <code>command</code> (this gateway's address as the
+  browser reaches it) and <code>signin_command</code> (<code>abstractcode login --gateway
+  &lt;url&gt; --token &lt;your token&gt;</code>) to copy. A terminal is never opened for a
+  remote browser. How the card presents each case: <a href="../console/#apps-tab">console.md</a>.</li>
+</ul>
+<h3 id="signed-in-without-a-token-anywhere-it-could-leak">Signed in, without a token anywhere it could leak<a class="headerlink" href="#signed-in-without-a-token-anywhere-it-could-leak" title="Permanent link">&para;</a></h3>
+<p>The terminal window runs a small launcher script
+(<code>&lt;data dir&gt;/apps/terminal/open-code-&lt;random&gt;.command</code>, mode 0700) that holds
+a <strong>one-time code</strong> (two minutes, single use) and deletes itself as its first
+line. It runs <code>tui_signin.py</code> from the gateway package (standard library only,
+<code>python -I</code>), which trades the code at <code>POST /apps/tui-handover</code> for a bearer
+token and then becomes the terminal app with the token in the app's
+<strong>environment</strong> (<code>ABSTRACTCODE_GATEWAY_TOKEN</code>, which Code prefers over its
+saved login). The token</p>
+<ul>
+<li>is new for each launch and is not the admin token;</li>
+<li>acts as the person who clicked (their identity and role, never more);</li>
+<li>is accepted only from this machine (a loopback socket peer);</li>
+<li>lives in the gateway's memory only, so it stops working when the gateway
+  restarts (open the app again from the console);</li>
+<li>is never in a command line, a file, the page, or a URL.</li>
+</ul>
+<h3 id="from-a-terminal">From a terminal<a class="headerlink" href="#from-a-terminal" title="Permanent link">&para;</a></h3>
+<p>Everything above works without the console:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>apps<span class="w"> </span>list<span class="w">                 </span><span class="c1"># each app; Code also gets a "terminal:" line (installed, where, what to run)</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>install-tui<span class="w"> </span>code<span class="w">     </span><span class="c1"># the same job: release binary, SHA256SUMS + GitHub digest, --version check</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>tui-command<span class="w"> </span>code<span class="w">     </span><span class="c1"># the one-time sign-in line for THIS machine (2 minutes, works once) + the plain command</span>
+</code></pre></div>
+<p><code>install-tui</code> prints the job's progress; when there is no prebuilt binary for
+the computer it prints the reason and <code>cargo install abstractcode</code> and exits 2.
+<code>tui-command</code> makes the same one-use, self-deleting launcher as "Open in
+Terminal" (it holds a single-use code, never a token) but opens no window: run
+the printed line in a terminal on the gateway machine. From another computer
+it prints the command and the <code>abstractcode login</code> line instead.</p>
+<p><code>/apps/tui-handover</code> sits outside <code>/api/gateway</code> like the browser handover:
+the code in its body is its only credential, it answers only loopback socket
+peers without proxy headers, and a browser handover code does not work there
+(nor the reverse).</p>
+<h2 id="why-the-gateway-runs-each-apps-own-server">Why the gateway runs each app's own server<a class="headerlink" href="#why-the-gateway-runs-each-apps-own-server" title="Permanent link">&para;</a></h2>
+<p>The gateway could in principle serve the apps' built files itself. It does
+not, because each app's server does real work:</p>
+<ul>
+<li>it holds the sign-in (<code>/api/connection/gateway</code>, HttpOnly session cookies,
+  CSRF) and forwards <code>/api/*</code> to the gateway on the same origin, which is how
+  live updates (server-sent events) reach the page;</li>
+<li>four of the five apps load their files from absolute <code>/assets/...</code> paths,
+  and Code and Observer register a service worker at the site root, so they
+  cannot live under a sub-path of the gateway;</li>
+<li>Observer reveals local folders, Flow keeps its connection file, and
+  Continuum proxies the agora hub.</li>
+</ul>
+<p>Serving the files alone would break sign-in and live updates in every app.</p>
+<h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
+<p>Settings, changed from the Apps page (<em>Advanced: apps settings</em>), the TUI
+(Runtimes → <em>Runtime knobs</em> → <em>Edit apps settings</em>) or the terminal
+(<code>abstractgateway apps config get|set NAME VALUE</code>). A saved value applies at the
+next app start or download. See
+<a href="../configuration/#browser-apps-settings-apps">configuration.md</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Setting (console label)</th>
+<th>Default</th>
+<th>Effect</th>
+<th>CLI</th>
+<th>Legacy env (fallback)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>apps.node</code> (<em>Node.js for apps</em>)</td>
+<td><code>auto</code></td>
+<td><code>auto</code>: Node.js on the machine, else the gateway's own. <code>managed</code>: always the gateway's own. <code>system</code>: never install Node.js. A path: use that <code>node</code>.</td>
+<td><code>apps config set node auto</code></td>
+<td><code>ABSTRACTGATEWAY_APPS_NODE</code></td>
+</tr>
+<tr>
+<td><code>apps.ports</code> (<em>Ports for apps</em>)</td>
+<td>(empty)</td>
+<td>A port or range, e.g. <code>3100-3199</code>. When set, apps only use ports in it.</td>
+<td><code>apps config set ports 3100-3199</code></td>
+<td><code>ABSTRACTGATEWAY_APPS_PORTS</code></td>
+</tr>
+<tr>
+<td><code>apps.host</code> (<em>Where apps listen</em>)</td>
+<td><code>127.0.0.1</code></td>
+<td>Where the apps listen. Other values expose them to the network: use your own access control.</td>
+<td><code>apps config set host 0.0.0.0</code></td>
+<td><code>ABSTRACTGATEWAY_APPS_HOST</code></td>
+</tr>
+<tr>
+<td><code>apps.npm_registry</code> (<em>npm registry</em>)</td>
+<td><code>https://registry.npmjs.org</code></td>
+<td>npm registry (mirror) for app downloads and their dependencies.</td>
+<td><code>apps config set npm_registry URL</code></td>
+<td><code>ABSTRACTGATEWAY_APPS_NPM_REGISTRY</code></td>
+</tr>
+<tr>
+<td><code>apps.pypi_url</code> (<em>Node.js download index</em>)</td>
+<td><code>https://pypi.org/pypi</code></td>
+<td>Where the Node.js build is looked up.</td>
+<td><code>apps config set pypi_url URL</code></td>
+<td><code>ABSTRACTGATEWAY_APPS_PYPI_URL</code></td>
+</tr>
+</tbody>
+</table>
+<p>Console: Apps → <em>Advanced: apps settings</em> (one field per setting, with where its
+value comes from). TUI: Runtimes → <em>Runtime knobs</em> → <em>Edit apps settings</em>. CLI:
+<code>abstractgateway apps config get [NAME] [--json]</code> / <code>set NAME VALUE</code> (<code>""</code>
+clears), on the data dir directly. All three validate the same way and show the
+gateway's sentence on a refusal.</p>
+<p>The legacy environment variables are only a fallback: a saved value always wins
+(stored &gt; env &gt; default). A value that comes from the environment the gateway
+was started with is reported as <code>source: env</code> ("From the environment" on the
+page); an env value a saved one shadows is reported as <code>env_shadowed</code>.</p>
+<p>Installing Node.js or an app runs software on the gateway host, so it follows
+the host's <strong>allow engine install</strong> setting: on by default when the gateway
+listens on this machine only (loopback), off otherwise. Install, update,
+start and stop need an admin. Any signed-in user can list the apps and open a
+running one (as themselves).</p>
+<h2 id="without-internet">Without internet<a class="headerlink" href="#without-internet" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Apps already installed keep working offline.</li>
+<li>Installing needs the npm registry (and PyPI for Node.js). When it cannot be
+  reached, the Apps page says so on each app and the Install button is off;
+  a job that loses the network fails with "The npm registry
+  (registry.npmjs.org) is not reachable…". The gateway does not ship app
+  copies: the five packages are about 6 MB, but four of them need npm
+  dependencies (Flow alone installs to about 130 MB), which would have to
+  ship too.</li>
+</ul>
+<h2 id="command-line">Command line<a class="headerlink" href="#command-line" title="Permanent link">&para;</a></h2>
+<p>The same actions, through the running gateway:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>apps<span class="w"> </span>list<span class="w">                 </span><span class="c1"># Node.js, every app, installed/latest, URL</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>install<span class="w"> </span>code<span class="w"> </span>--launch
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>launch<span class="w"> </span>observer
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>open<span class="w"> </span>observer<span class="w">        </span><span class="c1"># prints a one-time signed-in link</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>logs<span class="w"> </span>observer<span class="w"> </span>--tail<span class="w"> </span><span class="m">50</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>update<span class="w"> </span>flow
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>stop<span class="w"> </span>observer
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>runtime<span class="w">              </span><span class="c1"># install Node.js only</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>install-tui<span class="w"> </span>code<span class="w">     </span><span class="c1"># Code's terminal version (see "Terminal versions")</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>tui-command<span class="w"> </span>code<span class="w">     </span><span class="c1"># one-time signed-in launch line for this machine</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span><span class="nb">jobs</span><span class="w"> </span><span class="o">[</span>JOB_ID<span class="o">]</span>
+</code></pre></div>
+<p><code>--url</code>, <code>--token</code> and <code>--data-dir</code> work as for <code>abstractgateway models</code>: by
+default the command finds the gateway running for this data dir and uses its
+admin token on a loopback URL.</p>
+<h2 id="http-api">HTTP API<a class="headerlink" href="#http-api" title="Permanent link">&para;</a></h2>
+<p>All routes are under <code>/api/gateway/apps</code> and need a signed-in principal.</p>
+<table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Who</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /apps?latest=true</code></td>
+<td>any user</td>
+<td>Node.js status, one row per app (with <code>interfaces[]</code>, see "Terminal versions") and <code>console_tui</code> (the gateway console's terminal app). <code>latest=false</code> skips the npm registry and GitHub release lookups (cached 10 minutes).</td>
+</tr>
+<tr>
+<td><code>POST /apps/runtime/install</code></td>
+<td>admin</td>
+<td>Install Node.js (a job), or <code>job: null</code> when one is already usable.</td>
+</tr>
+<tr>
+<td><code>POST /apps/{id}/install</code> <code>{"version"?, "launch"?}</code></td>
+<td>admin</td>
+<td>A job: Node.js if needed, download, check, dependencies, and with <code>launch: true</code> start the app.</td>
+</tr>
+<tr>
+<td><code>POST /apps/{id}/update</code> <code>{"version"?}</code></td>
+<td>admin</td>
+<td>A job: install the latest (or given) version; a running app is restarted on it.</td>
+</tr>
+<tr>
+<td><code>POST /apps/{id}/launch</code></td>
+<td>admin</td>
+<td>Start the app (waits until it answers) and mark it enabled.</td>
+</tr>
+<tr>
+<td><code>POST /apps/{id}/stop</code></td>
+<td>admin</td>
+<td>Stop the app and mark it disabled. 409 <code>started_outside_gateway</code> for an app the gateway did not start.</td>
+</tr>
+<tr>
+<td><code>POST /apps/{id}/open</code> <code>{"remember"?, "path"?}</code></td>
+<td>any user</td>
+<td>A one-time <code>open_url</code> (relative to the gateway) that opens the running app signed in, at <code>path</code> inside the app when given (e.g. <code>/#new</code>). 400 <code>invalid_app_path</code> for anything that is not a path inside the app.</td>
+</tr>
+<tr>
+<td><code>GET /apps/{id}/logs?tail=200</code></td>
+<td>admin</td>
+<td>The end of the app's log.</td>
+</tr>
+<tr>
+<td><code>GET /apps/jobs</code>, <code>GET /apps/jobs/{job}</code></td>
+<td>any user</td>
+<td>Jobs: <code>state</code> (queued, running, succeeded, failed, cancelled), <code>percent</code>, <code>bytes_done</code>, <code>bytes_total</code>, <code>message</code>, <code>steps</code>, <code>details</code> (full log on failure).</td>
+</tr>
+<tr>
+<td><code>POST /apps/jobs/{job}/cancel</code></td>
+<td>admin</td>
+<td>Cancel a job.</td>
+</tr>
+<tr>
+<td><code>POST /apps/{id}/install-tui</code></td>
+<td>admin</td>
+<td>A job: download, check and place the app's prebuilt terminal version (or update the gateway's copy). 409 <code>toolchain_required</code> with <code>command</code> when only a source build exists.</td>
+</tr>
+<tr>
+<td><code>POST /apps/{id}/launch-tui</code></td>
+<td>admin, on the gateway machine</td>
+<td>Open the terminal version in a new terminal window, signed in as the caller: <code>{ok, app_id, interface: "tui", terminal, version, message, expires_in_s}</code>. From another computer (non-loopback peer or <code>Host</code>, or any proxy header): 409 <code>not_on_gateway_machine</code> with <code>command</code> and <code>signin_command</code>, and nothing opens.</td>
+</tr>
+<tr>
+<td><code>POST /apps/{id}/tui-command</code></td>
+<td>admin, on the gateway machine</td>
+<td>The same one-use launcher as launch-tui without opening a window: <code>{ok, app_id, interface, version, signin_command, command, expires_in_s}</code>. From another computer: 409 <code>not_on_gateway_machine</code> with <code>command</code> and <code>signin_command</code>.</td>
+</tr>
+<tr>
+<td><code>POST /apps/tui-handover</code> <code>{"code"}</code> (outside <code>/api/gateway</code>)</td>
+<td>the launcher script, loopback only</td>
+<td>Trade a launcher's one-time code for <code>{token, token_env, url_env, gateway_url, gateway_flag, user}</code>. 403 <code>loopback_only</code>, 410 <code>handover_expired</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Errors are <code>{"ok": false, "reason", "message", "hint"?, "details"?}</code> with
+404 (<code>unknown_app</code>, also for a terminal route on a browser-only app), 409
+(<code>not_installed</code>, <code>node_missing</code>, <code>not_running</code>, <code>app_loopback_only</code>,
+<code>toolchain_required</code>, <code>not_on_gateway_machine</code>, <code>no_terminal</code>,
+<code>started_outside_gateway</code>), 403
+(<code>installs_not_allowed</code>), 502 (<code>integrity_mismatch</code>), 503
+(<code>network_unavailable</code>, <code>no_free_port</code>) or 500 (<code>launch_failed</code>, with the
+app's output in <code>details</code>). The terminal errors also carry <code>command</code> (and,
+where it helps, <code>install_command</code> or <code>signin_command</code>) so the console can
+offer the command to copy instead.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

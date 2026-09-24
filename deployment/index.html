@@ -332,6 +332,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -835,12 +916,12 @@ and the Runtime-owned provider/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
 <p>Release images are published to GHCR. The default image is the light,
 portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.3.0
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.4.1
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
 vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.3.0-gpu
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.4.1-gpu
 </code></pre></div>
 <p>Legacy aliases <code>ghcr.io/lpalbou/abstractgateway-server:*</code> and
 <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:*</code> are still published for a
@@ -939,7 +1020,14 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authoriz
 </ul>
 <p>Common:</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code>: browser origin allowlist</li>
+<li>Browser origins and trust proxy are settings, not variables: the console's
+  Network → <em>Advanced: reverse proxy</em>, the TUI's Connection screen, or
+  <code>abstractgateway network set --allowed-origins https://gateway.example.com --trust-proxy on</code>
+  (inside a container: <code>docker exec &lt;container&gt; abstractgateway network set …</code>).
+  They apply to the next request. <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> /
+  <code>ABSTRACTGATEWAY_TRUST_PROXY</code> in the container environment still pin them
+  (reported as <code>overridden_by_env</code>); see
+  <a href="../configuration/#reverse-proxy-allowed-origins-and-trust-proxy">configuration.md</a>.</li>
 <li><code>input.text</code> capability route: default for LLM/agent nodes</li>
 <li><code>ABSTRACTGATEWAY_TOOL_MODE</code>: <code>approval</code>, <code>passthrough</code>, <code>delegated</code>, or local dev modes</li>
 <li><code>ABSTRACTGATEWAY_STORE_BACKEND</code>: <code>file</code> or <code>sqlite</code></li>
@@ -983,8 +1071,10 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authoriz
 <h2 id="single-machine-without-docker">Single machine without Docker<a class="headerlink" href="#single-machine-without-docker" title="Permanent link">&para;</a></h2>
 <p>On a desktop or laptop, <code>abstractgateway service install</code> registers the
 gateway as a per-user login service (macOS LaunchAgent, Linux systemd user
-unit, Windows Startup shortcut) bound to <code>127.0.0.1</code>, with data in the
-per-user data folder. See <a href="../first-run/">first-run.md</a>. Containers and
+unit or XDG autostart entry, Windows Run entry) that runs plain <code>serve</code>, so the
+<a href="../configuration/#network-exposure-localhost--local-network--internet">network exposure</a>
+setting decides the bind (seeded to <code>localhost</code>, i.e. <code>127.0.0.1</code>, on install),
+with data in the per-user data folder. See <a href="../first-run/">first-run.md</a>. Containers and
 servers keep the explicit configuration shown on this page: the image sets
 <code>--host 0.0.0.0</code> and needs explicit auth, exactly as before.</p>
 <h2 id="cache-and-auth-notes">Cache and auth notes<a class="headerlink" href="#cache-and-auth-notes" title="Permanent link">&para;</a></h2>
@@ -1002,7 +1092,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.3.0-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.4.1-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the
