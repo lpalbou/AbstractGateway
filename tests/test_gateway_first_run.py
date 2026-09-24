@@ -322,6 +322,29 @@ def test_claim_route_issues_an_admin_browser_session_once(user_auth_app: Path) -
     assert first_run.first_run_state(user_auth_app)["completed"] is True
 
 
+@pytest.mark.parametrize("minted_by", ["tray", "serve", "cli"])
+def test_claim_response_names_who_minted_the_link(user_auth_app: Path, minted_by: str) -> None:
+    # The console tells a tray sign-in from a first run by this one field.
+    code = first_run.mint_claim(data_dir=user_auth_app, created_by=minted_by)["code"]
+    r = _client().post("/api/gateway/session/claim", json={"code": code})
+    assert r.status_code == 200, r.text
+    assert r.json()["claim"] == {"created_by": minted_by}
+
+
+def test_claim_response_created_by_is_none_for_a_record_without_it(user_auth_app: Path) -> None:
+    # A record minted before the field existed: say "unknown", never guess.
+    import json as _json
+
+    code = first_run.mint_claim(data_dir=user_auth_app)["code"]
+    (path,) = list(first_run.claims_dir(user_auth_app).glob("*.json"))
+    rec = _json.loads(path.read_text(encoding="utf-8"))
+    rec.pop("created_by")
+    path.write_text(_json.dumps(rec), encoding="utf-8")
+    r = _client().post("/api/gateway/session/claim", json={"code": code})
+    assert r.status_code == 200, r.text
+    assert r.json()["claim"] == {"created_by": None}
+
+
 def test_claim_route_refuses_non_loopback_and_proxied_peers(user_auth_app: Path) -> None:
     code = first_run.mint_claim(data_dir=user_auth_app)["code"]
     remote = _client(client=("203.0.113.9", 50000)).post("/api/gateway/session/claim", json={"code": code})

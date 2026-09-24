@@ -78,7 +78,10 @@ def gateway_console_html() -> str:
     that are pure `str.replace` tokens (the template is never `.format`-ed),
     so nothing in the fragment -- braces, `$`, a `</script>` in a string --
     can re-enter the template or end the host script early."""
+    from .console_islands import ISLANDS_CSS, ISLANDS_JS, ISLANDS_PROVENANCE
     from .console_themes import KIT_THEME_CSS, KIT_THEME_SPECS
+    from .console_catalog import CATALOG_CSS, CATALOG_JS
+    from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
 
     parts = _core_console_parts()
     config = {
@@ -108,8 +111,21 @@ def gateway_console_html() -> str:
         .replace("__KIT_THEME_SPECS_JSON__", json.dumps(KIT_THEME_SPECS, ensure_ascii=False))
         .replace("__CORE_CONSOLE_CONFIG_JSON__", _script_json(config))
     )
-    # Fragment content last, each placeholder exactly once.
+    # Fragment content last, each placeholder exactly once. The layer and the
+    # kit islands go first (they are console-owned); `<script`/`</` inside the
+    # React bundle are hex-escaped (valid in any JS string/regex context) so
+    # nothing in it can close or open a script element.
+    islands_js = (
+        ISLANDS_JS.replace("<script", "\\x3Cscript").replace("</script", "\\x3C/script").replace("<!--", "\\x3C!--")
+    )
     for token, value in (
+        ("/*__AF_KIT_CSS__*/", ISLANDS_CSS.replace("</style", "<\\/style")),
+        # The model catalog cards (console_catalog.py) ride with the UI layer:
+        # same sheet, same script scope.
+        ("/*__CONSOLE_UI_CSS__*/", CONSOLE_UI_CSS + CATALOG_CSS),
+        ("/*__CONSOLE_UI_JS__*/", CONSOLE_UI_JS + CATALOG_JS),
+        ("__AF_ISLANDS_VERSION__", html.escape(str(ISLANDS_PROVENANCE.get("kit_version") or ""))),
+        ("/*__AF_CONSOLE_ISLANDS_JS__*/", islands_js),
         ("/*__ABSTRACTCORE_FRAGMENT_CSS__*/", css.replace("</style", "<\\/style")),
         ("<!--__ABSTRACTCORE_CATALOG_HTML__-->", catalog_body),
         ("<!--__ABSTRACTCORE_ENGINES_HTML__-->", engines_body),
@@ -128,6 +144,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AbstractGateway Console</title>
+  <!-- abstractuic ui-kit component CSS (console_islands.py, generated from the
+       kit's theme.css minus the per-theme blocks console_themes.py carries):
+       the islands below render the kit's real components with the kit's
+       own styles. The console's own sheet follows and may refine layout. -->
+  <style id="af-kit-css">/*__AF_KIT_CSS__*/</style>
   <style>
 	    /* DESIGN CHARTER (operator order 2026-07-15 00:31: "make it look like
 	       a true abstract app"): the token values below are the abstractuic
@@ -1579,25 +1600,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     /*__ABSTRACTCORE_FRAGMENT_CSS__*/
     .core-console-unavailable { display: grid; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-2); }
     .core-console-unavailable h2 { margin: 0; font-size: 1.05em; }
-    .first-run-default-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 0; }
-    /* First-run wizard (2026-09-23): reuses the modal shell; ids are a
-       contract for later embedding (see the FIRST RUN block in the JS). */
-    .first-run-modal { width: min(760px, 100%); }
-    .first-run-steps { display: flex; flex-wrap: wrap; gap: 6px 14px; list-style: none; margin: 4px 0 0; padding: 0; color: var(--muted); font-size: 0.85em; }
-    .first-run-step-dot.active { color: var(--accent); font-weight: 600; }
-    .first-run-panel { display: grid; gap: 10px; }
-    .first-run-kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
-    .first-run-kv dt { color: var(--muted); }
-    .first-run-kv dd { margin: 0; overflow-wrap: anywhere; }
-    .first-run-note { margin: 0; }
-    .first-run-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-    .first-run-card { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-2); }
-    .first-run-table { width: 100%; border-collapse: collapse; }
-    .first-run-table th, .first-run-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line-soft); }
-    .first-run-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-    .first-run-app { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
-    .first-run-cmd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-    .first-run-cmd code { padding: 2px 6px; border-radius: var(--radius-sm); background: var(--panel-2); }
+/*__CONSOLE_UI_CSS__*/
 	  </style>
 </head>
 <body>
@@ -1621,7 +1624,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <button id="tab-button-models" class="tab-button shell_nav_item" type="button" title="Host resources: loaded models, memory and GPU, session caches"><span class="shell_nav_icon" aria-hidden="true">▦</span><span class="shell_nav_label">Resources</span></button>
 	      <button id="tab-button-catalog" class="tab-button shell_nav_item" type="button" title="Browse, download and delete models that fit this machine"><span class="shell_nav_icon" aria-hidden="true">▤</span><span class="shell_nav_label">Models</span></button>
 	      <button id="tab-button-engines" class="tab-button shell_nav_item" type="button" title="Local engines (Ollama, LM Studio, MLX...): status and install"><span class="shell_nav_icon icon-gear" aria-hidden="true">⚙</span><span class="shell_nav_label">Engines</span></button>
+	      <button id="tab-button-apps" class="tab-button shell_nav_item" type="button" title="Browser apps (Flow, Code, Observer...): install, start, open"><span class="shell_nav_icon" aria-hidden="true">▣</span><span class="shell_nav_label">Apps</span></button>
+	      <button id="tab-button-network" class="tab-button shell_nav_item" type="button" title="Who can reach this gateway (this computer, local network, internet) and its addresses"><span class="shell_nav_icon" aria-hidden="true">⌖</span><span class="shell_nav_label">Network</span></button>
 	    </nav>
+	    <div class="shell_sidebar_foot">
+	      <label class="ui-switch" title="Show commands, route ids and other technical details"><input id="sidebar-advanced" type="checkbox"><span>Technical details</span></label>
+	    </div>
 	  </aside>
 	  <div class="shell_main">
 	  <header class="shell_header">
@@ -1632,7 +1640,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    <!-- Unified top-right cluster: .af-topbar / .af-drawer are abstractuic's
 	         documented CSS public API for non-React consumers (ui-kit README).
 	         Enforced order: assistant, appearance, [extras], connection pill. -->
-	    <div class="status af-topbar" role="group" aria-label="Console actions">
+	    <!-- The kit's AfTopBarActions island mounts here (console_islands.py);
+	         the static cluster below is the same public markup and stays as
+	         the no-bundle fallback (and the node-VM tests' surface). -->
+	    <div id="af-topbar-root" class="af-topbar-island hidden"></div>
+	    <div id="topbar-static" class="status af-topbar" role="group" aria-label="Console actions">
 	      <button id="open-assistant" class="af-topbar__btn session-only" title="Docs assistant" aria-label="Open docs assistant" aria-pressed="false">✦</button>
 	      <button id="open-appearance" class="af-topbar__btn" title="Appearance" aria-label="Appearance">◐</button>
 	      <button id="open-setup" class="af-topbar__btn session-only hidden" title="Setup: the first-run guide (engines, default model, apps)" aria-label="Open setup guide">⚑</button>
@@ -2122,10 +2134,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	           gateway's api() (CSRF) and apiBase /api/gateway. Not to be
 	           confused with Resources (id models) and Runtimes. -->
 	      <div id="tab-catalog" class="tab-panel">
-	        <div id="catalog-core-root" class="core-console-root"><!--__ABSTRACTCORE_CATALOG_HTML__--></div>
+	        <!-- One card per model with a sticky filter bar (console_catalog.py,
+	             mission X2); AbstractCore's Models screen below it keeps the
+	             "on this computer" list (models outside the catalog, Delete). -->
+	        <div id="catalog-cards-root"></div>
+	        <section class="mc-installed" aria-labelledby="catalog-installed-title">
+	          <div class="ui-section-title"><h3 id="catalog-installed-title">On this computer</h3><span class="ui-sub">Everything the local engines hold, including models that are not in the catalog. Delete a model here.</span></div>
+	          <div id="catalog-core-root" class="core-console-root"><!--__ABSTRACTCORE_CATALOG_HTML__--></div>
+	        </section>
 	      </div>
 	      <div id="tab-engines" class="tab-panel">
 	        <div id="engines-core-root" class="core-console-root"><!--__ABSTRACTCORE_ENGINES_HTML__--></div>
+	      </div>
+	      <div id="tab-apps" class="tab-panel">
+	        <div id="apps-root" class="core-console-root"></div>
+	        <div id="apps-settings-root" class="core-console-root"></div>
+	        <div id="backlog-settings-root" class="core-console-root"></div>
+	      </div>
+	      <div id="tab-network" class="tab-panel">
+	        <div id="network-root" class="core-console-root"></div>
 	      </div>
 	      <div id="tab-users" class="tab-panel">
 	        <div id="account" class="session-summary">No active session.</div>
@@ -2572,46 +2599,66 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       not completed); the topbar Setup button reopens it. The ids below
 	       are a contract: later workstreams mount AbstractCore's Engines /
 	       Models fragments into #first-run-engines-body / #first-run-model-body. -->
-	  <div id="first-run-backdrop" class="modal-backdrop hidden" role="presentation">
-	    <div id="first-run-wizard" class="modal first-run-modal" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
-	      <div class="modal-header">
-	        <h2 id="first-run-title">Set up AbstractGateway</h2>
+	  <div id="first-run-backdrop" class="first-run-page hidden" role="presentation">
+	    <div id="first-run-wizard" class="first-run-shell" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
+	      <aside class="first-run-rail" aria-label="Setup steps">
+	        <div class="first-run-brand"><span class="shell_brand_mark" aria-hidden="true">↔</span><span>AbstractGateway</span></div>
+	        <div class="first-run-intro">
+	          <h2 id="first-run-title">Set up AbstractGateway</h2>
+	          <p>Five short, optional steps. Skip anything you do not need: this guide stays one click away (Setup guide, top right).</p>
+	        </div>
 	        <ol id="first-run-steps" class="first-run-steps" aria-label="Setup steps"></ol>
-	      </div>
-	      <div class="modal-body">
-	        <section id="first-run-step-welcome" class="first-run-panel" data-step="welcome">
-	          <p class="first-run-note">Your gateway is running on this machine and you are signed in as its admin. A few optional steps get you to a working model; you can skip any of them and come back with <strong>Setup</strong> (top right).</p>
-	          <div id="first-run-host-summary"></div>
-	        </section>
-	        <section id="first-run-step-engines" class="first-run-panel hidden" data-step="engines">
-	          <p class="first-run-note">Local engines run models on this machine. You need one for local models; cloud providers need only an API key (Providers tab).</p>
-	          <div id="first-run-engines-body"></div>
-	        </section>
-	        <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
-	          <div id="first-run-model-body">
-	            <div id="first-run-model-recommended"></div>
-	            <p class="first-run-note">Or pick any model that fits this machine: download it, then set it as your default text model.</p>
-	            <div id="first-run-model-default" class="first-run-default-bar"></div>
-	            <div id="first-run-model-catalog"></div>
+	        <div class="first-run-rail-foot">
+	          <label class="ui-switch" title="Show commands, route ids and other technical details"><input id="first-run-advanced" type="checkbox"><span>Technical details</span></label>
+	          <span class="subtle">Everything here also lives in the console tabs.</span>
+	        </div>
+	      </aside>
+	      <div class="first-run-main">
+	        <div id="first-run-scroll" class="first-run-scroll">
+	          <div class="first-run-content">
+	            <header class="first-run-head">
+	              <div id="first-run-kicker" class="first-run-kicker">Step 1 of 5</div>
+	              <h3 id="first-run-step-title">Welcome</h3>
+	              <p id="first-run-step-lede"></p>
+	            </header>
+	            <!-- DOM CONTRACT (first-run 2026-09-23; the ids below are what
+	                 later work embeds into). Local engines render as cards
+	                 (console_ui.py) into #first-run-engines-body; AbstractCore's
+	                 Models screen mounts into #first-run-model-catalog. -->
+	            <section id="first-run-step-welcome" class="first-run-panel" data-step="welcome">
+	              <div id="first-run-host-summary"></div>
+	            </section>
+	            <section id="first-run-step-engines" class="first-run-panel hidden" data-step="engines">
+	              <div id="first-run-engines-body"></div>
+	            </section>
+	            <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
+	              <div id="first-run-model-body" class="first-run-panel">
+	                <div id="first-run-model-recommended" class="first-run-panel"></div>
+	                <div class="ui-section-title"><h3>Or choose any model that fits this computer</h3><span class="ui-sub">The same catalog as the Models tab, filtered to what fits. Download a model, then use it as your default text model.</span></div>
+	                <div id="first-run-model-catalog"></div>
+	              </div>
+	            </section>
+	            <section id="first-run-step-apps" class="first-run-panel hidden" data-step="apps">
+	              <div id="first-run-apps-body"></div>
+	            </section>
+	            <section id="first-run-step-done" class="first-run-panel hidden" data-step="done">
+	              <div id="first-run-done-body"></div>
+	            </section>
 	          </div>
-	        </section>
-	        <section id="first-run-step-apps" class="first-run-panel hidden" data-step="apps">
-	          <div id="first-run-apps-body"></div>
-	        </section>
-	        <section id="first-run-step-done" class="first-run-panel hidden" data-step="done">
-	          <p class="first-run-note">You are set. Everything in this guide stays available in the console tabs and from the command line:</p>
-	          <div id="first-run-done-body"></div>
-	        </section>
-	        <div id="first-run-message" class="message"></div>
-	      </div>
-	      <div class="modal-actions">
-	        <button id="first-run-skip" class="secondary" title="Close the guide and do not open it automatically again">Skip setup</button>
-	        <button id="first-run-back" class="secondary hidden">Back</button>
-	        <button id="first-run-next">Next</button>
-	        <button id="first-run-finish" class="hidden">Finish</button>
+	        </div>
+	        <footer class="first-run-footer">
+	          <div id="first-run-message" class="message" role="status" aria-live="polite"></div>
+	          <button id="first-run-skip" class="secondary" title="Close the guide and do not open it automatically again">Skip setup</button>
+	          <button id="first-run-back" class="secondary hidden">Back</button>
+	          <button id="first-run-next">Next</button>
+	          <button id="first-run-finish" class="hidden">Finish</button>
+	        </footer>
 	      </div>
 	    </div>
 	  </div>
+	  <!-- The kit's AfAppearanceDialog island (console_islands.py); the modal
+	       below is its no-bundle fallback. -->
+	  <div id="af-appearance-root"></div>
 	  <div id="appearance-backdrop" class="modal-backdrop hidden" role="presentation">
 	    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="appearance-title">
 	      <h2 id="appearance-title">Appearance</h2>
@@ -2664,6 +2711,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           <option value="admin">admin — full console and operator verbs</option>
           <option value="readonly">readonly — inspect only</option>
         </select></label>
+        <p id="new-roles-note" class="message hidden" role="status"></p>
         <details class="entity-advanced"><summary>Advanced (defaults are right for almost everyone)</summary>
           <label>Email<input id="new-email" type="email" placeholder="optional" title="Contact only — never used for auth"></label>
           <label>Runtime binding<input id="new-runtime" placeholder="defaults to the user id" title="The data plane this user's runs and flows live in. Leave blank: each user gets their own, named after them. Entities are NOT bound here — they always carry their own runtime."></label>
@@ -2780,6 +2828,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </form>
     </div>
   </div>
+  <!-- abstractuic ui-kit __AF_ISLANDS_VERSION__ console islands: the kit's React
+       AfTopBarActions + AfAppearanceDialog, bundled by ui-kit
+       scripts/build_islands.mjs, vendored + drift-pinned by
+       console_islands_sync.py. Defines window.AfConsoleIslands. -->
+  <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
 		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
@@ -3057,7 +3110,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines"];
+	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines", "apps", "network"];
 	    // The kit's THEME_SPECS (abstractuic theme.ts), generated by
 	    // console_theme_sync — the console offers exactly the framework's
 	    // themes, never a hand-copied subset (operator catch 2026-07-15).
@@ -3081,6 +3134,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    function applyAppearanceSettings() {
 	      const value = state.appearance || { theme: "dark", font_scale: "md", header_density: "standard" };
+	      if (islands.lib) {
+	        // The kit applies theme + typography itself (root theme class and
+	        // --font-scale/--header-density), exactly as in the React apps.
+	        for (const cls of ["font-sm", "font-md", "font-lg", "header-compact", "header-standard", "header-large"]) document.body.classList.remove(cls);
+	        islands.lib.applyAppearance(kitAppearance(value));
+	        return;
+	      }
 	      const root = document.documentElement || document.body;
 	      for (const theme of THEME_SPECS) root.classList.remove(`theme-${theme.id}`);
 	      root.classList.add(`theme-${value.theme || "dark"}`);
@@ -3145,6 +3205,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      saveAppearanceSettings();
 	    }
 	    function openAppearance() {
+	      // The kit's AfAppearanceDialog (island) when the bundle is live; the
+	      // static modal is its fallback.
+	      if (islands.appearance) { islands.appearanceOpen = true; renderIslands(); return; }
 	      initAppearanceControls();
 	      $("appearance-backdrop").classList.remove("hidden");
 	    }
@@ -3171,6 +3234,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("assistant-drawer").style.display = next ? "flex" : "none";
 	      $("open-assistant").classList.toggle("is-active", next);
 	      $("open-assistant").setAttribute("aria-pressed", next ? "true" : "false");
+	      renderIslands();
 	      if (next) $("assistant-input").focus();
 	    }
 	    async function assistantEnsureCorpus() {
@@ -3260,6 +3324,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      models: ["Resources", "Host resources: loaded models, memory and GPU, session caches"],
 	      catalog: ["Models", "Browse, download and delete models that fit this machine"],
 	      engines: ["Engines", "Local engines on the gateway host: status and install"],
+	      apps: ["Apps", "Browser apps: install, start and open them, signed in"],
+	      network: ["Network", "Who can reach this gateway, and at which addresses"],
 	    };
 	    function setActiveTab(tab) {
 	      // Legacy persisted tab ids fold into their new homes (entities
@@ -3281,6 +3347,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("page-subtitle").textContent = TAB_TITLES[next][1];
 	      }
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
+	      mcOnTabChange(next);  // the catalog's `#catalog?...` link follows the tab (console_catalog.py)
 	    }
 	    // ---- Workflows: the registered workflow registry ----
 	    // Server truth only: /bundles gives the served set AND the versions it
@@ -4198,8 +4265,42 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function closeTemplates() {
 	      $("templates-backdrop").classList.add("hidden");
 	    }
+	    // With user accounts OFF the gateway refuses a non-admin account (409
+	    // `user_accounts_off_admin_only`, routes/gateway.py) and such an account
+	    // could never sign in. `/me` reports the same switch as
+	    // `auth.user_auth_enabled`; without that field the modal says so and
+	    // keeps every role (the server's refusal is then shown word for word).
+	    function userAccountsOn() {
+	      const flag = state.meAuth ? state.meAuth.user_auth_enabled : undefined;
+	      return typeof flag === "boolean" ? flag : null;
+	    }
+	    function applyUserAccountsMode() {
+	      const on = userAccountsOn();
+	      const select = $("new-roles");
+	      const note = $("new-roles-note");
+	      for (const opt of Array.from(select.options || [])) {
+	        const off = on === false && opt.value !== "admin";
+	        opt.hidden = off;
+	        opt.disabled = off;
+	      }
+	      if (on === false) select.value = "admin";
+	      else if (select.dataset.accountsOff === "1") select.value = "user";
+	      select.dataset.accountsOff = on === false ? "1" : "0";
+	      if (on === false) {
+	        note.textContent = "User accounts are off on this gateway: only admin accounts can sign in. Turn user accounts on to add members.";
+	        note.className = "message warn";
+	      } else if (on === null) {
+	        note.textContent = "This gateway did not say whether user accounts are on, so every role is offered. If they are off, it refuses any role but admin.";
+	        note.className = "message error";
+	        console.error("AbstractGateway console: /api/gateway/me carries no auth.user_auth_enabled; the create-user modal cannot tell whether user accounts are on.");
+	      } else {
+	        note.textContent = "";
+	        note.className = "message hidden";
+	      }
+	    }
 	    function openUserCreate() {
 	      $("user-create-message").textContent = "";
+	      applyUserAccountsMode();
 	      $("user-create-form").classList.remove("hidden");
 	      $("user-create-done").classList.add("hidden");
 	      $("user-create-backdrop").classList.remove("hidden");
@@ -6842,7 +6943,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const detail = data.detail;
         let msg;
         if (detail && typeof detail === "object") msg = detail.message || detail.reason_code || JSON.stringify(detail);
-        else msg = detail || data.reason_code || `HTTP ${res.status}`;
+        // Flat refusal envelopes (apps `{ok:false, reason, message, hint}`,
+        // network `{refused_reason, fix}`) carry their sentence at the top
+        // level: show it, never a bare "HTTP 409".
+        else msg = detail || data.message || data.refused_reason || data.reason_code || data.reason || `HTTP ${res.status}`;
         const err = new Error(String(msg));
         if (detail && typeof detail === "object") err.detail = detail;
         err.status = res.status;
@@ -6859,6 +6963,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("status-dot").className = `dot ${ok ? "ok" : ""}`;
 	      $("status-text").textContent = text;
 	      $("sign-out").classList.toggle("hidden", !ok);
+	      if (typeof islandsSetConnection === "function") islandsSetConnection(ok, text);
 	      // Signed out = the assistant has no session to run with; close the
 	      // drawer so a stale conversation doesn't sit over the login screen.
 	      if (!ok && typeof toggleAssistant === "function" && assistantState.open) toggleAssistant(false);
@@ -7291,7 +7396,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const value = result?.speculation;
 	      if (!value) return "MTP execution not reported";
 	      if (value.used === true) return `MTP used${value.num_draft_tokens ? ` (depth ${value.num_draft_tokens})` : ""}`;
-	      return `MTP not used${value.reason ? `: ${value.reason}` : ""}`;
+	      return `MTP not used${value.message ? `: ${value.message}` : value.reason ? `: ${value.reason}` : ""}`;
 	    }
 	    function loadDefaultSpeculation(row) {
 	      const label = $("modal-default-speculation-label");
@@ -7315,7 +7420,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const result = await api(`/api/gateway/discovery/models/capabilities?model_name=${encodeURIComponent(model)}&provider=${encodeURIComponent(provider)}`);
 	        if (state.activeDefaultRow !== row || provider !== activeDefaultProvider() || model !== activeDefaultModel()) return;
 	        const caps = result.execution?.speculation;
-	        status.textContent = caps ? (caps.ready === true ? "MTP ready; the request reports actual execution." : (caps.reason || (caps.supported ? "Compatible backend; loading/reloading may be required." : "MTP is unavailable for this backend/model."))) : "Execution support unknown; saving a default does not enable MTP.";
+	        status.textContent = caps ? (caps.ready === true ? "MTP ready; the request reports actual execution." : (caps.message || caps.reason || (caps.supported ? "Compatible backend; loading/reloading may be required." : "MTP is unavailable for this backend/model."))) : "Execution support unknown; saving a default does not enable MTP.";
 	      } catch (err) {
 	        if (state.activeDefaultRow === row) status.textContent = `Execution support unavailable: ${err.message || err}`;
 	      }
@@ -7335,7 +7440,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const caps = result.execution?.speculation;
 	        const depths = caps?.supported === true && Array.isArray(caps.supported_depths) ? caps.supported_depths.map(String) : [];
 	        for (const option of select.options) if (/^[2-5]$/.test(option.value)) option.disabled = !depths.includes(option.value);
-	        label.title = caps?.reason || (caps?.ready === true ? "MTP ready. An explicit depth requires MTP execution; inherit uses the Core default." : "MTP support is unavailable or requires model loading; inspect model capabilities before overriding.");
+	        label.title = caps?.message || caps?.reason || (caps?.ready === true ? "MTP ready. An explicit depth requires MTP execution; inherit uses the Core default." : "MTP support is unavailable or requires model loading; inspect model capabilities before overriding.");
 	      } catch (err) {
 	        if (state.sandboxSpeculationTarget === target) label.title = `MTP support unknown: ${err.message || err}`;
 	      }
@@ -8468,50 +8573,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    function trackDownloadJob(job) {
-	      if (!job || !job.job) return;
-	      state.downloadJobs.set(downloadJobKey(job.provider, job.artifact), job);
-	      if (Array.isArray(state.defaults) && state.defaults.length) renderDefaultRows(state.defaults);
-	      renderFirstRunModel();
-	      pollDownloadJob(job.job);
+	      // One feed for every download (console_ui.py, mission L2): N's SSE
+	      // stream (/models/downloads/stream) while it is open, polling
+	      // (/models/download/{id}, 1.5 s) whenever it is not. A `grp_…`
+	      // parent job ("Download all") is tracked the same way.
+	      return dlTrack(job);
 	    }
-	    async function pollDownloadJob(jobId) {
-	      // Poll, do not stream: a download is minutes long and a dropped SSE
-	      // would strand the row mid-bar. 1.5s is well under a human's patience
-	      // and far above the cost of a dict read on the Gateway.
-	      for (;;) {
-	        await new Promise((resolve) => setTimeout(resolve, 1500));
-	        let res;
-	        try {
-	          res = await api(`/api/gateway/models/download/${encodeURIComponent(jobId)}`);
-	        } catch (err) {
-	          // 404 after a Gateway restart: the job list is in-process. The
-	          // weights may well have landed, so re-probe rather than report a
-	          // failure we cannot substantiate.
-	          await refreshAvailability();
-	          return;
-	        }
-	        const job = res.job || {};
-	        state.downloadJobs.set(downloadJobKey(job.provider, job.artifact), job);
-	        if (Array.isArray(state.defaults) && state.defaults.length) renderDefaultRows(state.defaults);
-	        renderFirstRunModel();
-	        if (job.status !== "running") {
-	          if (job.status === "failed") {
-	            const result = job.result || {};
-	            $("defaults-message").textContent = `${job.provider} ${job.artifact}: ${job.message || "download failed"}${result.instruction ? " — " + result.instruction : ""}`;
-	            $("defaults-message").className = "message error";
-	          }
-	          await refreshAvailability();
-	          return;
-	        }
-	      }
+	    function pollDownloadJob(jobId) {
+	      return dlPoll(jobId);
 	    }
 	    function weightsCellMarkup(row) {
 	      const info = rowAvailability(row);
 	      const job = rowDownloadJob(row);
-	      if (job && job.status === "running") {
-	        const pct = typeof job.percent === "number" ? ` ${Math.round(job.percent)}%` : "";
-	        return `<span class="state-pill" title="${esc(job.message || "")}">downloading${esc(pct)}</span>`;
-	      }
+	      if (job && job.status === "running") return uiProgressMarkup(job, "Downloading");
 	      if (!info || !info.availability || !info.availability.status) return "-";
 	      const availability = info.availability;
 	      const view = WEIGHT_LABELS[availability.status] || { label: availability.status, cls: "covered" };
@@ -9734,6 +9808,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function renderAccount(me) {
 	      const p = me?.principal;
 	      state.principal = p || null;
+	      state.meAuth = (me && me.auth && typeof me.auth === "object") ? me.auth : null;  // the create-user modal reads user_auth_enabled
 		      if (!p) {
 		        document.body.classList.remove("signed-in");
 		        $("page-title").textContent = "AbstractGateway Console";
@@ -9809,19 +9884,23 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // account refreshes must not yank the user back there. Any tab id
 	      // works — the fragment is a deep link, not a special case, and
 	      // `setActiveTab` already folds an unknown id onto the first tab.
-	      const wantedTab = String(location.hash || "").replace(/^#/, "").trim();
+	      // `#catalog?quant=8bit&provider=mlx`: the tab is before the `?`, the
+	      // catalog's filters after it (console_catalog.py reads them).
+	      const wantedTab = String(location.hash || "").replace(/^#/, "").split("?")[0].trim();
 	      if (!state.hashApplied && TABS.includes(wantedTab)) {
 	        state.hashApplied = true;
 	        state.activeTab = wantedTab;
 	        setActiveTab(wantedTab);
 	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
-	        if (wantedTab === "catalog" || wantedTab === "engines") openCoreTab(wantedTab);
+	        if (wantedTab === "catalog" || wantedTab === "engines" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);
 	      } else {
 	        setActiveTab(state.activeTab);
 	      }
 	      startPausedPoll();
 	      loadGatewayHost();
 	      $("open-setup").classList.toggle("hidden", !p.admin);
+	      // The header shows the gateway's primary address (GET /network).
+	      if (!netStore.data && !netStore.loading) netRefresh({ quiet: true });
 	      maybeOpenFirstRun();
 	    }
     function principalKind(u) {
@@ -10036,7 +10115,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <td>${routeCell}</td>
 	          <td>${capabilityCell}</td>
 	          <td>${row.provider ? esc(state.providerLabels.get(row.provider) || row.provider) : "-"}</td>
-	          <td>${row.model ? esc(row.model) + reasoningBadge : "-"}</td>
+	          <td>${row.model ? `<span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>` + reasoningBadge : "-"}</td>
 	          <td>${weightsCellMarkup(row)}</td>
 	          <td>${source ? `<span class="badge">${esc(source)}</span>` : "-"}</td>
 	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span></td>
@@ -11009,25 +11088,44 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       try {
         const handle = lib.mount(kind, el, coreConsoleOptions());
         coreMounts.set(key, handle);
-        // A second mount of the same kind injects the screen's markup again;
-        // its root id belongs to the tab copy, so drop it on this one.
-        if (!key.startsWith("tab-") && typeof el.querySelector === "function") {
-          const root = el.querySelector(".acc-root");
-          if (root && typeof root.removeAttribute === "function") root.removeAttribute("id");
-        }
         return handle;
       } catch (err) {
         el.innerHTML = `<p class="message error">Could not open the ${esc(kind)} screen: ${esc(String((err && err.message) || err))}</p>`;
         return null;
       }
     }
-    function unmountCoreScreen(key) {
-      const h = coreMounts.get(key);
-      coreMounts.delete(key);
-      try { if (h && typeof h.unmount === "function") h.unmount(); } catch { /* already gone */ }
-    }
-    function openCoreTab(tab) {
+    function openCoreTab(tab, opts) {
       if (!state.principal) return;
+      if (tab === "apps") {
+        mountAppCards("tab", $("apps-root"));
+        // The apps.* settings (console_ui.py, mission Z): registry-driven.
+        mountAppsSettings("tab", $("apps-settings-root"));
+        // The backlog folder + exec runner + process manager (mission II).
+        mountBacklogSettings($("backlog-settings-root"));
+        return;
+      }
+      if (tab === "network") {
+        // Who can reach this gateway (console_ui.py, contract gateway_network_v1).
+        mountNetworkPanel("tab", $("network-root"));
+        return;
+      }
+      if (tab === "engines") {
+        // Local engines are CARDS (console_ui.py), not AbstractCore's table:
+        // one card per engine, one primary action per state (mission L).
+        mountEngineCards("tab", $("engines-core-root"));
+        return;
+      }
+      if (tab === "catalog") {
+        // The catalog is CARDS, one per model, with a filter bar
+        // (console_catalog.py, mission X2). Its first open reads the
+        // `#catalog?...` link; later opens keep the filters in use unless
+        // the caller names some (the guide, an engine's "Browse models").
+        const first = !mcStore.views.has("tab");
+        mountModelCatalog("tab", $("catalog-cards-root"), {
+          syncHash: true,
+          filters: (opts && opts.filters) || (first ? mcParseHash(String(location.hash || "")) : null),
+        });
+      }
       if (!CORE_CONSOLE.available) return;  // the panel carries the server-rendered card
       const kind = tab === "catalog" ? "models" : "engines";
       const root = $(`${tab}-core-root`);
@@ -11035,59 +11133,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         root.innerHTML = `<p class="message warn">${esc(coreConsoleUnavailableText())}</p>`;
       }
     }
-    // "Set as default" (first-run model step): an INSTALLED row of the
-    // embedded Models screen can become the text-generation default through
-    // the same capability-defaults write the Multimodal tab makes. The served
-    // model id is the artifact minus LM Studio's `@quant` suffix (the
-    // download reference pins a quantization, the route names the model).
+    // "Use as default" (the catalog cards, console_catalog.py): a downloaded
+    // text model becomes the text-generation default through the same
+    // capability-defaults write the Multimodal tab makes. The served model id
+    // is the artifact minus LM Studio's `@quant` suffix (the download
+    // reference pins a quantization, the route names the model).
     function servedModelId(provider, artifact) {
       const a = String(artifact || "");
       if (String(provider || "") === "lmstudio" && a.includes("@")) return a.slice(0, a.lastIndexOf("@"));
       return a;
-    }
-    function renderFirstRunDefaultBar(pick) {
-      const bar = $("first-run-model-default");
-      if (!bar) return;
-      const admin = !!(state.principal && state.principal.admin);
-      if (!pick) {
-        bar.innerHTML = `<span class="subtle">Select an installed model below to make it the default text model.</span>`;
-        return;
-      }
-      const model = servedModelId(pick.provider, pick.artifact);
-      bar.innerHTML = `<button id="first-run-set-default" class="secondary"${admin ? "" : " disabled"}>Set as default</button>`
-        + `<span>Use <code>${esc(pick.provider)} / ${esc(model)}</code> as the default text model</span>`
-        + `<span class="subtle">CLI: <code>abstractgateway-config defaults</code></span>`;
-      const btn = $("first-run-set-default");
-      if (btn) btn.onclick = () => setFirstRunDefault(pick.provider, model, btn);
-    }
-    async function setFirstRunDefault(provider, model, btn) {
-      if (btn) btn.disabled = true;
-      try {
-        await api("/api/gateway/config/capability-defaults/output/text", { slow: true, method: "PUT", body: JSON.stringify({ provider, model }) });
-        $("first-run-message").textContent = `Default text model: ${provider} / ${model}.`;
-        $("first-run-message").className = "message ok";
-        try { await renderDefaults(await api("/api/gateway/config/capability-defaults")); } catch { /* the write landed; the grid refreshes on next visit */ }
-        renderFirstRunModel();
-      } catch (err) {
-        $("first-run-message").textContent = `Could not set the default: ${String(err.message || err)}`;
-        $("first-run-message").className = "message error";
-      } finally {
-        if (btn) btn.disabled = false;
-      }
-    }
-    function wireFirstRunDefaultBar() {
-      const catalog = $("first-run-model-catalog");
-      renderFirstRunDefaultBar(null);
-      if (!catalog || catalog.dataset.defaultBarWired === "1" || typeof catalog.addEventListener !== "function") return;
-      catalog.dataset.defaultBarWired = "1";
-      const pickFrom = (target) => {
-        const row = target && typeof target.closest === "function" ? target.closest('tr[data-acc-row="installed"]') : null;
-        if (row && row.dataset && row.dataset.provider && row.dataset.artifact) {
-          renderFirstRunDefaultBar({ provider: row.dataset.provider, artifact: row.dataset.artifact });
-        }
-      };
-      catalog.addEventListener("click", (e) => pickFrom(e.target));
-      catalog.addEventListener("focusin", (e) => pickFrom(e.target));
     }
     // ------------------------------------------------------------------
     // FIRST RUN (2026-09-23). A fresh install reaches this console through a
@@ -11106,6 +11160,129 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // controls #first-run-back/-next/-skip/-finish, #first-run-message, and
     // the topbar #open-setup.
     // ------------------------------------------------------------------
+/*__CONSOLE_UI_JS__*/
+    // ---- Backlog settings (mission II): Continuum's backlog folder, the
+    // backlog exec runner and the process manager, through the one
+    // runtime-config door. GET /api/gateway/admin/runtime-config carries
+    // {value, source: flag|stored|env|default, label, help, cli, available?,
+    // reason?, default_path?} per key (runtime_config.BACKLOG_SETTINGS);
+    // Save POSTs only the changed keys and shows the gateway's refusal as is.
+    const backlogSetStore = { data: null, error: "", saving: false, saved: null, draft: {}, el: null };
+    const BACKLOG_SET_KEYS = ["triage_repo_root", "backlog_exec_runner", "process_manager"];
+    function backlogSourcePill(r) {
+      const src = String((r && r.source) || "");
+      if (src === "flag") return uiPill("Launch flag", "info", "Set by a serve launch flag for this run; a saved value applies once the gateway restarts without it");
+      if (src === "stored") return uiPill("Saved setting", "info");
+      if (src === "env") return uiPill("Environment (legacy)", "warn", "Set by the environment this gateway was started with; saving a value here replaces it");
+      return uiPill("Default", "muted");
+    }
+    function backlogSettingsMarkup() {
+      const st = backlogSetStore;
+      if (st.error && !st.data) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the backlog settings.</strong><span>${esc(st.error)}</span></div>`;
+      if (!st.data) return `<div class="ui-empty">Reading the backlog settings...</div>`;
+      const admin = !!st.data.writable;
+      const rows = BACKLOG_SET_KEYS.map((k) => [k, st.data[k]]).filter(([, r]) => r && typeof r === "object");
+      const root = st.data.triage_repo_root || {};
+      const trouble = root.available === false;
+      let out = `<details class="ui-details ui-net-proxy" data-backlog-settings${trouble ? " open" : ""}><summary><span class="ui-net-proxy__title">Advanced: backlog settings (Continuum)</span>`
+        + `<span class="ui-net-proxy__sum">${esc(trouble ? "backlog folder not available" : "backlog folder, exec runner, process manager")}</span></summary><div class="ui-net-proxy__body"><div class="ui-apps-settings__rows">`;
+      for (const [key, r] of rows) {
+        const has = Object.prototype.hasOwnProperty.call(st.draft, key);
+        const dis = admin && !st.saving ? "" : " disabled";
+        // The folder row spans the grid: a path is wider than one column.
+        const span = key === "triage_repo_root" ? ' style="grid-column: 1 / -1"' : "";
+        out += `<div class="ui-apps-setting" data-backlog-setting="${esc(key)}"${span}><div class="ui-apps-setting__head"><label for="backlog-set-${esc(key)}">${esc(r.label || key)}</label>${backlogSourcePill(r)}</div>`;
+        if (key === "triage_repo_root") {
+          const saved = r.source === "stored" ? String(r.value || "") : String(r.stored_value || "");
+          const val = has ? st.draft[key] : saved;
+          out += `<input type="text" id="backlog-set-${esc(key)}" data-backlog-input="${esc(key)}" autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="${esc(String(r.value || r.default_path || ""))}"${dis}>`;
+          out += `<p class="ui-net-proxy__text">In use: <code style="overflow-wrap: anywhere">${esc(String(r.value || "(hidden)"))}</code></p>`;
+          if (r.available === false) out += `<p class="ui-field-msg tone-warn">Not available: ${esc(r.reason || "")}</p>`;
+          if (admin && r.default_path && r.value !== r.default_path) out += `<p><button type="button" class="ui-btn is-text" data-backlog-use-default${st.saving ? " disabled" : ""}>Use the gateway's own folder</button></p>`;
+        } else {
+          const savedSwitch = r.source === "stored" ? r.value : r.stored_value;
+          const cur = has ? st.draft[key] : (savedSwitch === true ? "on" : savedSwitch === false ? "off" : "");
+          const now = r.value ? "on" : "off";
+          out += `<select id="backlog-set-${esc(key)}" data-backlog-input="${esc(key)}" style="width: 100%; min-width: 0"${dis}>`
+            + `<option value=""${cur === "" ? " selected" : ""}>Not saved (now ${esc(now)})</option>`
+            + `<option value="on"${cur === "on" ? " selected" : ""}>On</option><option value="off"${cur === "off" ? " selected" : ""}>Off</option></select>`;
+        }
+        out += `<p class="ui-net-proxy__text">${esc(r.help || "")}</p>`
+          + `<span class="ui-advanced ui-sub"><code>${esc(r.cli || "")}</code>${r.flag ? ` · launch flag <code>serve ${esc(r.flag)}</code>` : ""}</span></div>`;
+      }
+      out += `</div>`;
+      if (admin) out += `<div class="ui-card__actions"><button type="button" class="ui-btn is-primary" data-backlog-settings-save${st.saving ? ' disabled aria-busy="true"' : ""}>${st.saving ? "Saving..." : "Save backlog settings"}</button></div>`;
+      if (st.saved) out += `<p class="ui-net-proxy__saved tone-${esc(st.saved.tone)}" role="status" data-backlog-settings-saved><b>${esc(st.saved.head)}</b><span>${esc(st.saved.text)}</span></p>`;
+      else out += `<p class="ui-net-proxy__saved" role="status"><span>${admin ? "Empty = not saved: the launch flag, else the default (the gateway's own folder; switches off). Applies at once." : "Only an admin can change these."}</span></p>`;
+      return out + `</div></details>`;
+    }
+    function backlogSettingsRender() { if (backlogSetStore.el) backlogSetStore.el.innerHTML = backlogSettingsMarkup(); }
+    async function backlogSettingsRefresh() {
+      try {
+        backlogSetStore.data = await api("/api/gateway/admin/runtime-config");
+        backlogSetStore.error = "";
+      } catch (err) {
+        backlogSetStore.error = String((err && err.message) || err);
+      }
+      backlogSettingsRender();
+    }
+    async function backlogSettingsPost(body) {
+      const st = backlogSetStore;
+      st.saving = true;
+      st.saved = null;
+      backlogSettingsRender();
+      try {
+        st.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify(body) });
+        st.draft = {};
+        st.saved = { tone: "ok", head: "Saved", text: "Applies at once." };
+      } catch (err) {
+        const data = (err && err.data) || {};
+        st.saved = { tone: "err", head: "Not saved", text: String((data && data.detail) || (err && err.message) || err) };
+      }
+      st.saving = false;
+      backlogSettingsRender();
+    }
+    function backlogSettingsSave() {
+      const st = backlogSetStore;
+      if (!st.data || st.saving) return;
+      const body = {};
+      for (const key of BACKLOG_SET_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(st.draft, key)) continue;
+        const r = st.data[key] || {};
+        const now = String(st.draft[key] || "").trim();
+        if (key === "triage_repo_root") {
+          const was = r.source === "stored" ? String(r.value || "") : String(r.stored_value || "");
+          if (now !== was) body[key] = now || null;
+        } else {
+          const savedSwitch = r.source === "stored" ? r.value : r.stored_value;
+          const was = savedSwitch === true ? "on" : savedSwitch === false ? "off" : "";
+          if (now !== was) body[key] = now ? now === "on" : null;
+        }
+      }
+      if (!Object.keys(body).length) { st.saved = { tone: "ok", head: "Nothing changed", text: "" }; backlogSettingsRender(); return; }
+      backlogSettingsPost(body);
+    }
+    function mountBacklogSettings(el) {
+      if (!el) return;
+      backlogSetStore.el = el;
+      el.onclick = (event) => {
+        const t = event && event.target && event.target.closest ? event.target : null;
+        if (!t) return;
+        const save = t.closest("[data-backlog-settings-save]");
+        if (save && !save.disabled) { backlogSettingsSave(); return; }
+        const useDefault = t.closest("[data-backlog-use-default]");
+        const r = (backlogSetStore.data || {}).triage_repo_root || {};
+        if (useDefault && !useDefault.disabled && r.default_path) backlogSettingsPost({ triage_repo_root: r.default_path });
+      };
+      const onEdit = (event) => {
+        const i = event && event.target && event.target.matches && event.target.matches("[data-backlog-input]") ? event.target : null;
+        if (i) backlogSetStore.draft[i.dataset.backlogInput] = i.value;
+      };
+      el.oninput = onEdit;
+      el.onchange = onEdit;
+      backlogSettingsRender();
+      backlogSettingsRefresh();
+    }
     const FIRST_RUN_STEPS = ["welcome", "engines", "model", "apps", "done"];
     const FIRST_RUN_STEP_TITLES = {
       welcome: "Welcome",
@@ -11114,44 +11291,63 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       apps: "Apps",
       done: "Done",
     };
+    const FIRST_RUN_STEP_COPY = {
+      welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
+      engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab)." },
+      model: { title: "Choose your default model", hint: "What your apps use", lede: "The recommended set is sized for this computer: set it up in one click, or pick any model that fits." },
+      apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Browser apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
+      done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and the Setup guide button (top right) reopens it." },
+    };
     const FIRST_RUN_APPS = [
-      { pkg: "@abstractframework/flow", name: "Flow Editor", what: "Visual workflow editor." },
-      { pkg: "@abstractframework/code", name: "Code", what: "Browser-based coding assistant with durable agent sessions." },
-      { pkg: "@abstractframework/observer", name: "Observer", what: "Watch runs, replay/stream ledgers, submit durable commands." },
-      { pkg: "@abstractframework/continuum", name: "Continuum", what: "Backlog, inbox triage and managed processes against this gateway." },
-      { pkg: "@abstractframework/entity", name: "Entity", what: "Create summoned entities, watch their memory graph, talk with them." },
-    ];
-    const FIRST_RUN_ENGINE_LINKS = [
-      { id: "ollama", name: "Ollama", url: "https://ollama.com/download", note: "Local model server (default port 11434)." },
-      { id: "lmstudio", name: "LM Studio", url: "https://lmstudio.ai/download", note: "Desktop app + local server (default port 1234); the recommended starter model uses it." },
+      { pkg: "@abstractframework/flow", name: "Flow", mark: "Fl", what: "Design workflows visually and run them on this gateway." },
+      { pkg: "@abstractframework/code", name: "Code", mark: "Co", what: "A coding assistant in your browser, with sessions that survive restarts." },
+      { pkg: "@abstractframework/observer", name: "Observer", mark: "Ob", what: "Watch runs live, replay them, and send commands to running work." },
+      { pkg: "@abstractframework/continuum", name: "Continuum", mark: "Cn", what: "Your backlog, inbox and long-running processes, driven by this gateway." },
+      { pkg: "@abstractframework/entity", name: "Entity", mark: "En", what: "Create entities, see their memory grow, and talk with them." },
     ];
     const firstRun = { open: false, step: "welcome", checked: false, autoOpened: false, host: null, engines: null, enginesMissing: false, enginesError: "" };
     function firstRunHash() {
       try { return String((typeof location !== "undefined" && location && location.hash) || ""); } catch { return ""; }
     }
-    function stripClaimFromUrl() {
+    // `#claim=<code>&tab=<tab>` (the tray's "Open Console -> Models / Apps /
+    // Network"): the tab survives the claim. The code is stripped, the tab
+    // is kept as the ordinary `#<tab>` deep link that refresh() applies.
+    function claimTabFromHash(hash) {
+      const m = /(?:^#|&)tab=([^&]+)/.exec(String(hash || ""));
+      if (!m) return "";
+      let tab = "";
+      try { tab = decodeURIComponent(m[1]).trim(); } catch { tab = ""; }
+      return TABS.includes(tab) ? tab : "";
+    }
+    function stripClaimFromUrl(keepTab) {
       // The code is a credential: it must not survive in the address bar, the
       // history entry, or a bookmark. replaceState keeps the page as it is.
+      const frag = keepTab ? `#${keepTab}` : "";
       try {
         if (typeof history !== "undefined" && history && typeof history.replaceState === "function" && typeof location !== "undefined") {
-          history.replaceState(null, "", String(location.pathname || "/console") + String(location.search || ""));
+          history.replaceState(null, "", String(location.pathname || "/console") + String(location.search || "") + frag);
         } else if (typeof location !== "undefined" && location) {
-          location.hash = "";
+          location.hash = frag;
         }
       } catch { /* best effort: the server already made the code single-use */ }
     }
     function redeemClaimFromHash() {
       // Returns true when it took over the boot (it calls refresh() itself).
-      const match = /(?:^#|&)claim=([^&]+)/.exec(firstRunHash());
+      const hash = firstRunHash();
+      const match = /(?:^#|&)claim=([^&]+)/.exec(hash);
       if (!match) return false;
       const code = decodeURIComponent(match[1]);
-      stripClaimFromUrl();
+      firstRun.claimTab = claimTabFromHash(hash);
+      stripClaimFromUrl(firstRun.claimTab);
       setLoginStatus("Claiming first-run link...", "warn", "token: one-time link");
       (async () => {
         try {
-          await api("/api/gateway/session/claim", { method: "POST", body: JSON.stringify({ code }) });
+          const res = await api("/api/gateway/session/claim", { method: "POST", body: JSON.stringify({ code }) });
           firstRun.claimed = true;
-          setLoginStatus("Signed in", "ok", "token: first-run link");
+          // Who minted the link (mission S adds `claim.created_by`: "tray",
+          // "installer", ...); absent on older gateways -> null.
+          firstRun.claimCreatedBy = (res && res.claim && typeof res.claim.created_by === "string") ? res.claim.created_by : null;
+          setLoginStatus("Signed in", "ok", firstRun.claimCreatedBy === "tray" ? "token: menu bar link" : "token: first-run link");
         } catch (err) {
           $("login-message").textContent = `${String(err.message || err)}`;
           $("login-message").className = "message error";
@@ -11167,12 +11363,30 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       firstRun.checked = true;
       let st = null;
       try { st = await api("/api/gateway/host/first-run"); } catch { return; }
-      if (firstRun.claimed || !(st && st.completed)) {
+      if (firstRunShouldAutoOpen(st)) {
         firstRun.autoOpened = true;
         openFirstRunWizard("welcome");
       }
     }
+    // The guide opens by itself only while first run is NOT completed. A
+    // claim link no longer forces it (the tray's "Open Console" mints one on
+    // every click, and a finished setup must not greet the operator with the
+    // guide each time); the "Setup guide" button always reopens it. A link
+    // that asks for a tab (`#claim=...&tab=apps`, or a plain `#apps` deep
+    // link) lands on that tab, not under the guide. `claim.created_by` (when the gateway sends it): a
+    // tray link never opens the guide, an installer link opens it until first
+    // run is completed; without the field, `completed` alone decides.
+    function firstRunShouldAutoOpen(st) {
+      const completed = !!(st && st.completed);
+      if (completed) return false;
+      if (firstRun.claimTab || state.hashApplied) return false;  // a link that names a tab lands there
+      if (firstRun.claimCreatedBy === "tray") return false;
+      return true;
+    }
     function openFirstRunWizard(step) {
+      if (!firstRun.open) {
+        try { firstRun.opener = typeof document !== "undefined" && document.activeElement && document.activeElement !== document.body ? document.activeElement : null; } catch { firstRun.opener = null; }
+      }
       firstRun.open = true;
       $("first-run-message").textContent = "";
       $("first-run-message").className = "message";
@@ -11184,8 +11398,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("first-run-backdrop").classList.add("hidden");
       // The wizard's copies stop polling and release their key handlers; the
       // Models/Engines tabs keep theirs.
-      unmountCoreScreen("first-run-engines");
-      unmountCoreScreen("first-run-models");
+      unmountModelCatalog("first-run");
+      unmountEngineCards("first-run");
+      unmountAppCards("first-run");
+      unmountNetworkPanel("first-run");
+      // Focus goes back to what opened the guide (keyboard users keep their
+      // place); the guide took it on open.
+      const back = firstRun.opener;
+      firstRun.opener = null;
+      if (back && typeof back.focus === "function" && back.isConnected !== false) { try { back.focus(); } catch { /* gone */ } }
     }
     async function completeFirstRun(outcome) {
       try {
@@ -11199,19 +11420,40 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     function renderFirstRunSteps() {
       const list = $("first-run-steps");
-      list.textContent = "";
-      FIRST_RUN_STEPS.forEach((step, i) => {
-        const li = document.createElement("li");
-        li.className = `first-run-step-dot${step === firstRun.step ? " active" : ""}`;
-        li.textContent = `${i + 1}. ${FIRST_RUN_STEP_TITLES[step]}`;
-        list.append(li);
-      });
+      const current = FIRST_RUN_STEPS.indexOf(firstRun.step);
+      list.innerHTML = FIRST_RUN_STEPS.map((step, i) => {
+        const cls = i === current ? " is-active" : (firstRun.visited && firstRun.visited.has(step) && i < current ? " is-done" : "");
+        const copy = FIRST_RUN_STEP_COPY[step] || {};
+        return `<li><button type="button" class="first-run-step${cls}" data-first-run-step="${esc(step)}"${i === current ? ' aria-current="step"' : ""}>`
+          + `<span class="first-run-step__num">${cls === " is-done" ? "&#10003;" : i + 1}</span>`
+          + `<span class="first-run-step__title">${esc(FIRST_RUN_STEP_TITLES[step])}</span>`
+          + `<span class="first-run-step__hint">${esc(copy.hint || "")}</span></button></li>`;
+      }).join("");
+      list.onclick = (event) => {
+        const b = event && event.target && event.target.closest ? event.target.closest("[data-first-run-step]") : null;
+        if (b) firstRunGoto(b.dataset.firstRunStep);
+      };
     }
     function firstRunGoto(step) {
       if (!FIRST_RUN_STEPS.includes(step)) step = "welcome";
       firstRun.step = step;
+      if (!firstRun.visited) firstRun.visited = new Set();
+      firstRun.visited.add(step);
       for (const s of FIRST_RUN_STEPS) $(`first-run-step-${s}`).classList.toggle("hidden", s !== step);
       const idx = FIRST_RUN_STEPS.indexOf(step);
+      const copy = FIRST_RUN_STEP_COPY[step] || {};
+      $("first-run-kicker").textContent = `Step ${idx + 1} of ${FIRST_RUN_STEPS.length}`;
+      $("first-run-step-title").textContent = copy.title || FIRST_RUN_STEP_TITLES[step];
+      $("first-run-step-lede").textContent = copy.lede || "";
+      const scroller = $("first-run-scroll");
+      if (scroller) scroller.scrollTop = 0;
+      // Keyboard: each step starts at its title (Tab then walks the step's
+      // controls, then the footer's Back/Next; Escape closes the guide).
+      const heading = $("first-run-step-title");
+      if (heading && typeof heading.setAttribute === "function" && typeof heading.focus === "function") {
+        heading.setAttribute("tabindex", "-1");
+        try { heading.focus({ preventScroll: true }); } catch { /* not focusable here */ }
+      }
       $("first-run-back").classList.toggle("hidden", idx === 0);
       $("first-run-next").classList.toggle("hidden", step === "done");
       $("first-run-finish").classList.toggle("hidden", step !== "done");
@@ -11229,12 +11471,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function firstRunKv(rows) {
       return `<dl class="first-run-kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
     }
+    function firstRunTiles(tiles) {
+      return `<dl class="first-run-tiles">${tiles.map(([k, v, sub]) => `<div class="first-run-tile"><dt>${esc(k)}</dt><dd>${v}${sub ? `<div class="ui-sub">${sub}</div>` : ""}</dd></div>`).join("")}</dl>`;
+    }
     async function loadFirstRunWelcome() {
       const box = $("first-run-host-summary");
-      box.innerHTML = `<p class="subtle">Reading this machine...</p>`;
+      box.innerHTML = `<div class="ui-empty">Looking at this computer...</div>`;
       let snap = null;
       try { snap = await api("/api/gateway/host/state"); } catch (err) {
-        box.innerHTML = `<p class="message error">Host summary unavailable: ${esc(String(err.message || err))}</p>`;
+        box.innerHTML = `<div class="ui-alert tone-warn" role="alert"><strong>This computer's summary is not available right now.</strong><span>${esc(String(err.message || err))}</span></div>`;
         return;
       }
       firstRun.host = snap;
@@ -11243,41 +11488,55 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const gpus = (((snap && snap.gpu) || {}).gpus || []).map((g) => g && g.name).filter(Boolean);
       const host = (snap && snap.host) || {};
       const svc = gw.service || {};
-      box.innerHTML = firstRunKv([
-        ["Machine", esc([host.hostname || host.name, host.os || host.platform].filter(Boolean).join(" · ") || "this computer")],
-        ["Memory", esc(typeof ram.total_bytes === "number" ? _fmtBytes(ram.total_bytes) : "unknown")],
-        ["GPU", esc(gpus.length ? gpus.join(", ") : "none detected")],
-        ["Data folder", `<code>${esc(gw.data_dir || "?")}</code> <span class="subtle">(${esc(gw.data_dir_source || "?")})</span>`],
-        ["Sign-in", esc(gw.auth_mode === "users" ? "user accounts (you are the admin)" : String(gw.auth_mode || "?"))],
-        ["Starts at login", esc(svc.installed ? `yes (${svc.mechanism})` : "no — run `abstractgateway service install`")],
-      ]);
+      const dataDir = String(gw.data_dir || "?");
+      box.innerHTML = firstRunTiles([
+        ["Computer", esc(host.hostname || host.name || CORE_CONSOLE.hostName || "This computer"), esc(host.os || host.platform || "")],
+        ["Memory", esc(typeof ram.total_bytes === "number" ? _fmtBytes(ram.total_bytes) : "Unknown"), "Available to models and apps"],
+        ["Graphics", esc(gpus.length ? gpus.join(", ") : "None detected"), gpus.length ? "Used to run local models" : "Models run on the processor"],
+        ["Data folder", `<code class="ui-ellip is-block" title="${esc(dataDir)}">${esc(dataDir)}</code>`, `Runs, workflows and settings live here <span class="ui-advanced">(${esc(gw.data_dir_source || "?")})</span>`],
+        ["Sign-in", esc(gw.auth_mode === "users" ? "User accounts" : String(gw.auth_mode || "Unknown")), gw.auth_mode === "users" ? "You are the admin" : ""],
+        ["Starts at login", esc(svc.installed ? "Yes" : "Not yet"), svc.installed ? esc(`Installed as a ${svc.mechanism || "service"}`) : `Keeps the gateway running after a restart <span class="ui-advanced"><code>abstractgateway service install</code></span>`],
+      ])
+        + `<div class="ui-section-title"><h3>What this guide sets up</h3><span class="ui-sub">Each step takes a minute; skip any of them.</span></div>`
+        + `<div class="ui-card-grid is-fit">${["engines", "model", "apps"].map((step) => {
+          const copy = FIRST_RUN_STEP_COPY[step] || {};
+          const n = FIRST_RUN_STEPS.indexOf(step) + 1;
+          return `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${n}</span>`
+            + `<div class="ui-card__titles"><div class="ui-card__title">${esc(copy.title || FIRST_RUN_STEP_TITLES[step])}</div></div></div>`
+            + `<div class="ui-card__blurb">${esc(copy.lede || "")}</div>`
+            + `<div class="ui-card__actions"><button type="button" class="ui-btn is-ghost" data-first-run-step="${esc(step)}">Go to ${esc(FIRST_RUN_STEP_TITLES[step].toLowerCase())}</button></div></article>`;
+        }).join("")}</div>`;
+      box.onclick = (event) => {
+        const b = event && event.target && event.target.closest ? event.target.closest("[data-first-run-step]") : null;
+        if (b) firstRunGoto(b.dataset.firstRunStep);
+      };
     }
     function loadFirstRunEngines() {
-      // AbstractCore's Engines screen, mounted in place: detection, versions,
-      // Install (admin; the confirmation shows the exact command and the host
-      // it runs on) and Open download page. Without the screens (an older
-      // AbstractCore) the card says so and keeps the two download links.
-      const box = $("first-run-engines-body");
-      if (mountCoreScreen("engines", box, "first-run-engines")) return;
-      const cards = FIRST_RUN_ENGINE_LINKS.map((e) =>
-        `<div class="first-run-card"><strong>${esc(e.name)}</strong><span>${esc(e.note)}</span>`
-        + `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.url)}</a></div>`).join("");
-      box.innerHTML = `<p class="first-run-note" id="first-run-engines-fallback">${esc(coreConsoleUnavailableText())} Until then, install a local engine yourself if you want models on this machine (cloud providers work without one):</p><div class="first-run-cards">${cards}</div>`
-        + `<p class="subtle">Cloud keys (OpenAI, Anthropic, OpenRouter...) go in the Providers tab.</p>`;
+      // Local engines as cards (console_ui.py): detection, version, status,
+      // Install with inline progress, plain-language failures, the log behind
+      // "Show details". Nothing here depends on AbstractCore's table screen.
+      mountEngineCards("first-run", $("first-run-engines-body"));
     }
     async function loadFirstRunModel() {
       const box = $("first-run-model-recommended");
       box.innerHTML = `<p class="subtle">Checking the recommended starter models...</p>`;
-      // AbstractCore's Models screen below the starter kit: "Fits this
-      // machine" is on by default, so the list opens on what can run here.
-      const catalog = $("first-run-model-catalog");
-      if (!mountCoreScreen("models", catalog, "first-run-models")) {
-        catalog.innerHTML = `<p class="subtle" id="first-run-model-catalog-unavailable">${esc(coreConsoleUnavailableText())}</p>`;
-      }
-      wireFirstRunDefaultBar();
+      // The Models tab's catalog cards below the starter kit, with "Fits this
+      // computer" preset, so the list opens on what can run here; "Open in the
+      // Models tab" carries the same filters over (console_catalog.py).
+      mountModelCatalog("first-run", $("first-run-model-catalog"), { guide: true, filters: { fits: true } });
       await refreshAvailability({ rerender: false });
       renderFirstRunModel();
+      uiRestoreDownloads();
     }
+    const FIRST_RUN_ROUTE_COPY = {
+      "input.text": { mark: "Aa", title: "Chat and text", what: "Answers, agents and workflows" },
+      "output.text": { mark: "Aa", title: "Chat and text", what: "Answers, agents and workflows" },
+      "output.voice": { mark: "Vo", title: "Voice", what: "Reads answers aloud" },
+      "input.audio": { mark: "Mi", title: "Transcription", what: "Turns speech into text" },
+      "output.image": { mark: "Im", title: "Images", what: "Creates pictures from a description" },
+      "input.image": { mark: "Vi", title: "Vision", what: "Understands pictures" },
+    };
+    function firstRunCap(text) { const t = String(text || ""); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
     function renderFirstRunModel() {
       if (!firstRun.open || firstRun.step !== "model") return;
       const box = $("first-run-model-recommended");
@@ -11285,41 +11544,101 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
       const text = (state.defaults || []).find((r) => r && r.key === "output.text")
         || (state.defaults || []).find((r) => r && r.key === "input.text") || null;
-      const current = text && text.provider && text.model ? `${text.provider} / ${text.model}` : "not configured yet";
-      const body = rows.map((r) => {
+      const current = text && text.provider && text.model ? `${state.providerLabels.get(text.provider) || text.provider} · ${text.model}` : "";
+      const cards = rows.map((r) => {
         const job = state.downloadJobs.get(downloadJobKey(r.provider, r.artifact));
-        let cell;
-        if (job && job.status === "running") {
-          const pct = typeof job.percent === "number" ? ` ${Math.round(job.percent)}%` : "";
-          cell = `<span class="state-pill" title="${esc(job.message || "")}">downloading${esc(pct)}</span>`;
+        const copy = FIRST_RUN_ROUTE_COPY[r.route] || { mark: "AI", title: r.route || "Model", what: "" };
+        let pill;
+        let body = "";
+        let cancel = "";
+        if (job && dlActive(job)) {
+          const jid = dlJobId(job);
+          const cancelling = dlFeed.cancelling.has(jid);
+          pill = dlStatePill(job);
+          const phaseLabel = UI_PHASE_LABELS[uiJobPhase(job)] || "Downloading";
+          body = uiProgressMarkup(job, job.parent_job ? `${phaseLabel} · part of Download all` : phaseLabel);
+          cancel = `<button class="ui-btn is-ghost ui-dl-cancel" data-dl-cancel="${esc(jid)}"${cancelling ? " disabled" : ""}>${cancelling ? "Cancelling..." : "Cancel download"}</button>`;
         } else if (job && job.status === "failed") {
-          cell = `<span class="state-pill off" title="${esc(job.message || "")}">failed</span>`;
+          pill = uiPill("Download failed", "err");
+          const why = String(job.error || "").trim();
+          body = `<div class="ui-alert tone-err" role="alert"><strong>The download did not finish.</strong><span>${esc(job.message || "Try again.")}</span></div>`
+            + (why && why !== String(job.message || "").trim() ? `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(why)}</pre></details>` : "");
+        } else if (job && job.status === "cancelled" && r.status === "absent") {
+          pill = uiPill("Cancelled", "muted");
+          body = `<p class="ui-card__note">Download cancelled. Download it again any time.</p>`;
+        } else if (job && (job.status === "completed" || job.state === "done") && r.status === "absent") {
+          // The job says done before the next availability probe does: show
+          // the result now (the job's own sentence), not a stale "absent".
+          pill = uiPill("Downloaded", "ok");
+          body = `<p class="ui-card__note">${esc(job.message || "Downloaded.")}</p>`;
         } else {
           const view = WEIGHT_LABELS[r.status] || { label: r.status || "unknown", cls: "covered" };
-          cell = `<span class="state-pill ${esc(view.cls)}" title="${esc(r.evidence || r.instruction || "")}">${esc(view.label)}</span>`;
+          const tone = view.cls === "ok" ? "ok" : view.cls === "off" ? "muted" : "info";
+          pill = uiPill(firstRunCap(view.label), tone, r.evidence || r.instruction || "");
         }
-        const canDownload = r.status === "absent" && !(job && job.status === "running");
-        const btn = canDownload ? `<button class="secondary first-run-download" data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}">Download</button>` : "";
-        return `<tr><td>${esc(r.route || "")}</td><td>${esc(r.provider || "")}</td><td><code>${esc(r.artifact || "")}</code></td><td>${cell}</td><td>${btn}</td></tr>`;
+        const canDownload = r.status === "absent" && !(job && (dlActive(job) || job.status === "completed"));
+        const provider = state.providerLabels.get(r.provider) || r.provider || "";
+        return `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(copy.mark)}</span>`
+          + `<div class="ui-card__titles"><div class="ui-card__title">${esc(copy.title)}</div><span class="ui-card__status">${pill}</span></div></div>`
+          + `<div class="ui-card__blurb">${esc(copy.what)}</div>`
+          // Mission GG: five rows (head, blurb, body, action row, technical)
+          // in an `.is-aligned` grid: every tile's action row at one level.
+          + `<div class="ui-card__body"><ul class="ui-facts"><li><b>${esc(provider)}</b></li><li><code class="ui-ellip" title="${esc(r.artifact || "")}">${esc(r.artifact || "")}</code></li><li class="ui-advanced">Route <code>${esc(r.route || "")}</code></li>${r.tier ? `<li class="ui-advanced">Chosen by memory: ${esc(r.tier)}</li>` : ""}</ul>`
+          // AbstractCore's fit estimate doubts the pick: say so on the card
+          // (the recommendation itself never switches model on its own).
+          + (r.warning ? `<div class="ui-alert tone-warn" role="note"><span>${esc(r.warning)}</span></div>` : "")
+          + body + `</div>`
+          + `<div class="ui-card__actions">${cancel}${canDownload ? `<button class="ui-btn is-primary first-run-download" data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}">Download</button>` : ""}</div>`
+          + `<div class="ui-card__tech"></div>`
+          + `</article>`;
       }).join("");
-      box.innerHTML = firstRunKv([["Text model now", esc(current)]])
-        + `<p class="first-run-note">One click sets the recommended provider/model on the text, voice and image routes (routes you already configured are kept). Downloads run on this machine; their size depends on the model.</p>`
-        + `<div class="first-run-actions"><button id="first-run-apply-recommended" class="secondary">Use recommended defaults</button>`
-        + `<span class="subtle">CLI: <code>abstractgateway-config defaults</code>, <code>abstractcore models download --recommended</code></span></div>`
-        + (rows.length
-          ? `<table class="first-run-table"><thead><tr><th>Route</th><th>Provider</th><th>Model</th><th>Weights</th><th></th></tr></thead><tbody>${body}</tbody></table>`
-          : `<p class="subtle">No recommended downloads reported by this gateway.</p>`)
-        + `<p class="subtle">Everything here is also in the Multimodal tab.</p>`;
+      // "Download all" = N's ONE parent job (`grp_…`): its card (overall bar,
+      // bytes/ETA, one row per model, Cancel per model + Cancel all) sits
+      // above the per-model cards while it runs and after it ends.
+      const group = dlFeed.group;
+      const groupBox = group ? dlGroupMarkup(group) : "";
+      const canDownloadAll = rows.some((r) => r.status === "absent" && !dlActive(state.downloadJobs.get(downloadJobKey(r.provider, r.artifact)))) && !dlActive(group);
+      box.innerHTML = `<div class="ui-section-title"><h3>Recommended for this computer</h3><span class="ui-sub">${current ? `Text model now: <b>${esc(current)}</b>` : "No text model is set yet."}</span></div>`
+        + groupBox
+        + (rows.length ? `<div class="ui-card-grid is-fit is-aligned">${cards}</div>` : `<div class="ui-empty">This gateway reported no recommended downloads.</div>`)
+        + `<div class="ui-toolbar"><button id="first-run-apply-recommended" class="ui-btn is-primary">Use recommended defaults</button>`
+        + (canDownloadAll ? `<button id="first-run-download-all" class="ui-btn is-ghost">Download all</button>` : "")
+        + `<span>Sets the recommended models for text, voice and images. Choices you already made are kept.</span>`
+        + `<span class="ui-advanced">CLI: <code>abstractgateway-config defaults</code>, <code>abstractcore models download --recommended</code></span></div>`;
       $("first-run-apply-recommended").onclick = async () => {
         await applyRecommendedDefaults($("first-run-apply-recommended"), false);
         $("first-run-message").textContent = $("defaults-message").textContent;
         $("first-run-message").className = $("defaults-message").className;
         renderFirstRunModel();
       };
+      const all = $("first-run-download-all");
+      if (all) all.onclick = async () => {
+        // One request for the whole recommended set: N's parent job (`group`)
+        // is tracked as one card; its children (`jobs`) drive the per-model
+        // cards. The request itself shows progress on the button.
+        all.disabled = true;
+        all.textContent = "Starting downloads...";
+        try {
+          const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ recommended: true }) });
+          if (!res || !res.group) throw new Error("The gateway started the downloads but returned no parent job (`group`); it needs the download-group contract (docs/model-downloads.md).");
+          for (const job of (Array.isArray(res.jobs) ? res.jobs : [])) trackDownloadJob(job);
+          trackDownloadJob(res.group);
+          $("first-run-message").textContent = "";
+          $("first-run-message").className = "message";
+        } catch (err) {
+          $("first-run-message").textContent = `Could not start the downloads: ${String(err.message || err)}`;
+          $("first-run-message").className = "message error";
+        }
+        renderFirstRunModel();
+      };
       if (typeof box.querySelectorAll === "function") {
+        box.querySelectorAll(".ui-dl-cancel").forEach((b) => {
+          b.onclick = () => dlCancel(b.dataset.dlCancel, b);
+        });
         box.querySelectorAll(".first-run-download").forEach((b) => {
           b.onclick = async () => {
             b.disabled = true;
+            b.textContent = "Starting...";
             try {
               const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ provider: b.dataset.provider, artifact: b.dataset.artifact }) });
               trackDownloadJob(res.job);
@@ -11346,29 +11665,38 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       try { return String(location.origin || "http://127.0.0.1:8080"); } catch { return "http://127.0.0.1:8080"; }
     }
     function renderFirstRunApps() {
-      const box = $("first-run-apps-body");
-      const url = gatewayBaseUrl();
-      const rows = FIRST_RUN_APPS.map((a, i) =>
-        `<div class="first-run-app"><div><strong>${esc(a.name)}</strong> <span class="subtle">${esc(a.what)}</span></div>`
-        + `<div class="first-run-cmd"><code>npx ${esc(a.pkg)}</code><button class="secondary first-run-copy" data-cmd="npx ${esc(a.pkg)}" id="first-run-copy-${i}">Copy</button>`
-        + `<a href="https://www.npmjs.com/package/${esc(a.pkg)}" target="_blank" rel="noopener">npm</a></div></div>`).join("");
-      box.innerHTML = `<p class="first-run-note">The apps run in your browser and talk to this gateway at <code>${esc(url)}</code>. They need Node.js 18+ (<a href="https://nodejs.org/" target="_blank" rel="noopener">nodejs.org</a>). Run one in a terminal:</p>${rows}`
-        + `<p class="subtle">Apps sign in with a Gateway user token: create one for yourself in Users &amp; Entities (or print the admin one with <code>abstractgateway-config bootstrap-admin --print-token</code>).</p>`;
-      if (typeof box.querySelectorAll === "function") {
-        box.querySelectorAll(".first-run-copy").forEach((b) => { b.onclick = () => firstRunCopy(b.dataset.cmd, b); });
-      }
+      // Install / Open / Start / Stop through the gateway's apps service
+      // (routes/apps.py): cards with one primary action each, Node.js
+      // installed for the user, the npx line only behind "Technical details".
+      mountAppCards("first-run", $("first-run-apps-body"));
     }
     function renderFirstRunDone() {
       const box = $("first-run-done-body");
       const url = gatewayBaseUrl();
       const svc = ((firstRun.host && firstRun.host.gateway) || {}).service || {};
-      box.innerHTML = firstRunKv([
-        ["Console", `<code>${esc(url)}/console</code>`],
-        ["Sign in again", `<code>abstractgateway claim --open</code> <span class="subtle">(one-time link, from this machine)</span>`],
-        ["Start at login", svc.installed ? esc(`installed (${svc.mechanism}); remove with abstractgateway service uninstall`) : `<code>abstractgateway service install</code>`],
-        ["Status", `<code>abstractgateway-config status</code>`],
-        ["Reopen this guide", "the Setup button, top right"],
-      ]);
+      const text = (state.defaults || []).find((r) => r && r.key === "output.text")
+        || (state.defaults || []).find((r) => r && r.key === "input.text") || null;
+      const model = text && text.provider && text.model ? `${state.providerLabels.get(text.provider) || text.provider} · ${text.model}` : "Not set yet";
+      box.innerHTML = firstRunTiles([
+        ["Console", `<code class="ui-ellip is-block" title="${esc(url)}/console">${esc(url)}/console</code>`, "Bookmark it: this is your gateway's home"],
+        ["Default text model", `<span class="ui-ellip is-block" title="${esc(model)}">${esc(model)}</span>`, "Change it any time in Multimodal"],
+        ["Starts at login", esc(svc.installed ? "Yes" : "Not yet"), svc.installed ? esc(`Installed as a ${svc.mechanism || "service"}`) : "Otherwise, start the gateway yourself after a restart"],
+        ["This guide", "Setup guide", "The button at the top right reopens it"],
+      ])
+        + `<div class="ui-advanced"><div class="ui-section-title"><h3>From the command line</h3></div>`
+        + firstRunKv([
+          ["Sign in again", `<code>abstractgateway claim --open</code> <span class="subtle">(one-time link, from this machine)</span>`],
+          ["Start at login", svc.installed ? esc(`installed (${svc.mechanism}); remove with abstractgateway service uninstall`) : `<code>abstractgateway service install</code>`],
+          ["Status", `<code>abstractgateway-config status</code>`],
+        ]) + `</div>`
+        // Who can reach the gateway, with its addresses to copy: the same
+        // panel as the Network tab (mission L2).
+        + `<section class="first-run-network" aria-label="Network"><div id="first-run-network" class="ui-net-root"></div></section>`
+        // The console's own terminal app, said once, with the real way to
+        // get it (mission Y: crates.io only, so a command, never a button).
+        + `<div id="first-run-console-tui"></div>`;
+      mountNetworkPanel("first-run", $("first-run-network"));
+      mountConsoleTuiNote($("first-run-console-tui"));
     }
     async function refresh() {
       let me;
@@ -11387,7 +11715,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (state.activeTab === "users") loadEntities();
       if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached; no fold since 2026-08-19)
       if (state.activeTab === "models") { loadHostState(); startHostStatePoll(); }
-      if (state.activeTab === "catalog" || state.activeTab === "engines") openCoreTab(state.activeTab);
+      if (state.activeTab === "catalog" || state.activeTab === "engines" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);
       try {
         await loadEndpointProfiles();
       } catch (err) {
@@ -11842,6 +12170,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("tab-button-models").onclick = () => { setActiveTab("models"); loadHostState(); startHostStatePoll(); };
 	    $("tab-button-catalog").onclick = () => { setActiveTab("catalog"); openCoreTab("catalog"); };
 	    $("tab-button-engines").onclick = () => { setActiveTab("engines"); openCoreTab("engines"); };
+	    $("tab-button-apps").onclick = () => { setActiveTab("apps"); openCoreTab("apps"); };
+	    $("tab-button-network").onclick = () => { setActiveTab("network"); openCoreTab("network"); };
 	    $("models-refresh").onclick = () => { loadHostState(); startHostStatePoll(); };
 	    $("gateway-host-pause").onclick = toggleGatewayPause;
 	    $("gateway-host-restart").onclick = restartGateway;
@@ -12086,6 +12416,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    state.appearance = loadAppearanceSettings();
 	    initAppearanceControls();
 	    applyAppearanceSettings();
+	    mountConsoleIslands();
+	    uiInitAdvanced();
+	    uiInitLayout();
 	    state.activeTab = readStringSetting(ACTIVE_TAB_KEY, "users");
 	    setActiveTab(state.activeTab);
 	    // The users tab hosts the entities surface — restoring onto it (or
@@ -12107,8 +12440,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("first-run-back").onclick = () => firstRunStep(-1);
 	    $("first-run-skip").onclick = () => completeFirstRun("skipped");
 	    $("first-run-finish").onclick = () => completeFirstRun("finished");
-	    // Clicking outside closes WITHOUT marking it done (it reopens next load).
-	    $("first-run-backdrop").onclick = (event) => { if (event.target === $("first-run-backdrop")) closeFirstRunWizard(); };
+	    // Escape closes the full-page guide WITHOUT marking it done (it reopens
+	    // next load); Skip/Finish record the outcome.
+	    if (typeof document.addEventListener === "function") {
+	      document.addEventListener("keydown", (event) => {
+	        if (event.key === "Escape" && firstRun.open && !islands.appearanceOpen) closeFirstRunWizard();
+	      });
+	    }
 	    // A #claim= link signs this browser in (and opens the wizard) before
 	    // the normal session probe; without one, boot is unchanged.
 	    if (!redeemClaimFromHash()) refresh();

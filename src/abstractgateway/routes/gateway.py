@@ -103,6 +103,8 @@ from ..security.sessions import (
     gateway_session_id_from_cookie_header,
     gateway_session_id_from_value,
     gateway_session_ttl_s,
+    principal_barred_from_shared_runtime,
+    user_accounts_off_sign_in_refusal,
 )
 from ..security.principal import GatewayPrincipal, current_gateway_principal, local_admin_principal, safe_principal_component
 from ..service import (
@@ -347,7 +349,11 @@ def _issue_gateway_browser_session(
     return {
         "ok": True,
         "principal": principal.public_dict(),
-        "auth": {"mode": "users", "user_auth_enabled": True, "session": "gateway-browser-session"},
+        "auth": {
+            "mode": "users" if gateway_user_auth_enabled() else "legacy-token",
+            "user_auth_enabled": bool(gateway_user_auth_enabled()),
+            "session": "gateway-browser-session",
+        },
         "routing": {
             "mode": "per-principal" if gateway_multi_user_enabled() else "single-user",
             "one_user_one_runtime": bool(gateway_multi_user_enabled()),
@@ -372,6 +378,17 @@ async def gateway_session_login(
         raise HTTPException(
             status_code=401,
             detail=f"Gateway token resolved to user '{principal.user_id or 'unknown'}', not '{expected_user}'.",
+        )
+    # User accounts off = ONE shared runtime, the operator's: only an admin
+    # may sign in (security/sessions.py `principal_barred_from_shared_runtime`,
+    # which `create_session` and the session check enforce as well).
+    if principal_barred_from_shared_runtime(principal):
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "reason_code": "user_accounts_off_admin_only",
+                "message": user_accounts_off_sign_in_refusal(principal.user_id),
+            },
         )
     return _issue_gateway_browser_session(request, response, principal, remember=bool(payload.remember))
 
@@ -420,8 +437,9 @@ async def gateway_session_claim(
             status_code=409,
             detail={
                 "reason_code": "claim_requires_user_auth",
-                "message": "This gateway runs without user auth (static token mode); first-run links need user auth. "
-                "Restart it without ABSTRACTGATEWAY_AUTH_TOKEN on 127.0.0.1, or with ABSTRACTGATEWAY_USER_AUTH=1.",
+                "message": "This gateway was started with a shared token only (no user accounts), and first-run links "
+                "need accounts. Started with a plain `abstractgateway serve` on this computer (or the login item "
+                "`abstractgateway service enable` registers), it has accounts on by default.",
             },
         )
     data_dir = gateway_data_dir_from_env()
@@ -444,6 +462,11 @@ async def gateway_session_claim(
     out = _issue_gateway_browser_session(request, response, principal, remember=bool(payload.remember))
     out["claimed"] = True
     out["first_run"] = first_run_state(data_dir)
+    # WHO minted the link (`serve` | `cli` | `tray` | ...), so the console can
+    # tell a tray sign-in from a first run. `None` for a record minted before
+    # the field existed -- never a guessed default.
+    created_by = record.get("created_by")
+    out["claim"] = {"created_by": str(created_by) if created_by else None}
     return out
 
 
@@ -483,6 +506,59 @@ async def gateway_admin_list_users(
     return {"users": rows, "kind": kind_s}
 
 
+def _roles_grant_admin(roles: Any) -> bool:
+    return "admin" in {str(r).strip() for r in (roles or [])}
+
+
+_USER_ACCOUNTS_OFF_NON_ADMIN = (
+    "This gateway runs with user accounts off, so a non-admin account could not sign in here: "
+    "without user accounts every signed-in person shares the operator's own runtime and settings, "
+    "which only an admin may change. Two ways forward: the gateway operator turns user accounts on "
+    "(each user then gets their own runtime), or give this account the admin role."
+)
+
+
+def _refuse_non_admin_account_while_user_accounts_off(roles: Any) -> None:
+    """With user accounts off a non-admin account can never sign in
+    (security/sessions.py `principal_barred_from_shared_runtime`): refuse to
+    mint one rather than hand back a token that only ever answers 401."""
+    if gateway_user_auth_enabled() or _roles_grant_admin(roles):
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={"reason_code": "user_accounts_off_admin_only", "message": _USER_ACCOUNTS_OFF_NON_ADMIN},
+    )
+
+
+def _refuse_removing_last_admin(registry: GatewayUserRegistry, *, tenant_id: str, user_id: str, action: str) -> None:
+    """Refuse a delete / disable / demotion that would leave NO enabled human
+    admin account in the registry: nobody could then sign in to administer
+    users. Entities never count (they cannot sign in)."""
+    target = registry.get_user(user_id, tenant_id=tenant_id)
+    if target is None or not target.enabled or not _roles_grant_admin(target.roles):
+        return
+    others = [
+        rec
+        for rec in registry.list_users()
+        if rec.key != target.key
+        and rec.enabled
+        and _roles_grant_admin(rec.roles)
+        and rec.principal_kind != "entity"
+    ]
+    if others:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "reason_code": "last_admin",
+            "message": (
+                f"'{target.user_id}' is the last enabled admin account on this gateway; {action} it would leave "
+                "no account that can sign in and administer users. Create or enable another admin account first."
+            ),
+        },
+    )
+
+
 @router.post("/admin/users")
 async def gateway_admin_create_user(request: Request, payload: GatewayUserCreateRequest) -> Dict[str, Any]:
     _require_admin_principal(request)
@@ -500,6 +576,7 @@ async def gateway_admin_create_user(request: Request, payload: GatewayUserCreate
                 "not exist); the generic users lane does not mint role=entity accounts"
             ),
         )
+    _refuse_non_admin_account_while_user_accounts_off(payload.roles)
     registry = GatewayUserRegistry()
     try:
         record, issued_token = registry.create_user(
@@ -539,8 +616,18 @@ async def gateway_admin_update_user(
         token_update = ""
     from ..users import EntityPrincipalGuardError
 
+    registry = GatewayUserRegistry()
+    demoting = payload.roles is not None and not _roles_grant_admin(payload.roles)
+    if demoting or payload.enabled is False:
+        _refuse_removing_last_admin(
+            registry, tenant_id=tenant_id, user_id=user_id, action="demoting" if demoting else "disabling"
+        )
+    if demoting:
+        current = registry.get_user(user_id, tenant_id=tenant_id)
+        if current is not None and _roles_grant_admin(current.roles):
+            _refuse_non_admin_account_while_user_accounts_off(payload.roles)
     try:
-        record, issued_token = GatewayUserRegistry().update_user(
+        record, issued_token = registry.update_user(
             user_id=user_id,
             tenant_id=tenant_id,
             roles=payload.roles,
@@ -573,8 +660,10 @@ async def gateway_admin_delete_user(
     _require_admin_principal(request)
     from ..users import EntityPrincipalGuardError
 
+    registry = GatewayUserRegistry()
+    _refuse_removing_last_admin(registry, tenant_id=tenant_id, user_id=user_id, action="deleting")
     try:
-        deleted = GatewayUserRegistry().delete_user(user_id=user_id, tenant_id=tenant_id)
+        deleted = registry.delete_user(user_id=user_id, tenant_id=tenant_id)
     except EntityPrincipalGuardError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
     if not deleted:
@@ -609,8 +698,13 @@ async def gateway_admin_write_runtime_config(request: Request, payload: Dict[str
     from ..runtime_config import RuntimeConfigError, RuntimeConfigStoreCorrupt, write_runtime_config
 
     actor = f"person:{principal.user_id}" if getattr(principal, "user_id", None) else "person:operator"
+    # The security middleware's audit line for this request carries WHAT was
+    # asked (keys only on a refusal) and what landed (mission Z).
+    request.state.audit_detail = {"setting_change": {"setting": "runtime_config", "actor": actor, "ok": False,
+                                                     "keys": sorted(str(k) for k in (payload or {}))}}
     try:
         out = write_runtime_config(gateway_data_dir_from_env(), dict(payload or {}), actor=actor)
+        request.state.audit_detail["setting_change"].update({"ok": True, "applied": out.get("applied")})
     except RuntimeConfigStoreCorrupt as e:
         # 409: the store is unreadable; refusing to overwrite it (would wipe
         # the other knobs). Operator repairs the file, then retries.
@@ -1287,8 +1381,8 @@ def gateway_docs_corpus(request: Request) -> Dict[str, Any]:
     raise HTTPException(
         status_code=404,
         detail=(
-            "No documentation corpus available: set ABSTRACTGATEWAY_DOCS_CORPUS to an llms.txt "
-            "path (checked: " + ", ".join(label for label, _ in _docs_corpus_candidates()) + ")"
+            "No documentation corpus available: this gateway was started without one (ABSTRACTGATEWAY_DOCS_CORPUS "
+            "unset or not an llms.txt; checked: " + ", ".join(label for label, _ in _docs_corpus_candidates()) + ")"
         ),
     )
 
@@ -2390,8 +2484,8 @@ class EmbeddingsResponse(BaseModel):
 def _embedding_unavailable_message(error: str = "") -> str:
     msg = (
         "Embeddings are not available for this gateway instance. Configure the execution-host "
-        "embedding.text capability default to a remote provider, or set ABSTRACTCORE_SERVER_BASE_URL "
-        "so Gateway delegates to a remote AbstractCore /v1/embeddings route. Install "
+        "embedding.text capability default to a remote provider (this gateway was started without a remote "
+        "AbstractCore server to delegate /v1/embeddings to: ABSTRACTCORE_SERVER_BASE_URL is unset). Install "
         "`abstractgateway[embeddings]` only when this host must run local HuggingFace/"
         "sentence-transformer embeddings."
     )
@@ -6744,8 +6838,12 @@ def _require_workflow_registry_write(request: Request, host: Any) -> GatewayPrin
     are deliberately user-level writes, justified by each principal owning its
     own bundles dir — but when hosted user auth is OFF there is only ONE dir,
     the operator's, and every authenticated principal was handed write access
-    to it. `/session/login` authenticates registry users regardless of auth
-    mode, so a non-admin could delete or overwrite the shared workflows.
+    to it. `/session/login` used to authenticate registry users regardless of
+    auth mode, so a non-admin could delete or overwrite the shared workflows.
+    Since mission BB (2026-09-24) a non-admin registry identity cannot hold a
+    session while user accounts are off (security/sessions.py
+    `principal_barred_from_shared_runtime`); this gate stays as the second,
+    independent line on every registry door.
 
     The rule is ownership, not role: you may write the registry you own. The
     shared, admin-owned set is writable by admins only; a per-user registry is
@@ -7254,13 +7352,14 @@ async def remove_bundle(
 
 
 @router.post("/bundles/{bundle_id}/deprecate")
-async def deprecate_bundle(bundle_id: str, req: DeprecateWorkflowRequest) -> Dict[str, Any]:
+async def deprecate_bundle(request: Request, bundle_id: str, req: DeprecateWorkflowRequest) -> Dict[str, Any]:
     """Mark a bundle entrypoint (or entire bundle) as deprecated.
 
     Deprecated workflows are excluded from discovery by default and cannot be launched.
     """
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    _require_workflow_registry_write(request, host)
 
     bid = str(bundle_id or "").strip()
     if not bid:
@@ -7288,9 +7387,10 @@ async def deprecate_bundle(bundle_id: str, req: DeprecateWorkflowRequest) -> Dic
 
 
 @router.post("/bundles/{bundle_id}/undeprecate")
-async def undeprecate_bundle(bundle_id: str, req: DeprecateWorkflowRequest) -> Dict[str, Any]:
+async def undeprecate_bundle(request: Request, bundle_id: str, req: DeprecateWorkflowRequest) -> Dict[str, Any]:
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    _require_workflow_registry_write(request, host)
 
     bid = str(bundle_id or "").strip()
     if not bid:
@@ -10564,7 +10664,7 @@ def _voice_tts_timeout_fail_loud(*, svc: Any, parent_run_id: str, request_id: st
         f"TTS synthesis exceeded {timeout_s:.0f}s and was abandoned by the gateway watchdog "
         f"(request_id={request_id}).{child_part} The synthesis backend may be wedged "
         "(head-of-line lock); inspect the gateway process if this repeats. "
-        "Tune via ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S (<=0 disables)."
+        "The timeout is this gateway's start-time ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S (<=0 disables it)."
     )
 
 
@@ -10689,7 +10789,7 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
             status_code=503,
             detail=(
                 f"TTS synthesis at concurrency ceiling ({_voice_synth_max_concurrency()}); "
-                "backend may be wedged — retry shortly (ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY tunes the bound)"
+                "backend may be wedged — retry shortly (the bound is this gateway's start-time ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY)"
             ),
         )
     permit_transferred = False
@@ -13567,7 +13667,7 @@ async def get_semantics_registry() -> Dict[str, Any]:
             status_code=501,
             detail=(
                 "Semantics registry is unavailable. "
-                f"Install abstractsemantics or configure ABSTRACTSEMANTICS_REGISTRY_PATH. ({e})"
+                f"abstractsemantics is not installed here and this gateway was started without ABSTRACTSEMANTICS_REGISTRY_PATH. ({e})"
             ),
         )
 
@@ -16122,7 +16222,8 @@ def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
             **(
                 {
                     "config_hint": (
-                        "Set ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb and configure the execution-host "
+                        "This gateway was started with the in-memory KG store (ABSTRACTGATEWAY_MEMORY_STORE_BACKEND "
+                        "is not lancedb); semantic KG queries need the lancedb store and the execution-host "
                         "embedding.text capability default for semantic KG queries."
                     ),
                     **({"embedding_error": embedding_error} if embedding_error else {}),
@@ -18595,7 +18696,7 @@ async def bugs_report(req: BugReportCreateRequest) -> BugReportCreateResponse:
     proposed_backlog_relpath = ""
     proposed_backlog_item_id: Optional[int] = None
     try:
-        repo_root = _triage_repo_root_from_env()
+        repo_root = _backlog_repo_root()
         if repo_root is not None:
             out = _maybe_autobridge_report_to_proposed_backlog(
                 report_path=path,
@@ -19438,7 +19539,7 @@ async def features_report(req: FeatureReportCreateRequest) -> FeatureReportCreat
     proposed_backlog_relpath = ""
     proposed_backlog_item_id: Optional[int] = None
     try:
-        repo_root = _triage_repo_root_from_env()
+        repo_root = _backlog_repo_root()
         if repo_root is not None:
             out = _maybe_autobridge_report_to_proposed_backlog(
                 report_path=path,
@@ -19534,14 +19635,50 @@ def _gateway_base_dir() -> Path:
     return Path(getattr(getattr(svc, "stores", None), "base_dir", Path("."))).expanduser().resolve()
 
 
-def _triage_repo_root_from_env() -> Optional[Path]:
-    raw = str(os.getenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT") or os.getenv("ABSTRACT_TRIAGE_REPO_ROOT") or "").strip()
-    if not raw:
+def _backlog_root_resolution() -> Dict[str, Any]:
+    """THE backlog-folder resolution (runtime_config.resolve_backlog_root:
+    `serve --backlog-root` > stored setting > legacy env > <data dir>/backlog,
+    whose skeleton is created on first use)."""
+    from ..runtime_config import resolve_backlog_root
+
+    return resolve_backlog_root(gateway_data_dir_from_env(), ensure=True)
+
+
+def _backlog_repo_root() -> Optional[Path]:
+    """The backlog folder every backlog/report/process route reads, or None
+    when it is not available (then `_backlog_unavailable_detail()` says why).
+    Mission II: this used to read ONLY the environment, so the stored setting
+    was cosmetic for the whole backlog family and a fresh install had no
+    backlog at all."""
+    res = _backlog_root_resolution()
+    if not res.get("available"):
         return None
+    return Path(str(res["value"]))
+
+
+def _process_repo_root() -> Optional[Path]:
+    """The repo the process manager controls: the backlog folder, but only
+    when one was CHOSEN (launch flag / saved setting / legacy env). The
+    gateway's own default folder is not a framework checkout, so process
+    control stays gracefully off there."""
+    res = _backlog_root_resolution()
+    if not res.get("available") or res.get("source") == "default":
+        return None
+    return Path(str(res["value"]))
+
+
+def _backlog_unavailable_detail() -> str:
+    """The 404 sentence for an unavailable backlog folder. No server path
+    (any signed-in user reads it); an admin sees the path in
+    GET /api/gateway/backlog/status and the settings."""
     try:
-        return Path(raw).expanduser().resolve()
-    except Exception:
-        return None
+        reason = str(_backlog_root_resolution().get("reason") or "unknown reason")
+    except Exception as exc:  # noqa: BLE001 - the sentence must still render
+        reason = f"it could not be resolved ({exc})"
+    return (
+        f"Backlog folder not available on this gateway: {reason}. An admin sets it in Continuum's Settings, "
+        "the gateway console (Apps -> Backlog settings), or with `abstractgateway config set triage_repo_root PATH`."
+    )
 
 
 def _backlog_roots() -> List[Tuple[str, Path]]:
@@ -19574,7 +19711,7 @@ def _backlog_roots() -> List[Tuple[str, Path]]:
                 roots.append((p.name, p))
                 seen.add(p)
         return roots
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
         return []
     if (repo_root / "docs" / "backlog").is_dir():
@@ -19907,7 +20044,7 @@ async def triage_run(req: TriageRunRequest) -> TriageRunResponse:
         raise HTTPException(status_code=500, detail=f"Triage unavailable: {e}")
 
     base = _gateway_base_dir()
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
 
     out = triage_reports(
         gateway_data_dir=base,
@@ -19964,7 +20101,7 @@ async def triage_apply_decision(decision_id: str, req: TriageDecisionApplyReques
         raise HTTPException(status_code=500, detail=f"Triage unavailable: {e}")
 
     base = _gateway_base_dir()
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     decision, err = apply_decision_action(
         gateway_data_dir=base,
         decision_id=safe,
@@ -19979,11 +20116,43 @@ async def triage_apply_decision(decision_id: str, req: TriageDecisionApplyReques
     return _decision_to_summary(decision)
 
 
+@router.get("/backlog/status")
+async def backlog_status(request: Request) -> Dict[str, Any]:
+    """Where the backlog lives and whether it is usable (mission II). Any
+    signed-in user reads the posture; server paths (`path`, `backlog_dir`,
+    `default_path`) are for admins only (the triage_repo_root redaction rule).
+
+    {available, source: flag|stored|env|default, reason, writable, key,
+     path?, backlog_dir?, default_path?, template_relpath, item_folders,
+     created?}. Resolving creates the gateway's own folder's skeleton on
+    first use, so a fresh install answers `available: true`."""
+    principal = _principal_from_request(request)
+    res = _backlog_root_resolution()
+    is_admin = bool(principal.is_admin())
+    out: Dict[str, Any] = {
+        "available": bool(res.get("available")),
+        "source": res.get("source"),
+        "reason": res.get("reason"),
+        "writable": is_admin,
+        "key": "triage_repo_root",
+        "template_relpath": "docs/backlog/template.md",
+        "item_folders": ["docs/backlog/proposed", "docs/backlog/planned", "docs/backlog/completed"],
+        "is_default": res.get("value") == res.get("default_path"),
+    }
+    if is_admin:
+        out.update({"path": res.get("value"), "backlog_dir": res.get("backlog_dir"), "default_path": res.get("default_path")})
+        if res.get("created"):
+            out["created"] = res["created"]
+        if res.get("env_shadowed"):
+            out["env_shadowed"] = True
+    return out
+
+
 @router.get("/backlog/template", response_model=BacklogTemplateResponse)
 async def backlog_template() -> BacklogTemplateResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     template_md = _read_backlog_template(repo_root)
     sha = _sha256_hex_text(template_md)
@@ -19992,9 +20161,9 @@ async def backlog_template() -> BacklogTemplateResponse:
 
 @router.get("/backlog/exec/config", response_model=BacklogExecConfigResponse)
 async def backlog_exec_config() -> BacklogExecConfigResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     try:
         from ..maintenance.backlog_exec_runner import BacklogExecRunnerConfig, _resolve_executor  # type: ignore
@@ -20218,9 +20387,9 @@ async def backlog_exec_requests(
     ),
     limit: int = Query(default=200, ge=1),  # no ceiling (over-large asks are served, not 422'd)
 ) -> BacklogExecRequestListResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     base = _gateway_base_dir()
     qdir = (base / "backlog_exec_queue").resolve()
@@ -20278,9 +20447,9 @@ async def backlog_exec_active_items(
     This is used by thin clients to hide items from `docs/backlog/planned/` while they are being processed,
     reducing accidental duplicate executions.
     """
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     base = _gateway_base_dir()
     qdir = (base / "backlog_exec_queue").resolve()
@@ -20300,9 +20469,9 @@ async def backlog_exec_request_detail(
     request_id: str,
     include_prompt: bool = Query(default=False, description="Include the queued prompt (may be large)."),
 ) -> BacklogExecRequestDetailResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     rid = _safe_backlog_exec_request_id(request_id)
     if rid is None:
@@ -20387,9 +20556,9 @@ def _sha256_hex_bytes(data: bytes) -> str:
 
 @router.post("/backlog/exec/requests/{request_id}/feedback", response_model=BacklogExecRequestDetailResponse)
 async def backlog_exec_request_feedback(request_id: str, req: BacklogExecFeedbackRequest) -> BacklogExecRequestDetailResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     rid = _safe_backlog_exec_request_id(request_id)
     if rid is None:
@@ -20531,9 +20700,9 @@ async def backlog_exec_request_feedback(request_id: str, req: BacklogExecFeedbac
 
 @router.post("/backlog/exec/requests/{request_id}/promote", response_model=BacklogExecRequestDetailResponse)
 async def backlog_exec_request_promote(request_id: str, req: BacklogExecPromoteRequest) -> BacklogExecRequestDetailResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     rid = _safe_backlog_exec_request_id(request_id)
     if rid is None:
@@ -20935,9 +21104,9 @@ async def backlog_exec_request_promote(request_id: str, req: BacklogExecPromoteR
 @router.post("/backlog/exec/requests/{request_id}/uat/deploy", response_model=BacklogExecRequestDetailResponse)
 async def backlog_exec_request_deploy_uat(request_id: str) -> BacklogExecRequestDetailResponse:
     """Manually deploy a pending UAT request to the shared UAT stack (best-effort)."""
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     rid = _safe_backlog_exec_request_id(request_id)
     if rid is None:
@@ -20989,9 +21158,9 @@ async def backlog_exec_log_tail(
         ),
     ),
 ) -> BacklogExecLogTailResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     rid = _safe_backlog_exec_request_id(request_id)
     if rid is None:
@@ -21102,15 +21271,29 @@ async def audit_log_tail(
 
 
 def _process_manager_enabled() -> bool:
-    return _env_bool("ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER", False)
+    # The runtime setting `process_manager` (stored > env > default): the
+    # stored choice is honoured here too (mission Z; it read the env only).
+    from ..runtime_config import resolve_process_manager_enabled
+
+    return bool(resolve_process_manager_enabled(gateway_data_dir_from_env()))
+
+
+_PROCESS_MANAGER_OFF = (
+    "The process manager is off on this gateway (runtime setting process_manager; an admin turns it on with "
+    "POST /api/gateway/admin/runtime-config {\"process_manager\": true})"
+)
 
 
 def _require_process_manager():
     if not _process_manager_enabled():
-        raise HTTPException(status_code=404, detail="Process manager is disabled (set ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1)")
-    repo_root = _triage_repo_root_from_env()
+        raise HTTPException(status_code=404, detail=_PROCESS_MANAGER_OFF)
+    repo_root = _process_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Repo root is not configured (set ABSTRACTGATEWAY_TRIAGE_REPO_ROOT)")
+        raise HTTPException(
+            status_code=404,
+            detail="Process control needs the framework checkout it manages: an admin sets the backlog folder to it "
+            "(Continuum Settings, the gateway console, or `abstractgateway config set triage_repo_root PATH`).",
+        )
     base_dir = _gateway_base_dir()
     try:
         from ..maintenance.process_manager import get_process_manager  # type: ignore
@@ -21124,7 +21307,7 @@ def _require_process_manager():
 
 def _require_managed_env_var_manager():
     if not _process_manager_enabled():
-        raise HTTPException(status_code=404, detail="Process manager is disabled (set ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1)")
+        raise HTTPException(status_code=404, detail=_PROCESS_MANAGER_OFF)
     base_dir = _gateway_base_dir()
     try:
         from ..maintenance.process_manager import get_managed_env_var_manager  # type: ignore
@@ -21143,7 +21326,7 @@ async def processes_list() -> ProcessListResponse:
     # Fresh installs (packaged gateway) may enable the process manager for env config
     # while not having a repo checkout. Process control is repo-root scoped and must
     # degrade gracefully (UI should show a hint, not a hard error).
-    if _triage_repo_root_from_env() is None:
+    if _process_repo_root() is None:
         return ProcessListResponse(enabled=False, processes=[])
     mgr = _require_process_manager()
     try:
@@ -21281,7 +21464,7 @@ async def backlog_list(kind: str) -> BacklogListResponse:
     keep the read bounded; the whole walk runs off the event loop (H7c)."""
     roots = _backlog_roots()
     if not roots:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     k = str(kind or "").strip().lower()
     if k not in {"planned", "completed", "proposed", "recurrent", "deprecated", "trash"}:
@@ -21357,7 +21540,7 @@ async def backlog_content(kind: str, filename: str, package: Optional[str] = Non
     backlog dir."""
     roots = _backlog_roots()
     if not roots:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     k = str(kind or "").strip().lower()
     if k not in {"planned", "completed", "proposed", "recurrent", "deprecated", "trash"}:
@@ -21726,9 +21909,9 @@ def _generate_backlog_assist_json(
 
 @router.post("/backlog/move", response_model=BacklogMoveResponse)
 async def backlog_move(req: BacklogMoveRequest) -> BacklogMoveResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     from_kind = _safe_backlog_kind(req.from_kind)
     to_kind = _safe_backlog_kind(req.to_kind)
@@ -21771,9 +21954,9 @@ async def backlog_move(req: BacklogMoveRequest) -> BacklogMoveResponse:
 
 @router.post("/backlog/{kind}/{filename}/update", response_model=BacklogUpdateResponse)
 async def backlog_update(kind: str, filename: str, req: BacklogUpdateRequest) -> BacklogUpdateResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     k = _safe_backlog_kind(kind)
     if k is None or k not in _BACKLOG_WRITE_KINDS:
@@ -21820,9 +22003,9 @@ async def backlog_upload_attachment(
     file: UploadFile = File(..., description="Attachment (e.g. screenshot, diagram)."),
     overwrite: bool = Form(False, description="If true, overwrite an existing attachment with the same name."),
 ) -> BacklogAttachmentUploadResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     k = _safe_backlog_kind(kind)
     if k is None or k not in _BACKLOG_WRITE_KINDS:
@@ -21916,9 +22099,9 @@ async def backlog_upload_attachment(
 
 @router.post("/backlog/create", response_model=BacklogCreateResponse)
 async def backlog_create(req: BacklogCreateRequest) -> BacklogCreateResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     k = _safe_backlog_kind(req.kind)
     if k is None or k not in _BACKLOG_CREATE_KINDS:
@@ -22004,9 +22187,9 @@ async def backlog_create(req: BacklogCreateRequest) -> BacklogCreateResponse:
 
 @router.post("/backlog/merge", response_model=BacklogMergeResponse)
 async def backlog_merge(req: BacklogMergeRequest) -> BacklogMergeResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     k = _safe_backlog_kind(req.kind)
     if k is None or k not in _BACKLOG_CREATE_KINDS:
@@ -22229,7 +22412,7 @@ def _apply_exec_target_override(
                 status_code=403,
                 detail=(
                     "target_model overrides are not enabled on this gateway — the operator declares "
-                    "assignable models via ABSTRACTGATEWAY_BACKLOG_EXEC_ALLOWED_MODELS"
+                    "assignable models at start (ABSTRACTGATEWAY_BACKLOG_EXEC_ALLOWED_MODELS is unset on this gateway)"
                 ),
             )
         if requested_norm not in allowed:
@@ -22296,9 +22479,9 @@ async def backlog_execute(
             requested_executor = validate_executor_choice(str(executor))
         except RuntimeConfigError as e:
             raise HTTPException(status_code=400, detail=str(e))
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     k = _safe_backlog_kind(kind)
     if k is None:
@@ -22455,9 +22638,9 @@ async def backlog_execute(
 
 @router.post("/backlog/execute_batch", response_model=BacklogExecuteResponse)
 async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecuteResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     resolved = _resolve_backlog_refs(repo_root=repo_root, refs=list(req.items or []), allowed_kinds={"planned"})
     if len(resolved) < 2:
@@ -22615,9 +22798,9 @@ async def backlog_execute_batch(req: BacklogExecuteBatchRequest) -> BacklogExecu
 
 @router.post("/backlog/assist", response_model=BacklogAssistResponse)
 async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     k = _safe_backlog_kind(req.kind)
     if k is None or k not in _BACKLOG_ASSIST_KINDS:
@@ -23030,9 +23213,9 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
 
     Runs the `basic-agent` bundle (default entrypoint) with a structured JSON response schema.
     """
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     k = _safe_backlog_kind(req.kind)
     if k is None or k not in _BACKLOG_ASSIST_KINDS:
@@ -23203,9 +23386,9 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
 
     Runs a ReAct-style agent bundle (default: `basic-agent`) with read/search/list/skim + optional web tools.
     """
-    repo_root = _triage_repo_root_from_env()
+    repo_root = _backlog_repo_root()
     if repo_root is None:
-        raise HTTPException(status_code=404, detail="Backlog browsing not configured on this gateway")
+        raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
     provider, model = _resolve_gateway_provider_model_or_400(
         provider=req.provider,
@@ -24603,7 +24786,7 @@ async def model_download_start(req: _GatewayModelDownloadRequest) -> Dict[str, A
     files (the returned job's `joined` counter says so). Poll
     `GET /models/download/{job}` for progress.
     """
-    from ..model_downloads import start_download, start_recommended_downloads
+    from ..model_downloads import start_download, start_recommended_group
 
     if req.recommended and (req.provider or req.artifact):
         raise HTTPException(
@@ -24611,8 +24794,10 @@ async def model_download_start(req: _GatewayModelDownloadRequest) -> Dict[str, A
             detail="`recommended` fetches the recommended set; do not also name a provider/artifact.",
         )
     if req.recommended:
-        jobs = await asyncio.to_thread(start_recommended_downloads, dry_run=req.dry_run)
-        return {"ok": True, "recommended": True, "jobs": jobs}
+        # One PARENT job (`group`, id `grp_...`) over one child per model:
+        # poll the parent for the overall bar, `jobs` for the per-model rows.
+        started = await asyncio.to_thread(start_recommended_group, dry_run=req.dry_run)
+        return {"ok": True, "recommended": True, "jobs": started["jobs"], "group": started["group"]}
     if not (req.provider and req.artifact):
         raise HTTPException(status_code=400, detail="`provider` and `artifact` are required (or pass `recommended`).")
     try:
@@ -24661,6 +24846,80 @@ async def model_downloads_list() -> Dict[str, Any]:
     return {"ok": True, "jobs": jobs}
 
 
+@router.post("/models/download/{job_id}/cancel")
+async def model_download_cancel(job_id: str, request: Request) -> Dict[str, Any]:
+    """Cancel a download (admin): the transfer stops within about a second.
+
+    A `grp_...` parent cancels every child still running. The job answers
+    `cancel_requested: true` at once and turns `cancelled` when the provider
+    tool has stopped; poll it (or the stream) for that. 404 when unknown.
+    """
+    from ..model_downloads import cancel_job
+
+    _require_admin_principal(request)
+    job = await _core_host_call(cancel_job, job_id)
+    if isinstance(job, JSONResponse):
+        return job
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No download job {job_id!r}.")
+    return {"ok": True, "job": job}
+
+
+@router.get("/models/downloads/stream")
+async def model_downloads_stream(
+    request: Request,
+    job_id: Optional[str] = Query(None, description="Stream one job (a `dl_...` or a `grp_...`) instead of all."),
+    until_idle: bool = Query(False, description="End the stream once no download is active (after sending the final state)."),
+) -> StreamingResponse:
+    """Server-Sent Events: the download list (or one job) every time it changes.
+
+    Each event is `event: downloads` with `data: {"jobs": [...]}` (or
+    `event: job` with `data: {"job": {...}}` for `?job_id=`), the same
+    dicts as the polling routes, sent at most every 0.5 s and only when
+    something changed; a `: keepalive` comment every 15 s. Polling keeps
+    working unchanged.
+    """
+    from ..model_downloads import get_job, list_jobs
+
+    async def _events():
+        last = None
+        last_sent = time.monotonic()
+        while True:
+            if await request.is_disconnected():
+                return
+            try:
+                if job_id:
+                    job = await asyncio.to_thread(get_job, job_id)
+                    payload = {"job": job}
+                    active = bool(job) and str(job.get("status")) in ("running", "queued")
+                    name = "job"
+                else:
+                    jobs = await asyncio.to_thread(list_jobs)
+                    payload = {"jobs": jobs}
+                    active = any(str(j.get("status")) in ("running", "queued") for j in jobs)
+                    name = "downloads"
+            except Exception as exc:  # the stream says what broke, then ends
+                yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+                return
+            body = json.dumps(jsonable_encoder(payload), sort_keys=True)
+            if body != last:
+                yield f"event: {name}\ndata: {body}\n\n"
+                last = body
+                last_sent = time.monotonic()
+            elif time.monotonic() - last_sent >= 15.0:
+                yield ": keepalive\n\n"
+                last_sent = time.monotonic()
+            if until_idle and not active:
+                return
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        _events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Models & engines, inherited from AbstractCore (contracts A-F)
 # ---------------------------------------------------------------------------
@@ -24670,8 +24929,8 @@ async def model_downloads_list() -> Dict[str, Any]:
 # seam (`core_config` -> Runtime `config_facade` -> AbstractCore). The Gateway
 # adds only what is Gateway-proper: every POST is admin-only (policy rows in
 # `security/authorization.py` AND `_require_admin_principal`), engine installs
-# also need the runtime-config knob `allow_engine_install` (default on only for
-# a loopback bind), each request is in the audit log (middleware), and job
+# also need the runtime-config knob `allow_engine_install` (default on for a
+# loopback bind and for a caller on the gateway machine itself), each request is in the audit log (middleware), and job
 # `cli_equivalent` strings name `abstractgateway`.
 #
 #   GET  /host/profile                               contract A
@@ -24725,20 +24984,19 @@ async def _core_host_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
         return _host_action_error(503, "unavailable", str(exc), reason="abstractcore_unavailable")
 
 
-def _engine_install_policy() -> Dict[str, Any]:
-    from ..runtime_config import read_runtime_config
+def _engine_install_policy(request: Optional[Request] = None) -> Dict[str, Any]:
+    """`allow_engine_install` for THIS caller: with no stored choice a caller
+    on the gateway machine itself may install (runtime_config
+    `allow_engine_install_for_caller`, security/same_machine.py); without a
+    request (no caller) only the host policy applies."""
+    from ..runtime_config import allow_engine_install_for_caller, read_runtime_config
+    from ..security.same_machine import request_is_from_this_machine
 
     try:
-        return dict(read_runtime_config(gateway_data_dir_from_env())["allow_engine_install"])
+        policy = dict(read_runtime_config(gateway_data_dir_from_env())["allow_engine_install"])
     except Exception:
         return {"value": False, "source": "error"}
-
-
-class _GatewayEngineInstallRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"dry_run": True, "force": False}]})
-
-    dry_run: bool = Field(default=False, description="Resolve the install command and report it without running it.")
-    force: bool = Field(default=False, description="Run the installer even when the engine is already installed.")
+    return allow_engine_install_for_caller(policy, caller_on_this_machine=request is not None and request_is_from_this_machine(request))
 
 
 class _GatewayModelDeleteRequest(BaseModel):
@@ -24761,62 +25019,9 @@ async def host_profile_get(refresh: bool = Query(False, description="Measure aga
     return await _core_host_call(core_host_profile, refresh=refresh)
 
 
-@router.get("/engines")
-async def engines_list(probe: bool = Query(False, description="GET each local engine server once (short timeouts).")) -> Any:
-    """Local inference engines: installed, running, and how to install them (contract B).
-
-    `install_allowed` says whether an admin may run an install from this
-    Gateway (`allow_engine_install`); dry runs are always allowed."""
-    from ..core_config import core_engine_inventory
-
-    payload = await _core_host_call(core_engine_inventory, probe=probe)
-    if isinstance(payload, dict):
-        policy = _engine_install_policy()
-        payload["install_allowed"] = bool(policy.get("value"))
-        payload["install_policy"] = policy
-    return payload
-
-
-@router.get("/engines/{engine_id}")
-async def engine_get(engine_id: str, probe: bool = Query(False)) -> Any:
-    """One engine row (contract B); 404 for an unknown engine id."""
-    from ..core_config import core_engine_status
-
-    row = await _core_host_call(core_engine_status, engine_id, probe=probe)
-    if isinstance(row, dict):
-        row["install_allowed"] = bool(_engine_install_policy().get("value"))
-    return row
-
-
-@router.post("/engines/{engine_id}/install")
-async def engine_install_start(engine_id: str, request: Request, req: Optional[_GatewayEngineInstallRequest] = None) -> Any:
-    """Install a local engine on the GATEWAY HOST as a job (admin only).
-
-    `dry_run: true` returns the finished job with the exact command it would
-    run and never needs permission. A real install needs the runtime-config
-    knob `allow_engine_install` (403 otherwise; on by default only when the
-    Gateway is bound to loopback). 409 when an engine install is already
-    running, or the engine is unsupported / has no install command here."""
-    from ..core_config import core_engine_install
-
-    _require_admin_principal(request)
-    body = req or _GatewayEngineInstallRequest()
-    policy = _engine_install_policy()
-    allowed = bool(policy.get("value"))
-    if not allowed and not body.dry_run:
-        bind = policy.get("bind_host")
-        return _host_action_error(
-            403,
-            "refused",
-            "engine installs are disabled on this gateway (allow_engine_install is off"
-            + (f"; bound to {bind}" if bind else "")
-            + "). An admin can enable them with "
-            "`POST /api/gateway/admin/runtime-config {\"allow_engine_install\": true}`, "
-            "or run the command shown by a dry run on the gateway host; a dry run is always allowed.",
-            reason="not_allowed",
-            install_policy=policy,
-        )
-    return await _core_host_call(core_engine_install, engine_id, dry_run=body.dry_run, force=body.force, allow=allowed)
+# GET /engines, GET /engines/{id} and POST /engines/{id}/install moved to
+# `routes/engines.py` (2026-09-24): user-level installs with needs_admin /
+# needs_tools jobs, contract `gateway_engines_v2`.
 
 
 @router.get("/models/catalog")
@@ -24874,6 +25079,11 @@ async def host_job_get(job_id: str) -> Any:
     """One host job (`host_job_v1`); 404 when unknown."""
     from ..core_config import core_host_job
 
+    from ..engines_install import default_registry
+
+    found = default_registry().get(job_id)  # an engine install job (routes/engines.py) read through the older lane
+    if found is not None:
+        return dict(found.snapshot(), schema="host_job_v1", engine_job_schema="engine_install_job_v1")
     job = await _core_host_call(core_host_job, job_id)
     if job is None:
         return _host_action_error(404, "not_found", f"no job {job_id}")
@@ -24886,6 +25096,11 @@ async def host_job_cancel_post(job_id: str, request: Request) -> Any:
     from ..core_config import core_host_job_cancel
 
     _require_admin_principal(request)
+    from ..engines_install import default_registry
+
+    if default_registry().get(job_id) is not None:
+        snap = await asyncio.to_thread(default_registry().cancel, job_id)
+        return dict(snap or {}, schema="host_job_v1", engine_job_schema="engine_install_job_v1")
     job = await _core_host_call(core_host_job_cancel, job_id)
     if job is None:
         return _host_action_error(404, "not_found", f"no job {job_id}")

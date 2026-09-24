@@ -2491,5 +2491,5 @@ def test_models_and_engines_tabs_do_not_reuse_existing_ids() -> None:
     assert '$("tab-button-catalog").onclick = () => { setActiveTab("catalog"); openCoreTab("catalog"); };' in html
     assert '$("tab-button-engines").onclick = () => { setActiveTab("engines"); openCoreTab("engines"); };' in html
     # A `#catalog` / `#engines` deep link and a restored landing tab mount too.
-    assert 'if (wantedTab === "catalog" || wantedTab === "engines") openCoreTab(wantedTab);' in html
-    assert 'if (state.activeTab === "catalog" || state.activeTab === "engines") openCoreTab(state.activeTab);' in html
+    assert 'if (wantedTab === "catalog" || wantedTab === "engines" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);' in html
+    assert 'if (state.activeTab === "catalog" || state.activeTab === "engines" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);' in html

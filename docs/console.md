@@ -45,30 +45,89 @@ user auth enabled, the first-login token is written to
 - **Engines:** the local engines on the gateway host (Ollama, LM Studio, MLX,
   llama.cpp, vLLM, Hugging Face): installed or not, running or not, and a
   one-click install (details below).
+- **Apps:** the browser apps (Flow Editor, Code, Observer, Continuum, Entity):
+  install, open, and Code's terminal version (details below).
 
 ### Models and Engines tabs
 
-These two tabs are AbstractCore's own Models and Engines screens, embedded in
-the gateway console. The same screens appear in `abstractcore serve`'s console
-and, as terminal screens, in both terminal consoles, so they look and behave the
-same everywhere. Everything they show and do happens **on the gateway host**:
-the machine that runs `abstractgateway serve`, not the computer your browser
-runs on.
+Everything these two tabs show and do happens **on the gateway host**: the
+machine that runs `abstractgateway serve`, not the computer your browser runs
+on. The catalog data, the presence checks and the fit verdicts come from
+AbstractCore (`GET /api/gateway/models/catalog`, contract `model_catalog_v1`);
+downloads are the gateway's own jobs (see [Model downloads](model-downloads.md)).
 
-**Models** (tab id `catalog`; the older **Resources** tab keeps id `models`):
+**Models** (tab id `catalog`; the older **Resources** tab keeps id `models`)
+shows the catalog as **one card per model**:
 
-- A line describing this machine (accelerator, memory the models can use, free
-  disk).
-- The catalog: model families with one row per downloadable artifact (engine,
-  quantization, download size), whether its weights are already here
-  (`installed`, `not downloaded`, `unknown`, `remote`), and a fit verdict
-  (`fits`, `tight`, `too large`, `partial offload`, `unknown`). **Fits this
-  machine** is on by default. Search, filter by engine or modality, or tick
-  **Search Hugging Face** to include hub results (slower).
-- The models already installed, per engine, with their size and location.
-- Actions: **Download** and **Delete** (with a confirmation that names the
-  model and any blocker, such as a model that is loaded right now). Downloads
-  and deletes run as jobs with progress; you can cancel them.
+- The card header: the model's name, organisation, parameter count and
+  licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
+  Voice, Image) and a **Starter** badge for the models of the recommended
+  starter set.
+- The card body: one row per downloadable build (artifact) of that model: the
+  provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
+  ids are shortened with "..."; hover to read the whole id, click it to copy
+  it), the quantization (4-bit, 8-bit, 16-bit, ... and its bits per weight),
+  the download size ("about" when the size is estimated from the parameter
+  count), whether the weights are already here (Downloaded, Not downloaded,
+  Unknown, Remote) and whether it fits this machine (Fits, Tight, Partial
+  offload, Too large; hover the pill for the numbers behind it). The build
+  recommended for this computer comes first and is marked; the others are
+  quieter.
+- One action per row: **Download** (a download shows its progress bar with
+  bytes, speed and time left, and **Cancel**, the same progress display as the
+  setup guide), then **Use as default** once a text model is downloaded (it
+  sets the default text model, like the Multimodal tab).
+- Many models have 8-bit builds next to the 4-bit ones when upstream publishes
+  them (MLX `-8bit` repositories, Ollama `-q8_0` tags, GGUF `Q8_0` files, LM
+  Studio `@8bit`). Every build the catalog knows is listed; nothing is cut off.
+
+The filter bar above the cards:
+
+- **Search** matches model names, organisations and artifact ids (every word
+  must match). **Escape** clears it.
+- **Quantization**: All, 4-bit, 8-bit, Other (every other class: 16-bit, full
+  precision, 2/3/5/6-bit and builds whose reference names no quantization).
+  The classes come from AbstractCore's `quant_class` field. A gateway whose
+  AbstractCore is older than that field shows the notice "This gateway's
+  catalog does not report quant_class yet", and the quantization filter stays
+  off until AbstractCore is updated on the gateway host; every build is still
+  listed.
+- **Catalog / Hugging Face**: the switch left of the search box. In
+  **Hugging Face** mode, type a name and press **Enter** (or **Search**): the
+  gateway searches the Hugging Face Hub (answers are cached for 24 hours) and
+  the results show as the same cards, with a **Hugging Face** badge: provider,
+  artifact id, quantization when the result names one ("Not stated"
+  otherwise, never guessed), size from the Hub, fit, and **Download** with
+  the same progress bar. Capabilities of a Hub result are unknown until it is
+  installed, so it offers no **Use as default** from here. When the Hub has
+  nothing for the query the view says so; when the gateway host cannot reach
+  the Hub it says "Hugging Face could not be searched right now" (the raw
+  reason sits behind **Show details**), and results the Hub only partly
+  answered carry a warning. The query is part of the address:
+  `/console#catalog?hf=smollm`.
+- **Provider**, **Capability** and **Status** (Downloaded, Not downloaded)
+  chips, each with the number of builds it would show.
+- **Fits this computer** hides the builds that do not fit (only Fits and Tight
+  remain).
+- A live count: "12 of 77 models · 31 artifacts shown". The row with the search
+  box, the count and the filters in use stays under the header while you
+  scroll; **Filters** brings the chips back into view. When nothing matches,
+  **Clear filters** resets them.
+- The filters are part of the address: `/console#catalog?quant=8bit&provider=mlx&fits=1`
+  opens the tab with exactly that view, so a link reproduces it. The keys are
+  `q`, `quant` (`4bit`, `8bit`, `other`), `provider`, `cap`, `status`
+  (`downloaded`, `not_downloaded`), `fits=1` and `hf` (Hugging Face mode and
+  its query).
+
+Below the cards, **On this computer** is AbstractCore's own list of the models
+the local engines hold (including models that are not in the catalog), with
+their size and location, and **Delete** (with a confirmation that names the
+model and any blocker, such as a model that is loaded right now).
+
+The setup guide's **Default model** step shows the same catalog cards with
+**Fits this computer** already on; **Open in the Models tab** carries the
+filters over. An engine card's **Browse models** opens the tab filtered to that
+engine's builds.
 
 **Engines** (tab id `engines`):
 
@@ -91,10 +150,11 @@ Who can do what:
   disabled for other users, and the gateway refuses those calls from them.
 - Installing an engine also needs the gateway setting
   [`allow_engine_install`](./configuration.md#allow_engine_install). It lives in
-  the runtime configuration and is on by default only when the gateway listens
-  on this machine only (`127.0.0.1`); a gateway reachable from the network
-  refuses installs until an admin turns it on. A dry run (**Preview**) is
-  always allowed.
+  the runtime configuration and is on by default when the gateway listens on
+  this machine only (`127.0.0.1`), and, whatever it listens on, for someone
+  using the console on the gateway machine itself. A browser on another
+  computer is refused until an admin turns the setting on. A dry run
+  (**Preview**) is always allowed.
 - Every action is recorded in the gateway's audit log, and each job card shows
   the equivalent command, for example
   `abstractgateway models download ollama qwen3:8b`.
@@ -103,6 +163,56 @@ If the gateway's AbstractCore is older than 2.14.0, both tabs show a card saying
 so, with the version installed and the upgrade command
 (`pip install -U "abstractcore>=2.14.0"`); the rest of the console works as
 before.
+
+### Apps tab
+
+The Apps tab and the setup guide's Apps step show the same cards (the apps
+themselves are described in [apps.md](./apps.md)). What a plain user sees on
+each card: the app's mark, name and status pill (Not installed, Installed,
+Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
+description (hover it for the whole sentence), and one row of buttons. The
+button rows of the cards side by side are always at the same height.
+
+| The app is | The action row |
+|---|---|
+| not installed | **Install and open** (installs Node.js first when the gateway needs it, then the app, starts it and opens it) |
+| installing | a progress bar above the row, and **Cancel** |
+| installed and running | **Open** (a new tab, already signed in) |
+| installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
+
+Code has a terminal version too. Next to Code's primary button: **Open in
+Terminal** when the terminal version is installed and the browser is on the
+gateway machine (a new terminal window opens there, signed in), or a quiet
+**Install for Terminal** when a ready-made download exists for this
+computer. When the terminal version needs the Rust toolchain, or when the
+browser is on another computer, the plain view shows no terminal button.
+
+A result box appears only after something you did ("Code opened in a new
+Terminal window, signed in to this gateway.", "Flow Editor opened in a new
+tab.") and closes itself after a few seconds. A failure stays, with the
+gateway's reason and **Show details** (the full response or log).
+
+The **Technical details** switch (bottom left of the console, and in the
+guide) adds a secondary line under each card's buttons, and removes it again
+when switched off:
+
+- **Stop** (a running app), **Start** (start without opening), **Show log** /
+  **Hide log** (the app's log, the log file's path, **Show more** up to 5000
+  lines), **Update to X** when a newer version is published, and the version.
+- For Code's terminal version: its version, **Update terminal app to X**, and
+  the exact command to copy (one line, **Copy**): the command that opens it,
+  `cargo install abstractcode` when it needs the Rust toolchain, or, for a
+  browser on another computer, the command to run there and the one-time
+  `abstractcode login` line.
+- The app's local address, the `npx @abstractframework/<app>` line, and the
+  log of a finished install.
+- For an app started outside the gateway (the development stack, `npx`, a
+  service): "Started outside the gateway on port 3001" instead of Stop,
+  Start, Show log and Update; the card shows the Running pill and **Open**
+  like any running app ([apps.md](./apps.md#apps-started-outside-the-gateway)).
+
+Installing, starting, stopping and updating need an admin; other users see the
+buttons disabled with the reason on hover.
 
 ## Terminal console (`abstractgateway-console`)
 

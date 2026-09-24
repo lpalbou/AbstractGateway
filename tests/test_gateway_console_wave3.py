@@ -70,6 +70,11 @@ def test_radius_scale_normalized(html: str) -> None:
     (circle), inherit, and the pc-chat-item 12px (the shared uic transcript
     recipe — snapping it locally would drift from the kit's pen)."""
     offenders = []
+    # The abstractuic kit's component CSS (<style id="af-kit-css">, vendored
+    # verbatim by console_islands_sync) carries the kit's own radii; this pin
+    # is about the console's sheet.
+    kit_start = html.index('<style id="af-kit-css">')
+    html = html[:kit_start] + html[html.index("</style>", kit_start):]
     for m in re.finditer(r"border-radius:\s*([^;]+);", html):
         value = m.group(1).strip()
         if value.startswith("var(--radius-"):

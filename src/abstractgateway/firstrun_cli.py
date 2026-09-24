@@ -1,7 +1,9 @@
 """CLI verbs for the no-terminal first run (2026-09-23):
 
 - `abstractgateway claim` / `abstractgateway-config claim-url [--open]`
-- `abstractgateway service install|uninstall|status`
+- `abstractgateway service install|uninstall|enable|disable|status` (enable /
+  disable / status share `abstractgateway.autostart` with the tray's
+  "Start AbstractGateway at login" switch)
 
 Both are LOCAL commands: they act on this machine's data dir and service
 manager, never through the HTTP API, so they work before anyone has a token.
@@ -83,8 +85,9 @@ def run_claim(args: argparse.Namespace) -> int:
     if running and auth and not bool(auth.get("user_auth_enabled")):
         msg = (
             f"The gateway running at {serve.get('url')} (data dir {res.path}) does not use user auth "
-            f"(auth mode: {auth.get('mode')}); it would refuse a first-run link. Sign in with its token, "
-            "or restart it on 127.0.0.1 without ABSTRACTGATEWAY_AUTH_TOKEN."
+            f"(auth mode: {auth.get('mode')}): it was started with a shared token only, so it would refuse a "
+            "first-run link. Sign in with its token, or start it with a plain `abstractgateway serve` on this "
+            "computer (accounts on by default)."
         )
         if args.json:
             print(json.dumps({"ok": False, "reason_code": "claim_requires_user_auth", "message": msg}, indent=2))
@@ -142,19 +145,45 @@ def run_claim(args: argparse.Namespace) -> int:
 
 
 def add_service_subparser(sub: Any) -> None:
-    svc = sub.add_parser("service", help="Start the gateway at login (LaunchAgent / systemd user unit / Windows Startup)")
+    svc = sub.add_parser("service", help="Start the gateway at login (LaunchAgent / systemd user unit or XDG autostart / Windows Run entry)")
     ssub = svc.add_subparsers(dest="service_cmd", required=True)
     for name, help_text in (
         ("install", "Install and start the per-user login service"),
         ("uninstall", "Stop and remove the login service (data is kept)"),
-        ("status", "Show whether the login service is installed and loaded"),
+        ("enable", "Start this gateway at the next login (does not start a second copy now) — the tray's switch"),
+        ("disable", "Stop starting this gateway at login (the running gateway keeps running) — the tray's switch"),
+        ("status", "Show whether the gateway would start at login: on | off | broken | other"),
     ):
         p = ssub.add_parser(name, help=help_text)
         p.add_argument("--data-dir", default=None, help="Gateway data dir (default: same resolution as `serve`)")
         p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+        if name in {"enable", "install"}:
+            p.add_argument(
+                "--host",
+                default=None,
+                help="Written into the Network setting, NOT the command line: 127.0.0.1 = localhost, 0.0.0.0 = lan "
+                "(default: keep the stored setting, else localhost). See `abstractgateway network`.",
+            )
+            p.add_argument(
+                "--port",
+                type=int,
+                default=None,
+                help="Written into the Network setting (default: the stored setting's port, else "
+                + ("the running gateway's, else " if name == "enable" else "")
+                + "the previously installed one, else the first free from 8080)",
+            )
+            p.add_argument(
+                "--pin-command-line",
+                action="store_true",
+                dest="pin_command_line",
+                help="Technical: put --host/--port on the login item's command line (the pre-2026-09-24 shape). "
+                "They then override the Network setting, which no longer applies (reported as overridden_by_cli).",
+            )
+        if name == "enable":
+            p.add_argument("--start-now", action="store_true", help="Also start it now (like `install`, without waiting for health)")
+        if name == "disable":
+            p.add_argument("--stop", action="store_true", help="Also stop a gateway the service manager started (like `uninstall`)")
         if name == "install":
-            p.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-            p.add_argument("--port", type=int, default=None, help="Port (default: the previously installed port, else the first free from 8080)")
             p.add_argument("--dry-run", action="store_true", help="Print the files and commands; change nothing")
             p.add_argument("--no-start", action="store_true", help="Write the service file only (do not load/start it)")
             p.add_argument("--no-wait", action="store_true", help="Do not wait for /api/health after starting")
@@ -176,6 +205,9 @@ def _print_plan(plan: Any) -> None:
         print(f"# --- write {f['path']} (mode {f['mode']}) ---")
         print(f["content"].rstrip("\n"))
         print("# --- end ---")
+    for r in d.get("registry") or []:
+        where = f"HKCU\\{r['key']}\\{r['name']}"
+        print(f"registry set {where} = {r['value']}" if r["op"] == "set" else f"registry delete {where}{' (if present)' if r.get('missing_ok') else ''}")
     for c in d["commands"]:
         import shlex
 
@@ -188,8 +220,38 @@ def _print_plan(plan: Any) -> None:
         print(f"# note: {n}")
 
 
+def _actor() -> str:
+    try:
+        import getpass
+
+        return f"cli/{getpass.getuser() or 'operator'}"
+    except Exception:
+        return "cli/operator"
+
+
+def _print_autostart_result(out: Dict[str, Any]) -> None:
+    after = out.get("after") or {}
+    if (out.get("network") or {}).get("message"):
+        print(out["network"]["message"])
+    for r in out.get("results") or []:
+        if r.get("registry"):
+            print(f"registry {r['registry']}: HKCU\\{r['key']}\\{r['name']}")
+        elif r.get("argv"):
+            print("ran: " + " ".join(str(a) for a in r["argv"][:6]) + f" -> rc={r.get('returncode')}")
+        elif r.get("removed"):
+            print(f"removed {r['removed']}")
+    for f in (out.get("plan") or {}).get("files") or []:
+        print(f"wrote {f['path']}")
+    print(f"start at login [{after.get('state')}]: {after.get('summary')}")
+    for n in (out.get("plan") or {}).get("notes") or []:
+        if "OLD registration" in n or "--pin-command-line" in n:
+            print(f"note: {n}")
+    if out.get("error"):
+        print(f"error: {out['error']}")
+
+
 def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, home: Optional[Path] = None) -> int:
-    from . import os_service
+    from . import autostart, os_service
     from .host_paths import apply_data_dir_default
 
     _apply_data_dir_flag(getattr(args, "data_dir", None))
@@ -202,9 +264,25 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
         st = os_service.service_status(platform=plat, home=home_p, data_dir=data_dir, probe=True)
         st["data_dir"] = str(data_dir)
         st["data_dir_source"] = res.source
+        auto = autostart.autostart_status(data_dir=data_dir, platform=plat, home=home_p, probe=True)
+        st["autostart"] = auto
+        st["state"] = auto["state"]
+        st["needs_repair"] = bool(auto.get("needs_repair"))
+        st["pinned_command_line"] = auto.get("pinned_command_line")
+        st["bind_source"] = auto.get("bind_source")
         if args.json:
             print(json.dumps(st, indent=2, sort_keys=True))
         else:
+            print(f"start at login [{auto['state']}]: {auto['summary']}")
+            for p in auto.get("problems") or []:
+                print(f"- {'needs repair' if p in (auto.get('repairs') or []) else 'problem'}: {p}")
+            pin = auto.get("pinned_command_line") or {}
+            if pin:
+                print(f"- bind: pinned on the command line to {pin.get('host')}:{pin.get('port')}"
+                      + (" (--pin-command-line, on purpose; the Network setting does not apply)" if pin.get("by_choice") else ""))
+            elif auto.get("network_setting"):
+                ns = auto["network_setting"]
+                print(f"- bind: the Network setting ({ns.get('mode')}, port {ns.get('port')}; `abstractgateway network status`)")
             print(f"service ({st['mechanism']}): {'installed' if st['installed'] else 'not installed'}"
                   + ("" if st["loaded"] is None else f", {'loaded' if st['loaded'] else 'not loaded'}"))
             print(f"- unit: {st['unit_path']}")
@@ -212,6 +290,26 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
                 print(f"- console: {st['url']}/console")
             print(f"- data dir: {data_dir} ({res.source})")
         return 0
+
+    if args.service_cmd in {"enable", "disable"}:
+        if args.service_cmd == "enable":
+            out = autostart.enable_autostart(
+                data_dir=data_dir,
+                host=getattr(args, "host", None) or None,
+                port=getattr(args, "port", None),
+                pin_command_line=bool(getattr(args, "pin_command_line", False)),
+                actor=_actor(),
+                platform=plat,
+                home=home_p,
+                start_now=bool(args.start_now),
+            )
+        else:
+            out = autostart.disable_autostart(data_dir=data_dir, platform=plat, home=home_p, stop_now=bool(args.stop))
+        if args.json:
+            print(json.dumps(out, indent=2, sort_keys=True, default=str))
+        else:
+            _print_autostart_result(out)
+        return 0 if out["ok"] else 1
 
     if args.service_cmd == "uninstall":
         plan = os_service.build_uninstall_plan(platform=plat, home=home_p, data_dir=data_dir)
@@ -229,18 +327,27 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
                 print(n)
         return 0
 
-    # install
-    rec = os_service.read_service_record(data_dir) or {}
-    chosen = os_service.choose_port(host=args.host, requested=args.port, persisted=rec.get("port"))
+    # install: the bind goes into the Network setting (seeded below), the
+    # login item runs plain `serve` — unless --pin-command-line.
+    bind = os_service.resolve_service_bind(
+        data_dir,
+        host=getattr(args, "host", None) or None,
+        port=getattr(args, "port", None),
+        pin_command_line=bool(getattr(args, "pin_command_line", False)),
+    )
+    chosen = {"port": bind["port"], "source": bind["port_source"], "busy_skipped": bind["busy_skipped"]}
     exe = os_service.current_gateway_argv(plat)
     plan = os_service.build_install_plan(
         platform=plat,
         home=home_p,
-        host=args.host,
-        port=int(chosen["port"]),
+        host=str(bind["host"]),
+        port=int(bind["port"]),
         data_dir=data_dir,
         exe_argv=exe,
+        pinned=bool(bind["pinned"]),
+        network=bind,
     )
+    plan.notes.insert(0, os_service.describe_seed(bind))
     if chosen.get("busy_skipped"):
         plan.notes.insert(0, f"Ports in use, skipped: {', '.join(str(p) for p in chosen['busy_skipped'])}; using {chosen['port']}.")
     if args.no_start:
@@ -253,6 +360,7 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
             _print_plan(plan)
         return 0
 
+    seeded = os_service.seed_network_setting(data_dir, bind, actor=_actor() + "/install")
     results = os_service.execute_plan(plan, echo=(lambda _l: None) if args.json else print)
     os_service.write_service_record(plan)
     healthy: Optional[bool] = None
@@ -271,7 +379,7 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
             minted = mint_claim(data_dir=data_dir, tenant_id=str(user.get("tenant_id") or "default"), user_id=str(user.get("user_id") or "admin"))
             claim = claim_url(plan.url, minted["code"])
     if args.json:
-        print(json.dumps({"ok": True, "healthy": healthy, "claim_url": claim, "port_choice": chosen, **plan.public_dict(), "results": results}, indent=2))
+        print(json.dumps({"ok": True, "healthy": healthy, "claim_url": claim, "port_choice": chosen, **plan.public_dict(), "network_seed": seeded, "results": results}, indent=2, default=str))
         return 0 if healthy is not False else 1
     for n in plan.notes:
         print(n)

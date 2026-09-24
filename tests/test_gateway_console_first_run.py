@@ -5,9 +5,20 @@ console JavaScript in a node VM: a `#claim=` link is stripped from the URL
 BEFORE it is redeemed, redemption opens the wizard, every step renders from
 the gateway's payloads, and Finish records the first-run state with the CSRF
 header. The Engines and Model steps mount AbstractCore's embedded screens
-(`window.AbstractCoreConsole`, stubbed here) with the gateway's options; the
-"Set as default" bar writes the text route through the capability-defaults
-endpoint; an AbstractCore older than 2.14.0 shows a card instead.
+(`window.AbstractCoreConsole`, stubbed here) with the gateway's options; an
+AbstractCore older than 2.14.0 shows a card instead.
+
+Mission L (2026-09-24): the guide is a full-page flow; Local engines render
+as CONSOLE cards from GET /engines (one card per engine, one primary action
+per state, plain-language failures, the log behind "Show details") instead
+of AbstractCore's table; the Apps step shows Install/Open cards with the
+terminal commands behind "Technical details".
+
+Mission X2 (2026-09-24): the Model step shows the Models tab's catalog CARDS
+(console_catalog.py) with "Fits this computer" preset, not AbstractCore's
+table; a downloaded text model's "Use as default" writes the text route
+through the capability-defaults endpoint; the Models tab mounts the cards
+plus AbstractCore's screen (its "on this computer" list) below them.
 """
 
 from __future__ import annotations
@@ -27,6 +38,11 @@ pytestmark = pytest.mark.basic
 WIZARD_IDS = [
     "open-setup",
     "first-run-backdrop",
+    "first-run-scroll",
+    "first-run-kicker",
+    "first-run-step-title",
+    "first-run-step-lede",
+    "first-run-advanced",
     "first-run-wizard",
     "first-run-title",
     "first-run-steps",
@@ -95,7 +111,7 @@ const document = { body: el("body"), documentElement: el("html"), cookie: "", ge
 const store = new Map();
 const localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
 const location = { hash: scenario.hash, pathname: "/console", search: "", origin: "http://127.0.0.1:18080", reload() {} };
-const history = { calls: [], replaceState(_s, _t, url) { this.calls.push({ url, hashAtCall: location.hash, claimCallsSoFar: calls.filter((c) => c.path.endsWith("/session/claim")).length }); location.hash = ""; } };
+const history = { calls: [], replaceState(_s, _t, url) { this.calls.push({ url, hashAtCall: location.hash, claimCallsSoFar: calls.filter((c) => c.path.endsWith("/session/claim")).length }); location.hash = (String(url).match(/#.*$/) || [""])[0]; } };
 let loggedIn = false;
 let firstRunCompleted = scenario.completed;
 const calls = [];
@@ -109,11 +125,11 @@ async function fetch(path, options = {}) {
     const body = JSON.parse(String(options.body || "{}"));
     if (body.code !== scenario.code) return res(401, { detail: { reason_code: "claim_unknown", message: "already used" } });
     loggedIn = true; document.cookie = "abstractgateway_csrf=agcsrf_wizard";
-    return res(200, { ok: true, claimed: true, principal: { admin: true } });
+    return res(200, Object.assign({ ok: true, claimed: true, principal: { admin: true } }, scenario.createdBy ? { claim: { created_by: scenario.createdBy } } : {}));
   }
   if (path === "/api/gateway/me") {
     if (!loggedIn) return res(401, { detail: "signed out" });
-    return res(200, { ok: true, principal: { tenant_id: "default", user_id: "admin", runtime_id: "default", roles: ["admin", "user"], admin: true } });
+    return res(200, Object.assign({ ok: true, principal: { tenant_id: "default", user_id: "admin", runtime_id: "default", roles: ["admin", "user"], admin: true } }, scenario.meAuth ? { auth: scenario.meAuth } : {}));
   }
   if (path === "/api/gateway/host/first-run" && method === "GET") return res(200, { ok: true, completed: firstRunCompleted });
   if (path === "/api/gateway/host/first-run" && method === "POST") { firstRunCompleted = true; return res(200, { ok: true, completed: true }); }
@@ -124,6 +140,41 @@ async function fetch(path, options = {}) {
     gateway: { data_dir: "/Users/u/Library/Application Support/AbstractGateway", data_dir_source: "os_default", auth_mode: "users", service: { installed: false, mechanism: "launchd-agent" }, url: "http://127.0.0.1:18080" },
   });
   if (path === "/api/gateway/engines") return res(404, { detail: "Not Found" });
+  if (path.startsWith("/api/gateway/engines?")) {
+    if (scenario.enginesFail) return res(501, { detail: { message: scenario.enginesFail } });
+    return res(200, { schema: "gateway_engines_v2", install_allowed: true, engines: [
+      { id: "ollama", name: "Ollama", description: "A local model server.", supported: true, installed: false, running: false, base_url: "http://localhost:11434", install: { available: true, method: "app", needs_admin: false, steps: ["download"], command_preview: ["download ollama"] }, actions: [{ id: "install", label: "Install", enabled: true }, { id: "docs", label: "Docs", enabled: true, url: "https://docs.ollama.com" }], active_job: null },
+      { id: "mlx", name: "MLX (mlx-lm)", description: "Apple's engine.", supported: true, installed: true, version: "0.32.2", running: null, install: { available: true, method: "wheel" }, actions: [], active_job: null },
+    ] });
+  }
+  if (path === "/api/gateway/engines/jobs") return res(200, { jobs: [] });
+  if (path === "/api/gateway/engines/ollama/install" && method === "POST" && JSON.parse(String(options.body || "{}")).dry_run === true) {
+    const loc = JSON.parse(String(options.body || "{}")).location;
+    const sys = loc === "system";
+    return res(200, { schema: "engine_install_job_v1", job_id: null, dry_run: true, state: "done", plan: { available: true, method: "app", target: sys ? "/Applications/Ollama.app" : "/Users/u/Applications/Ollama.app", needs_admin: sys, admin_reason: sys ? "/Applications is not writable by this account; placing Ollama.app there needs an administrator." : null } });
+  }
+  if (path === "/api/gateway/network") return res(200, { schema: "gateway_network_v1", writable: true, configured: { mode: "localhost", label: "Localhost only", port: 18080 }, effective: { mode: "localhost", label: "Localhost only", bind_host: "127.0.0.1", port: 18080 }, restart_required: false, restart: {}, auth: { ok_for_mode: true }, modes: [{ id: "localhost", label: "Localhost only", allowed: true }, { id: "lan", label: "Local network", allowed: true }, { id: "internet", label: "Internet", allowed: true }], addresses: [{ kind: "loopback", url: "http://127.0.0.1:18080", reachable: true }], copy_hint: "http://127.0.0.1:18080", warnings: [] });
+  if (path === "/api/gateway/engines/ollama/install" && method === "POST") return res(200, { schema: "engine_install_job_v1", job_id: "eng-1", engine: "ollama", state: "downloading", status: "running", percent: 40, bytes_done: 40, bytes_total: 100, message: "Downloading Ollama", can_cancel: true });
+  if (path === "/api/gateway/engines/jobs/eng-1") return res(200, { schema: "engine_install_job_v1", job_id: "eng-1", engine: "ollama", state: "needs_tools", status: "running", percent: 5, message: "Building from source needs the Apple command-line tools.", tools_prompt: { reason: "no compiler", action: { kind: "xcode_select_install", available: true, button: "Install tools" } }, continue_actions: ["install_tools", "recheck"], can_cancel: true, details: "xcrun: error: invalid active developer path" });
+  if (path === "/api/gateway/engines/jobs/eng-1/continue" && method === "POST") return res(200, { schema: "engine_install_job_v1", job_id: "eng-1", engine: "ollama", state: "failed", status: "failed", message: "The build failed: no C compiler was found.", error: { code: "build_failed", message: "The build failed: no C compiler was found." }, details: "xcrun: error: invalid active developer path", can_cancel: false });
+  if (path.startsWith("/api/gateway/jobs?")) return res(200, { schema: "host_jobs_v1", jobs: [] });
+  if (path.startsWith("/api/gateway/apps?")) {
+    const row = (id, pkg, extra) => Object.assign({ id, name: id, package: pkg, installed: false, running: false, status: "not_installed", needs_node_install: true, install_available: false, install_blocked_reason: "Installing software on the gateway host is turned off for this gateway.", actions: [], active_job: null }, extra || {});
+    return res(200, { ok: true, gateway_url: "http://127.0.0.1:18080", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: false, active_job: null } },
+      console_tui: { kind: "tui", installed: false, install_available: false, install_method: "cargo", install_command: "cargo install abstractgateway-console", command: "abstractgateway-console --url http://127.0.0.1:18080" }, apps: [
+      row("flow", "@abstractframework/flow", { install_available: true, install_blocked_reason: null, actions: ["install"] }),
+      row("code", "@abstractframework/code", { installed: true, version: "0.4.2", running: true, status: "running", actions: ["open", "stop", "logs"], url: "http://127.0.0.1:3002/", interfaces: [{ kind: "web" }, { kind: "tui", installed: true, version: "0.5.0", launch_available: true, command: "abstractcode --gateway http://127.0.0.1:18080" }] }),
+      row("observer", "@abstractframework/observer"),
+      row("continuum", "@abstractframework/continuum"),
+      row("entity", "@abstractframework/entity"),
+    ] });
+  }
+  if (path === "/api/gateway/apps/flow/install" && method === "POST") return res(200, { ok: true, created: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "running", percent: 12, bytes_done: 0, bytes_total: null, message: "Installing Node.js", steps: [] } });
+  if (path === "/api/gateway/apps/jobs/app-1") return res(200, { ok: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "succeeded", percent: 100, message: "Flow is running" } });
+  if (path === "/api/gateway/models/catalog") {
+    if (scenario.catalogFail) return res(501, { detail: { message: scenario.catalogFail } });
+    return res(200, CATALOG);
+  }
   if (path === "/api/gateway/models/delete") return res(409, { ok: false, status: "refused", message: "refusing to delete: loaded (send force=true to override)", delete_blockers: ["loaded"], error: { message: "refusing to delete: loaded (send force=true to override)", type: "host_action_refused" } });
   if (path.startsWith("/api/gateway/config/capability-defaults/") && method === "PUT") return res(200, { ok: true });
   if (path === "/api/gateway/models/availability") return res(200, {
@@ -131,12 +182,31 @@ async function fetch(path, options = {}) {
     recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
   });
   if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: [] });
+  if (path === "/api/gateway/admin/users" && method === "POST") return res(409, { detail: { reason_code: "user_accounts_off_admin_only", message: "This gateway runs with user accounts off, so a non-admin account could not sign in here." } });
   if (path === "/api/gateway/admin/users") return res(200, { users: [] });
   if (path === "/api/gateway/admin/runtime-reservations") return res(200, { runtime_reservations: [] });
   if (path === "/api/gateway/config/provider-endpoint-profiles") return res(200, { profiles: [] });
   if (path === "/api/gateway/discovery/providers") return res(200, { items: [] });
   return res(200, {});
 }
+// AbstractCore's model_catalog_v1 (with W1's quant_class): one text model
+// (installed LM Studio 4-bit build recommended, an 8-bit MLX build, an Ollama
+// build too large for this host) and one model with nothing that fits.
+const art = (provider, artifact, quant_class, verdict, status, extra) => Object.assign({
+  provider, artifact, engine: provider, quant: quant_class, quant_class, bits: quant_class === "8bit" ? 8.5 : 4.5,
+  download_bytes: 5400000000, size_source: "catalog", presence: { status, location: null, evidence: null },
+  fit: { verdict, notes: [] }, supported_on_host: true, downloadable: true, recommended: false,
+}, extra || {});
+const CATALOG = { schema: "model_catalog_v1", host_profile: { accelerator: "metal", gpu_name: "Apple M5 Max", ram_bytes: 34359738368, unified_memory: true, ceiling_bytes: 27000000000 }, rows: [
+  { id: "qwen3.5-9b", display_name: "Qwen3.5 9B", vendor: "Qwen", params_total: 9000000000, license: "apache-2.0", starter: true, capabilities: { text: true, tools: "native", thinking: true },
+    artifacts: [
+      art("lmstudio", "qwen/qwen3.5-9b@4bit", "4bit", "fits", "installed", { recommended: true }),
+      art("mlx", "mlx-community/Qwen3.5-9B-8bit", "8bit", "fits", "absent"),
+      art("ollama", "qwen3.5:9b-fp16", "16bit", "too_large", "absent"),
+    ] },
+  { id: "big-model", display_name: "Big Model 400B", vendor: "Big", params_total: 400000000000, license: "mit", starter: false, capabilities: { text: true },
+    artifacts: [art("mlx", "mlx-community/Big-400B-4bit", "4bit", "too_large", "absent", { recommended: true })] },
+] };
 // AbstractCore's embedded screens, stubbed: records every mount/refresh/unmount.
 const mounts = [];
 const coreLib = {
@@ -176,66 +246,112 @@ if (scenario.name === "claim") {
 
   context.firstRunStep(1); await settle();
   if (hidden("first-run-step-engines") || !hidden("first-run-step-welcome")) fail("step panels did not switch");
-  if (scenario.expectMount) {
-    const m = mounts.find((x) => x.id === "first-run-engines-body");
-    if (!m || m.kind !== "engines") fail("engines step did not mount the Engines screen: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
-    const o = m.options;
-    if (o.apiBase !== "/api/gateway" || o.cliPrefix !== "abstractgateway") fail("mount options wrong: " + JSON.stringify(o));
-    if (!o.hostName || typeof o.hostName !== "string") fail("mount carried no host name");
-    if (o.isAdmin() !== true) fail("isAdmin must read the admin principal");
-    if (typeof o.onJob !== "function") fail("mount carried no onJob");
-    // The request adapter: CSRF on writes, `.status` and the refusal's own
-    // message on a 409 whose body has no `detail` envelope.
-    let refused = null;
-    try { await o.request("POST", "/api/gateway/models/delete", { provider: "ollama", artifact: "qwen3:8b" }); } catch (err) { refused = err; }
-    if (!refused || refused.status !== 409) fail("adapter must reject with .status 409");
-    if (!String(refused.message).startsWith("refusing to delete: loaded")) fail("adapter lost the refusal message: " + refused.message);
-    const del = calls.find((c) => c.path === "/api/gateway/models/delete");
-    if (!del || del.csrf !== "agcsrf_wizard" || JSON.parse(del.body).artifact !== "qwen3:8b") fail("adapter POST carried no CSRF/body: " + JSON.stringify(del));
-    const got = await o.request("GET", "/api/gateway/host/first-run");
-    if (!got || got.ok !== true) fail("adapter GET did not resolve to parsed JSON");
-    // Going back and forth refreshes the mounted screen, never re-mounts it.
-    context.firstRunStep(-1); await settle(); context.firstRunStep(1); await settle();
-    if (mounts.filter((x) => x.id === "first-run-engines-body").length !== 1 || m.refreshed < 1) fail("engines screen re-mounted instead of refreshed");
+  if (mounts.some((x) => x.kind === "engines")) fail("engines must render as console cards, not mount AbstractCore's table: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
+  const engines = el("first-run-engines-body").innerHTML;
+  if (engines.includes("<table")) fail("engines must not render as a table");
+  if (engines.includes("CLI equivalent")) fail("no CLI lines on the primary path");
+  if (scenario.enginesFail) {
+    for (const want of scenario.enginesWant) if (!engines.includes(want)) fail("engines failure view missing " + want + ": " + engines);
   } else {
-    const engines = el("first-run-engines-body").innerHTML;
-    for (const want of scenario.enginesWant) if (!engines.includes(want)) fail("engines fallback missing " + want + ": " + engines);
+    for (const want of ['data-engine-card="ollama"', 'data-engine-card="mlx"', "Not installed", "Ready", 'data-engine-action="install"']) if (!engines.includes(want)) fail("engine cards missing " + want + ": " + engines);
+    // Install asks first, then POSTs a real (non-dry-run) job with CSRF.
+    await context.engineAction("install", "ollama"); await settle(); await settle();
+    const confirmHtml = el("first-run-engines-body").innerHTML;
+    if (!confirmHtml.includes('data-engine-action="install-go"')) fail("Install must confirm before running");
+    // An app engine offers the two real locations (mission L2): the gateway's
+    // own dry-run plans for user and system, the system one marked
+    // "(administrator)" because its plan says needs_admin.
+    const plans = calls.filter((c) => c.path === "/api/gateway/engines/ollama/install" && JSON.parse(c.body).dry_run === true).map((c) => JSON.parse(c.body).location).sort();
+    if (JSON.stringify(plans) !== JSON.stringify(["system", "user"])) fail("location plans not asked: " + JSON.stringify(plans));
+    if (!/data-location="user"[^>]*>Install</.test(confirmHtml) || !/data-location="system"[^>]*>Install for all users \(administrator\)</.test(confirmHtml)) fail("location choice missing: " + confirmHtml);
+    await context.engineAction("install-go", "ollama", { dataset: { location: "user" } }); await settle(); await settle();
+    const post = calls.find((c) => c.path === "/api/gateway/engines/ollama/install" && JSON.parse(c.body).dry_run === false);
+    if (!post || post.csrf !== "agcsrf_wizard" || JSON.parse(post.body).location !== "user") fail("install POST wrong: " + JSON.stringify(post));
+    if (!calls.some((c) => c.path === "/api/gateway/engines/jobs/eng-1")) fail("the install job was not polled");
+    const waiting = el("first-run-engines-body").innerHTML;
+    if (!waiting.includes("Needs Apple tools") || !waiting.includes('data-engine-action="continue:install_tools"') || !waiting.includes("Install tools")) fail("needs_tools must offer Install tools: " + waiting);
+    await context.engineAction("continue:install_tools", "ollama"); await settle(); await settle();
+    const cont = calls.find((c) => c.path === "/api/gateway/engines/jobs/eng-1/continue");
+    if (!cont || cont.csrf !== "agcsrf_wizard" || JSON.parse(cont.body).action !== "install_tools") fail("continue POST wrong: " + JSON.stringify(cont));
+    const after = el("first-run-engines-body").innerHTML;
+    if (!after.includes("no C compiler was found")) fail("a failed install shows the job's plain message first: " + after);
+    if (!after.includes("Show details") || !after.includes("ui-log")) fail("the raw log must sit behind Show details: " + after);
+    if (!after.includes("Try again")) fail("a failed install offers Try again");
   }
 
   context.firstRunStep(1); await settle();
   const model = el("first-run-model-recommended").innerHTML;
-  for (const want of ["qwen/qwen3.5-9b@4bit", "not downloaded", "Use recommended defaults", "first-run-download"]) if (!model.includes(want)) fail("model step missing " + want + ": " + model);
-  if (scenario.expectMount) {
-    const m = mounts.find((x) => x.id === "first-run-model-catalog");
-    if (!m || m.kind !== "models" || m.options.apiBase !== "/api/gateway") fail("model step did not mount the Models screen");
-    // Selecting an installed row offers "Set as default"; it PUTs the text
-    // route with the SERVED id (LM Studio's @quant suffix dropped) + CSRF.
-    const row = { dataset: { provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit" } };
-    el("first-run-model-catalog").dispatch("click", { target: { closest: (sel) => (sel.includes('data-acc-row="installed"') ? row : null) } });
-    if (!el("first-run-model-default").innerHTML.includes("first-run-set-default")) fail("installed row did not offer Set as default: " + el("first-run-model-default").innerHTML);
-    el("first-run-model-default").innerHTML = "";
-    el("first-run-model-catalog").dispatch("click", { target: { closest: () => null } });
-    if (el("first-run-model-default").innerHTML.includes("first-run-set-default")) fail("a non-installed click must not offer Set as default");
-    el("first-run-model-catalog").dispatch("focusin", { target: { closest: (sel) => (sel.includes('data-acc-row="installed"') ? row : null) } });
-    await el("first-run-set-default").onclick(); await settle();
-    const put = calls.find((c) => c.method === "PUT" && c.path.startsWith("/api/gateway/config/capability-defaults/"));
-    if (!put || put.path !== "/api/gateway/config/capability-defaults/output/text") fail("Set as default hit the wrong route: " + JSON.stringify(put));
-    const body = JSON.parse(put.body);
-    if (body.provider !== "lmstudio" || body.model !== "qwen/qwen3.5-9b") fail("Set as default body wrong: " + put.body);
-    if (put.csrf !== "agcsrf_wizard") fail("Set as default PUT carried no CSRF header");
-    if (!el("first-run-message").textContent.includes("qwen/qwen3.5-9b")) fail("no confirmation after Set as default");
+  for (const want of ["qwen/qwen3.5-9b@4bit", "Not downloaded", "Use recommended defaults", "first-run-download"]) if (!model.includes(want)) fail("model step missing " + want + ": " + model);
+  // The Models tab's catalog cards, "Fits this computer" preset (never
+  // AbstractCore's table, whatever the screens' state).
+  if (mounts.some((x) => x.id === "first-run-model-catalog")) fail("the model step must show the catalog cards, not mount AbstractCore's table");
+  const cat = el("first-run-model-catalog").innerHTML;
+  if (scenario.catalogFail) {
+    for (const want of ["The model catalog did not load", scenario.catalogWant]) if (!cat.includes(want)) fail("model step must explain why the catalog is missing (" + want + "): " + cat);
   } else {
-    const cat = el("first-run-model-catalog").innerHTML;
-    if (!cat.includes(scenario.enginesWant[0])) fail("model step must explain why the catalog is missing: " + cat);
+    for (const want of ['data-mc-model="qwen3.5-9b"', "Recommended for this computer", "qwen/qwen3.5-9b@4bit", "mlx-community/Qwen3.5-9B-8bit", "8-bit", "Starter", "Use as default", 'data-mc-fits="1" checked', "1</b> of 2 models"]) if (!cat.includes(want)) fail("catalog cards missing " + want + ": " + cat);
+    for (const gone of ['data-mc-model="big-model"', "qwen3.5:9b-fp16"]) if (cat.includes(gone)) fail("the guide presets Fits this computer; " + gone + " is too large and must be hidden: " + cat);
+    if (cat.includes("<table")) fail("the catalog is cards, not a table");
+    if (cat.includes("does not report quant_class")) fail("a catalog WITH quant_class must not show the missing-field notice");
+    // "Use as default" on the downloaded text model PUTs the text route with
+    // the SERVED id (LM Studio's @quant suffix dropped) + CSRF.
+    const btn = { disabled: false, textContent: "Use as default", dataset: { mcAction: "default", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit" } };
+    el("first-run-model-catalog").onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? btn : null) } });
+    await settle();
+    const put = calls.find((c) => c.method === "PUT" && c.path.startsWith("/api/gateway/config/capability-defaults/"));
+    if (!put || put.path !== "/api/gateway/config/capability-defaults/output/text") fail("Use as default hit the wrong route: " + JSON.stringify(put));
+    const body = JSON.parse(put.body);
+    if (body.provider !== "lmstudio" || body.model !== "qwen/qwen3.5-9b") fail("Use as default body wrong: " + put.body);
+    if (put.csrf !== "agcsrf_wizard") fail("Use as default PUT carried no CSRF header");
+    if (!el("first-run-message").textContent.includes("qwen/qwen3.5-9b")) fail("no confirmation after Use as default");
   }
 
   context.firstRunStep(1); await settle();
   const apps = el("first-run-apps-body").innerHTML;
-  for (const pkg of ["flow", "code", "observer", "continuum", "entity"]) if (!apps.includes("npx @abstractframework/" + pkg)) fail("apps missing " + pkg);
+  // Mission GG: a plain card is icon + name + pill / one line / ONE action
+  // row (the primary action + the terminal one), pinned at the same level
+  // (`.is-aligned` subgrid). Nothing technical is RENDERED with Technical
+  // details off: no Stop, no Show log, no versions, no commands.
+  if (!apps.includes('class="ui-card-grid is-aligned"')) fail("the apps grid must pin the action rows (is-aligned): " + apps);
+  for (const gone of ['data-app-action="stop"', 'data-app-action="logs"', "Show log", "npx @abstractframework/", "Version 0.4.2", "Open it with the Open button", "Also runs in your terminal", "abstractcode --gateway"]) if (apps.includes(gone)) fail("the plain view must not render " + gone + ": " + apps);
   if (!apps.includes("http://127.0.0.1:18080")) fail("apps step did not name the gateway URL");
+  if (apps.includes("nodejs.org")) fail("apps step must not send people to nodejs.org");
+  for (const want of ['data-app-action="install"', "Install and open", 'data-app-action="open"', 'data-app-action="tui-open"', "Open in Terminal", "Node.js will be installed for you", "turned off for this gateway"]) if (!apps.includes(want)) fail("apps cards missing " + want + ": " + apps);
+  if (!/<button[^>]*is-primary[^>]*disabled[^>]*>Install</.test(apps)) fail("a blocked install shows a disabled Install with its reason: " + apps);
+  const cards = apps.split('<article class="ui-card ui-app-card').slice(1);
+  if (cards.length !== 5) fail("five app cards expected: " + cards.length);
+  for (const c of cards) {
+    const at = ["ui-card__head", "ui-card__blurb is-oneline", "ui-card__body", "ui-card__actions", "ui-card__tech"].map((k) => c.indexOf('class="' + k));
+    if (at.some((i) => i < 0) || at.some((i, k) => k && i < at[k - 1])) fail("a card must be head / one line / body / action row / technical, in that order: " + c);
+    const row = c.slice(c.indexOf('class="ui-card__actions"'), c.indexOf('class="ui-card__tech"'));
+    if ((row.match(/is-primary/g) || []).length !== 1) fail("one primary action per card: " + row);
+  }
+  const codeRow = cards.find((c) => c.includes('data-app-card="code"'));
+  if (!/data-app-action="open"[\s\S]*data-app-action="tui-open"[\s\S]*class="ui-card__tech"/.test(codeRow)) fail("Open in Terminal sits next to Open in the one action row: " + codeRow);
+  // Technical details ON renders the technical line (Stop · Show log ·
+  // version) and the commands; OFF removes them from the DOM again.
+  context.uiSetAdvanced(true); await settle();
+  const tech = el("first-run-apps-body").innerHTML;
+  for (const want of ['data-app-action="stop"', 'data-app-action="logs"', "Show log", "Version 0.4.2", "Terminal 0.5.0", "abstractcode --gateway http://127.0.0.1:18080", "ui-card__techline"]) if (!tech.includes(want)) fail("Technical details must render " + want + ": " + tech);
+  for (const pkg of ["flow", "code", "observer", "continuum", "entity"]) if (!tech.includes("npx @abstractframework/" + pkg)) fail("Technical details must show the npx line for " + pkg);
+  context.uiSetAdvanced(false); await settle();
+  if (el("first-run-apps-body").innerHTML.includes('data-app-action="stop"')) fail("switching Technical details off must remove Stop from the DOM");
+  await context.appAction("install", "flow"); await settle(); await settle();
+  const appPost = calls.find((c) => c.path === "/api/gateway/apps/flow/install");
+  if (!appPost || appPost.csrf !== "agcsrf_wizard" || JSON.parse(appPost.body).launch !== true) fail("app install POST wrong: " + JSON.stringify(appPost));
+  if (!calls.some((c) => c.path === "/api/gateway/apps/jobs/app-1")) fail("the app install job was not polled");
+  if (el("first-run-apps-body").innerHTML.includes("Open it with the Open button")) fail("a finished install never leaves a box restating the pill");
 
   context.firstRunStep(1); await settle();
   if (!el("first-run-done-body").innerHTML.includes("abstractgateway claim --open")) fail("done step missing the CLI equivalents");
+  // The console's own terminal app: one quiet line; its two commands only
+  // with Technical details ON (rendered, not hidden by CSS).
+  const note = el("first-run-console-tui").innerHTML;
+  if (!note.includes("This console also exists as a terminal app") || note.includes("cargo install abstractgateway-console") || note.includes("ui-cmdline")) fail("Done step: one quiet line, no commands: " + note);
+  context.uiSetAdvanced(true); await settle();
+  const noteTech = el("first-run-console-tui").innerHTML;
+  for (const want of ["cargo install abstractgateway-console", "abstractgateway-console --url http://127.0.0.1:18080"]) if (!noteTech.includes(want)) fail("Done step with Technical details must show " + want + ": " + noteTech);
+  context.uiSetAdvanced(false); await settle();
   if (hidden("first-run-finish") || !hidden("first-run-next")) fail("finish/next buttons wrong on the last step");
 
   el("first-run-finish").onclick(); await settle();
@@ -245,21 +361,21 @@ if (scenario.name === "claim") {
   if (post.csrf !== "agcsrf_wizard") fail("finish POST carried no CSRF header");
   if (!hidden("first-run-backdrop")) fail("wizard stayed open after finish");
   if (scenario.expectMount) {
-    for (const id of ["first-run-engines-body", "first-run-model-catalog"]) {
-      const m = mounts.find((x) => x.id === id);
-      if (!m || m.unmounted !== 1) fail("closing the wizard must unmount " + id);
-    }
     // The Models / Engines tabs mount on first open, refresh on re-open.
     el("tab-button-catalog").onclick(); await settle();
     el("tab-button-engines").onclick(); await settle();
     el("tab-button-catalog").onclick(); await settle();
     const tabModels = mounts.filter((x) => x.id === "catalog-core-root");
-    const tabEngines = mounts.filter((x) => x.id === "engines-core-root");
     if (tabModels.length !== 1 || tabModels[0].kind !== "models") fail("Models tab did not mount once: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
-    if (tabEngines.length !== 1 || tabEngines[0].kind !== "engines") fail("Engines tab did not mount once");
+    if (mounts.some((x) => x.id === "engines-core-root")) fail("the Engines tab renders console cards, it must not mount AbstractCore's table");
+    if (!el("engines-core-root").innerHTML.includes("data-engine-card")) fail("Engines tab shows no engine cards: " + el("engines-core-root").innerHTML);
     if (tabModels[0].refreshed !== 1) fail("re-opening the Models tab must refresh it");
     if (tabModels[0].options.cliPrefix !== "abstractgateway" || tabModels[0].options.apiBase !== "/api/gateway") fail("tab mount options wrong");
     if (!String(el("tab-catalog").className).includes("active")) fail("Models tab panel not active");
+    // The tab shows the catalog cards above AbstractCore's list, and its
+    // filters are the shareable `#catalog` link.
+    if (!el("catalog-cards-root").innerHTML.includes('data-mc-model="big-model"')) fail("the Models tab opens on the whole catalog (no fits preset): " + el("catalog-cards-root").innerHTML);
+    if (!String(history.calls[history.calls.length - 1].url).endsWith("#catalog")) fail("the Models tab did not write its #catalog link: " + JSON.stringify(history.calls.slice(-2)));
   } else {
     el("tab-button-catalog").onclick(); await settle();
     el("tab-button-engines").onclick(); await settle();
@@ -267,6 +383,52 @@ if (scenario.name === "claim") {
   }
 }
 
+if (scenario.name === "claim-tab") {
+  // `#claim=<code>&tab=<tab>`: the code is stripped, the tab survives as the
+  // `#<tab>` deep link, and the guide does not cover the requested tab.
+  if (!history.calls.length) fail("claim code was not stripped from the URL");
+  const url = String(history.calls[0].url);
+  if (url.includes("claim")) fail("replaceState kept the claim: " + url);
+  if (!url.endsWith("#" + scenario.tab)) fail("the requested tab was dropped: " + url);
+  if (!String(document.body.className).includes("signed-in")) fail("claim did not sign in");
+  if (!String(el("tab-" + scenario.tab).className).includes("active")) fail("tab " + scenario.tab + " is not the active tab: " + el("tab-" + scenario.tab).className);
+  if (!hidden("first-run-backdrop")) fail("the guide opened over the requested tab");
+}
+if (scenario.name === "claim-no-guide") {
+  // A claim after first run is completed (every tray "Open Console") or a
+  // tray link (claim.created_by "tray") never auto-opens the guide.
+  if (!String(document.body.className).includes("signed-in")) fail("claim did not sign in");
+  if (!hidden("first-run-backdrop")) fail("the guide auto-opened on a claim (completed=" + scenario.completed + ", created_by=" + scenario.createdBy + ")");
+  if (hidden("open-setup")) fail("Setup button must stay reachable");
+  el("open-setup").onclick(); await settle();
+  if (hidden("first-run-backdrop")) fail("Setup button did not reopen the guide");
+}
+
+if (scenario.name === "create-user") {
+  // Mission BB/X2: with user accounts off only admin accounts can sign in, so
+  // the create-user modal offers admin alone and says why; `/me` without the
+  // field is said out loud; a 409 that still comes back is shown word for word.
+  loggedIn = true;
+  vm.runInContext("refresh()", context);
+  await settle();
+  const opt = (value) => ({ value, hidden: false, disabled: false });
+  el("new-roles").children = [opt("user"), opt("admin"), opt("readonly")];
+  el("new-roles").value = "user";
+  el("new-user").focus = () => {};
+  context.openUserCreate();
+  const shown = el("new-roles").children.filter((o) => !o.hidden && !o.disabled).map((o) => o.value);
+  const note = el("new-roles-note");
+  if (JSON.stringify(shown) !== JSON.stringify(scenario.wantRoles)) fail("roles offered " + JSON.stringify(shown) + ", want " + JSON.stringify(scenario.wantRoles));
+  if (scenario.wantRoles.length === 1 && el("new-roles").value !== "admin") fail("accounts off must preselect admin: " + el("new-roles").value);
+  if (scenario.wantNote && !note.textContent.includes(scenario.wantNote)) fail("modal note missing: " + note.textContent);
+  if (!scenario.wantNote && !String(note.className).includes("hidden")) fail("no note when accounts are on: " + note.textContent);
+  if (scenario.post) {
+    el("new-user").value = "bob";
+    el("new-roles").value = "user";
+    await context.createUser(); await settle();
+    if (!el("user-create-message").textContent.includes("user accounts off, so a non-admin account could not sign in")) fail("the server's 409 message must be shown: " + el("user-create-message").textContent);
+  }
+}
 if (scenario.name === "completed") {
   loggedIn = true;
   vm.runInContext("refresh()", context);
@@ -312,12 +474,11 @@ def test_claim_link_signs_in_opens_and_completes_the_wizard() -> None:
     assert "OK" in result.stdout
 
 
-def test_wizard_without_the_screens_script_explains_and_keeps_download_links() -> None:
+def test_wizard_without_the_screens_script_still_shows_engine_cards() -> None:
     # Server has the screens, but the page's AbstractCore script did not run.
     code = "agclaim_" + "B" * 43
     result = _run({
         "name": "claim", "hash": f"#claim={code}", "code": code, "completed": False, "coreStub": False,
-        "enginesWant": ["did not load", "https://ollama.com/download", "https://lmstudio.ai/download", "first-run-engines-fallback"],
     })
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
@@ -340,7 +501,10 @@ def test_wizard_with_an_older_abstractcore_shows_the_upgrade_card(monkeypatch) -
     code = "agclaim_" + "C" * 43
     result = _run({
         "name": "claim", "hash": f"#claim={code}", "code": code, "completed": False, "coreStub": True,
-        "enginesWant": ["require abstractcore \u2265 2.14.0", "2.13.42", 'pip install -U &quot;abstractcore&gt;=2.14.0&quot;', "https://ollama.com/download"],
+        "enginesFail": "Models and Engines require abstractcore \u2265 2.14.0 (this gateway has 2.13.42)",
+        "enginesWant": ["cannot list its engines", "require abstractcore \u2265 2.14.0", "2.13.42", 'pip install -U &quot;abstractcore&gt;=2.14.0&quot;', "https://ollama.com/download", "https://lmstudio.ai/download"],
+        "catalogFail": "Models and Engines require abstractcore \u2265 2.14.0 (this gateway has 2.13.42)",
+        "catalogWant": "require abstractcore \u2265 2.14.0",
     }, html=html)
     # A global that happens to exist is ignored when the server said the
     # screens are unavailable: the page never mounts (expectMount False).
@@ -349,5 +513,46 @@ def test_wizard_with_an_older_abstractcore_shows_the_upgrade_card(monkeypatch) -
 
 def test_completed_data_dir_does_not_auto_open_but_setup_reopens() -> None:
     result = _run({"name": "completed", "hash": "", "code": "", "completed": True})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_claim_link_with_a_tab_lands_on_that_tab_without_the_guide() -> None:
+    code = "agclaim_" + "D" * 43
+    result = _run({"name": "claim-tab", "hash": f"#claim={code}&tab=apps", "code": code, "completed": False, "tab": "apps"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_claim_link_to_the_network_tab() -> None:
+    code = "agclaim_" + "E" * 43
+    result = _run({"name": "claim-tab", "hash": f"#claim={code}&tab=network", "code": code, "completed": True, "tab": "network"})
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_claim_after_first_run_completed_does_not_open_the_guide() -> None:
+    code = "agclaim_" + "F" * 43
+    result = _run({"name": "claim-no-guide", "hash": f"#claim={code}", "code": code, "completed": True})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_tray_claim_never_opens_the_guide_even_before_completion() -> None:
+    code = "agclaim_" + "G" * 43
+    result = _run({"name": "claim-no-guide", "hash": f"#claim={code}", "code": code, "completed": False, "createdBy": "tray"})
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+@pytest.mark.parametrize(
+    "me_auth,want_roles,want_note,post",
+    [
+        ({"mode": "legacy-token", "user_auth_enabled": False}, ["admin"], "User accounts are off on this gateway: only admin accounts can sign in. Turn user accounts on to add members.", False),
+        ({"mode": "users", "user_auth_enabled": True}, ["user", "admin", "readonly"], "", False),
+        (None, ["user", "admin", "readonly"], "did not say whether user accounts are on", True),
+    ],
+    ids=["accounts-off", "accounts-on", "field-absent"],
+)
+def test_create_user_modal_follows_the_user_accounts_mode(me_auth, want_roles, want_note, post) -> None:
+    result = _run({"name": "create-user", "hash": "", "code": "", "completed": True, "meAuth": me_auth, "wantRoles": want_roles, "wantNote": want_note, "post": post})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout

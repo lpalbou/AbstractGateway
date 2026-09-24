@@ -43,9 +43,26 @@ The guide has five steps. Every step is optional:
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
-| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), a **Download** button for each recommended model that is missing, and the model catalog filtered to models that fit this machine. Select an installed model and click **Set as default** to make it the default text model |
-| Apps | The `npx @abstractframework/{flow,code,observer,continuum,entity}` commands with copy buttons |
-| Done | How to reopen the console, the login-service status, and the CLI equivalents |
+| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), a **Download** button for each recommended model that is missing, and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
+| Apps | One card per browser app (Flow Editor, Code, Observer, Continuum, Entity): name, status, one line of description and one row of buttons at the same height on every card: **Install and open** or **Open** (Open also starts a stopped app), plus **Open in Terminal** or **Install for Terminal** on Code. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](./console.md#apps-tab)) |
+| Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
+
+**What "recommended" means on this computer.** AbstractCore picks the
+recommended text model; the gateway shows that pick and holds no list of its
+own. On a Mac with Apple silicon the pick is an MLX build chosen by the
+computer's memory:
+
+| Memory | Recommended text model |
+|---|---|
+| less than 24 GB | `mlx-community/Qwen3.5-9B-MLX-4bit` (Qwen3.5 9B) |
+| 24 GB up to, but not including, 128 GB | `mlx-community/Qwen3.8-27B-4bit` (Qwen3.8 27B) |
+| 128 GB or more | `mlx-community/Qwen3.8-Flash-Next-4bit` (Qwen3.8 Flash-Next) |
+
+LM Studio and Ollama builds stay in the catalog and can be downloaded, but on
+a Mac they are not the recommendation. Other computers keep the LM Studio
+build `qwen/qwen3.5-9b@4bit`. When AbstractCore's memory estimate says the
+recommended model may not fit, the **Chat and text** card says so with the
+estimate; the recommendation does not quietly switch to another model.
 
 A typical path from a fresh install to a working local model:
 
@@ -54,10 +71,11 @@ A typical path from a fresh install to a working local model:
    for example `brew install ollama` on a Mac with Homebrew, and that it runs
    on this machine. The install runs in the background with progress; when it
    finishes the row shows the version.
-2. **Default model.** The list opens on models that fit this machine's memory.
-   Click **Download** on the one you want; progress shows in the job card.
-3. When the download finishes, the model appears under *Installed*. Select it
-   and click **Set as default**: the gateway's text route now uses it.
+2. **Default model.** The catalog opens on models that fit this machine's
+   memory, one card per model with its 4-bit and 8-bit builds. Click
+   **Download** on the build you want; its progress bar shows on the row.
+3. When the download finishes, the row reads *Downloaded*. Click **Use as
+   default**: the gateway's text route now uses it.
 
 The same steps are available later in the **Engines** and **Models** tabs (see
 [console.md](./console.md#models-and-engines-tabs)) and from the command line
@@ -99,21 +117,37 @@ How the link is protected:
   `X-Forwarded-Host`, `X-Real-IP`, `Forwarded`);
 - the console removes the code from the address bar before sending it;
 - the result is the same browser session as a normal sign-in (session cookie +
-  CSRF cookie).
+  CSRF cookie). The response's `claim.created_by` says who minted the link
+  (`serve`, `cli`, `tray`, or `null` for an older link). This lets the
+  console treat a tray sign-in differently from a first run.
 
 ## 4. Start the gateway at login (optional)
 
 ```bash
 abstractgateway service install      # install and start
-abstractgateway service status       # installed? loaded?
+abstractgateway service status       # on | off | broken | other, and why
+abstractgateway service enable       # start THIS gateway at the next login (starts nothing now)
+abstractgateway service disable      # stop starting it at login (the running gateway keeps running)
 abstractgateway service uninstall    # stop and remove (your data is kept)
 ```
+
+The desktop tray's **Start AbstractGateway at login** item is the same switch
+(`enable`/`disable`, shared module `abstractgateway.autostart`). `status`
+reports `broken` when a registration exists that would not start — the
+program it points at is gone (a moved or reinstalled gateway), the file is
+unreadable, the unit is not enabled, or launchd / Task Manager / the desktop
+switched it off — and `other` when it belongs to another data folder. It also
+reports `broken` with **needs repair** when a registration starts the gateway
+but pins `--host/--port` on its command line (every registration written
+before 2026-09-24): "pinned to 127.0.0.1:N by the login item — run
+`abstractgateway service enable` again to let the Network setting apply".
 
 | OS | What is installed | Logs |
 |---|---|---|
 | macOS | LaunchAgent `~/Library/LaunchAgents/ai.abstractframework.gateway.plist` (`RunAtLoad`, restarted if it crashes), loaded with `launchctl bootstrap gui/<uid>` | `~/Library/Logs/AbstractGateway/` |
 | Linux | systemd user unit `~/.config/systemd/user/abstractgateway.service` (`Restart=on-failure`), enabled with `systemctl --user enable --now` | `journalctl --user -u abstractgateway.service` |
-| Windows (experimental) | Startup-folder shortcut `AbstractGateway.lnk` that starts the gateway with `pythonw.exe` (no console window) | `<data dir>\logs\gateway.log` |
+| Linux without a systemd user manager | XDG autostart entry `~/.config/autostart/abstractgateway.desktop` (starts at graphical login) | `<data dir>/logs/gateway.log` |
+| Windows (experimental) | per-user Run entry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway` that starts the gateway with `pythonw.exe` (no console window, no admin); an older `AbstractGateway.lnk` Startup shortcut is removed | `<data dir>\logs\gateway.log` |
 
 Details:
 
@@ -121,9 +155,17 @@ Details:
   and sets `PATH` itself (including `~/.local/bin`, `~/.lmstudio/bin`,
   `/opt/homebrew/bin`, `/usr/local/bin`), because service managers do not read
   your shell profile.
-- The port is `--port` when given, else the port of a previous install, else
-  the first free port from 8080 upwards. The choice is stored in
-  `<data dir>/service.json`.
+- The login item runs plain `abstractgateway serve`: the host and port come
+  from the [Network setting](./configuration.md#network-exposure-localhost--local-network--internet)
+  (`abstractgateway network set localhost|lan|internet [--port N]`, the tray's
+  Network menu, the console) at every start. `install`/`enable` store it
+  first: a stored mode and port are kept; otherwise the mode is `localhost`
+  (127.0.0.1, as before) and the port is `--port` when given, else the running
+  gateway's (`enable`), else a previous install's, else the first free port
+  from 8080 upwards. `--host 127.0.0.1|0.0.0.0` and `--port` are written into
+  that setting and printed. `--pin-command-line` puts `--host/--port` on the
+  command line instead (for technical setups; the Network setting then does
+  not apply). The registration is recorded in `<data dir>/service.json`.
 - After starting, `install` waits up to 60 seconds for `/api/health`
   (`--wait-s`, `--no-wait`) and, on a first run, prints a sign-in link
   (`--no-claim` to skip).

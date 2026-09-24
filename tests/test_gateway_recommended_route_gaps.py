@@ -18,6 +18,8 @@ question with a different right answer.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 pytestmark = pytest.mark.basic
@@ -208,6 +210,15 @@ def test_the_console_banner_speaks_only_about_gaps():
     assert 'id="defaults-apply-recommended"' in html
     assert '<span>Apply recommended</span>' in html
     # And "Download missing" fetches the artifacts the banner named, one by one
-    # -- not the whole starter kit for routes that are already answered.
-    assert '{ recommended: true }' not in html
+    # -- not the whole starter kit for routes that are already answered. The
+    # check is scoped to the banner's download function: the first-run guide's
+    # "Download all" is a DIFFERENT, documented action that posts
+    # `{recommended: true}` on purpose (one parent job over the whole set,
+    # docs/model-downloads.md), and a page-wide check would forbid it.
+    start = html.index("async function downloadRecommended(")
+    following = re.search(r"\n\s*(?:async )?function \w+\(", html[start + 1 :])
+    banner_download = html[start : start + 1 + following.start()]
+    assert "gaps" in banner_download
+    assert "recommended: true" not in banner_download.replace("`{recommended: true}`", "")
+    assert "recommended: true })" not in banner_download
     assert "Download missing" in html

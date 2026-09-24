@@ -70,10 +70,12 @@ def test_tabs_are_appended_with_their_own_ids() -> None:
     # The existing tabs keep their ids and meaning.
     for element_id in ("tab-button-models", "tab-models", "tab-button-runtimes", "tab-runtimes"):
         assert html.count(f'id="{element_id}"') == 1, element_id
-    assert 'const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines"];' in html
+    assert 'const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines", "apps", "network"];' in html
     nav = html[html.index('<nav class="shell_nav">') : html.index("</nav>")]
     order = re.findall(r'id="tab-button-([a-z]+)"', nav)
-    assert order[-3:] == ["models", "catalog", "engines"], order
+    # Mission L appends Apps (the gateway's apps service) after Engines;
+    # mission L2 appends Network (who can reach the gateway) after Apps.
+    assert order[-5:] == ["models", "catalog", "engines", "apps", "network"], order
     assert '<span class="shell_nav_label">Models</span>' in nav
     assert '<span class="shell_nav_label">Engines</span>' in nav
     assert 'catalog: ["Models",' in html and 'engines: ["Engines",' in html
@@ -104,7 +106,7 @@ def test_every_script_parses_including_the_screens() -> None:
     _require_screens()
     html = gateway_console_html()
     scripts = _all_scripts(html)
-    assert len(scripts) == 2, "expected the AbstractCore screens script and the console script"
+    assert len(scripts) == 3, "expected the kit islands, the AbstractCore screens script and the console script"
     for source in scripts:
         _node_check(source)
 
@@ -142,7 +144,7 @@ def test_hostile_fragment_content_cannot_break_the_page(monkeypatch) -> None:
     assert html.count("<!--__ABSTRACTCORE_ENGINES_HTML__-->") == 2  # the two copies inside the fragment html
     assert "</style> */" not in html
     scripts = _all_scripts(html)
-    assert len(scripts) == 2
+    assert len(scripts) == 3  # kit islands + AbstractCore screens + console
     for source in scripts:
         _node_check(source)
     assert _core_console_config(html)["available"] is True
@@ -171,8 +173,9 @@ def test_older_abstractcore_renders_an_upgrade_card(monkeypatch) -> None:
     assert config["available"] is False
     assert config["installed"] == "2.13.42"
     scripts = _all_scripts(html)
-    assert len(scripts) == 1
-    _node_check(scripts[0])
+    assert len(scripts) == 2  # kit islands + console (no AbstractCore screens)
+    for source in scripts:
+        _node_check(source)
 
 
 def test_missing_abstractcore_renders_the_card_with_the_reason(monkeypatch) -> None:
@@ -190,3 +193,21 @@ def test_missing_abstractcore_renders_the_card_with_the_reason(monkeypatch) -> N
     assert "which is not installed" in html
     assert _core_console_config(html)["available"] is False
     _node_check(_all_scripts(html)[0])
+
+
+def test_apps_cards_pin_one_action_row_and_render_technical_parts_on_demand() -> None:
+    """Mission GG (operator, 2026-09-24): every app card is icon + name + pill /
+    one line / ONE action row, the rows at the same level across the grid
+    (five subgrid rows per card); Stop, Show log, Update, versions and
+    commands are RENDERED only with Technical details on, and the switch
+    re-renders the cards; no permanent box restates the status pill."""
+    from abstractgateway.console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
+
+    assert '`<div class="ui-card-grid is-aligned">${apps.map(appCardMarkup).join("")}</div>`' in CONSOLE_UI_JS
+    assert ".ui-card-grid.is-aligned > .ui-card { display: grid; grid-row: span 5; grid-template-rows: subgrid;" in CONSOLE_UI_CSS
+    assert "try { appRender(); consoleTuiRender(); } catch" in CONSOLE_UI_JS
+    assert "const techOn = uiShowAdvanced();" in CONSOLE_UI_JS
+    for gone in ("Open it with the Open button", "Also runs in your terminal", "ui-iface"):
+        assert gone not in CONSOLE_UI_JS and gone not in CONSOLE_UI_CSS, gone
+    html = gateway_console_html()
+    assert "Open it with the Open button" not in html
