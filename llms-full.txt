@@ -54,7 +54,7 @@ The guide has five steps. Every step is optional:
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
 | Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), a **Download** button for each recommended model that is missing, and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
-| Apps | One card per browser app (Flow Editor, Code, Observer, Continuum, Entity): name, status, one line of description and one row of buttons at the same height on every card: **Install and open** or **Open** (Open also starts a stopped app), plus **Open in Terminal** or **Install for Terminal** on Code. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](docs/console.md#apps-tab)) |
+| Apps | "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](docs/console.md#apps-tab)) |
 | Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
 
 **What "recommended" means on this computer.** AbstractCore picks the
@@ -1794,17 +1794,26 @@ button rows of the cards side by side are always at the same height.
 
 | The app is | The action row |
 |---|---|
-| not installed | **Install and open** (installs Node.js first when the gateway needs it, then the app, starts it and opens it) |
-| installing | a progress bar above the row, and **Cancel** |
+| not installed | **Install** (installs Node.js first when the gateway needs it, then the app and, for Code when a ready-made download exists for this computer, its terminal app too; nothing opens by itself) |
+| installing | a progress bar above the row (with one row per part: "Code in the browser", "Code in the terminal"), and **Cancel** (it stops both) |
+| an install failed | the reason, **Show details**, and **Install** again |
 | installed and running | **Open** (a new tab, already signed in) |
 | installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
 
-Code has a terminal version too. Next to Code's primary button: **Open in
-Terminal** when the terminal version is installed and the browser is on the
-gateway machine (a new terminal window opens there, signed in), or a quiet
-**Install for Terminal** when a ready-made download exists for this
-computer. When the terminal version needs the Rust toolchain, or when the
-browser is on another computer, the plain view shows no terminal button.
+Code has a terminal version too. Next to Code's Open: **Open in Terminal**
+when the terminal version is installed and the browser is on the gateway
+machine (a new terminal window opens there, signed in). The plain view never
+installs the terminal version on its own: Code's Install installs both. When
+the terminal version needs the Rust toolchain, or when the browser is on
+another computer, the plain view shows no terminal button (the commands are
+under Technical details, as is "Install terminal app" for a browser app that
+is installed without it).
+
+The last card is the **Assistant**, the desktop app: **Install** when it is
+not on the gateway's computer, then **Open** (it starts in the menu bar of the
+gateway's computer, or comes to the front when it already runs). From another
+computer the card says "The Assistant runs on the gateway's computer: open it
+there." with no button. See [apps.md](docs/apps.md#the-assistant-a-desktop-app).
 
 A result box appears only after something you did ("Code opened in a new
 Terminal window, signed in to this gateway.", "Flow Editor opened in a new
@@ -3455,7 +3464,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.1
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.2
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -3463,7 +3472,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.2-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
@@ -3949,7 +3958,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.4.1-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.4.2-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -4033,6 +4042,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.4.2] - 2026-09-24
+
+This release requires AbstractCore 2.15.1 and AbstractRuntime 0.4.34
+(installed automatically). The terminal console is unchanged
+(`abstractgateway-console` 0.8.0).
+
+### Added
+
+- The **Assistant** (AbstractAssistant, the desktop menu-bar app) is an app
+  card (`kind: "desktop"`, id `assistant`, after the five browser apps):
+  presence detection shared with the tray (`apps_desktop.detect_assistant`:
+  the command next to the gateway's Python or on PATH, the package without
+  importing it, `AbstractAssistant.app` in /Applications or ~/Applications;
+  version from the package or the app's Info.plist; Running from the process
+  list). **Install** installs `abstractassistant` into the gateway's own Python
+  as a job, with every `abstract*` package pinned by a constraints file.
+  **Open** (`POST /apps/assistant/launch`) starts it on the gateway's
+  computer with a scrubbed environment and nothing on its command line, or
+  brings a running one to the front; from another computer 409
+  `not_on_gateway_machine`, and the card says the Assistant runs on the
+  gateway's computer. `abstractgateway apps install|launch assistant` work
+  too. The tray offers **Install Assistant…** when it is missing.
+
+### Changed
+
+- Apps cards: ONE button, **Install** (it was "Install and open", plus a
+  separate "Install for Terminal" on Code). Install only installs; the card
+  then shows **Open**, and **Open in Terminal** beside it when the terminal
+  app is installed. For an app with a terminal version that has a
+  ready-made download for this computer (Code), Install installs the browser
+  app AND the terminal app as one job: the job's new `parts` are the two rows
+  the progress shows ("Code in the browser", "Code in the terminal"), Cancel
+  stops both, and a failed terminal part keeps the browser app and says so.
+  Without a ready-made download, Install installs the browser app only.
+  `POST /apps/{id}/install` gains `with_terminal` (default true); rows gain
+  `kind` and `install_parts`. Installing the terminal app alone is now a
+  Technical details action ("Install terminal app").
+- Tray: **Install X…** runs the same install (both parts) and no longer opens
+  the app by itself; a notification says it is installed and the menu offers
+  **Open X**.
+- Guide step 4: "Apps that work with this gateway" (it lists a desktop app too).
+- Dependency floors: `abstractcore>=2.15.1` (also in the `embeddings`
+  extra) and `AbstractRuntime>=0.4.34` (also in the `apple` and `gpu`
+  extras), for the download end reasons and the facade's
+  `host_job_cancel(job_id, by=, user=)`.
+
+### Fixed
+
+- Downloads in the console are no longer cancelled by a stray click. The card re-rendered every half
+  second, which closed the "Files" list each time and moved "Cancel download" into the place the
+  file rows had been; the next click on the list cancelled the download ("Cancelled / Download
+  cancelled. Download it again any time."). The list now stays open across updates, and Cancel asks
+  first ("Stop this download?", with "Keep downloading" in the Cancel button's own place).
+- A failed download shows its plain reason (a dropped connection, a Hub error, a restart) and a
+  cancelled one says who cancelled it and when; `POST /models/download/{id}/cancel` accepts
+  `{"via": "console"}` and records the admin who asked.
+- The model catalog's fit tooltip compares the need with the usable memory (the verdict's own
+  numbers), not the raw ceiling.
+
+### Tests
+
+- `tests/test_gateway_apps_install_and_assistant.py`: the combined install
+  (both parts, web only without a prebuilt terminal app, a failed terminal
+  part, cancel covering both, `with_terminal: false`), the Assistant's
+  detection matrix and running check, install job (constraints, failure,
+  cancel, installs off), launch (bundle, script, running, same-machine
+  refusal, a launch that exits), routes, the tray's shared detection and
+  menu lines, and the console card pins. Updated: apps routes and terminal
+  tests (six rows), console first-run (one Install, the Assistant card). The
+  test suite's conftest hides the real machine from the Assistant detection.
+- `tests/test_gateway_console_download_cancel.py`: the keyed file list
+  survives redraws, Cancel asks first and posts `{"via": "console"}` only on
+  "Stop download", the end reason on the tile, the group card and the
+  catalog, the usable-memory tooltip. `test_gateway_model_download_progress`:
+  who cancelled, and why a download ended (never a bare "Cancelled").
 
 ## [0.4.1] - 2026-09-24
 
@@ -6079,12 +6164,25 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 ## docs/apps.md
 
-# Browser apps
+# Apps
 
 The five browser apps (Observer, Continuum, Code, Entity and Flow Editor) can be
 installed, started, stopped and updated from the gateway: from the console's
 Apps page, from the HTTP API below, or with `abstractgateway apps`. Nobody has
-to open a terminal or install Node.js by hand.
+to open a terminal or install Node.js by hand. The Apps page also lists the
+desktop app, the **Assistant** (see [The Assistant](#the-assistant-a-desktop-app)).
+
+On a card, a plain user sees one button for the state the app is in:
+
+| State | Buttons |
+|---|---|
+| Not installed | **Install** |
+| Installing | a progress bar (one row per part, e.g. "Code in the browser" and "Code in the terminal") and **Cancel** |
+| Installed (running or not) | **Open**, and **Open in Terminal** right beside it when the app's terminal version is installed |
+| Failed | the reason, **Show details**, and **Install** again |
+
+Stop, Show log, Update, versions, addresses and commands are under
+**Technical details**.
 
 ## What happens when you click Install
 
@@ -6100,8 +6198,23 @@ to open a terminal or install Node.js by hand.
    registry's sha512 integrity hash. Apps that need other npm packages get them
    through npm (with its cache in `<data dir>/apps/npm-cache/`); Code needs
    none and is unpacked directly.
-3. **Start.** With "Install and open", the gateway starts the app on a free
-   port, waits until it answers, and opens it in a new tab, already signed in.
+3. **The terminal app, too.** When the app also runs in a terminal and a
+   ready-made download exists for this computer (Code today, see
+   [Terminal versions](#terminal-versions)), the same Install installs it
+   right after the browser app: ONE job whose `parts` are the two rows the
+   card shows (`install` then `install-tui`, each `waiting`, `running`,
+   `done`, `failed`, `cancelled` or `skipped`). Cancel stops both. If the
+   terminal part fails, the browser app stays installed and the job says so
+   ("Code is installed for the browser, but its terminal app did not install:
+   …"); with Technical details on, the card offers "Install terminal app" to
+   try that part again. Without a ready-made download for this computer,
+   Install installs the browser app only and the terminal app's command stays
+   under Technical details. The row's `install_parts` (`["web"]` or
+   `["web", "tui"]`) says in advance what Install covers.
+
+Install only installs: nothing starts and no tab opens. The card then shows
+**Open**, which starts the app on a free port when it is stopped, waits until
+it answers, and opens it in a new tab, already signed in.
 
 Every step is a job with a percentage, downloaded bytes and a plain message.
 When a step fails, the job says why in one sentence and carries the full log
@@ -6230,7 +6343,8 @@ second entry of kind `"tui"`:
 - **Install (`install_method`).** `release_binary`: Code publishes prebuilt
   binaries for macOS (Apple silicon and Intel), Linux (x86_64 and arm64,
   glibc) and Windows (x86_64) on its GitHub release, with a `SHA256SUMS` file.
-  "Install for Terminal" downloads the archive for this computer, checks it
+  The card's Install (and `install-tui` on its own) downloads the archive for
+  this computer, checks it
   against `SHA256SUMS` and against the sha256 digest GitHub reports for the
   file (both must agree), unpacks the single binary into `<data dir>/apps/bin/`,
   makes it executable and runs `--version` before it replaces anything.
@@ -6357,7 +6471,10 @@ The same actions, through the running gateway:
 
 ```bash
 abstractgateway apps list                 # Node.js, every app, installed/latest, URL
-abstractgateway apps install code --launch
+abstractgateway apps install code            # the browser app and, where available, its terminal app
+abstractgateway apps install code --launch   # ... and start it
+abstractgateway apps install assistant       # the desktop Assistant, into the gateway's Python
+abstractgateway apps launch assistant        # open it on this computer
 abstractgateway apps launch observer
 abstractgateway apps open observer        # prints a one-time signed-in link
 abstractgateway apps logs observer --tail 50
@@ -6373,21 +6490,60 @@ abstractgateway apps jobs [JOB_ID]
 default the command finds the gateway running for this data dir and uses its
 admin token on a loopback URL.
 
+## The Assistant (a desktop app)
+
+AbstractAssistant (PyPI `abstractassistant`) is the framework's desktop
+companion: a menu-bar app with a chat palette and hands-free voice
+conversations. It is a Python app, not a browser app, so its card
+(`kind: "desktop"`, id `assistant`, after the five browser apps) has no address
+or port. The full `abstractframework` install already includes it, in the same
+Python environment as the gateway; a gateway-only install may not.
+
+- **Found by presence** (nothing is imported or started to find it): the
+  `abstractassistant` command next to the gateway's own Python (or on `PATH`),
+  the installed package (`importlib.util.find_spec`, without importing it; a
+  folder that merely has the package's name does not count), and on macOS
+  `AbstractAssistant.app` in `/Applications` or `~/Applications`. The version
+  comes from the package, else from the app's `Info.plist`. It is **Running**
+  when a process on this computer is the Assistant (its command, `python -m
+  abstractassistant…`, or the app's own program). The tray's "Launch
+  Assistant" uses the same detection (`apps_desktop.detect_assistant`), so
+  the tray and the console always agree.
+- **Install** installs `abstractassistant` into the gateway's own Python as a
+  job (`uv pip install --python <gateway python> abstractassistant`, or pip
+  when there is no uv), with every `abstract*` package the gateway runs
+  pinned to its current version by a constraints file, so installing the
+  Assistant never changes the gateway. The same rule as the other installs
+  decides who may install (see [Who may install](#who-may-install)).
+- **Open** starts it on the gateway's computer: `open -a AbstractAssistant.app`
+  when the app exists, otherwise its command, as a separate process with none
+  of the gateway's tokens, secrets or keys in its environment. A running
+  Assistant is not started twice: the app is brought to the front (or, when
+  it was started from its command, the card says its icon is in the menu
+  bar). The Assistant keeps its own connection settings (its Settings window,
+  Connection): the gateway passes it no address and no token, and it has no
+  one-time sign-in handover yet.
+- **From another computer** the card says "The Assistant runs on the gateway's
+  computer: open it there." with no button: it is a desktop app for that
+  computer's screen.
+- **Technical details** show its version, where it was found and the launch
+  command (or the install command when it is not installed).
+
 ## HTTP API
 
 All routes are under `/api/gateway/apps` and need a signed-in principal.
 
 | Method and path | Who | What |
 |---|---|---|
-| `GET /apps?latest=true` | any user | Node.js status, one row per app (with `interfaces[]`, see "Terminal versions") and `console_tui` (the gateway console's terminal app). `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
+| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}`) and `console_tui` (the gateway console's terminal app). `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
-| `POST /apps/{id}/install` `{"version"?, "launch"?}` | admin | A job: Node.js if needed, download, check, dependencies, and with `launch: true` start the app. |
+| `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (constraints keep every `abstract*` package as it is). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. |
-| `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. |
+| `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, `{ok, app, already_running, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
 | `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |
-| `POST /apps/{id}/open` `{"remember"?, "path"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`). 400 `invalid_app_path` for anything that is not a path inside the app. |
+| `POST /apps/{id}/open` `{"remember"?, "path"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`). 400 `invalid_app_path` for anything that is not a path inside the app. 409 `desktop_app` for the Assistant (use `/launch`). |
 | `GET /apps/{id}/logs?tail=200` | admin | The end of the app's log. |
-| `GET /apps/jobs`, `GET /apps/jobs/{job}` | any user | Jobs: `state` (queued, running, succeeded, failed, cancelled), `percent`, `bytes_done`, `bytes_total`, `message`, `steps`, `details` (full log on failure). |
+| `GET /apps/jobs`, `GET /apps/jobs/{job}` | any user | Jobs: `state` (queued, running, succeeded, failed, cancelled), `percent`, `bytes_done`, `bytes_total`, `message`, `steps`, `parts` (the child rows of an Install that covers two parts), `details` (full log on failure). |
 | `POST /apps/jobs/{job}/cancel` | admin | Cancel a job. |
 | `POST /apps/{id}/install-tui` | admin | A job: download, check and place the app's prebuilt terminal version (or update the gateway's copy). 409 `toolchain_required` with `command` when only a source build exists. |
 | `POST /apps/{id}/launch-tui` | admin, on the gateway machine | Open the terminal version in a new terminal window, signed in as the caller: `{ok, app_id, interface: "tui", terminal, version, message, expires_in_s}`. From another computer (non-loopback peer or `Host`, or any proxy header): 409 `not_on_gateway_machine` with `command` and `signin_command`, and nothing opens. |
@@ -6558,10 +6714,10 @@ All under `/api/gateway`.
 | `POST /models/download` `{"recommended": true}` | admin | `{"ok": true, "recommended": true, "jobs": [one per model], "group": {parent}}` |
 | `GET /models/download/{job_id}` | user | `{"ok": true, "job": {...}}`; a `grp_...` id returns the parent; 404 when unknown (jobs are per Gateway process) |
 | `GET /models/downloads` | user | `{"ok": true, "jobs": [...]}`, newest first; parents are listed, and each child names its parent in `parent_job` |
-| `POST /models/download/{job_id}/cancel` | admin | `{"ok": true, "job": {...}}` with `cancel_requested: true`; the job turns `cancelled` when the tool has stopped (normally < 1 s); a parent cancels every running child; 404 when unknown |
+| `POST /models/download/{job_id}/cancel` `{"via": "console"}`? | admin | `{"ok": true, "job": {...}}` with `cancel_requested: true` and `cancelled_by`; the job turns `cancelled` when the tool has stopped (normally < 1 s); a parent cancels every running child; 404 when unknown. A console sends `{"via": "console"}` when a person clicked Cancel; without it the cancel is recorded as `api` |
 | `GET /models/downloads/stream` | user | Server-Sent Events, below |
 
-The request bodies are unchanged from before this contract.
+The request bodies are unchanged from before this contract (the cancel body is optional).
 
 ### The event stream
 
@@ -6590,16 +6746,18 @@ final state). Polling keeps working; the stream is optional.
 | `detail` | the engine tool's own last line, unchanged |
 | `files` | `[{name, bytes_done, bytes_total, state}]`, file state `pending`, `downloading`, `done`, `failed`, `cancelled`; Ollama layers are named `layer <digest>` |
 | `current_file` | the file arriving now |
-| `error` | the full reason when `failed` |
+| `error` | the full reason when `failed` (the tool's own words) |
+| `ended_reason` | when `failed` or `cancelled`: one plain sentence saying what happened and what a new download reuses, e.g. "The connection to Hugging Face dropped after 200 MB of 266 MB. Check the network connection, then download it again; the files that finished are kept, and the file that was in progress starts over." or "Cancelled in the console by admin at 21:15 after 105 MB of 275 MB. ..." |
 | `stall_after_s`, `stalled_for_s` | the stall threshold (default 15 s) and how long the current stall has lasted |
 | `transitions` | `[{at, state, why}]`, every state change |
 | `cancel_requested` | `true` from the cancel request until the job ends |
+| `cancelled_by`, `cancelled_by_user` | who asked for the cancel: `console` (a person clicked Cancel in a console), `api` (any other HTTP cancel), `cli` (`abstractcore models cancel`, Ctrl-C), `other_process` (a cancel marker from another program); the signed-in account when known. `null` unless a cancel was requested |
 | `parent_job` | on a child of a parent job |
 
 A parent (`download_group`) adds `children` (the full child jobs),
 `child_job_ids` and `label`, and uses `files` for one row per model. Its
 bytes, percent and speed add up its children; models already installed count
-as done with nothing to fetch. It is `stalled` only when every running child
+as done with nothing to fetch. Its `ended_reason` joins its children's. It is `stalled` only when every running child
 is stalled, `failed` when every child ended and one failed (`error` names
 which, with its reason), `cancelled` when one was cancelled, and `done` when
 all are.
@@ -6616,7 +6774,11 @@ all are.
   `transitions`.
 - `verifying`: checking what arrived (Ollama's sha256, every Hugging Face file whole).
 - `installing`: moving into the library (Ollama "writing manifest", LM Studio "Finalizing download...").
-- `done`, `failed`, `cancelled`: finished.
+- `done`, `failed`, `cancelled`: finished. `cancelled` ONLY follows a cancel request
+  (`cancelled_by` says whose); a download that stops on its own -- a dropped
+  connection, a Hub error, a full disk, the Gateway restarting (the job then
+  reads `failed` from its saved snapshot, and the transfer stops with it) -- is
+  `failed`, with `ended_reason`.
 
 `verifying` and `installing` never count as stalls.
 
@@ -6734,7 +6896,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.1
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.2
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6742,7 +6904,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.2-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -6948,7 +7110,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.4.1-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.4.2-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

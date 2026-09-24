@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-24
+
+This release requires AbstractCore 2.15.1 and AbstractRuntime 0.4.34
+(installed automatically). The terminal console is unchanged
+(`abstractgateway-console` 0.8.0).
+
+### Added
+
+- The **Assistant** (AbstractAssistant, the desktop menu-bar app) is an app
+  card (`kind: "desktop"`, id `assistant`, after the five browser apps):
+  presence detection shared with the tray (`apps_desktop.detect_assistant`:
+  the command next to the gateway's Python or on PATH, the package without
+  importing it, `AbstractAssistant.app` in /Applications or ~/Applications;
+  version from the package or the app's Info.plist; Running from the process
+  list). **Install** installs `abstractassistant` into the gateway's own Python
+  as a job, with every `abstract*` package pinned by a constraints file.
+  **Open** (`POST /apps/assistant/launch`) starts it on the gateway's
+  computer with a scrubbed environment and nothing on its command line, or
+  brings a running one to the front; from another computer 409
+  `not_on_gateway_machine`, and the card says the Assistant runs on the
+  gateway's computer. `abstractgateway apps install|launch assistant` work
+  too. The tray offers **Install Assistant…** when it is missing.
+
+### Changed
+
+- Apps cards: ONE button, **Install** (it was "Install and open", plus a
+  separate "Install for Terminal" on Code). Install only installs; the card
+  then shows **Open**, and **Open in Terminal** beside it when the terminal
+  app is installed. For an app with a terminal version that has a
+  ready-made download for this computer (Code), Install installs the browser
+  app AND the terminal app as one job: the job's new `parts` are the two rows
+  the progress shows ("Code in the browser", "Code in the terminal"), Cancel
+  stops both, and a failed terminal part keeps the browser app and says so.
+  Without a ready-made download, Install installs the browser app only.
+  `POST /apps/{id}/install` gains `with_terminal` (default true); rows gain
+  `kind` and `install_parts`. Installing the terminal app alone is now a
+  Technical details action ("Install terminal app").
+- Tray: **Install X…** runs the same install (both parts) and no longer opens
+  the app by itself; a notification says it is installed and the menu offers
+  **Open X**.
+- Guide step 4: "Apps that work with this gateway" (it lists a desktop app too).
+- Dependency floors: `abstractcore>=2.15.1` (also in the `embeddings`
+  extra) and `AbstractRuntime>=0.4.34` (also in the `apple` and `gpu`
+  extras), for the download end reasons and the facade's
+  `host_job_cancel(job_id, by=, user=)`.
+
+### Fixed
+
+- Downloads in the console are no longer cancelled by a stray click. The card re-rendered every half
+  second, which closed the "Files" list each time and moved "Cancel download" into the place the
+  file rows had been; the next click on the list cancelled the download ("Cancelled / Download
+  cancelled. Download it again any time."). The list now stays open across updates, and Cancel asks
+  first ("Stop this download?", with "Keep downloading" in the Cancel button's own place).
+- A failed download shows its plain reason (a dropped connection, a Hub error, a restart) and a
+  cancelled one says who cancelled it and when; `POST /models/download/{id}/cancel` accepts
+  `{"via": "console"}` and records the admin who asked.
+- The model catalog's fit tooltip compares the need with the usable memory (the verdict's own
+  numbers), not the raw ceiling.
+
+### Tests
+
+- `tests/test_gateway_apps_install_and_assistant.py`: the combined install
+  (both parts, web only without a prebuilt terminal app, a failed terminal
+  part, cancel covering both, `with_terminal: false`), the Assistant's
+  detection matrix and running check, install job (constraints, failure,
+  cancel, installs off), launch (bundle, script, running, same-machine
+  refusal, a launch that exits), routes, the tray's shared detection and
+  menu lines, and the console card pins. Updated: apps routes and terminal
+  tests (six rows), console first-run (one Install, the Assistant card). The
+  test suite's conftest hides the real machine from the Assistant detection.
+- `tests/test_gateway_console_download_cancel.py`: the keyed file list
+  survives redraws, Cancel asks first and posts `{"via": "console"}` only on
+  "Stop download", the end reason on the tile, the group card and the
+  catalog, the usable-memory tooltip. `test_gateway_model_download_progress`:
+  who cancelled, and why a download ended (never a bare "Cancelled").
+
 ## [0.4.1] - 2026-09-24
 
 This release requires AbstractCore 2.15.0 and AbstractRuntime 0.4.33

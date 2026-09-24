@@ -99,7 +99,7 @@ Compatibility note:
 - [docs/security.md](./docs/security.md): token auth + origin allowlist + limits + audit log
 - [docs/configuration.md](./docs/configuration.md): env vars, install extras, Core-owned MTP default controls and application/run overrides.
 - [docs/console.md](./docs/console.md): the web console at `/console`, the `abstractgateway-console` terminal app (`cargo install abstractgateway-console`), and `abstractgateway models loaded|load|unload`
-- [docs/apps.md](./docs/apps.md): browser and terminal apps (Flow, Code, Observer, Continuum, Entity) installed, started and opened signed in from the gateway; Node.js installed for you
+- [docs/apps.md](./docs/apps.md): browser and terminal apps (Flow, Code, Observer, Continuum, Entity) and the desktop Assistant, installed with one Install, started and opened signed in from the gateway; Node.js installed for you
 - [docs/engines.md](./docs/engines.md): installing local engines (Ollama, LM Studio, MLX, llama.cpp) without a terminal; when the Apple tools or an administrator password are needed
 - [docs/model-downloads.md](./docs/model-downloads.md): model downloads with progress, stalls, cancel, parent jobs and the event stream
 - [docs/deployment.md](./docs/deployment.md): Docker/GHCR/Compose deployment profile
