@@ -111,6 +111,10 @@ The normal browser-console/browser-app path uses Gateway user auth:
   instead
 - `POST /api/gateway/session/claim`: redeems a one-time link code for an admin
   browser session; accepted only from a loopback peer without proxy headers.
+  The response carries `claimed: true`, `first_run` (the guide state) and
+  `claim: {created_by}`, which says who minted the link: `serve` (first run),
+  `cli` (`claim-url` / `abstractgateway claim`), `tray` (tray sign-in), or
+  `null` for a link minted before the field existed.
   `GET /api/gateway/host/first-run` / `POST` (admin) read and record the
   first-run guide state
 
@@ -177,6 +181,216 @@ id or CSRF token. Session-authenticated writes carry
 AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
 current user/session in hosted mode. They should not share one app-server
 Gateway token for all users.
+
+## Network exposure (localhost / local network / internet)
+
+One setting decides who can reach the gateway. The console, the console TUI
+(Connection screen), the tray and `abstractgateway network` all edit the same
+runtime-config key (`network`); there is no environment variable for it.
+
+| Mode | Bind | Requires |
+|---|---|---|
+| `localhost` ("Localhost only") | `127.0.0.1` | nothing: only this machine can connect |
+| `lan` ("Local network") | `0.0.0.0` (IPv4) | user auth (accounts + console sign-in) |
+| `internet` ("Internet…") | `0.0.0.0` (IPv4) | user auth **and** an explicit acknowledgement |
+
+- **Applied at the next start.** A listening socket cannot move: after a change
+  the status says `restart_required: true` with `configured` vs `effective`
+  until the gateway restarts (`POST /api/gateway/network/restart`, the tray's
+  *Restart AbstractGateway…*, `abstractgateway network restart`, or stop and
+  start `serve`).
+- **`serve --host/--port` win** over the setting and are reported as
+  `effective.overridden_by_cli: true`. A restart replays the same command
+  line, so it cannot apply the setting: the status says so
+  (`restart.applies: false` + `restart.reason`) and the restart route refuses.
+- **The login service lets the setting apply** (2026-09-24). The LaunchAgent,
+  systemd unit, XDG entry and Windows Run entry written by
+  `abstractgateway service install|enable` start plain `serve`: no `--host`, no
+  `--port`. Install/enable first **seed** the setting through the same change
+  door as `network set` (same auth refusals; a refusal registers nothing):
+  nothing stored yet → `localhost` on the chosen port (the bind every earlier
+  registration had); a stored mode/port → kept. `service install|enable --host H
+  --port P` are written **into the setting** (`127.0.0.1` → `localhost`,
+  `0.0.0.0` → `lan`, or the stored `internet`; a specific address is refused),
+  never onto the command line. `--pin-command-line` is the technical escape
+  hatch: `serve --host H --port P` on the command line as before, the setting
+  untouched and overridden (`overridden_by_cli`, `service status` names it).
+- **Registrations from before 2026-09-24 carry `--host/--port`.** `service
+  status` (and the tray's *Start at login — needs repair*) says
+  "pinned to 127.0.0.1:N by the login item — run `abstractgateway service enable`
+  again to let the Network setting apply". `service enable` (or the tray click)
+  rewrites the registration in place, keeping a stored mode. The gateway
+  running at that moment still has the old command line, which a restart
+  replays: `abstractgateway service install` restarts it from the new
+  registration now, or log out and back in.
+- **Auth is checked before anything is stored.** `lan`/`internet` are refused
+  (HTTP 409, nothing written, `refused_reason` + `fix`) when the gateway was
+  started with authentication switched off (`ABSTRACTGATEWAY_SECURITY=0` /
+  `ABSTRACTGATEWAY_PROTECT_WRITE=0` in its launch environment), with read
+  protection off (`ABSTRACTGATEWAY_PROTECT_READ=0`: unauthenticated reads would
+  be answered as the admin, `reason_code: auth_disabled`), or with a posture
+  without accounts (a shared token only, or `ABSTRACTGATEWAY_USER_AUTH=0`).
+  The `fix` describes that state; a plain start (`abstractgateway serve`, or
+  the login item `abstractgateway service enable` registers) has none of
+  them: when no auth posture is configured at all (the first-run default),
+  `serve` turns user auth on for the network mode and says so on stderr
+  (`auth.source: network_setting`).
+- **`internet` needs `acknowledge_internet: true`** (CLI
+  `--acknowledge-internet`; the TUI and tray ask with a confirm). The gateway
+  does not terminate TLS: put a TLS reverse proxy or a tunnel in front
+  (Caddy, nginx, Cloudflare Tunnel, Tailscale Funnel, ngrok). Port forwarding
+  and firewalls are yours to configure; the gateway changes neither.
+- **Browser origins.** In a network mode from the setting, `serve` also allows
+  the gateway's own discovered LAN origins (e.g. `http://192.168.1.23:8080`,
+  `http://mymac.local:8080`) next to the loopback defaults, so the console can
+  sign in from another machine. An address that appears later (new Wi-Fi)
+  needs a restart. Your public origin (behind a proxy or tunnel) is a setting:
+  see [Reverse proxy](#reverse-proxy-allowed-origins-and-trust-proxy) below.
+- **A setting that cannot apply falls back loudly.** If the stored mode's auth
+  requirement stops being met (the environment changed), `serve` binds
+  `127.0.0.1`, prints `[ERROR] Network exposure 'lan' cannot be applied: … Fix: …`
+  and the status carries `effective.blocked_reason`.
+
+### Reverse proxy: allowed origins and trust proxy
+
+Two settings a deployment behind a reverse proxy or a tunnel needs, stored in
+the same `network` setting and changed through the same door
+(`POST /api/gateway/network`, admin-only, audit-logged). **Both apply to the
+next request: no restart.** The security middleware re-reads them per request
+(one `stat()` of the settings file; parsed again only when it changed), so a
+change from the console, the TUI or the CLI (another process) is live at once.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` (and, in a network mode, the gateway's own LAN origins). | none |
+| `trust_proxy` | Take the client address from `X-Forwarded-For` (sign-in lockouts, audit log). Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees. | off |
+
+**Validation** (one place, the gateway; every door shows its sentence
+verbatim). An origin is `scheme://host[:port]`: `http` or `https`, no path, no
+trailing slash, no query, no user info; IPv6 in brackets. It is stored the way
+a browser sends it: scheme and host lowercased, the default port dropped
+(`https://Gateway.Example.com:443` → `https://gateway.example.com`). `*` (every
+origin), a leading `*.` label and a `:*` port are accepted only as typed and
+are flagged with a warning. A list with any invalid entry is refused whole
+(HTTP 400 `reason_code: invalid_origins`, `errors[{value, error}]`, nothing
+written), e.g. `1 origin is not valid (nothing was saved): https://x.example/: no
+trailing slash: an origin is scheme://host[:port] (write https://x.example)`.
+An empty list clears the setting back to the default.
+
+**The environment override.** `ABSTRACTGATEWAY_ALLOWED_ORIGINS` /
+`ABSTRACTGATEWAY_TRUST_PROXY` in the environment a gateway was started with
+still decide (a deployment pin, the security carve-out in `env_registry.py`),
+and every surface says so: the payload carries `source: "env"` and
+`overridden_by_env: true` with `env_name`/`env_value` and a `note` ("This
+gateway was started with … in its environment: …"); saving is still allowed
+and answers `changed.<field>.applies: "overridden_by_env"` ("Saved, but not in
+effect"). The value in the settings applies once the gateway starts without
+the variable. The origins `serve` itself exports for a network mode are never
+counted as an override.
+
+Status payload (`GET /api/gateway/network`, `reverse_proxy`):
+
+```json
+"reverse_proxy": {
+  "allowed_origins": {"value": ["https://gateway.example.com"], "source": "setting", "overridden_by_env": false,
+                      "effective": ["http://localhost:*", "http://127.0.0.1:*", "https://gateway.example.com"],
+                      "builtin": ["http://localhost:*", "http://127.0.0.1:*"], "self_origins": [],
+                      "applies": "live", "warnings": []},
+  "trust_proxy": {"value": true, "source": "setting", "overridden_by_env": false, "effective": true,
+                  "applies": "live", "warning": "Trust proxy is on: …"}
+}
+```
+
+`source` is `setting` (stored), `env` (the start-time override) or `default`.
+From the CLI (another process) the running gateway's environment is read from
+its run record (`<data>/run/gateway-network.json`, `proxy_env`), never from the
+CLI's own shell.
+
+**Three ways, same semantics** (a headless server over SSH needs only the
+last two):
+
+| | Web console | Console TUI | CLI |
+|---|---|---|---|
+| Where | Network → *Advanced: reverse proxy* | Connection screen, below the addresses | `abstractgateway network …` |
+| Add/replace origins | type an origin, *Add origin* (Enter); × on a chip removes it | *browser origins* line: comma-separated list, Enter saves, empty clears | `set --allowed-origins https://a,https://b` (`""` clears) |
+| Trust proxy | *Trust the proxy's client address* switch | checkbox (Space) | `set --trust-proxy on\|off` |
+| See values + source | pills: *Saved setting* / *Default* / *Set by the environment* | `[saved setting]` / `[default]` / `[environment override]` + the override line | `network show` (`--json` = the payload) |
+| Refusal | the gateway's sentence under the input | notice `✗ reverse proxy refused: <sentence>` | `refused: <sentence>` on stderr, exit 1 |
+
+The console and the TUI send `{allowed_origins}` / `{trust_proxy}` to
+`POST /api/gateway/network`; the CLI writes the same store through the same
+function (`network_exposure.apply_network_change`). The mode is untouched by a
+reverse-proxy-only change (`mode` is optional).
+
+### Addresses
+
+`GET /api/gateway/network` lists every address a client can use, discovered on
+each call: loopback; each up interface's IPv4/IPv6 (loopback, link-local and
+down interfaces skipped; macOS names from `networksetup`, e.g. "Wi-Fi"; VPN
+`utun`/CGNAT addresses labelled "VPN"); the Bonjour name `<LocalHostName>.local`
+when it resolves. Discovery uses `psutil` when importable, else `ifconfig -a`
+(macOS/BSD) or `ip -o addr show up` (Linux), else the hostname's own
+resolution. Each row says whether the gateway listens there now
+(`reachable`). The WAN address (`kind: public`) is looked up only on request
+(`?lookup_public=1`, admin, `internet` mode only; one HTTPS GET to
+`api.ipify.org`), never on a poll. `copy_hint` is the URL to copy first (the
+LAN IPv4 when listening on the network, else loopback).
+
+### API (`gateway_network_v1`)
+
+- `GET /api/gateway/network[?lookup_public=1]`: any authenticated principal
+  (`writable` says whether the caller may change it).
+- `POST /api/gateway/network {mode?, port?, acknowledge_internet?, allowed_origins?, trust_proxy?}`:
+  admin, any subset (at least one). 200
+  `{ok, configured, effective, restart_required, restart, auth, reverse_proxy, changed, warnings, copy_hint}`
+  where `changed{field: {from, to, applies: live|restart|overridden_by_env}}`;
+  409 `{ok:false, reason_code: user_auth_required|auth_disabled|acknowledgement_required, refused_reason, fix?, warnings}`;
+  400 invalid mode/port/`trust_proxy`, or `invalid_origins` with `errors[]`;
+  422 unknown field or a non-boolean `trust_proxy`. Every attempt is one
+  audit-log line (`audit_log.jsonl`) carrying `setting_change` (the fields
+  changed, from/to, or the refusal).
+- `POST /api/gateway/network/restart {force?}`: admin. 409 with
+  `refused_reason` when a restart cannot apply the setting (CLI override, auth
+  not met, nothing pending, process cannot relaunch itself).
+
+A trimmed `GET` in `lan` mode, running and applied:
+
+```json
+{
+  "schema": "gateway_network_v1",
+  "configured": {"mode": "lan", "label": "Local network", "port": 8080, "bind_host": "0.0.0.0", "source": "stored"},
+  "effective": {"mode": "lan", "bind_host": "0.0.0.0", "port": 8080, "overridden_by_cli": false,
+                "host_source": "setting", "port_source": "setting", "running": true},
+  "restart_required": false,
+  "restart": {"available": true, "applies": true, "needed": false},
+  "auth": {"user_auth": true, "token_auth": false, "ok_for_mode": true, "source": "env"},
+  "modes": [{"id": "localhost", "allowed": true, "selected": false},
+            {"id": "lan", "allowed": true, "selected": true},
+            {"id": "internet", "allowed": true, "requires_acknowledgement": true}],
+  "addresses": [
+    {"kind": "loopback", "url": "http://127.0.0.1:8080", "reachable": true},
+    {"kind": "lan", "url": "http://192.168.1.23:8080", "interface": "en0", "interface_label": "Wi-Fi", "reachable": true},
+    {"kind": "hostname", "url": "http://mymac.local:8080", "reachable": true}
+  ],
+  "copy_hint": "http://192.168.1.23:8080",
+  "warnings": ["Traffic is plain HTTP: …"]
+}
+```
+
+### CLI
+
+```bash
+abstractgateway network status|show [--json] [--data-dir DIR]
+abstractgateway network set [localhost|lan|internet] [--port N] [--acknowledge-internet]
+                            [--allowed-origins ORIGIN[,ORIGIN...]] [--trust-proxy on|off]
+abstractgateway network addresses [--copy] [--public] [--json]
+abstractgateway network restart [--url URL] [--token T] [--force]
+```
+
+`status`, `set` and `addresses` work on the data dir directly (a running
+gateway's bind and auth posture are read from `<data>/run/gateway-network.json`);
+`restart` asks the running gateway. See [security.md](./security.md#network-exposure)
+for what each mode changes for someone on your network.
 
 ## Two entry points, one store
 
@@ -342,7 +556,7 @@ and both console-TUIs: `installed`, `not downloaded`, `unknown`, `remote`.
 
 | Endpoint | What it does |
 |---|---|
-| `GET /api/gateway/models/availability` | The capability grid annotated with weight availability, plus the recommended fresh-install set — its raw counts (`total`, `installed`, `absent`, `would_download`) and `gaps`, the subset whose route has nothing else serving it. Read-only; never downloads. |
+| `GET /api/gateway/models/availability` | The capability grid annotated with weight availability, plus the recommended fresh-install set — its raw counts (`total`, `installed`, `absent`, `would_download`) and `gaps`, the subset whose route has nothing else serving it. The text entry of `recommended` also carries AbstractCore's reasons: `catalog_id`, `basis` (`apple_silicon_tiers` or `portable_default`), `tier`, `fit_verdict`, `fits` and `warning` (a sentence when the model may not fit this computer). Read-only; never downloads. |
 | `POST /api/gateway/models/download` | `{"provider": "...", "artifact": "..."}` or `{"recommended": true}`, with optional `"dry_run": true`. Returns a job id immediately. |
 | `GET /api/gateway/models/download/{job}` | One job's progress: status, percent, byte counts and the provider tool's own recent output. |
 | `GET /api/gateway/models/downloads` | Every download job this Gateway process knows about. |
@@ -420,10 +634,18 @@ Installing an engine runs its vendor installer (for example
 remote gateway is not the machine of the person clicking. So installs are
 controlled by the runtime-config setting `allow_engine_install`:
 
-| Gateway bound to | Default |
-|---|---|
-| a loopback address (`127.0.0.1`, `::1`, `localhost`), which is what a bare `abstractgateway serve` and `abstractgateway service install` use | on |
-| any other address (`0.0.0.0`, a LAN IP, a host name), or started without `abstractgateway serve` | off |
+| Gateway bound to | Default for someone at the gateway machine | Default for another computer |
+|---|---|---|
+| a loopback address (`127.0.0.1`, `::1`, `localhost`), which is what a bare `abstractgateway serve` and `abstractgateway service install` use | on | on |
+| any other address (`0.0.0.0`, a LAN IP, a host name), or started without `abstractgateway serve` | on | off |
+
+"Someone at the gateway machine" is a request whose socket peer is loopback
+or one of this host's own interface addresses (a browser on the gateway
+machine that uses its LAN address counts), with no proxy header
+(`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`): see
+[security.md](./security.md). The same rule gates app installs (Apps page,
+tray). `install_policy` reports `caller_on_this_machine` and, when that rule
+decided, `source: "default_same_machine"`.
 
 An admin changes it with
 `POST /api/gateway/admin/runtime-config {"allow_engine_install": true}`
@@ -432,6 +654,106 @@ where it came from are in `GET /api/gateway/admin/runtime-config` and in
 `install_policy` on `GET /api/gateway/engines`. There is no environment
 variable for it. A dry run ("show the command") is always allowed, and every
 install is admin-only and recorded in the audit log.
+
+### Browser apps settings (`apps.*`)
+
+The browser apps (Apps page: Flow, Code, Observer, Continuum, Entity) read five
+runtime-config settings. They replace the `ABSTRACTGATEWAY_APPS_*` environment
+variables, which remain the labeled fallback rung (precedence **stored > env >
+default**, the runtime-config rule: a saved value always wins; an env value it
+shadows is reported as `env_shadowed`).
+
+| Key | Label | Default | Value |
+|---|---|---|---|
+| `apps.node` | Node.js for apps | `auto` | `auto` (Node.js 18+ on this computer, else the gateway's own) · `managed` · `system` · an absolute path to `node` |
+| `apps.ports` | Ports for apps | (empty) | a port or `low-high`; empty = each app's usual port, else the next free one in 3100-3199 |
+| `apps.host` | Where apps listen | `127.0.0.1` | an IP or host name; `0.0.0.0` opens the apps to every network this computer is on |
+| `apps.npm_registry` | npm registry | `https://registry.npmjs.org` | an http(s) URL (a mirror) |
+| `apps.pypi_url` | Node.js download index | `https://pypi.org/pypi` | an http(s) URL (a mirror) |
+
+`GET /api/gateway/admin/runtime-config` returns them under `apps` as
+`{name: {key, label, help, placeholder, default, env_name, value, source,
+note?, env_shadowed?, invalid_stored?, invalid_env?}}` (the registry
+`runtime_config.APPS_SETTINGS`: a new knob is one row, and the TUI renders
+whatever the payload lists). Writes go through the generic door, admin-only
+and audit-logged (`setting_change` on the request's audit line):
+`POST /api/gateway/admin/runtime-config {"apps.host": "0.0.0.0"}` (or
+`{"apps": {"host": "0.0.0.0"}}`); an empty value clears back to env/default.
+Each value is validated before anything is written (400 with the reason). Read
+at each use: a change applies at the next app start (`node`, `host`, `ports`)
+or the next download (the two URLs).
+
+Three ways, same semantics:
+
+| | Web console | Console TUI | CLI |
+|---|---|---|---|
+| Where | Apps → *Advanced: apps settings* (one field per setting, with its source pill) | Runtimes → *Runtime knobs* → *Edit apps settings* | `abstractgateway apps config get [NAME] [--json]` |
+| Change | type, *Save apps settings* (only changed fields are sent; empty = clear) | one line per setting (stored value prefilled; empty = clear) | `abstractgateway apps config set NAME VALUE` (`""` clears) |
+| Refusal | the gateway's sentence (*Not saved*) | the form shows the gateway's sentence | `refused: <sentence>`, exit 2 |
+
+The CLI works on the data dir directly (`--data-dir`, default: the `serve`
+resolution), so a headless server needs no browser.
+
+### Backlog folder, exec runner and process manager (Continuum)
+
+Continuum's Board, Backlog, Executions and Services pages read three runtime
+settings. A fresh install needs none of them: the gateway keeps its own
+backlog in `<data dir>/backlog/`, and creates the standard layout there the
+first time the backlog is used (`docs/backlog/overview.md`,
+`docs/backlog/template.md`, and the `planned/`, `proposed/`, `completed/`
+folders; nothing existing is ever overwritten). Continuum then shows an empty
+board with **Create your first item**.
+
+| Key | Label | Default | Value |
+|---|---|---|---|
+| `triage_repo_root` | Backlog folder | `<data dir>/backlog` (created on first use) | a folder that contains `docs/backlog` (a project checkout), or the gateway's own folder |
+| `backlog_exec_runner` | Backlog exec runner | off | `on` / `off`: run the items queued for execution on this machine |
+| `process_manager` | Process manager | off | `on` / `off`: Continuum's Services page (process control also needs the backlog folder set to the framework checkout it manages) |
+
+**Where a value comes from** (one resolution, `runtime_config.resolve_backlog_root`
+and `resolve_exec_runner`; every consumer calls it: the backlog, report,
+triage and process routes, the exec runner at each poll, the skills shelf):
+
+1. the launch flag of the running gateway: `abstractgateway serve --backlog-root PATH`
+   and `--exec-runner on|off` (for that run only; source `flag`);
+2. the saved setting (source `stored`);
+3. a legacy environment value, for gateways set up before these settings
+   existed (source `env`; reported, never needed; saving a value replaces it);
+4. the default (source `default`).
+
+`GET /api/gateway/admin/runtime-config` serves each as `{value, source, key,
+label, help, cli, flag?}`; the backlog folder also carries `available`,
+`reason` (why it is not usable, without the path), `default_path` and, under a
+launch flag, the `stored_value` that applies once the gateway restarts
+without it. Non-admins get the posture without server paths.
+`GET /api/gateway/backlog/status` answers the same question for Continuum
+(any signed-in user; paths for admins only).
+
+Changing them, three doors with one validation (a folder must exist and
+contain `docs/backlog`, or be the gateway's own folder, which is created; a
+switch is `on` or `off`; a refusal is one plain sentence):
+
+| | Web console | CLI | Continuum |
+|---|---|---|---|
+| Where | Apps → *Advanced: backlog settings (Continuum)* | `abstractgateway config get [KEY] [--json]` | Settings → *Gateway administration* |
+| Change | edit, *Save backlog settings*; *Use the gateway's own folder* | `abstractgateway config set KEY VALUE`, `abstractgateway config unset KEY` | *Change…*, *Use the gateway's own folder*, *Enable* / *Disable* |
+
+`config set` goes through the running gateway's door when one serves this
+data dir on this machine (it applies at once and lands in the audit log);
+otherwise it writes the settings store and the next start reads it. The same
+`config get|set|unset` covers every runtime setting (`executor`,
+`apps.<name>`, …).
+
+When a saved folder disappears (a deleted or unmounted checkout), the backlog
+routes answer `404` *Backlog folder not available on this gateway: the folder
+does not exist (set by the saved setting)…* and Continuum shows the folder,
+the reason and, for an admin, **Use the gateway's own folder** and **Choose a
+folder…**.
+
+Evidence: `src/abstractgateway/runtime_config.py` (`resolve_backlog_root`,
+`resolve_exec_runner`, `validate_backlog_root`, `BACKLOG_SETTINGS`),
+`src/abstractgateway/assets/backlog_skeleton/`, `src/abstractgateway/config_cli.py`,
+`tests/test_gateway_backlog_root_settings.py`.
 
 ### Host state and model residency
 
@@ -896,16 +1218,29 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port 8080] [--data-dir DIR] [--no-runner] [--reload]`
-  (`--host` defaults to `127.0.0.1` when no auth is configured, else `0.0.0.0`)
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload]`
+  (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
+  setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
+  configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)
   Evidence: `src/abstractgateway/cli.py`
+- `abstractgateway network status|set|addresses|restart`: who can reach the
+  gateway and the URLs to copy ([network exposure](#network-exposure-localhost--local-network--internet))
 - `abstractgateway claim [--open] [--port P | --url URL] [--json]`: one-time
   console sign-in link ([first-run.md](./first-run.md))
-- `abstractgateway service install|uninstall|status [--port P] [--host H] [--data-dir DIR] [--dry-run] [--json]`:
-  start the gateway at login (LaunchAgent, systemd user unit, Windows Startup
-  shortcut; [first-run.md](./first-run.md#4-start-the-gateway-at-login-optional))
+- `abstractgateway service install|uninstall|enable|disable|status [--port P] [--host H] [--pin-command-line] [--data-dir DIR] [--dry-run] [--json]`:
+  start the gateway at login (LaunchAgent, systemd user unit or XDG autostart
+  entry, Windows Run entry; `enable`/`disable` are the tray's switch;
+  [first-run.md](./first-run.md#4-start-the-gateway-at-login-optional)). The
+  registration runs plain `serve`; `--host/--port` are written into the
+  [network exposure](#network-exposure-localhost--local-network--internet)
+  setting, or onto the command line with `--pin-command-line`
 - `abstractgateway runner` (worker only)
 - `abstractgateway config status --json`
+- `abstractgateway config get [KEY] [--json]`, `config set KEY VALUE`, `config unset KEY`:
+  runtime settings from a terminal ([backlog folder, exec runner, process
+  manager](#backlog-folder-exec-runner-and-process-manager-continuum), and every other key)
+- `abstractgateway serve --backlog-root PATH --exec-runner on|off`: the backlog
+  folder and the exec runner for this run (they win over the saved settings until the gateway stops)
 - `abstractgateway migrate --from=file --to=sqlite --data-dir <DIR> --db-path <FILE>`
 - `abstractgateway models loaded|load|unload --url <URL> [--provider P --model M] [--force]`
   (model residency on a running gateway; see [console.md](./console.md#model-residency-from-a-shell))

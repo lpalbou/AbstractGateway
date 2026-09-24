@@ -32,6 +32,7 @@ def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
     assert "AbstractRuntime>=0.4.33" in deps
+    assert "abstractcore>=2.15.0" in deps
     assert "abstractagent>=0.3.13" in deps
     assert "AbstractMemory[lancedb]>=0.3.0" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
@@ -118,7 +119,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]>=2.14.0" in embeddings
+    assert "abstractcore[embeddings]>=2.15.0" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras
@@ -236,11 +237,11 @@ def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> 
     assert "ABSTRACTGATEWAY_DATA_DIR=/data" in dockerfile
     assert "ABSTRACTGATEWAY_FLOWS_DIR=/data/flows" not in dockerfile
     assert "ENTRYPOINT [\"abstractgateway-docker-entrypoint\"]" in dockerfile
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.3.0}" in compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.4.0}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS: ${ABSTRACTGATEWAY_EXTRAS:-}" in compose
     assert "ABSTRACTGATEWAY_USER_AUTH: ${ABSTRACTGATEWAY_USER_AUTH:-1}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS:-gpu" in nvidia_compose
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.3.0-gpu}" in nvidia_compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.4.0-gpu}" in nvidia_compose
     assert "context: ../.." in nvidia_compose
 
 

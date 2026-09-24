@@ -37,6 +37,9 @@ nav:
   - Getting Started: getting-started.md
   - Configuration: configuration.md
   - Consoles (web + terminal): console.md
+  - Browser & Terminal Apps: apps.md
+  - Local Engines: engines.md
+  - Model Downloads: model-downloads.md
   - Shipped Workflows: shipped-workflows.md
   - Deployment: deployment.md
   - API Overview: api.md

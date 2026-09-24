@@ -11,7 +11,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.3.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -19,7 +19,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.3.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.0-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -145,7 +145,14 @@ Optional:
 
 Common:
 
-- `ABSTRACTGATEWAY_ALLOWED_ORIGINS`: browser origin allowlist
+- Browser origins and trust proxy are settings, not variables: the console's
+  Network → *Advanced: reverse proxy*, the TUI's Connection screen, or
+  `abstractgateway network set --allowed-origins https://gateway.example.com --trust-proxy on`
+  (inside a container: `docker exec <container> abstractgateway network set …`).
+  They apply to the next request. `ABSTRACTGATEWAY_ALLOWED_ORIGINS` /
+  `ABSTRACTGATEWAY_TRUST_PROXY` in the container environment still pin them
+  (reported as `overridden_by_env`); see
+  [configuration.md](./configuration.md#reverse-proxy-allowed-origins-and-trust-proxy).
 - `input.text` capability route: default for LLM/agent nodes
 - `ABSTRACTGATEWAY_TOOL_MODE`: `approval`, `passthrough`, `delegated`, or local dev modes
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` or `sqlite`
@@ -190,8 +197,10 @@ Filesystem/media controls from AbstractCore remain available:
 
 On a desktop or laptop, `abstractgateway service install` registers the
 gateway as a per-user login service (macOS LaunchAgent, Linux systemd user
-unit, Windows Startup shortcut) bound to `127.0.0.1`, with data in the
-per-user data folder. See [first-run.md](./first-run.md). Containers and
+unit or XDG autostart entry, Windows Run entry) that runs plain `serve`, so the
+[network exposure](./configuration.md#network-exposure-localhost--local-network--internet)
+setting decides the bind (seeded to `localhost`, i.e. `127.0.0.1`, on install),
+with data in the per-user data folder. See [first-run.md](./first-run.md). Containers and
 servers keep the explicit configuration shown on this page: the image sets
 `--host 0.0.0.0` and needs explicit auth, exactly as before.
 
@@ -216,7 +225,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.3.0-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.4.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

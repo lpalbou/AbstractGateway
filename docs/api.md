@@ -891,13 +891,19 @@ are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 | Method and path | Access | Body / query | Returns |
 |---|---|---|---|
 | `GET /host/profile` | user | `refresh=1` | `host_profile_v1` |
-| `GET /engines` | user | `probe=1` | `engines_status_v1` plus `install_allowed` and `install_policy` |
+| `GET /engines` | user | `probe=1` | `gateway_engines_v2` rows (AbstractCore's detection plus the install plan and actions) with `install_allowed` and `install_policy`; see [engines.md](./engines.md) |
 | `GET /engines/{id}` | user | `probe=1` | one engine row plus `install_allowed`; 404 for an unknown id |
-| `POST /engines/{id}/install` | admin | `{"dry_run": bool, "force": bool}` | `host_job_v1` (kind `engine_install`) |
+| `POST /engines/{id}/install` | admin | `{"dry_run": bool, "force": bool, "location": "auto"\|"user"\|"system"}` | an `engine_install_job_v1` job (user-level first; pauses in `needs_admin` / `needs_tools`), see [engines.md](./engines.md) |
+| `GET /engines/jobs`, `GET /engines/jobs/{id}` | user | | engine install jobs |
+| `POST /engines/jobs/{id}/continue`, `/cancel` | admin | `{"action"?}` | the job |
+| `POST /engines/{id}/start`, `/stop` | admin | | Ollama / LM Studio server state |
 | `GET /models/catalog` | user | `q`, `engine`, `fits=1`, `hub=1`, `tag` (repeatable) | `model_catalog_v1` |
 | `GET /models/installed` | user | `provider` | `models_installed_v1` |
-| `POST /models/download` | admin | `{"provider", "artifact", "dry_run", "expected_bytes"?}` or `{"recommended": true}` | `{"ok": true, "job": {...}}` |
-| `GET /models/download/{job}` | user | | `{"ok": true, "job": {...}}` |
+| `POST /models/download` | admin | `{"provider", "artifact", "dry_run", "expected_bytes"?}` or `{"recommended": true}` | `{"ok": true, "job": {...}}`; with `recommended`, `{"ok": true, "recommended": true, "jobs": [...], "group": {...}}` |
+| `GET /models/download/{job}` | user | | `{"ok": true, "job": {...}}` (a `grp_...` id returns the parent job) |
+| `GET /models/downloads` | user | | `{"ok": true, "jobs": [...]}`, newest first, parents included |
+| `POST /models/download/{job}/cancel` | admin | none | `{"ok": true, "job": {...}}`; stops the transfer within about a second; a `grp_...` id cancels every running child; 404 when unknown |
+| `GET /models/downloads/stream` | user | `job_id`, `until_idle=1` | Server-Sent Events of the same dicts, see [model-downloads.md](./model-downloads.md) |
 | `POST /models/delete` | admin | `{"provider", "artifact", "dry_run": bool, "force": bool}` | `host_job_v1` (kind `delete`) |
 | `GET /jobs` | user | `kind`, `status` | `{"schema": "host_jobs_v1", "jobs": [...], "generated_at"}`, newest first |
 | `GET /jobs/{id}` | user | | `host_job_v1`; 404 when unknown |
@@ -905,6 +911,23 @@ are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 
 Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
 `hub` accept `1`/`0` and `true`/`false`.
+
+**Catalog artifacts.** `model_catalog_v1` is AbstractCore's payload, served
+unchanged (field reference: AbstractCore `docs/models.md`, "The catalog").
+Besides `quant` (the artifact's own label, lowercased, or `null`) and `bits`
+(effective bits per weight), every artifact carries `quant_class`, one of
+`2bit`, `3bit`, `4bit`, `5bit`, `6bit`, `8bit`, `16bit`, `full`, `unknown`,
+for filtering by quantization: `q4_k_m`, `4bit`, `mxfp4` and `oq4e` are
+`4bit`; `q8_0` and `8bit` are `8bit`; `bf16` and `f16` are `16bit`; `f32` is
+`full`. `quant_class_source` is `stated` (the reference names its quant),
+`assumed` (a bare Ollama tag such as `qwen3.5:9b` or LM Studio id: the class of
+the engine's default build, which the fit estimate assumes too) or `null` (no
+quant information; the class is `unknown`). `options` holds the route options a
+recommendation copies with the artifact (`{}` for most); `companions` lists
+repos downloaded with it (an MLX build's MTP drafter, from AbstractCore's
+drafter registry; `[]` for most), `companion_bytes` is their size, and
+`download_bytes` already includes it; `note` is one sentence about the build. On Apple silicon the text rows pre-select the
+memory tier's MLX build and exactly one text row is the `starter`.
 
 **Jobs.** A `host_job_v1` has `schema`, `job_id`, `kind`
 (`download | delete | engine_install`), `status`
@@ -916,6 +939,17 @@ Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
 the POST returns. On the older `/models/download` lane the job also carries
 `job` (the id), `events`, `host_status`, reports `queued` as `running`, and
 counts `joined` including the first request.
+
+**Download progress.** A download job also carries `state`
+(`queued | resolving | downloading | verifying | installing | done | failed |
+cancelled | stalled`), `bytes_done`, `bytes_total`, `size_unknown`,
+`size_note`, `bytes_per_second`, `eta_s`, `updated_at`, `files`
+(`[{name, bytes_done, bytes_total, state}]`), `current_file`, a one-sentence
+`message`, the tool's own `detail`, and `transitions`. "Use recommended
+defaults" (`{"recommended": true}`) returns one parent job (`kind:
+"download_group"`, id `grp_...`) whose bytes, percent, speed and time left
+add up its children. The full contract, one real example per state and what
+each source reports: [model-downloads.md](./model-downloads.md).
 
 **Refusals** share one body:
 `{"ok": false, "status", "reason"?, "message", "detail", "error": {"message", "type"}, ...}`.

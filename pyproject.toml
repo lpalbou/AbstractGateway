@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.3.0"
+version = "0.4.0"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,11 @@ authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
   "AbstractRuntime>=0.4.33",
+  # Floor only (no extras; Runtime chooses them). The gateway relies on
+  # AbstractCore 2.15.0 (host-job download progress and parent jobs, the
+  # recommended text tiers, the operator HF-offline snapshot); Runtime alone
+  # would keep an older Core on upgrade.
+  "abstractcore>=2.15.0",
   "abstractagent>=0.3.13",
   "AbstractMemory[lancedb]>=0.3.0",
   "requests<3.0.0,>=2.32.5",
@@ -35,7 +40,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.14.0",
+  "abstractcore[embeddings]>=2.15.0",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,

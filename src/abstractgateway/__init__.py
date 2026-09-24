@@ -6,4 +6,4 @@ AbstractGateway is a deployable Run Gateway host for AbstractRuntime:
 - security middleware for network-safe deployments
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

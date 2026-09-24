@@ -53,9 +53,26 @@ The guide has five steps. Every step is optional:
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
-| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), a **Download** button for each recommended model that is missing, and the model catalog filtered to models that fit this machine. Select an installed model and click **Set as default** to make it the default text model |
-| Apps | The `npx @abstractframework/{flow,code,observer,continuum,entity}` commands with copy buttons |
-| Done | How to reopen the console, the login-service status, and the CLI equivalents |
+| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), a **Download** button for each recommended model that is missing, and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
+| Apps | One card per browser app (Flow Editor, Code, Observer, Continuum, Entity): name, status, one line of description and one row of buttons at the same height on every card: **Install and open** or **Open** (Open also starts a stopped app), plus **Open in Terminal** or **Install for Terminal** on Code. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](docs/console.md#apps-tab)) |
+| Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
+
+**What "recommended" means on this computer.** AbstractCore picks the
+recommended text model; the gateway shows that pick and holds no list of its
+own. On a Mac with Apple silicon the pick is an MLX build chosen by the
+computer's memory:
+
+| Memory | Recommended text model |
+|---|---|
+| less than 24 GB | `mlx-community/Qwen3.5-9B-MLX-4bit` (Qwen3.5 9B) |
+| 24 GB up to, but not including, 128 GB | `mlx-community/Qwen3.8-27B-4bit` (Qwen3.8 27B) |
+| 128 GB or more | `mlx-community/Qwen3.8-Flash-Next-4bit` (Qwen3.8 Flash-Next) |
+
+LM Studio and Ollama builds stay in the catalog and can be downloaded, but on
+a Mac they are not the recommendation. Other computers keep the LM Studio
+build `qwen/qwen3.5-9b@4bit`. When AbstractCore's memory estimate says the
+recommended model may not fit, the **Chat and text** card says so with the
+estimate; the recommendation does not quietly switch to another model.
 
 A typical path from a fresh install to a working local model:
 
@@ -64,10 +81,11 @@ A typical path from a fresh install to a working local model:
    for example `brew install ollama` on a Mac with Homebrew, and that it runs
    on this machine. The install runs in the background with progress; when it
    finishes the row shows the version.
-2. **Default model.** The list opens on models that fit this machine's memory.
-   Click **Download** on the one you want; progress shows in the job card.
-3. When the download finishes, the model appears under *Installed*. Select it
-   and click **Set as default**: the gateway's text route now uses it.
+2. **Default model.** The catalog opens on models that fit this machine's
+   memory, one card per model with its 4-bit and 8-bit builds. Click
+   **Download** on the build you want; its progress bar shows on the row.
+3. When the download finishes, the row reads *Downloaded*. Click **Use as
+   default**: the gateway's text route now uses it.
 
 The same steps are available later in the **Engines** and **Models** tabs (see
 [console.md](docs/console.md#models-and-engines-tabs)) and from the command line
@@ -109,21 +127,37 @@ How the link is protected:
   `X-Forwarded-Host`, `X-Real-IP`, `Forwarded`);
 - the console removes the code from the address bar before sending it;
 - the result is the same browser session as a normal sign-in (session cookie +
-  CSRF cookie).
+  CSRF cookie). The response's `claim.created_by` says who minted the link
+  (`serve`, `cli`, `tray`, or `null` for an older link). This lets the
+  console treat a tray sign-in differently from a first run.
 
 ## 4. Start the gateway at login (optional)
 
 ```bash
 abstractgateway service install      # install and start
-abstractgateway service status       # installed? loaded?
+abstractgateway service status       # on | off | broken | other, and why
+abstractgateway service enable       # start THIS gateway at the next login (starts nothing now)
+abstractgateway service disable      # stop starting it at login (the running gateway keeps running)
 abstractgateway service uninstall    # stop and remove (your data is kept)
 ```
+
+The desktop tray's **Start AbstractGateway at login** item is the same switch
+(`enable`/`disable`, shared module `abstractgateway.autostart`). `status`
+reports `broken` when a registration exists that would not start — the
+program it points at is gone (a moved or reinstalled gateway), the file is
+unreadable, the unit is not enabled, or launchd / Task Manager / the desktop
+switched it off — and `other` when it belongs to another data folder. It also
+reports `broken` with **needs repair** when a registration starts the gateway
+but pins `--host/--port` on its command line (every registration written
+before 2026-09-24): "pinned to 127.0.0.1:N by the login item — run
+`abstractgateway service enable` again to let the Network setting apply".
 
 | OS | What is installed | Logs |
 |---|---|---|
 | macOS | LaunchAgent `~/Library/LaunchAgents/ai.abstractframework.gateway.plist` (`RunAtLoad`, restarted if it crashes), loaded with `launchctl bootstrap gui/<uid>` | `~/Library/Logs/AbstractGateway/` |
 | Linux | systemd user unit `~/.config/systemd/user/abstractgateway.service` (`Restart=on-failure`), enabled with `systemctl --user enable --now` | `journalctl --user -u abstractgateway.service` |
-| Windows (experimental) | Startup-folder shortcut `AbstractGateway.lnk` that starts the gateway with `pythonw.exe` (no console window) | `<data dir>\logs\gateway.log` |
+| Linux without a systemd user manager | XDG autostart entry `~/.config/autostart/abstractgateway.desktop` (starts at graphical login) | `<data dir>/logs/gateway.log` |
+| Windows (experimental) | per-user Run entry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway` that starts the gateway with `pythonw.exe` (no console window, no admin); an older `AbstractGateway.lnk` Startup shortcut is removed | `<data dir>\logs\gateway.log` |
 
 Details:
 
@@ -131,9 +165,17 @@ Details:
   and sets `PATH` itself (including `~/.local/bin`, `~/.lmstudio/bin`,
   `/opt/homebrew/bin`, `/usr/local/bin`), because service managers do not read
   your shell profile.
-- The port is `--port` when given, else the port of a previous install, else
-  the first free port from 8080 upwards. The choice is stored in
-  `<data dir>/service.json`.
+- The login item runs plain `abstractgateway serve`: the host and port come
+  from the [Network setting](docs/configuration.md#network-exposure-localhost--local-network--internet)
+  (`abstractgateway network set localhost|lan|internet [--port N]`, the tray's
+  Network menu, the console) at every start. `install`/`enable` store it
+  first: a stored mode and port are kept; otherwise the mode is `localhost`
+  (127.0.0.1, as before) and the port is `--port` when given, else the running
+  gateway's (`enable`), else a previous install's, else the first free port
+  from 8080 upwards. `--host 127.0.0.1|0.0.0.0` and `--port` are written into
+  that setting and printed. `--pin-command-line` puts `--host/--port` on the
+  command line instead (for technical setups; the Network setting then does
+  not apply). The registration is recorded in `<data dir>/service.json`.
 - After starting, `install` waits up to 60 seconds for `/api/health`
   (`--wait-s`, `--no-wait`) and, on a first run, prints a sign-in link
   (`--no-claim` to skip).
@@ -1086,13 +1128,19 @@ are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 | Method and path | Access | Body / query | Returns |
 |---|---|---|---|
 | `GET /host/profile` | user | `refresh=1` | `host_profile_v1` |
-| `GET /engines` | user | `probe=1` | `engines_status_v1` plus `install_allowed` and `install_policy` |
+| `GET /engines` | user | `probe=1` | `gateway_engines_v2` rows (AbstractCore's detection plus the install plan and actions) with `install_allowed` and `install_policy`; see [engines.md](docs/engines.md) |
 | `GET /engines/{id}` | user | `probe=1` | one engine row plus `install_allowed`; 404 for an unknown id |
-| `POST /engines/{id}/install` | admin | `{"dry_run": bool, "force": bool}` | `host_job_v1` (kind `engine_install`) |
+| `POST /engines/{id}/install` | admin | `{"dry_run": bool, "force": bool, "location": "auto"\|"user"\|"system"}` | an `engine_install_job_v1` job (user-level first; pauses in `needs_admin` / `needs_tools`), see [engines.md](docs/engines.md) |
+| `GET /engines/jobs`, `GET /engines/jobs/{id}` | user | | engine install jobs |
+| `POST /engines/jobs/{id}/continue`, `/cancel` | admin | `{"action"?}` | the job |
+| `POST /engines/{id}/start`, `/stop` | admin | | Ollama / LM Studio server state |
 | `GET /models/catalog` | user | `q`, `engine`, `fits=1`, `hub=1`, `tag` (repeatable) | `model_catalog_v1` |
 | `GET /models/installed` | user | `provider` | `models_installed_v1` |
-| `POST /models/download` | admin | `{"provider", "artifact", "dry_run", "expected_bytes"?}` or `{"recommended": true}` | `{"ok": true, "job": {...}}` |
-| `GET /models/download/{job}` | user | | `{"ok": true, "job": {...}}` |
+| `POST /models/download` | admin | `{"provider", "artifact", "dry_run", "expected_bytes"?}` or `{"recommended": true}` | `{"ok": true, "job": {...}}`; with `recommended`, `{"ok": true, "recommended": true, "jobs": [...], "group": {...}}` |
+| `GET /models/download/{job}` | user | | `{"ok": true, "job": {...}}` (a `grp_...` id returns the parent job) |
+| `GET /models/downloads` | user | | `{"ok": true, "jobs": [...]}`, newest first, parents included |
+| `POST /models/download/{job}/cancel` | admin | none | `{"ok": true, "job": {...}}`; stops the transfer within about a second; a `grp_...` id cancels every running child; 404 when unknown |
+| `GET /models/downloads/stream` | user | `job_id`, `until_idle=1` | Server-Sent Events of the same dicts, see [model-downloads.md](docs/model-downloads.md) |
 | `POST /models/delete` | admin | `{"provider", "artifact", "dry_run": bool, "force": bool}` | `host_job_v1` (kind `delete`) |
 | `GET /jobs` | user | `kind`, `status` | `{"schema": "host_jobs_v1", "jobs": [...], "generated_at"}`, newest first |
 | `GET /jobs/{id}` | user | | `host_job_v1`; 404 when unknown |
@@ -1100,6 +1148,23 @@ are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 
 Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
 `hub` accept `1`/`0` and `true`/`false`.
+
+**Catalog artifacts.** `model_catalog_v1` is AbstractCore's payload, served
+unchanged (field reference: AbstractCore `docs/models.md`, "The catalog").
+Besides `quant` (the artifact's own label, lowercased, or `null`) and `bits`
+(effective bits per weight), every artifact carries `quant_class`, one of
+`2bit`, `3bit`, `4bit`, `5bit`, `6bit`, `8bit`, `16bit`, `full`, `unknown`,
+for filtering by quantization: `q4_k_m`, `4bit`, `mxfp4` and `oq4e` are
+`4bit`; `q8_0` and `8bit` are `8bit`; `bf16` and `f16` are `16bit`; `f32` is
+`full`. `quant_class_source` is `stated` (the reference names its quant),
+`assumed` (a bare Ollama tag such as `qwen3.5:9b` or LM Studio id: the class of
+the engine's default build, which the fit estimate assumes too) or `null` (no
+quant information; the class is `unknown`). `options` holds the route options a
+recommendation copies with the artifact (`{}` for most); `companions` lists
+repos downloaded with it (an MLX build's MTP drafter, from AbstractCore's
+drafter registry; `[]` for most), `companion_bytes` is their size, and
+`download_bytes` already includes it; `note` is one sentence about the build. On Apple silicon the text rows pre-select the
+memory tier's MLX build and exactly one text row is the `starter`.
 
 **Jobs.** A `host_job_v1` has `schema`, `job_id`, `kind`
 (`download | delete | engine_install`), `status`
@@ -1111,6 +1176,17 @@ Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
 the POST returns. On the older `/models/download` lane the job also carries
 `job` (the id), `events`, `host_status`, reports `queued` as `running`, and
 counts `joined` including the first request.
+
+**Download progress.** A download job also carries `state`
+(`queued | resolving | downloading | verifying | installing | done | failed |
+cancelled | stalled`), `bytes_done`, `bytes_total`, `size_unknown`,
+`size_note`, `bytes_per_second`, `eta_s`, `updated_at`, `files`
+(`[{name, bytes_done, bytes_total, state}]`), `current_file`, a one-sentence
+`message`, the tool's own `detail`, and `transitions`. "Use recommended
+defaults" (`{"recommended": true}`) returns one parent job (`kind:
+"download_group"`, id `grp_...`) whose bytes, percent, speed and time left
+add up its children. The full contract, one real example per state and what
+each source reports: [model-downloads.md](docs/model-downloads.md).
 
 **Refusals** share one body:
 `{"ok": false, "status", "reason"?, "message", "detail", "error": {"message", "type"}, ...}`.
@@ -1588,30 +1664,89 @@ user auth enabled, the first-login token is written to
 - **Engines:** the local engines on the gateway host (Ollama, LM Studio, MLX,
   llama.cpp, vLLM, Hugging Face): installed or not, running or not, and a
   one-click install (details below).
+- **Apps:** the browser apps (Flow Editor, Code, Observer, Continuum, Entity):
+  install, open, and Code's terminal version (details below).
 
 ### Models and Engines tabs
 
-These two tabs are AbstractCore's own Models and Engines screens, embedded in
-the gateway console. The same screens appear in `abstractcore serve`'s console
-and, as terminal screens, in both terminal consoles, so they look and behave the
-same everywhere. Everything they show and do happens **on the gateway host**:
-the machine that runs `abstractgateway serve`, not the computer your browser
-runs on.
+Everything these two tabs show and do happens **on the gateway host**: the
+machine that runs `abstractgateway serve`, not the computer your browser runs
+on. The catalog data, the presence checks and the fit verdicts come from
+AbstractCore (`GET /api/gateway/models/catalog`, contract `model_catalog_v1`);
+downloads are the gateway's own jobs (see [Model downloads](docs/model-downloads.md)).
 
-**Models** (tab id `catalog`; the older **Resources** tab keeps id `models`):
+**Models** (tab id `catalog`; the older **Resources** tab keeps id `models`)
+shows the catalog as **one card per model**:
 
-- A line describing this machine (accelerator, memory the models can use, free
-  disk).
-- The catalog: model families with one row per downloadable artifact (engine,
-  quantization, download size), whether its weights are already here
-  (`installed`, `not downloaded`, `unknown`, `remote`), and a fit verdict
-  (`fits`, `tight`, `too large`, `partial offload`, `unknown`). **Fits this
-  machine** is on by default. Search, filter by engine or modality, or tick
-  **Search Hugging Face** to include hub results (slower).
-- The models already installed, per engine, with their size and location.
-- Actions: **Download** and **Delete** (with a confirmation that names the
-  model and any blocker, such as a model that is loaded right now). Downloads
-  and deletes run as jobs with progress; you can cancel them.
+- The card header: the model's name, organisation, parameter count and
+  licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
+  Voice, Image) and a **Starter** badge for the models of the recommended
+  starter set.
+- The card body: one row per downloadable build (artifact) of that model: the
+  provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
+  ids are shortened with "..."; hover to read the whole id, click it to copy
+  it), the quantization (4-bit, 8-bit, 16-bit, ... and its bits per weight),
+  the download size ("about" when the size is estimated from the parameter
+  count), whether the weights are already here (Downloaded, Not downloaded,
+  Unknown, Remote) and whether it fits this machine (Fits, Tight, Partial
+  offload, Too large; hover the pill for the numbers behind it). The build
+  recommended for this computer comes first and is marked; the others are
+  quieter.
+- One action per row: **Download** (a download shows its progress bar with
+  bytes, speed and time left, and **Cancel**, the same progress display as the
+  setup guide), then **Use as default** once a text model is downloaded (it
+  sets the default text model, like the Multimodal tab).
+- Many models have 8-bit builds next to the 4-bit ones when upstream publishes
+  them (MLX `-8bit` repositories, Ollama `-q8_0` tags, GGUF `Q8_0` files, LM
+  Studio `@8bit`). Every build the catalog knows is listed; nothing is cut off.
+
+The filter bar above the cards:
+
+- **Search** matches model names, organisations and artifact ids (every word
+  must match). **Escape** clears it.
+- **Quantization**: All, 4-bit, 8-bit, Other (every other class: 16-bit, full
+  precision, 2/3/5/6-bit and builds whose reference names no quantization).
+  The classes come from AbstractCore's `quant_class` field. A gateway whose
+  AbstractCore is older than that field shows the notice "This gateway's
+  catalog does not report quant_class yet", and the quantization filter stays
+  off until AbstractCore is updated on the gateway host; every build is still
+  listed.
+- **Catalog / Hugging Face**: the switch left of the search box. In
+  **Hugging Face** mode, type a name and press **Enter** (or **Search**): the
+  gateway searches the Hugging Face Hub (answers are cached for 24 hours) and
+  the results show as the same cards, with a **Hugging Face** badge: provider,
+  artifact id, quantization when the result names one ("Not stated"
+  otherwise, never guessed), size from the Hub, fit, and **Download** with
+  the same progress bar. Capabilities of a Hub result are unknown until it is
+  installed, so it offers no **Use as default** from here. When the Hub has
+  nothing for the query the view says so; when the gateway host cannot reach
+  the Hub it says "Hugging Face could not be searched right now" (the raw
+  reason sits behind **Show details**), and results the Hub only partly
+  answered carry a warning. The query is part of the address:
+  `/console#catalog?hf=smollm`.
+- **Provider**, **Capability** and **Status** (Downloaded, Not downloaded)
+  chips, each with the number of builds it would show.
+- **Fits this computer** hides the builds that do not fit (only Fits and Tight
+  remain).
+- A live count: "12 of 77 models · 31 artifacts shown". The row with the search
+  box, the count and the filters in use stays under the header while you
+  scroll; **Filters** brings the chips back into view. When nothing matches,
+  **Clear filters** resets them.
+- The filters are part of the address: `/console#catalog?quant=8bit&provider=mlx&fits=1`
+  opens the tab with exactly that view, so a link reproduces it. The keys are
+  `q`, `quant` (`4bit`, `8bit`, `other`), `provider`, `cap`, `status`
+  (`downloaded`, `not_downloaded`), `fits=1` and `hf` (Hugging Face mode and
+  its query).
+
+Below the cards, **On this computer** is AbstractCore's own list of the models
+the local engines hold (including models that are not in the catalog), with
+their size and location, and **Delete** (with a confirmation that names the
+model and any blocker, such as a model that is loaded right now).
+
+The setup guide's **Default model** step shows the same catalog cards with
+**Fits this computer** already on; **Open in the Models tab** carries the
+filters over. An engine card's **Browse models** opens the tab filtered to that
+engine's builds.
 
 **Engines** (tab id `engines`):
 
@@ -1634,10 +1769,11 @@ Who can do what:
   disabled for other users, and the gateway refuses those calls from them.
 - Installing an engine also needs the gateway setting
   [`allow_engine_install`](docs/configuration.md#allow_engine_install). It lives in
-  the runtime configuration and is on by default only when the gateway listens
-  on this machine only (`127.0.0.1`); a gateway reachable from the network
-  refuses installs until an admin turns it on. A dry run (**Preview**) is
-  always allowed.
+  the runtime configuration and is on by default when the gateway listens on
+  this machine only (`127.0.0.1`), and, whatever it listens on, for someone
+  using the console on the gateway machine itself. A browser on another
+  computer is refused until an admin turns the setting on. A dry run
+  (**Preview**) is always allowed.
 - Every action is recorded in the gateway's audit log, and each job card shows
   the equivalent command, for example
   `abstractgateway models download ollama qwen3:8b`.
@@ -1646,6 +1782,56 @@ If the gateway's AbstractCore is older than 2.14.0, both tabs show a card saying
 so, with the version installed and the upgrade command
 (`pip install -U "abstractcore>=2.14.0"`); the rest of the console works as
 before.
+
+### Apps tab
+
+The Apps tab and the setup guide's Apps step show the same cards (the apps
+themselves are described in [apps.md](docs/apps.md)). What a plain user sees on
+each card: the app's mark, name and status pill (Not installed, Installed,
+Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
+description (hover it for the whole sentence), and one row of buttons. The
+button rows of the cards side by side are always at the same height.
+
+| The app is | The action row |
+|---|---|
+| not installed | **Install and open** (installs Node.js first when the gateway needs it, then the app, starts it and opens it) |
+| installing | a progress bar above the row, and **Cancel** |
+| installed and running | **Open** (a new tab, already signed in) |
+| installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
+
+Code has a terminal version too. Next to Code's primary button: **Open in
+Terminal** when the terminal version is installed and the browser is on the
+gateway machine (a new terminal window opens there, signed in), or a quiet
+**Install for Terminal** when a ready-made download exists for this
+computer. When the terminal version needs the Rust toolchain, or when the
+browser is on another computer, the plain view shows no terminal button.
+
+A result box appears only after something you did ("Code opened in a new
+Terminal window, signed in to this gateway.", "Flow Editor opened in a new
+tab.") and closes itself after a few seconds. A failure stays, with the
+gateway's reason and **Show details** (the full response or log).
+
+The **Technical details** switch (bottom left of the console, and in the
+guide) adds a secondary line under each card's buttons, and removes it again
+when switched off:
+
+- **Stop** (a running app), **Start** (start without opening), **Show log** /
+  **Hide log** (the app's log, the log file's path, **Show more** up to 5000
+  lines), **Update to X** when a newer version is published, and the version.
+- For Code's terminal version: its version, **Update terminal app to X**, and
+  the exact command to copy (one line, **Copy**): the command that opens it,
+  `cargo install abstractcode` when it needs the Rust toolchain, or, for a
+  browser on another computer, the command to run there and the one-time
+  `abstractcode login` line.
+- The app's local address, the `npx @abstractframework/<app>` line, and the
+  log of a finished install.
+- For an app started outside the gateway (the development stack, `npx`, a
+  service): "Started outside the gateway on port 3001" instead of Stop,
+  Start, Show log and Update; the card shows the Running pill and **Open**
+  like any running app ([apps.md](docs/apps.md#apps-started-outside-the-gateway)).
+
+Installing, starting, stopping and updating need an admin; other users see the
+buttons disabled with the reason on hover.
 
 ## Terminal console (`abstractgateway-console`)
 
@@ -1830,6 +2016,10 @@ The normal browser-console/browser-app path uses Gateway user auth:
   instead
 - `POST /api/gateway/session/claim`: redeems a one-time link code for an admin
   browser session; accepted only from a loopback peer without proxy headers.
+  The response carries `claimed: true`, `first_run` (the guide state) and
+  `claim: {created_by}`, which says who minted the link: `serve` (first run),
+  `cli` (`claim-url` / `abstractgateway claim`), `tray` (tray sign-in), or
+  `null` for a link minted before the field existed.
   `GET /api/gateway/host/first-run` / `POST` (admin) read and record the
   first-run guide state
 
@@ -1896,6 +2086,216 @@ id or CSRF token. Session-authenticated writes carry
 AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
 current user/session in hosted mode. They should not share one app-server
 Gateway token for all users.
+
+## Network exposure (localhost / local network / internet)
+
+One setting decides who can reach the gateway. The console, the console TUI
+(Connection screen), the tray and `abstractgateway network` all edit the same
+runtime-config key (`network`); there is no environment variable for it.
+
+| Mode | Bind | Requires |
+|---|---|---|
+| `localhost` ("Localhost only") | `127.0.0.1` | nothing: only this machine can connect |
+| `lan` ("Local network") | `0.0.0.0` (IPv4) | user auth (accounts + console sign-in) |
+| `internet` ("Internet…") | `0.0.0.0` (IPv4) | user auth **and** an explicit acknowledgement |
+
+- **Applied at the next start.** A listening socket cannot move: after a change
+  the status says `restart_required: true` with `configured` vs `effective`
+  until the gateway restarts (`POST /api/gateway/network/restart`, the tray's
+  *Restart AbstractGateway…*, `abstractgateway network restart`, or stop and
+  start `serve`).
+- **`serve --host/--port` win** over the setting and are reported as
+  `effective.overridden_by_cli: true`. A restart replays the same command
+  line, so it cannot apply the setting: the status says so
+  (`restart.applies: false` + `restart.reason`) and the restart route refuses.
+- **The login service lets the setting apply** (2026-09-24). The LaunchAgent,
+  systemd unit, XDG entry and Windows Run entry written by
+  `abstractgateway service install|enable` start plain `serve`: no `--host`, no
+  `--port`. Install/enable first **seed** the setting through the same change
+  door as `network set` (same auth refusals; a refusal registers nothing):
+  nothing stored yet → `localhost` on the chosen port (the bind every earlier
+  registration had); a stored mode/port → kept. `service install|enable --host H
+  --port P` are written **into the setting** (`127.0.0.1` → `localhost`,
+  `0.0.0.0` → `lan`, or the stored `internet`; a specific address is refused),
+  never onto the command line. `--pin-command-line` is the technical escape
+  hatch: `serve --host H --port P` on the command line as before, the setting
+  untouched and overridden (`overridden_by_cli`, `service status` names it).
+- **Registrations from before 2026-09-24 carry `--host/--port`.** `service
+  status` (and the tray's *Start at login — needs repair*) says
+  "pinned to 127.0.0.1:N by the login item — run `abstractgateway service enable`
+  again to let the Network setting apply". `service enable` (or the tray click)
+  rewrites the registration in place, keeping a stored mode. The gateway
+  running at that moment still has the old command line, which a restart
+  replays: `abstractgateway service install` restarts it from the new
+  registration now, or log out and back in.
+- **Auth is checked before anything is stored.** `lan`/`internet` are refused
+  (HTTP 409, nothing written, `refused_reason` + `fix`) when the gateway was
+  started with authentication switched off (`ABSTRACTGATEWAY_SECURITY=0` /
+  `ABSTRACTGATEWAY_PROTECT_WRITE=0` in its launch environment), with read
+  protection off (`ABSTRACTGATEWAY_PROTECT_READ=0`: unauthenticated reads would
+  be answered as the admin, `reason_code: auth_disabled`), or with a posture
+  without accounts (a shared token only, or `ABSTRACTGATEWAY_USER_AUTH=0`).
+  The `fix` describes that state; a plain start (`abstractgateway serve`, or
+  the login item `abstractgateway service enable` registers) has none of
+  them: when no auth posture is configured at all (the first-run default),
+  `serve` turns user auth on for the network mode and says so on stderr
+  (`auth.source: network_setting`).
+- **`internet` needs `acknowledge_internet: true`** (CLI
+  `--acknowledge-internet`; the TUI and tray ask with a confirm). The gateway
+  does not terminate TLS: put a TLS reverse proxy or a tunnel in front
+  (Caddy, nginx, Cloudflare Tunnel, Tailscale Funnel, ngrok). Port forwarding
+  and firewalls are yours to configure; the gateway changes neither.
+- **Browser origins.** In a network mode from the setting, `serve` also allows
+  the gateway's own discovered LAN origins (e.g. `http://192.168.1.23:8080`,
+  `http://mymac.local:8080`) next to the loopback defaults, so the console can
+  sign in from another machine. An address that appears later (new Wi-Fi)
+  needs a restart. Your public origin (behind a proxy or tunnel) is a setting:
+  see [Reverse proxy](#reverse-proxy-allowed-origins-and-trust-proxy) below.
+- **A setting that cannot apply falls back loudly.** If the stored mode's auth
+  requirement stops being met (the environment changed), `serve` binds
+  `127.0.0.1`, prints `[ERROR] Network exposure 'lan' cannot be applied: … Fix: …`
+  and the status carries `effective.blocked_reason`.
+
+### Reverse proxy: allowed origins and trust proxy
+
+Two settings a deployment behind a reverse proxy or a tunnel needs, stored in
+the same `network` setting and changed through the same door
+(`POST /api/gateway/network`, admin-only, audit-logged). **Both apply to the
+next request: no restart.** The security middleware re-reads them per request
+(one `stat()` of the settings file; parsed again only when it changed), so a
+change from the console, the TUI or the CLI (another process) is live at once.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` (and, in a network mode, the gateway's own LAN origins). | none |
+| `trust_proxy` | Take the client address from `X-Forwarded-For` (sign-in lockouts, audit log). Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees. | off |
+
+**Validation** (one place, the gateway; every door shows its sentence
+verbatim). An origin is `scheme://host[:port]`: `http` or `https`, no path, no
+trailing slash, no query, no user info; IPv6 in brackets. It is stored the way
+a browser sends it: scheme and host lowercased, the default port dropped
+(`https://Gateway.Example.com:443` → `https://gateway.example.com`). `*` (every
+origin), a leading `*.` label and a `:*` port are accepted only as typed and
+are flagged with a warning. A list with any invalid entry is refused whole
+(HTTP 400 `reason_code: invalid_origins`, `errors[{value, error}]`, nothing
+written), e.g. `1 origin is not valid (nothing was saved): https://x.example/: no
+trailing slash: an origin is scheme://host[:port] (write https://x.example)`.
+An empty list clears the setting back to the default.
+
+**The environment override.** `ABSTRACTGATEWAY_ALLOWED_ORIGINS` /
+`ABSTRACTGATEWAY_TRUST_PROXY` in the environment a gateway was started with
+still decide (a deployment pin, the security carve-out in `env_registry.py`),
+and every surface says so: the payload carries `source: "env"` and
+`overridden_by_env: true` with `env_name`/`env_value` and a `note` ("This
+gateway was started with … in its environment: …"); saving is still allowed
+and answers `changed.<field>.applies: "overridden_by_env"` ("Saved, but not in
+effect"). The value in the settings applies once the gateway starts without
+the variable. The origins `serve` itself exports for a network mode are never
+counted as an override.
+
+Status payload (`GET /api/gateway/network`, `reverse_proxy`):
+
+```json
+"reverse_proxy": {
+  "allowed_origins": {"value": ["https://gateway.example.com"], "source": "setting", "overridden_by_env": false,
+                      "effective": ["http://localhost:*", "http://127.0.0.1:*", "https://gateway.example.com"],
+                      "builtin": ["http://localhost:*", "http://127.0.0.1:*"], "self_origins": [],
+                      "applies": "live", "warnings": []},
+  "trust_proxy": {"value": true, "source": "setting", "overridden_by_env": false, "effective": true,
+                  "applies": "live", "warning": "Trust proxy is on: …"}
+}
+```
+
+`source` is `setting` (stored), `env` (the start-time override) or `default`.
+From the CLI (another process) the running gateway's environment is read from
+its run record (`<data>/run/gateway-network.json`, `proxy_env`), never from the
+CLI's own shell.
+
+**Three ways, same semantics** (a headless server over SSH needs only the
+last two):
+
+| | Web console | Console TUI | CLI |
+|---|---|---|---|
+| Where | Network → *Advanced: reverse proxy* | Connection screen, below the addresses | `abstractgateway network …` |
+| Add/replace origins | type an origin, *Add origin* (Enter); × on a chip removes it | *browser origins* line: comma-separated list, Enter saves, empty clears | `set --allowed-origins https://a,https://b` (`""` clears) |
+| Trust proxy | *Trust the proxy's client address* switch | checkbox (Space) | `set --trust-proxy on\|off` |
+| See values + source | pills: *Saved setting* / *Default* / *Set by the environment* | `[saved setting]` / `[default]` / `[environment override]` + the override line | `network show` (`--json` = the payload) |
+| Refusal | the gateway's sentence under the input | notice `✗ reverse proxy refused: <sentence>` | `refused: <sentence>` on stderr, exit 1 |
+
+The console and the TUI send `{allowed_origins}` / `{trust_proxy}` to
+`POST /api/gateway/network`; the CLI writes the same store through the same
+function (`network_exposure.apply_network_change`). The mode is untouched by a
+reverse-proxy-only change (`mode` is optional).
+
+### Addresses
+
+`GET /api/gateway/network` lists every address a client can use, discovered on
+each call: loopback; each up interface's IPv4/IPv6 (loopback, link-local and
+down interfaces skipped; macOS names from `networksetup`, e.g. "Wi-Fi"; VPN
+`utun`/CGNAT addresses labelled "VPN"); the Bonjour name `<LocalHostName>.local`
+when it resolves. Discovery uses `psutil` when importable, else `ifconfig -a`
+(macOS/BSD) or `ip -o addr show up` (Linux), else the hostname's own
+resolution. Each row says whether the gateway listens there now
+(`reachable`). The WAN address (`kind: public`) is looked up only on request
+(`?lookup_public=1`, admin, `internet` mode only; one HTTPS GET to
+`api.ipify.org`), never on a poll. `copy_hint` is the URL to copy first (the
+LAN IPv4 when listening on the network, else loopback).
+
+### API (`gateway_network_v1`)
+
+- `GET /api/gateway/network[?lookup_public=1]`: any authenticated principal
+  (`writable` says whether the caller may change it).
+- `POST /api/gateway/network {mode?, port?, acknowledge_internet?, allowed_origins?, trust_proxy?}`:
+  admin, any subset (at least one). 200
+  `{ok, configured, effective, restart_required, restart, auth, reverse_proxy, changed, warnings, copy_hint}`
+  where `changed{field: {from, to, applies: live|restart|overridden_by_env}}`;
+  409 `{ok:false, reason_code: user_auth_required|auth_disabled|acknowledgement_required, refused_reason, fix?, warnings}`;
+  400 invalid mode/port/`trust_proxy`, or `invalid_origins` with `errors[]`;
+  422 unknown field or a non-boolean `trust_proxy`. Every attempt is one
+  audit-log line (`audit_log.jsonl`) carrying `setting_change` (the fields
+  changed, from/to, or the refusal).
+- `POST /api/gateway/network/restart {force?}`: admin. 409 with
+  `refused_reason` when a restart cannot apply the setting (CLI override, auth
+  not met, nothing pending, process cannot relaunch itself).
+
+A trimmed `GET` in `lan` mode, running and applied:
+
+```json
+{
+  "schema": "gateway_network_v1",
+  "configured": {"mode": "lan", "label": "Local network", "port": 8080, "bind_host": "0.0.0.0", "source": "stored"},
+  "effective": {"mode": "lan", "bind_host": "0.0.0.0", "port": 8080, "overridden_by_cli": false,
+                "host_source": "setting", "port_source": "setting", "running": true},
+  "restart_required": false,
+  "restart": {"available": true, "applies": true, "needed": false},
+  "auth": {"user_auth": true, "token_auth": false, "ok_for_mode": true, "source": "env"},
+  "modes": [{"id": "localhost", "allowed": true, "selected": false},
+            {"id": "lan", "allowed": true, "selected": true},
+            {"id": "internet", "allowed": true, "requires_acknowledgement": true}],
+  "addresses": [
+    {"kind": "loopback", "url": "http://127.0.0.1:8080", "reachable": true},
+    {"kind": "lan", "url": "http://192.168.1.23:8080", "interface": "en0", "interface_label": "Wi-Fi", "reachable": true},
+    {"kind": "hostname", "url": "http://mymac.local:8080", "reachable": true}
+  ],
+  "copy_hint": "http://192.168.1.23:8080",
+  "warnings": ["Traffic is plain HTTP: …"]
+}
+```
+
+### CLI
+
+```bash
+abstractgateway network status|show [--json] [--data-dir DIR]
+abstractgateway network set [localhost|lan|internet] [--port N] [--acknowledge-internet]
+                            [--allowed-origins ORIGIN[,ORIGIN...]] [--trust-proxy on|off]
+abstractgateway network addresses [--copy] [--public] [--json]
+abstractgateway network restart [--url URL] [--token T] [--force]
+```
+
+`status`, `set` and `addresses` work on the data dir directly (a running
+gateway's bind and auth posture are read from `<data>/run/gateway-network.json`);
+`restart` asks the running gateway. See [security.md](docs/security.md#network-exposure)
+for what each mode changes for someone on your network.
 
 ## Two entry points, one store
 
@@ -2061,7 +2461,7 @@ and both console-TUIs: `installed`, `not downloaded`, `unknown`, `remote`.
 
 | Endpoint | What it does |
 |---|---|
-| `GET /api/gateway/models/availability` | The capability grid annotated with weight availability, plus the recommended fresh-install set — its raw counts (`total`, `installed`, `absent`, `would_download`) and `gaps`, the subset whose route has nothing else serving it. Read-only; never downloads. |
+| `GET /api/gateway/models/availability` | The capability grid annotated with weight availability, plus the recommended fresh-install set — its raw counts (`total`, `installed`, `absent`, `would_download`) and `gaps`, the subset whose route has nothing else serving it. The text entry of `recommended` also carries AbstractCore's reasons: `catalog_id`, `basis` (`apple_silicon_tiers` or `portable_default`), `tier`, `fit_verdict`, `fits` and `warning` (a sentence when the model may not fit this computer). Read-only; never downloads. |
 | `POST /api/gateway/models/download` | `{"provider": "...", "artifact": "..."}` or `{"recommended": true}`, with optional `"dry_run": true`. Returns a job id immediately. |
 | `GET /api/gateway/models/download/{job}` | One job's progress: status, percent, byte counts and the provider tool's own recent output. |
 | `GET /api/gateway/models/downloads` | Every download job this Gateway process knows about. |
@@ -2139,10 +2539,18 @@ Installing an engine runs its vendor installer (for example
 remote gateway is not the machine of the person clicking. So installs are
 controlled by the runtime-config setting `allow_engine_install`:
 
-| Gateway bound to | Default |
-|---|---|
-| a loopback address (`127.0.0.1`, `::1`, `localhost`), which is what a bare `abstractgateway serve` and `abstractgateway service install` use | on |
-| any other address (`0.0.0.0`, a LAN IP, a host name), or started without `abstractgateway serve` | off |
+| Gateway bound to | Default for someone at the gateway machine | Default for another computer |
+|---|---|---|
+| a loopback address (`127.0.0.1`, `::1`, `localhost`), which is what a bare `abstractgateway serve` and `abstractgateway service install` use | on | on |
+| any other address (`0.0.0.0`, a LAN IP, a host name), or started without `abstractgateway serve` | on | off |
+
+"Someone at the gateway machine" is a request whose socket peer is loopback
+or one of this host's own interface addresses (a browser on the gateway
+machine that uses its LAN address counts), with no proxy header
+(`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`): see
+[security.md](docs/security.md). The same rule gates app installs (Apps page,
+tray). `install_policy` reports `caller_on_this_machine` and, when that rule
+decided, `source: "default_same_machine"`.
 
 An admin changes it with
 `POST /api/gateway/admin/runtime-config {"allow_engine_install": true}`
@@ -2151,6 +2559,106 @@ where it came from are in `GET /api/gateway/admin/runtime-config` and in
 `install_policy` on `GET /api/gateway/engines`. There is no environment
 variable for it. A dry run ("show the command") is always allowed, and every
 install is admin-only and recorded in the audit log.
+
+### Browser apps settings (`apps.*`)
+
+The browser apps (Apps page: Flow, Code, Observer, Continuum, Entity) read five
+runtime-config settings. They replace the `ABSTRACTGATEWAY_APPS_*` environment
+variables, which remain the labeled fallback rung (precedence **stored > env >
+default**, the runtime-config rule: a saved value always wins; an env value it
+shadows is reported as `env_shadowed`).
+
+| Key | Label | Default | Value |
+|---|---|---|---|
+| `apps.node` | Node.js for apps | `auto` | `auto` (Node.js 18+ on this computer, else the gateway's own) · `managed` · `system` · an absolute path to `node` |
+| `apps.ports` | Ports for apps | (empty) | a port or `low-high`; empty = each app's usual port, else the next free one in 3100-3199 |
+| `apps.host` | Where apps listen | `127.0.0.1` | an IP or host name; `0.0.0.0` opens the apps to every network this computer is on |
+| `apps.npm_registry` | npm registry | `https://registry.npmjs.org` | an http(s) URL (a mirror) |
+| `apps.pypi_url` | Node.js download index | `https://pypi.org/pypi` | an http(s) URL (a mirror) |
+
+`GET /api/gateway/admin/runtime-config` returns them under `apps` as
+`{name: {key, label, help, placeholder, default, env_name, value, source,
+note?, env_shadowed?, invalid_stored?, invalid_env?}}` (the registry
+`runtime_config.APPS_SETTINGS`: a new knob is one row, and the TUI renders
+whatever the payload lists). Writes go through the generic door, admin-only
+and audit-logged (`setting_change` on the request's audit line):
+`POST /api/gateway/admin/runtime-config {"apps.host": "0.0.0.0"}` (or
+`{"apps": {"host": "0.0.0.0"}}`); an empty value clears back to env/default.
+Each value is validated before anything is written (400 with the reason). Read
+at each use: a change applies at the next app start (`node`, `host`, `ports`)
+or the next download (the two URLs).
+
+Three ways, same semantics:
+
+| | Web console | Console TUI | CLI |
+|---|---|---|---|
+| Where | Apps → *Advanced: apps settings* (one field per setting, with its source pill) | Runtimes → *Runtime knobs* → *Edit apps settings* | `abstractgateway apps config get [NAME] [--json]` |
+| Change | type, *Save apps settings* (only changed fields are sent; empty = clear) | one line per setting (stored value prefilled; empty = clear) | `abstractgateway apps config set NAME VALUE` (`""` clears) |
+| Refusal | the gateway's sentence (*Not saved*) | the form shows the gateway's sentence | `refused: <sentence>`, exit 2 |
+
+The CLI works on the data dir directly (`--data-dir`, default: the `serve`
+resolution), so a headless server needs no browser.
+
+### Backlog folder, exec runner and process manager (Continuum)
+
+Continuum's Board, Backlog, Executions and Services pages read three runtime
+settings. A fresh install needs none of them: the gateway keeps its own
+backlog in `<data dir>/backlog/`, and creates the standard layout there the
+first time the backlog is used (`docs/backlog/overview.md`,
+`docs/backlog/template.md`, and the `planned/`, `proposed/`, `completed/`
+folders; nothing existing is ever overwritten). Continuum then shows an empty
+board with **Create your first item**.
+
+| Key | Label | Default | Value |
+|---|---|---|---|
+| `triage_repo_root` | Backlog folder | `<data dir>/backlog` (created on first use) | a folder that contains `docs/backlog` (a project checkout), or the gateway's own folder |
+| `backlog_exec_runner` | Backlog exec runner | off | `on` / `off`: run the items queued for execution on this machine |
+| `process_manager` | Process manager | off | `on` / `off`: Continuum's Services page (process control also needs the backlog folder set to the framework checkout it manages) |
+
+**Where a value comes from** (one resolution, `runtime_config.resolve_backlog_root`
+and `resolve_exec_runner`; every consumer calls it: the backlog, report,
+triage and process routes, the exec runner at each poll, the skills shelf):
+
+1. the launch flag of the running gateway: `abstractgateway serve --backlog-root PATH`
+   and `--exec-runner on|off` (for that run only; source `flag`);
+2. the saved setting (source `stored`);
+3. a legacy environment value, for gateways set up before these settings
+   existed (source `env`; reported, never needed; saving a value replaces it);
+4. the default (source `default`).
+
+`GET /api/gateway/admin/runtime-config` serves each as `{value, source, key,
+label, help, cli, flag?}`; the backlog folder also carries `available`,
+`reason` (why it is not usable, without the path), `default_path` and, under a
+launch flag, the `stored_value` that applies once the gateway restarts
+without it. Non-admins get the posture without server paths.
+`GET /api/gateway/backlog/status` answers the same question for Continuum
+(any signed-in user; paths for admins only).
+
+Changing them, three doors with one validation (a folder must exist and
+contain `docs/backlog`, or be the gateway's own folder, which is created; a
+switch is `on` or `off`; a refusal is one plain sentence):
+
+| | Web console | CLI | Continuum |
+|---|---|---|---|
+| Where | Apps → *Advanced: backlog settings (Continuum)* | `abstractgateway config get [KEY] [--json]` | Settings → *Gateway administration* |
+| Change | edit, *Save backlog settings*; *Use the gateway's own folder* | `abstractgateway config set KEY VALUE`, `abstractgateway config unset KEY` | *Change…*, *Use the gateway's own folder*, *Enable* / *Disable* |
+
+`config set` goes through the running gateway's door when one serves this
+data dir on this machine (it applies at once and lands in the audit log);
+otherwise it writes the settings store and the next start reads it. The same
+`config get|set|unset` covers every runtime setting (`executor`,
+`apps.<name>`, …).
+
+When a saved folder disappears (a deleted or unmounted checkout), the backlog
+routes answer `404` *Backlog folder not available on this gateway: the folder
+does not exist (set by the saved setting)…* and Continuum shows the folder,
+the reason and, for an admin, **Use the gateway's own folder** and **Choose a
+folder…**.
+
+Evidence: `src/abstractgateway/runtime_config.py` (`resolve_backlog_root`,
+`resolve_exec_runner`, `validate_backlog_root`, `BACKLOG_SETTINGS`),
+`src/abstractgateway/assets/backlog_skeleton/`, `src/abstractgateway/config_cli.py`,
+`tests/test_gateway_backlog_root_settings.py`.
 
 ### Host state and model residency
 
@@ -2615,16 +3123,29 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port 8080] [--data-dir DIR] [--no-runner] [--reload]`
-  (`--host` defaults to `127.0.0.1` when no auth is configured, else `0.0.0.0`)
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload]`
+  (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
+  setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
+  configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)
   Evidence: `src/abstractgateway/cli.py`
+- `abstractgateway network status|set|addresses|restart`: who can reach the
+  gateway and the URLs to copy ([network exposure](#network-exposure-localhost--local-network--internet))
 - `abstractgateway claim [--open] [--port P | --url URL] [--json]`: one-time
   console sign-in link ([first-run.md](docs/first-run.md))
-- `abstractgateway service install|uninstall|status [--port P] [--host H] [--data-dir DIR] [--dry-run] [--json]`:
-  start the gateway at login (LaunchAgent, systemd user unit, Windows Startup
-  shortcut; [first-run.md](docs/first-run.md#4-start-the-gateway-at-login-optional))
+- `abstractgateway service install|uninstall|enable|disable|status [--port P] [--host H] [--pin-command-line] [--data-dir DIR] [--dry-run] [--json]`:
+  start the gateway at login (LaunchAgent, systemd user unit or XDG autostart
+  entry, Windows Run entry; `enable`/`disable` are the tray's switch;
+  [first-run.md](docs/first-run.md#4-start-the-gateway-at-login-optional)). The
+  registration runs plain `serve`; `--host/--port` are written into the
+  [network exposure](#network-exposure-localhost--local-network--internet)
+  setting, or onto the command line with `--pin-command-line`
 - `abstractgateway runner` (worker only)
 - `abstractgateway config status --json`
+- `abstractgateway config get [KEY] [--json]`, `config set KEY VALUE`, `config unset KEY`:
+  runtime settings from a terminal ([backlog folder, exec runner, process
+  manager](#backlog-folder-exec-runner-and-process-manager-continuum), and every other key)
+- `abstractgateway serve --backlog-root PATH --exec-runner on|off`: the backlog
+  folder and the exec runner for this run (they win over the saved settings until the gateway stops)
 - `abstractgateway migrate --from=file --to=sqlite --data-dir <DIR> --db-path <FILE>`
 - `abstractgateway models loaded|load|unload --url <URL> [--provider P --model M] [--force]`
   (model residency on a running gateway; see [console.md](docs/console.md#model-residency-from-a-shell))
@@ -2824,7 +3345,8 @@ abstractgateway models list                     # installed models with sizes
 
 The commands talk to the running gateway (admin rules and audit log apply);
 add `--local` to run them in-process instead. Engine installs run on the
-gateway host and are on by default only for a loopback gateway
+gateway host and are on by default for a loopback gateway, and for someone at
+the gateway machine whatever it listens on
 ([`allow_engine_install`](docs/configuration.md#allow_engine_install)). See
 [docs/console.md](docs/console.md) and [docs/api.md](docs/api.md#models-and-engines).
 
@@ -2933,7 +3455,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.3.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -2941,7 +3463,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.3.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.0-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
@@ -3211,6 +3733,9 @@ Related repos:
 - Configuration (env vars + install extras): [configuration.md](docs/configuration.md)
 - Consoles: the web console at `/console` and the `abstractgateway-console` terminal app: [console.md](docs/console.md)
 - Desktop tray icon: [tray.md](docs/tray.md)
+- Browser apps (install, start and open Flow, Code, Observer, Continuum, Entity from the gateway; Node.js installed for you): [apps.md](docs/apps.md)
+- Local engines (install Ollama, LM Studio, MLX, llama.cpp without a terminal; when the Apple tools or an administrator password are needed): [engines.md](docs/engines.md)
+- Model downloads (progress, stalls, cancel, "Use recommended defaults" as one job, the event stream): [model-downloads.md](docs/model-downloads.md)
 - Summoned entities: [entities.md](docs/entities.md)
 - Apple Silicon local Gateway + Flow quickstart: [apple-local-gateway-flow.md](docs/apple-local-gateway-flow.md)
 - Deployment (Docker/GHCR/Compose): [deployment.md](docs/deployment.md)
@@ -3424,7 +3949,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.3.0-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.4.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -3509,7 +4034,571 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-24
+
+This release requires AbstractCore 2.15.0 and AbstractRuntime 0.4.33
+(installed automatically). The terminal console ships as
+`abstractgateway-console` 0.8.0 (see `console-tui/CHANGELOG.md`).
+
+### Added
+- **A fresh gateway has a working backlog; the backlog folder and the exec
+  runner are settings and launch flags (mission II, 2026-09-24).** The
+  operator: "fix continuum for a new fresh install ... i don't like
+  environment variables and these should be handled with proper settings and
+  --param_name." Continuum's Board on a fresh gateway said "Backlog browsing is
+  not configured ... set ABSTRACTGATEWAY_TRIAGE_REPO_ROOT". Now:
+  - without a setting the gateway uses its own folder `<data dir>/backlog/`
+    and creates the standard layout there on first use (`docs/backlog/`
+    `overview.md`, `template.md`, `planned/`, `proposed/`, `completed/`,
+    shipped as package data; nothing existing is overwritten);
+  - ONE resolution (`runtime_config.resolve_backlog_root` /
+    `resolve_exec_runner`): `serve --backlog-root PATH` / `--exec-runner
+    on|off` > the saved setting (`triage_repo_root`, `backlog_exec_runner`) >
+    a legacy environment value (reported as `source: env`, never needed) >
+    the default. Every consumer calls it: the backlog, report, triage and
+    process routes, the exec runner (at each poll), the skills shelf;
+  - `GET /api/gateway/backlog/status` (available, source, reason; paths for
+    admins) and the runtime-config rows carry label/help/cli, `available`,
+    a path-free `reason`, `default_path`, and `stored_value` under a flag;
+  - `abstractgateway config get [KEY]`, `config set KEY VALUE`, `config unset
+    KEY`: every runtime setting from a terminal, through the running
+    gateway's door when one serves the data dir (applies at once, audited),
+    else the settings store;
+  - the console's Apps tab gains *Advanced: backlog settings (Continuum)*
+    (folder, exec runner, process manager, with source pills and *Use the
+    gateway's own folder*);
+  - one validation for every door: a folder must exist and contain
+    `docs/backlog`, or be the gateway's own folder; switches are on/off (a
+    typo refuses instead of storing "off").
+- **The Entity card offers "Create your first entity" (mission JJ,
+  2026-09-24).** The operator: with no entity yet, Open landed on an empty
+  list with nothing to do. The apps payload gains `content_summary` on every
+  row: `{"entities_count": n}` for Entity (the entry count of
+  `GET /api/gateway/entities`, from the same registry, `null` when unknown or
+  when an Entity started outside the gateway talks to another gateway),
+  `null` for the other apps. At exactly 0 the card's one primary button reads
+  "Create your first entity" and opens the app on its creation form; 1 or
+  more, or unknown, keeps "Open". Same card on the guide's Apps step.
+- **`POST /api/gateway/apps/{id}/open` accepts `path`** (e.g. `/#new`): where
+  the browser lands inside the app after the signed-in handover. The path is
+  bound to the one-time code and must be a path inside the app: `//host`, a
+  full address, a backslash, whitespace or a control character is refused
+  with 400 `invalid_app_path` and no link is made. docs/apps.md.
+- **Console: the create-user modal follows the user-accounts mode.** With
+  user accounts off (`/me` → `auth.user_auth_enabled: false`) it offers the
+  admin role only and says "User accounts are off on this gateway: only admin
+  accounts can sign in. Turn user accounts on to add members."; a gateway
+  whose `/me` lacks the field is named in the modal; a 409
+  (`user_accounts_off_admin_only`) is shown in the server's own words.
+- **Reverse proxy settings instead of environment variables (mission Z).**
+  Operator: "i explicitly told you i don't like env vars. most should be
+  something one can configure from the consoles (wui+tui)". Browser origins
+  (`allowed_origins`) and trust proxy (`trust_proxy`) are stored in the
+  network setting and changed through the same door as the mode:
+  `POST /api/gateway/network {allowed_origins?, trust_proxy?}` (`mode` is now
+  optional), `abstractgateway network set --allowed-origins https://a,https://b
+  --trust-proxy on|off`, `abstractgateway network show`, the console's Network →
+  *Advanced: reverse proxy* (chips, validation, switch, "Saved · applies now")
+  and the console TUI's Connection screen (origins edit line, trust checkbox).
+  Both apply to the NEXT REQUEST: the security middleware reads them per
+  request (one `stat()`, re-parsed on change), no restart. `GET /network`
+  carries `reverse_proxy{allowed_origins, trust_proxy}` with `value`,
+  `source: setting|env|default`, `overridden_by_env`, `effective`, `applies`;
+  a POST answers `changed{field: {from, to, applies: live|restart|overridden_by_env}}`.
+  Origins are validated (`scheme://host[:port]`, no path, no trailing slash,
+  default port dropped, `*`/patterns flagged); a list with a bad entry is
+  refused whole (400 `invalid_origins`, `errors[]`), and every door shows the
+  same sentence. `ABSTRACTGATEWAY_ALLOWED_ORIGINS` / `ABSTRACTGATEWAY_TRUST_PROXY`
+  still pin the values when set at start, and every surface says so in words.
+  The running gateway's environment is recorded in the run record
+  (`proxy_env`) so the CLI reports it, not its own shell's.
+- **Browser apps settings `apps.*` (mission Z).** The five
+  `ABSTRACTGATEWAY_APPS_*` knobs are runtime-config keys (`apps.node`,
+  `apps.ports`, `apps.host`, `apps.npm_registry`, `apps.pypi_url`; registry
+  `runtime_config.APPS_SETTINGS` with label/help), stored > env > default,
+  written through `POST /api/gateway/admin/runtime-config {"apps.host": …}`,
+  `abstractgateway apps config get|set`, the Apps page (*Advanced: apps
+  settings*) and the TUI (Runtimes → *Runtime knobs* → *Edit apps settings*).
+  `AppsManager` reads them at each use (`resolve_apps_setting`; an unknown
+  name raises). `env_registry` rows name the replacing setting
+  (`superseded_by`).
+- **Setting changes on the audit line.** `POST /network` and
+  `POST /admin/runtime-config` attach `setting_change` (fields from/to, or the
+  refusal) to the security middleware's audit-log line for the request.
+
+- **Apps that also run in a terminal: "Open in Terminal" (mission Y).** Each
+  row of `GET /api/gateway/apps` gains `interfaces[]`: the browser app (kind
+  `web`, mirroring the row) and, for Code, its terminal version (kind `tui`:
+  `installed`, `version`, `install_available`, `install_method`
+  `release_binary`|`cargo`, `install_blocked_reason`, `launch_available`,
+  `launch_blocked_reason`, `launch_mode` `terminal`|`copy`, `command`,
+  `install_command`, `signin_command`). The overview also carries
+  `console_tui` (the gateway console's own terminal app, crates.io only).
+  Presence only: the binary in `<data>/apps/bin/`, on PATH or in
+  `~/.cargo/bin`, accepted when its `--help` names it (PyPI's unrelated
+  `abstractcode` script is not it). `POST /apps/{id}/install-tui` (admin)
+  installs Code's prebuilt binary from its GitHub release, checked against
+  the release's `SHA256SUMS` and GitHub's per-file digest, smoke-tested with
+  `--version` before it replaces anything; with no binary for the computer the
+  row says "Needs the Rust toolchain" and gives `cargo install abstractcode`
+  (409 `toolchain_required` + `command` from the route, never a fake button).
+  `POST /apps/{id}/launch-tui` (admin) opens a new terminal window on the
+  gateway machine (macOS Terminal, Linux terminal emulators, Windows `cmd`)
+  only when the request comes from that machine (loopback socket peer,
+  loopback `Host`, no proxy headers); otherwise 409 `not_on_gateway_machine`
+  with the command to copy. The window's launcher script holds a one-time
+  code (2 minutes, single use, deletes itself) that `tui_signin.py` trades at
+  `POST /apps/tui-handover` (outside `/api/gateway`, loopback peers only) for
+  a per-launch bearer token acting as the caller, accepted from loopback only,
+  kept in the gateway's memory only, and handed to the app through its
+  environment (never argv, a file or the browser). The ephemeral loopback
+  token registry can now bind a token to a principal
+  (`register_ephemeral_loopback_token(..., principal=)`). Console: the Apps
+  step and Apps tab cards show "Also runs in your terminal" with "Open in
+  Terminal", the command to copy (remote browser), "Install for Terminal", or
+  "Needs the Rust toolchain" + the command; commands are one mono line with an
+  ellipsis and Copy. The Done step says once that the console also exists as a
+  terminal app, with `cargo install abstractgateway-console`. Tray: "Open Code
+  in Terminal" when the gateway reports it installed. Terminal parity:
+  `abstractgateway apps install-tui <id>` (same job and checksum rules; a
+  refusal prints the reason and the cargo command), `abstractgateway apps
+  tui-command <id>` (`POST /apps/{id}/tui-command`, admin, gateway machine
+  only: the same one-use launcher without a window; prints the one-time
+  sign-in line and the plain command), and a `terminal:` line per app in
+  `abstractgateway apps list`. docs/apps.md "Terminal versions", docs/tray.md.
+- **The guide's "Recommended for this computer" text card follows
+  AbstractCore's per-computer pick (mission W1).** On a Mac the recommended
+  text model is an MLX build chosen by memory (below 24 GiB Qwen3.5 9B,
+  24 GiB to below 128 GiB Qwen3.8 27B, 128 GiB and above Qwen3.8
+  Flash-Next); other computers keep LM Studio `qwen/qwen3.5-9b@4bit`. The
+  Gateway holds no list of its own: the card, **Download all**, **Use
+  recommended defaults** and the tray's "Your defaults" all read AbstractCore
+  (`recommended_text_model()` through the runtime facade). The text entry of
+  `/models/availability` `recommended` carries `catalog_id`, `basis`, `tier`,
+  `fit_verdict`, `fits` and `warning`, and the card shows the warning when
+  AbstractCore's estimate says the model may not fit. Catalog artifacts carry
+  `quant_class` and `options` (docs/api.md, "Catalog artifacts").
+- **Console: the model catalog is one card per model, with a filter bar
+  (mission X2).** The Models tab (and the setup guide's Default model step)
+  no longer shows one long table: each model is a card (name, organisation,
+  parameters, licence, capabilities, a Starter badge) with its builds as
+  compact rows (provider, artifact id shortened with a tooltip and copied on
+  click, quantization, download size, weights and fit pills, one action:
+  Download, then the shared progress bar with bytes, speed, time left and
+  Cancel, then Use as default). The recommended build is first and marked.
+  The filter bar: search, **4-bit / 8-bit / Other** from AbstractCore's
+  `quant_class`, provider, capability, Downloaded / Not downloaded and **Fits
+  this computer**, with a live count ("12 of 77 models · 31 artifacts
+  shown"); its top row stays under the header while the cards scroll. The
+  8-bit builds (MLX `-8bit`, Ollama `-q8_0`, GGUF `Q8_0`; LM Studio `@8bit` ids could not be verified upstream and are not listed)
+  are listed next to the 4-bit ones, every build, never capped. The filters
+  live in the address (`#catalog?quant=8bit&provider=mlx&fits=1`), so a link
+  reproduces the view. A gateway whose AbstractCore does not send
+  `quant_class` says so and keeps the quantization filter off (the class is
+  never guessed in the browser). The guide's step shows the same cards with
+  Fits this computer on and **Open in the Models tab**; an engine's **Browse
+  models** opens the tab filtered to that engine. AbstractCore's installed
+  list (with Delete) stays below the cards as **On this computer**. A
+  **Catalog / Hugging Face** switch next to the search box brings back the
+  old table's Hugging Face search: Enter asks the catalog API's Hub search and
+  the results are the same cards (quantization "Not stated" when the result
+  names none, size from the Hub, fit, Download with the same progress), the
+  query lives in the address (`#catalog?hf=smollm`), and an empty answer or
+  an unreachable Hub is said in plain words.
+- **Console: every backend contract that landed after the redesign is wired
+  (mission L2).** Downloads: "Download all" is ONE card for the parent job
+  (`grp_…`: overall bar, bytes, speed, ETA, one row per model with its own
+  bar and Cancel, plus "Cancel all"); the console follows
+  `GET /models/downloads/stream` (SSE) and falls back to polling whenever the
+  stream is not open; a stalled download reads "Stalled · no data for 18 s ·
+  still trying" in the warning tone. Engines: Ollama / LM Studio offer the two
+  real install locations from the gateway's own dry-run plans ("Install" =
+  just for you, no password; "Install for all users (administrator)" only
+  when that plan needs an administrator); Start/Stop, Cancel and the
+  `continue` actions show progress on the button and a result on the card
+  ("Re-check", "Install tools", "Continue with administrator password").
+  Apps: "Show log" (the tail, how much is shown, "Show more" up to the
+  route's 5000 lines, then the log file's path), "Update to <version>", a
+  Node.js row with its own Install, and results on the card. A new
+  **Network** tab (also on the guide's Done step): the three modes of
+  `gateway_network_v1` as a segmented control with a plain explanation each,
+  the refusal reason and its fix, the Internet warnings before the
+  acknowledgement, "Restart to apply" / "Restart now" only when a restart can
+  apply it (else the reason), and every address with its own Copy; the header
+  shows the primary address with a copy button. Refusals from the apps and
+  network routes (`{message}` / `{refused_reason}`) are shown in words, never
+  as "HTTP 409", with the whole response behind "Show details".
+- **Console: tray links land where they point.** `#claim=<code>&tab=<tab>`
+  keeps the tab after the code is stripped, and a claim no longer re-opens the
+  first-run guide once first run is completed (a `tray` link, per
+  `claim.created_by`, never opens it); the "Setup guide" button always does.
+  The guide is keyboard-complete: each step starts at its title, Tab walks
+  its controls, Escape closes it and focus returns to what opened it.
+- **`POST /api/gateway/session/claim` says who minted the link.** The
+  response gains `claim: {created_by}`, one of `serve` (first run), `cli`
+  (`abstractgateway-config claim-url` / `abstractgateway claim`) or `tray`
+  (the tray's sign-in). It is `null` for a link minted before the field
+  existed. The console can now tell a tray sign-in from a first run. The
+  change only adds a field.
+- **Downloads keep working after an MLX model is loaded, and installed rows
+  carry `kind`/`tasks`** (through AbstractCore). Loading an MLX model no
+  longer puts the gateway process into Hugging Face offline mode, which made
+  every later download job fail with `OfflineModeIsEnabled`. Download jobs
+  never inherit an offline flag written in-process after start, and their log
+  says so. `GET /api/gateway/models/installed` rows gain `kind`, `tasks` and
+  `tasks_source`, read from local files only. **Restart the gateway to pick
+  this up.**
+- **Network exposure: localhost only / local network / internet (mission R).**
+  One runtime-config setting (`network`: `exposure` + `port`), edited through
+  `GET/POST /api/gateway/network` (contract `gateway_network_v1`),
+  `abstractgateway network status|set|addresses|restart`, and the console TUI's
+  Connection screen (↑/↓ + Enter picks the mode, `c` copies the highlighted
+  URL, a restart banner when the running bind differs). `serve` reads it when
+  `--host/--port` are not given (explicit flags win and are reported as
+  `overridden_by_cli`). `lan`/`internet` bind `0.0.0.0` and are refused (409,
+  nothing stored, the exact fix) unless user auth will be on at the next start;
+  `internet` also needs `acknowledge_internet: true` and returns the TLS /
+  port-forwarding warnings. Changes apply at the next start
+  (`restart_required` + `configured` vs `effective`);
+  `POST /api/gateway/network/restart` (admin) restarts through the existing
+  host-control relaunch and refuses when a restart cannot apply the setting.
+  Addresses are discovered per call (psutil, else `ifconfig`/`ip`), labelled
+  ("Wi-Fi"), with the Bonjour `<name>.local` when it resolves and the WAN
+  address only on an explicit admin request. In a network mode `serve` allows
+  the gateway's own LAN origins when `ABSTRACTGATEWAY_ALLOWED_ORIGINS` is
+  unset, so the console signs in from another machine.
+- **The tray icon is a control centre (mission Q).** The menu is now built as
+  data (`tray/menu_model.py`: snapshot + extras → nodes; rendered on pystray,
+  unit-tested without a display) and gains:
+  - **Start AbstractGateway at login** — a check item showing whether THIS
+    gateway would really start at the next login, toggled from the menu. One
+    shared module, `abstractgateway.autostart`, used by the tray, the new
+    `abstractgateway service enable|disable` (and `status`, which now reports
+    `on | off | broken | other` with the reason) and the installers. "On" is
+    read back, never assumed: a LaunchAgent / unit / Run value pointing at a
+    program that no longer exists, an unreadable file, a unit that is not
+    enabled, a `launchctl disable`, a Task Manager "disabled" switch or an XDG
+    entry switched off reads **broken** ("— needs repair"; a click repairs it);
+    a registration for another data folder reads **other**. Enabling registers
+    for the next login without starting a second gateway; disabling only
+    unregisters (the running gateway, possibly the tray's parent, keeps
+    running).
+  - **Apps ▸** — Observer, Flow, Code, Continuum, Entity and Assistant,
+    detected by presence only (no import): the gateway-managed install
+    (`/api/gateway/apps`), the app's own command on PATH or its package under
+    `npm root -g` (the terminal `abstractcode` is not Code), and for the
+    Assistant an `AbstractAssistant.app` bundle, the `abstractassistant`
+    command or `find_spec` in this Python (a namespace-only match — a folder in
+    the working directory — does not count). Each app shows what it can do now:
+    **Open X** (one-time signed-in handover), **Start X**, **Install X…**
+    (install + start + open signed in, with progress), **Start X (global
+    install)**, **Launch Assistant**; launched processes get a token-free
+    environment. **Manage Apps in Console…** opens the Apps tab.
+  - **Models ▸** replaces "Loaded Models": what is in memory (each loaded model
+    a submenu whose action is **Eject — frees N GB**; eject warns when work is
+    running), then **Load a Model ▸**: your configured defaults first, then every
+    installed model grouped by engine (recognised catalog models first, then
+    A–Z, lists over 30 split into ranges, nothing dropped), sizes on disk, a
+    "more than free memory" hint with a confirmation, embeddings greyed ("load
+    on use"). Loads and ejects show progress and the result, failures the
+    gateway's full reason.
+  - **Open Console signs you in**: the tray (and the Activity window) mint a
+    one-time claim link locally, as `abstractgateway claim` does, so an expired
+    8-hour session never ends on a token prompt; plain URL + a notification
+    saying why when the gateway runs with a static token. No sign-in endpoint
+    was added.
+  - **Network ▸** and **Copy Address ▸** (consuming `GET/POST
+    /api/gateway/network`): the primary address and mode under the status
+    header, radio items Localhost only / Local network / Internet… (Internet
+    asks for an explicit acknowledgement showing the gateway's warnings),
+    "Restart to apply" while a change is pending, refusals shown with their
+    reason and fix; every address the gateway answers on, one click to copy.
+  - Explicit degrade: `"flat_menu": true` in `<data>/tray/prefs.json` renders
+    the same rows without submenus (path-prefixed) for panels that drop them;
+    pystray's menu-less X11 backend gets a start notification naming the CLI
+    equivalents.
+- **Linux login item without systemd.** Where no systemd user manager answers,
+  `service install|enable` writes an XDG autostart entry
+  (`~/.config/autostart/abstractgateway.desktop`) instead of failing.
+- **The console looks and behaves like a finished product (mission L).**
+  The first-run guide is a full-page flow instead of a 760 px modal: a step
+  rail on the left (done / current / upcoming), a content area that uses the
+  window, and a sticky footer with Skip / Back / Next; Escape closes it
+  without marking it done. Local engines are cards, not a table: one card per
+  engine with a plain status pill (Ready, Running, Installing, Needs your
+  approval, Needs Apple tools, Not installed, Not for this computer), one
+  primary action per state from the `gateway_engines_v2` row (Install, Start,
+  Stop, Continue with administrator password, Install tools, Try again), an
+  inline progress bar, the job's plain sentence first and the full log behind
+  "Show details". Downloads (wizard starter models, Multimodal "Weights") show
+  a real bar with bytes, percent, speed, time left and per-file rows, a
+  distinct "Stalled" state, Cancel, and a "Download all" for the recommended
+  set; a reload re-attaches to running downloads. The Apps step and a new
+  **Apps** tab install, start, open (signed in) and stop the browser apps
+  through the gateway's apps service, with "Node.js will be installed for
+  you" instead of terminal commands. Every table fits its box: when a table
+  no longer fits, each row becomes a card (label/value grid) instead of a
+  horizontal scrollbar; ids, model names, paths and URLs are ellipsized with
+  the full value on hover and click-to-copy, never character-wrapped
+  (ADR-0026). CLI lines, route ids and commands sit behind a "Technical
+  details" switch (sidebar and guide). New module `console_ui.py`.
+- **The console header runs the abstractuic kit's real widgets.** The
+  top-right cluster is the kit's `AfTopBarActions` (assistant, appearance,
+  setup guide, signed-in identity, Connect/Disconnect pill) and Appearance is
+  the kit's `AfAppearanceDialog` (its `ThemeSelect`, font and header size),
+  mounted as React islands from the kit's own bundle
+  (`ui-kit/scripts/build_islands.mjs`), vendored into the generated
+  `console_islands.py` with the kit's component CSS by
+  `python -m abstractgateway.console_islands_sync`, and drift-pinned by
+  `tests/test_gateway_console_islands_sync.py` (kit-source hash, byte compare
+  of the built bundle, API probe). The static cluster stays as the fallback.
+- **Model downloads show real progress from the first second, and "Use
+  recommended defaults" is one job.** A download job now carries `state`
+  (queued, resolving, downloading, verifying, installing, done, failed,
+  cancelled, stalled), bytes done and total, percent, speed, time left, the
+  file arriving now and one row per file, and a plain sentence such as
+  "Downloading model.safetensors (2 of 5) · 1.2 GB of 4.8 GB · 38 MB/s ·
+  1 min left", for Hugging Face / mlx-gen, Ollama, LM Studio and Supertonic
+  alike. A download that receives no bytes for 15 s says it is stalled and
+  recovers by itself. `POST /models/download {"recommended": true}` also
+  returns a parent job (`grp_...`) whose bytes, percent, speed and time left
+  add up the three models. New routes: `POST /models/download/{job}/cancel`
+  (admin; stops the transfer within about a second, or every child of a
+  parent) and `GET /models/downloads/stream` (Server-Sent Events of the same
+  jobs; polling still works). See [docs/model-downloads.md](docs/model-downloads.md).
+  Requires the matching AbstractCore. The `message` of a running download is
+  now that sentence; the engine tool's own last line moved to `detail`.
+- **The gateway installs and runs the browser apps.** Flow Editor, Code,
+  Observer, Continuum and Entity can be installed, started, stopped, updated
+  and opened from the gateway, with no terminal: when the machine has no
+  Node.js 18+, the gateway installs Node.js 24 in its own data folder (no
+  admin rights, sha256-checked), then downloads the app from the npm registry
+  (sha512-checked), installs its dependencies, starts it on a free port and
+  opens it already signed in to this gateway through a one-time link (the
+  token never reaches the page or the URL). Every step is a job with percent,
+  bytes and a plain message, and the full log when it fails. Started apps are
+  children of the gateway: they stop with it, restart after a crash (at most
+  3 times a minute), and start again with the gateway until you stop them.
+  Routes under `/api/gateway/apps` (list, runtime/install, install, update,
+  launch, stop, open, logs, jobs), the `/apps/handover/{code}` link, and
+  `abstractgateway apps list|install|launch|stop|update|open|logs|runtime|jobs`.
+  See [docs/apps.md](docs/apps.md).
+- **Engine installs finish without a terminal: user-level first, tools and
+  administrator only through the operating system's own dialogs.** llama.cpp
+  installs upstream's prebuilt Metal wheel (0.3.28; CPU 0.3.35 on Linux and
+  Windows x64) instead of building the PyPI sdist; a source build happens only
+  when no wheel fits, and only after the job has checked for the Apple
+  command-line tools (`needs_tools`, one-click `xcode-select --install`, the
+  job resumes by itself). Ollama and LM Studio on macOS download the vendor's
+  signed app (Ollama: SHA-256 from its GitHub release; both: Developer ID team
+  check), place it in `/Applications` when the account can write it or else
+  in `~/Applications`, and start the server. A step that genuinely needs an
+  administrator stops in `needs_admin` with the reason and the exact command;
+  nothing elevated runs until someone presses Continue, and then only through
+  macOS's password dialog (`osascript … with administrator privileges`) or
+  `pkexec` on a Linux desktop. vLLM on a Mac and MLX off Apple silicon are
+  refusals with the reason and no Install button. Jobs report state, percent,
+  bytes, a plain-language message (heartbeat every 3 s) and the full log.
+  New routes in `routes/engines.py`: `GET /engines` (contract
+  `gateway_engines_v2`), `POST /engines/{id}/install {location}`,
+  `GET /engines/jobs[/{id}]`, `POST /engines/jobs/{id}/continue|cancel`,
+  `POST /engines/{id}/start|stop`; CLI `abstractgateway engines
+  continue|cancel|start|stop`. See [docs/engines.md](docs/engines.md).
+
+### Changed
+- **Console: calm app cards with one action row (mission GG).** On the Apps
+  tab and the setup guide's Apps step each card is now icon + name + status
+  pill / one line of description (the whole sentence on hover) / one action
+  row. The action rows of a grid row sit at the same height (each card is five
+  subgrid rows: head, description, body, actions, technical), and the row
+  holds the primary action for the state (**Install and open**, **Open**;
+  **Open** also starts a stopped or crashed app, there is no separate Start)
+  plus the terminal action next to it (**Open in Terminal**, or a quiet
+  **Install for Terminal**). Stop, Start, Show log, Update, the version, the
+  address, the npx line and the terminal commands (Rust toolchain case,
+  another computer) are rendered only with the **Technical details** switch on,
+  as one secondary line of text buttons under the action row; switching it off
+  removes them from the page. The "is installed and running. Open it with the
+  Open button." box is gone: result boxes ("Code opened in a new Terminal
+  window, signed in to this gateway.", "Flow Editor opened in a new tab.")
+  close themselves after 6 seconds; errors stay, with **Show details**. The
+  terminal version is no longer its own block ("Also runs in your terminal",
+  glyph, pill, sentence). The Done step's note about the console's terminal
+  app is one quiet line; its install and open commands show with Technical
+  details. The Engines cards and the guide's recommended-model tiles use the
+  same five rows, so their action rows line up too (a "Learn more"-only row
+  sat 16 px lower than a row of buttons); a model download's **Cancel** moved
+  into the tile's action row.
+- **No user-facing text tells anyone to set an environment variable** (mission
+  Z, operator rule). Network-mode warnings point at the controls ("Add your
+  public https origin under Reverse proxy below"); auth refusals describe the
+  state the gateway was started in ("This gateway was started with accounts
+  (user auth) off …"); `serve`'s hardening hints, the missing-auth refusal,
+  the loopback auth line, `claim`'s refusal and the apps hints name settings
+  and commands. Inventory: `untracked/missionZ/env_instructions.md`.
+
+- **The login service lets the Network setting apply (mission T).** Every
+  registration (LaunchAgent, systemd user unit, XDG autostart entry, Windows Run
+  entry) now starts plain `serve` — no `--host`, no `--port` — so a mode chosen
+  in the tray, the console or `abstractgateway network set` takes effect at the
+  next start. Before, the pinned `serve --host 127.0.0.1 --port N` overrode it
+  forever (`restart.applies: false`). `service install|enable` store the bind
+  in the setting first (nothing stored → `localhost` on the chosen port: the
+  same bind as before; a stored mode is kept; `--host 127.0.0.1|0.0.0.0` and
+  `--port` are written into the setting, printed; a refused mode registers
+  nothing). New `--pin-command-line` keeps the old command line on purpose
+  (recorded as `pinned` in `service.json`, reported as an override).
+  `service status` / `autostart_status` report a registration that still pins
+  `--host/--port` as `broken` + `needs_repair` ("pinned to 127.0.0.1:N by the
+  login item — run `abstractgateway service enable` again to let the Network
+  setting apply"), which the tray shows as *needs repair*; `service enable` or
+  the tray click rewrites it in place. New status fields: `bind_source`,
+  `pinned_command_line`, `network_setting`, `repairs`, `needs_repair`. The
+  tray's switch no longer passes its own URL's host/port (that would have
+  written 127.0.0.1 into the setting). **Installed machines: run
+  `abstractgateway service enable` once** (then `service install`, or log out
+  and in, to restart the gateway from the new registration).
+- **Windows login item is a per-user `HKCU\…\Run` value** (was a Startup-folder
+  shortcut). A Run value can be read back and verified (a `.lnk` cannot without
+  COM) and Task Manager's switch for it is readable; install/uninstall remove
+  an older `AbstractGateway.lnk`, which would start a second gateway. Still
+  experimental (not validated on a Windows VM).
+- `service uninstall` on Linux only calls `systemctl --user disable` when the
+  unit file exists (it used to fail on a machine with nothing installed).
+
 ### Fixed
+- **`abstractgateway --version`** prints `abstractgateway <version>` (the
+  flag did not exist).
+- **No false "PyTorch was imported" GGUF warning.** Every command printed
+  "GGUF GPU offload could NOT be reserved ... PyTorch was imported before this
+  gateway started" on a light install (no llama-cpp-python) and on any host
+  that is not Apple silicon, where Metal offload cannot exist. The reservation
+  and its warning now run only on Apple silicon with llama-cpp-python
+  installed; `config`, `--version` and `--help` skip it.
+- **The saved backlog folder was ignored by the backlog routes (mission II).**
+  Every backlog/report/process route read ONLY the environment, so the
+  `triage_repo_root` setting saved from Continuum or the console changed
+  nothing, and the exec runner did the same. A saved folder that disappears
+  now answers `404 Backlog folder not available on this gateway: <reason>`
+  (no server path in the sentence) instead of "not configured".
+- **`abstractgateway backlog-exec-runner` no longer writes
+  `os.environ["ABSTRACTGATEWAY_TRIAGE_REPO_ROOT"]`** in its own process: the
+  folder (`--repo-root`, else the setting) is passed to the runner as an
+  argument. Its old fallback to the current directory is replaced by the
+  setting's default (the gateway's own folder).
+- **Process control stays off on the gateway's default backlog folder** (it
+  is not a checkout); it needs `triage_repo_root` set to the framework
+  checkout it manages, as before.
+- **Apps started outside the gateway are listed and open signed in (mission
+  HH, 2026-09-24).** The operator's report: with the whole dev stack running
+  (`scripts/start-local.sh --build`: all five apps on 127.0.0.1:3001-3005),
+  the tray said "Observer — can't install here: …" for every app. The apps
+  manager only knew apps it installed itself. It now asks the usual loopback
+  ports (3001-3005, then 3000 and 3007) for the start page and recognises
+  each app by its title (no app has an identity route that answers without a
+  gateway sign-in); the version is read from the `package.json` of the
+  listening program. Such an app is `installed`, `running`,
+  `source: "external"`, `managed: false`, with `url`, `port`, `version` and
+  one action, `open`, which goes through the usual one-time handover (the
+  app's server reads the same cookies whoever started it; the gateway URL in
+  them is the gateway's own). Stop answers 409 `started_outside_gateway`;
+  launch does not start a second copy. Probing is loopback only, 0.5 s per
+  port in parallel, cached 5 s, and never probes a port an app of this
+  gateway holds.
+- **One port table, the stack map.** The gateway's usual app ports now match
+  `scripts/start-local.sh`: Observer 3001, Continuum 3002, Code 3003, Entity
+  3004, Flow 3005 (`apps_manager.STACK_PORTS`, used by the managed launch, the
+  external probe and the tray; it was Code 3002, Flow 3003, Continuum 3004,
+  Entity 3007). Apps are listed in that order.
+- **The person at the gateway machine may install by default, whatever the
+  bind.** With no saved `allow_engine_install`, installs of apps, Node.js,
+  terminal apps and engines are allowed for a caller on the gateway machine
+  itself: the socket peer is loopback or one of this host's own interface
+  addresses, and the request has no proxy header
+  (`security/same_machine.py`). A LAN-bound gateway used to refuse the
+  operator at their own keyboard. Remote callers still need the setting; a
+  saved OFF is off for everyone. `install_policy` gains
+  `caller_on_this_machine` and the source `default_same_machine`.
+- **Tray Apps submenu: one short line per app, no reasons.** Running
+  (managed or external) or installed → "Open X"; installable → "Install X…";
+  otherwise the name, greyed. When an install is blocked, one line near the
+  bottom: "Installs are off for this gateway · Console → Apps". The console's
+  Apps card shows an external app with the Running pill and Open, and under
+  Technical details "Started outside the gateway on port N" instead of Stop.
+- **Tray base URL.** Confirmed loopback (`http://127.0.0.1:<port>`) for every
+  network mode (wildcard and loopback binds); the LAN address in the header
+  is the network status, not the tray's connection. Pinned by a test.
+
+- **Engine installer downloads go to the per-OS user cache (mission FF).**
+  Without an explicit cache directory, `engines_install` wrote to a
+  hard-coded `~/.cache/abstractgateway/engines`, ignoring `XDG_CACHE_HOME`.
+  The new `host_paths.user_cache_dir()` (next to `user_data_dir()`) answers
+  `~/Library/Caches/AbstractGateway` on macOS, `$XDG_CACHE_HOME/abstractgateway`
+  (default `~/.cache/abstractgateway`; a relative value is ignored per the XDG
+  spec) on Linux and `%LOCALAPPDATA%\AbstractGateway\Cache` on Windows.
+- **The administrator copy of an engine app is chowned to the process owner
+  from the password database**, not to an inherited `USER` value (which can
+  name someone else, e.g. under `sudo`). The `USER` read is gone.
+- **Every environment read is declared.** `env_registry` now carries the
+  desktop-session reads (`DISPLAY`, `WAYLAND_DISPLAY`) and the per-OS
+  directory reads (`XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`,
+  `LOCALAPPDATA`, `APPDATA`) as reads of the operating system, not settings
+  (class `deployment`, owner `desktop-session`, silent in the boot scanner).
+- **Console: cancelling a model download uses the long-call budget.** The
+  download panel's Cancel (`POST /models/download/{id}/cancel`) went through
+  the 60 s default; like the download start it now passes `slow: true`.
+- **The consoles say why MTP did not run, in words.** The web console's sandbox and
+  default-route test lines, and the terminal console's test line, now show the response's
+  `speculation.message` (and the discovery capabilities' `message`) instead of only the
+  slug. For example: "MTP not used: MTP acceleration off: companion
+  mlx-community/Qwen3.5-9B-MTP-4bit … is not downloaded; download it with `abstractcore
+  models download mlx …`". Model downloads now fetch an MLX model's MTP companion in
+  the same job. That comes from AbstractCore: see its CHANGELOG, mission CC.
+- **`lan`/`internet` are refused when read protection is off** (mission AA
+  finding). `ABSTRACTGATEWAY_PROTECT_READ=0` makes the middleware answer every
+  unauthenticated read as the admin; the network modes now refuse it
+  (`reason_code: auth_disabled`) and `serve` falls back to loopback with the
+  reason. `auth_mode_summary` reports `read_protected`.
+- `abstractgateway network … --data-dir DIR` now uses DIR (it was accepted
+  and ignored); `network` no longer reserves the GGUF GPU offload (no model
+  is ever loaded by it).
+
+- **Security: with user accounts off, a non-admin account can no longer sign
+  in and change the operator's settings (mission BB).** With user accounts
+  off the gateway runs one runtime, the operator's; `POST /session/login`
+  nevertheless accepted any registry account, so a non-admin (role `user`,
+  created by the admin) could sign in and then change the gateway-wide
+  capability defaults and add endpoint profiles to the admin's own list (his
+  bearer token was already refused). Now only admin accounts can hold a
+  browser session in that mode: login answers `401`
+  (`reason_code: "user_accounts_off_admin_only"`, a message naming the two
+  ways out: the operator turns user accounts on, or sign in with an admin
+  account), and a session that already exists for a non-admin account is
+  refused and removed at its next use. The rule lives in one place
+  (`security/sessions.py::principal_barred_from_shared_runtime`) and every
+  session path applies it, including the browser-app sign-in handover. Admin
+  accounts sign in in both modes, and the login answer now reports the real
+  mode instead of always claiming user accounts are on.
+- **Users: no account that could never sign in, and never zero admins.**
+  With user accounts off, `POST /admin/users` answers `409` instead of
+  creating a non-admin account, and a `PATCH` that removes the `admin` role is
+  refused the same way. In both modes, deleting, disabling or demoting the
+  last enabled admin account answers `409` (`reason_code: "last_admin"`).
+- **Workflows: `POST /bundles/{id}/deprecate` and `/undeprecate` apply the
+  shared-registry ownership check** that every other registry write already
+  applied (they answered `404` for a missing bundle, i.e. authorization had
+  passed, where `/bundles/reload` answered `403`).
+- **The route authorization contract test tells the truth.** Its comment
+  credited a `_principal_requires_isolation` function that never existed; it
+  now describes the real mechanism and pins both modes against the live
+  route table: with user accounts off a non-admin session is refused on every
+  write route, and with them on it gets `403` on every admin family and never
+  changes the admin's gateway-wide view.
+- **An engine Install no longer surfaces a raw build failure.** Before, the
+  llama.cpp Install ran `uv pip install llama-cpp-python` (a CMake source build
+  that fails without Xcode's tools, shown as a 43-line log and "uv exited 1"),
+  and the Ollama Install on macOS ran the vendor shell script, which needs
+  `sudo` for `/usr/local/bin` and cannot ask for it from a job.
 - **The admin token is printed again at first launch.** 0.3.0 hid it behind
   `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1`, so a first launch showed only the
   one-time console link and no credential for the browser apps. A loopback
@@ -3517,6 +4606,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-loopback bind hides it. The switch is a launch flag,
   `abstractgateway serve --print-token` / `--no-print-token`; the environment
   variable is kept only as an alias of `--print-token`.
+- **A restart from the tray or console no longer carries in-process Hugging
+  Face offline flags into the new gateway.** `host_control.relaunch_process`
+  used `os.execv`, which hands the new process the current `os.environ`. An
+  `HF_HUB_OFFLINE=1` written in-process during the run (the old MLX / Hugging
+  Face provider writes, a third-party library) therefore became the new
+  process's start-up environment, which AbstractCore records as the
+  operator's choice and which makes every explicit download refuse by name.
+  The relaunch (POSIX `execve` and the Windows spawn) now resets
+  `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE` and `HF_DATASETS_OFFLINE` to the
+  values the gateway started with (a value counts only if both the gateway's
+  and AbstractCore's start-up snapshots saw it) and logs each variable it
+  dropped or restored. Every other variable passes through unchanged.
+
+### Tests
+- The conftest's network guard now also refuses 127.0.0.1:3000-3007 (the
+  operator's browser apps), and an autouse fixture empties the external-app
+  probe's port list: a test names its own scratch ports (mission HH).
+- **Subprocess guard (mission FF, 2026-09-24).** A child process has its own
+  sockets, so a real engine CLI slipped past the network guard. The conftest
+  now refuses launching `lms`, `ollama`, `open` or `xdg-open` (through
+  `subprocess`, asyncio subprocesses or `os.system`, including `sh -c` and
+  `env …` forms), fails the test and lists the launch under "subprocess
+  guard". Opt-outs: the `fake_cli` fixture registers a stand-in script (only
+  that file may run); `@pytest.mark.desktop("reason")` (mandatory reason,
+  skipped unless `pytest --allow-desktop`) and `network` tests may launch the
+  real ones. First catch: the fresh-install catalog test ran the operator's
+  real `~/.lmstudio/bin/lms ls --json` through the refusal's weights probe; it
+  now uses a fake `lms`. Self-tests in `tests/test_conftest_subprocess_guard.py`.
+- **Tests never touch your home or the network (mission DD, 2026-09-24).**
+  `tests/conftest.py` now also isolates `HOME`, `HF_HOME`/`HF_HUB_CACHE` and
+  the AbstractCore config directory (at import and per test), clears exported
+  `ABSTRACT*`/`HF_*` path settings and `XDG_*`, and installs a socket guard that
+  refuses non-loopback destinations and the live local services on loopback
+  (8080, 1234, 11434, 18850). Findings fixed: the live API-parity checks in
+  `test_gateway_offline_parity.py` queried the operator's gateway on :8080 by
+  default (now opt-in by URL and marked `network`); the fresh-install catalog
+  test queried the live LM Studio on :1234 (now a loopback fake); three tests
+  resolved the stand-in `core.test` server over real DNS (now stubbed).
+  `@pytest.mark.network("reason")` (skipped unless `pytest --allow-network`)
+  and `@pytest.mark.real_home("reason")` are the opt-outs; a bare marker is a
+  collection error. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#tests-never-touch-your-home-or-the-network).
 
 ## [0.3.0] - 2026-09-23
 
@@ -4312,6 +5443,46 @@ Notes:
 - `integration` and `e2e` tests may require optional dependencies and/or external services (e.g. an LLM provider).
 - The CLI entrypoint is `abstractgateway` (see `pyproject.toml`).
 
+### Tests never touch your home or the network
+
+`tests/conftest.py` makes every run hermetic, whatever your shell exports:
+
+- **Home and caches.** `HOME` (and `USERPROFILE` on Windows) points at a
+  temporary directory for the whole session and a fresh one for each test, so
+  everything the code derives from the home directory lands there: the
+  AbstractCore config, models, embeddings and blocs under `~/.abstractcore`,
+  the Hugging Face cache (`HF_HOME`, `HF_HUB_CACHE`), the data registry, and the gateway's own data, flows and AbstractCore config store (per-test directories).
+  Path settings exported in your shell (the `ABSTRACT*`/`HF_*` directory, file
+  and cache variables, `XDG_*`) are cleared for the run. This happens when the
+  conftest is imported, before any package or `huggingface_hub` loads; a test
+  fails loudly if `huggingface_hub` froze its cache path on your real home.
+- **Network guard.** Sockets refuse any non-loopback destination and name
+  lookup, and also the live local services on loopback: the gateway (8080), LM
+  Studio (1234), Ollama (11434) and 18850. Any other loopback port stays open,
+  so `TestClient`, fake servers and scratch-port fixtures work. A refused
+  attempt fails the test and is listed under "network guard" at the end of the
+  run with the host and port it tried to reach. Point such a test at a fake or
+  a scratch port; the `fake_public_dns` fixture answers name lookups for code
+  that resolves a host before a faked fetch.
+- **Subprocess guard.** A child process has its own sockets, so a real engine
+  CLI would slip past the network guard. Launching `lms`, `ollama`, `open` or
+  `xdg-open` (through `subprocess`, `asyncio` subprocesses or `os.system`,
+  including `sh -c "…"` and `env …` forms) is refused, fails the test, and is
+  listed under "subprocess guard" at the end of the run. Fake the CLI instead:
+  record the argv in a double, or register a stand-in script with the
+  `fake_cli` fixture (`fake_cli("lms", "#!/bin/sh\necho ok\n")` returns its
+  path; only that file may run).
+- **Opting out, with a reason.** `@pytest.mark.desktop("reason")` marks a test
+  that drives the real engine CLIs or the desktop; it is skipped unless you
+  run `pytest --allow-desktop` (a `network` test may launch them too). `@pytest.mark.network("reason")` marks a test
+  that genuinely needs the network (a Hub lookup, a real download, a live
+  provider). Such tests are skipped unless you run `pytest --allow-network`.
+  `@pytest.mark.real_home("reason")` marks a test that READS your real home
+  (for example installed tokenizers); `HOME` still stays temporary, and the
+  test gets the real path as `ABSTRACT_TEST_REAL_HOME`. A marker without its
+  reason is a collection error, as is a test module that reads the real-home
+  path without the marker. `pytest --markers` lists all three.
+
 ## How to contribute
 
 1. **Open an issue** (or a draft PR) describing what you want to change and why.
@@ -4525,6 +5696,34 @@ X-AbstractGateway-CSRF: <csrf token>
 `POST /api/gateway/session/logout` revokes the session. Disabling, deleting, or
 rotating the Gateway user invalidates existing browser sessions for that user.
 
+**Who can sign in depends on whether user accounts are on.** With user
+accounts on, every registry account (admin or not) can sign in, and each one
+works in its own runtime (below). With user accounts off the gateway runs one
+runtime, the operator's, so every signed-in person would share the operator's
+runtime, capability defaults, endpoint profiles and workflows. In that mode
+only accounts with the `admin` role can hold a browser session:
+
+- `POST /api/gateway/session/login` answers `401` for a non-admin account, with
+  `reason_code: "user_accounts_off_admin_only"` and a message naming the two
+  ways out: the gateway operator turns user accounts on, or the person signs
+  in with an admin account.
+- A session that already exists for a non-admin account (minted by an older
+  gateway, or while user accounts were on) is refused and removed at its next
+  use. Every session path applies the same rule (`principal_barred_from_shared_runtime`
+  in `security/sessions.py`), including the browser-app sign-in handover.
+- `POST /api/gateway/admin/users` answers `409` (same `reason_code`) instead of
+  creating a non-admin account that could never sign in, and
+  `PATCH /api/gateway/admin/users/{user_id}` refuses to remove the `admin` role
+  from an admin account in this mode.
+
+Admin accounts sign in in both modes. The rule reads the same setting the
+service routing reads, so the two cannot disagree.
+
+**The last admin account is protected.** `DELETE /api/gateway/admin/users/{user_id}`,
+and a `PATCH` that disables it or removes its `admin` role, answer `409` with
+`reason_code: "last_admin"` when the target is the only enabled admin account
+left (entity principals never count). Create or enable another admin first.
+
 When user auth is active, the Gateway service composition root routes each
 principal to an isolated service/data plane under:
 
@@ -4603,9 +5802,13 @@ principal.
 
 One check covers every route that writes a registry — `POST /bundles/upload`,
 `DELETE /bundles/{bundle_id}`, `POST /bundles/reload`,
-`POST /bundles/{bundle_id}/deprecate` and `POST /visualflows/{flow_id}/publish`
-— so a shared workflow cannot be replaced through one route while another is
-restricted. `POST /visualflows/{flow_id}/publish` accepts a caller-supplied
+`POST /bundles/{bundle_id}/deprecate`, `POST /bundles/{bundle_id}/undeprecate`
+and `POST /visualflows/{flow_id}/publish` — so a shared workflow cannot be
+replaced through one route while another is restricted. The check runs before
+the route looks the bundle up, so a non-admin gets `403` for a bundle that
+does not exist as well. (Until 2026-09-24 the two deprecation routes skipped
+it.) Since a non-admin account cannot be signed in while user accounts are off
+(above), this check is the second, independent line of defence. `POST /visualflows/{flow_id}/publish` accepts a caller-supplied
 `bundle_id`, `bundle_version` and `overwrite`, and installs into the same
 registry as `upload`; it is gated on the same rule. Non-admin requests against
 the shared registry return `403`. Read routes are unchanged.
@@ -4641,20 +5844,85 @@ available at `GET /api/gateway/workflow-catalog`.
 
 ## Origin allowlist (browser/origin defense)
 
-If the request includes an `Origin` header, the middleware enforces `ABSTRACTGATEWAY_ALLOWED_ORIGINS` using glob-style patterns (fnmatch).
+If the request includes an `Origin` header, the middleware allows it only when
+it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
+`http://localhost:*` and `http://127.0.0.1:*`, the gateway's own LAN origins in
+a network mode, plus the **`allowed_origins` setting** (console: Network →
+*Advanced: reverse proxy*; TUI: Connection screen; CLI:
+`abstractgateway network set --allowed-origins https://gateway.example.com`).
+The setting is read per request: a change applies to the next request, no
+restart. Each origin is validated (`scheme://host[:port]`, no path, no trailing
+slash); `*` and wildcard patterns are accepted only as typed and are flagged.
+See [configuration.md](docs/configuration.md#reverse-proxy-allowed-origins-and-trust-proxy).
 
-Examples:
+A gateway started with `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in its environment
+uses that list instead (a deployment pin): every surface says "This gateway was
+started with ABSTRACTGATEWAY_ALLOWED_ORIGINS in its environment" and reports
+`overridden_by_env: true`; the saved setting applies once it starts without it.
 
-```bash
-export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
-# or (example) an ngrok domain:
-export ABSTRACTGATEWAY_ALLOWED_ORIGINS="https://*.ngrok-free.app"
-```
-
-Evidence: `GatewayAuthPolicy.allowed_origins` and `_origin_allowed()` in `src/abstractgateway/security/gateway_security.py`.
+Evidence: `GatewayAuthPolicy.allowed_origins`, `_effective_allowed_origins()` and
+`_origin_allowed()` in `src/abstractgateway/security/gateway_security.py`;
+`live_reverse_proxy()` in `src/abstractgateway/network_exposure.py`.
 
 Important nuance:
 - FastAPI’s CORS middleware in `src/abstractgateway/app.py` is permissive, but **origin enforcement for gateway endpoints is done by this security middleware**.
+- In a network exposure mode from the settings store, `serve` adds the
+  gateway's own discovered LAN origins (IP literals and `<name>.local`). A
+  foreign origin, including a DNS-rebinding name that resolves to your LAN IP,
+  is still refused (403) unless it is in `allowed_origins`.
+
+## Network exposure
+
+The network exposure setting ([configuration.md](docs/configuration.md#network-exposure-localhost--local-network--internet))
+chooses `localhost`, `lan` or `internet`. What changes for someone else on
+your network:
+
+- **`localhost`** (default for a first run): the gateway listens on
+  `127.0.0.1` only. Nobody else can open a connection; every local process of
+  every local user still can, which is why user auth stays on.
+- **`lan`**: the gateway listens on every IPv4 interface. Anyone on the same
+  network (and anyone on a VPN such as Tailscale whose address is listed) can
+  reach the sign-in page and the API. The gate is authentication: `lan` is
+  refused unless user auth will be on at the next start; unauthenticated
+  requests answer 401, failed credentials are locked out per client address
+  with a growing wait, and a browser page from a foreign origin is refused
+  (403). `lan` and `internet` are also refused when the gateway was started
+  with read protection off (`ABSTRACTGATEWAY_PROTECT_READ=0`: unauthenticated
+  reads would be answered as the admin). What `lan` does NOT give you:
+  - **encryption**: it is plain HTTP. Passwords, bearer tokens and the
+    session cookie cross the network in clear; the session cookie is
+    `HttpOnly; SameSite=Lax` but not `Secure` over HTTP. Anyone who can sniff
+    the network (shared Wi-Fi, a compromised router) can capture and replay a
+    session. Use `lan` on networks you trust, or use a TLS proxy / VPN.
+  - **a smaller attack surface**: every admin route is reachable to whoever
+    holds an admin credential. Give each person their own account, keep the
+    admin token off other machines, and prefer non-admin accounts for daily use.
+  - **exposure of the browser apps**: apps started from the Apps page stay
+    bound to `127.0.0.1` (the `apps.host` setting, *Where apps listen*), and the sign-in
+    handover (`/apps/handover/{code}`) only works on the host it was minted
+    for and refuses a loopback-only app to a browser on another machine.
+  - **engine and app installs for remote admins**: `allow_engine_install`
+    defaults to off on a non-loopback bind for callers on other computers.
+    Someone at the gateway machine itself can still install: the request's
+    socket peer is loopback or one of this host's own addresses, and it
+    carries no proxy header (`Forwarded`, `X-Forwarded-For`,
+    `X-Forwarded-Host`, `X-Real-IP`). A remote computer cannot use this
+    host's own address as the source of an established TCP connection (the
+    handshake reply never reaches it, and the kernel drops outside packets
+    with a local source address); a reverse proxy on this host would make
+    every visitor look local, which is why a proxied request never counts.
+- **`internet`**: the same bind plus an explicit acknowledgement. The gateway
+  does **not** terminate TLS and does not configure your router or firewall.
+  Put a TLS reverse proxy (Caddy, nginx, Traefik) or a tunnel (Cloudflare
+  Tunnel, Tailscale Funnel, ngrok) in front and expose that; add the public
+  `https://` origin under *Reverse proxy* (`allowed_origins`), turn on *Trust
+  the proxy's client address* (`trust_proxy`) only when your own proxy is in
+  front of every request, and rate-limit at the proxy. Forwarding the raw port
+  means plain HTTP on the internet: do not.
+
+The mode is applied at the next start and `serve --host/--port` override it;
+`GET /api/gateway/network` always says what is configured, what is running,
+and why they differ.
 
 ## Workspace filesystem scope (blacklist/whitelist)
 
@@ -4768,13 +6036,20 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 ### Reverse proxies
 
-- `ABSTRACTGATEWAY_TRUST_PROXY=1|0`
-  If enabled, `X-Forwarded-For` is used for IP attribution and lockout tracking.
+- The `trust_proxy` setting (console: Network → *Advanced: reverse proxy* →
+  *Trust the proxy's client address*; TUI: Connection screen checkbox; CLI:
+  `abstractgateway network set --trust-proxy on|off`). On: `X-Forwarded-For` is
+  used for IP attribution (audit log) and lockout tracking. Read per request:
+  it applies to the next request. Only when your own proxy sits in front of
+  every request; otherwise any client chooses the address the gateway sees.
+  The ephemeral tray token never honours it (raw socket peer only).
+- A gateway started with `ABSTRACTGATEWAY_TRUST_PROXY` in its environment uses
+  that value instead; the status reports `overridden_by_env: true`.
 
 ## Production checklist (minimal)
 
 - Run behind TLS (reverse proxy) and bind `--host 127.0.0.1` (proxy in front) or lock down your network if binding `0.0.0.0`.
-- Use a strong random token and set exact `ABSTRACTGATEWAY_ALLOWED_ORIGINS` (avoid public wildcards).
+- Use a strong random token and list exact origins in `allowed_origins` (avoid public wildcards).
 - Keep `ABSTRACTGATEWAY_SECURITY=1`.
 
 ## Related docs
@@ -4782,6 +6057,648 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 - Configuration overview: [configuration.md](docs/configuration.md)
 - API overview: [api.md](docs/api.md)
 - FAQ: [faq.md](docs/faq.md)
+
+---
+
+## docs/apps.md
+
+# Browser apps
+
+The five browser apps (Observer, Continuum, Code, Entity and Flow Editor) can be
+installed, started, stopped and updated from the gateway: from the console's
+Apps page, from the HTTP API below, or with `abstractgateway apps`. Nobody has
+to open a terminal or install Node.js by hand.
+
+## What happens when you click Install
+
+1. **Node.js.** The apps are small Node.js servers. If the gateway finds
+   Node.js 18 or newer on the machine, it uses it. Otherwise it installs
+   Node.js 24 for you in its own data folder (`<data dir>/runtime/node/`,
+   about 56 MB to download, no administrator rights). This is the Node.js
+   build published on PyPI as `nodejs-wheel-binaries`, the same one the
+   installer's `--with-apps` option gets with `uv tool install nodejs-wheel`.
+   The download is checked against PyPI's sha256 checksum.
+2. **The app.** The gateway downloads `@abstractframework/<name>` from the npm
+   registry into `<data dir>/apps/<app>/<version>/` and checks it against the
+   registry's sha512 integrity hash. Apps that need other npm packages get them
+   through npm (with its cache in `<data dir>/apps/npm-cache/`); Code needs
+   none and is unpacked directly.
+3. **Start.** With "Install and open", the gateway starts the app on a free
+   port, waits until it answers, and opens it in a new tab, already signed in.
+
+Every step is a job with a percentage, downloaded bytes and a plain message.
+When a step fails, the job says why in one sentence and carries the full log
+in its `details` field (`<data dir>/apps/jobs/<job>.log`).
+
+## Running apps
+
+- An app started from the gateway is a child process of the gateway. It stops
+  when the gateway stops (even if the gateway is killed: the app watches the
+  pipe the gateway holds open and exits when it closes).
+- An app you started stays **enabled**: the next time the gateway starts, it
+  starts the app again, on the same port when that port is free. Stop the app
+  to turn this off (the console's **Stop** is under **Technical details**, or
+  `abstractgateway apps stop <app>`). Nothing is registered with launchd, systemd or the login
+  items; the gateway itself starts the apps.
+- If an app exits unexpectedly, the gateway restarts it (after 1, 2 then 4
+  seconds). After more than 3 crashes in a minute it stops trying and shows
+  "crash_loop" with the app's log.
+- Each app writes its output to `<data dir>/logs/apps/<app>.log`.
+- Apps listen on `127.0.0.1` only. Ports: the app's usual port when it is
+  free, else the first free port in 3100-3199. The usual ports are the
+  framework's stack port map (`scripts/start-local.sh`): Observer 3001,
+  Continuum 3002, Code 3003, Entity 3004, Flow 3005.
+
+## Apps started outside the gateway
+
+An app can also run without the gateway having started it: the framework's
+development stack (`scripts/start-local.sh`), `npx @abstractframework/observer`,
+a global npm install, a service. The gateway finds such an app by asking the
+usual ports on this machine (3001-3005, then 3000 and 3007, which older
+launch scripts used) for their start page and reading its title
+("AbstractObserver", "AbstractContinuum", "AbstractCode", "AbstractEntity",
+"AbstractFlow"). None of the apps has an address that says who it is without
+a gateway sign-in, and the start page is plain HTML, so this costs one short
+local request per port (half a second at most, all ports at once, remembered
+for 5 seconds). The version is read from the `package.json` of the program
+listening on the port, when this computer shows which program that is.
+
+Such an app is listed as installed and running, with `source: "external"`,
+`managed: false`, its `url`, `port` and `version`, and one action: **Open**.
+Opening it works exactly like opening an app the gateway started (the
+one-time sign-in link below): the app's server reads the same sign-in
+cookies whoever started it. The gateway does not stop, update or show the
+log of an app it did not start; the console's **Technical details** says
+"Started outside the gateway on port 3001" instead, and `POST /apps/{id}/stop`
+answers 409 `started_outside_gateway`. Starting the gateway's own copy while
+an outside one runs does nothing (the app is already running).
+
+## Who may install
+
+Installing an app (or Node.js, or a terminal version) runs software on the
+gateway machine, so it follows the gateway's `allow_engine_install` setting.
+With no saved choice, installs are allowed for someone at the gateway machine
+itself, whatever address the gateway listens on (a browser or the tray on that
+machine, including one that uses its network address), and for everyone when
+the gateway listens on this machine only. A browser on another computer needs
+an admin to turn the setting on. How "at the gateway machine" is decided is
+in [configuration.md](docs/configuration.md#allow_engine_install).
+
+## Opening an app signed in
+
+The console asks the gateway for a one-time link
+(`POST /api/gateway/apps/{id}/open`) and opens it in a new tab. The link
+(`/apps/handover/<code>`) works once, for two minutes, and only on the address
+it was made for. The gateway creates a browser session for the person who
+clicked, puts it in the app's own sign-in cookies, and redirects to the app.
+Browsers keep cookies per machine name, not per port, so the app's server finds
+the session and the app opens connected. The gateway token never appears in
+the page, the link or the browser's storage.
+
+A browser on another computer cannot reach an app that listens on
+`127.0.0.1`; the gateway says so instead of producing a broken link.
+
+### Landing somewhere inside the app
+
+`POST /api/gateway/apps/{id}/open` accepts an optional `path`: where inside
+the app the browser lands after the handover, for example `/#new`, Entity's
+creation form. The path is bound to the one-time code when the link is made
+(the link itself carries nothing), and it must stay inside the app: it starts
+with a single `/`, and a second leading slash (`//host`), a full address, a
+backslash, a space or a control character is refused with 400
+`invalid_app_path` before any link is made. Without `path` the browser lands
+on the app's start page, as before.
+
+### An app with nothing in it yet
+
+Each app row carries `content_summary`: a small fact about what the app holds
+on this gateway, or `null` for apps that report nothing. Today only Entity
+has one, `{"entities_count": n}`: the number of entries
+`GET /api/gateway/entities` lists (counted from the same entity registry,
+without reading any entity), `null` when it cannot be known, including for an
+Entity started outside the gateway whose page names another gateway. When the
+count is exactly 0, the Entity card's button reads **Create your first
+entity** and opens the app on `/#new` through the handover above; with one
+entity or more, or an unknown count, it reads **Open**. The guide's Apps step
+shows the same card.
+
+## Terminal versions
+
+Some apps also run in a terminal. Today that is **Code** (`abstractcode`, a
+Rust terminal app from the abstractcode repository); Flow Editor, Observer,
+Continuum and Entity are browser apps only. The gateway's own console also
+has a terminal twin, `abstractgateway-console`, which the console's Done step
+mentions once.
+
+Every app row therefore lists its interfaces: `interfaces[0]` is the browser
+app (it mirrors the row's own fields), and apps with a terminal version have a
+second entry of kind `"tui"`:
+
+```json
+{"kind": "tui", "name": "Code in the terminal", "binary": "abstractcode",
+ "installed": true, "version": "0.5.1", "source": "gateway", "path": "<data dir>/apps/bin/abstractcode",
+ "latest_version": "0.5.1", "update_available": false,
+ "install_available": false, "install_method": "release_binary", "install_blocked_reason": null,
+ "install_command": "cargo install abstractcode", "download_page": "https://github.com/lpalbou/abstractcode/releases",
+ "launch_available": true, "launch_blocked_reason": null, "launch_mode": "terminal",
+ "command": "<data dir>/apps/bin/abstractcode --gateway http://127.0.0.1:8080",
+ "signin_command": null, "active_job": null}
+```
+
+- **Found by presence.** The gateway never imports or runs an app to detect
+  it: it looks for the binary in `<data dir>/apps/bin/`, on `PATH` and in
+  `~/.cargo/bin`, and accepts it only when its `--help` names the program
+  (PyPI's unrelated Python package `abstractcode` installs a script with the
+  same name). `source` says where it was found (`gateway` or `path`).
+- **Install (`install_method`).** `release_binary`: Code publishes prebuilt
+  binaries for macOS (Apple silicon and Intel), Linux (x86_64 and arm64,
+  glibc) and Windows (x86_64) on its GitHub release, with a `SHA256SUMS` file.
+  "Install for Terminal" downloads the archive for this computer, checks it
+  against `SHA256SUMS` and against the sha256 digest GitHub reports for the
+  file (both must agree), unpacks the single binary into `<data dir>/apps/bin/`,
+  makes it executable and runs `--version` before it replaces anything.
+  About 3 MB, no administrator rights, no terminal. `cargo`: there is no
+  prebuilt binary for this computer (musl Linux, Windows on ARM, other CPUs),
+  or the program is published as source only (the gateway console, crates.io).
+  Then `install_available` is `false`, `install_blocked_reason` starts with
+  "Needs the Rust toolchain" and `install_command` is the exact command to
+  copy; the console shows no Install button.
+- **Open (`launch_mode`).** `terminal`: the caller is an admin on the gateway
+  machine itself, and "Open in Terminal" opens a new terminal window there
+  (macOS Terminal; on Linux the first of `x-terminal-emulator`,
+  `gnome-terminal`, `konsole`, `xfce4-terminal`, `kitty`, `alacritty`, `xterm`
+  when a desktop session exists; Windows `cmd`). `copy`: the browser is on
+  another computer (or the caller is not an admin); with **Technical
+  details** on, the card shows `command` (this gateway's address as the
+  browser reaches it) and `signin_command` (`abstractcode login --gateway
+  <url> --token <your token>`) to copy. A terminal is never opened for a
+  remote browser. How the card presents each case: [console.md](docs/console.md#apps-tab).
+
+### Signed in, without a token anywhere it could leak
+
+The terminal window runs a small launcher script
+(`<data dir>/apps/terminal/open-code-<random>.command`, mode 0700) that holds
+a **one-time code** (two minutes, single use) and deletes itself as its first
+line. It runs `tui_signin.py` from the gateway package (standard library only,
+`python -I`), which trades the code at `POST /apps/tui-handover` for a bearer
+token and then becomes the terminal app with the token in the app's
+**environment** (`ABSTRACTCODE_GATEWAY_TOKEN`, which Code prefers over its
+saved login). The token
+
+- is new for each launch and is not the admin token;
+- acts as the person who clicked (their identity and role, never more);
+- is accepted only from this machine (a loopback socket peer);
+- lives in the gateway's memory only, so it stops working when the gateway
+  restarts (open the app again from the console);
+- is never in a command line, a file, the page, or a URL.
+
+### From a terminal
+
+Everything above works without the console:
+
+```bash
+abstractgateway apps list                 # each app; Code also gets a "terminal:" line (installed, where, what to run)
+abstractgateway apps install-tui code     # the same job: release binary, SHA256SUMS + GitHub digest, --version check
+abstractgateway apps tui-command code     # the one-time sign-in line for THIS machine (2 minutes, works once) + the plain command
+```
+
+`install-tui` prints the job's progress; when there is no prebuilt binary for
+the computer it prints the reason and `cargo install abstractcode` and exits 2.
+`tui-command` makes the same one-use, self-deleting launcher as "Open in
+Terminal" (it holds a single-use code, never a token) but opens no window: run
+the printed line in a terminal on the gateway machine. From another computer
+it prints the command and the `abstractcode login` line instead.
+
+`/apps/tui-handover` sits outside `/api/gateway` like the browser handover:
+the code in its body is its only credential, it answers only loopback socket
+peers without proxy headers, and a browser handover code does not work there
+(nor the reverse).
+
+## Why the gateway runs each app's own server
+
+The gateway could in principle serve the apps' built files itself. It does
+not, because each app's server does real work:
+
+- it holds the sign-in (`/api/connection/gateway`, HttpOnly session cookies,
+  CSRF) and forwards `/api/*` to the gateway on the same origin, which is how
+  live updates (server-sent events) reach the page;
+- four of the five apps load their files from absolute `/assets/...` paths,
+  and Code and Observer register a service worker at the site root, so they
+  cannot live under a sub-path of the gateway;
+- Observer reveals local folders, Flow keeps its connection file, and
+  Continuum proxies the agora hub.
+
+Serving the files alone would break sign-in and live updates in every app.
+
+## Settings
+
+Settings, changed from the Apps page (*Advanced: apps settings*), the TUI
+(Runtimes → *Runtime knobs* → *Edit apps settings*) or the terminal
+(`abstractgateway apps config get|set NAME VALUE`). A saved value applies at the
+next app start or download. See
+[configuration.md](docs/configuration.md#browser-apps-settings-apps).
+
+| Setting (console label) | Default | Effect | CLI | Legacy env (fallback) |
+|---|---|---|---|---|
+| `apps.node` (*Node.js for apps*) | `auto` | `auto`: Node.js on the machine, else the gateway's own. `managed`: always the gateway's own. `system`: never install Node.js. A path: use that `node`. | `apps config set node auto` | `ABSTRACTGATEWAY_APPS_NODE` |
+| `apps.ports` (*Ports for apps*) | (empty) | A port or range, e.g. `3100-3199`. When set, apps only use ports in it. | `apps config set ports 3100-3199` | `ABSTRACTGATEWAY_APPS_PORTS` |
+| `apps.host` (*Where apps listen*) | `127.0.0.1` | Where the apps listen. Other values expose them to the network: use your own access control. | `apps config set host 0.0.0.0` | `ABSTRACTGATEWAY_APPS_HOST` |
+| `apps.npm_registry` (*npm registry*) | `https://registry.npmjs.org` | npm registry (mirror) for app downloads and their dependencies. | `apps config set npm_registry URL` | `ABSTRACTGATEWAY_APPS_NPM_REGISTRY` |
+| `apps.pypi_url` (*Node.js download index*) | `https://pypi.org/pypi` | Where the Node.js build is looked up. | `apps config set pypi_url URL` | `ABSTRACTGATEWAY_APPS_PYPI_URL` |
+
+Console: Apps → *Advanced: apps settings* (one field per setting, with where its
+value comes from). TUI: Runtimes → *Runtime knobs* → *Edit apps settings*. CLI:
+`abstractgateway apps config get [NAME] [--json]` / `set NAME VALUE` (`""`
+clears), on the data dir directly. All three validate the same way and show the
+gateway's sentence on a refusal.
+
+The legacy environment variables are only a fallback: a saved value always wins
+(stored > env > default). A value that comes from the environment the gateway
+was started with is reported as `source: env` ("From the environment" on the
+page); an env value a saved one shadows is reported as `env_shadowed`.
+
+Installing Node.js or an app runs software on the gateway host, so it follows
+the host's **allow engine install** setting: on by default when the gateway
+listens on this machine only (loopback), off otherwise. Install, update,
+start and stop need an admin. Any signed-in user can list the apps and open a
+running one (as themselves).
+
+## Without internet
+
+- Apps already installed keep working offline.
+- Installing needs the npm registry (and PyPI for Node.js). When it cannot be
+  reached, the Apps page says so on each app and the Install button is off;
+  a job that loses the network fails with "The npm registry
+  (registry.npmjs.org) is not reachable…". The gateway does not ship app
+  copies: the five packages are about 6 MB, but four of them need npm
+  dependencies (Flow alone installs to about 130 MB), which would have to
+  ship too.
+
+## Command line
+
+The same actions, through the running gateway:
+
+```bash
+abstractgateway apps list                 # Node.js, every app, installed/latest, URL
+abstractgateway apps install code --launch
+abstractgateway apps launch observer
+abstractgateway apps open observer        # prints a one-time signed-in link
+abstractgateway apps logs observer --tail 50
+abstractgateway apps update flow
+abstractgateway apps stop observer
+abstractgateway apps runtime              # install Node.js only
+abstractgateway apps install-tui code     # Code's terminal version (see "Terminal versions")
+abstractgateway apps tui-command code     # one-time signed-in launch line for this machine
+abstractgateway apps jobs [JOB_ID]
+```
+
+`--url`, `--token` and `--data-dir` work as for `abstractgateway models`: by
+default the command finds the gateway running for this data dir and uses its
+admin token on a loopback URL.
+
+## HTTP API
+
+All routes are under `/api/gateway/apps` and need a signed-in principal.
+
+| Method and path | Who | What |
+|---|---|---|
+| `GET /apps?latest=true` | any user | Node.js status, one row per app (with `interfaces[]`, see "Terminal versions") and `console_tui` (the gateway console's terminal app). `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
+| `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
+| `POST /apps/{id}/install` `{"version"?, "launch"?}` | admin | A job: Node.js if needed, download, check, dependencies, and with `launch: true` start the app. |
+| `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. |
+| `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. |
+| `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |
+| `POST /apps/{id}/open` `{"remember"?, "path"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`). 400 `invalid_app_path` for anything that is not a path inside the app. |
+| `GET /apps/{id}/logs?tail=200` | admin | The end of the app's log. |
+| `GET /apps/jobs`, `GET /apps/jobs/{job}` | any user | Jobs: `state` (queued, running, succeeded, failed, cancelled), `percent`, `bytes_done`, `bytes_total`, `message`, `steps`, `details` (full log on failure). |
+| `POST /apps/jobs/{job}/cancel` | admin | Cancel a job. |
+| `POST /apps/{id}/install-tui` | admin | A job: download, check and place the app's prebuilt terminal version (or update the gateway's copy). 409 `toolchain_required` with `command` when only a source build exists. |
+| `POST /apps/{id}/launch-tui` | admin, on the gateway machine | Open the terminal version in a new terminal window, signed in as the caller: `{ok, app_id, interface: "tui", terminal, version, message, expires_in_s}`. From another computer (non-loopback peer or `Host`, or any proxy header): 409 `not_on_gateway_machine` with `command` and `signin_command`, and nothing opens. |
+| `POST /apps/{id}/tui-command` | admin, on the gateway machine | The same one-use launcher as launch-tui without opening a window: `{ok, app_id, interface, version, signin_command, command, expires_in_s}`. From another computer: 409 `not_on_gateway_machine` with `command` and `signin_command`. |
+| `POST /apps/tui-handover` `{"code"}` (outside `/api/gateway`) | the launcher script, loopback only | Trade a launcher's one-time code for `{token, token_env, url_env, gateway_url, gateway_flag, user}`. 403 `loopback_only`, 410 `handover_expired`. |
+
+Errors are `{"ok": false, "reason", "message", "hint"?, "details"?}` with
+404 (`unknown_app`, also for a terminal route on a browser-only app), 409
+(`not_installed`, `node_missing`, `not_running`, `app_loopback_only`,
+`toolchain_required`, `not_on_gateway_machine`, `no_terminal`,
+`started_outside_gateway`), 403
+(`installs_not_allowed`), 502 (`integrity_mismatch`), 503
+(`network_unavailable`, `no_free_port`) or 500 (`launch_failed`, with the
+app's output in `details`). The terminal errors also carry `command` (and,
+where it helps, `install_command` or `signin_command`) so the console can
+offer the command to copy instead.
+
+---
+
+## docs/engines.md
+
+# Local engines: install, start, stop
+
+The gateway can install the local inference engines (Ollama, LM Studio, MLX,
+llama.cpp, vLLM, the Hugging Face stack) on the machine it runs on, from the
+console or the command line, without a terminal and without a password in the
+common case. This page explains what each **Install** does, when it asks for
+the Apple command-line tools or an administrator password, and the API a UI
+renders.
+
+## What Install does, engine by engine
+
+| Engine | macOS (Apple silicon) | Linux | Admin rights? |
+|---|---|---|---|
+| **Ollama** | Downloads the signed `Ollama-darwin.zip` from Ollama's official GitHub release, checks its published SHA-256 and the Developer ID signature (team `3MU9H2V9Y9`), places `Ollama.app` in `/Applications` when your account can write it (an admin account can, with no password) or else in `~/Applications`, then starts it and waits until `http://127.0.0.1:11434/api/version` answers | Ollama's official installer (`curl -fsSL https://ollama.com/install.sh \| sh`) | macOS: no. Linux: yes (the installer writes `/usr/local` and a systemd service) |
+| **LM Studio** | Downloads the signed disk image from lmstudio.ai, checks the signature (team `D65G88RHWN`), copies `LM Studio.app` to `/Applications` or `~/Applications`, opens it once and starts its local server (`lms server start`) | LM Studio's official installer: the headless daemon and the `lms` CLI under `~/.lmstudio` | no |
+| **MLX** | Prebuilt `mlx` and `mlx-lm` wheels into the gateway's own Python | not supported | no |
+| **llama.cpp** | Upstream's prebuilt Metal wheel (`llama-cpp-python` 0.3.28) into the gateway's own Python; no compiler | prebuilt CPU wheel (0.3.35) | no |
+| **vLLM** | not supported (the row says why; no Install button) | Linux with an NVIDIA GPU: the vLLM wheels into the gateway's Python | no |
+| **Hugging Face** | `abstractcore[huggingface]` at the installed AbstractCore version (several GB) | same | no |
+
+Windows keeps the vendor commands AbstractCore plans (winget / the vendor
+PowerShell installers / pip); the flow on this page is not yet exercised there.
+
+Everything the gateway's own Python receives is installed with the gateway's
+`abstract*` packages pinned to the versions it runs, so an engine install can
+never change the gateway itself.
+
+### When the Apple command-line tools are needed
+
+Only for llama.cpp when no prebuilt wheel fits (an Intel Mac, a Python under
+Rosetta, or a broken wheel): it must then be built from source, which needs a
+C compiler. The job stops **before** the build, in the `needs_tools` state,
+with the reason in plain words, for example:
+
+> The prebuilt llama.cpp wheel did not install (no matching package for this
+> Python and machine); building from source needs the Apple command-line tools.
+
+**Install tools** runs `xcode-select --install`, which opens Apple's own
+installer dialog on the gateway machine's screen (no administrator password
+involved). The job waits and continues by itself once the tools are there.
+
+### When an administrator password is needed
+
+Only when a step genuinely needs it, and never silently:
+
+- you asked for `/Applications` (`"location": "system"`) and your account
+  cannot write it (a standard, non-admin account);
+- Ollama on Linux (its installer writes `/usr/local` and creates a service).
+
+The job stops in the `needs_admin` state and shows the exact reason and the
+exact command. Nothing runs with administrator rights until someone presses
+**Continue with administrator password**; the gateway then asks the operating
+system: on macOS the standard password dialog (`osascript … with
+administrator privileges`), on a Linux desktop `pkexec`. On a machine that
+cannot show a dialog (a headless server), the job shows the command to run in
+a terminal and a **re-check** button. There is no hidden `sudo` anywhere.
+
+### What you see when something fails
+
+The job's `message` is one plain sentence (what failed and why); the whole
+log (every line, never a tail) is behind it in `details` and in a log file in
+the gateway's data folder (`engines/jobs/<job id>.log`). A failed llama.cpp
+build, for example, reads:
+
+> The prebuilt llama.cpp wheel did not install (the wheel file is corrupted),
+> and building it from source failed: no C compiler was found. The full build
+> log is in the details.
+
+## Command line
+
+```bash
+abstractgateway engines status --probe
+abstractgateway engines install ollama --yes            # [--location auto|user|system] [--force] [--dry-run]
+abstractgateway engines continue <job-id>               # after needs_admin (password dialog) or needs_tools
+abstractgateway engines continue <job-id> --action install_tools
+abstractgateway engines cancel <job-id>
+abstractgateway engines start ollama                     # stop | start: ollama, lmstudio
+```
+
+A job that stops for tools or an administrator exits with code 2 and prints
+what it needs and the `continue` command.
+
+## API (contract `gateway_engines_v2`)
+
+All routes are under `/api/gateway`. Reads are user-level; every POST is
+admin-only; `install` and `continue` also need `allow_engine_install`
+([configuration.md](docs/configuration.md#allow_engine_install)); a dry run never does.
+
+| Method and path | Returns |
+|---|---|
+| `GET /engines?probe=1` | `{schema: "gateway_engines_v2", engines: [row…], install_allowed, install_policy, host, active_job}` |
+| `GET /engines/{id}?probe=1` | one row; 404 for an unknown id |
+| `POST /engines/{id}/install` `{dry_run?, force?, location?: auto\|user\|system}` | a job (below); `dry_run` returns the plan; 409 `busy` while another engine installs (the same engine joins its job); 409 `unsupported_on_this_machine` |
+| `GET /engines/jobs` | `{jobs: [job…]}`, newest first |
+| `GET /engines/jobs/{job_id}` | one job; 404 |
+| `POST /engines/jobs/{job_id}/continue` `{action?: approve_admin\|install_tools\|recheck}` | the job, resumed; 409 when it is not waiting |
+| `POST /engines/jobs/{job_id}/cancel` | the job |
+| `POST /engines/{id}/start`, `/stop` | `{ok, engine, action, running, base_url, …}`; 409 for an engine that is not a server |
+
+**Row:** `id, name, description, supported, support_reason, installed,
+version, install_location, running, reachable, base_url, models_count,
+install {available, method: wheel|app|script|unsupported, target, needs_admin,
+admin_reason, needs_tools, tools_action, notes, steps, command_preview, url,
+allowed, fallback {kind: open_page, url, recheck}}, actions [{id, label,
+enabled, reason?, method?, path?, url?}], active_job`. Action ids: `install`,
+`open_page`, `recheck`, `start`, `stop`, `docs`. `running` is known only on a
+probed read, so `start`/`stop` appear only with `probe=1`.
+
+**Job (`engine_install_job_v1`):** `job_id, engine, state, percent,
+bytes_done, bytes_total, message, details, log_path, admin_prompt {key,
+reason, command, method: osascript|pkexec|manual, button, prompt_text,
+where}, tools_prompt {key, reason, tools, action {kind, command, available,
+button}, started}, continue_actions, can_cancel, events [{at, state, message,
+percent}], result, error {code, message}, started_at, updated_at,
+finished_at`. `state` is one of `queued, downloading, installing, needs_admin,
+needs_tools, done, failed, cancelled`. While a step runs quietly, `message`
+says so at least every 3 seconds (`… (still working, 45 s)`). The job also
+carries `status` (`host_job_v1` words) so older clients polling
+`GET /jobs/{id}` keep working.
+
+Jobs live in the gateway process: a restart forgets them (the log files stay).
+
+---
+
+## docs/model-downloads.md
+
+# Model downloads: progress you can see
+
+Every model download the Gateway starts is a job that reports real progress
+(bytes, total, percent, speed, time left, per file) from the first second to
+the last, for every source: Hugging Face (and MLX / mlx-gen), Ollama,
+LM Studio and Supertonic. A download that stops receiving bytes says it is
+stalled; a cancelled download stops within about a second and never leaves
+files that later read as installed.
+
+The job machinery is AbstractCore's (`abstractcore.config.host_jobs`,
+`host_job_v1`); the Gateway serves it unchanged and adds the parent job for
+"Use recommended defaults", the cancel route and the event stream.
+
+## Routes
+
+All under `/api/gateway`.
+
+| Method and path | Access | Returns |
+|---|---|---|
+| `POST /models/download` `{"provider", "artifact", "dry_run"?, "expected_bytes"?}` | admin | `{"ok": true, "job": {...}}` at once; the bytes move in the background |
+| `POST /models/download` `{"recommended": true}` | admin | `{"ok": true, "recommended": true, "jobs": [one per model], "group": {parent}}` |
+| `GET /models/download/{job_id}` | user | `{"ok": true, "job": {...}}`; a `grp_...` id returns the parent; 404 when unknown (jobs are per Gateway process) |
+| `GET /models/downloads` | user | `{"ok": true, "jobs": [...]}`, newest first; parents are listed, and each child names its parent in `parent_job` |
+| `POST /models/download/{job_id}/cancel` | admin | `{"ok": true, "job": {...}}` with `cancel_requested: true`; the job turns `cancelled` when the tool has stopped (normally < 1 s); a parent cancels every running child; 404 when unknown |
+| `GET /models/downloads/stream` | user | Server-Sent Events, below |
+
+The request bodies are unchanged from before this contract.
+
+### The event stream
+
+`GET /models/downloads/stream` sends `event: downloads` with
+`data: {"jobs": [...]}` (the same list as `GET /models/downloads`) each time
+something changed, at most every 0.5 s, and a `: keepalive` comment every
+15 s. `?job_id=<id>` streams one job as `event: job` / `data: {"job": {...}}`.
+`?until_idle=1` ends the stream once nothing is running (after sending the
+final state). Polling keeps working; the stream is optional.
+
+## The job
+
+| Field | Meaning |
+|---|---|
+| `job_id` (also `job`) | `dl_...` for one download, `grp_...` for a parent |
+| `kind` | `download`, or `download_group` for a parent |
+| `status` | the coarse lifecycle older pollers read: `running` (queued included), `completed`, `failed`, `cancelled`; `host_status` keeps AbstractCore's own word |
+| `state` | `queued`, `resolving`, `downloading`, `verifying`, `installing`, `done`, `failed`, `cancelled`, `stalled` |
+| `bytes_done`, `bytes_total` | bytes so far and the total; same values as `downloaded_bytes`, `total_bytes` |
+| `size_unknown`, `size_note` | `true` only when the source cannot say how big the download is; `size_note` says why |
+| `percent` | `bytes_done / bytes_total × 100`; 100 when done; `null` while the size is unknown |
+| `bytes_per_second` | speed over the last 5 s; falls to 0 when bytes stop, never frozen at its last value |
+| `eta_s` | seconds left at that speed; `null` when unknown or stalled |
+| `started_at`, `updated_at`, `finished_at` | ISO-8601 UTC; `updated_at` moves at least every 0.5 s while the job runs |
+| `message` | one plain sentence to show as is |
+| `detail` | the engine tool's own last line, unchanged |
+| `files` | `[{name, bytes_done, bytes_total, state}]`, file state `pending`, `downloading`, `done`, `failed`, `cancelled`; Ollama layers are named `layer <digest>` |
+| `current_file` | the file arriving now |
+| `error` | the full reason when `failed` |
+| `stall_after_s`, `stalled_for_s` | the stall threshold (default 15 s) and how long the current stall has lasted |
+| `transitions` | `[{at, state, why}]`, every state change |
+| `cancel_requested` | `true` from the cancel request until the job ends |
+| `parent_job` | on a child of a parent job |
+
+A parent (`download_group`) adds `children` (the full child jobs),
+`child_job_ids` and `label`, and uses `files` for one row per model. Its
+bytes, percent and speed add up its children; models already installed count
+as done with nothing to fetch. It is `stalled` only when every running child
+is stalled, `failed` when every child ended and one failed (`error` names
+which, with its reason), `cancelled` when one was cancelled, and `done` when
+all are.
+
+### States
+
+- `queued`: accepted, not started (milliseconds for an in-process job).
+- `resolving`: finding what to fetch and how big it is (hub file list, `lms get` search, Ollama manifest).
+- `downloading`: bytes are moving.
+- `stalled`: no bytes for `stall_after_s` seconds (15 by default,
+  `ABSTRACTCORE_DOWNLOAD_STALL_S` on the Gateway host). The job keeps trying
+  and turns back to `downloading` by itself when bytes arrive again. The
+  stall and the recovery are logged (`abstractcore.host_jobs`) and listed in
+  `transitions`.
+- `verifying`: checking what arrived (Ollama's sha256, every Hugging Face file whole).
+- `installing`: moving into the library (Ollama "writing manifest", LM Studio "Finalizing download...").
+- `done`, `failed`, `cancelled`: finished.
+
+`verifying` and `installing` never count as stalls.
+
+### Real examples
+
+Captured on a hermetic Gateway (port 18822, scratch caches) with the real
+recommended artifact ids; the voice and image files came from a local stand-in
+for huggingface.co and LM Studio from a stand-in `lms` that prints exactly what
+the real one prints. Key fields only.
+
+`queued`:
+
+```json
+{"job_id": "dl_2b0e98639928", "provider": "ollama", "artifact": "all-minilm", "status": "running", "state": "queued", "bytes_done": null, "bytes_total": null, "size_unknown": false, "percent": null, "bytes_per_second": null, "eta_s": null, "updated_at": "2026-09-24T03:28:38.435Z", "current_file": null, "message": "queued (detached)", "error": null, "stalled_for_s": null}
+```
+
+`resolving`:
+
+```json
+{"job_id": "dl_be2ff93db7d6", "provider": "mlx-gen", "artifact": "AbstractFramework/flux.2-klein-4b-8bit", "status": "running", "state": "resolving", "bytes_done": null, "bytes_total": null, "size_unknown": false, "percent": null, "bytes_per_second": null, "eta_s": null, "updated_at": "2026-09-24T03:27:55.745Z", "current_file": null, "message": "Preparing · reading the file list of AbstractFramework/flux.2-klein-4b-8bit", "error": null, "stalled_for_s": null}
+```
+
+`downloading`:
+
+```json
+{"job_id": "dl_f46f63c01098", "provider": "mlx-gen", "artifact": "AbstractFramework/flux.2-klein-4b-8bit", "status": "running", "state": "downloading", "bytes_done": 25976720, "bytes_total": 65005200, "size_unknown": false, "percent": 39.96, "bytes_per_second": 7699301.9, "eta_s": 6, "updated_at": "2026-09-24T03:25:15.363Z", "current_file": "transformer/diffusion_pytorch_model.safetensors", "message": "Downloading transformer/diffusion_pytorch_model.safetensors (2 of 5) · 26 MB of 65 MB · 7.7 MB/s · 6 s left", "error": null, "stalled_for_s": null, "files": [{"bytes_done": 1200, "bytes_total": 1200, "name": "model_index.json", "state": "done"}, {"bytes_done": 10485760, "bytes_total": 40000000, "name": "transformer/diffusion_pytorch_model.safetensors", "state": "downloading"}, {"bytes_done": 10485760, "bytes_total": 20000000, "name": "text_encoder/model.safetensors", "state": "downloading"}, {"bytes_done": 5000000, "bytes_total": 5000000, "name": "vae/diffusion_pytorch_model.safetensors", "state": "done"}, {"bytes_done": 4000, "bytes_total": 4000, "name": "README.md", "state": "done"}]}
+```
+
+`stalled`:
+
+```json
+{"job_id": "dl_f8684d929f51", "provider": "supertonic", "artifact": "supertonic-3", "status": "running", "state": "stalled", "bytes_done": 25942208, "bytes_total": 56185929, "size_unknown": false, "percent": 46.17, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:27:38.444Z", "current_file": "onnx/vector_estimator.onnx", "message": "Stalled: no data for 16 s · 26 MB of 56 MB · still trying, it resumes by itself when data flows again", "error": null, "stalled_for_s": 15.3}
+```
+
+`verifying`:
+
+```json
+{"job_id": "dl_3d015e06ebaa", "provider": "mlx-gen", "artifact": "AbstractFramework/flux.2-klein-4b-8bit", "status": "running", "state": "verifying", "bytes_done": 65005200, "bytes_total": 65005200, "size_unknown": false, "percent": 100.0, "bytes_per_second": 3742244.1, "eta_s": 0, "updated_at": "2026-09-24T03:28:21.002Z", "current_file": "transformer/diffusion_pytorch_model.safetensors", "message": "Verifying · checking 5 file(s) are whole · 65 MB of 65 MB", "error": null, "stalled_for_s": null}
+```
+
+`installing`:
+
+```json
+{"job_id": "dl_faa442ea7875", "provider": "lmstudio", "artifact": "qwen/qwen3.5-9b@4bit", "status": "running", "state": "installing", "bytes_done": 6000000000, "bytes_total": 6000000000, "size_unknown": false, "percent": 100.0, "bytes_per_second": 466469568.4, "eta_s": 0, "updated_at": "2026-09-24T03:26:40.607Z", "current_file": null, "message": "Installing · Finalizing download... · 6.0 GB of 6.0 GB", "error": null, "stalled_for_s": null}
+```
+
+`done`:
+
+```json
+{"job_id": "dl_e36dca05d05c", "provider": "supertonic", "artifact": "supertonic-3", "status": "completed", "state": "done", "bytes_done": 56185929, "bytes_total": 56185929, "size_unknown": false, "percent": 100.0, "bytes_per_second": null, "eta_s": 0, "updated_at": "2026-09-24T03:26:41.409Z", "current_file": null, "message": "Downloaded 56 MB in 15 s", "error": null, "stalled_for_s": null}
+```
+
+`failed`:
+
+```json
+{"job_id": "dl_842ede4aff62", "provider": "ollama", "artifact": "all-minilm", "status": "failed", "state": "failed", "bytes_done": null, "bytes_total": null, "size_unknown": false, "percent": null, "bytes_per_second": null, "eta_s": null, "updated_at": "2026-09-24T03:27:14.156Z", "current_file": null, "message": "cannot reach the Ollama server at http://127.0.0.1:11499: [Errno 61] Connection refused", "error": "cannot reach the Ollama server at http://127.0.0.1:11499: [Errno 61] Connection refused", "stalled_for_s": null}
+```
+
+`cancelled`:
+
+```json
+{"job_id": "dl_be2ff93db7d6", "provider": "mlx-gen", "artifact": "AbstractFramework/flux.2-klein-4b-8bit", "status": "cancelled", "state": "cancelled", "bytes_done": 25976720, "bytes_total": 65005200, "size_unknown": false, "percent": 39.96, "bytes_per_second": null, "eta_s": null, "updated_at": "2026-09-24T03:27:59.076Z", "current_file": "transformer/diffusion_pytorch_model.safetensors", "message": "cancelled", "error": null, "stalled_for_s": null}
+```
+
+`download_group (downloading)`:
+
+```json
+{"job_id": "grp_080bae3c6d3e", "status": "running", "state": "downloading", "bytes_done": 0, "bytes_total": null, "size_unknown": true, "percent": null, "bytes_per_second": null, "eta_s": null, "updated_at": "2026-09-24T03:26:26.753Z", "message": "Downloading 3 models · 0 of 3 ready · 3 of 3 sources cannot report their size yet", "error": null, "kind": "download_group", "files": [{"bytes_done": null, "bytes_total": null, "job_id": "dl_faa442ea7875", "name": "lmstudio qwen/qwen3.5-9b@4bit", "state": "downloading"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_e36dca05d05c", "name": "supertonic supertonic-3", "state": "resolving"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_8dde3c3f4834", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "resolving"}], "children": "[3 child jobs]"}
+```
+
+`download_group (stalled)`:
+
+```json
+{"job_id": "grp_a1e3f58d4cd0", "status": "running", "state": "stalled", "bytes_done": 6090947408, "bytes_total": 6121191129, "size_unknown": false, "percent": 99.51, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:25:34.055Z", "message": "Stalled: no data for 16 s from supertonic supertonic-3 · 2 of 3 ready · 6.1 GB of 6.1 GB · 0 B/s", "error": null, "kind": "download_group", "files": [{"bytes_done": 6000000000, "bytes_total": 6000000000, "job_id": "dl_ec66382e80a1", "name": "lmstudio qwen/qwen3.5-9b@4bit", "state": "done"}, {"bytes_done": 25942208, "bytes_total": 56185929, "job_id": "dl_2b7360ab34fe", "name": "supertonic supertonic-3", "state": "stalled"}, {"bytes_done": 65005200, "bytes_total": 65005200, "job_id": "dl_f46f63c01098", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "done"}], "children": "[3 child jobs]"}
+```
+
+## What each source reports
+
+| Source | What the source exposes | What the job reports | Cancel |
+|---|---|---|---|
+| Hugging Face, MLX, mlx-gen | the hub's file list with sizes and blob names; the files being written in the cache (`blobs/<etag>…incomplete`) | the total and every file before the first byte, then per-file bytes read from disk every 0.25 s; files already complete count as done (the download resumes) | the transfer runs in a child process, stopped at once; its temporary files are removed; a marker in the repo folder keeps an unfinished download from reading as installed |
+| Ollama | `/api/pull` lines with `digest`, `total`, `completed` per layer | layers added up into one total that never goes back, one `files` row per layer; "pulling manifest" is `resolving`, "verifying sha256 digest" `verifying`, "writing manifest" `installing` | the connection is closed at once; Ollama keeps the layers it has |
+| LM Studio (`lms get`) | a progress bar with bytes, total, speed and time left | those numbers; "Finalizing download..." is `installing`. When no bar is printed: the bytes landing in the LM Studio models folder, "LM Studio reports no progress; N MB on disk so far", with `size_unknown: true` unless the catalog size was sent as `expected_bytes` | answers `lms get`'s "continue in the background?" with No, so LM Studio stops too, then stops the CLI |
+| Supertonic (voice) | the size of each file (HEAD), then the file bodies | per-file bytes with the total known before the first byte | stops at once; the partial file is removed, finished files are kept |
+
+Hugging Face downloads started from a job use plain HTTP rather than Xet:
+Xet writes a file only once it is complete, so the bar would sit still and
+then jump. `ABSTRACTCORE_HF_XET=1` turns Xet back on (progress then moves one
+whole file at a time). With huggingface_hub 1.x a cancelled file restarts
+from zero on the next download; files that were complete are kept.
+
+## Limits
+
+- Parent jobs live in the Gateway process: after a restart a `grp_...` id
+  answers 404, while its children (AbstractCore jobs, persisted) can still be
+  read with `GET /models/download/{dl_id}` or `GET /jobs`.
+- `lms get` is LM Studio's own CLI. Its progress bar and its cancel question
+  are what this relies on; if a future `lms` prints neither, the job falls
+  back to bytes on disk and a plain stop of the CLI.
 
 ---
 
@@ -4800,7 +6717,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.3.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -4808,7 +6725,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.3.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.0-gpu
 ```
 
 Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -4934,7 +6851,14 @@ Optional:
 
 Common:
 
-- `ABSTRACTGATEWAY_ALLOWED_ORIGINS`: browser origin allowlist
+- Browser origins and trust proxy are settings, not variables: the console's
+  Network → *Advanced: reverse proxy*, the TUI's Connection screen, or
+  `abstractgateway network set --allowed-origins https://gateway.example.com --trust-proxy on`
+  (inside a container: `docker exec <container> abstractgateway network set …`).
+  They apply to the next request. `ABSTRACTGATEWAY_ALLOWED_ORIGINS` /
+  `ABSTRACTGATEWAY_TRUST_PROXY` in the container environment still pin them
+  (reported as `overridden_by_env`); see
+  [configuration.md](docs/configuration.md#reverse-proxy-allowed-origins-and-trust-proxy).
 - `input.text` capability route: default for LLM/agent nodes
 - `ABSTRACTGATEWAY_TOOL_MODE`: `approval`, `passthrough`, `delegated`, or local dev modes
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` or `sqlite`
@@ -4979,8 +6903,10 @@ Filesystem/media controls from AbstractCore remain available:
 
 On a desktop or laptop, `abstractgateway service install` registers the
 gateway as a per-user login service (macOS LaunchAgent, Linux systemd user
-unit, Windows Startup shortcut) bound to `127.0.0.1`, with data in the
-per-user data folder. See [first-run.md](docs/first-run.md). Containers and
+unit or XDG autostart entry, Windows Run entry) that runs plain `serve`, so the
+[network exposure](docs/configuration.md#network-exposure-localhost--local-network--internet)
+setting decides the bind (seeded to `localhost`, i.e. `127.0.0.1`, on install),
+with data in the per-user data folder. See [first-run.md](docs/first-run.md). Containers and
 servers keep the explicit configuration shown on this page: the image sets
 `--host 0.0.0.0` and needs explicit auth, exactly as before.
 
@@ -5005,7 +6931,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.3.0-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.4.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -5679,28 +7605,33 @@ Notification helpers used by `triage-reports --notify`:
 
 Evidence: CLI wiring in `src/abstractgateway/cli.py`.
 
-## Backlog browsing/editing (repo-dependent)
+## Backlog browsing/editing
 
-The gateway also exposes endpoints that read/write backlog Markdown files in a repository layout that includes `docs/backlog/*`.
+The gateway also exposes endpoints that read/write backlog Markdown files in a folder that contains `docs/backlog/*`.
 
-To enable these endpoints, set the repo root:
+They work out of the box: without a setting the gateway uses its own folder, `<data dir>/backlog/`, created with a starter overview and item template on first use. To point it at a project checkout:
 
 ```bash
-export ABSTRACTGATEWAY_TRIAGE_REPO_ROOT="/path/to/your/repo"
+abstractgateway config set triage_repo_root /path/to/your/repo   # saved; or Continuum Settings, or the console
+abstractgateway serve --backlog-root /path/to/your/repo          # this run only
 ```
 
-Evidence: repo-root checks in `src/abstractgateway/routes/gateway.py` (process manager + backlog endpoints) and in `src/abstractgateway/maintenance/backlog_exec_runner.py`.
+See [configuration.md](docs/configuration.md#backlog-folder-exec-runner-and-process-manager-continuum) for the resolution order and the three doors.
+
+Evidence: `resolve_backlog_root` in `src/abstractgateway/runtime_config.py`, used by `src/abstractgateway/routes/gateway.py` (process manager + backlog endpoints) and `src/abstractgateway/maintenance/backlog_exec_runner.py`.
 
 ## Backlog execution runner (high risk; disabled by default)
 
 The backlog exec runner consumes queued execution requests under `<DATA_DIR>/backlog_exec_queue/` and executes them (optionally using the `codex` CLI).
 
-Enable:
+Enable (applies at once on a running gateway):
 
 ```bash
-export ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER=1
-export ABSTRACTGATEWAY_BACKLOG_EXECUTOR="none"   # none|codex_cli|workflow_bundle
+abstractgateway config set backlog_exec_runner on
+abstractgateway config set executor codex        # codex | claude | cursor-agent | abstractcode
 ```
+
+or `abstractgateway serve --exec-runner on` for one run, or Continuum → Settings → Gateway administration.
 
 Additional knobs (see `BacklogExecRunnerConfig.from_env()`):
 - `ABSTRACTGATEWAY_BACKLOG_EXEC_POLL_S`
@@ -5724,11 +7655,13 @@ Notes:
 Enable:
 
 ```bash
-export ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1
+abstractgateway config set process_manager on
 
-# Optional (process control only): the AbstractFramework checkout root
-export ABSTRACTGATEWAY_TRIAGE_REPO_ROOT="$PWD"
+# Process control only: the AbstractFramework checkout it manages
+abstractgateway config set triage_repo_root "$PWD"
 ```
+
+Process control stays off while the backlog folder is the gateway's own default folder (it is not a checkout).
 
 Optional config path:
 
@@ -5737,7 +7670,7 @@ export ABSTRACTGATEWAY_PROCESS_MANAGER_CONFIG="$PWD/runtime/gateway/processes.js
 ```
 
 Endpoints:
-- `GET /api/gateway/processes` (requires `ABSTRACTGATEWAY_TRIAGE_REPO_ROOT`)
+- `GET /api/gateway/processes` (requires the backlog folder set to a checkout: `triage_repo_root`)
 - `POST /api/gateway/processes/{id}/start|stop|restart|redeploy`
 - `GET /api/gateway/processes/{id}/logs/tail`
 - `GET /api/gateway/processes/env` (metadata only; never returns values; does not require repo root)
@@ -5750,7 +7683,7 @@ Evidence: `src/abstractgateway/routes/gateway.py` (endpoint guards) and `src/abs
 Env var editing is allowlist-only and values are write-only (they are never returned to the client). Overrides are persisted on the gateway host under:
 - `<ABSTRACTGATEWAY_DATA_DIR>/process_manager/env_overrides.json`
 
-When the gateway starts and `ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER=1`, it loads and applies persisted overrides to its own `os.environ` (best-effort).
+When the gateway starts with the process manager on (`process_manager` setting), it loads and applies persisted overrides to its own `os.environ` (best-effort).
 
 To extend the allowlist, update:
 - `src/abstractgateway/maintenance/process_manager.py` → `managed_env_var_allowlist()`

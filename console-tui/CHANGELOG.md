@@ -1,5 +1,39 @@
 # Changelog — abstractgateway-console
 
+## 0.8.0 (2026-09-24) — Network exposure, reverse proxy and apps settings
+
+Needs AbstractGateway 0.4.0 for the Network panel and the apps settings
+(`GET/POST /api/gateway/network`, `apps.*` runtime-config keys). Against an
+older gateway the panel says "not found" and the other screens work as
+before.
+
+- **Reverse proxy on the Connection screen (mission Z).** Below the
+  addresses: `Reverse proxy · origins: … [saved setting|default|environment
+  override] · trust proxy: on|off [...]`, a *browser origins* edit line
+  (comma-separated, Enter saves the whole list, empty clears) and a *trust
+  the proxy's client address* checkbox (Space saves). Both send
+  `POST /api/gateway/network {allowed_origins}` / `{trust_proxy}` and apply to
+  the next request; the notice says "saved, applies now", "saved, NOT in
+  effect" (a gateway started with the environment override, also said on its
+  own warn line) or the gateway's refusal sentence verbatim. Read-only
+  without an admin token.
+- **Apps settings in Runtime knobs (mission Z).** The `apps.*` settings render
+  with their source; *Edit apps settings* opens a form (one line per
+  setting, stored value prefilled, empty clears) that saves only the changed
+  keys through `POST /api/gateway/admin/runtime-config`.
+- **Network exposure on the Connection screen.** Once connected, a panel
+  shows who can reach the gateway (Localhost only / Local network /
+  Internet…), what is running, and every address to copy
+  (`GET /api/gateway/network`, contract `gateway_network_v1`). Tab to the
+  mode picker, ↑/↓ then Enter stores a mode (`POST /api/gateway/network`;
+  Internet asks for a confirm, which is the acknowledgement); a refused mode
+  shows the gateway's fix and posts nothing. Tab to the address list, `c`
+  (or Enter) copies the highlighted URL. When the running bind differs, a
+  banner says "restart required" with a *Restart to apply* button, or why a
+  restart cannot apply it (`serve --host/--port`). `r` reloads the panel.
+  Against a gateway without the route, the panel says "not found" and the
+  rest of the screen works as before.
+
 ## 0.7.0 (2026-09-23) — Models and Engines, inherited from AbstractCore
 
 Needs an AbstractGateway that serves the Models/Engines routes

@@ -55,7 +55,8 @@ abstractgateway models list                     # installed models with sizes
 
 The commands talk to the running gateway (admin rules and audit log apply);
 add `--local` to run them in-process instead. Engine installs run on the
-gateway host and are on by default only for a loopback gateway
+gateway host and are on by default for a loopback gateway, and for someone at
+the gateway machine whatever it listens on
 ([`allow_engine_install`](docs/configuration.md#allow_engine_install)). See
 [docs/console.md](docs/console.md) and [docs/api.md](docs/api.md#models-and-engines).
 
@@ -164,7 +165,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.3.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -172,7 +173,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.3.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.4.0-gpu
 ```
 
 Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
