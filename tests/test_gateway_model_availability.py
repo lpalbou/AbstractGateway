@@ -232,6 +232,12 @@ def test_a_finished_job_frees_the_single_flight_slot(monkeypatch, core_jobs):
     assert model_downloads.get_job(first["job"])["status"] == "failed"
     second = model_downloads.start_download("ollama", "tiny:1b")
     assert second["job"] != first["job"]
+    # The second job runs on its own worker thread: wait for it to finish
+    # before counting (under a loaded full run it had not called yet).
+    for _ in range(200):
+        if model_downloads.get_job(second["job"])["status"] != "running":
+            break
+        time.sleep(0.02)
     assert len(calls) == 2
 
 

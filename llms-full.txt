@@ -4118,6 +4118,11 @@ This release requires AbstractCore 2.15.1 and AbstractRuntime 0.4.34
   "Stop download", the end reason on the tile, the group card and the
   catalog, the usable-memory tooltip. `test_gateway_model_download_progress`:
   who cancelled, and why a download ended (never a bare "Cancelled").
+- The test suite hides a terminal app installed on the developer's machine
+  (`abstractcode` on PATH) from the apps manager, so the combined Install
+  behaves in a test as on a clean CI runner; the two browser-install tests
+  of `test_gateway_apps_manager` pass `with_terminal=False`. A single-flight
+  download test waits for its second job before counting calls.
 
 ## [0.4.1] - 2026-09-24
 

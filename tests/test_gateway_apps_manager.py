@@ -279,7 +279,9 @@ def test_job_cancel(tmp_path: Path) -> None:
 def test_install_dependency_free_app_reports_bytes_and_percent(manager: am.AppsManager) -> None:
     spec = am.APP_BY_ID["code"]
     data = _publish(manager, spec, "1.2.3")
-    job, created = manager.start_install("code", run_inline=True)
+    # The browser app's own steps; the combined install (with the terminal
+    # app) is pinned in test_gateway_apps_install_and_assistant.py.
+    job, created = manager.start_install("code", with_terminal=False, run_inline=True)
     d = job.to_dict()
     assert created and d["state"] == "succeeded", d["details"]
     assert d["percent"] == 100.0
@@ -448,7 +450,7 @@ def test_parse_port_range() -> None:
 
 def test_launch_stop_and_env(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
     _publish(manager, am.APP_BY_ID["code"], "1.0.0")
-    job, _ = manager.start_install("code", run_inline=True)
+    job, _ = manager.start_install("code", with_terminal=False, run_inline=True)
     assert job.state == "succeeded", job.details
     port = _free_port()
     monkeypatch.setenv(am.ENV_PORTS, f"{port}-{port}")

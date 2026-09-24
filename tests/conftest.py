@@ -724,6 +724,38 @@ def _no_real_desktop_app(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> N
     monkeypatch.setattr(_desk, "_process_argvs", lambda: [])
 
 
+@pytest.fixture(autouse=True)
+def _no_real_terminal_app(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> None:
+    """The terminal apps (apps_manager CODE_TUI, GATEWAY_CONSOLE_TUI) are found
+    through PATH: a developer machine with `abstractcode` in ~/.cargo/bin made
+    every Code install "already has its terminal app", so Install stayed
+    browser-only there while the CI runner (no such binary, glibc Linux, a
+    prebuilt target) also fetched the terminal app from GitHub and the fake
+    registry answered "Not found" (v0.4.2 CI). In a test only a binary the test
+    put under its own tmp folder is found."""
+    import os as _os
+    import shutil as _real_shutil
+
+    import abstractgateway.apps_manager as _am
+
+    names = {_am.CODE_TUI.binary, _am.GATEWAY_CONSOLE_TUI.binary}
+    names |= {n + ".exe" for n in list(names)}
+    base = _os.path.realpath(str(tmp_path_factory.getbasetemp()))
+
+    class _ShutilHidingRealTerminalApps:
+        def __getattr__(self, name):
+            return getattr(_real_shutil, name)
+
+        @staticmethod
+        def which(cmd, mode=_os.F_OK | _os.X_OK, path=None):
+            found = _real_shutil.which(cmd, mode=mode, path=path)
+            if found and _os.path.basename(str(cmd)) in names and not _os.path.realpath(found).startswith(base):
+                return None
+            return found
+
+    monkeypatch.setattr(_am, "shutil", _ShutilHidingRealTerminalApps())
+
+
 def pytest_configure(config):
     _register_hermetic_markers(config)
 
