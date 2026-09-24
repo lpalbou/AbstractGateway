@@ -42,7 +42,7 @@ def _core_console_parts() -> Dict[str, Any]:
         except Exception:
             support = {}
         installed = support.get("abstractcore_version") if isinstance(support, dict) else None
-        required = (support.get("required") if isinstance(support, dict) else None) or "2.14.0"
+        required = (support.get("required") if isinstance(support, dict) else None) or "2.15.1"
         if isinstance(exc, NotImplementedError) or installed:
             have = f"This gateway has abstractcore {installed}." if installed else "This gateway's abstractcore is older."
         else:
@@ -11122,7 +11122,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       } catch { return null; }
     }
     function coreConsoleUnavailableText() {
-      if (!CORE_CONSOLE.available) return `${CORE_CONSOLE.message || "Models and Engines require abstractcore ≥ 2.14.0."} Upgrade: ${CORE_CONSOLE.upgrade || 'pip install -U "abstractcore>=2.14.0"'}`;
+      if (!CORE_CONSOLE.available) return `${CORE_CONSOLE.message || "Models and Engines require abstractcore ≥ 2.15.1."} Upgrade: ${CORE_CONSOLE.upgrade || 'pip install -U "abstractcore>=2.15.1"'}`;
       return "The AbstractCore console screens did not load in this page; reload it.";
     }
     // The screens' request contract: (method, full path, plain body) ->

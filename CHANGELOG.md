@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comments (design notes, review references, dates); it is about 11% smaller
   (1.25 MB to 1.12 MB). The artifact search box shows `YYYY-MM-DD` as its
   date example.
+- When the Models and Engines tabs cannot load, their card names AbstractCore
+  2.15.1 as the version to install (it said 2.14.0, which lacks the cancel
+  attribution the gateway uses).
 
 ## [0.4.2] - 2026-09-24
 

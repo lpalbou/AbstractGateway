@@ -29,6 +29,11 @@ from typing import Any, Dict, List, Optional
 import pytest
 from fastapi.testclient import TestClient
 
+from abstractgateway.core_config import CoreTooOld
+
+# The AbstractCore version these features need is the runtime facade's to say.
+CORE_FLOOR = CoreTooOld("probe").required
+
 pytestmark = pytest.mark.basic
 
 TOKEN = "admin-token-for-models-engines-tests"
@@ -515,8 +520,8 @@ def test_an_older_abstractcore_is_501_and_a_missing_one_503(facade, tmp_path, mo
             assert got.status_code == 501, (path, got.status_code, got.text)
             body = got.json()
             assert body["reason"] == "abstractcore_too_old", path
-            assert body["required"] == "2.14.0" and body["installed"] == "2.13.42", path
-            assert "abstractcore>=2.14.0" in body["message"], path
+            assert body["required"] == CORE_FLOOR and body["installed"] == "2.13.42", path
+            assert f"abstractcore>={CORE_FLOOR}" in body["message"], path
 
         facade.raise_on["engine_inventory"] = RuntimeError("Engine detection needs AbstractCore, which is not installed.")
         got = client.get("/api/gateway/engines", headers=h)
@@ -658,7 +663,7 @@ def test_cli_local_mode_uses_the_seam_without_a_gateway(facade, tmp_path, monkey
 
     facade.raise_on["list_installed_models"] = __import__("abstractgateway.core_config", fromlist=["x"]).CoreTooOld("Listing installed models", "2.13.42")
     rc, _, err = _run_cli(["models", "list", "--local"], capsys)
-    assert rc == 1 and "abstractcore>=2.14.0" in err
+    assert rc == 1 and f"abstractcore>={CORE_FLOOR}" in err
 
 
 def test_cli_http_default_finds_the_recorded_gateway_and_its_token(tmp_path, monkeypatch) -> None:
