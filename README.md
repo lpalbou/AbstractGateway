@@ -1,22 +1,30 @@
 # AbstractGateway
 
-AbstractGateway is a **deployable Run Gateway host** for AbstractRuntime runs:
-- start durable runs
-- accept a durable command inbox
-- replay/stream a durable ledger (replay-first)
-- enforce a security baseline (token + origin allowlist + limits)
+AbstractGateway is a **deployable Run Gateway host** for AbstractRuntime runs,
+and the control plane of an AbstractFramework installation:
 
-This decouples the gateway service from any specific UI (AbstractFlow, AbstractCode, web/PWA thin clients).
+- start durable runs, accept a durable command inbox, and replay or stream a
+  durable ledger (replay-first);
+- enforce a security baseline: user accounts, browser sessions, an origin
+  allowlist, request limits and an audit log;
+- manage users, providers, capability defaults, local engines, model
+  downloads, browser apps and network exposure from a web console
+  (`/console`), a terminal console, the CLI or a desktop tray icon.
 
-Start here: [docs/getting-started.md](docs/getting-started.md)
+Clients (AbstractFlow, AbstractCode, AbstractObserver, AbstractContinuum,
+AbstractEntity, AbstractAssistant, scripts) talk to the gateway over HTTP, so
+none of them depends on the others.
+
+Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
+[docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
 ## AbstractFramework ecosystem
 
 AbstractGateway is part of the **AbstractFramework** ecosystem:
 
 - **AbstractRuntime** (required): durable run model + workflow registry + stores (`pyproject.toml`, `src/abstractgateway/runner.py`)
-- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image/video plus voice/audio/music capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`)
-- Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractCode / AbstractObserver / thin clients (rendering + operations)
+- **AbstractCore, AbstractAgent, AbstractMemory** (installed with the gateway): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery and run facades for prompt-cache controls, generated and edited media, voice, audio and music, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`)
+- Apps (optional): AbstractFlow (authoring/bundling), AbstractCode, AbstractObserver, AbstractContinuum, AbstractEntity, AbstractAssistant
 
 Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
@@ -42,8 +50,8 @@ pick a local engine, a default model and the browser apps. A new link:
 
 The console's **Models** and **Engines** tabs (and the matching commands)
 install a local engine and download a model that fits this machine, without a
-terminal. They are AbstractCore's model browser and engine installer
-(AbstractCore 2.14.0 or newer), shown inside the gateway:
+terminal. They are AbstractCore's model browser and engine installer, shown
+inside the gateway:
 
 ```bash
 abstractgateway engines status --probe          # Ollama, LM Studio, MLX, llama.cpp, ...
@@ -58,7 +66,25 @@ add `--local` to run them in-process instead. Engine installs run on the
 gateway host and are on by default for a loopback gateway, and for someone at
 the gateway machine whatever it listens on
 ([`allow_engine_install`](docs/configuration.md#allow_engine_install)). See
-[docs/console.md](docs/console.md) and [docs/api.md](docs/api.md#models-and-engines).
+[docs/engines.md](docs/engines.md), [docs/model-downloads.md](docs/model-downloads.md)
+and [docs/console.md](docs/console.md).
+
+### Browser apps, network access and the tray
+
+```bash
+abstractgateway apps install observer --launch   # Flow, Code, Observer, Continuum, Entity, Assistant
+abstractgateway apps open observer               # a one-time signed-in link
+abstractgateway network set lan                  # let your local network reach the gateway
+abstractgateway network restart                  # apply it now
+```
+
+The gateway installs Node.js when needed, installs the browser apps from npm,
+runs them and opens them already signed in ([docs/apps.md](docs/apps.md)). The
+network setting decides who can reach the gateway: `localhost`, `lan` or
+`internet`
+([docs/configuration.md](docs/configuration.md#network-exposure-localhost--local-network--internet)).
+With `pip install "abstractgateway[tray]"`, `serve` also shows a menu bar /
+system tray icon ([docs/tray.md](docs/tray.md)).
 
 ## Quickstart (HTTP server, bundle mode, explicit configuration)
 
@@ -71,10 +97,8 @@ export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 # the packaged shipped bundle directory containing basic-agent.
 # export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
 
-# User auth is the normal browser-console/browser-app path.
+# User accounts: the sign-in path for the console and the browser apps.
 export ABSTRACTGATEWAY_USER_AUTH=1
-# Browser-origin allowlist (glob patterns). Default allows localhost; customize when exposing remotely.
-export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
 
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
@@ -95,69 +119,25 @@ verify-gated coding agent (`coding-agent`), `deep-research`, and
 `co-scientist`, alongside the default `basic-agent`. See
 [docs/shipped-workflows.md](docs/shipped-workflows.md).
 
-## Hosted user auth
+## User accounts and the console
 
-`ABSTRACTGATEWAY_AUTH_TOKEN` is a legacy Gateway-level bearer token for
-server/operator access. Browser apps and `/console` should use file-backed user
-principals and one runtime/data plane per user:
+With user accounts on (the default of a plain `serve`, or
+`ABSTRACTGATEWAY_USER_AUTH=1`), the gateway creates `default/admin`, writes its
+first token to `<data dir>/auth/bootstrap-admin-token`, and routes each user to
+their own runtime and data plane (`1 user = 1 runtime`). Admins manage users
+from the console or `/api/gateway/admin/users`; user tokens are returned once
+and stored only as hashes. Browser apps exchange a user token for an opaque
+session (`POST /api/gateway/session/login`, HTTP-only cookie plus CSRF token)
+instead of keeping the token. `ABSTRACTGATEWAY_AUTH_TOKEN` is a shared
+server/operator token, not a browser sign-in token. See
+[docs/security.md](docs/security.md).
 
-```bash
-export ABSTRACTGATEWAY_USER_AUTH=1
-abstractgateway serve --host 127.0.0.1 --port 8080
-```
-
-On first start, Gateway creates `default/admin`, writes the browser-login token
-to `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token`, and prints the token
-when bound to a loopback host. Use user `admin` plus that `agw_...` token in
-`/console`, AbstractFlow, AbstractCode Web, or AbstractObserver. Admins manage
-users through `/api/gateway/admin/users`; generated user bearer tokens are
-returned once and stored only as hashes under
-`<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`. User clients call
-`GET /api/gateway/me` after connecting to confirm the resolved principal and
-routing mode. Gateway rejects duplicate runtime ids within the same tenant, so
-the default hosted model remains `1 user = 1 runtime`. Deleting a user reserves
-the retained runtime id; admins can explicitly purge retained runtime data or
-transfer it to an existing same-tenant user. See
-[docs/security.md](docs/security.md) for the current hosted isolation boundary
-and remaining operator-route hardening work.
-
-Gateway also serves a built-in control-plane console at `/console`. The console
-uses the same browser-session contract as hosted apps: sign in with a Gateway
-user id and its token. Because the console is served by Gateway, it uses the
-current origin and does not ask for a Gateway URL. You can then manage the
-current account, admin-only user records with optional email metadata, retained
-runtime reservations, provider connections, and multimodal capability defaults
-selected from available providers without storing the bearer token in browser
-storage. Provider endpoint URLs/API keys are configured in the Providers tab;
-the Multimodal Capabilities tab only selects provider/model pairs. Direct
-providers such as `openai` and `anthropic` appear automatically when their
-required keys are already available from scoped Core config or environment.
-Reachable default local servers such as LM Studio (`http://localhost:1234/v1`)
-and Ollama (`http://localhost:11434`) are also surfaced automatically when
-Gateway can discover models from them. The Sandbox tab runs quick smoke tests
-against the selected multimodal capability defaults in a chat surface, including
-text chat, drag-and-drop attachments, inline image/video previews, and audio
-players for voice, sound, and music artifacts. The Resources tab shows what is
-loaded in host memory right now — RAM/GPU meters, the resident-model table
-with modality chips, lock state, and context facts, and session prompt
-caches; admins additionally get warm-up, lock/unlock, unload (with a force
-confirmation when a model is locked), and cache-clear controls.
-Defaults model pickers use Core route filters for LLM/embedding rows, for
-example `capability_route=input.image,output.text` and
-`capability_route=embedding.text`. Generated image/video/voice/sound/music rows
-continue to use capability plugin catalogs so readiness and download/setup state
-stay out of Core's raw model registry.
-Input fallback routes are explicit: `input.voice` selects the STT backend for
-speech attachments, and `input.video` selects an overrideable video/VLM fallback
-when the text route cannot or should not handle frames directly. If those routes
-are unconfigured and the primary text model lacks native support, Gateway/Core
-return a configuration error instead of silently probing installed packages.
-
-Browser apps should not keep user bearer tokens. They exchange the user token at
-`POST /api/gateway/session/login` for an opaque Gateway browser session and use
-that session for proxied Gateway calls. The login response body does not return
-the session id or CSRF token. Session writes require the Gateway CSRF token, and
-`POST /api/gateway/session/logout` revokes the session.
+The built-in console at `/console` covers users and entities, runtimes,
+workflows, provider connections, multimodal capability defaults, a sandbox,
+host resources, models, engines, apps and network access. The same
+configuration surfaces exist in a terminal through the `abstractgateway-console`
+Rust app (`cargo install abstractgateway-console`). See
+[docs/console.md](docs/console.md).
 
 ## Docker server
 
@@ -176,9 +156,9 @@ best-effort until it has a real CUDA build and smoke gate:
 docker pull ghcr.io/lpalbou/abstractgateway:0.4.2-gpu
 ```
 
-Legacy `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR aliases
-are still published for existing deployments; new deployments should use
-`abstractgateway`.
+The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
+published as aliases for existing deployments; use `abstractgateway` for new
+ones.
 
 The image installs the base `abstractgateway` package: HTTP server,
 `AbstractRuntime`, Runtime-owned provider/tool and
@@ -192,7 +172,7 @@ capability route: point it at OpenAI, OpenRouter, Portkey, LM Studio, vLLM,
 any OpenAI-compatible embeddings endpoint, or a remote AbstractCore server.
 
 AbstractFlow note:
-- You do **not** need the `abstractflow` Python package to run `.flow` bundles (bundle mode). You only need it to author bundles. VisualFlow directory mode was intentionally removed from the gateway to keep the dependency direction clean.
+- You do **not** need the `abstractflow` Python package to run `.flow` bundles. You only need it to author bundles; the gateway runs bundles only (store VisualFlows through `/api/gateway/visualflows/*` and publish them as bundles).
 
 ```bash
 docker run --rm --name abstractgateway \
@@ -242,80 +222,37 @@ For a minimal Apple-local Gateway + Flow setup, see
 
 Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 
-## Current capability scope
+## Capability scope
 
-Current direct Gateway APIs:
-- `GET /api/gateway/runs/{run_id}/input_data`
-- `GET /api/gateway/runs/{run_id}/history_bundle`
-- `POST /api/gateway/runs/{run_id}/voice/tts`
-- `POST /api/gateway/runs/{run_id}/audio/transcribe`
-- `POST /api/gateway/runs/{run_id}/images/generate`
-- `POST /api/gateway/runs/{run_id}/images/edit`
-- `POST /api/gateway/runs/{run_id}/images/upscale`
-- `POST /api/gateway/runs/{run_id}/videos/generate`
-- `POST /api/gateway/runs/{run_id}/videos/from_image`
-- `POST /api/gateway/runs/{run_id}/music/generate`
-- `GET /api/gateway/voice/voices`
-- `GET /api/gateway/audio/speech/models`
-- `GET /api/gateway/audio/transcriptions/models`
-- `GET /api/gateway/audio/music/providers`
-- `GET /api/gateway/audio/music/models`
-- `GET /api/gateway/vision/provider_models`
-- `GET /api/gateway/vision/models`
-- `GET /api/gateway/vision/adapters`
-- `/api/gateway/artifacts/search` cross-run/session/run artifact search with
-  canonical `artifact_envelope_v1` rows, exact stats/facets, bounded paging,
-  descriptor filters, and UI-friendly `artifact_kind` filtering for
-  Voice/Music/Sound/unclassified audio and text/media render kinds
-- `/api/gateway/prompt_cache/*` provider/model operator controls
-- `/api/gateway/prompt_cache/saved|save|load` Runtime-backed host-local export/import admin aliases
-- `/api/gateway/sessions/{session_id}/prompt_cache/*` session lifecycle controls
-- `/api/gateway/kg/query` with configurable `lancedb` or in-memory AbstractMemory stores, plus `sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`
-- `/api/gateway/discovery/capabilities` package, plugin, and thin-client contract discovery
+Direct, run-scoped Gateway routes (each creates a durable child run and
+returns artifacts):
 
-Discovery note:
-- the capability contract is versioned and stable for endpoint discovery and
-  feature gating
-- provider/model/voice catalog routes now add a stable Gateway-owned envelope:
-  `catalog.contract = gateway_catalog_v1` plus canonical `items`
-- the shared thin-client contract now also exposes `common.readiness` as a
-  compact Gateway-owned surface summary derived from endpoint descriptors
-- legacy fields such as `models`, `providers`, `provider_models`, `profiles`,
-  and `voices` remain in place for compatibility
-- richer deployment/readiness truth is still separate from the catalog
-  envelope and depends on lower-layer Runtime/Core surfaces
+- voice and audio: `POST /api/gateway/runs/{run_id}/voice/tts`,
+  `POST /api/gateway/runs/{run_id}/audio/transcribe`
+- images: `POST /api/gateway/runs/{run_id}/images/generate`, `/images/edit`,
+  `/images/upscale`
+- video: `POST /api/gateway/runs/{run_id}/videos/generate`,
+  `/videos/from_image`
+- music: `POST /api/gateway/runs/{run_id}/music/generate`
+- run data: `GET /api/gateway/runs/{run_id}/input_data`,
+  `GET /api/gateway/runs/{run_id}/history_bundle`
 
-Workflow/Core-backed capabilities:
-- Generated images and videos are available to Runtime workflows through
-  Runtime's media backend integrations, and the direct Gateway image/video
-  routes use the same Runtime/Core output-selector contracts. Image,
-  image-edit, text-to-video, and image-to-video direct routes expose child-run
-  progress through `abstract.progress` ledger records; image progress is
-  best-effort and may be limited to start/complete for backends that do not
-  report step progress.
-- Direct image/video requests preserve task-specific batch and adapter fields:
-  `count` / `n`, `seeds`, ordered `lora_adapters`, and video `flow_shift`.
-  Batch responses keep compatibility singular fields (`image_artifact`,
-  `video_artifact`) and also return the full `image_artifacts` /
-  `video_artifacts` lists.
-- Generated music is available through Gateway's direct Runtime-backed child-run
-  route, with provider/model discovery exposed through Gateway capability
-  contracts and music catalog endpoints for higher apps.
-- Catalog routes now return a canonical `items` array and a `catalog` metadata
-  block so higher apps can stop parsing route-local payload variants.
-- Vision adapter discovery is available through
-  `GET /api/gateway/vision/adapters`, routed through Runtime's public discovery
-  facade.
-- Audio transcription is available through a direct Runtime-backed child-run
-  route, and the capability contract also exposes `voice.listen` as a
-  host-capture command surface for higher apps that record locally before
-  emitting events or uploading audio.
-- Prompt-cache support depends on the active provider/model. Session lifecycle
-  routes provide Gateway-owned naming and orchestration, not a provider-
-  independent local KV cache.
-- Prompt-cache export/import admin remains local-only. Local runtimes keep those
-  artifacts under the Gateway data dir; remote and hybrid runtimes return a
-  structured `prompt_cache_local_only` response.
+Discovery and catalogs for thin clients:
+
+- `GET /api/gateway/discovery/capabilities`: a versioned contract of packages,
+  plugins, endpoints and feature gates, with `common.readiness`
+- voice, speech, transcription, music and vision catalogs
+  (`/api/gateway/voice/voices`, `/audio/*/models`, `/audio/music/providers`,
+  `/vision/*`), each with a `gateway_catalog_v1` envelope and canonical `items`
+- `/api/gateway/artifacts/search`: cross-run, session and run artifact search
+- `/api/gateway/kg/query`: KG memory queries (LanceDB by default)
+- `/api/gateway/prompt_cache/*` and `/api/gateway/sessions/{session_id}/prompt_cache/*`:
+  provider-dependent prompt-cache controls
+
+Media generation needs a configured backend for the route (the console's
+**Multimodal** tab). Image and video routes stream `abstract.progress` records
+on the child run's ledger; prompt-cache support depends on the provider and
+model. Details: [docs/api.md](docs/api.md) and [docs/faq.md](docs/faq.md).
 
 ## Client contract (replay-first)
 
@@ -330,10 +267,8 @@ Workflow/Core-backed capabilities:
   - replay: `GET /api/gateway/runs/{run_id}/ledger?after=...`
   - stream (SSE): `GET /api/gateway/runs/{run_id}/ledger/stream?after=...`
 
-The same configuration surfaces are available in a terminal through the
-`abstractgateway-console` Rust app (`cargo install abstractgateway-console`),
-and model residency through `abstractgateway models loaded|load|unload`. See
-[docs/console.md](docs/console.md).
+Model residency is available from a shell through
+`abstractgateway models loaded|load|unload` ([docs/console.md](docs/console.md)).
 
 See [docs/api.md](docs/api.md) for curl examples and the live OpenAPI spec (`/openapi.json`).
 
@@ -367,9 +302,7 @@ pip install abstractgateway
 KG memory nodes use Gateway's memory resolver. The default durable/vector
 backend is LanceDB; `memory` is process-local dev/test storage, and `sqlite` is
 structured-only when the installed AbstractMemory build exposes
-`SQLiteTripleStore`. A fresh persistent store is still reported as available
-when the backend resolves; empty queries return empty results instead of hiding
-KG authoring surfaces.
+`SQLiteTripleStore`.
 
 Gateway has a first-class config helper:
 
@@ -394,21 +327,24 @@ See [docs/getting-started.md](docs/getting-started.md) for running, split API/ru
 
 Published docs site: https://www.lpalbou.info/AbstractGateway/
 
-### Project docs
-
-- Changelog: [CHANGELOG.md](CHANGELOG.md) (compat: `CHANGELOD.md`)
-- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security policy (vulnerability reporting): [SECURITY.md](SECURITY.md)
-- Acknowledgments: [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) (compat: `ACKNOWLEDMENTS.md`)
-
-### Package docs
-
 - Docs index: [docs/README.md](docs/README.md)
+- First run: [docs/first-run.md](docs/first-run.md)
 - Getting started: [docs/getting-started.md](docs/getting-started.md)
-- FAQ: [docs/faq.md](docs/faq.md)
 - Architecture: [docs/architecture.md](docs/architecture.md)
-- Configuration: [docs/configuration.md](docs/configuration.md)
-- Deployment: [docs/deployment.md](docs/deployment.md)
 - API overview: [docs/api.md](docs/api.md)
+- Configuration: [docs/configuration.md](docs/configuration.md)
+- Consoles: [docs/console.md](docs/console.md)
+- Apps: [docs/apps.md](docs/apps.md)
+- Local engines: [docs/engines.md](docs/engines.md)
+- Model downloads: [docs/model-downloads.md](docs/model-downloads.md)
+- Desktop tray: [docs/tray.md](docs/tray.md)
 - Security: [docs/security.md](docs/security.md)
-- Operator tooling (optional): [docs/maintenance.md](docs/maintenance.md)
+- Deployment: [docs/deployment.md](docs/deployment.md)
+- Shipped workflows: [docs/shipped-workflows.md](docs/shipped-workflows.md)
+- FAQ: [docs/faq.md](docs/faq.md)
+- Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
+- Operator tooling: [docs/maintenance.md](docs/maintenance.md)
+
+Project: [CHANGELOG.md](CHANGELOG.md) · [CONTRIBUTING.md](CONTRIBUTING.md) ·
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · [SECURITY.md](SECURITY.md) ·
+[ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) · [LICENSE](LICENSE) (MIT)

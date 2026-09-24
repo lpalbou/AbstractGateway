@@ -75,11 +75,27 @@ Notes:
 1. **Open an issue** (or a draft PR) describing what you want to change and why.
 2. Keep changes **small and reviewable**.
 3. Add/adjust tests where it improves confidence.
-4. Update docs so they remain truthful and user-facing:
-   - README is the entrypoint.
-   - `docs/getting-started.md` is the step-by-step guide.
-   - Prefer adding FAQ entries for recurring “gotchas”.
-   - Regenerate the LLM snapshot: `python scripts/generate-llms-full.py` (updates `llms-full.txt`).
+4. Update docs in the same change so they stay truthful and user-facing:
+   - `README.md` is the entrypoint; `docs/README.md` indexes every page in
+     `docs/` (add new pages there and to the `nav` in `mkdocs.yml`).
+   - `docs/getting-started.md` and `docs/first-run.md` are the step-by-step
+     guides; `docs/faq.md` answers recurring questions and
+     `docs/troubleshooting.md` holds symptom → cause → fix entries.
+   - Describe current behavior. Put what changed, and any upgrade steps, in
+     `CHANGELOG.md`.
+   - `llms.txt` indexes the docs and is also the corpus of the console's docs
+     assistant; update it when a key fact changes, then regenerate the
+     snapshot: `python scripts/generate-llms-full.py` (updates `llms-full.txt`).
+   - Check the docs site builds: `pip install -e ".[docs]" && mkdocs build`.
+
+### Shipped workflows
+
+Changing the shipped workflow set is a change in two places: the
+force-include pins in `pyproject.toml` and the matching `!flows/bundles/<name>`
+negation in `.gitignore`. `tests/test_gateway_shipped_default_workflows.py`
+fails if a pinned artifact is untracked or does not load, and each shipped
+bundle has a contract test (for example
+`tests/test_deep_research_bundle_contract.py`).
 
 ## Project conventions
 
@@ -102,3 +118,8 @@ Notes:
 - Package overview + quickstart: [README.md](./README.md)
 - Docs index: [docs/README.md](./docs/README.md)
 - Getting started: [docs/getting-started.md](./docs/getting-started.md)
+- Architecture: [docs/architecture.md](./docs/architecture.md)
+- API overview: [docs/api.md](./docs/api.md)
+- Changelog: [CHANGELOG.md](./CHANGELOG.md)
+- Security policy: [SECURITY.md](./SECURITY.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)

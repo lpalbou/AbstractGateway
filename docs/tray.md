@@ -26,9 +26,9 @@ can see what it is doing and act on it in one click:
   GPU and loaded models on this menu describe the machine, and the run list
   has to describe the same machine. Catalog-published workflows are shown
   under the name you know them by (their run id encodes scope and tenant in
-  base64) and are not mistaken for the gateway's own bookkeeping runs. Entity planes are the one exception and
-  the payload names them — reaching one goes through the entity registry,
-  which opens homes and wires embedders, and that must not ride a poll.
+  base64) and are not mistaken for the gateway's own bookkeeping runs. Summoned
+  entities' data planes are not listed (the payload names them in
+  `skipped_entity_planes`).
 - **Pause / Resume Workflows** — the one high-level control over all of that:
   stop new workflow steps from running to free the machine or to look at what
   is going on (the gateway keeps answering; work queues until you resume).
@@ -81,11 +81,9 @@ means a workflow step is executing right now; pause bars mean paused; a red
 ring with `!` means the gateway is not answering.
 
 Everything works offline except *Documentation*, *Report a Problem* and
-*Check for Updates*, which open a website or ask pypi.org. Menu items name what
-they open and nothing else — a "(needs internet)" suffix on every second line
-is noise the reader steps over, and the browser says so the one time it
-matters. (The human docs live online: the wheel ships `llms.txt` for
-docs-grounded Q&A, not a browsable copy of this site.)
+*Check for Updates*, which open a website or ask pypi.org. The documentation
+is online; the console's docs assistant answers from the `llms.txt` shipped
+with the gateway.
 
 ## Install
 
@@ -104,24 +102,22 @@ pip install "abstractgateway[tray]"      # pystray + Pillow
 The Activity window uses `tkinter` from the Python standard library. Some
 Python builds ship without it (Homebrew: `brew install python-tk`; Debian:
 `sudo apt install python3-tk`; pyenv builds need the Tk headers at build
-time). When it is missing, the item is simply absent — the console's Resources
-tab shows the same graphs, and a second menu entry pointing at the same browser
-page is one choice too many.
+time). When it is missing, the item is absent; the console's **Resources** tab
+shows the same graphs.
 
 ## When the icon appears
 
 At `abstractgateway serve` time the gateway decides, and says why on stderr:
 
 **While the gateway runs, the icon is there.** There is no setting to turn it
-off and no *Hide* item in its menu: the icon is how someone who never opens a
-terminal reaches their gateway, and a switch whose only effect is to remove
-that entry point is a way to lose the product. Every reason it can be absent
-is a fact about the machine, not a preference:
+off and no *Hide* item in its menu, because the icon is how people who never
+open a terminal reach their gateway. It is absent only for one of these
+reasons:
 
 | Situation | Outcome |
 |---|---|
 | `abstractgateway[tray]` not installed | not started; the install hint is printed |
-| No display (SSH session, container, Windows service, macOS daemon, CI) | not started, silently |
+| No display (SSH session, container, Windows service, macOS daemon, CI) | not started (reason `headless`) |
 | `serve --reload` (development) | not started (the app runs in uvicorn's reloader child) |
 | A runner-only process (`abstractgateway runner`) | not started; the tray belongs to the process that serves the console |
 | Otherwise | started; `Desktop tray: started (pid …)` |
@@ -164,12 +160,10 @@ Every load shows *Loading X* while it runs (a notification and a greyed row),
 then *Loaded X after N s* — or a dialog with the gateway's full reason when it
 fails.
 
-Why engines and not capabilities (text / image / voice / music)? Because the
-engine is always known and it is what decides how a model loads, while the
-capability of an installed artifact mostly is not: on the reference machine
-136 of 151 installed artifacts carry no capability metadata, and a menu
-grouped by guesses would put LoRAs, encoders and adapters under confident
-headings. Capabilities appear where they are facts — the routes you configured.
+Installed models are grouped by engine rather than by capability: the engine
+is always known and decides how a model loads, while many installed artifacts
+carry no capability metadata. Capabilities appear where they are known: the
+routes you configured, under **Your defaults**.
 
 The model lists refresh every 5 minutes and after each load or eject; the
 Activity window and the console's Models tab show the same data live.
@@ -224,10 +218,10 @@ start (the gateway was moved or reinstalled elsewhere, the file is unreadable,
 the unit is disabled); the line under it says why, and a click repairs it. It
 reads **(another gateway is registered)** when the login item belongs to
 another data folder; a click asks before replacing it. A registration that
-pins `--host/--port` on its command line (written before 2026-09-24) also
-reads **— needs repair** ("pinned to 127.0.0.1:N by the login item …"): it
-starts, but the **Network** choice can never apply to it. The click rewrites
-it to plain `serve` and keeps the stored network mode.
+pins `--host/--port` on its command line also reads **— needs repair**
+("pinned to 127.0.0.1:N by the login item …"): it starts, but the **Network**
+choice cannot apply to it. The click rewrites it to plain `serve` and keeps
+the stored network mode.
 
 Turning it on registers for the **next** login: it never starts a second copy
 of the gateway that is already running. Turning it off only unregisters: the
@@ -286,11 +280,11 @@ paused:
 - `GET /api/health` carries `"paused": true` while `status` stays
   `"healthy"` — a supervisor must never recycle a paused gateway.
 
-Pause reaches inside a tick: an AbstractRuntime that ships
-`Runtime.tick(step_gate=…)` (the release after 0.4.31) consults the gateway's
-gate at every step boundary. With an older runtime the pause takes effect at
-tick boundaries (up to `tick_max_steps` steps later); `GET /host/runner`
-reports `step_gate_supported` and the menu says so.
+Pause reaches inside a tick: AbstractRuntime's `Runtime.tick(step_gate=…)`
+consults the gateway's gate at every step boundary. Where the runtime does
+not offer that gate, the pause takes effect at tick boundaries (up to
+`tick_max_steps` steps later); `GET /host/runner` reports
+`step_gate_supported` and the menu says so.
 
 In the split layout (`serve --no-runner` + `abstractgateway runner`) the
 pause is written to `<data_dir>/gateway_paused.json` and the runner process
@@ -351,17 +345,16 @@ running. Use a concrete proxy IP.
 
 ## Troubleshooting
 
-- **"Desktop tray: not started (missing_dependency …)"** — install the extra
-  (and, on Linux, the GTK/AppIndicator bindings).
-- **The helper starts then disappears** — read `<data_dir>/logs/tray.log`;
+See [troubleshooting.md](./troubleshooting.md#there-is-no-tray-icon) for a
+missing icon. Other cases:
+
+- **The helper starts then disappears**: read `<data_dir>/logs/tray.log`;
   `GET /api/gateway/host/tray` reports `exit_code` and the readiness failure.
-  Two crashes in a row stop automatic restarts until the setting is toggled
-  or `POST /api/gateway/host/tray/show` is used.
-- **The icon says "Not responding"** — the gateway is restarting, stopped or
-  wedged. *Force Quit* in that state sends the gateway process SIGTERM and,
-  after five seconds, kills it.
-- **GNOME shows no icon** — install the AppIndicator extension; the gateway
-  reports `headless: no system tray on this desktop` when it can tell.
+  After two crashes in a row it is not restarted automatically;
+  `POST /api/gateway/host/tray/show` (admin) starts it again.
+- **The icon says "Not responding"**: the gateway is restarting, stopped or
+  unresponsive. *Force Quit* in that state sends the gateway process SIGTERM
+  and, after five seconds, kills it.
 
 ## Licensing note
 

@@ -110,10 +110,6 @@ default agent, install the replacement bundle first, then remove the old file.
   ([configuration.md](./configuration.md)).
 - Shipped bundle versions are immutable pins; newer versions install alongside
   them through the normal bundle upload or workflow catalog routes.
-- Changing the shipped set is a deliberate act in two places: the force-include
-  pins in `pyproject.toml` and the matching `!flows/bundles/<name>` negation in
-  `.gitignore`. `tests/test_gateway_shipped_default_workflows.py` fails if a
-  pinned artifact is untracked or does not load.
 - The editable sources for the shipped workflows are VisualFlow JSON files in
   the AbstractFlow repository (`abstractflow/examples/flows/`), packed with
   `abstractflow bundle pack`.

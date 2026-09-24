@@ -22,14 +22,14 @@ best-effort until it has a real CUDA build and smoke gate:
 docker pull ghcr.io/lpalbou/abstractgateway:0.4.2-gpu
 ```
 
-Legacy aliases `ghcr.io/lpalbou/abstractgateway-server:*` and
-`ghcr.io/lpalbou/abstractgateway-server-nvidia:*` are still published for a
-transition period. New deployments should use `abstractgateway`.
+The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
+`ghcr.io/lpalbou/abstractgateway-server-nvidia:*` are published as aliases for
+existing deployments; use `abstractgateway` for new ones.
 
 The default image installs the base `abstractgateway` package, which includes:
 
 - `AbstractRuntime`
-- `AbstractMemory[lancedb]>=0.2.6`
+- `AbstractMemory[lancedb]>=0.3.0`
 - `abstractagent`
 - FastAPI/Uvicorn
 
@@ -140,8 +140,8 @@ Required for hosted/container user-auth mode:
 
 Optional:
 
-- `ABSTRACTGATEWAY_AUTH_TOKEN`: legacy shared admin bearer token for
-  compatibility/bootstrap APIs; browser apps should use Gateway user tokens
+- `ABSTRACTGATEWAY_AUTH_TOKEN`: a shared admin bearer token for
+  server/operator scripts; browser apps use Gateway user accounts
 
 Common:
 
@@ -167,7 +167,7 @@ Provider keys and endpoints:
 - `OPENROUTER_API_KEY`
 - `PORTKEY_API_KEY` / `PORTKEY_CONFIG`
 - `OPENAI_BASE_URL` / `OPENAI_API_KEY` for generic OpenAI-compatible endpoints
-- `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY` as legacy operator aliases; prefer `OPENAI_BASE_URL` for AbstractCore discovery
+- `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY` (aliases); prefer `OPENAI_BASE_URL` for AbstractCore discovery
 - `LMSTUDIO_BASE_URL`
 - `OLLAMA_BASE_URL`
 - `VLLM_BASE_URL`
@@ -175,8 +175,8 @@ Provider keys and endpoints:
 Image/voice plugin endpoints:
 
 - `ABSTRACTVISION_BACKEND`: `openai`, `openai-compatible`, `diffusers`, or `sdcpp`
-- `ABSTRACTGATEWAY_VISION_BACKEND` / `ABSTRACTGATEWAY_VISION_BASE_URL` / `ABSTRACTGATEWAY_VISION_API_KEY` / `ABSTRACTGATEWAY_VISION_MODEL_ID` (legacy `ABSTRACTVISION_*` names still work)
-- `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE` (`openai` by default in the server image; legacy `ABSTRACTVOICE_*` names still work)
+- `ABSTRACTGATEWAY_VISION_BACKEND` / `ABSTRACTGATEWAY_VISION_BASE_URL` / `ABSTRACTGATEWAY_VISION_API_KEY` / `ABSTRACTGATEWAY_VISION_MODEL_ID` (the `ABSTRACTVISION_*` names also work)
+- `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE` (`openai` by default in the server image; the `ABSTRACTVOICE_*` names also work)
 - `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL` / `ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY`
 - `ABSTRACTGATEWAY_VOICE_TTS_MODEL` / `ABSTRACTGATEWAY_VOICE_STT_MODEL`
 
@@ -201,8 +201,8 @@ unit or XDG autostart entry, Windows Run entry) that runs plain `serve`, so the
 [network exposure](./configuration.md#network-exposure-localhost--local-network--internet)
 setting decides the bind (seeded to `localhost`, i.e. `127.0.0.1`, on install),
 with data in the per-user data folder. See [first-run.md](./first-run.md). Containers and
-servers keep the explicit configuration shown on this page: the image sets
-`--host 0.0.0.0` and needs explicit auth, exactly as before.
+servers use the explicit configuration shown on this page: the image sets
+`--host 0.0.0.0` with user accounts on.
 
 ## Cache and auth notes
 

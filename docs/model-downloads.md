@@ -24,8 +24,6 @@ All under `/api/gateway`.
 | `POST /models/download/{job_id}/cancel` `{"via": "console"}`? | admin | `{"ok": true, "job": {...}}` with `cancel_requested: true` and `cancelled_by`; the job turns `cancelled` when the tool has stopped (normally < 1 s); a parent cancels every running child; 404 when unknown. A console sends `{"via": "console"}` when a person clicked Cancel; without it the cancel is recorded as `api` |
 | `GET /models/downloads/stream` | user | Server-Sent Events, below |
 
-The request bodies are unchanged from before this contract (the cancel body is optional).
-
 ### The event stream
 
 `GET /models/downloads/stream` sends `event: downloads` with
@@ -41,7 +39,7 @@ final state). Polling keeps working; the stream is optional.
 |---|---|
 | `job_id` (also `job`) | `dl_...` for one download, `grp_...` for a parent |
 | `kind` | `download`, or `download_group` for a parent |
-| `status` | the coarse lifecycle older pollers read: `running` (queued included), `completed`, `failed`, `cancelled`; `host_status` keeps AbstractCore's own word |
+| `status` | the coarse lifecycle for simple pollers: `running` (queued included), `completed`, `failed`, `cancelled`; `host_status` keeps AbstractCore's own word |
 | `state` | `queued`, `resolving`, `downloading`, `verifying`, `installing`, `done`, `failed`, `cancelled`, `stalled` |
 | `bytes_done`, `bytes_total` | bytes so far and the total; same values as `downloaded_bytes`, `total_bytes` |
 | `size_unknown`, `size_note` | `true` only when the source cannot say how big the download is; `size_note` says why |
@@ -81,7 +79,7 @@ all are.
   `transitions`.
 - `verifying`: checking what arrived (Ollama's sha256, every Hugging Face file whole).
 - `installing`: moving into the library (Ollama "writing manifest", LM Studio "Finalizing download...").
-- `done`, `failed`, `cancelled`: finished. `cancelled` ONLY follows a cancel request
+- `done`, `failed`, `cancelled`: finished. `cancelled` only follows a cancel request
   (`cancelled_by` says whose); a download that stops on its own -- a dropped
   connection, a Hub error, a full disk, the Gateway restarting (the job then
   reads `failed` from its saved snapshot, and the transfer stops with it) -- is
@@ -89,12 +87,9 @@ all are.
 
 `verifying` and `installing` never count as stalls.
 
-### Real examples
+### Examples
 
-Captured on a hermetic Gateway (port 18822, scratch caches) with the real
-recommended artifact ids; the voice and image files came from a local stand-in
-for huggingface.co and LM Studio from a stand-in `lms` that prints exactly what
-the real one prints. Key fields only.
+One job per state, key fields only (sizes are illustrative).
 
 `queued`:
 
@@ -183,5 +178,5 @@ from zero on the next download; files that were complete are kept.
   answers 404, while its children (AbstractCore jobs, persisted) can still be
   read with `GET /models/download/{dl_id}` or `GET /jobs`.
 - `lms get` is LM Studio's own CLI. Its progress bar and its cancel question
-  are what this relies on; if a future `lms` prints neither, the job falls
-  back to bytes on disk and a plain stop of the CLI.
+  are what the job reads; when `lms` prints neither, the job falls back to
+  bytes on disk and a plain stop of the CLI.

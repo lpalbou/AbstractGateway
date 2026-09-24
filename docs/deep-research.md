@@ -2,10 +2,8 @@
 
 Gateway packages `deep-research@0.1.7.flow` as a supported shipped bundle. It
 is available from the normal bundle registry alongside `basic-agent` when the
-packaged bundle directory is used. (Formerly `dp-research` — the `dp-*` names
-were retired by operator ruling 2026-07-16; version lineage continues from
-`dp-research@0.1.5`, and old `dp-research@0.1.x` artifacts live under
-`flows/bundles/archive/` for completed-run history only, no longer served.)
+packaged bundle directory is used. It replaces the `dp-research` bundle id,
+which is no longer shipped.
 
 ## Contract
 
@@ -48,15 +46,7 @@ prefix (`reports/deep-*-research`) to avoid overwrites. The final manifest is
 built after file writes and includes actual Markdown/PDF/DOCX paths, byte
 counts, PDF/DOCX hashes, and content types.
 
-## Validation
+## Related docs
 
-From the monorepo root:
-
-```bash
-PYTHONPATH=abstractgateway/src:abstractruntime/src:abstractcore \
-  pytest -q abstractgateway/tests/test_deep_research_bundle_contract.py
-```
-
-That test opens the bundle, checks the public input/output contract, verifies
-the review-gated loop wiring, verifies agent tool allowlists, and loads the
-bundle through `WorkflowBundleGatewayHost` with an isolated registry.
+- [shipped-workflows.md](./shipped-workflows.md): every bundle a fresh install serves
+- [api.md](./api.md): starting runs and streaming their ledger

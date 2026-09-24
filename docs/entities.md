@@ -2,8 +2,7 @@
 
 The gateway owns the lifecycle of **summoned entities** — persistent
 identities (like "Castor") that live across sessions, users, and workplaces;
-each summon is a re-adoption of the same self (earlier experiments called
-them *incarnations*). An entity is not a chatbot configuration: it is a home
+each summon is a re-adoption of the same self. An entity is not a chatbot configuration: it is a home
 directory holding everything the entity is and has lived, plus the lifecycle
 surface to create, inspect, verify, and summon it.
 
@@ -26,13 +25,12 @@ A summoned entity lives in two files at its **home**:
 Next to those live the **attested seed** (`spark.yaml`, stored byte-verbatim
 at creation — the spark is engrammed once and kept for life) and the
 gateway's `manifest.json` (an internal record: the engraved owner key —
-`entity:<name>` on new homes; legacy homes keep their birth-era
-`entity:<name>@<home-id>` engraving for life because journals are
-append-only — plus creation time, the spark hash, and reserved fields for
+`entity:<name>`, or `entity:<name>@<home-id>` on homes created with that
+form, kept for life because journals are append-only — plus creation time, the spark hash, and reserved fields for
 the future key/signature work).
 
-**The entity's ID — the handle — is `<name>@<gateway ip>`** (operator
-ruling 2026-07-15), e.g. `castor@192.168.1.146`: the name at its home
+**The entity's ID — the handle — is `<name>@<gateway ip>`**, e.g.
+`castor@192.168.1.146`: the name at its home
 gateway's current LAN address (or the operator-declared
 `ABSTRACTGATEWAY_DECLARED_ADDRESS`). That is what every operator surface
 shows as "Entity ID". The manifest string above is a birth marker, never
@@ -120,10 +118,9 @@ render-when-present: the field exists only for homes that have an inbox —
 an entity never handed a task shows no field, not a zero. The file schema
 is the cross-package contract for the runtime's day-open reader (the R-C
 loop half): event lines `{"event": "added"|"status", "task_id", …}` — see
-`abstractgateway/entity_tasks.py` for the authoritative shapes. Whether an
-operator-left task auto-opens the work phase or the entity elects the
-shift is the operator's ruling (plan D1); the inbox records facts either
-way.
+`abstractgateway/entity_tasks.py` for the authoritative shapes. The inbox
+records facts; whether a task opens the work phase is decided by the entity's
+loop.
 
 ## Drive ratios (cognition health)
 
@@ -223,7 +220,7 @@ Privacy: the engine redacts diary display blocks at the source
 (`{"redacted": "diary"}`). These HTTP endpoints serve the OPERATOR audience,
 so the serving end resolves that marker into the entry's **gist** — the
 entity's one-sentence summary, or the first ~120 characters when no explicit
-gist exists (the 2026-07-08 operator-audience ruling; `_operator_diary_display`).
+gist exists (`_operator_diary_display`).
 So the operator sees the diary's topology (the entity wrote *something*, it
 connects to *something*) **and a gist of what it was about** — never the full
 verbatim prose, which stays in the book and is fetched one entry at a time
@@ -243,9 +240,8 @@ the verbatim is the lossless original). Three shapes:
 - **Born-digest records** (interests, dreams): born as words — their
   digest is their complete text, never a compression. Served as-is with
   `born_digest: true` ("the words you see are all the words there are").
-- **Diary projections**: served to the **operator** from the book (the
-  2026-07-08 ruling — "the operator sees everything"; the prior 403
-  refusals were removed). The read is marker-first: a `diary_read` host
+- **Diary projections**: served to the **operator** from the book. The read
+  is marker-first: a `diary_read` host
   marker (entry id, kind, visibility) lands in the entity's replay stream
   before the words return, so the disclosure is recorded in the entity's
   biography. Private entries are included. Born-digest diary kinds
@@ -254,13 +250,11 @@ the verbatim is the lossless original). Three shapes:
 ### The operator diary door (reads are visible events)
 
 `GET /api/gateway/entities/{name}/diary/{entry_id}?reason=...` serves a
-book entry — private included — to the **operator** channel. This is the
-maintainer's debugging ruling made honest rather than covert: the book
-already lives unencrypted on the operator's machine; this door makes the
-read *recorded* instead of silent. `reason` is **optional** (defaults to
-"operator review" — identity + act + timestamp is the audit value; a
-mandatory free-text field was friction, removed per the 2026-07-08 21:39
-ruling), and every disclosure lands a `diary_read` host marker (entry id +
+book entry — private included — to the **operator** channel. The book
+already lives unencrypted on the operator's machine; this door makes each
+read *recorded* rather than silent. `reason` is **optional** (default
+"operator review"; the identity, the act and the timestamp are the audit
+record), and every disclosure lands a `diary_read` host marker (entry id +
 reason) in the entity's replay stream before the words return — the
 entity's biography shows who read it and why. Failed lookups disclose
 nothing and are not marked. Both full-content doors (this one and the
@@ -274,8 +268,3 @@ book), not the operator's HTTP surface.
   and construction-bound authorship), not policy checks.
 - A refused prelude aborts the summon.
 - Actor strings are made true at the door; everything downstream trusts them.
-
-Design history: `a2a/threads/0004-gateway-entity-lifecycle/` (the charter,
-both halves) and `a2a/threads/0003-named-persistent-identity/` in the
-framework monorepo; reference implementation
-`abstractruntime/tests/test_readoption_experiment.py`.

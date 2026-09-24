@@ -12,6 +12,25 @@ Context:
 - In the AbstractFramework ecosystem, UIs and automations call this API to operate **AbstractRuntime** runs.
 - Architecture diagram and core concepts: [architecture.md](./architecture.md)
 
+## Route families
+
+This page covers the run contract, artifacts, discovery, media, models and
+host state. Other route families are documented next to the feature they
+serve:
+
+| Routes | Purpose | Reference |
+|---|---|---|
+| `/api/gateway/session/login`, `/session/logout`, `/session/claim`, `/me` | browser sessions, one-time sign-in links, the current principal | [security.md](./security.md), [first-run.md](./first-run.md) |
+| `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
+| `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
+| `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](./configuration.md#api-gateway_network_v1) |
+| `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover` | browser apps, terminal apps, the Assistant | [apps.md](./apps.md#http-api) |
+| `/api/gateway/engines/*` | local engine installs | [engines.md](./engines.md#api-contract-gateway_engines_v2) |
+| `/api/gateway/models/download*`, `/models/downloads*` | model download jobs and their event stream | [model-downloads.md](./model-downloads.md) |
+| `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
+| `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](./maintenance.md) |
+| `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
+
 ## Auth
 
 By default, `/api/gateway/*` is protected by `GatewaySecurityMiddleware` (bearer token + origin allowlist).  
@@ -28,9 +47,8 @@ export AUTH="Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 
 Gateway-owned provider connections let users create reusable cloud, local, or
 OpenAI-compatible endpoints without putting raw API keys in workflow JSON or
-browser storage. The API route keeps the historical
-`provider-endpoint-profiles` name; the Console presents them as provider
-connections.
+browser storage. The API route is named `provider-endpoint-profiles`; the
+console presents them as provider connections.
 
 - `GET /api/gateway/config/provider-endpoint-profiles`: list visible profiles.
 - `POST /api/gateway/config/provider-endpoint-profiles`: create a user- or
@@ -93,8 +111,8 @@ for data edges such as Break Object and Switch.
 Thin clients do not need to carry conversation transcripts. Passing
 `"input_data": {"use_session_history": true}` together with a `session_id`
 makes the gateway seed the run's `context.messages` from the session's prior
-COMPLETED root runs before the run starts — the run store is the durable
-transcript (agora `durable-sessions` contract v1, 2026-07-16).
+COMPLETED root runs before the run starts: the run store is the durable
+transcript.
 
 ```bash
 curl -sS -H "$AUTH" -H "Content-Type: application/json" \
@@ -125,9 +143,8 @@ deliberately narrower than what history views display):
 - Entity lanes never ride this: their transcript authority is the entity home
   (`_visit.history` / the chat driver), not the run store.
 
-Evidence: `_seed_session_history` in `src/abstractgateway/hosts/bundle_host.py`;
-read half `abstractruntime.session_history.session_chat_messages` (>=0.4.30);
-tests `tests/test_gateway_session_history_seed.py`.
+Evidence: `_seed_session_history` in `src/abstractgateway/hosts/bundle_host.py`
+and `abstractruntime.session_history.session_chat_messages`.
 
 ### 2b) Schedule a run (bundle mode)
 
@@ -383,7 +400,7 @@ curl -sS -H "$AUTH" \
 
 `scope` can be `all`, `session`, or `run`. Use `session_id` with
 `scope=session` and `run_id` with `scope=run`; omit both for `scope=all`.
-Search responses preserve the legacy row fields and also include
+Search responses carry the row fields and also include
 `artifact_envelope_v1`, a normalized projection of Runtime-owned descriptors,
 access stats, and Gateway action links.
 
@@ -543,16 +560,16 @@ gateway helpers (`tools`, `visualflow`, `media`), memory-store readiness, and
 AbstractCore capability plugin status for `voice`, `audio`, `vision`, and
 `music`.
 
-Today the route paths and contract descriptors are the stable part of this
-surface. Catalog routes now also include a stable Gateway-owned envelope:
+The route paths and contract descriptors are the stable part of this surface.
+Catalog routes also include a stable Gateway-owned envelope:
 
 - `catalog.contract = gateway_catalog_v1`
 - `catalog.version = 1`
 - `items = [...]`
 
-Legacy lower-layer fields are still preserved for compatibility. New thin
-clients should read `catalog` plus `items`; older clients can keep using route-
-specific fields like `models`, `provider_models`, `profiles`, or `voices`.
+The lower-layer fields stay in the payload for compatibility. Thin clients
+should read `catalog` plus `items`; the route-specific fields (`models`,
+`provider_models`, `profiles`, `voices`) remain available.
 
 Provider discovery also reports the resolved default provider/model when one is
 configured. The resolver follows request values, flow pins, and the execution-host
@@ -759,7 +776,7 @@ reuses the Gateway bearer token as a Core/provider secret. Without a configured
 Core server, the voice/model routes return bounded static descriptors from
 Gateway and capability-package environment variables.
 
-Each route now adds:
+Each route adds:
 
 - `catalog`: Gateway-owned route metadata (`contract`, `version`, `kind`,
   `scope`, `route_source`, optional `upstream_source`, and route filters)
@@ -883,8 +900,8 @@ result rather than making Flow authoring nodes unavailable.
 
 ## Models and engines
 
-The gateway serves AbstractCore's models and engines payloads unchanged
-(AbstractCore 2.14.0 or newer), under `/api/gateway`. The bodies and payloads
+The gateway serves AbstractCore's models and engines payloads unchanged,
+under `/api/gateway`. The bodies and payloads
 are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 `abstractgateway` render them with the same screens.
 
@@ -936,7 +953,7 @@ memory tier's MLX build and exactly one text row is the `starter`.
 `command` (the exact argv), `dry_run`, `started_at`, `finished_at`, `error`
 (a string or `null`), `joined`, `result` and `cli_equivalent`, which names the
 `abstractgateway` command that does the same thing. A dry run finishes before
-the POST returns. On the older `/models/download` lane the job also carries
+the POST returns. On the `/models/download` routes the job also carries
 `job` (the id), `events`, `host_status`, reports `queued` as `running`, and
 counts `joined` including the first request.
 
@@ -962,7 +979,7 @@ each source reports: [model-downloads.md](./model-downloads.md).
 | 404 `not_found` | unknown job id, engine id, or a model that is not installed |
 | 409 `busy` | an engine install is already running (`job` is the running one) |
 | 409 `refused` | the engine is not supported here or has no install command (`install` is the plan), or a delete is blocked (`delete_blockers`: `loaded`, `shared_cache:…`, `unknown_location`, `engine_not_running`, `remote_engine`; `force: true` overrides the first two) |
-| 501 `unsupported` / `abstractcore_too_old` | the installed AbstractCore predates 2.14.0; `required`, `installed` and `missing` name what to upgrade |
+| 501 `unsupported` / `abstractcore_too_old` | the installed AbstractCore is too old for these routes; `required`, `installed` and `missing` name what to upgrade |
 | 503 `unavailable` | AbstractCore is not installed |
 
 Example:

@@ -22,7 +22,7 @@ With no auth configured, `serve`:
 
 ```text
 Gateway data dir: /Users/you/Library/Application Support/AbstractGateway (os_default: ...)
-Gateway auth: user auth enabled automatically (bound to loopback 127.0.0.1, no auth configured). ...
+Gateway auth: user auth enabled automatically (bound to loopback 127.0.0.1, no auth posture in this gateway's environment): ...
 Gateway admin token file: .../auth/bootstrap-admin-token
 First run: open http://127.0.0.1:8080/console#claim=agclaim_...
            (one-time link, valid 10 minutes, works from this machine only; ...)
@@ -67,9 +67,9 @@ estimate; the recommendation does not quietly switch to another model.
 A typical path from a fresh install to a working local model:
 
 1. **Local engines.** If no engine is installed, click **Install** on Ollama
-   (or open LM Studio's download page). The confirmation shows the command,
-   for example `brew install ollama` on a Mac with Homebrew, and that it runs
-   on this machine. The install runs in the background with progress; when it
+   or LM Studio. The confirmation shows what will run and that it runs on
+   this machine (on a Mac: download Ollama's signed app and place it in
+   Applications; see [engines.md](./engines.md)). The install runs in the background with progress; when it
    finishes the row shows the version.
 2. **Default model.** The catalog opens on models that fit this machine's
    memory, one card per model with its 4-bit and 8-bit builds. Click
@@ -82,9 +82,8 @@ The same steps are available later in the **Engines** and **Models** tabs (see
 (`abstractgateway engines install ollama`, `abstractgateway models download
 ollama qwen3:8b`). Installing an engine needs an admin and the
 [`allow_engine_install`](./configuration.md#allow_engine_install) setting, which
-is on by default for a gateway that listens on this machine only. With an
-AbstractCore older than 2.14.0 the engines step shows the Ollama and LM Studio
-download links and the upgrade command instead.
+is on by default for a gateway that listens on this machine only, and for
+someone at the gateway machine whatever it listens on.
 
 The guide opens by itself once per data folder. **Finish** or **Skip setup**
 records that it ran (`POST /api/gateway/host/first-run`); clicking outside the
@@ -118,8 +117,8 @@ How the link is protected:
 - the console removes the code from the address bar before sending it;
 - the result is the same browser session as a normal sign-in (session cookie +
   CSRF cookie). The response's `claim.created_by` says who minted the link
-  (`serve`, `cli`, `tray`, or `null` for an older link). This lets the
-  console treat a tray sign-in differently from a first run.
+  (`serve`, `cli` or `tray`), so the console can treat a tray sign-in
+  differently from a first run.
 
 ## 4. Start the gateway at login (optional)
 
@@ -137,17 +136,17 @@ reports `broken` when a registration exists that would not start — the
 program it points at is gone (a moved or reinstalled gateway), the file is
 unreadable, the unit is not enabled, or launchd / Task Manager / the desktop
 switched it off — and `other` when it belongs to another data folder. It also
-reports `broken` with **needs repair** when a registration starts the gateway
-but pins `--host/--port` on its command line (every registration written
-before 2026-09-24): "pinned to 127.0.0.1:N by the login item — run
-`abstractgateway service enable` again to let the Network setting apply".
+reports `broken` with **needs repair** when a registration pins
+`--host/--port` on its command line, so the Network setting cannot apply:
+"pinned to 127.0.0.1:N by the login item — run `abstractgateway service
+enable` again to let the Network setting apply". `service enable` rewrites it.
 
 | OS | What is installed | Logs |
 |---|---|---|
 | macOS | LaunchAgent `~/Library/LaunchAgents/ai.abstractframework.gateway.plist` (`RunAtLoad`, restarted if it crashes), loaded with `launchctl bootstrap gui/<uid>` | `~/Library/Logs/AbstractGateway/` |
 | Linux | systemd user unit `~/.config/systemd/user/abstractgateway.service` (`Restart=on-failure`), enabled with `systemctl --user enable --now` | `journalctl --user -u abstractgateway.service` |
 | Linux without a systemd user manager | XDG autostart entry `~/.config/autostart/abstractgateway.desktop` (starts at graphical login) | `<data dir>/logs/gateway.log` |
-| Windows (experimental) | per-user Run entry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway` that starts the gateway with `pythonw.exe` (no console window, no admin); an older `AbstractGateway.lnk` Startup shortcut is removed | `<data dir>\logs\gateway.log` |
+| Windows (experimental) | per-user Run entry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway` that starts the gateway with `pythonw.exe` (no console window, no admin) | `<data dir>\logs\gateway.log` |
 
 Details:
 
@@ -160,7 +159,7 @@ Details:
   (`abstractgateway network set localhost|lan|internet [--port N]`, the tray's
   Network menu, the console) at every start. `install`/`enable` store it
   first: a stored mode and port are kept; otherwise the mode is `localhost`
-  (127.0.0.1, as before) and the port is `--port` when given, else the running
+  (127.0.0.1) and the port is `--port` when given, else the running
   gateway's (`enable`), else a previous install's, else the first free port
   from 8080 upwards. `--host 127.0.0.1|0.0.0.0` and `--port` are written into
   that setting and printed. `--pin-command-line` puts `--host/--port` on the
@@ -191,11 +190,23 @@ explicitly.
 
 ## Exposing the gateway beyond this machine
 
-The automatic setup applies to loopback binds only. `serve --host 0.0.0.0` (or
-any non-loopback address) still refuses to start until you configure auth
-explicitly (`ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_TOKEN`); see
-[security.md](./security.md). When any auth setting is present, `serve` keeps
-its `0.0.0.0` default bind.
+Choose who can reach the gateway with the network setting:
+
+```bash
+abstractgateway network set lan                            # this machine + your local network
+abstractgateway network set internet --acknowledge-internet
+abstractgateway network restart                            # apply it now
+```
+
+The console's **Network** tab and the tray's **Network** menu change the same
+setting. User accounts stay on in every mode; the gateway does not terminate
+TLS, so put a reverse proxy or a tunnel in front for `internet`. See
+[configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)
+and [security.md](./security.md#network-exposure).
+
+An explicit `serve --host 0.0.0.0` (or any non-loopback address) refuses to
+start unless auth is configured (`ABSTRACTGATEWAY_USER_AUTH=1` or
+`ABSTRACTGATEWAY_AUTH_TOKEN`).
 
 ## Checking the setup from scripts
 
@@ -220,3 +231,4 @@ its `0.0.0.0` default bind.
 - [console.md](./console.md): the web console and the terminal console
 - [security.md](./security.md): auth, origins, limits
 - [tray.md](./tray.md): the desktop tray icon
+- [troubleshooting.md](./troubleshooting.md): sign-in links, login service, network modes

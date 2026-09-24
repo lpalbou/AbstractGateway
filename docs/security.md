@@ -10,12 +10,21 @@ Notes:
 
 ## Default behavior
 
-By default, `abstractgateway serve` refuses to start if write endpoints are
-protected and neither a legacy server/operator token nor Gateway user auth is
-configured.
-Evidence: startup self-check in `src/abstractgateway/cli.py` (`load_gateway_auth_policy_from_env`).
+Security is on by default for `/api/gateway/*`:
 
-Recommended browser-console/browser-app setup:
+- A plain `abstractgateway serve` with no auth posture in its environment binds
+  `127.0.0.1` (or the stored network mode), turns **user accounts** on and
+  creates the admin account `default/admin`
+  ([first-run.md](./first-run.md)).
+- Choosing `lan` or `internet` with the [network setting](#network-exposure)
+  keeps user accounts on.
+- An explicit non-loopback `--host` with neither user accounts nor a token
+  refuses to start, and so does a weak shared token on a non-loopback bind.
+
+Evidence: startup self-checks in `src/abstractgateway/cli.py`,
+`src/abstractgateway/first_run.py`.
+
+Explicit browser-console/browser-app setup:
 
 ```bash
 export ABSTRACTGATEWAY_USER_AUTH=1
@@ -34,8 +43,8 @@ Authorization: Bearer <token>
 
 ### Tenant and user isolation
 
-In local/single-user mode, `ABSTRACTGATEWAY_AUTH_TOKEN` remains a gateway-level
-control-plane token and maps to the `local-admin` principal. Treat that token as
+In token mode, `ABSTRACTGATEWAY_AUTH_TOKEN` is a gateway-level control-plane
+token and maps to the `local-admin` principal. Treat that token as
 full authority for the Gateway instance.
 
 Hosted user-auth mode is enabled with `ABSTRACTGATEWAY_USER_AUTH=1` or
@@ -51,6 +60,9 @@ is set for compatibility. Admin principals can manage users through:
 - `GET /api/gateway/admin/users/{user_id}?tenant_id=...`
 - `PATCH /api/gateway/admin/users/{user_id}?tenant_id=...`
 - `DELETE /api/gateway/admin/users/{user_id}?tenant_id=...`
+- `GET /api/gateway/admin/runtime-reservations`
+- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer`
+- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/purge`
 
 Every user row carries a first-class `principal_kind` field (`"human"` or
 `"entity"`); clients must read it (or the `kind` filter) instead of
@@ -68,9 +80,6 @@ a delete would remove the name-collision guard protecting the entity's
 identity. `enabled` (the door-side disable), `email`, and `scopes` stay
 editable. The guard lives in `GatewayUserRegistry` itself, so the config CLI
 refuses the same writes.
-- `GET /api/gateway/admin/runtime-reservations`
-- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer`
-- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/purge`
 
 Gateway stores user token hashes in `<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`
 by default. Generated or rotated bearer tokens are returned once from the admin
@@ -108,8 +117,8 @@ only accounts with the `admin` role can hold a browser session:
   `reason_code: "user_accounts_off_admin_only"` and a message naming the two
   ways out: the gateway operator turns user accounts on, or the person signs
   in with an admin account.
-- A session that already exists for a non-admin account (minted by an older
-  gateway, or while user accounts were on) is refused and removed at its next
+- A session that already exists for a non-admin account (for example one
+  created while user accounts were on) is refused and removed at its next
   use. Every session path applies the same rule (`principal_barred_from_shared_runtime`
   in `security/sessions.py`), including the browser-app sign-in handover.
 - `POST /api/gateway/admin/users` answers `409` (same `reason_code`) instead of
@@ -153,8 +162,8 @@ workspace-root values. Runtime fields such as `actor_id` and `session_id`, and
 references such as `run_id`, `artifact_id`, and memory `owner_id`, remain
 correlation and lookup fields; they do not authorize access by themselves.
 
-Hosted multi-user mode is an incremental surface: the core request path now has
-principal auth and per-principal services. Gateway also applies a central
+In hosted multi-user mode, the request path resolves a principal and routes it
+to its own service. Gateway also applies a central
 route-family authorization table for operator/admin surfaces. Admin-only route
 families include user management, audit, process control, backlog/triage/report
 operations, email bridge routes, model residency mutations
@@ -207,8 +216,7 @@ One check covers every route that writes a registry — `POST /bundles/upload`,
 and `POST /visualflows/{flow_id}/publish` — so a shared workflow cannot be
 replaced through one route while another is restricted. The check runs before
 the route looks the bundle up, so a non-admin gets `403` for a bundle that
-does not exist as well. (Until 2026-09-24 the two deprecation routes skipped
-it.) Since a non-admin account cannot be signed in while user accounts are off
+does not exist as well. Since a non-admin account cannot be signed in while user accounts are off
 (above), this check is the second, independent line of defence. `POST /visualflows/{flow_id}/publish` accepts a caller-supplied
 `bundle_id`, `bundle_version` and `overwrite`, and installs into the same
 registry as `upload`; it is gated on the same rule. Non-admin requests against
@@ -374,7 +382,7 @@ In this mode, a client can request:
 
 Do **not** enable this when serving untrusted browser origins: a compromised thin client can request access to arbitrary server paths.
 
-### Important limitation (still true in all modes)
+### Important limitation (all modes)
 
 `execute_command` is **not** an OS sandbox: even if the runtime sets the default working directory under `workspace_root`, the command itself can reference absolute paths or `cd ..`.
 

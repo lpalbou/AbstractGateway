@@ -4,13 +4,16 @@ AbstractGateway is a deployable HTTP/SSE host for **durable AbstractRuntime runs
 - clients **start runs** and submit **durable commands**
 - clients **render** by replaying/streaming the durable ledger (replay-first)
 
-This guide gets a new installation running in **bundle mode** (recommended), then covers **file vs SQLite** durability and a best-effort **file → SQLite** migration.
+This guide starts with the zero-configuration path on your own machine, then
+runs the gateway with explicit configuration, starts and schedules runs, and
+covers **file vs SQLite** durability and a best-effort **file → SQLite**
+migration.
 
 ## AbstractFramework ecosystem (context)
 
 AbstractGateway is one component in the larger **AbstractFramework** ecosystem:
 - **AbstractRuntime** (required): durable runs + workflow registry + stores
-- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image/video plus voice/audio/music capabilities, and KG-backed bundle execution
+- **AbstractCore, AbstractAgent, AbstractMemory** (installed with the gateway): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery and run facades for prompt-cache controls, generated and edited media, voice, audio and music, and KG-backed bundle execution
 
 Related repos:
 - AbstractFramework: https://github.com/lpalbou/AbstractFramework
@@ -20,10 +23,10 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- Workflow source:
-  - **Bundle mode** (recommended): one `.flow` file or a directory of `*.flow` bundles
-    - You can also upload bundles after startup via `POST /api/gateway/bundles/upload` (see below)
-  - **VisualFlow directory mode** (compat): a directory of `*.json` VisualFlow files; the base install includes the compiler dependency
+- Workflows: none needed to start. The gateway serves its shipped bundles
+  ([shipped-workflows.md](./shipped-workflows.md)); you can point it at your
+  own `.flow` bundles or upload them after startup
+  (`POST /api/gateway/bundles/upload`, see below)
 
 ## Install
 
@@ -56,24 +59,24 @@ creates `default/admin`, keeps data in your OS's per-user data folder, and
 prints a one-time `First run: open http://127.0.0.1:8080/console#claim=...`
 link that signs you into the console and opens the first-run guide. See
 [first-run.md](./first-run.md), including `abstractgateway claim` and
-`abstractgateway service install`. The rest of this guide uses explicit
-configuration.
+`abstractgateway service install`. To let other devices on your network reach
+it, use `abstractgateway network set lan` (see
+[configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)).
+The rest of this guide uses explicit configuration.
 
-## 1) Run (bundle mode, file-backed stores)
+## 1) Run with explicit configuration (file-backed stores)
 
-File-backed stores are the default and easiest for dev.
+File-backed stores are the default and easiest for development.
 
 ```bash
-export ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 
 # Optional: set only for a custom bundle registry. When unset, Gateway uses
 # the packaged shipped bundle directory containing basic-agent.
 # export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
 
-# User auth is the normal browser-console/browser-app path.
+# User accounts: the sign-in path for the console and the browser apps.
 export ABSTRACTGATEWAY_USER_AUTH=1
-export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
 
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
@@ -83,8 +86,12 @@ token to `$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token` (mode `0600`),
 prints that token, and prints a one-time console sign-in link. Use the token
 with user `admin` for browser apps. `abstractgateway serve --no-print-token`
 keeps the token out of the startup output (it stays in the file); on a
-non-loopback bind it is hidden by default and `--print-token` shows it. `ABSTRACTGATEWAY_AUTH_TOKEN` remains available for legacy server/operator
-bearer-token deployments, but it is not a browser sign-in token.
+non-loopback bind it is hidden by default and `--print-token` shows it.
+`ABSTRACTGATEWAY_AUTH_TOKEN` is a shared server/operator bearer token; it is
+not a browser sign-in token.
+
+Browser origins other than `http://localhost:*` and `http://127.0.0.1:*` are a
+setting: `abstractgateway network set --allowed-origins https://your.host`.
 
 OpenAPI docs (Swagger UI): `http://127.0.0.1:8080/docs` (use **Authorize** with a Gateway user token)
 
@@ -97,7 +104,8 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
   "http://127.0.0.1:8080/api/gateway/bundles"
 ```
 
-If `bundles.items` is empty, either:
+If `bundles.items` is empty (see also
+[troubleshooting.md](./troubleshooting.md#get-apigatewaybundles-returns-no-bundles)), either:
 - point `ABSTRACTGATEWAY_FLOWS_DIR` at the shipped bundle directory or another
   directory containing `*.flow` files (or a single `.flow` file), or
 - upload a bundle via the API:
@@ -245,7 +253,10 @@ abstractgateway migrate --from=file --to=sqlite \
 ## Related docs
 
 - Docs index: [README.md](./README.md)
+- First run: [first-run.md](./first-run.md)
 - FAQ: [faq.md](./faq.md)
+- Troubleshooting: [troubleshooting.md](./troubleshooting.md)
+- Web and terminal consoles: [console.md](./console.md)
 - Architecture: [architecture.md](./architecture.md)
 - Configuration (env vars + optional deps): [configuration.md](./configuration.md)
 - Deployment: [deployment.md](./deployment.md)

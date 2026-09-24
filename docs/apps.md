@@ -33,7 +33,7 @@ Stop, Show log, Update, versions, addresses and commands are under
    through npm (with its cache in `<data dir>/apps/npm-cache/`); Code needs
    none and is unpacked directly.
 3. **The terminal app, too.** When the app also runs in a terminal and a
-   ready-made download exists for this computer (Code today, see
+   ready-made download exists for this computer (Code, see
    [Terminal versions](#terminal-versions)), the same Install installs it
    right after the browser app: ONE job whose `parts` are the two rows the
    card shows (`install` then `install-tui`, each `waiting`, `running`,
@@ -68,7 +68,7 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   seconds). After more than 3 crashes in a minute it stops trying and shows
   "crash_loop" with the app's log.
 - Each app writes its output to `<data dir>/logs/apps/<app>.log`.
-- Apps listen on `127.0.0.1` only. Ports: the app's usual port when it is
+- Apps listen on `127.0.0.1` (the `apps.host` setting changes this). Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (`scripts/start-local.sh`): Observer 3001,
   Continuum 3002, Code 3003, Entity 3004, Flow 3005.
@@ -78,8 +78,8 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
 An app can also run without the gateway having started it: the framework's
 development stack (`scripts/start-local.sh`), `npx @abstractframework/observer`,
 a global npm install, a service. The gateway finds such an app by asking the
-usual ports on this machine (3001-3005, then 3000 and 3007, which older
-launch scripts used) for their start page and reading its title
+usual ports on this machine (3001-3005, then 3000 and 3007) for their start
+page and reading its title
 ("AbstractObserver", "AbstractContinuum", "AbstractCode", "AbstractEntity",
 "AbstractFlow"). None of the apps has an address that says who it is without
 a gateway sign-in, and the start page is plain HTML, so this costs one short
@@ -131,13 +131,12 @@ creation form. The path is bound to the one-time code when the link is made
 with a single `/`, and a second leading slash (`//host`), a full address, a
 backslash, a space or a control character is refused with 400
 `invalid_app_path` before any link is made. Without `path` the browser lands
-on the app's start page, as before.
+on the app's start page.
 
 ### An app with nothing in it yet
 
 Each app row carries `content_summary`: a small fact about what the app holds
-on this gateway, or `null` for apps that report nothing. Today only Entity
-has one, `{"entities_count": n}`: the number of entries
+on this gateway, or `null` for apps that report nothing. Entity reports `{"entities_count": n}`: the number of entries
 `GET /api/gateway/entities` lists (counted from the same entity registry,
 without reading any entity), `null` when it cannot be known, including for an
 Entity started outside the gateway whose page names another gateway. When the
@@ -148,7 +147,7 @@ shows the same card.
 
 ## Terminal versions
 
-Some apps also run in a terminal. Today that is **Code** (`abstractcode`, a
+Some apps also run in a terminal: **Code** (`abstractcode`, a
 Rust terminal app from the abstractcode repository); Flow Editor, Observer,
 Continuum and Entity are browser apps only. The gateway's own console also
 has a terminal twin, `abstractgateway-console`, which the console's Done step
@@ -239,10 +238,10 @@ the code in its body is its only credential, it answers only loopback socket
 peers without proxy headers, and a browser handover code does not work there
 (nor the reverse).
 
-## Why the gateway runs each app's own server
+## How the apps are served
 
-The gateway could in principle serve the apps' built files itself. It does
-not, because each app's server does real work:
+Each app runs its own small server, started by the gateway, rather than being
+served as static files by the gateway. The app's server does real work:
 
 - it holds the sign-in (`/api/connection/gateway`, HttpOnly session cookies,
   CSRF) and forwards `/api/*` to the gateway on the same origin, which is how
@@ -253,40 +252,29 @@ not, because each app's server does real work:
 - Observer reveals local folders, Flow keeps its connection file, and
   Continuum proxies the agora hub.
 
-Serving the files alone would break sign-in and live updates in every app.
+This is why each app has its own port.
 
 ## Settings
 
-Settings, changed from the Apps page (*Advanced: apps settings*), the TUI
-(Runtimes → *Runtime knobs* → *Edit apps settings*) or the terminal
-(`abstractgateway apps config get|set NAME VALUE`). A saved value applies at the
-next app start or download. See
+Five settings control the apps: `apps.node` (*Node.js for apps*),
+`apps.ports` (*Ports for apps*), `apps.host` (*Where apps listen*),
+`apps.npm_registry` (*npm registry*) and `apps.pypi_url` (*Node.js download
+index*). Change them from the Apps page (*Advanced: apps settings*), the
+terminal console (Runtimes → *Runtime knobs* → *Edit apps settings*) or the
+CLI:
+
+```bash
+abstractgateway apps config get [NAME] [--json]
+abstractgateway apps config set ports 3100-3199     # "" clears back to the default
+```
+
+A saved value applies at the next app start or download. Values, defaults and
+the environment-variable fallbacks are listed in
 [configuration.md](./configuration.md#browser-apps-settings-apps).
 
-| Setting (console label) | Default | Effect | CLI | Legacy env (fallback) |
-|---|---|---|---|---|
-| `apps.node` (*Node.js for apps*) | `auto` | `auto`: Node.js on the machine, else the gateway's own. `managed`: always the gateway's own. `system`: never install Node.js. A path: use that `node`. | `apps config set node auto` | `ABSTRACTGATEWAY_APPS_NODE` |
-| `apps.ports` (*Ports for apps*) | (empty) | A port or range, e.g. `3100-3199`. When set, apps only use ports in it. | `apps config set ports 3100-3199` | `ABSTRACTGATEWAY_APPS_PORTS` |
-| `apps.host` (*Where apps listen*) | `127.0.0.1` | Where the apps listen. Other values expose them to the network: use your own access control. | `apps config set host 0.0.0.0` | `ABSTRACTGATEWAY_APPS_HOST` |
-| `apps.npm_registry` (*npm registry*) | `https://registry.npmjs.org` | npm registry (mirror) for app downloads and their dependencies. | `apps config set npm_registry URL` | `ABSTRACTGATEWAY_APPS_NPM_REGISTRY` |
-| `apps.pypi_url` (*Node.js download index*) | `https://pypi.org/pypi` | Where the Node.js build is looked up. | `apps config set pypi_url URL` | `ABSTRACTGATEWAY_APPS_PYPI_URL` |
-
-Console: Apps → *Advanced: apps settings* (one field per setting, with where its
-value comes from). TUI: Runtimes → *Runtime knobs* → *Edit apps settings*. CLI:
-`abstractgateway apps config get [NAME] [--json]` / `set NAME VALUE` (`""`
-clears), on the data dir directly. All three validate the same way and show the
-gateway's sentence on a refusal.
-
-The legacy environment variables are only a fallback: a saved value always wins
-(stored > env > default). A value that comes from the environment the gateway
-was started with is reported as `source: env` ("From the environment" on the
-page); an env value a saved one shadows is reported as `env_shadowed`.
-
-Installing Node.js or an app runs software on the gateway host, so it follows
-the host's **allow engine install** setting: on by default when the gateway
-listens on this machine only (loopback), off otherwise. Install, update,
-start and stop need an admin. Any signed-in user can list the apps and open a
-running one (as themselves).
+Install, update, start and stop need an admin, and installs follow
+[Who may install](#who-may-install). Any signed-in user can list the apps and
+open a running one (as themselves).
 
 ## Without internet
 
@@ -356,7 +344,7 @@ Python environment as the gateway; a gateway-only install may not.
   it was started from its command, the card says its icon is in the menu
   bar). The Assistant keeps its own connection settings (its Settings window,
   Connection): the gateway passes it no address and no token, and it has no
-  one-time sign-in handover yet.
+  one-time sign-in handover.
 - **From another computer** the card says "The Assistant runs on the gateway's
   computer: open it there." with no button: it is a desktop app for that
   computer's screen.

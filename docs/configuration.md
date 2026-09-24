@@ -1,6 +1,18 @@
 # AbstractGateway — Configuration
 
-AbstractGateway is configured primarily via **environment variables** (plus a few CLI flags).
+AbstractGateway is configured in three places:
+
+- **Runtime settings**, stored in the data dir and changed from the web
+  console, the terminal console, the tray or the CLI (`abstractgateway
+  network`, `abstractgateway apps config`, `abstractgateway config
+  get|set|unset`): network exposure, reverse proxy, browser apps, engine
+  installs, backlog folder, exec runner, process manager, stop kill switch.
+- **AbstractCore configuration** for capability defaults, provider keys and
+  other values AbstractCore owns (see [Two entry points, one store](#two-entry-points-one-store)).
+- **Launch flags and environment variables** for deployment choices such as
+  the data dir, auth mode, stores and limits.
+
+This page is the reference for all three.
 
 ## Install extras (recommended)
 
@@ -26,10 +38,11 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
-Default dependency floors:
-- `AbstractRuntime>=0.4.26`
-- `abstractagent>=0.3.12`
-- `AbstractMemory[lancedb]>=0.2.6`
+Default dependency floors (see `pyproject.toml`):
+- `AbstractRuntime>=0.4.34`
+- `abstractcore>=2.15.1`
+- `abstractagent>=0.3.13`
+- `AbstractMemory[lancedb]>=0.3.0`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.
@@ -83,7 +96,8 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
   unavailable, Gateway fails clearly instead of starting with an empty default
   registry. Setting this replaces the shipped registry with your own directory.
   Evidence: `src/abstractgateway/config.py`
-- `ABSTRACTGATEWAY_WORKFLOW_SOURCE`: `bundle` (default) or `visualflow`  
+- `ABSTRACTGATEWAY_WORKFLOW_SOURCE`: `bundle` (the default and only
+  supported source)  
   Evidence: `src/abstractgateway/service.py` (`create_default_gateway_service`)
 
 ### Authentication and user routing
@@ -104,8 +118,9 @@ The normal browser-console/browser-app path uses Gateway user auth:
   exists and writes the first-login token to
   `<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token` (mode `0600`). The
   token is printed on a loopback bind and hidden on other binds;
-  `serve --print-token` / `--no-print-token` override that (the older
-  `ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` still acts as `--print-token`). Until
+  `serve --print-token` / `--no-print-token` override that
+  (`ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1` is accepted as an alias of
+  `--print-token`). Until
   the first-run guide is completed, a one-time sign-in link
   (`/console#claim=...`, 10 minutes, single use, loopback only) is printed
   instead
@@ -113,17 +128,16 @@ The normal browser-console/browser-app path uses Gateway user auth:
   browser session; accepted only from a loopback peer without proxy headers.
   The response carries `claimed: true`, `first_run` (the guide state) and
   `claim: {created_by}`, which says who minted the link: `serve` (first run),
-  `cli` (`claim-url` / `abstractgateway claim`), `tray` (tray sign-in), or
-  `null` for a link minted before the field existed.
+  `cli` (`claim-url` / `abstractgateway claim`) or `tray` (tray sign-in).
   `GET /api/gateway/host/first-run` / `POST` (admin) read and record the
   first-run guide state
 
-Legacy server/operator mode uses a Gateway bearer token:
+Server/operator token mode uses a shared Gateway bearer token:
 
 - `ABSTRACTGATEWAY_AUTH_TOKEN`: single Gateway admin token
 - `ABSTRACTGATEWAY_AUTH_TOKENS`: comma-separated Gateway admin tokens
 
-That legacy bearer token maps to `local-admin` and is not accepted by browser
+That shared bearer token maps to `local-admin` and is not accepted by browser
 sign-in flows such as `/console` or AbstractFlow. User-auth mode resolves
 Gateway user bearer tokens to principals and routes each principal to a separate
 service/data plane:
@@ -182,6 +196,7 @@ AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
 current user/session in hosted mode. They should not share one app-server
 Gateway token for all users.
 
+<a id="network-exposure-localhost--local-network--internet"></a>
 ## Network exposure (localhost / local network / internet)
 
 One setting decides who can reach the gateway. The console, the console TUI
@@ -203,26 +218,26 @@ runtime-config key (`network`); there is no environment variable for it.
   `effective.overridden_by_cli: true`. A restart replays the same command
   line, so it cannot apply the setting: the status says so
   (`restart.applies: false` + `restart.reason`) and the restart route refuses.
-- **The login service lets the setting apply** (2026-09-24). The LaunchAgent,
+- **The login service lets the setting apply.** The LaunchAgent,
   systemd unit, XDG entry and Windows Run entry written by
   `abstractgateway service install|enable` start plain `serve`: no `--host`, no
   `--port`. Install/enable first **seed** the setting through the same change
   door as `network set` (same auth refusals; a refusal registers nothing):
-  nothing stored yet → `localhost` on the chosen port (the bind every earlier
-  registration had); a stored mode/port → kept. `service install|enable --host H
+  nothing stored yet → `localhost` on the chosen port; a stored mode/port →
+  kept. `service install|enable --host H
   --port P` are written **into the setting** (`127.0.0.1` → `localhost`,
   `0.0.0.0` → `lan`, or the stored `internet`; a specific address is refused),
   never onto the command line. `--pin-command-line` is the technical escape
-  hatch: `serve --host H --port P` on the command line as before, the setting
+  hatch: `serve --host H --port P` on the command line, the setting
   untouched and overridden (`overridden_by_cli`, `service status` names it).
-- **Registrations from before 2026-09-24 carry `--host/--port`.** `service
+- **A registration that pins `--host/--port` reads "needs repair".** `service
   status` (and the tray's *Start at login — needs repair*) says
   "pinned to 127.0.0.1:N by the login item — run `abstractgateway service enable`
   again to let the Network setting apply". `service enable` (or the tray click)
   rewrites the registration in place, keeping a stored mode. The gateway
-  running at that moment still has the old command line, which a restart
-  replays: `abstractgateway service install` restarts it from the new
-  registration now, or log out and back in.
+  running at that moment keeps its command line until it restarts:
+  `abstractgateway service install` restarts it from the new registration, or
+  log out and back in.
 - **Auth is checked before anything is stored.** `lan`/`internet` are refused
   (HTTP 409, nothing written, `refused_reason` + `fix`) when the gateway was
   started with authentication switched off (`ABSTRACTGATEWAY_SECURITY=0` /
@@ -586,7 +601,7 @@ returned job's `joined` counter says so.
 
 **Jobs run in AbstractCore's host job registry.** Downloads, deletes and
 engine installs are jobs of one kind (`host_job_v1`), readable at
-`GET /api/gateway/jobs/{id}` as well as through the older
+`GET /api/gateway/jobs/{id}` as well as through
 `GET /api/gateway/models/download/{job}` (which keeps its `{ok, job}` envelope
 and reports a queued job as `running`). AbstractCore keeps a snapshot of each
 job on disk, so jobs started by `abstractcore models download` on the same
@@ -608,7 +623,7 @@ engines …`): the host's hardware, the local inference engines, a model catalog
 with a "fits this machine" verdict per download, the models already installed,
 and the jobs that download, delete or install. The gateway does not detect
 engines or size models itself; it serves AbstractCore's answers
-(AbstractCore 2.14.0 or newer), so both entry points always agree.
+so both entry points always agree.
 
 | Endpoint | What it does |
 |---|---|
@@ -658,18 +673,18 @@ install is admin-only and recorded in the audit log.
 ### Browser apps settings (`apps.*`)
 
 The browser apps (Apps page: Flow, Code, Observer, Continuum, Entity) read five
-runtime-config settings. They replace the `ABSTRACTGATEWAY_APPS_*` environment
-variables, which remain the labeled fallback rung (precedence **stored > env >
-default**, the runtime-config rule: a saved value always wins; an env value it
-shadows is reported as `env_shadowed`).
+runtime settings. Precedence is **stored > env > default**: a saved value
+always wins; the `ABSTRACTGATEWAY_APPS_*` environment variable named in the
+table is the fallback, and an env value that a saved one shadows is reported
+as `env_shadowed`.
 
-| Key | Label | Default | Value |
-|---|---|---|---|
-| `apps.node` | Node.js for apps | `auto` | `auto` (Node.js 18+ on this computer, else the gateway's own) · `managed` · `system` · an absolute path to `node` |
-| `apps.ports` | Ports for apps | (empty) | a port or `low-high`; empty = each app's usual port, else the next free one in 3100-3199 |
-| `apps.host` | Where apps listen | `127.0.0.1` | an IP or host name; `0.0.0.0` opens the apps to every network this computer is on |
-| `apps.npm_registry` | npm registry | `https://registry.npmjs.org` | an http(s) URL (a mirror) |
-| `apps.pypi_url` | Node.js download index | `https://pypi.org/pypi` | an http(s) URL (a mirror) |
+| Key | Label | Default | Value | Environment fallback |
+|---|---|---|---|---|
+| `apps.node` | Node.js for apps | `auto` | `auto` (Node.js 18+ on this computer, else the gateway's own) · `managed` · `system` · an absolute path to `node` | `ABSTRACTGATEWAY_APPS_NODE` |
+| `apps.ports` | Ports for apps | (empty) | a port or `low-high`; empty = each app's usual port, else the next free one in 3100-3199 | `ABSTRACTGATEWAY_APPS_PORTS` |
+| `apps.host` | Where apps listen | `127.0.0.1` | an IP or host name; `0.0.0.0` opens the apps to every network this computer is on | `ABSTRACTGATEWAY_APPS_HOST` |
+| `apps.npm_registry` | npm registry | `https://registry.npmjs.org` | an http(s) URL (a mirror) | `ABSTRACTGATEWAY_APPS_NPM_REGISTRY` |
+| `apps.pypi_url` | Node.js download index | `https://pypi.org/pypi` | an http(s) URL (a mirror) | `ABSTRACTGATEWAY_APPS_PYPI_URL` |
 
 `GET /api/gateway/admin/runtime-config` returns them under `apps` as
 `{name: {key, label, help, placeholder, default, env_name, value, source,
@@ -717,8 +732,9 @@ triage and process routes, the exec runner at each poll, the skills shelf):
 1. the launch flag of the running gateway: `abstractgateway serve --backlog-root PATH`
    and `--exec-runner on|off` (for that run only; source `flag`);
 2. the saved setting (source `stored`);
-3. a legacy environment value, for gateways set up before these settings
-   existed (source `env`; reported, never needed; saving a value replaces it);
+3. an environment value (`ABSTRACTGATEWAY_TRIAGE_REPO_ROOT`,
+   `ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER`; source `env`;
+   supported for compatibility, never needed; a saved value wins);
 4. the default (source `default`).
 
 `GET /api/gateway/admin/runtime-config` serves each as `{value, source, key,
@@ -791,8 +807,8 @@ the `model_residency_row_v1` field list.
 
 ### Host control: pause, desktop tray, restart, update
 
-The process's own controls (system tray + console, 2026-09-05). Reads are
-user-level; every write is admin-only.
+The process's own controls, used by the desktop tray and the console. Reads
+are user-level; every write is admin-only.
 
 | Endpoint | What it does |
 |---|---|
@@ -809,9 +825,8 @@ user-level; every write is admin-only.
 The tray icon has **no setting**: while the gateway serves a desktop that can
 hold it, it is there. It is absent only for reasons that are facts about the
 machine — no display, no `tray` extra, `serve --reload`, a runner-only process
-— and `GET /host/tray` names which. (The retired `desktop_tray` knob now
-refuses with that explanation rather than accepting a write that does
-nothing.) `GET /api/health` carries `"paused": true` while paused (status
+— and `GET /host/tray` names which. There is no `desktop_tray` setting; a
+write to that key is refused with this explanation. `GET /api/health` carries `"paused": true` while paused (status
 stays `healthy`). Full description: [tray.md](./tray.md).
 
 ### Runtime-scoped Core capability defaults
@@ -836,9 +851,8 @@ remote-provider defaults for their own runtime without mutating the operator's
 global AbstractCore config or other users. The route schema, normalization,
 task-specific generated-media suffixes, and file format come from AbstractCore
 capability-default contracts. Capability defaults live only in the AbstractCore
-config file; a `config/capability_defaults.json` overlay from an older Gateway is
-ignored, and its defaults are recreated with `abstractgateway-config set-default
-...`. Provider API keys and raw secrets are
+config file; a `config/capability_defaults.json` file in the data dir is not
+read (recreate such defaults with `abstractgateway-config set-default ...`). Provider API keys and raw secrets are
 not returned by these routes. Use Gateway provider connections when a route
 default needs an API key or custom base URL.
 
@@ -872,7 +886,7 @@ abstractgateway-config defaults --scope user --user alice
 #### Modality rows and task rows
 
 `output.image`, `output.video` and `output.scene3d` are the **parent** rows of
-their `output.<modality>.<task>` siblings, not legacy duplicates of them. The
+their `output.<modality>.<task>` siblings, not duplicates of them. The
 parent answers every task of that modality that has no row of its own, so
 setting it alone is the simple path (one image model for generate, edit and
 upscale) and is what a fresh install seeds. A task row overrides it for that
@@ -1034,15 +1048,15 @@ Evidence: `src/abstractgateway/config.py`, `src/abstractgateway/runner.py`.
 
 ### Stop and the kill switch
 
-A `cancel` command (the Stop button) cancels the run tree AND stops the model
-call that is executing now: the runtime hands the call a cancel event and the
+A `cancel` command (the Stop button) cancels the run tree and also stops the
+model call that is executing: the runtime hands the call a cancel event and the
 provider stops within one token (MLX) or one stream chunk (any streaming
 provider). The stopped call is recorded as an `llm_call` step with status
 `cancelled` and `cancelled_by: command`.
 
 If a model call of the cancelled tree is still executing after the kill-switch
 deadline (a provider lane that cannot observe the event, e.g. a non-streaming
-HTTP request), the gateway kills THAT INFERENCE in process — never the gateway
+HTTP request), the gateway kills that inference in process, never the gateway
 process: other runs, sessions and the HTTP API keep working. The runtime
 injects an `EffectKilled` exception into the one thread executing the call (it
 unwinds within one token of a Python-level decode loop); the step is recorded
@@ -1179,8 +1193,8 @@ does not implicitly install them.
     `http://host.docker.internal:1234/v1`, or another `/v1` endpoint.
 - `LMSTUDIO_BASE_URL` / `OLLAMA_BASE_URL`: named local endpoint providers for
   LM Studio and Ollama model discovery/routing from inside the Gateway container.
-- `ABSTRACTGATEWAY_VISION_BACKEND` / `ABSTRACTGATEWAY_VISION_BASE_URL` / `ABSTRACTGATEWAY_VISION_API_KEY` / `ABSTRACTGATEWAY_VISION_MODEL_ID`: Gateway-scoped image backend settings. Legacy `ABSTRACTVISION_*` names are still accepted by the lower package.
-- `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE`: Gateway-scoped voice engine settings. Legacy `ABSTRACTVOICE_*` names are still accepted by the lower package.
+- `ABSTRACTGATEWAY_VISION_BACKEND` / `ABSTRACTGATEWAY_VISION_BASE_URL` / `ABSTRACTGATEWAY_VISION_API_KEY` / `ABSTRACTGATEWAY_VISION_MODEL_ID`: Gateway-scoped image backend settings. The `ABSTRACTVISION_*` names are also accepted by the lower package.
+- `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE`: Gateway-scoped voice engine settings. The `ABSTRACTVOICE_*` names are also accepted by the lower package.
 - `ABSTRACTGATEWAY_VOICE_TTS_MODEL` / `ABSTRACTGATEWAY_VOICE_STT_MODEL`: Gateway-scoped TTS/STT model defaults.
 - `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL` / `ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice.
 - `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls

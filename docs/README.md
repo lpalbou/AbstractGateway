@@ -1,46 +1,63 @@
 # AbstractGateway docs
 
-Start here if you’re new to the project.
+AbstractGateway is the durable run gateway and control plane of
+AbstractFramework: it starts and replays AbstractRuntime runs over HTTP/SSE,
+and lets you manage users, providers, models, local engines, browser apps and
+network access from a web console, a terminal console, the CLI or a desktop
+tray icon.
+
+New here? Start with [first-run.md](./first-run.md) on your own machine, or
+[getting-started.md](./getting-started.md) for an explicit setup.
 
 ## AbstractFramework ecosystem
 
-AbstractGateway is one component in the larger AbstractFramework ecosystem:
-
-- **AbstractRuntime** (required): durable runs + stores
-- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image/video plus voice/audio/music capabilities, and KG-backed bundle execution
-- Higher-level UIs (optional): AbstractFlow / AbstractObserver / AbstractCode / thin clients
+- **AbstractRuntime** (required): durable runs, workflow registry, stores.
+- **AbstractCore**, **AbstractAgent**, **AbstractMemory** (installed with the
+  gateway): providers, tools and media capabilities through Runtime's
+  facades, agent nodes, and KG memory.
+- Apps that use the gateway (optional): AbstractFlow, AbstractCode,
+  AbstractObserver, AbstractContinuum, AbstractEntity, AbstractAssistant.
 
 Related repos:
-- AbstractFramework: https://github.com/lpalbou/AbstractFramework
-- AbstractCore: https://github.com/lpalbou/abstractcore
-- AbstractRuntime: https://github.com/lpalbou/abstractruntime
+[AbstractFramework](https://github.com/lpalbou/AbstractFramework) ·
+[AbstractCore](https://github.com/lpalbou/abstractcore) ·
+[AbstractRuntime](https://github.com/lpalbou/abstractruntime)
 
-## Docs map
+## Core docs
 
-- First run on your own machine (no configuration, one-time sign-in link, start at login): [first-run.md](./first-run.md)
-- Quickstart + stores (file/SQLite): [getting-started.md](./getting-started.md)
-- FAQ / troubleshooting: [faq.md](./faq.md)
-- Architecture (durable contract + components): [architecture.md](./architecture.md)
-- Configuration (env vars + install extras): [configuration.md](./configuration.md)
-- Consoles: the web console at `/console` and the `abstractgateway-console` terminal app: [console.md](./console.md)
-- Desktop tray icon: [tray.md](./tray.md)
-- Browser apps (install, start and open Flow, Code, Observer, Continuum, Entity from the gateway; Node.js installed for you): [apps.md](./apps.md)
-- Local engines (install Ollama, LM Studio, MLX, llama.cpp without a terminal; when the Apple tools or an administrator password are needed): [engines.md](./engines.md)
-- Model downloads (progress, stalls, cancel, "Use recommended defaults" as one job, the event stream): [model-downloads.md](./model-downloads.md)
-- Summoned entities: [entities.md](./entities.md)
-- Apple Silicon local Gateway + Flow quickstart: [apple-local-gateway-flow.md](./apple-local-gateway-flow.md)
-- Deployment (Docker/GHCR/Compose): [deployment.md](./deployment.md)
-- API overview (client contract + OpenAPI, including host state/model residency, direct image/video, STT, and music generation): [api.md](./api.md)
-- Shipped workflows served out of the box (coder, deep research, co-scientist): [shipped-workflows.md](./shipped-workflows.md)
-- Shipped `deep-research` workflow bundle: [deep-research.md](./deep-research.md)
-- Security guide (auth/origin/limits/audit log): [security.md](./security.md)
-- Operator tooling (triage/backlog/process manager): [maintenance.md](./maintenance.md)
+| Page | Read it for |
+|---|---|
+| [first-run.md](./first-run.md) | the zero-configuration start on your own machine: one-time sign-in link, first-run guide, start at login |
+| [getting-started.md](./getting-started.md) | explicit setup: bundles, starting and scheduling runs, split API/runner, file vs SQLite stores |
+| [architecture.md](./architecture.md) | components, diagrams, the replay-first durable contract, deployment shapes |
+| [api.md](./api.md) | the client contract with curl examples, discovery, media, models, host state; map of every route family |
+| [configuration.md](./configuration.md) | every setting: runtime settings, network exposure, apps, backlog, capability defaults, environment variables, CLI flags |
+| [faq.md](./faq.md) | recurring questions and limits |
+| [troubleshooting.md](./troubleshooting.md) | symptoms, causes and fixes: sign-in, network modes, runs, installs, downloads, tray, login service |
 
-## API docs (generated)
+## Topic guides
 
-Published static docs site: https://www.lpalbou.info/AbstractGateway/
+| Page | Read it for |
+|---|---|
+| [console.md](./console.md) | the web console at `/console` (every tab) and the `abstractgateway-console` terminal app |
+| [apps.md](./apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
+| [engines.md](./engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
+| [model-downloads.md](./model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
+| [tray.md](./tray.md) | the desktop tray icon: apps, models, pause, start at login, network, restart and update |
+| [security.md](./security.md) | user accounts, sessions, origins, network exposure, workspace scope, limits, audit log |
+| [deployment.md](./deployment.md) | Docker images, Compose, provider variables, single machine without Docker |
+| [shipped-workflows.md](./shipped-workflows.md) | the workflows a fresh install serves (coding agent, deep research, co-scientist, …) and managing the registry |
+| [deep-research.md](./deep-research.md) | the shipped `deep-research` workflow contract |
+| [entities.md](./entities.md) | summoned entities: homes, lifecycle, summoning, replay |
+| [apple-local-gateway-flow.md](./apple-local-gateway-flow.md) | an Apple Silicon local Gateway + Flow setup with local engines |
+| [maintenance.md](./maintenance.md) | operator tooling: reports, triage, backlog, exec runner, process manager, bridges (high trust) |
 
-When the HTTP server is running (`abstractgateway serve`):
+## API reference (generated)
+
+Published docs site: https://www.lpalbou.info/AbstractGateway/
+
+When the server is running (`abstractgateway serve`):
+
 - Health: `GET /api/health`
 - OpenAPI JSON: `GET /openapi.json`
 - Interactive Swagger UI: `GET /docs`
@@ -48,7 +65,9 @@ When the HTTP server is running (`abstractgateway serve`):
 ## Project docs
 
 - Package README: [../README.md](../README.md)
-- Changelog: [../CHANGELOG.md](../CHANGELOG.md) (compat: `CHANGELOD.md`)
+- Changelog: [../CHANGELOG.md](../CHANGELOG.md)
 - Contributing: [../CONTRIBUTING.md](../CONTRIBUTING.md)
+- Code of conduct: [../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md)
 - Security policy (vulnerability reporting): [../SECURITY.md](../SECURITY.md)
-- Acknowledgments: [../ACKNOWLEDGMENTS.md](../ACKNOWLEDGMENTS.md) (compat: `ACKNOWLEDMENTS.md`)
+- Acknowledgments: [../ACKNOWLEDGMENTS.md](../ACKNOWLEDGMENTS.md)
+- License: [../LICENSE](../LICENSE)

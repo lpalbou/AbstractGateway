@@ -96,17 +96,20 @@ curl -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
 ```
 
 If these return only `gateway_static` defaults, stop the Gateway process and
-restart the one from this venv. A common mistake is leaving an older globally
-installed `abstractgateway serve --port 8080` process running.
+restart the one from this venv. Check that no other `abstractgateway serve`
+process (for example from a global install) still holds port 8080.
 
 ## 5. Start Flow
 
 ```bash
-npx @abstractframework/flow --gateway-url http://127.0.0.1:8080 --port 3003
+npx @abstractframework/flow --gateway-url http://127.0.0.1:8080 --port 3005
 ```
 
-Open `http://127.0.0.1:3003` and sign in as Gateway user `admin` with
+Open `http://127.0.0.1:3005` and sign in as Gateway user `admin` with
 `$GATEWAY_ADMIN_TOKEN`.
+
+You can also install and open Flow from the console's **Apps** tab, which
+signs you in for you ([apps.md](./apps.md)).
 
 In the editor, media nodes use Gateway catalogs:
 

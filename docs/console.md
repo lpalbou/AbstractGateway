@@ -19,34 +19,37 @@ see [configuration.md](./configuration.md). For the endpoints themselves, see
 Start the gateway and open `http://<host>:<port>/console`:
 
 ```bash
-abstractgateway serve --host 127.0.0.1 --port 8081
-# then open http://127.0.0.1:8081/console
+abstractgateway serve
+# then open http://127.0.0.1:8080/console
 ```
 
-The console uses the current origin, so it never asks for a gateway URL. With
-user auth enabled, the first-login token is written to
-`<ABSTRACTGATEWAY_DATA_DIR>/auth/bootstrap-admin-token`. The console covers:
+On a first run, `serve` prints a one-time link that signs you in
+([first-run.md](./first-run.md)); `abstractgateway claim --open` prints a new
+one. The console uses the current origin, so it never asks for a gateway URL.
+You can also sign in with a user id and token (the admin's first token is in
+`<data dir>/auth/bootstrap-admin-token`).
 
-- **Users & runtimes:** user records, token rotation, retained runtime
-  reservations, the runtime inventory with sessions, data and caches.
-- **Providers:** provider connections (OpenAI, Anthropic, OpenRouter, Portkey,
-  LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys.
-- **Multimodal capabilities:** capability route defaults, the text reasoning
-  effort, and the MTP (speculative decoding) default.
-- **Workflows:** every registered workflow with versions and entrypoints,
-  import/export/delete, and versions that are not served (with the reason).
-- **Sandbox:** quick chat and media generation against the configured defaults.
-- **Resources:** memory/GPU meters, resident models (warm up, lock, unload),
-  and session prompt caches.
-- **Entities:** summoned-entity roster and management (see
-  [entities.md](./entities.md)).
-- **Models:** browse models that fit this machine, download them, and delete
-  the ones you no longer need (details below).
-- **Engines:** the local engines on the gateway host (Ollama, LM Studio, MLX,
-  llama.cpp, vLLM, Hugging Face): installed or not, running or not, and a
-  one-click install (details below).
-- **Apps:** the browser apps (Flow Editor, Code, Observer, Continuum, Entity):
-  install, open, and Code's terminal version (details below).
+The sidebar lists these tabs:
+
+| Tab | What it covers |
+|---|---|
+| **Users & Entities** | user records, token rotation, retained runtime reservations, and the summoned-entity roster ([entities.md](./entities.md)) |
+| **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
+| **Workflows** | every registered workflow with versions and entrypoints, import, export, delete, and versions that are not served (with the reason) |
+| **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
+| **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
+| **Sandbox** | quick chat and media generation against the configured defaults |
+| **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon) |
+| **Models** | browse models that fit this machine, download them, delete installed ones (below) |
+| **Engines** | the local engines on the gateway host: installed or not, running or not, install, start, stop (below) |
+| **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
+| **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, and *Advanced: reverse proxy* ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
+
+The **Technical details** switch at the bottom of the sidebar shows commands,
+route ids and other technical information throughout the console. The top bar
+holds the docs assistant (answers grounded on this gateway's documentation),
+the appearance settings, the **Setup** button that reopens the first-run guide
+(admins), and the sign-out control.
 
 ### Models and Engines tabs
 
@@ -56,8 +59,7 @@ on. The catalog data, the presence checks and the fit verdicts come from
 AbstractCore (`GET /api/gateway/models/catalog`, contract `model_catalog_v1`);
 downloads are the gateway's own jobs (see [Model downloads](model-downloads.md)).
 
-**Models** (tab id `catalog`; the older **Resources** tab keeps id `models`)
-shows the catalog as **one card per model**:
+**Models** (tab id `catalog`) shows the catalog as **one card per model**:
 
 - The card header: the model's name, organisation, parameter count and
   licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
@@ -78,8 +80,8 @@ shows the catalog as **one card per model**:
   setup guide), then **Use as default** once a text model is downloaded (it
   sets the default text model, like the Multimodal tab).
 - Many models have 8-bit builds next to the 4-bit ones when upstream publishes
-  them (MLX `-8bit` repositories, Ollama `-q8_0` tags, GGUF `Q8_0` files, LM
-  Studio `@8bit`). Every build the catalog knows is listed; nothing is cut off.
+  them (MLX `-8bit` repositories, Ollama `-q8_0` tags, GGUF `Q8_0` files).
+  Every build the catalog knows is listed; nothing is cut off.
 
 The filter bar above the cards:
 
@@ -87,11 +89,7 @@ The filter bar above the cards:
   must match). **Escape** clears it.
 - **Quantization**: All, 4-bit, 8-bit, Other (every other class: 16-bit, full
   precision, 2/3/5/6-bit and builds whose reference names no quantization).
-  The classes come from AbstractCore's `quant_class` field. A gateway whose
-  AbstractCore is older than that field shows the notice "This gateway's
-  catalog does not report quant_class yet", and the quantization filter stays
-  off until AbstractCore is updated on the gateway host; every build is still
-  listed.
+  The classes come from AbstractCore's `quant_class` field.
 - **Catalog / Hugging Face**: the switch left of the search box. In
   **Hugging Face** mode, type a name and press **Enter** (or **Search**): the
   gateway searches the Hugging Face Hub (answers are cached for 24 hours) and
@@ -131,13 +129,19 @@ engine's builds.
 
 **Engines** (tab id `engines`):
 
-- One row per engine: supported on this host, installed, version, running,
-  reachable, base URL and model count.
-- **Install** opens a confirmation that shows the exact command it will run
-  and the host it runs on, with a **Preview (dry run)** button that asks the
-  gateway what it would run without running it.
-  **Open download page** links to the vendor page (LM Studio is installed from
-  its download page).
+- One card per engine with a status pill (Ready, Running, Installing, Needs
+  your approval, Needs Apple tools, Not installed, Not for this computer),
+  its version, base URL and model count, and one primary action for its
+  state: **Install**, **Start**, **Stop**, **Continue with administrator
+  password**, **Install tools** or **Try again**.
+- **Install** opens a confirmation that shows what will run and the host it
+  runs on, with a **Preview (dry run)** button. Ollama and LM Studio offer
+  "Install" (just for you, no password) and, when that plan needs an
+  administrator, "Install for all users (administrator)". What each install
+  does, engine by engine: [engines.md](./engines.md).
+- An install shows its progress on the card, one plain sentence first and the
+  full log behind **Show details**. **Open download page** links to the
+  vendor page.
 
 Keys (when the tab is visible and you are not typing in a field): `/` search,
 `f` fits-only on/off, `r` refresh; on a focused row `w` download, `d` delete,
@@ -159,10 +163,9 @@ Who can do what:
   the equivalent command, for example
   `abstractgateway models download ollama qwen3:8b`.
 
-If the gateway's AbstractCore is older than 2.14.0, both tabs show a card saying
-so, with the version installed and the upgrade command
-(`pip install -U "abstractcore>=2.14.0"`); the rest of the console works as
-before.
+If AbstractCore on the gateway host is missing or too old for these routes,
+both tabs show a card with the installed version and the upgrade command; the
+rest of the console keeps working.
 
 ### Apps tab
 
@@ -235,7 +238,7 @@ Connect it to a running gateway. Pass the token through the environment rather
 than on the command line:
 
 ```bash
-ABSTRACTGATEWAY_AUTH_TOKEN=... abstractgateway-console --url http://127.0.0.1:8081
+ABSTRACTGATEWAY_AUTH_TOKEN=... abstractgateway-console --url http://127.0.0.1:8080
 abstractgateway-console --help
 ```
 
@@ -279,9 +282,9 @@ The same model routes the consoles drive are available from the Python CLI
 against a running gateway:
 
 ```bash
-abstractgateway models loaded --url http://127.0.0.1:8081
-abstractgateway models load   --url http://127.0.0.1:8081 --provider ollama --model qwen3:4b
-abstractgateway models unload --url http://127.0.0.1:8081 --provider ollama --model qwen3:4b
+abstractgateway models loaded --url http://127.0.0.1:8080
+abstractgateway models load   --url http://127.0.0.1:8080 --provider ollama --model qwen3:4b
+abstractgateway models unload --url http://127.0.0.1:8080 --provider ollama --model qwen3:4b
 ```
 
 The token comes from `--token` or `ABSTRACTGATEWAY_AUTH_TOKEN`, and the URL from

@@ -1,16 +1,21 @@
 # AbstractGateway — FAQ
 
-This FAQ is written for first-time users integrating or operating `abstractgateway`.
-For the full API surface, rely on the live OpenAPI spec (`/openapi.json`, `/docs`) which is generated from code.
+This FAQ answers recurring questions from people integrating or operating
+`abstractgateway`. For symptom-by-symptom fixes, see
+[troubleshooting.md](./troubleshooting.md). For the full API surface, use the
+live OpenAPI spec (`/openapi.json`, `/docs`), which is generated from the code.
 
 ## Getting started
 
 ### What is AbstractGateway?
 
 AbstractGateway is a **durable run gateway** for AbstractRuntime:
-- starts runs from workflows (bundle mode or visualflow directory mode)
+- starts runs from `.flow` workflow bundles
 - accepts a **durable command inbox** (commands are appended, then applied asynchronously by the runner)
 - exposes a **replay-first ledger** API (SSE is optional)
+- is the control plane of an AbstractFramework installation: users, providers,
+  capability defaults, local engines, models, browser apps and network
+  exposure, from the web console, the terminal console, the CLI or the tray
 
 Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.py`, `src/abstractgateway/service.py`.
 
@@ -18,7 +23,7 @@ Evidence: `src/abstractgateway/routes/gateway.py`, `src/abstractgateway/runner.p
 
 - **AbstractRuntime** (required): the durable run model + tick loop + stores (declared in `pyproject.toml`).
 - **AbstractGateway** (this repo): a deployable HTTP/SSE facade around AbstractRuntime runs (API in `src/abstractgateway/routes/gateway.py`).
-- **AbstractRuntime + transitive capability packages** (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image plus voice/audio/music capabilities, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`).
+- **AbstractCore, AbstractAgent, AbstractMemory** (installed with the gateway): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery and run facades for prompt-cache controls, generated and edited media, voice, audio and music, and KG-backed bundle execution (`src/abstractgateway/hosts/bundle_host.py`).
 - Higher-level UIs (optional): AbstractFlow (authoring/bundling), AbstractObserver / AbstractCode / thin clients (operations + rendering).
 
 Related repos:
@@ -35,55 +40,54 @@ Not for **bundle mode** (the default).
 
 Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation).
 
-### What’s the difference between bundle mode and visualflow directory mode?
+### Can the gateway run VisualFlow JSON files directly?
 
-- **Bundle mode** (`ABSTRACTGATEWAY_WORKFLOW_SOURCE=bundle`, default):
-  - input: one `.flow` file or a directory of `*.flow`
-  - versioning: bundles are addressed as `bundle_id@bundle_version`
-- **VisualFlow directory mode**: removed. Use VisualFlow CRUD + publish to `.flow` bundles, then run in bundle mode.
+No. Bundle mode is the only workflow source:
 
-Evidence: `src/abstractgateway/service.py` (workflow source switch), `src/abstractgateway/hosts/bundle_host.py`.
+- input: one `.flow` file or a directory of `*.flow` bundles
+  (`ABSTRACTGATEWAY_FLOWS_DIR`; the shipped bundles when unset);
+- versioning: bundles are addressed as `bundle_id@bundle_version`.
+
+Store VisualFlows through `/api/gateway/visualflows/*` and publish them as a
+`.flow` bundle with `POST /api/gateway/visualflows/{flow_id}/publish`.
+
+Evidence: `src/abstractgateway/service.py`, `src/abstractgateway/hosts/bundle_host.py`.
 
 ## Security
 
-### Why does `abstractgateway serve` refuse to start?
+### Do I need to configure authentication?
 
-By default, the server requires either Gateway user auth or a legacy
-server/operator bearer token for `/api/gateway/*` and will fail fast if neither
-is configured.
+Not on your own computer. A plain `abstractgateway serve` with nothing
+configured binds `127.0.0.1`, turns user accounts on, creates the admin
+account and prints a one-time sign-in link ([first-run.md](./first-run.md)).
 
-Recommended browser-app fix:
+To let other devices reach the gateway, choose the **network setting**
+(`abstractgateway network set lan`, the console's **Network** tab or the
+tray); user accounts stay on. A `--host 0.0.0.0` without any auth posture is
+refused ([troubleshooting.md](./troubleshooting.md#serve-says-refusing-to-start-no-sign-in-would-protect-this-gateway)).
 
-```bash
-export ABSTRACTGATEWAY_USER_AUTH=1
-export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
-abstractgateway serve --host 127.0.0.1 --port 8080
+`ABSTRACTGATEWAY_AUTH_TOKEN` is a shared server/operator token that maps to
+`local-admin`; it is not a browser sign-in token. Use user accounts for the
+console and the browser apps.
 
-# Use user admin plus this token for first login.
-cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token"
-```
+Evidence: `src/abstractgateway/cli.py` (`serve`), `src/abstractgateway/first_run.py`.
 
-Use `ABSTRACTGATEWAY_AUTH_TOKEN` only for legacy server/operator bearer-token
-deployments; it maps to `local-admin` and is not a browser sign-in token.
+### What is the difference between the bind address and the allowed origins?
 
-Evidence: startup self-check in `src/abstractgateway/cli.py`, policy loading in `src/abstractgateway/security/gateway_security.py`.
-
-### What’s the difference between `--host` and `ABSTRACTGATEWAY_ALLOWED_ORIGINS`?
-
-- `abstractgateway serve --host ...` controls the **bind address** (network interfaces the server listens on).
-- `ABSTRACTGATEWAY_ALLOWED_ORIGINS` controls an **Origin allowlist** for requests that include an `Origin` header (browser/origin defense) on `/api/gateway/*`.
+- The bind address decides which network interfaces the server listens on.
+  Set it with the network setting (`localhost`, `lan`, `internet`);
+  `serve --host` overrides it for one run.
+- The origin allowlist decides which browser pages may call `/api/gateway/*`
+  (requests that carry an `Origin` header). Add origins with
+  `abstractgateway network set --allowed-origins …`;
+  `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in the launch environment pins it.
 
 Evidence: CLI flags in `src/abstractgateway/cli.py`, origin checks in `src/abstractgateway/security/gateway_security.py`.
 
 ### Why do I get `401` / `403` / `429` / `413` from `/api/gateway/*`?
 
-Common causes:
-- `401 Unauthorized`: missing/invalid `Authorization: Bearer <token>`
-- `403 Forbidden (origin not allowed)`: browser `Origin` not matched by `ABSTRACTGATEWAY_ALLOWED_ORIGINS`
-- `429 Too Many Requests (auth lockout)`: repeated auth failures from the same client IP (lockout backoff)
-- `413 Payload Too Large`: request exceeds configured body/upload limits
-
-Evidence: `GatewaySecurityMiddleware.__call__` in `src/abstractgateway/security/gateway_security.py`.
+See the status table in
+[troubleshooting.md](./troubleshooting.md#401-403-429-or-413-from-apigateway).
 
 ### Can I disable security (dev only)?
 
@@ -159,31 +163,16 @@ When starting runs in bundle mode you can select versions in two ways:
 
 Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start_run`).
 
-### My bundle fails with “LLM/tool execution requires AbstractCore integration”
+### Where does a bundle's default model come from?
 
-AbstractRuntime’s AbstractCore integration is included by the base
-`abstractgateway` install. If this error appears, verify the installed package set with
-`pip show AbstractRuntime abstractcore`.
+From the execution-host `input.text` capability route (the console's
+**Multimodal** tab, **Use as default** in **Models**, or
+`abstractgateway-config set-default input.text …`). A flow can also pin a
+provider and model on its `llm_call` or `agent` nodes. When nothing is
+configured, the run fails with a clear configuration error; see
+[troubleshooting.md](./troubleshooting.md#llm-nodes-but-no-default-providermodel-is-configured).
 
-Evidence: `src/abstractgateway/hosts/bundle_host.py` (imports under `needs_llm/needs_tools`).
-
-### My bundle fails with “LLM nodes but no default provider/model is configured”
-
-Configure the execution-host `input.text` route:
-
-```bash
-abstractgateway-config set-default input.text \
-  --provider lmstudio \
-  --model qwen/qwen3.6-35b-a3b \
-  --base-url http://127.0.0.1:1234/v1
-```
-
-Alternatives:
-- Pin provider/model on at least one `llm_call` or `agent` node; the gateway scans the flow JSON for defaults.
-- Keep provider secrets in `abstractcore-config`; use `--base-url` on the capability route when the
-  selected provider endpoint is not the provider default.
-
-Evidence: `_scan_flows_for_llm_defaults` + provider/model selection in `src/abstractgateway/hosts/bundle_host.py`.
+Evidence: `src/abstractgateway/provider_defaults.py`, `src/abstractgateway/hosts/bundle_host.py`.
 
 ### Why do tool calls not execute?
 
@@ -195,29 +184,6 @@ In bundle mode, tool execution is controlled by:
 - `ABSTRACTGATEWAY_TOOL_MODE=local` (or `local_all`): tools execute inside the gateway process without approval (dev only; unsafe).
 
 Evidence: tool executor selection in `src/abstractgateway/hosts/bundle_host.py`.
-
-### Why do `/voice/tts` or `/audio/transcribe` fail with “capability unavailable”?
-
-Those endpoints are surfaced through Runtime's voice/audio integration path and
-the required capability packages are included by the base `abstractgateway`
-install. Verify the installed package set with:
-
-```bash
-pip show abstractgateway AbstractRuntime abstractcore
-```
-
-By default, the gateway allows the configured voice backend to download models on first use. If you disabled downloads (or want to enable them explicitly), set:
-
-```bash
-export ABSTRACTGATEWAY_VOICE_ALLOW_DOWNLOADS=1
-```
-
-For remote/OpenAI-compatible voice backends, configure the Gateway-scoped voice
-environment variables in the gateway process, for example
-`ABSTRACTGATEWAY_VOICE_TTS_ENGINE`, `ABSTRACTGATEWAY_VOICE_STT_ENGINE`,
-`ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL`, and
-`ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY` (legacy `ABSTRACTVOICE_*` names still
-work).
 
 ### How do I enable generated images, edited images, generated music, or other Runtime-managed multimodal outputs?
 
@@ -289,26 +255,18 @@ higher-app contract that tells clients how to handle local capture:
 This keeps live capture UX owned by higher apps such as Assistant or Observer
 while Gateway stays responsible for durable runs, artifacts, and transcription.
 
-### Are catalog responses fully normalized by Gateway?
+### Are catalog responses normalized by Gateway?
 
-Not yet.
+Catalog routes carry a Gateway-owned envelope: `catalog` (contract
+`gateway_catalog_v1`, version, kind, scope and source) plus a canonical
+`items` array. Read those. The lower-layer fields (`models`, `providers`,
+`provider_models`, `profiles`, `voices`) stay in the payload for
+compatibility, and their shapes differ from route to route.
 
-Gateway already owns the route family and the thin-client contract pointers for
-provider/model discovery, but some catalog response bodies still preserve
-lower-layer shape differences. Higher apps like Flow currently normalize a few
-legacy variants when reading model/provider catalogs.
-
-What is stable today:
-
-- which discovery routes exist
-- which contract fields point at those routes
-- which media tasks and direct endpoints are available
-
-What is not yet versioned as a strict Gateway contract:
-
-- one canonical provider/model catalog response envelope across text, vision,
-  voice, STT, and music
-- a dedicated deployment/readiness block for operator dashboards
+The capabilities contract also carries `common.readiness`, a compact summary
+of Gateway-owned surface readiness. Deeper backend and provider diagnostics
+belong to Runtime and AbstractCore, and the gateway reports them only when
+those layers expose them. See [api.md](./api.md#discovery-endpoints-optional).
 
 ### What does Gateway session prompt-cache orchestration include?
 
@@ -321,48 +279,30 @@ rebuild, and clear using deterministic session keys.
 This is Gateway-owned naming and orchestration over provider controls, not a
 provider-independent local KV cache or full CachedSession persistence system.
 
-### My bundle fails with “Visual Agent nodes require AbstractAgent”
+### Which KG memory backend should I use?
 
-AbstractAgent is included by the base `abstractgateway` install. Verify the
-installed package set with:
-
-```bash
-pip show abstractgateway abstractagent
-```
-
-Evidence: agent workflow registration in `src/abstractgateway/hosts/bundle_host.py`.
-
-### My bundle fails with “memory_kg_* nodes … install abstractmemory”
-
-`memory_kg_*` nodes use Gateway's AbstractMemory TripleStore integration,
-included by the base `abstractgateway` install.
-
-Keep the default `lancedb` backend for durable vector-capable memory, use
-`memory` for process-local dev/test memory, or set
+Keep the default `lancedb` backend for durable, vector-capable memory; use
+`memory` for process-local dev/test memory; set
 `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite` only when your installed
-AbstractMemory build exposes `SQLiteTripleStore`.
+AbstractMemory exposes `SQLiteTripleStore`. A fresh persistent store is
+reported as available: structured queries return no matches until a flow
+asserts triples.
 
-A fresh persistent store does not make KG memory unavailable. Capability
-discovery treats the surface as available once AbstractMemory is installed and
-the configured backend resolves; empty structured queries return empty results
-until a flow asserts triples.
-
-Evidence: memory KG wiring in `src/abstractgateway/memory_store.py` and
-`src/abstractgateway/hosts/bundle_host.py`.
+Evidence: `src/abstractgateway/memory_store.py`.
 
 ## Desktop tray
 
 ### How do I get the menu bar / tray icon, and why is there none?
 
-Install the extra — `pip install "abstractgateway[tray]"` — and start the
-gateway with `abstractgateway serve` on a desktop session. The boot log says
-what happened: `Desktop tray: started (pid …)`, or `not started` with the
-reason (`missing_dependency`, `disabled_by_setting`, `dev_reload`). Headless
-hosts (SSH, containers, services) never start it and stay silent. On Linux the
-GTK/AppIndicator bindings are needed (`python3-gi` +
-`gir1.2-ayatanaappindicator3-0.1`); GNOME also needs the AppIndicator
-extension. The switch lives in Console → Resources → Gateway. Details:
-[tray.md](./tray.md).
+Install the extra (`pip install "abstractgateway[tray]"`) and start the
+gateway with `abstractgateway serve` on a desktop session. The icon has no
+on/off setting: while the gateway serves a desktop that can show it, it is
+there. The boot log says `Desktop tray: started (pid …)` or names the reason
+it is absent (`missing_dependency`, `headless`, `dev_reload`, `runner_only`);
+the console's **Resources** tab shows the same. On Linux the GTK/AppIndicator
+bindings are needed; GNOME also needs the AppIndicator extension. Details:
+[tray.md](./tray.md) and
+[troubleshooting.md](./troubleshooting.md#there-is-no-tray-icon).
 
 ### What does "Pause Workflows" actually stop?
 
@@ -391,6 +331,7 @@ Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle
 ## Related docs
 
 - Docs index: [README.md](./README.md)
+- Troubleshooting: [troubleshooting.md](./troubleshooting.md)
 - Getting started: [getting-started.md](./getting-started.md)
 - API overview: [api.md](./api.md)
 - Security: [security.md](./security.md)

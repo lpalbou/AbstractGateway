@@ -18,8 +18,8 @@ renders.
 | **vLLM** | not supported (the row says why; no Install button) | Linux with an NVIDIA GPU: the vLLM wheels into the gateway's Python | no |
 | **Hugging Face** | `abstractcore[huggingface]` at the installed AbstractCore version (several GB) | same | no |
 
-Windows keeps the vendor commands AbstractCore plans (winget / the vendor
-PowerShell installers / pip); the flow on this page is not yet exercised there.
+On Windows (experimental), installs use the vendor commands AbstractCore
+plans (winget, the vendor PowerShell installers, pip).
 
 Everything the gateway's own Python receives is installed with the gateway's
 `abstract*` packages pinned to the versions it runs, so an engine install can
@@ -115,7 +115,7 @@ percent}], result, error {code, message}, started_at, updated_at,
 finished_at`. `state` is one of `queued, downloading, installing, needs_admin,
 needs_tools, done, failed, cancelled`. While a step runs quietly, `message`
 says so at least every 3 seconds (`… (still working, 45 s)`). The job also
-carries `status` (`host_job_v1` words) so older clients polling
-`GET /jobs/{id}` keep working.
+carries `status` (`host_job_v1` words) so clients polling `GET /jobs/{id}`
+read the same lifecycle as other host jobs.
 
 Jobs live in the gateway process: a restart forgets them (the log files stay).
