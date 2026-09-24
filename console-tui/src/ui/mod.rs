@@ -8,6 +8,7 @@
 pub mod connection;
 pub mod entity_manage;
 pub mod models;
+pub mod network;
 pub mod providers;
 pub mod review;
 pub mod routes;
@@ -417,6 +418,14 @@ impl Ctx {
         // budgets (a fresh `r` means "try again", including the probe).
         s.conn_retry_spent.set(Vec::new());
         match screen {
+            0 => {
+                // Connection: the network exposure panel's read (the
+                // probe itself stays the Probe button's job).
+                if s.conn.with_untracked(crate::store::ConnPhase::is_connected) {
+                    s.network.set(Loadable::Loading);
+                    self.send(Cmd::LoadNetwork);
+                }
+            }
             1 => {
                 s.profiles.set(Loadable::Loading);
                 s.providers.set(Loadable::Loading);

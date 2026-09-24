@@ -144,6 +144,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 None => line(vec![span("no probe has run yet", t.text_faint)]),
             }
         }))
+        // Who can reach this gateway (localhost / LAN / internet) and the
+        // addresses to copy — the gateway's `gateway_network_v1` verdicts.
+        .child(super::network::panel(cx, ctx, t))
         .element(t)
         .build()
 }
@@ -178,7 +181,7 @@ fn status_view(t: &TokenSet, conn: &ConnPhase, token_source: Option<String>) -> 
             .child(line(vec![span(format!("  {msg}"), t.text)]))
             .child(source_line(t))
             .child(line(vec![span(
-                "  the gateway is reachable but rejected that token — fix the field, the env var, or mint a fresh user token",
+                "  the gateway is reachable but rejected that token — fix it (the field, or the one this terminal was started with) or mint a fresh user token",
                 t.text_muted,
             )]))
             .build(),

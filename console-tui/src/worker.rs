@@ -20,8 +20,8 @@ use crate::api::{ApiError, ApiErrorKind, ApiResult, GatewayClient};
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadStatus, Identity, JournalEntry, Loadable,
-    ProbeReport, ProfilesData, ProvidersData, RouteTestOutcome, RoutesData, RuntimeConfigData,
-    SandboxOutcome, Store, VoicesData,
+    NetworkData, ProbeReport, ProfilesData, ProvidersData, RouteTestOutcome, RoutesData,
+    RuntimeConfigData, SandboxOutcome, Store, VoicesData,
 };
 
 /// Probe sequence — every probe gets a visible number so repeated
@@ -194,6 +194,22 @@ pub enum Cmd {
     ForgetDataHomes {
         body: Body,
         all_stale: bool,
+    },
+    /// Network exposure + addresses (`GET /network`).
+    LoadNetwork,
+    /// `POST /network {mode, acknowledge_internet}` then re-read.
+    SetNetwork {
+        mode: String,
+        acknowledge_internet: bool,
+    },
+    /// `POST /network/restart` (the gateway goes away for a few seconds).
+    RestartNetwork,
+    /// `POST /network {allowed_origins?, trust_proxy?}` (reverse proxy,
+    /// mission Z) then re-read. Only the named fields change; the gateway
+    /// validates and its words are shown verbatim.
+    SetNetworkProxy {
+        allowed_origins: Option<Vec<String>>,
+        trust_proxy: Option<bool>,
     },
     /// The gateway runtime/workspace settings surface.
     LoadRuntimeConfig,
@@ -679,6 +695,79 @@ fn finish_busy<T>(store: &Store, wake: &WakeHandle, op: u64, f: impl FnOnce() ->
     let s = *store;
     wake.post(move || s.end_busy(op));
     out
+}
+
+/// The gateway's own words for a refusal: `refused_reason` (+ `fix`)
+/// from a 4xx body, else the error's text.
+pub fn refusal_text(e: &ApiError) -> String {
+    let body = e.body.as_ref();
+    let reason = body
+        .and_then(|b| b.get("refused_reason"))
+        .and_then(Value::as_str);
+    let fix = body.and_then(|b| b.get("fix")).and_then(Value::as_str);
+    match (reason, fix) {
+        (Some(r), Some(f)) => format!("{r} — fix: {f}"),
+        (Some(r), None) => r.to_string(),
+        _ => e.to_string(),
+    }
+}
+
+fn network_write_note(mode: &str, write: &ApiResult<Value>) -> String {
+    match write {
+        Ok(v) => {
+            let restart = v
+                .get("restart_required")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if restart {
+                format!("✓ network exposure set to '{mode}' — restart the gateway to apply it")
+            } else {
+                format!("✓ network exposure set to '{mode}' (already live)")
+            }
+        }
+        Err(e) => format!("✗ '{mode}' refused: {}", refusal_text(e)),
+    }
+}
+
+/// The body the TUI sends for a reverse-proxy change: exactly the fields
+/// named (the console and the CLI send the same shape to the same door).
+pub fn network_proxy_body(allowed_origins: &Option<Vec<String>>, trust_proxy: Option<bool>) -> Value {
+    let mut body = serde_json::Map::new();
+    if let Some(list) = allowed_origins {
+        body.insert("allowed_origins".into(), serde_json::json!(list));
+    }
+    if let Some(on) = trust_proxy {
+        body.insert("trust_proxy".into(), Value::Bool(on));
+    }
+    Value::Object(body)
+}
+
+/// One line per changed field: "applies now" / "restart" / "saved, not in
+/// effect (environment override)", or the gateway's refusal verbatim.
+pub fn network_proxy_note(write: &ApiResult<Value>) -> String {
+    match write {
+        Ok(v) => {
+            let changed = v.get("changed").and_then(Value::as_object);
+            let mut parts: Vec<String> = Vec::new();
+            for field in ["allowed_origins", "trust_proxy"] {
+                if let Some(ch) = changed.and_then(|c| c.get(field)) {
+                    let label = if field == "trust_proxy" { "trust proxy" } else { "origins" };
+                    let when = match ch.get("applies").and_then(Value::as_str) {
+                        Some("overridden_by_env") => "saved, NOT in effect: the environment the gateway was started with decides",
+                        Some("restart") => "saved, applies at the next start",
+                        _ => "saved, applies now",
+                    };
+                    parts.push(format!("{label} {when}"));
+                }
+            }
+            if parts.is_empty() {
+                "✓ reverse proxy: no change".to_string()
+            } else {
+                format!("✓ {}", parts.join(" · "))
+            }
+        }
+        Err(e) => format!("✗ reverse proxy refused: {}", refusal_text(e)),
+    }
 }
 
 fn require_client(client: &Option<GatewayClient>) -> Result<GatewayClient, ApiError> {
@@ -1366,6 +1455,67 @@ fn handle(
             }
         }
 
+        Cmd::LoadNetwork => load(
+            store,
+            wake,
+            "loading network exposure",
+            store.network,
+            || {
+                require_client(client)?
+                    .network()
+                    .map(|v| NetworkData::from_value(&v))
+            },
+        ),
+
+        Cmd::SetNetwork {
+            mode,
+            acknowledge_internet,
+        } => {
+            let body =
+                serde_json::json!({"mode": mode, "acknowledge_internet": acknowledge_internet});
+            let (write, verify) = with_busy(store, wake, "saving network exposure", || {
+                let write = require_client(client).and_then(|c| c.set_network(&body));
+                let verify = require_client(client).and_then(|c| c.network());
+                (write, verify)
+            });
+            let note = network_write_note(&mode, &write);
+            let s = *store;
+            wake.post(move || s.notice.set(Some(note.clone())));
+            if let Ok(v) = verify {
+                publish_ready(wake, store.network, NetworkData::from_value(&v));
+            }
+        }
+
+        Cmd::SetNetworkProxy {
+            allowed_origins,
+            trust_proxy,
+        } => {
+            let body = network_proxy_body(&allowed_origins, trust_proxy);
+            let (write, verify) = with_busy(store, wake, "saving reverse proxy", || {
+                let write = require_client(client).and_then(|c| c.set_network(&body));
+                let verify = require_client(client).and_then(|c| c.network());
+                (write, verify)
+            });
+            let note = network_proxy_note(&write);
+            let s = *store;
+            wake.post(move || s.notice.set(Some(note.clone())));
+            if let Ok(v) = verify {
+                publish_ready(wake, store.network, NetworkData::from_value(&v));
+            }
+        }
+
+        Cmd::RestartNetwork => {
+            let res = with_busy(store, wake, "restarting the gateway", || {
+                require_client(client).and_then(|c| c.restart_network())
+            });
+            let note = match &res {
+                Ok(_) => "gateway restarting to apply the network exposure — probe again in a few seconds (1 Connection → Enter)".to_string(),
+                Err(e) => format!("✗ restart refused: {}", refusal_text(e)),
+            };
+            let s = *store;
+            wake.post(move || s.notice.set(Some(note.clone())));
+        }
+
         Cmd::LoadRuntimeConfig => load(
             store,
             wake,
@@ -1872,8 +2022,10 @@ fn handle(
                         Some(outcome) if !outcome.is_null() => format!(
                             "MTP not used{}",
                             outcome
-                                .get("reason")
+                                .get("message")
                                 .and_then(Value::as_str)
+                                .filter(|m| !m.is_empty())
+                                .or_else(|| outcome.get("reason").and_then(Value::as_str))
                                 .map(|reason| format!(": {reason}"))
                                 .unwrap_or_default()
                         ),

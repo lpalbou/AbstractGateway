@@ -489,6 +489,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         && d.workspace_root.is_empty()
                                         && d.workspace_allowed_paths.is_empty()
                                         && d.workspace_blocked_paths.is_empty()
+                                        && d.apps.is_empty()
                                 },
                                 "the gateway reported no runtime knobs",
                                 |d| knobs_view(cx, &ctx_knobs, &tt, d),
@@ -1180,20 +1181,172 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             span(d.executors.join(" · "), t.text),
         ]));
     }
+    // Browser apps (mission Z): the apps.* settings with their source.
+    for a in &d.apps {
+        rows.push(line(vec![
+            span(format!("{:>20}: ", a.key), t.text_muted),
+            span(
+                ellipsize(if a.value.is_empty() { "—" } else { a.value.as_str() }, 48),
+                t.text,
+            ),
+            span(format!("  ({})", a.source), t.text_faint),
+            span(format!("  {}", a.label), t.text_faint),
+        ]));
+        if !a.invalid.is_empty() {
+            rows.push(line(vec![span(
+                format!("{:>20}  ⚠ set aside: {}", "", a.invalid),
+                t.warn,
+            )]));
+        }
+    }
     Element::new()
         .style(LayoutStyle::column())
         .child(if d.writable {
             let ctx2 = ctx.clone();
             let current = d.clone();
-            Button::new("Edit workspace access policy")
-                .on_click(move || open_workspace_policy_form(cx, &ctx2, current.clone()))
-                .element(cx, t)
+            let ctx3 = ctx.clone();
+            let current_apps = d.clone();
+            Element::new()
+                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                .child(
+                    Button::new("Edit workspace access policy")
+                        .on_click(move || open_workspace_policy_form(cx, &ctx2, current.clone()))
+                        .element(cx, t)
+                        .build(),
+                )
+                .child(if current_apps.apps.is_empty() {
+                    Element::new().style(LayoutStyle::default().h(0)).build()
+                } else {
+                    Button::new("Edit apps settings")
+                        .on_click(move || open_apps_settings_form(cx, &ctx3, current_apps.clone()))
+                        .element(cx, t)
+                        .build()
+                })
                 .build()
         } else {
             Element::new().style(LayoutStyle::default().h(0)).build()
         })
         .children(rows)
         .build()
+}
+
+/// The body the apps form sends: only the settings whose text changed,
+/// as flat `apps.<name>` keys; an emptied field sends "" (= clear back to
+/// env/default), exactly like `abstractgateway apps config set <name> ""`.
+pub fn apps_settings_body(current: &[crate::store::AppsSetting], typed: &[(String, String)]) -> Value {
+    let mut body = serde_json::Map::new();
+    for (name, text) in typed {
+        let Some(cur) = current.iter().find(|a| &a.name == name) else {
+            continue;
+        };
+        let was = if cur.source == "stored" { cur.value.as_str() } else { "" };
+        let now = text.trim();
+        if now != was {
+            body.insert(cur.key.clone(), Value::String(now.to_string()));
+        }
+    }
+    Value::Object(body)
+}
+
+/// Browser-apps settings form (mission Z): one line per `apps.*` setting,
+/// prefilled with the STORED value only (a resolved env/default value
+/// written back would silently become a stored one); the gateway
+/// validates and its sentence is shown on refusal.
+fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
+    if !current.writable {
+        ctx.store
+            .notice
+            .set(Some("this needs an admin token".into()));
+        return;
+    }
+    let ctx2 = ctx.clone();
+    open_form(ctx, cx, Size::new(96, 12 + 2 * current.apps.len() as i32), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let fields: Vec<(String, Signal<String>)> = current
+            .apps
+            .iter()
+            .map(|a| {
+                (
+                    a.name.clone(),
+                    mcx.signal(if a.source == "stored" { a.value.clone() } else { String::new() }),
+                )
+            })
+            .collect();
+        let mut col = Element::new()
+            .focusable()
+            .autofocus()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold("Browser apps settings", t0.accent)]))
+            .child(line(vec![span(
+                "empty = the default (or the value this gateway's environment gives); applies at the next app start or download",
+                t0.text_faint,
+            )]));
+        for (a, (_, sig)) in current.apps.iter().zip(fields.iter()) {
+            col = col
+                .child(field(
+                    &t0,
+                    &a.label,
+                    TextInput::new()
+                        .value(*sig)
+                        .placeholder(format!(
+                            "{} (now: {} · {})",
+                            a.placeholder,
+                            if a.value.is_empty() { "—" } else { a.value.as_str() },
+                            a.source
+                        ))
+                        .layout(LayoutStyle::default().w(60).h(1))
+                        .element(mcx, &t0)
+                        .build(),
+                ))
+                .child(line(vec![span(ellipsize(&a.help, 92), t0.text_faint)]));
+        }
+        let ctx_save = ctx2.clone();
+        let close_cancel = close.clone();
+        let apps_now = current.apps.clone();
+        col.child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(
+                        Button::new("Save")
+                            .on_click(move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                let typed: Vec<(String, String)> = fields
+                                    .iter()
+                                    .map(|(n, sig)| (n.clone(), sig.get_untracked()))
+                                    .collect();
+                                let body = apps_settings_body(&apps_now, &typed);
+                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                                    form_error.set(Some("nothing changed".into()));
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_save.send(Cmd::SaveRuntimeConfig {
+                                    body: body.into(),
+                                    form_id: Some(form_id),
+                                });
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+    });
 }
 
 fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {

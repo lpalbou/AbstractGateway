@@ -1118,6 +1118,199 @@ pub struct ProbeReport {
     pub took_ms: u64,
 }
 
+/// One mode row of `GET /network` (`gateway_network_v1.modes[]`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NetworkMode {
+    pub id: String,
+    pub label: String,
+    pub selected: bool,
+    pub allowed: bool,
+    /// Why the mode is refused today, and the exact fix (auth).
+    pub reason: Option<String>,
+    pub fix: Option<String>,
+}
+
+/// One address a client can use (`gateway_network_v1.addresses[]`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NetworkAddress {
+    /// loopback | lan | hostname | public
+    pub kind: String,
+    pub url: String,
+    /// "Wi-Fi", "Ethernet", "VPN", else the interface name.
+    pub label: String,
+    /// true = the gateway listens there now; false = not yet (the
+    /// mode/bind); None = unknowable from here (WAN).
+    pub reachable: Option<bool>,
+    pub note: String,
+}
+
+/// The network exposure surface (`GET /api/gateway/network`): who can
+/// reach the gateway (configured vs running), the restart story, the
+/// auth verdict and every address to copy.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NetworkData {
+    pub writable: bool,
+    pub configured_mode: String,
+    pub configured_label: String,
+    pub configured_port: u64,
+    pub configured_source: String,
+    pub effective_mode: String,
+    pub effective_label: String,
+    pub effective_bind: String,
+    pub effective_port: Option<u64>,
+    pub overridden_by_cli: bool,
+    pub restart_required: bool,
+    pub restart_applies: bool,
+    pub restart_available: bool,
+    /// Why a restart cannot apply the setting / cannot be done here.
+    pub restart_reason: Option<String>,
+    pub restart_how: String,
+    pub auth_ok: bool,
+    pub auth_fix: Option<String>,
+    pub modes: Vec<NetworkMode>,
+    pub addresses: Vec<NetworkAddress>,
+    pub copy_hint: String,
+    pub warnings: Vec<String>,
+    /// Reverse proxy (`reverse_proxy`, mission Z): the stored origins the
+    /// edit line changes, where the winning value comes from
+    /// (setting | env | default), whether the environment the gateway was
+    /// started with overrides it, and what the middleware applies now.
+    pub proxy: ReverseProxyView,
+}
+
+/// `gateway_network_v1.reverse_proxy` flattened for the panel.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ReverseProxyView {
+    /// The payload carried the block (an older gateway does not).
+    pub present: bool,
+    pub origins: Vec<String>,
+    pub origins_source: String,
+    pub origins_overridden: bool,
+    pub origins_env_name: String,
+    pub origins_env_value: Vec<String>,
+    pub origins_effective: Vec<String>,
+    pub origins_warnings: Vec<String>,
+    pub trust_proxy: bool,
+    pub trust_source: String,
+    pub trust_overridden: bool,
+    pub trust_env_name: String,
+    pub trust_effective: bool,
+}
+
+impl ReverseProxyView {
+    pub fn from_value(v: Option<&Value>) -> ReverseProxyView {
+        let Some(rp) = v.filter(|x| x.is_object()) else {
+            return ReverseProxyView::default();
+        };
+        let null = Value::Null;
+        let o = rp.get("allowed_origins").unwrap_or(&null);
+        let t = rp.get("trust_proxy").unwrap_or(&null);
+        let strs = |x: &Value, k: &str| -> Vec<String> {
+            x.get(k)
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default()
+        };
+        let st = |x: &Value, k: &str| x.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        let bo = |x: &Value, k: &str| x.get(k).and_then(Value::as_bool).unwrap_or(false);
+        ReverseProxyView {
+            present: o.is_object() && t.is_object(),
+            origins: strs(o, "value"),
+            origins_source: st(o, "source"),
+            origins_overridden: bo(o, "overridden_by_env"),
+            origins_env_name: st(o, "env_name"),
+            origins_env_value: strs(o, "env_value"),
+            origins_effective: strs(o, "effective"),
+            origins_warnings: strs(o, "warnings"),
+            trust_proxy: bo(t, "value"),
+            trust_source: st(t, "source"),
+            trust_overridden: bo(t, "overridden_by_env"),
+            trust_env_name: st(t, "env_name"),
+            trust_effective: bo(t, "effective"),
+        }
+    }
+}
+
+impl NetworkData {
+    pub fn from_value(v: &Value) -> NetworkData {
+        let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        let b = |v: &Value, k: &str| v.get(k).and_then(Value::as_bool).unwrap_or(false);
+        let opt = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+        let null = Value::Null;
+        let c = v.get("configured").unwrap_or(&null);
+        let e = v.get("effective").unwrap_or(&null);
+        let r = v.get("restart").unwrap_or(&null);
+        let a = v.get("auth").unwrap_or(&null);
+        let modes = v
+            .get("modes")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .map(|m| NetworkMode {
+                        id: s(m, "id"),
+                        label: s(m, "label"),
+                        selected: b(m, "selected"),
+                        allowed: b(m, "allowed"),
+                        reason: opt(m, "reason"),
+                        fix: opt(m, "fix"),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let addresses = v
+            .get("addresses")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter(|x| x.get("url").and_then(Value::as_str).is_some())
+                    .map(|x| NetworkAddress {
+                        kind: s(x, "kind"),
+                        url: s(x, "url"),
+                        label: opt(x, "interface_label")
+                            .or_else(|| opt(x, "interface"))
+                            .unwrap_or_default(),
+                        reachable: x.get("reachable").and_then(Value::as_bool),
+                        note: s(x, "note"),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        NetworkData {
+            writable: b(v, "writable"),
+            configured_mode: s(c, "mode"),
+            configured_label: s(c, "label"),
+            configured_port: c.get("port").and_then(Value::as_u64).unwrap_or(0),
+            configured_source: s(c, "source"),
+            effective_mode: s(e, "mode"),
+            effective_label: s(e, "label"),
+            effective_bind: s(e, "bind_host"),
+            effective_port: e.get("port").and_then(Value::as_u64),
+            overridden_by_cli: b(e, "overridden_by_cli"),
+            restart_required: b(v, "restart_required"),
+            restart_applies: b(r, "applies"),
+            restart_available: b(r, "available"),
+            restart_reason: opt(r, "reason").or_else(|| opt(r, "unavailable_reason")),
+            restart_how: s(r, "how"),
+            auth_ok: b(a, "ok_for_mode"),
+            auth_fix: opt(a, "fix"),
+            modes,
+            addresses,
+            copy_hint: s(v, "copy_hint"),
+            proxy: ReverseProxyView::from_value(v.get("reverse_proxy")),
+            warnings: v
+                .get("warnings")
+                .and_then(Value::as_array)
+                .map(|w| {
+                    w.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+}
+
 /// The runtime knobs surface: per-knob value + provenance (which layer
 /// set it), rendered read-only in v1 — the web console's Runtimes tab
 /// parity surface.
@@ -1149,6 +1342,26 @@ pub struct RuntimeConfigData {
     pub knobs: Vec<(String, String, String)>,
     /// Executor rows: "codex (default)" style, availability-honest.
     pub executors: Vec<String>,
+    /// Browser-apps settings (`apps.<name>`, mission Z), enumerated from
+    /// the payload's `apps` registry — never a hardcoded list.
+    pub apps: Vec<AppsSetting>,
+}
+
+/// One `apps.<name>` runtime-config setting (label/help from the gateway).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AppsSetting {
+    pub name: String,
+    pub key: String,
+    pub label: String,
+    pub help: String,
+    pub placeholder: String,
+    /// The value in effect ("" = none, e.g. ports on their default).
+    pub value: String,
+    /// stored | env | default
+    pub source: String,
+    pub note: String,
+    /// An invalid stored/env value the gateway set aside (it says why).
+    pub invalid: String,
 }
 
 impl RuntimeConfigData {
@@ -1294,6 +1507,31 @@ impl RuntimeConfigData {
                     .collect()
             })
             .unwrap_or_default();
+        let apps = v
+            .get("apps")
+            .and_then(Value::as_object)
+            .map(|m| {
+                m.iter()
+                    .map(|(name, row)| AppsSetting {
+                        name: name.clone(),
+                        key: s(row, "key").unwrap_or_else(|| format!("apps.{name}")),
+                        label: s(row, "label").unwrap_or_default(),
+                        help: s(row, "help").unwrap_or_default(),
+                        placeholder: s(row, "placeholder").unwrap_or_default(),
+                        value: match row.get("value") {
+                            Some(Value::String(x)) => x.clone(),
+                            Some(Value::Null) | None => String::new(),
+                            Some(other) => other.to_string(),
+                        },
+                        source: s(row, "source").unwrap_or_else(|| "?".into()),
+                        note: s(row, "note").unwrap_or_default(),
+                        invalid: s(row, "invalid_stored")
+                            .or_else(|| s(row, "invalid_env"))
+                            .unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         RuntimeConfigData {
             writable: b(v, "writable").unwrap_or(false),
             workspace_root,
@@ -1312,6 +1550,7 @@ impl RuntimeConfigData {
             user_workspace_policies_source,
             knobs,
             executors,
+            apps,
         }
     }
 }
@@ -2076,6 +2315,8 @@ pub struct Store {
     /// versions the gateway refused to serve.
     pub workflows: Signal<Loadable<WorkflowsData>>,
     pub runtime_config: Signal<Loadable<RuntimeConfigData>>,
+    /// Network exposure + reachable addresses (Connection screen).
+    pub network: Signal<Loadable<NetworkData>>,
     /// Per-provider model lists (route editor + provider browser).
     pub models: Signal<HashMap<String, Loadable<Vec<String>>>>,
     /// Result of the LAST discover-models call — a single slot, which
@@ -2807,6 +3048,7 @@ impl Store {
             runtimes: cx.signal(Loadable::default()),
             workflows: cx.signal(Loadable::default()),
             runtime_config: cx.signal(Loadable::default()),
+            network: cx.signal(Loadable::default()),
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
             sandbox: cx.signal(Loadable::default()),
@@ -2873,6 +3115,7 @@ impl Store {
             runtimes,
             workflows,
             runtime_config,
+            network,
             models,
             discover,
             sandbox,
@@ -2910,6 +3153,7 @@ impl Store {
         runtimes.set(Loadable::NotAsked);
         workflows.set(Loadable::NotAsked);
         runtime_config.set(Loadable::NotAsked);
+        network.set(Loadable::NotAsked);
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);
         sandbox.set(Loadable::NotAsked);

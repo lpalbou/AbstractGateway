@@ -1129,6 +1129,26 @@ impl GatewayClient {
         self.send("POST", "/admin/runtime-config", body, false)
     }
 
+    // ---- Network exposure (gateway_network_v1) --------------------------
+
+    /// Who can reach the gateway + every address to copy. Interface
+    /// discovery (and a Bonjour lookup) runs server-side: slow agent.
+    pub fn network(&self) -> ApiResult<Value> {
+        self.get("/network", true)
+    }
+
+    /// Store a mode (applied at the next start). 409 = refused with
+    /// `refused_reason` + `fix` in the error body; nothing stored.
+    pub fn set_network(&self, body: &Value) -> ApiResult<Value> {
+        self.send("POST", "/network", body, false)
+    }
+
+    /// Restart the gateway so the stored mode applies (409 when a
+    /// restart cannot apply it — the body says why).
+    pub fn restart_network(&self) -> ApiResult<Value> {
+        self.send("POST", "/network/restart", &serde_json::json!({}), false)
+    }
+
     /// ONE user's workspace policy (per-runtime settings form). Identity
     /// components are the registry's safe charset ([A-Za-z0-9_.@-]) — no
     /// URL-encoding needed.

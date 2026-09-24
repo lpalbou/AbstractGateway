@@ -6603,3 +6603,510 @@ fn a_reconnect_forgets_the_old_gateways_models_and_reloads() {
     abstractgateway_console::ui::reset_screens(&ctx_reset);
     assert!(h.screens.engines.with_untracked(Remote::is_not_asked));
 }
+
+// =======================================================================
+// Network exposure panel (Connection screen, gateway_network_v1)
+// =======================================================================
+
+fn network_fixture(configured: &str, running_bind: &str, restart: bool, applies: bool) -> Value {
+    json!({
+        "schema": "gateway_network_v1",
+        "writable": true,
+        "configured": {"mode": configured, "label": match configured {
+            "localhost" => "Localhost only", "lan" => "Local network", _ => "Internet"},
+            "port": 8080, "bind_host": if configured == "localhost" {"127.0.0.1"} else {"0.0.0.0"},
+            "source": "stored", "port_source": "stored", "internet_acknowledged": null},
+        "effective": {"mode": if running_bind == "127.0.0.1" {"localhost"} else {"lan"},
+            "label": if running_bind == "127.0.0.1" {"Localhost only"} else {"Local network"},
+            "bind_host": running_bind, "port": 8080, "overridden_by_cli": !applies,
+            "host_source": if applies {"setting"} else {"cli"}, "port_source": "setting", "running": true},
+        "restart_required": restart,
+        "restart": {"available": true, "applies": applies, "needed": restart,
+            "how": "POST /api/gateway/network/restart (admin)",
+            "reason": if applies { Value::Null } else { json!("this gateway was started with --host/--port on its command line") }},
+        "auth": {"user_auth": true, "token_auth": false, "ok_for_mode": true, "will_enable_user_auth": false},
+        "modes": [
+            {"id": "localhost", "label": "Localhost only", "selected": configured == "localhost", "allowed": true, "requires_acknowledgement": false},
+            {"id": "lan", "label": "Local network", "selected": configured == "lan", "allowed": true, "requires_acknowledgement": false},
+            {"id": "internet", "label": "Internet", "selected": configured == "internet", "allowed": true, "requires_acknowledgement": true}
+        ],
+        "addresses": [
+            {"kind": "loopback", "url": "http://127.0.0.1:8080", "host": "127.0.0.1", "port": 8080, "reachable": true, "note": "this machine only"},
+            {"kind": "lan", "url": "http://192.168.1.23:8080", "host": "192.168.1.23", "port": 8080, "interface": "en0", "interface_label": "Wi-Fi", "reachable": running_bind == "0.0.0.0"},
+            {"kind": "hostname", "url": "http://mymac.local:8080", "host": "mymac.local", "port": 8080, "reachable": running_bind == "0.0.0.0"}
+        ],
+        "copy_hint": if running_bind == "0.0.0.0" {"http://192.168.1.23:8080"} else {"http://127.0.0.1:8080"},
+        "warnings": []
+    })
+}
+
+fn set_network(h: &mut Harness, v: Value) -> String {
+    h.store.network.set(Loadable::Ready(
+        abstractgateway_console::store::NetworkData::from_value(&v),
+    ));
+    h.turns(3)
+}
+
+/// Focus the mode picker: Tab past URL, token and the probe button.
+fn focus_network_modes(h: &mut Harness) {
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
+}
+
+#[test]
+fn network_panel_loads_on_connect_and_renders_modes_and_addresses() {
+    let mut h = harness_sized(Size::new(110, 40));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    let s = h.turns(3);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::LoadNetwork)).is_some(),
+        "connected → the panel asks for GET /network"
+    );
+    assert!(s.contains("reading network exposure"), "loading line:\n{s}");
+    let s = set_network(
+        &mut h,
+        network_fixture("localhost", "127.0.0.1", false, true),
+    );
+    for needle in [
+        "Network exposure",
+        "Localhost only",
+        "Local network",
+        "Internet…",
+        "Network exposure: Localhost only · port 8080 · running: Localhost only 127.0.0.1:8080",
+        "● http://127.0.0.1:8080",
+        "○ http://192.168.1.23:8080",
+        "lan · Wi-Fi",
+        "http://mymac.local:8080",
+        "primary http://127.0.0.1:8080",
+    ] {
+        assert!(s.contains(needle), "missing {needle:?}:\n{s}");
+    }
+    assert!(
+        !s.contains("restart required"),
+        "no banner when in sync:\n{s}"
+    );
+    // The text render is the report's evidence (MISSION R).
+    if let Ok(dir) = std::env::var("MISSION_R_RENDER_DIR") {
+        std::fs::write(format!("{dir}/tui_connection_localhost.txt"), &s).expect("write render");
+    }
+}
+
+#[test]
+fn network_panel_restart_banner_and_cli_override_story() {
+    let mut h = harness_sized(Size::new(110, 40));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    let s = set_network(&mut h, network_fixture("lan", "127.0.0.1", true, true));
+    assert!(
+        s.contains("restart required to apply 'lan' on port 8080"),
+        "banner:\n{s}"
+    );
+    assert!(s.contains("Restart to apply"), "restart button:\n{s}");
+    if let Ok(dir) = std::env::var("MISSION_R_RENDER_DIR") {
+        std::fs::write(format!("{dir}/tui_connection_restart_required.txt"), &s)
+            .expect("write render");
+    }
+    let s = set_network(&mut h, network_fixture("lan", "127.0.0.1", true, false));
+    assert!(
+        s.contains("not applied (command line overrides the setting): this gateway was started with --host/--port"),
+        "cli story:\n{s}"
+    );
+    assert!(
+        !s.contains("Restart to apply"),
+        "no restart button that cannot apply:\n{s}"
+    );
+}
+
+#[test]
+fn network_mode_arrow_enter_posts_the_chosen_mode() {
+    let mut h = harness_sized(Size::new(110, 40));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    set_network(
+        &mut h,
+        network_fixture("localhost", "127.0.0.1", false, true),
+    );
+    h.drain_cmds();
+    focus_network_modes(&mut h);
+    h.key(b"\x1b[B"); // Down → Local network
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. })) {
+        Some(Cmd::SetNetwork {
+            mode,
+            acknowledge_internet,
+        }) => {
+            assert_eq!(mode, "lan");
+            assert!(!acknowledge_internet);
+        }
+        other => panic!("expected SetNetwork lan, got {other:?}"),
+    }
+}
+
+#[test]
+fn network_internet_needs_the_danger_confirm_then_acknowledges() {
+    let mut h = harness_sized(Size::new(110, 40));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    set_network(
+        &mut h,
+        network_fixture("localhost", "127.0.0.1", false, true),
+    );
+    h.drain_cmds();
+    focus_network_modes(&mut h);
+    h.key(b"\x1b[B");
+    h.turn();
+    h.key(b"\x1b[B"); // Internet…
+    h.turn();
+    h.type_text("\r");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Expose the gateway to the internet?"),
+        "confirm:\n{s}"
+    );
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. }))
+            .is_none(),
+        "nothing posted before the confirm"
+    );
+    h.type_text("\r"); // initial highlight is "keep"
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. }))
+            .is_none(),
+        "keep posts nothing"
+    );
+    h.type_text("\r"); // the radio still holds Internet: Enter asks again
+    h.turns(2);
+    h.key(b"\x1b[A"); // up to the danger option
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. })) {
+        Some(Cmd::SetNetwork {
+            mode,
+            acknowledge_internet,
+        }) => {
+            assert_eq!(mode, "internet");
+            assert!(acknowledge_internet, "the confirm IS the acknowledgement");
+        }
+        other => panic!("expected SetNetwork internet, got {other:?}"),
+    }
+}
+
+#[test]
+fn network_refused_mode_says_the_fix_and_posts_nothing() {
+    let mut h = harness_sized(Size::new(110, 40));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    let mut v = network_fixture("localhost", "127.0.0.1", false, true);
+    v["modes"][1]["allowed"] = json!(false);
+    v["modes"][1]["reason"] = json!("'lan' requires user auth");
+    v["modes"][1]["fix"] = json!("started with accounts off");
+    let s = set_network(&mut h, v);
+    assert!(s.contains("Local network (needs user auth)"), "label:\n{s}");
+    h.drain_cmds();
+    focus_network_modes(&mut h);
+    h.key(b"\x1b[B");
+    h.turn();
+    h.type_text("\r");
+    let s = h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. }))
+            .is_none(),
+        "a refused mode posts nothing"
+    );
+    assert!(s.contains("fix: started with accounts off"), "fix shown:\n{s}");
+}
+
+#[test]
+fn network_c_copies_the_highlighted_address() {
+    let mut h = harness_sized(Size::new(110, 40));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    set_network(&mut h, network_fixture("lan", "0.0.0.0", false, true));
+    focus_network_modes(&mut h);
+    h.key(b"\t"); // → address list
+    h.turn();
+    h.key(b"\x1b[B"); // → the Wi-Fi LAN URL
+    h.turn();
+    h.type_text("c");
+    let s = h.turns(2);
+    assert!(
+        s.contains("copied http://192.168.1.23:8080"),
+        "copy notice:\n{s}"
+    );
+    assert_eq!(
+        h.store.notice.get_untracked().as_deref(),
+        Some("copied http://192.168.1.23:8080")
+    );
+    // Enter on a row copies too (List activation).
+    h.key(b"\x1b[B");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    assert_eq!(
+        h.store.notice.get_untracked().as_deref(),
+        Some("copied http://mymac.local:8080")
+    );
+}
+
+#[test]
+fn network_c_in_the_url_field_still_types() {
+    let mut h = harness_sized(Size::new(110, 40));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    set_network(&mut h, network_fixture("lan", "0.0.0.0", false, true));
+    h.store.notice.set(None);
+    h.ui.conn_url.set(String::new());
+    h.turn();
+    h.type_text("c");
+    h.turns(2);
+    assert_eq!(
+        h.ui.conn_url.get_untracked(),
+        "c",
+        "the URL field keeps its letters"
+    );
+    assert!(
+        !h.store
+            .notice
+            .get_untracked()
+            .unwrap_or_default()
+            .starts_with("copied"),
+        "no copy from the URL field"
+    );
+}
+
+
+// =======================================================================
+// Reverse proxy (mission Z): allowed origins + trust proxy, same door as
+// the mode (POST /network), the gateway's words on refusal.
+// =======================================================================
+
+fn proxy_fixture(origins: &[&str], trust: bool, env_origins: Option<&[&str]>, env_trust: Option<bool>) -> Value {
+    let mut v = network_fixture("internet", "0.0.0.0", false, true);
+    let mut o = json!({
+        "value": origins, "source": if origins.is_empty() {"default"} else {"setting"},
+        "overridden_by_env": env_origins.is_some(),
+        "effective": ["http://localhost:*", "http://127.0.0.1:*"],
+        "builtin": ["http://localhost:*", "http://127.0.0.1:*"], "self_origins": [],
+        "applies": "live", "warnings": []
+    });
+    if let Some(e) = env_origins {
+        o["source"] = json!("env");
+        o["env_name"] = json!("ABSTRACTGATEWAY_ALLOWED_ORIGINS");
+        o["env_value"] = json!(e);
+    }
+    let mut t = json!({"value": trust, "source": if trust {"setting"} else {"default"},
+        "overridden_by_env": env_trust.is_some(), "effective": env_trust.unwrap_or(trust), "applies": "live"});
+    if env_trust.is_some() {
+        t["source"] = json!("env");
+        t["env_name"] = json!("ABSTRACTGATEWAY_TRUST_PROXY");
+    }
+    v["reverse_proxy"] = json!({"allowed_origins": o, "trust_proxy": t});
+    v
+}
+
+/// Tab from the URL field to the origins edit line (URL, token, probe,
+/// modes, addresses, origins).
+fn focus_origins_line(h: &mut Harness) {
+    for _ in 0..5 {
+        h.key(b"\t");
+        h.turn();
+    }
+}
+
+#[test]
+fn network_reverse_proxy_shows_values_and_where_they_come_from() {
+    let mut h = harness_sized(Size::new(160, 60));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    let s = set_network(&mut h, proxy_fixture(&["https://gateway.example.com"], false, None, None));
+    for needle in [
+        "Reverse proxy",
+        "origins: https://gateway.example.com [saved setting]",
+        "trust proxy: off [default]",
+        "applies to the next request",
+        "Enter saves · empty clears",
+        "trust the proxy's client address (X-Forwarded-For): only when your own proxy sits in front",
+    ] {
+        assert!(s.contains(needle), "missing {needle:?}:\n{s}");
+    }
+    assert!(!s.contains("environment override"), "no override:\n{s}");
+    if let Ok(dir) = std::env::var("MISSION_Z_RENDER_DIR") {
+        std::fs::write(format!("{dir}/tui_network_reverse_proxy.txt"), &s).expect("write render");
+    }
+    // The environment override is said in words, per field.
+    let s = set_network(
+        &mut h,
+        proxy_fixture(&["https://gateway.example.com"], false, Some(&["https://pinned.example"]), Some(true)),
+    );
+    assert!(s.contains("[environment override]"), "override tag:\n{s}");
+    assert!(
+        s.contains("this gateway was started with ABSTRACTGATEWAY_ALLOWED_ORIGINS in its environment: that list decides (https://pinned.example)"),
+        "origins override line:\n{s}"
+    );
+    assert!(
+        s.contains("this gateway was started with ABSTRACTGATEWAY_TRUST_PROXY in its environment: trust proxy is on"),
+        "trust override line:\n{s}"
+    );
+    assert!(!s.contains("set ABSTRACTGATEWAY"), "never an env instruction:\n{s}");
+    if let Ok(dir) = std::env::var("MISSION_Z_RENDER_DIR") {
+        std::fs::write(format!("{dir}/tui_network_reverse_proxy_env_override.txt"), &s).expect("write render");
+    }
+}
+
+#[test]
+fn network_origins_line_enter_saves_the_whole_list() {
+    let mut h = harness_sized(Size::new(160, 60));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    set_network(&mut h, proxy_fixture(&["https://a.example"], false, None, None));
+    h.drain_cmds();
+    focus_origins_line(&mut h);
+    h.key(b"\x1b[F"); // End
+    h.turn();
+    h.type_text(", https://b.example:8443 ,");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::SetNetworkProxy { .. })) {
+        Some(Cmd::SetNetworkProxy { allowed_origins, trust_proxy }) => {
+            assert_eq!(
+                allowed_origins,
+                Some(vec!["https://a.example".to_string(), "https://b.example:8443".to_string()])
+            );
+            assert_eq!(trust_proxy, None, "only the origins change");
+        }
+        other => panic!("expected SetNetworkProxy origins, got {other:?}"),
+    }
+    assert!(h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. })).is_none(), "the mode is untouched");
+}
+
+#[test]
+fn network_trust_checkbox_saves_on_toggle() {
+    let mut h = harness_sized(Size::new(160, 60));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    set_network(&mut h, proxy_fixture(&[], false, None, None));
+    h.drain_cmds();
+    focus_origins_line(&mut h);
+    h.key(b"\t"); // → the checkbox
+    h.turn();
+    h.type_text(" ");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::SetNetworkProxy { .. })) {
+        Some(Cmd::SetNetworkProxy { allowed_origins, trust_proxy }) => {
+            assert_eq!(trust_proxy, Some(true));
+            assert_eq!(allowed_origins, None, "only trust changes");
+        }
+        other => panic!("expected SetNetworkProxy trust, got {other:?}"),
+    }
+}
+
+#[test]
+fn network_reverse_proxy_is_read_only_without_admin() {
+    let mut h = harness_sized(Size::new(160, 60));
+    h.connect_as_admin();
+    h.ui.screen.set(0);
+    h.turns(2);
+    let mut v = proxy_fixture(&["https://a.example"], true, None, None);
+    v["writable"] = json!(false);
+    let s = set_network(&mut h, v);
+    assert!(s.contains("changing the reverse proxy needs an admin token"), "read-only:\n{s}");
+    assert!(!s.contains("Enter saves"), "no edit line:\n{s}");
+}
+
+#[test]
+fn network_proxy_body_and_notes_use_the_gateways_words() {
+    use abstractgateway_console::api::{ApiError, ApiErrorKind};
+    use abstractgateway_console::ui::network::parse_origins_line;
+    use abstractgateway_console::worker::{network_proxy_body, network_proxy_note};
+
+    assert_eq!(parse_origins_line(" https://a.example, ,https://b.example "), vec!["https://a.example", "https://b.example"]);
+    assert_eq!(parse_origins_line(""), Vec::<String>::new());
+    assert_eq!(network_proxy_body(&Some(vec![]), None), json!({"allowed_origins": []}));
+    assert_eq!(network_proxy_body(&None, Some(false)), json!({"trust_proxy": false}));
+    let refused = "1 origin is not valid (nothing was saved): https://x.example/: no trailing slash: an origin is scheme://host[:port] (write https://x.example)";
+    let err = ApiError {
+        kind: ApiErrorKind::Http(400),
+        message: "bad".into(),
+        body: Some(json!({"ok": false, "reason_code": "invalid_origins", "refused_reason": refused})),
+        timed_out: false,
+    };
+    assert_eq!(network_proxy_note(&Err(err)), format!("✗ reverse proxy refused: {refused}"));
+    let ok = json!({"changed": {"allowed_origins": {"applies": "live"}, "trust_proxy": {"applies": "overridden_by_env"}}});
+    let note = network_proxy_note(&Ok(ok));
+    assert!(note.contains("origins saved, applies now"), "{note}");
+    assert!(note.contains("trust proxy saved, NOT in effect"), "{note}");
+    assert_eq!(network_proxy_note(&Ok(json!({"changed": {}}))), "✓ reverse proxy: no change");
+}
+
+fn apps_runtime_config() -> Value {
+    json!({
+        "writable": true,
+        "apps": {
+            "host": {"key": "apps.host", "label": "Where apps listen", "help": "127.0.0.1 = this computer only.",
+                     "placeholder": "127.0.0.1", "value": "0.0.0.0", "source": "stored", "default": "127.0.0.1"},
+            "ports": {"key": "apps.ports", "label": "Ports for apps", "help": "A port or a range.",
+                      "placeholder": "3100-3199", "value": "", "source": "default", "default": ""},
+            "node": {"key": "apps.node", "label": "Node.js for apps", "help": "auto, managed, system or a path.",
+                     "placeholder": "auto", "value": "system", "source": "env", "default": "auto",
+                     "note": "from ABSTRACTGATEWAY_APPS_NODE in the environment this gateway was started with; a saved value replaces it"}
+        }
+    })
+}
+
+#[test]
+fn apps_settings_render_in_runtime_knobs_with_their_source() {
+    let mut h = harness_sized(Size::new(120, 70));
+    h.connect_as_admin();
+    h.goto_screen(4);
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.turns(2);
+    h.ui.rt_knobs_folded.set(false);
+    h.turns(2);
+    h.store.runtime_config.set(Loadable::Ready(
+        abstractgateway_console::store::RuntimeConfigData::from_value(&apps_runtime_config()),
+    ));
+    let s = h.turns(2);
+    assert!(s.contains("apps.host: 0.0.0.0  (stored)"), "host row:\n{s}");
+    assert!(s.contains("apps.node: system  (env)"), "env-sourced row:\n{s}");
+    assert!(s.contains("apps.ports: —  (default)"), "default row:\n{s}");
+    assert!(s.contains("Edit apps settings"), "editor entry point:\n{s}");
+    if let Ok(dir) = std::env::var("MISSION_Z_RENDER_DIR") {
+        std::fs::write(format!("{dir}/tui_runtime_knobs_apps.txt"), &s).expect("write render");
+    }
+}
+
+#[test]
+fn apps_settings_body_sends_only_changed_keys_and_clears_with_empty() {
+    use abstractgateway_console::ui::runtimes::apps_settings_body;
+
+    let d = abstractgateway_console::store::RuntimeConfigData::from_value(&apps_runtime_config());
+    assert_eq!(d.apps.len(), 3);
+    // Unchanged (stored host kept, env/default fields left empty) -> nothing.
+    let same = vec![("host".to_string(), "0.0.0.0".to_string()), ("ports".to_string(), String::new()), ("node".to_string(), String::new())];
+    assert_eq!(apps_settings_body(&d.apps, &same), json!({}));
+    let typed = vec![
+        ("host".to_string(), String::new()),              // clear the stored value
+        ("ports".to_string(), " 3200-3299 ".to_string()),  // new
+        ("node".to_string(), String::new()),              // env value never promoted to stored
+    ];
+    assert_eq!(apps_settings_body(&d.apps, &typed), json!({"apps.host": "", "apps.ports": "3200-3299"}));
+}
