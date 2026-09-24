@@ -488,6 +488,18 @@ def _module_source(module) -> str:
     return _SOURCE_CACHE[path]
 
 
+# Port 9 (discard) on loopback: nothing listens there, and it is not a live
+# service port, so a connection is refused at once without a guard hit.
+_ENGINE_DEFAULT_URLS = {
+    "LMSTUDIO_BASE_URL": "http://127.0.0.1:9/v1",
+    "OLLAMA_BASE_URL": "http://127.0.0.1:9",
+    "OLLAMA_HOST": "http://127.0.0.1:9",
+}
+# Also for the whole session: a gateway runner thread started by one test can
+# boot its bundle host after that test's monkeypatch has been undone.
+os.environ.update(_ENGINE_DEFAULT_URLS)
+
+
 @pytest.fixture(autouse=True)
 def isolate_home_and_network(request, monkeypatch, tmp_path_factory):
     """Per-test home under tmp, operator path knobs scrubbed, network guard armed."""
@@ -500,6 +512,15 @@ def isolate_home_and_network(request, monkeypatch, tmp_path_factory):
     # operator's home through ABSTRACT_TEST_REAL_HOME and so cannot write there
     # by accident (collection refuses the pointer in a module without the marker).
     monkeypatch.setenv("ABSTRACT_TEST_REAL_HOME", _REAL_HOME)
+    # Local engines' DEFAULT addresses point at a closed port. On a host that
+    # is not Apple silicon, AbstractCore's recommended text route is LM Studio,
+    # so a gateway booted with no provider configured builds an LM Studio
+    # client that lists models at localhost:1234: the operator's live LM
+    # Studio on a Linux workstation, a guard hit on CI (release 0.4.0 CI,
+    # 2026-09-24). A test that needs a local engine sets its own URL (a
+    # loopback fake); one that checks the defaults deletes these.
+    for key, value in _ENGINE_DEFAULT_URLS.items():
+        monkeypatch.setenv(key, value)
     _assert_hf_constants_isolated()
 
     allowed, _ = _marker_reason(request.node, "network")

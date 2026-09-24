@@ -58,6 +58,11 @@ class FakeSystem(ei.System):
         self.sha_published = ZIP_SHA
         self.team = ei.OLLAMA_TEAM_ID
         self.spawned: List[List[str]] = []
+        # What `xcode-select -p` answers: a real folder under tmp, because the
+        # installer checks that the answered path exists (on a Linux CI host
+        # /Library/Developer/CommandLineTools does not).
+        self.clt = tmp / "CommandLineTools"
+        self.clt.mkdir(exist_ok=True)
 
     def on(self, match: Callable[[List[str]], bool], result: Callable[[List[str]], Tuple[int, str]]) -> None:
         self.handlers.insert(0, (match, result))
@@ -79,7 +84,7 @@ class FakeSystem(ei.System):
         if argv[:2] == ["codesign", "-dv"]:
             return 0, f"Identifier=x\nTeamIdentifier={self.team}\n"
         if argv[:2] == ["xcode-select", "-p"]:
-            return 0, "/Library/Developer/CommandLineTools\n"
+            return 0, f"{self.clt}\n"
         return 0, ""
 
     def run(self, argv, *, env=None, timeout=60.0, input_text=None):
@@ -348,7 +353,7 @@ BUILD_LOG = [f"      cmake line {i}: -- Detecting C compiler ABI info" for i in 
 def test_no_wheel_and_no_command_line_tools_is_needs_tools_then_resumes(tmp_path) -> None:
     sysd = FakeSystem(tmp_path)
     clt = {"present": False}
-    sysd.on(lambda a: a[:2] == ["xcode-select", "-p"], lambda a: (0, "/Library/Developer/CommandLineTools\n") if clt["present"] else (2, "xcode-select: error: unable to get active developer directory"))
+    sysd.on(lambda a: a[:2] == ["xcode-select", "-p"], lambda a: (0, f"{sysd.clt}\n") if clt["present"] else (2, "xcode-select: error: unable to get active developer directory"))
     sysd.on(lambda a: a[:3] == ["/fake/uv", "pip", "install"] and "--only-binary" in a, lambda a: (1, "  x No solution found when resolving dependencies:\n  Because llama-cpp-python==0.3.28 has no wheels with a matching platform tag"))
 
     def install_tools(argv):

@@ -326,6 +326,11 @@ def api(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch):
     m = am.AppsManager(tmp_path / "runtime", urlopen=net, install_allowed=lambda: True)
     opened: List[List[str]] = []
     m.terminal_opener = lambda argv: opened.append(list(argv))
+    # The window is opened by the fake opener above; the argv is built as on a
+    # Mac so the test does not depend on this host having a desktop session
+    # (a headless Linux CI runner has no DISPLAY: NoTerminal, 409).
+    real_terminal_argv = am.terminal_argv
+    monkeypatch.setattr(am, "terminal_argv", lambda script, **kw: real_terminal_argv(script, system="darwin"))
     import abstractgateway.routes.apps as routes
 
     monkeypatch.setattr(routes, "get_apps_manager", lambda: m)
@@ -365,8 +370,7 @@ def test_launch_tui_opens_a_terminal_with_a_one_time_code_and_no_token(api, tmp_
     assert len(opened) == 1
     argv = opened[0]
     script = Path(argv[-1])
-    if sys.platform == "darwin":
-        assert argv[:3] == ["open", "-a", "Terminal"]
+    assert argv[:3] == ["open", "-a", "Terminal"]
     text = script.read_text()
     assert oct(script.stat().st_mode & 0o777) == "0o700"
     (code,) = list(m._tui_handover)

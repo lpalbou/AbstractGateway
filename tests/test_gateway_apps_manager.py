@@ -152,6 +152,15 @@ def _free_port() -> int:
     return p
 
 
+def _free_range() -> str:
+    """A VALID explicit range of two free ports (low-high). An inverted range
+    is invalid and falls back to the default range, whose first candidate is
+    the app's stack port (3003 for Code): a live port on a developer machine
+    and a network-guard hit on CI."""
+    lo, hi = sorted((_free_port(), _free_port()))
+    return f"{lo}-{hi}"
+
+
 def _wait(pred, timeout=10.0):
     end = time.time() + timeout
     while time.time() < end:
@@ -463,7 +472,7 @@ def test_launch_stop_and_env(manager: am.AppsManager, monkeypatch: pytest.Monkey
 def test_crash_restarts_then_crash_loop(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
     _publish(manager, am.APP_BY_ID["code"], "1.0.0")
     manager.start_install("code", run_inline=True)
-    monkeypatch.setenv(am.ENV_PORTS, f"{_free_port()}-{_free_port()}")
+    monkeypatch.setenv(am.ENV_PORTS, _free_range())
     row = manager.launch("code")
     first_pid = row["pid"]
     proc = manager._procs["code"]
@@ -485,7 +494,7 @@ def test_launch_failure_carries_the_app_log(manager: am.AppsManager, monkeypatch
     _publish(manager, am.APP_BY_ID["code"], "1.0.0")
     manager.start_install("code", run_inline=True)
     (manager.package_dir("code", "1.0.0") / "bin" / "mode").write_text("exit")
-    monkeypatch.setenv(am.ENV_PORTS, f"{_free_port()}-{_free_port()}")
+    monkeypatch.setenv(am.ENV_PORTS, _free_range())
     with pytest.raises(am.LaunchFailed) as ei:
         manager.launch("code")
     assert "boom: refusing to start" in (ei.value.details or "")

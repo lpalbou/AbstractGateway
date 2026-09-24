@@ -1077,7 +1077,11 @@ def _pid_command(pid: int) -> Optional[str]:
     if sys.platform.startswith("win"):
         return None
     try:
-        out = subprocess.run(["ps", "-o", "command=", "-p", str(int(pid))], capture_output=True, text=True, timeout=5)
+        # `-ww`: unlimited width. Linux procps cuts a non-tty listing at 80
+        # columns, so the reaper's "is this still that app" test (the app's
+        # bin path in the command line) failed for every real install path
+        # and a leftover app kept its port.
+        out = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(int(pid))], capture_output=True, text=True, timeout=5)
     except Exception:
         return None
     return out.stdout.strip() or None

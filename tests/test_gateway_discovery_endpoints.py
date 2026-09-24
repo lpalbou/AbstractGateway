@@ -10,6 +10,16 @@ from fastapi.testclient import TestClient
 from abstractruntime.utils.workspace_paths import build_workspace_mounts
 
 
+@pytest.fixture(autouse=True)
+def _engine_default_urls_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests pin that discovery forwards NO base URL when none is
+    # configured; the conftest points the engines' default URLs at a closed
+    # port, which is exactly such a configuration. The calls are recorded by a
+    # fake, never sent.
+    for key in ("LMSTUDIO_BASE_URL", "OLLAMA_BASE_URL", "OLLAMA_HOST"):
+        monkeypatch.delenv(key, raising=False)
+
+
 def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> None:
     bundles_dir.mkdir(parents=True, exist_ok=True)
 
