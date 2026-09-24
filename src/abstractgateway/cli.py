@@ -376,6 +376,18 @@ def _reserve_gguf_metal() -> None:
     operator deserves to see, but it is not a reason to refuse to start.
     """
     try:
+        import importlib.util
+        import platform
+
+        # Metal offload exists only on Apple silicon, and only for an installed
+        # llama-cpp-python. Anywhere else AbstractCore's reservation is a no-op
+        # that answers False, and the warning below would blame PyTorch on
+        # every light install and every Linux host.
+        if platform.system().lower() != "darwin" or platform.machine().lower() != "arm64":
+            return
+        if importlib.util.find_spec("llama_cpp") is None:
+            return
+
         import abstractcore
 
         reserve = getattr(abstractcore, "enable_gguf_metal", None)
@@ -649,12 +661,18 @@ def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
     _argv0 = (list(argv) if argv is not None else sys.argv[1:])[:1]
-    if _argv0 not in (["claim"], ["service"], ["models"], ["engines"], ["apps"], ["network"]):
-        # The first-run verbs and the models/engines verbs never load a model
-        # in this process; the reservation (and its CPU-fallback warning) is
-        # noise for them.
+    if _argv0 not in (
+        ["claim"], ["service"], ["models"], ["engines"], ["apps"], ["network"], ["config"],
+        ["--version"], ["-h"], ["--help"],
+    ):
+        # The first-run verbs, the models/engines verbs, `config` and the
+        # version/help flags never load a model in this process; the
+        # reservation (and its CPU-fallback warning) is noise for them.
         _reserve_gguf_metal()
+    from . import __version__ as _gateway_version
+
     parser = argparse.ArgumentParser(prog="abstractgateway", description="AbstractGateway (Run Gateway host)")
+    parser.add_argument("--version", action="version", version=f"abstractgateway {_gateway_version}")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     serve = sub.add_parser("serve", help="Run the AbstractGateway HTTP/SSE server")
