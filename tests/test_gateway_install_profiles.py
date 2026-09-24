@@ -31,8 +31,8 @@ def _sibling_pyproject(package_dir: str) -> dict:
 def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
-    assert "AbstractRuntime>=0.4.33" in deps
-    assert "abstractcore>=2.15.0" in deps
+    assert "AbstractRuntime>=0.4.34" in deps
+    assert "abstractcore>=2.15.1" in deps
     assert "abstractagent>=0.3.13" in deps
     assert "AbstractMemory[lancedb]>=0.3.0" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
@@ -57,7 +57,7 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     music_base = "\n".join(_sibling_pyproject("abstractmusic")["project"].get("dependencies", []))
 
     runtime_base = "\n".join(runtime_project["dependencies"])
-    assert "abstractcore[remote,tools,vision,voice,audio,music]>=2.14.0" in runtime_base
+    assert "abstractcore[remote,tools,vision,voice,audio,music]>=2.15.1" in runtime_base
     assert "pypdf" in runtime_base
     assert "reportlab" in runtime_base
     assert "pymupdf" not in runtime_base.lower()
@@ -119,7 +119,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]>=2.15.0" in embeddings
+    assert "abstractcore[embeddings]>=2.15.1" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras
@@ -128,7 +128,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[apple]>=0.4.33" in apple
+    assert "AbstractRuntime[apple]>=0.4.34" in apple
     assert "abstractagent[apple]>=0.3.13" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.3.0" in apple
@@ -137,7 +137,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[gpu]>=0.4.33" in gpu
+    assert "AbstractRuntime[gpu]>=0.4.34" in gpu
     assert "abstractagent[gpu]>=0.3.13" in gpu
     assert "AbstractMemory[all-gpu]>=0.3.0" in gpu
     assert "abstractcore[" not in gpu

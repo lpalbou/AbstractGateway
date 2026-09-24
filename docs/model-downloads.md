@@ -21,10 +21,10 @@ All under `/api/gateway`.
 | `POST /models/download` `{"recommended": true}` | admin | `{"ok": true, "recommended": true, "jobs": [one per model], "group": {parent}}` |
 | `GET /models/download/{job_id}` | user | `{"ok": true, "job": {...}}`; a `grp_...` id returns the parent; 404 when unknown (jobs are per Gateway process) |
 | `GET /models/downloads` | user | `{"ok": true, "jobs": [...]}`, newest first; parents are listed, and each child names its parent in `parent_job` |
-| `POST /models/download/{job_id}/cancel` | admin | `{"ok": true, "job": {...}}` with `cancel_requested: true`; the job turns `cancelled` when the tool has stopped (normally < 1 s); a parent cancels every running child; 404 when unknown |
+| `POST /models/download/{job_id}/cancel` `{"via": "console"}`? | admin | `{"ok": true, "job": {...}}` with `cancel_requested: true` and `cancelled_by`; the job turns `cancelled` when the tool has stopped (normally < 1 s); a parent cancels every running child; 404 when unknown. A console sends `{"via": "console"}` when a person clicked Cancel; without it the cancel is recorded as `api` |
 | `GET /models/downloads/stream` | user | Server-Sent Events, below |
 
-The request bodies are unchanged from before this contract.
+The request bodies are unchanged from before this contract (the cancel body is optional).
 
 ### The event stream
 
@@ -53,16 +53,18 @@ final state). Polling keeps working; the stream is optional.
 | `detail` | the engine tool's own last line, unchanged |
 | `files` | `[{name, bytes_done, bytes_total, state}]`, file state `pending`, `downloading`, `done`, `failed`, `cancelled`; Ollama layers are named `layer <digest>` |
 | `current_file` | the file arriving now |
-| `error` | the full reason when `failed` |
+| `error` | the full reason when `failed` (the tool's own words) |
+| `ended_reason` | when `failed` or `cancelled`: one plain sentence saying what happened and what a new download reuses, e.g. "The connection to Hugging Face dropped after 200 MB of 266 MB. Check the network connection, then download it again; the files that finished are kept, and the file that was in progress starts over." or "Cancelled in the console by admin at 21:15 after 105 MB of 275 MB. ..." |
 | `stall_after_s`, `stalled_for_s` | the stall threshold (default 15 s) and how long the current stall has lasted |
 | `transitions` | `[{at, state, why}]`, every state change |
 | `cancel_requested` | `true` from the cancel request until the job ends |
+| `cancelled_by`, `cancelled_by_user` | who asked for the cancel: `console` (a person clicked Cancel in a console), `api` (any other HTTP cancel), `cli` (`abstractcore models cancel`, Ctrl-C), `other_process` (a cancel marker from another program); the signed-in account when known. `null` unless a cancel was requested |
 | `parent_job` | on a child of a parent job |
 
 A parent (`download_group`) adds `children` (the full child jobs),
 `child_job_ids` and `label`, and uses `files` for one row per model. Its
 bytes, percent and speed add up its children; models already installed count
-as done with nothing to fetch. It is `stalled` only when every running child
+as done with nothing to fetch. Its `ended_reason` joins its children's. It is `stalled` only when every running child
 is stalled, `failed` when every child ended and one failed (`error` names
 which, with its reason), `cancelled` when one was cancelled, and `done` when
 all are.
@@ -79,7 +81,11 @@ all are.
   `transitions`.
 - `verifying`: checking what arrived (Ollama's sha256, every Hugging Face file whole).
 - `installing`: moving into the library (Ollama "writing manifest", LM Studio "Finalizing download...").
-- `done`, `failed`, `cancelled`: finished.
+- `done`, `failed`, `cancelled`: finished. `cancelled` ONLY follows a cancel request
+  (`cancelled_by` says whose); a download that stops on its own -- a dropped
+  connection, a Hub error, a full disk, the Gateway restarting (the job then
+  reads `failed` from its saved snapshot, and the transfer stops with it) -- is
+  `failed`, with `ended_reason`.
 
 `verifying` and `installing` never count as stalls.
 

@@ -24856,8 +24856,19 @@ async def model_download_cancel(job_id: str, request: Request) -> Dict[str, Any]
     """
     from ..model_downloads import cancel_job
 
-    _require_admin_principal(request)
-    job = await _core_host_call(cancel_job, job_id)
+    principal = _require_admin_principal(request)
+    # WHO ASKED is recorded on the job (mission KK): a console sends
+    # `{"via": "console"}` when a person clicked Cancel; anything else is an
+    # API call. The final state then says "admin cancelled this download in
+    # the console at 21:15", never a bare "Cancelled".
+    via = "api"
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict) and str(body.get("via") or "") == "console":
+        via = "console"
+    job = await _core_host_call(cancel_job, job_id, via=via, user=getattr(principal, "user_id", None) or None)
     if isinstance(job, JSONResponse):
         return job
     if job is None:
@@ -25101,7 +25112,8 @@ async def host_job_cancel_post(job_id: str, request: Request) -> Any:
     if default_registry().get(job_id) is not None:
         snap = await asyncio.to_thread(default_registry().cancel, job_id)
         return dict(snap or {}, schema="host_job_v1", engine_job_schema="engine_install_job_v1")
-    job = await _core_host_call(core_host_job_cancel, job_id)
+    principal = _principal_from_request(request)
+    job = await _core_host_call(core_host_job_cancel, job_id, by="api", user=getattr(principal, "user_id", None) or None)
     if job is None:
         return _host_action_error(404, "not_found", f"no job {job_id}")
     return job

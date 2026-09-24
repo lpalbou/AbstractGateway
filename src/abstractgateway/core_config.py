@@ -911,8 +911,10 @@ def core_host_job(job_id: str) -> Optional[Dict[str, Any]]:
     return gateway_cli_equivalent(job) if job is not None else None
 
 
-def core_host_job_cancel(job_id: str) -> Optional[Dict[str, Any]]:
-    job = config_facade.host_job_cancel(job_id)
+def core_host_job_cancel(job_id: str, *, by: str = "api", user: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Cancel a host job, saying who asked (`api`, or `console` for a click in a console)."""
+
+    job = config_facade.host_job_cancel(job_id, by=by, user=user)
     return gateway_cli_equivalent(job) if job is not None else None
 
 

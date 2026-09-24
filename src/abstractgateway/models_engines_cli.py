@@ -321,7 +321,7 @@ class _Local:
                 job = seam.core_host_job(parts[1])
                 return _Answer(200, job) if job is not None else _Answer(404, {"ok": False, "status": "not_found", "message": f"no job {parts[1]}"})
             if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "cancel":
-                job = seam.core_host_job_cancel(parts[1])
+                job = seam.core_host_job_cancel(parts[1], by="cli")
                 return _Answer(200, job) if job is not None else _Answer(404, {"ok": False, "status": "not_found", "message": f"no job {parts[1]}"})
         except ei.JobStateError as exc:
             return _Answer(exc.status_code, {"ok": False, "status": "refused", "reason": exc.reason, "message": str(exc)})

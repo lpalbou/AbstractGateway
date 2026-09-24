@@ -136,7 +136,7 @@ def facade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> SimpleNamespace:
     rec("start_model_download_job", lambda provider, artifact, **kw: _job("dl_1", "download", "queued", joined=1))
     rec("host_jobs_list", lambda kind=None, status=None: {"schema": "host_jobs_v1", "jobs": [_job("dl_1"), _job("rm_1", "delete", "completed")], "generated_at": "2026-09-23T10:00:00Z"})
     rec("host_job", lambda job_id: state.jobs.get(job_id))
-    rec("host_job_cancel", lambda job_id: (dict(state.jobs[job_id], status="cancelled") if job_id in state.jobs else None))
+    rec("host_job_cancel", lambda job_id, by="api", user=None: (dict(state.jobs[job_id], status="cancelled", cancelled_by=by, cancelled_by_user=user) if job_id in state.jobs else None))
     rec("models_engines_support", {"available": True, "abstractcore_version": "2.14.0", "required": "2.14.0", "missing": []})
     state.real = real
     yield state

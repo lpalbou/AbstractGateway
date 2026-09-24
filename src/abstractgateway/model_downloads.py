@@ -321,6 +321,13 @@ def group_view(group_id: str) -> Optional[Dict[str, Any]]:
         elif unknown:
             parts.append(f"{len(unknown)} of {len(fetching)} sources cannot report their size yet")
     errors = [f"{j.get('provider')} {j.get('artifact')}: {j.get('error')}" for j in children if j.get("error") and _child_state(j) == "failed"]
+    # Why the parent ended, in the children's own plain words (who cancelled,
+    # what failed); None while it runs or when every child finished.
+    reasons = [
+        f"{j.get('artifact')}: {j.get('ended_reason')}"
+        for j in children
+        if j.get("ended_reason") and _child_state(j) in ("failed", "cancelled")
+    ]
     updated = [str(j.get("updated_at") or "") for j in children]
     host_status = "running" if active else ("completed" if state == "done" else state)
     return {
@@ -346,6 +353,7 @@ def group_view(group_id: str) -> Optional[Dict[str, Any]]:
         "updated_at": max(updated) if any(updated) else _iso(time.time()),
         "message": " · ".join(parts),
         "error": "; ".join(errors) if errors else None,
+        "ended_reason": " ".join(reasons) if (reasons and not active) else None,
         "files": [
             {
                 "name": f"{j.get('provider')} {j.get('artifact')}",
@@ -371,12 +379,23 @@ def _group_of_children() -> Dict[str, str]:
         }
 
 
-def cancel_job(job_id: str) -> Optional[Dict[str, Any]]:
-    """Cancel a download (or every active child of a group); None when unknown."""
+CANCEL_VIAS = ("console", "api")
+
+
+def cancel_job(job_id: str, *, via: str = "api", user: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Cancel a download (or every active child of a group); None when unknown.
+
+    `via` is `console` when a person clicked Cancel in a console (the console
+    says so in the request body), else `api`; `user` is the signed-in admin.
+    Both are recorded on the job by AbstractCore (`cancelled_by`,
+    `cancelled_by_user`, `ended_reason`), so its final state says who
+    cancelled it. Nothing in the Gateway cancels a download on its own.
+    """
 
     jid = str(job_id or "").strip()
     if not jid:
         return None
+    by = via if via in CANCEL_VIAS else "api"
     if jid.startswith("grp_"):
         view = group_view(jid)
         if view is None:
@@ -384,9 +403,9 @@ def cancel_job(job_id: str) -> Optional[Dict[str, Any]]:
         for child in view["children"]:
             cid = child.get("job_id") or child.get("job")
             if cid and _child_state(child) not in _DONE_STATES:
-                core_host_job_cancel(str(cid))
+                core_host_job_cancel(str(cid), by=by, user=user)
         return group_view(jid)
-    job = core_host_job_cancel(jid)
+    job = core_host_job_cancel(jid, by=by, user=user)
     if job is None:
         return None
     return legacy_job_view(job)

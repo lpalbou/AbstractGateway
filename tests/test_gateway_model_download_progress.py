@@ -244,3 +244,49 @@ def test_cancel_route_is_admin_only():
     req = gateway_route_authorization_requirement("/api/gateway/models/download/dl_abc/cancel", "POST")
     assert req is not None and req.admin_required
     assert gateway_route_authorization_requirement("/api/gateway/models/downloads/stream", "GET") is None
+
+
+# ---------------------------------------------------------------------------
+# Mission KK: who cancelled, and why a download ended (never a bare "Cancelled")
+# ---------------------------------------------------------------------------
+
+DROP = "httpx.RemoteProtocolError: peer closed connection without sending complete message body"
+
+
+def test_a_console_cancel_records_who_and_a_drop_is_failed_not_cancelled(three_sources, tmp_path, monkeypatch):
+    three_sources.outcome["supertonic-3"] = {"ok": False, "status": "failed", "message": DROP}
+    client, h = _client(tmp_path, monkeypatch)
+    with client:
+        body = client.post("/api/gateway/models/download", headers=h, json={"recommended": True}).json()
+        gid = body["group"]["job_id"]
+        ids = {j["artifact"]: j["job_id"] for j in body["jobs"]}
+        text_id = ids["qwen/qwen3.5-9b@4bit"]
+        assert _wait(lambda: client.get(f"/api/gateway/models/download/{text_id}", headers=h).json()["job"]["bytes_done"])
+        # A person clicked "Stop download" in the console: the body says so.
+        got = client.post(f"/api/gateway/models/download/{text_id}/cancel", headers=h, json={"via": "console"}).json()["job"]
+        assert got["cancel_requested"] is True and got["cancelled_by"] == "console" and got["cancelled_by_user"]
+        # A script's cancel (no body) is an API cancel.
+        image_id = ids["AbstractFramework/flux.2-klein-4b-8bit"]
+        assert client.post(f"/api/gateway/models/download/{image_id}/cancel", headers=h).json()["job"]["cancelled_by"] == "api"
+        for ev in list(three_sources.step.values()) + list(three_sources.finish.values()):
+            ev.set()
+        assert _wait(lambda: client.get(f"/api/gateway/models/download/{gid}", headers=h).json()["job"]["status"] != "running")
+        text = client.get(f"/api/gateway/models/download/{text_id}", headers=h).json()["job"]
+        voice = client.get(f"/api/gateway/models/download/{ids['supertonic-3']}", headers=h).json()["job"]
+        group = client.get(f"/api/gateway/models/download/{gid}", headers=h).json()["job"]
+    assert text["status"] == "cancelled" and text["ended_reason"].startswith("Cancelled in the console by ")
+    # The dropped connection ended its job as FAILED, with the plain reason.
+    assert voice["status"] == "failed" and voice["cancelled_by"] is None
+    assert voice["ended_reason"].startswith("The connection to Hugging Face dropped")
+    assert group["state"] == "failed"
+    assert "Cancelled in the console by" in group["ended_reason"] and "The connection to Hugging Face dropped" in group["ended_reason"]
+
+
+def test_a_cancel_body_other_than_console_is_an_api_cancel(three_sources):
+    from abstractgateway import model_downloads
+
+    gid = model_downloads.start_recommended_group()["group"]["job_id"]
+    view = model_downloads.cancel_job(gid, via="tray-made-up", user=None)
+    assert {c.get("cancelled_by") for c in view["children"]} == {"api"}
+    for ev in list(three_sources.step.values()) + list(three_sources.finish.values()):
+        ev.set()
