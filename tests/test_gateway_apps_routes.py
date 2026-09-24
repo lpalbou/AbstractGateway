@@ -37,7 +37,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return client, m, allowed
 
 
-def test_overview_requires_auth_and_lists_five_apps(env) -> None:
+def test_overview_requires_auth_and_lists_the_apps(env) -> None:
     client, _m, _ = env
     from abstractgateway.app import app
 
@@ -46,8 +46,10 @@ def test_overview_requires_auth_and_lists_five_apps(env) -> None:
     r = client.get("/api/gateway/apps?latest=false")
     assert r.status_code == 200, r.text
     data = r.json()
-    # The stack order (scripts/start-local.sh port map: 3001..3005).
-    assert [a["id"] for a in data["apps"]] == ["observer", "continuum", "code", "entity", "flow"]
+    # The stack order (scripts/start-local.sh port map: 3001..3005), then the
+    # desktop app (mission LL).
+    assert [a["id"] for a in data["apps"]] == ["observer", "continuum", "code", "entity", "flow", "assistant"]
+    assert [a["kind"] for a in data["apps"]] == ["web"] * 5 + ["desktop"]
     node = data["runtime"]["node"]
     assert set(node) >= {"available", "version", "source", "install_available", "message"}
     row = data["apps"][1]
@@ -59,7 +61,7 @@ def test_overview_reports_registry_unreachable(env) -> None:
     client, _m, _ = env
     data = client.get("/api/gateway/apps").json()
     assert data["registry"]["reachable"] is False
-    assert all(a["install_available"] is False for a in data["apps"])
+    assert all(a["install_available"] is False for a in data["apps"] if a["kind"] == "web")
     assert "not reachable" in data["apps"][0]["install_blocked_reason"]
 
 

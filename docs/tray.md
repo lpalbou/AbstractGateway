@@ -12,9 +12,11 @@ can see what it is doing and act on it in one click:
   is a deep link to a tab of it.
 - **Apps** — the six AbstractFramework apps, one short line each: **Open X**
   (running, whoever started it, or installed: started first), **Install X…**
-  (installs through the gateway, starts it and opens it signed in, with
-  progress notifications), **Launch Assistant** (the desktop app), otherwise
-  the app's name, greyed. See *Apps* below.
+  (installs through the gateway, with progress notifications: the same
+  install as the console's Install button, so Code's terminal app comes with
+  it; nothing opens by itself, the menu then offers **Open X**), **Launch
+  Assistant** (the desktop app), otherwise the app's name, greyed. See *Apps*
+  below.
 - **Workflows** — the last 24 hours of runs, newest first: a state badge
   (🟢 running, 🟡 waiting, ✅ completed, ❌ failed, ⚪️ cancelled), the step
   count and how long each took, under a one-line tally. Rows are information;
@@ -182,9 +184,9 @@ not depend on its apps:
 
 | App | Detected by | Line |
 |---|---|---|
-| Observer, Continuum, Code, Entity, Flow | the gateway (`GET /api/gateway/apps`): its own installs, and apps started outside it (the dev stack, `npx`, a service) found on their usual port | **Open X** when running, whoever started it (a one-time signed-in handover); **Open X** when installed and stopped (starts it, then opens it); **Install X…** when it can be installed (install + start + open, with progress); otherwise **X**, greyed |
+| Observer, Continuum, Code, Entity, Flow | the gateway (`GET /api/gateway/apps`): its own installs, and apps started outside it (the dev stack, `npx`, a service) found on their usual port | **Open X** when running, whoever started it (a one-time signed-in handover); **Open X** when installed and stopped (starts it, then opens it); **Install X…** when it can be installed (the browser app and, for Code when a ready-made download exists for this computer, its terminal app, as one job; a notification when it is done, then **Open X**); otherwise **X**, greyed |
 | the same, installed globally | the app's command on PATH (`abstractobserver`, `abstractflow-editor`, `abstractcode-web`, `abstractcontinuum`, `abstractentity`) or the package under `npm root -g` | **Open X** — started by the tray with the gateway URL passed in and stopped when the tray exits; sign in inside the app (install it here instead for the one-click sign-in) |
-| Assistant | `AbstractAssistant.app` in /Applications or ~/Applications, the `abstractassistant` command (PATH or this Python's scripts folder), or the package in this Python (`importlib.util.find_spec`) | **Launch Assistant** |
+| Assistant | the same detection as the console's Assistant card (`apps_desktop.detect_assistant`): `AbstractAssistant.app` in /Applications or ~/Applications, the `abstractassistant` command (this Python's scripts folder, or PATH), or the package in this Python (`importlib.util.find_spec`, without importing it) | **Launch Assistant** when found (also while it runs); **Install Assistant…** when the gateway can install it into its own Python (the console's Install); otherwise **Assistant**, greyed |
 | Code's terminal version (the only app with one today) | the gateway's presence check, reported as `interfaces[kind="tui"]` on the app row: its own copy in `<data dir>/apps/bin/`, `abstractcode` on PATH, or `~/.cargo/bin` | **Open Code in Terminal** — a new terminal window on this machine, signed in through a one-time code (`POST /api/gateway/apps/code/launch-tui`, the same route as the console's button). Shown only when the gateway reports it installed; greyed when the gateway would refuse (the console says why) |
 
 When an app cannot be installed from here, ONE line near the bottom says so:

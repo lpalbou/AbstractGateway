@@ -571,11 +571,20 @@ def apps_section(inputs: MenuInputs, *, reachable: bool) -> Node:
     blocked_other = False
     for a in inputs.apps:
         if a.id == "assistant":
+            # A desktop app (mission LL): launched here, on this machine;
+            # installed through the gateway (into its own Python).
             items.append(SEP)
-            if a.status == "available":
+            if a.status in {"available", "running"}:
                 items.append(Node(f"Launch {a.name}", ("assistant_launch",)))
+            elif a.status == "installing":
+                pct = f" {int(a.job_percent)}%" if isinstance(a.job_percent, (int, float)) else ""
+                items.append(info(f"{a.name} — installing{pct}…"))
+            elif a.status == "not_installed" and a.install_available:
+                items.append(Node(f"Install {a.name}…", ("app_install", a.id), enabled=reachable))
             else:
                 items.append(info(a.name))
+                if a.status == "not_installed" and a.installs_off:
+                    blocked_by_policy = True
             continue
         if a.status == "running" and a.source in {"gateway", "external"}:
             # Through the gateway's one-time sign-in handover, whoever started it.

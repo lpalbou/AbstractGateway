@@ -285,8 +285,11 @@ def test_every_row_has_a_web_interface_and_only_code_a_terminal_one(mgr) -> None
     net.offline = False
     ov = m.overview(check_latest=False, caller={"local": True, "admin": True, "gateway_url": "http://127.0.0.1:18890"})
     kinds = {a["id"]: [i["kind"] for i in a["interfaces"]] for a in ov["apps"]}
-    assert kinds == {"flow": ["web"], "code": ["web", "tui"], "observer": ["web"], "continuum": ["web"], "entity": ["web"]}
+    # The desktop app (mission LL) has no browser or terminal interface.
+    assert kinds == {"flow": ["web"], "code": ["web", "tui"], "observer": ["web"], "continuum": ["web"], "entity": ["web"], "assistant": []}
     for a in ov["apps"]:
+        if a["kind"] != "web":
+            continue
         web = a["interfaces"][0]
         assert web["installed"] == a["installed"] and web["install_available"] == a["install_available"]
         assert web["version"] == a["version"] and web["install_method"] == "npm"
@@ -618,16 +621,18 @@ def test_cli_list_shows_the_terminal_interface(monkeypatch, capsys) -> None:
 def test_console_terminal_action_sits_in_the_card_action_row() -> None:
     """Mission GG: the terminal version is no longer its own block in the card
     ("Also runs in your terminal", glyph, pill, sentence). Installed -> an
-    "Open in Terminal" button next to Open; installable -> a quiet "Install
-    for Terminal"; the Rust-toolchain and other-computer cases say nothing
-    in the plain view and show their one-line command + Copy only with
-    Technical details on."""
+    "Open in Terminal" button next to Open. Mission LL: the plain view never
+    INSTALLS the terminal app on its own (the card's one Install installs it
+    with the browser app); installing it alone is a Technical details action;
+    the Rust-toolchain and other-computer cases say nothing in the plain view
+    and show their one-line command + Copy only with Technical details on."""
     from abstractgateway.console_ui import CONSOLE_UI_JS
 
     parts = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appTuiParts(app, techOn) {"):CONSOLE_UI_JS.index("function appRowById(id)")]
     plain, tech = parts.split("if (!techOn) return out;", 1)
     assert 'btn("tui-open", "Open in Terminal", "is-ghost", `The same ${name}, in a terminal window' in plain
-    assert 'btn("tui-install", "Install for Terminal", "is-quiet"' in plain
+    assert '"tui-install"' not in plain and "Install for Terminal" not in CONSOLE_UI_JS
+    assert 'btn("tui-install", "Install terminal app", "is-text"' in tech
     for tech_only in ("Terminal version: needs the Rust toolchain", "Terminal version, on the other computer", "t.install_command", "t.signin_command"):
         assert tech_only in tech and tech_only not in plain, tech_only
     assert "Also runs in your terminal" not in CONSOLE_UI_JS

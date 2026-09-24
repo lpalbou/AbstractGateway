@@ -696,6 +696,34 @@ def _no_external_app_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_am, "external_probe_ports", lambda: [])
 
 
+@pytest.fixture(autouse=True)
+def _no_real_desktop_app(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> None:
+    """The Assistant card (apps_desktop.py) looks at /Applications, this
+    Python's scripts folder, the importable package and the process list: the
+    operator's real machine. In a test nothing is found and nothing runs
+    unless the test hands a manager its own `desktop_probes` (or calls
+    `detect_assistant` with its own DesktopProbes)."""
+    import abstractgateway.apps_desktop as _desk
+
+    empty = tmp_path_factory.mktemp("no-desktop-apps")
+
+    def _nothing() -> "_desk.DesktopProbes":
+        return _desk.DesktopProbes(
+            which=lambda _name: None,
+            exists=lambda _path: False,
+            find_spec=lambda _name: None,
+            home=empty,
+            script_dirs=[str(empty)],
+            dist_version=lambda _name: None,
+            plist_version=lambda _path: None,
+            entry_point=lambda _script: None,
+            processes=lambda: [],
+        )
+
+    monkeypatch.setattr(_desk, "system_probes", _nothing)
+    monkeypatch.setattr(_desk, "_process_argvs", lambda: [])
+
+
 def pytest_configure(config):
     _register_hermetic_markers(config)
 

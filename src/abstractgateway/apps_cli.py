@@ -22,7 +22,7 @@ _POLL_S = 0.5
 
 
 def add_apps_subparser(sub: Any) -> None:
-    apps = sub.add_parser("apps", help="Browser apps (Flow, Code, Observer, Continuum, Entity): install, launch, stop, update")
+    apps = sub.add_parser("apps", help="Apps (Flow, Code, Observer, Continuum, Entity, and the desktop Assistant): install, launch, stop, update")
     verbs = apps.add_subparsers(dest="apps_cmd", required=True)
 
     def conn(p: argparse.ArgumentParser) -> None:
@@ -40,7 +40,7 @@ def add_apps_subparser(sub: Any) -> None:
     conn(p)
     for name, helptext in (("install", "Download and install an app from the npm registry"), ("update", "Update an installed app to the latest version (restarts it when running)")):
         p = verbs.add_parser(name, help=helptext)
-        p.add_argument("app", help="flow | code | observer | continuum | entity")
+        p.add_argument("app", help="flow | code | observer | continuum | entity | assistant (install: the browser app plus, where available, its terminal app; assistant: into the gateway's Python)")
         p.add_argument("--version", default=None, help="Exact version (default: latest)")
         if name == "install":
             p.add_argument("--launch", action="store_true", help="Start the app after installing it (and keep it enabled)")
@@ -308,6 +308,8 @@ def run_apps_command(args: argparse.Namespace) -> int:
         row = answer.data["app"]
         if args.json:
             _print_json(row)
+        elif verb == "launch" and row.get("kind") == "desktop":
+            print(answer.data.get("message") or f"{row['name']} is starting.")
         elif verb == "launch":
             print(f"{row['name']} {row.get('version')} is running at {row.get('url')} (starts with the gateway; `abstractgateway apps open {row['id']}` prints a signed-in link)")
         else:

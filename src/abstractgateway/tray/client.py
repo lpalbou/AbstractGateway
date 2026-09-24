@@ -175,8 +175,10 @@ class GatewayClient:
         terminal version signed in through a one-time handover."""
         return self._request("POST", f"/apps/{app_id}/launch-tui", body={}, timeout=30.0)
 
-    def app_install(self, app_id: str, *, launch: bool = True) -> Result:
-        return self._request("POST", f"/apps/{app_id}/install", body={"launch": bool(launch)}, timeout=30.0)
+    def app_install(self, app_id: str) -> Result:
+        """Install only (mission LL): the browser app and, where one exists for
+        this computer, its terminal app, as one job; nothing is started."""
+        return self._request("POST", f"/apps/{app_id}/install", body={}, timeout=30.0)
 
     def apps_job(self, job_id: str) -> Result:
         return self._request("GET", f"/apps/jobs/{job_id}", timeout=10.0)

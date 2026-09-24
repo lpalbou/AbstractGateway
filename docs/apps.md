@@ -1,9 +1,22 @@
-# Browser apps
+# Apps
 
 The five browser apps (Observer, Continuum, Code, Entity and Flow Editor) can be
 installed, started, stopped and updated from the gateway: from the console's
 Apps page, from the HTTP API below, or with `abstractgateway apps`. Nobody has
-to open a terminal or install Node.js by hand.
+to open a terminal or install Node.js by hand. The Apps page also lists the
+desktop app, the **Assistant** (see [The Assistant](#the-assistant-a-desktop-app)).
+
+On a card, a plain user sees one button for the state the app is in:
+
+| State | Buttons |
+|---|---|
+| Not installed | **Install** |
+| Installing | a progress bar (one row per part, e.g. "Code in the browser" and "Code in the terminal") and **Cancel** |
+| Installed (running or not) | **Open**, and **Open in Terminal** right beside it when the app's terminal version is installed |
+| Failed | the reason, **Show details**, and **Install** again |
+
+Stop, Show log, Update, versions, addresses and commands are under
+**Technical details**.
 
 ## What happens when you click Install
 
@@ -19,8 +32,23 @@ to open a terminal or install Node.js by hand.
    registry's sha512 integrity hash. Apps that need other npm packages get them
    through npm (with its cache in `<data dir>/apps/npm-cache/`); Code needs
    none and is unpacked directly.
-3. **Start.** With "Install and open", the gateway starts the app on a free
-   port, waits until it answers, and opens it in a new tab, already signed in.
+3. **The terminal app, too.** When the app also runs in a terminal and a
+   ready-made download exists for this computer (Code today, see
+   [Terminal versions](#terminal-versions)), the same Install installs it
+   right after the browser app: ONE job whose `parts` are the two rows the
+   card shows (`install` then `install-tui`, each `waiting`, `running`,
+   `done`, `failed`, `cancelled` or `skipped`). Cancel stops both. If the
+   terminal part fails, the browser app stays installed and the job says so
+   ("Code is installed for the browser, but its terminal app did not install:
+   …"); with Technical details on, the card offers "Install terminal app" to
+   try that part again. Without a ready-made download for this computer,
+   Install installs the browser app only and the terminal app's command stays
+   under Technical details. The row's `install_parts` (`["web"]` or
+   `["web", "tui"]`) says in advance what Install covers.
+
+Install only installs: nothing starts and no tab opens. The card then shows
+**Open**, which starts the app on a free port when it is stopped, waits until
+it answers, and opens it in a new tab, already signed in.
 
 Every step is a job with a percentage, downloaded bytes and a plain message.
 When a step fails, the job says why in one sentence and carries the full log
@@ -149,7 +177,8 @@ second entry of kind `"tui"`:
 - **Install (`install_method`).** `release_binary`: Code publishes prebuilt
   binaries for macOS (Apple silicon and Intel), Linux (x86_64 and arm64,
   glibc) and Windows (x86_64) on its GitHub release, with a `SHA256SUMS` file.
-  "Install for Terminal" downloads the archive for this computer, checks it
+  The card's Install (and `install-tui` on its own) downloads the archive for
+  this computer, checks it
   against `SHA256SUMS` and against the sha256 digest GitHub reports for the
   file (both must agree), unpacks the single binary into `<data dir>/apps/bin/`,
   makes it executable and runs `--version` before it replaces anything.
@@ -276,7 +305,10 @@ The same actions, through the running gateway:
 
 ```bash
 abstractgateway apps list                 # Node.js, every app, installed/latest, URL
-abstractgateway apps install code --launch
+abstractgateway apps install code            # the browser app and, where available, its terminal app
+abstractgateway apps install code --launch   # ... and start it
+abstractgateway apps install assistant       # the desktop Assistant, into the gateway's Python
+abstractgateway apps launch assistant        # open it on this computer
 abstractgateway apps launch observer
 abstractgateway apps open observer        # prints a one-time signed-in link
 abstractgateway apps logs observer --tail 50
@@ -292,21 +324,60 @@ abstractgateway apps jobs [JOB_ID]
 default the command finds the gateway running for this data dir and uses its
 admin token on a loopback URL.
 
+## The Assistant (a desktop app)
+
+AbstractAssistant (PyPI `abstractassistant`) is the framework's desktop
+companion: a menu-bar app with a chat palette and hands-free voice
+conversations. It is a Python app, not a browser app, so its card
+(`kind: "desktop"`, id `assistant`, after the five browser apps) has no address
+or port. The full `abstractframework` install already includes it, in the same
+Python environment as the gateway; a gateway-only install may not.
+
+- **Found by presence** (nothing is imported or started to find it): the
+  `abstractassistant` command next to the gateway's own Python (or on `PATH`),
+  the installed package (`importlib.util.find_spec`, without importing it; a
+  folder that merely has the package's name does not count), and on macOS
+  `AbstractAssistant.app` in `/Applications` or `~/Applications`. The version
+  comes from the package, else from the app's `Info.plist`. It is **Running**
+  when a process on this computer is the Assistant (its command, `python -m
+  abstractassistant…`, or the app's own program). The tray's "Launch
+  Assistant" uses the same detection (`apps_desktop.detect_assistant`), so
+  the tray and the console always agree.
+- **Install** installs `abstractassistant` into the gateway's own Python as a
+  job (`uv pip install --python <gateway python> abstractassistant`, or pip
+  when there is no uv), with every `abstract*` package the gateway runs
+  pinned to its current version by a constraints file, so installing the
+  Assistant never changes the gateway. The same rule as the other installs
+  decides who may install (see [Who may install](#who-may-install)).
+- **Open** starts it on the gateway's computer: `open -a AbstractAssistant.app`
+  when the app exists, otherwise its command, as a separate process with none
+  of the gateway's tokens, secrets or keys in its environment. A running
+  Assistant is not started twice: the app is brought to the front (or, when
+  it was started from its command, the card says its icon is in the menu
+  bar). The Assistant keeps its own connection settings (its Settings window,
+  Connection): the gateway passes it no address and no token, and it has no
+  one-time sign-in handover yet.
+- **From another computer** the card says "The Assistant runs on the gateway's
+  computer: open it there." with no button: it is a desktop app for that
+  computer's screen.
+- **Technical details** show its version, where it was found and the launch
+  command (or the install command when it is not installed).
+
 ## HTTP API
 
 All routes are under `/api/gateway/apps` and need a signed-in principal.
 
 | Method and path | Who | What |
 |---|---|---|
-| `GET /apps?latest=true` | any user | Node.js status, one row per app (with `interfaces[]`, see "Terminal versions") and `console_tui` (the gateway console's terminal app). `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
+| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}`) and `console_tui` (the gateway console's terminal app). `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
-| `POST /apps/{id}/install` `{"version"?, "launch"?}` | admin | A job: Node.js if needed, download, check, dependencies, and with `launch: true` start the app. |
+| `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (constraints keep every `abstract*` package as it is). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. |
-| `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. |
+| `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, `{ok, app, already_running, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
 | `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |
-| `POST /apps/{id}/open` `{"remember"?, "path"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`). 400 `invalid_app_path` for anything that is not a path inside the app. |
+| `POST /apps/{id}/open` `{"remember"?, "path"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`). 400 `invalid_app_path` for anything that is not a path inside the app. 409 `desktop_app` for the Assistant (use `/launch`). |
 | `GET /apps/{id}/logs?tail=200` | admin | The end of the app's log. |
-| `GET /apps/jobs`, `GET /apps/jobs/{job}` | any user | Jobs: `state` (queued, running, succeeded, failed, cancelled), `percent`, `bytes_done`, `bytes_total`, `message`, `steps`, `details` (full log on failure). |
+| `GET /apps/jobs`, `GET /apps/jobs/{job}` | any user | Jobs: `state` (queued, running, succeeded, failed, cancelled), `percent`, `bytes_done`, `bytes_total`, `message`, `steps`, `parts` (the child rows of an Install that covers two parts), `details` (full log on failure). |
 | `POST /apps/jobs/{job}/cancel` | admin | Cancel a job. |
 | `POST /apps/{id}/install-tui` | admin | A job: download, check and place the app's prebuilt terminal version (or update the gateway's copy). 409 `toolchain_required` with `command` when only a source build exists. |
 | `POST /apps/{id}/launch-tui` | admin, on the gateway machine | Open the terminal version in a new terminal window, signed in as the caller: `{ok, app_id, interface: "tui", terminal, version, message, expires_in_s}`. From another computer (non-loopback peer or `Host`, or any proxy header): 409 `not_on_gateway_machine` with `command` and `signin_command`, and nothing opens. |

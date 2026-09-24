@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ..apps_manager import STACK_PORT
+from ..apps_manager import STACK_PORT, TUI_BY_APP
 
 WEB_APPS: Tuple[Tuple[str, str, str, str, int, str], ...] = (
     # id, name, npm package, command on PATH, usual port, gateway-URL env the app reads.
@@ -61,6 +61,8 @@ ASSISTANT_NAME = "Assistant"
 ASSISTANT_PACKAGE = "abstractassistant"
 ASSISTANT_BUNDLE = "AbstractAssistant.app"
 ASSISTANT_SCRIPT = "abstractassistant"
+# Apps whose Install also installs a terminal app (apps_manager.TUI_BY_APP).
+TERMINAL_APP_IDS: Tuple[str, ...] = tuple(TUI_BY_APP)
 
 
 @dataclass(frozen=True)
@@ -120,10 +122,17 @@ class Probes:
     home: Path = field(default_factory=Path.home)
     scripts_dir: Optional[str] = field(default_factory=lambda: sysconfig.get_path("scripts"))
     read_text: Callable[[str], str] = lambda p: Path(p).read_text(encoding="utf-8")
+    # (pid, argv) of this user's processes: is the Assistant running
+    # (apps_desktop._process_argvs, psutil).
+    processes: Callable[[], List[Tuple[int, List[str]]]] = field(default=None)  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.npm_root is None:
             self.npm_root = _npm_root_global
+        if self.processes is None:
+            from ..apps_desktop import _process_argvs
+
+            self.processes = _process_argvs
 
 
 def _npm_root_global() -> Optional[str]:
@@ -192,40 +201,26 @@ def _assistant_entry_point() -> Optional[str]:
 
 
 def detect_assistant(probes: Probes, *, python: str = sys.executable, entry_point: Callable[[], Optional[str]] = _assistant_entry_point) -> Dict[str, Any]:
-    """{found_by: [...], launch: argv | None, source}. Preference for launching:
-    the .app bundle (what a user installed), then the console script, then
-    this Python running the console-script entry point."""
-    found: List[str] = []
-    launches: List[Tuple[str, List[str]]] = []
-    if probes.platform == "darwin":
-        for base in (Path("/Applications"), probes.home / "Applications"):
-            bundle = base / ASSISTANT_BUNDLE
-            if probes.exists(str(bundle)):
-                found.append(f"bundle:{bundle}")
-                launches.append(("bundle", ["open", "-a", str(bundle)]))
-    script = probes.which(ASSISTANT_SCRIPT)
-    if not script and probes.scripts_dir:
-        cand = Path(probes.scripts_dir) / (ASSISTANT_SCRIPT + (".exe" if probes.platform.startswith("win") else ""))
-        if probes.exists(str(cand)):
-            script = str(cand)
-    if script:
-        found.append(f"script:{script}")
-        launches.append(("script", [script]))
-    spec = None
-    try:
-        spec = probes.find_spec(ASSISTANT_PACKAGE)
-    except (ImportError, ValueError):
-        spec = None
-    if _is_real_spec(spec):
-        found.append(f"python:{spec.origin}")
-        ep = entry_point()
-        if ep and ":" in ep:
-            mod, attr = ep.split(":", 1)
-            launches.append(("python", [python, "-c", f"import sys; from {mod} import {attr} as _m; sys.exit(_m())"]))
-    elif spec is not None:
-        found.append("namespace-only (ignored: a folder named abstractassistant, not an install)")
-    source, launch = (launches[0] if launches else ("", None))
-    return {"found_by": found, "launch": launch, "source": source}
+    """{found_by: [...], launch: argv | None, source, version, running, pid}.
+
+    The ONE detection the console shares (apps_desktop.detect_assistant,
+    mission LL): the tray only maps its own probes onto it. Preference for
+    launching: the .app bundle (what a user installed), then the console
+    script, then this Python running the console-script entry point."""
+    from ..apps_desktop import DesktopProbes, detect_assistant as _detect
+
+    dp = DesktopProbes(
+        which=probes.which,
+        exists=probes.exists,
+        find_spec=probes.find_spec,
+        platform=probes.platform,
+        home=probes.home,
+        script_dirs=[probes.scripts_dir] if probes.scripts_dir else [],
+        python=python,
+        entry_point=lambda _script: entry_point(),
+        processes=probes.processes,
+    )
+    return _detect(dp)
 
 
 # ---------------------------------------------------------------------------
@@ -299,11 +294,31 @@ def build_app_entries(
         )
     # One entry per web app so far; each also carries its terminal version.
     out = [_with_tui(e, rows.get(e.id)) for e in out]
+    # The Assistant (a desktop app): found on this machine by the detection
+    # the console shares (apps_desktop.detect_assistant); installed through
+    # the gateway's row (`kind: "desktop"`) when the gateway lists it.
     a = assistant or {}
-    if a.get("launch"):
-        out.append(AppEntry(ASSISTANT_ID, ASSISTANT_NAME, "available", str(a.get("source") or ""), "desktop app", found_by=tuple(a.get("found_by") or ())))
+    arow = rows.get(ASSISTANT_ID)
+    ajob = arow.get("active_job") if arow and isinstance(arow.get("active_job"), dict) else None
+    afound = tuple(a.get("found_by") or ())
+    if ajob and str(ajob.get("state") or "") in {"queued", "running"}:
+        out.append(AppEntry(ASSISTANT_ID, ASSISTANT_NAME, "installing", "gateway", str(ajob.get("message") or "installing"), job_percent=ajob.get("percent"), found_by=afound))
+    elif a.get("launch"):
+        out.append(AppEntry(ASSISTANT_ID, ASSISTANT_NAME, "running" if a.get("running") else "available", str(a.get("source") or ""), "desktop app", found_by=afound))
     else:
-        out.append(AppEntry(ASSISTANT_ID, ASSISTANT_NAME, "not_installed", "", "not installed (pip install abstractassistant, or the AbstractAssistant app)", found_by=tuple(a.get("found_by") or ())))
+        out.append(
+            AppEntry(
+                ASSISTANT_ID,
+                ASSISTANT_NAME,
+                "not_installed",
+                "",
+                "not installed",
+                install_available=bool(arow and arow.get("install_available")),
+                install_blocked_reason=(arow or {}).get("install_blocked_reason"),
+                installs_off=installs_off,
+                found_by=afound,
+            )
+        )
     return tuple(out)
 
 

@@ -175,17 +175,26 @@ button rows of the cards side by side are always at the same height.
 
 | The app is | The action row |
 |---|---|
-| not installed | **Install and open** (installs Node.js first when the gateway needs it, then the app, starts it and opens it) |
-| installing | a progress bar above the row, and **Cancel** |
+| not installed | **Install** (installs Node.js first when the gateway needs it, then the app and, for Code when a ready-made download exists for this computer, its terminal app too; nothing opens by itself) |
+| installing | a progress bar above the row (with one row per part: "Code in the browser", "Code in the terminal"), and **Cancel** (it stops both) |
+| an install failed | the reason, **Show details**, and **Install** again |
 | installed and running | **Open** (a new tab, already signed in) |
 | installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
 
-Code has a terminal version too. Next to Code's primary button: **Open in
-Terminal** when the terminal version is installed and the browser is on the
-gateway machine (a new terminal window opens there, signed in), or a quiet
-**Install for Terminal** when a ready-made download exists for this
-computer. When the terminal version needs the Rust toolchain, or when the
-browser is on another computer, the plain view shows no terminal button.
+Code has a terminal version too. Next to Code's Open: **Open in Terminal**
+when the terminal version is installed and the browser is on the gateway
+machine (a new terminal window opens there, signed in). The plain view never
+installs the terminal version on its own: Code's Install installs both. When
+the terminal version needs the Rust toolchain, or when the browser is on
+another computer, the plain view shows no terminal button (the commands are
+under Technical details, as is "Install terminal app" for a browser app that
+is installed without it).
+
+The last card is the **Assistant**, the desktop app: **Install** when it is
+not on the gateway's computer, then **Open** (it starts in the menu bar of the
+gateway's computer, or comes to the front when it already runs). From another
+computer the card says "The Assistant runs on the gateway's computer: open it
+there." with no button. See [apps.md](./apps.md#the-assistant-a-desktop-app).
 
 A result box appears only after something you did ("Code opened in a new
 Terminal window, signed in to this gateway.", "Flow Editor opened in a new

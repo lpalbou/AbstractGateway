@@ -133,6 +133,10 @@ CONSOLE_UI_CSS = r"""
     .ui-card__body, .ui-card__tech { display: grid; gap: 10px; min-width: 0; align-content: start; }
     .ui-card__body:empty, .ui-card__tech:empty { display: none; }
     .ui-card__tech { gap: 8px; padding-top: 10px; border-top: 1px solid var(--ui-border-1); }
+    .ui-app-parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: var(--font-size-sm); color: var(--text-secondary); min-width: 0; }
+    .ui-app-parts li { display: flex; justify-content: space-between; gap: 10px; min-width: 0; }
+    .ui-app-parts li[data-state="done"] > span:last-child { color: var(--success); }
+    .ui-app-parts li[data-state="failed"] > span:last-child { color: var(--error); }
     .ui-card__techline { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; color: var(--text-secondary); font-size: var(--font-size-sm); min-width: 0; }
     .ui-card__sep { color: var(--text-muted, var(--text-secondary)); padding-inline: 2px; }
     .ui-card__techrow { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
@@ -1375,10 +1379,15 @@ CONSOLE_UI_JS = r"""
 
     // ---- Browser apps as cards (wizard step + Apps tab) ----
     // Contract: GET /api/gateway/apps (apps_manager.overview), POST
-    // /apps/{id}/install {launch}, /launch, /stop, /update, /open (one-time
-    // signed-in link), jobs on /apps/jobs/{id} (state queued|running|
-    // succeeded|failed|cancelled, percent, indeterminate, bytes_done/_total,
-    // message, steps, error{reason,message,hint}, details, log_tail).
+    // /apps/{id}/install {} (installs, starts nothing: the browser app AND,
+    // when row.install_parts has "tui", its terminal app, one job whose
+    // `parts` are the two child rows), /launch, /stop, /update, /open
+    // (one-time signed-in link), jobs on /apps/jobs/{id} (state queued|
+    // running|succeeded|failed|cancelled, percent, indeterminate,
+    // bytes_done/_total, message, steps, parts, error{reason,message,hint},
+    // details, log_tail). A row of kind "desktop" (the Assistant, mission LL)
+    // has no address: `desktop` {location, launch_command, install_command,
+    // launch_available, launch_blocked_reason}; Open = POST /apps/{id}/launch.
     const APP_COPY = {
       // One line on the card (ellipsis + the whole sentence on hover).
       flow: { mark: "Fl", blurb: "Design workflows visually and run them here." },
@@ -1386,6 +1395,7 @@ CONSOLE_UI_JS = r"""
       observer: { mark: "Ob", blurb: "Watch runs live, replay them, steer running work." },
       continuum: { mark: "Cn", blurb: "Your backlog, inbox and long-running processes." },
       entity: { mark: "En", blurb: "Create entities and talk with them as they learn." },
+      assistant: { mark: "As", blurb: "A menu-bar assistant: chat or talk hands-free." },
     };
     // An app that holds nothing yet on this gateway opens where its first
     // thing is made (mission JJ). Keyed by app id; `when` reads the row's
@@ -1404,7 +1414,7 @@ CONSOLE_UI_JS = r"""
       running: ["Running", "ok"], stopping: ["Stopping", "info tone-busy"], crashed: ["Stopped unexpectedly", "err"], crash_loop: ["Keeps crashing", "err"],
     };
     const appStore = { data: null, error: "", loading: false, views: new Map(), jobs: new Map(), polling: false, message: "", busy: new Set(), pending: new Map(), notices: new Map(), logs: new Map() };
-    const APP_PENDING = { install: "Starting the install...", launch: "Starting...", stop: "Stopping...", update: "Starting the update...", cancel: "Cancelling...", open: "Opening...", "runtime-install": "Starting...", "tui-open": "Opening the terminal...", "tui-install": "Starting the install...", "tui-cancel": "Cancelling..." };
+    const APP_PENDING = { install: "Starting the install...", launch: "Starting...", stop: "Stopping...", update: "Starting the update...", cancel: "Cancelling...", open: "Opening...", "runtime-install": "Starting...", "tui-open": "Opening the terminal...", "tui-install": "Starting the install...", "tui-cancel": "Cancelling...", "desktop-open": "Opening..." };
     const APP_LOG_TAIL = 200;
     const APP_LOG_MAX = 5000;  // the route's own ceiling (routes/apps.py), said out loud in the panel
     function appNoticeMarkup(key) {
@@ -1471,11 +1481,10 @@ CONSOLE_UI_JS = r"""
       if (appJobActive(job)) {
         out.body += uiProgressMarkup(appJobAsProgress(job), job.title || `Installing ${name} for the terminal`);
         if (admin) out.button = btn("tui-cancel", "Cancel terminal install", "is-quiet", `Stop installing ${name}'s terminal app`);
-      } else if (t.installed && t.launch_available) {
+      } else if (t.installed && t.launch_available && app.installed) {
+        // Mission LL: the plain view only ever OPENS the terminal app; the
+        // card's one Install installs it together with the browser app.
         out.button = btn("tui-open", "Open in Terminal", "is-ghost", `The same ${name}, in a terminal window on this computer, signed in`, true);
-      } else if (!t.installed && t.install_available) {
-        out.button = admin ? btn("tui-install", "Install for Terminal", "is-quiet", `The same ${name}, in a terminal window: a ready-made download from ${name}'s release, checked against its published checksums`)
-          : `<button type="button" class="ui-btn is-quiet" disabled title="Only an admin can install apps">Install for Terminal</button>`;
       }
       if (job && job.state === "failed" && !appJobActive(job)) {
         const err = (job.error && typeof job.error === "object") ? job.error : { message: String(job.error || job.message || "") };
@@ -1490,6 +1499,9 @@ CONSOLE_UI_JS = r"""
       // leaves out (the Rust toolchain, a browser on another computer).
       if (t.installed && t.version) out.tech.push(`<span>Terminal ${esc(t.version)}</span>`);
       if (t.installed && t.update_available && t.install_available && admin && !appJobActive(job)) out.tech.push(btn("tui-install", t.latest_version ? `Update terminal app to ${t.latest_version}` : "Update terminal app", "is-text", `Install the newest ${name} terminal app`));
+      // The browser app is there but its terminal app is not (a failed or
+      // older install): installing it alone is a technical action.
+      if (!t.installed && t.install_available && app.installed && admin && !appJobActive(job)) out.tech.push(btn("tui-install", "Install terminal app", "is-text", `Install ${name}'s terminal app: a ready-made download from ${name}'s release, checked against its published checksums`));
       let lines = "";
       if (!t.installed && !t.install_available && t.install_method === "cargo") {
         lines += `<div class="ui-card__techrow is-stacked" data-app-tui-tech="toolchain"><span class="ui-card__techlabel" title="${esc(t.install_blocked_reason || "")}">Terminal version: needs the Rust toolchain</span>${appCmdLine(t.install_command, `Copy the install command for ${name}'s terminal app`)}</div>`;
@@ -1634,6 +1646,14 @@ CONSOLE_UI_JS = r"""
       return Object.assign({}, j, { state, percent: j.indeterminate ? null : j.percent, bytes_total: j.bytes_total || null, bytes_done: j.bytes_total ? j.bytes_done : null });
     }
     function appRowById(id) { return ((appStore.data && appStore.data.apps) || []).find((a) => a && a.id === id) || null; }
+    // One Install, two child rows (mission LL): the job's `parts`, e.g. "Code
+    // in the browser · Installed" / "Code in the terminal · Installing...".
+    const APP_PART_WORDS = { waiting: "Waiting", running: "Installing...", done: "Installed", failed: "Did not install", cancelled: "Cancelled", skipped: "Not started" };
+    function appPartsMarkup(job) {
+      const parts = Array.isArray(job && job.parts) ? job.parts : [];
+      if (!parts.length) return "";
+      return `<ul class="ui-app-parts" data-app-parts>${parts.map((p) => `<li data-part="${esc(p.id)}" data-state="${esc(p.state)}"><span class="ui-ellip" title="${esc(p.label)}">${esc(p.label)}</span><span>${esc(APP_PART_WORDS[p.state] || p.state)}</span></li>`).join("")}</ul>`;
+    }
     function appCardMarkup(app) {
       const copy = APP_COPY[app.id] || { mark: String(app.name || app.id || "?").slice(0, 2), blurb: "" };
       const admin = !!(state.principal && state.principal.admin);
@@ -1647,18 +1667,23 @@ CONSOLE_UI_JS = r"""
       // The body: only what the user must see now (progress, a failure, a
       // result they just caused). Never a box that restates the pill.
       let body = appNoticeMarkup(app.id);
+      const desk = app.kind === "desktop" ? (app.desktop || {}) : null;
       if (appJobActive(job)) {
-        body += uiProgressMarkup(appJobAsProgress(job), job.title || `Installing ${name}`);
+        body += uiProgressMarkup(appJobAsProgress(job), job.title || `Installing ${name}`) + appPartsMarkup(job);
       } else if (job && job.state === "failed") {
         const err = (job.error && typeof job.error === "object") ? job.error : { message: String(job.error || job.message || "") };
         const tail = job.details || (Array.isArray(job.log_tail) ? job.log_tail.join("\n") : "");
         body += `<div class="ui-alert tone-err" role="alert"><strong>${esc(err.message || "The install did not finish.")}</strong>${err.hint ? `<span>${esc(err.hint)}</span>` : ""}</div>`
+          + appPartsMarkup(job)
           + (tail ? `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(tail)}</pre></details>` : "");
       } else if (crashed) {
         body += `<div class="ui-alert tone-err" role="alert"><strong>${esc(name)} stopped unexpectedly.</strong><span>Open starts it again.</span></div>`
           + (app.last_error ? `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(app.last_error)}</pre></details>` : "");
       }
       if (!app.installed && !appJobActive(job) && app.install_blocked_reason) body += `<p class="ui-card__note">${esc(app.install_blocked_reason)}</p>`;
+      // The Assistant opens on the gateway computer's screen: from another
+      // computer the card says so, with no button.
+      if (desk && app.installed && desk.launch_blocked === "other_computer") body += `<p class="ui-card__note" data-app-desktop-remote="${esc(app.id)}">${esc(desk.launch_blocked_reason || "")}</p>`;
       const tui = appTuiParts(app, techOn);
       body += tui.body;
       const pend = busy ? appStore.pending.get(app.id) : null;
@@ -1673,9 +1698,20 @@ CONSOLE_UI_JS = r"""
       if (appJobActive(job)) {
         primary = admin ? b("cancel", "Cancel", "is-ghost", `Stop installing ${name}`) : "";
       } else if (!app.installed) {
+        // Mission LL (operator, 2026-09-24): ONE button, "Install". It
+        // installs the browser app and, when the app has one for this
+        // computer, its terminal app too; it starts nothing.
+        const withTui = Array.isArray(app.install_parts) && app.install_parts.includes("tui");
+        const what = desk ? `Install the ${name} on the gateway's computer (into the gateway's own Python)`
+          : `Install ${name}${withTui ? " for the browser and the terminal" : ""}${app.needs_node_install ? " (Node.js is installed for you first: about 56 MB, no password needed)" : ""}`;
         primary = actions.includes("install") && admin
-          ? b("install", "Install and open", "is-primary", `Install ${name} and start it${app.needs_node_install ? " (Node.js is installed for you first: about 56 MB, no password needed)" : ""}`)
+          ? b("install", "Install", "is-primary", what)
           : off("Install", app.install_blocked_reason || (admin ? "Installing is not available right now" : "Only an admin can install apps"));
+      } else if (desk) {
+        // A desktop app: Open starts it on the gateway computer (or brings it
+        // forward); from another computer there is no button (note above).
+        if (desk.launch_available) primary = b("desktop-open", "Open", "is-primary", app.running ? `Bring the ${name} to the front on this computer` : `Start the ${name} on this computer`);
+        else if (desk.launch_blocked === "admin") primary = off("Open", desk.launch_blocked_reason || "Only an admin can start apps");
       } else if (app.running) {
         primary = first ? b("open", first.label, "is-primary", first.title(name), first.path)
           : b("open", "Open", "is-primary", `Open ${name} in a new tab, signed in`);
@@ -1690,7 +1726,15 @@ CONSOLE_UI_JS = r"""
       // Technical details ON: the secondary line (text buttons + facts), the
       // terminal commands, the address, the npx line, the logs.
       let tech = "";
-      if (techOn) {
+      if (techOn && desk) {
+        const items = [];
+        if (app.version) items.push(`<span>Version ${esc(app.version)}</span>`);
+        if (app.running && app.pid) items.push(`<span>Running (process ${esc(app.pid)})</span>`);
+        tech = (items.length ? `<div class="ui-card__techline" data-app-tech="${esc(app.id)}">${appTechSep(items)}</div>` : "")
+          + (desk.location ? `<div class="ui-card__techrow"><span class="ui-card__techlabel">Location</span><code class="ui-ellip" title="${esc(desk.location)}">${esc(desk.location)}</code></div>` : "")
+          + (desk.launch_command ? `<div class="ui-card__techrow is-stacked"><span class="ui-card__techlabel">Launch command</span>${appCmdLine(desk.launch_command, `Copy the command that starts the ${name}`)}</div>` : "")
+          + (!app.installed && desk.install_command ? `<div class="ui-card__techrow is-stacked"><span class="ui-card__techlabel">Install command</span>${appCmdLine(desk.install_command, `Copy the command that installs the ${name}`)}</div>` : "");
+      } else if (techOn) {
         const items = [];
         // Started outside the gateway (the dev stack, npx, a service): the
         // row offers Open only; this line says why there is no Stop.
@@ -1806,7 +1850,7 @@ CONSOLE_UI_JS = r"""
         const verb = job.kind === "update" ? "updated" : "installed";
         const text = id === "__node__"
           ? `Node.js ${r.version || ""} is installed.`.replace("  ", " ")
-          : (r.url ? `${name} ${r.version || ""} is ${verb} and running.` : `${name} ${r.version || ""} is ${verb}.`).replace("  ", " ");
+          : (r.url ? `${name} ${r.version || ""} is ${verb} and running.` : (r.terminal ? `${name} ${r.version || ""} is ${verb}, for the browser and the terminal.` : `${name} ${r.version || ""} is ${verb}.`)).replace("  ", " ");
         appNotify(id, { tone: "ok", text });
       } else if (job.state === "failed") {
         const err = (job.error && typeof job.error === "object") ? job.error : { message: String(job.error || job.message || "") };
@@ -1829,6 +1873,24 @@ CONSOLE_UI_JS = r"""
       if (action === "log-copy") { const L = appStore.logs.get(id) || {}; uiCopy((L.lines || []).join("\n")); return; }
       if (action === "tui-copy") { uiCopy((button && button.dataset && button.dataset.cmd) || ""); return; }
       if (action === "tui-open" || action === "tui-install" || action === "tui-cancel") { await appTuiAction(action, id); return; }
+      if (action === "desktop-open") {
+        // The Assistant (a desktop app): POST /launch opens it on the gateway
+        // computer's screen (or brings it forward); no tab, no link.
+        appStore.busy.add(id);
+        appStore.pending.set(id, { action, label: APP_PENDING["desktop-open"] });
+        appStore.notices.delete(id);
+        appRender();
+        try {
+          const res = await api(`/api/gateway/apps/${encodeURIComponent(id)}/launch`, { slow: true, method: "POST", body: JSON.stringify({}) });
+          appNotify(id, { tone: "ok", text: (res && res.message) || `${appName(id)} is starting.` });
+        } catch (err) {
+          appNotify(id, { tone: "err", text: `Could not open ${appName(id)}: ${String((err && err.message) || err)}`, hint: (err && err.data && err.data.hint) || "", details: uiErrorDetails(err) });
+        }
+        appStore.busy.delete(id);
+        appStore.pending.delete(id);
+        await appRefresh();
+        return;
+      }
       if (action === "cancel") {
         const job = appStore.jobs.get(id);
         appStore.busy.add(id);
@@ -1915,7 +1977,7 @@ CONSOLE_UI_JS = r"""
       appStore.message = "";
       appRender();
       try {
-        const res = await api(`/api/gateway/apps/${encodeURIComponent(id)}/${path}`, { slow: true, method: "POST", body: JSON.stringify(action === "install" ? { launch: true } : {}) });
+        const res = await api(`/api/gateway/apps/${encodeURIComponent(id)}/${path}`, { slow: true, method: "POST", body: JSON.stringify({}) });
         if (res && res.job) appStore.jobs.set(id, res.job);
         if (action === "launch" && res && res.app) appNotify(id, { tone: "ok", text: `${name} is ${res.app.running ? "running" : String(res.app.status || "starting")}.` });
         if (action === "stop" && res && res.app) appNotify(id, { tone: "ok", text: `${name} is stopped.` });

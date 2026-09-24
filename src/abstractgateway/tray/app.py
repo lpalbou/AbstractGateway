@@ -968,13 +968,22 @@ class TrayApp:
         self._bg(_do, "tray-app-launch-tui")
 
     def app_install(self, app_id: str) -> None:
+        """"Install X…": the same install as the console's Install button
+        (mission LL): the browser app AND its terminal app when one exists for
+        this computer (Code), one job; the Assistant into the gateway's Python.
+        Nothing opens by itself afterwards: the menu then offers Open."""
         name = _app_name(app_id)
-        body = f"{APP_NAME} downloads {name} from the npm registry (and Node.js the first time, about 56 MB), then starts it and opens it signed in. Progress shows here."
+        if app_id == tray_apps.ASSISTANT_ID:
+            body = f"{APP_NAME} installs AbstractAssistant (a desktop app for your menu bar) into its own Python. Progress shows here."
+        elif app_id in tray_apps.TERMINAL_APP_IDS:
+            body = f"{APP_NAME} downloads {name} for the browser and for the terminal (and Node.js the first time, about 56 MB). Progress shows here."
+        else:
+            body = f"{APP_NAME} downloads {name} from the npm registry (and Node.js the first time, about 56 MB). Progress shows here."
         self._confirm(f"install:{app_id}", f"Install {name}", f"Install {name}?", body, ok_label="Install", danger=False, action=lambda: self._bg(lambda: self._install_now(app_id), "tray-app-install"))
 
     def _install_now(self, app_id: str) -> None:
         name = _app_name(app_id)
-        r = self.client.app_install(app_id, launch=True)
+        r = self.client.app_install(app_id)
         if not r.ok or not isinstance(r.data, dict) or not isinstance(r.data.get("job"), dict):
             self._info(f"Couldn't install {name}", r.detail, style="warning")
             return
@@ -998,12 +1007,8 @@ class TrayApp:
                 continue
             self.poke_extras()
             if state == "succeeded":
-                self._notify(f"{name} is installed", "Opening it in your browser, signed in.")
-                o = self.client.app_open(app_id)
-                if o.ok and isinstance(o.data, dict) and o.data.get("open_url"):
-                    self._open_signed_in(str(o.data["open_url"]))
-                else:
-                    self._info(f"{name} is installed, but couldn't open it", o.detail, style="warning")
+                where = "Launch it from the Apps menu." if app_id == tray_apps.ASSISTANT_ID else f"Open {name} is in the Apps menu."
+                self._notify(f"{name} is installed", where)
             else:
                 err = job.get("error") if isinstance(job.get("error"), dict) else {}
                 reason = " ".join(str(x) for x in (err.get("message"), err.get("hint")) if x) or step or state
@@ -1073,6 +1078,17 @@ class TrayApp:
             return
 
         def _do() -> None:
+            # Never a second copy (the console's rule, apps_manager.launch_desktop):
+            # a running app bundle is brought forward by `open -a`; one started
+            # from its command is left alone.
+            nonlocal argv
+            now = tray_apps.detect_assistant(tray_apps.Probes())
+            if now.get("running"):
+                bundle, run = now.get("bundle"), [str(x) for x in (now.get("running_argv") or [])]
+                if not (bundle and run and f"{bundle}/Contents/MacOS/" in run[0]):
+                    self._notify("The Assistant is already running", "Its icon is in the menu bar.")
+                    return
+                argv = ["open", "-a", str(bundle)]
             log = (self.data_dir / "logs" / "assistant-launch.log") if self.data_dir else None
             try:
                 proc = tray_apps.spawn_detached(argv, env=tray_apps.scrubbed_env(os.environ), log_path=log)

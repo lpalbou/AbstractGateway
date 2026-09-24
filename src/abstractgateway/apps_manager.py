@@ -34,6 +34,8 @@ import base64
 import collections
 import concurrent.futures
 import hashlib
+import importlib
+import importlib.util
 import json
 import logging
 import os
@@ -505,6 +507,12 @@ class Job:
         self.error: Optional[Dict[str, Any]] = None
         self.result: Dict[str, Any] = {}
         self.steps: List[Dict[str, Any]] = []
+        # The job's child rows (mission LL): one Install that installs the
+        # browser app AND its terminal app shows both, e.g.
+        # [{"id": "install", "label": "Code in the browser", "state": "done"},
+        #  {"id": "install-tui", "label": "Code in the terminal", "state": "running"}].
+        # state: waiting | running | done | failed | cancelled | skipped.
+        self.parts: List[Dict[str, Any]] = []
         self.created_at = _now()
         self.updated_at = self.created_at
         self.finished_at: Optional[float] = None
@@ -565,6 +573,18 @@ class Job:
             for s in self.steps:
                 if s["state"] == "running":
                     s["state"] = state
+            for part in self.parts:
+                if part["state"] == "running":
+                    part["state"] = state
+                elif part["state"] == "waiting" and state in ("failed", "cancelled"):
+                    part["state"] = "skipped"
+
+    def part(self, part_id: str, state: str) -> None:
+        with self._lock:
+            for part in self.parts:
+                if part["id"] == part_id:
+                    part["state"] = state
+            self.updated_at = _now()
 
     def check_cancel(self) -> None:
         if self.cancel_event.is_set():
@@ -595,6 +615,7 @@ class Job:
                 "details": self.details,
                 "error": self.error,
                 "steps": [dict(s) for s in self.steps],
+                "parts": [dict(p) for p in self.parts],
                 "result": dict(self.result),
                 "log_path": str(self.log_path),
                 "log_tail": list(self._tail)[-20:],
@@ -1602,6 +1623,19 @@ class AppsManager:
         # How many entities this gateway hosts (the Entity card's first-run
         # button); tests replace it.
         self.entities_counter: Callable[[], Optional[int]] = gateway_entities_count
+        # Desktop apps (mission LL, apps_desktop.py): every OS touch point is
+        # replaceable, so no test finds, installs or launches the real one.
+        from . import apps_desktop as _desk
+
+        self.desktop_probes: Callable[[], Any] = lambda: _desk.system_probes()
+        self.desktop_pip_runner: Callable[..., int] = _desk.stream_command
+        self.desktop_pins: Callable[[str], Dict[str, str]] = _desk.abstract_pins
+        self.desktop_find_uv: Callable[[], Optional[str]] = _desk.find_uv
+        self.desktop_has_pip: Callable[[], bool] = lambda: importlib.util.find_spec("pip") is not None
+        self.desktop_spawner: Callable[..., Any] = _desk.spawn_detached
+        self.desktop_wait: Callable[[Any], Optional[int]] = _desk.wait_launch
+        self.desktop_python: str = sys.executable
+        self._desktop_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
     # -- paths ---------------------------------------------------------------
     @property
@@ -2145,19 +2179,61 @@ class AppsManager:
                 continue
             shutil.rmtree(d, ignore_errors=True)
 
-    def start_install(self, app_id: str, *, version: Optional[str] = None, launch: bool = False, update: bool = False, gateway_url: Optional[str] = None, run_inline: bool = False, same_machine: bool = False) -> Tuple[Job, bool]:
+    def install_includes_terminal(self, app_id: str) -> Optional[TuiSpec]:
+        """The terminal app that an Install of this app also installs (mission
+        LL, operator 2026-09-24: "it should always download both wui and tui
+        if both are present"): the app has one (TUI_BY_APP), it is not on this
+        computer yet, and a prebuilt binary exists for this computer. None
+        otherwise: then Install installs the browser app only and the terminal
+        app's command stays under Technical details."""
+        tui = TUI_BY_APP.get(str(app_id or "").strip().lower())
+        if tui is None:
+            return None
+        if self.tui_status(tui)["installed"]:
+            return None
+        if self.tui_install_plan(tui)["method"] != "release_binary":
+            return None
+        return tui
+
+    def start_install(
+        self,
+        app_id: str,
+        *,
+        version: Optional[str] = None,
+        launch: bool = False,
+        update: bool = False,
+        gateway_url: Optional[str] = None,
+        run_inline: bool = False,
+        same_machine: bool = False,
+        with_terminal: bool = True,
+    ) -> Tuple[Job, bool]:
+        """Install (or update) an app as ONE job. A fresh install of an app with
+        a terminal version (Code) installs the browser app AND the terminal app
+        (`install_includes_terminal`), shown as the job's two `parts`; Cancel
+        stops both. Nothing is started unless `launch` (CLI `--launch`)."""
+        from .apps_desktop import is_desktop_app
+
+        if is_desktop_app(app_id) and not update:
+            return self.start_desktop_install(app_id, run_inline=run_inline, same_machine=same_machine)
         spec = spec_for(app_id)
         self._require_install_allowed(same_machine=same_machine)
+        tui = self.install_includes_terminal(spec.id) if (with_terminal and not update) else None
 
         def work(job: Job) -> Dict[str, Any]:
             job.same_machine = bool(same_machine)
+            web_hi = 100.0 if tui is None else 65.0
+            if tui is not None:
+                job.parts = [
+                    {"id": "install", "label": f"{spec.name} in the browser", "state": "running"},
+                    {"id": "install-tui", "label": f"{spec.name} in the terminal", "state": "waiting"},
+                ]
             node_needed = not self.node_status(refresh=True)["available"]
             lo = 0.0
             if node_needed:
-                self._ensure_node(job, _Phase(job, 0.0, 45.0))
-                lo = 45.0
+                self._ensure_node(job, _Phase(job, 0.0, web_hi * 0.45))
+                lo = web_hi * 0.45
             was_running = self._procs.get(spec.id) is not None and self._procs[spec.id].alive()
-            res = self._install_app(job, spec, version, _Phase(job, lo, 90.0 if (launch or was_running) else 100.0))
+            res = self._install_app(job, spec, version, _Phase(job, lo, web_hi * 0.9 if (launch or was_running) else web_hi))
             if launch or (update and was_running):
                 job.step("launch", f"Starting {spec.name}…")
                 if was_running:
@@ -2167,6 +2243,22 @@ class AppsManager:
                 res["message"] = f"{spec.name} {res['version']} is running at {row.get('url')}"
             else:
                 res["message"] = f"{spec.name} {res['version']} installed."
+            if tui is not None:
+                job.part("install", "done")
+                job.part("install-tui", "running")
+                job.check_cancel()
+                try:
+                    tres = self._install_tui(job, tui, _Phase(job, web_hi, 100.0))
+                except AppsError as exc:
+                    raise type(exc)(
+                        f"{spec.name} is installed for the browser, but its terminal app did not install: {exc.message}",
+                        hint=exc.hint,
+                        details=exc.details,
+                        extra=exc.extra,
+                    ) from exc
+                job.part("install-tui", "done")
+                res["terminal"] = {"version": tres.get("version"), "path": tres.get("path")}
+                res["message"] = f"{spec.name} {res['version']} is installed, with its terminal app {tres.get('version')}."
             return res
 
         kind = "app_update" if update else "app_install"
@@ -2808,6 +2900,226 @@ class AppsManager:
             "command": f"npx {spec.package}",
         }
 
+    # -- desktop apps (mission LL, 2026-09-24): the Assistant ---------------------------
+    def desktop_presence(self, app_id: str, *, refresh: bool = False) -> Dict[str, Any]:
+        """apps_desktop.detect_assistant on this machine (cached a few seconds:
+        the running check lists processes)."""
+        from .apps_desktop import DESKTOP_BY_ID, RUNNING_CACHE_TTL_S, detect_assistant
+
+        spec = DESKTOP_BY_ID[str(app_id)]
+        hit = self._desktop_cache.get(spec.id)
+        if not refresh and hit is not None and _now() - hit[0] < RUNNING_CACHE_TTL_S:
+            return dict(hit[1])
+        try:
+            found = detect_assistant(self.desktop_probes(), spec=spec)
+        except Exception as exc:  # noqa: BLE001 - detection never breaks the apps page
+            logger.warning("detecting %s failed", spec.name, exc_info=True)
+            found = {"installed": False, "found_by": [f"detection failed: {type(exc).__name__}: {exc}"], "source": "", "launch": None, "launches": [], "bundle": None, "script": None, "package_origin": None, "version": None, "location": None, "running": False, "pid": None, "running_argv": None}
+        self._desktop_cache[spec.id] = (_now(), found)
+        return dict(found)
+
+    def desktop_install_argv(self, app_id: str) -> Optional[List[str]]:
+        """`uv pip install --python <gateway python> abstractassistant` (or pip),
+        None when this Python has neither."""
+        from .apps_desktop import DESKTOP_BY_ID, pip_install_argv
+
+        spec = DESKTOP_BY_ID[str(app_id)]
+        try:
+            uv = self.desktop_find_uv()
+        except Exception:
+            uv = None
+        try:
+            has_pip = bool(self.desktop_has_pip())
+        except Exception:
+            has_pip = False
+        return pip_install_argv(spec.package, python=self.desktop_python, uv=uv, has_pip=has_pip)
+
+    def desktop_row(self, app_id: str, *, caller: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """The console's card for a desktop app (`kind: "desktop"`): the same
+        keys as a browser app's row, no port or address; `desktop` says where
+        it is found, how it launches, and whether it can open for THIS caller
+        (it opens on the gateway computer's screen)."""
+        from .apps_desktop import DESKTOP_BY_ID, launch_command_text
+
+        spec = DESKTOP_BY_ID[str(app_id)]
+        caller = caller or {}
+        pres = self.desktop_presence(spec.id)
+        installed = bool(pres.get("installed"))
+        running = bool(pres.get("running"))
+        same_machine = bool(caller.get("same_machine", True))
+        admin = bool(caller.get("admin", True))
+        allowed = self.install_allowed(same_machine=bool(caller.get("same_machine")))
+        argv = self.desktop_install_argv(spec.id)
+        job = self.jobs.active_for(f"app:{spec.id}")
+        blocked = None
+        if not installed and not allowed:
+            blocked = INSTALLS_OFF_MESSAGE
+        elif not installed and argv is None:
+            blocked = f"The gateway's Python has neither uv nor pip, so the {spec.name} cannot be installed from here."
+        # launch_blocked: not_installed | other_computer | admin | None.
+        if not installed:
+            launch_available, code, launch_blocked = False, "not_installed", f"The {spec.name} is not installed on the gateway's computer."
+        elif not same_machine:
+            launch_available, code, launch_blocked = False, "other_computer", f"The {spec.name} runs on the gateway's computer: open it there."
+        elif not admin:
+            launch_available, code, launch_blocked = False, "admin", "Only an admin can start apps."
+        else:
+            launch_available, code, launch_blocked = True, None, None
+        actions: List[str] = []
+        if not installed:
+            if allowed and argv is not None:
+                actions.append("install")
+        else:
+            actions.append("open")
+        return {
+            "id": spec.id,
+            "name": spec.name,
+            "kind": "desktop",
+            "description": spec.description,
+            "package": spec.package,
+            "installed": installed,
+            "version": pres.get("version"),
+            "latest_version": None,
+            "update_available": False,
+            "running": running,
+            "status": ("running" if running else "stopped") if installed else "not_installed",
+            "managed": False,
+            "source": pres.get("source") or None,
+            "external": None,
+            "enabled": False,
+            "url": None,
+            "port": None,
+            "pid": pres.get("pid"),
+            "restarts_last_minute": 0,
+            "last_exit_code": None,
+            "last_error": None,
+            "needs_node_install": False,
+            "install_available": (not installed) and allowed and argv is not None,
+            "install_blocked_reason": blocked,
+            "install_parts": ["desktop"],
+            "actions": actions,
+            "active_job": job.to_dict() if job is not None else None,
+            "log_path": str(self.app_log_path(spec.id)),
+            "content_summary": None,
+            "interfaces": [],
+            "desktop": {
+                "location": pres.get("location"),
+                "found_by": list(pres.get("found_by") or []),
+                "launch_command": launch_command_text(pres.get("launch")),
+                "install_command": launch_command_text(argv) if argv else f"pip install {spec.package}",
+                "launch_available": launch_available,
+                "launch_blocked": code,
+                "launch_blocked_reason": launch_blocked,
+            },
+        }
+
+    def start_desktop_install(self, app_id: str, *, run_inline: bool = False, same_machine: bool = False) -> Tuple[Job, bool]:
+        """Install a desktop app's package into the gateway's own Python, as a
+        job; every `abstract*` package already there is pinned by a
+        constraints file so the gateway itself never changes."""
+        from .apps_desktop import DESKTOP_BY_ID, launch_command_text
+
+        spec = DESKTOP_BY_ID[str(app_id)]
+        self._require_install_allowed(same_machine=same_machine)
+        argv = self.desktop_install_argv(spec.id)
+        if argv is None:
+            raise AppsError(
+                f"The gateway's Python has neither uv nor pip, so the {spec.name} cannot be installed from here.",
+                hint=f"Install it with `pip install {spec.package}` in the gateway's Python environment.",
+                extra={"command": f"pip install {spec.package}"},
+            )
+
+        def work(job: Job) -> Dict[str, Any]:
+            job.same_machine = bool(same_machine)
+            self._require_install_allowed(same_machine=job.same_machine)
+            job.step("pins", "Keeping the gateway's own packages as they are…")
+            pins = self.desktop_pins(self.desktop_python) or {}
+            full = list(argv)
+            if pins:
+                path = self.apps_root / "jobs" / f"constraints-{job.id}.txt"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("".join(f"{k}=={v}\n" for k, v in sorted(pins.items())), encoding="utf-8")
+                job.log("keeping the gateway's own packages as they are: " + ", ".join(f"{k}=={v}" for k, v in sorted(pins.items())))
+                full += ["--constraint", str(path)]
+            job.step("install", f"Downloading and installing {spec.name}…")
+            job.log("$ " + (launch_command_text(full) or ""))
+            job.percent = max(job.percent, 5.0)
+            tail: collections.deque = collections.deque(maxlen=60)
+
+            def on_line(text: str) -> None:
+                tail.append(text)
+                job.log(text)
+                t = text.strip()
+                if t.startswith("Resolved"):
+                    job.say("Resolving packages…", percent=20, log=False)
+                elif t.startswith(("Downloading", "Collecting", "Downloaded")):
+                    job.say("Downloading packages…", percent=45, log=False)
+                elif t.startswith(("Prepared", "Installing collected")):
+                    job.say("Installing packages…", percent=75, log=False)
+                elif t.startswith(("Installed", "Successfully installed")):
+                    job.say("Packages installed.", percent=92, log=False)
+
+            env = dict(os.environ)
+            env.setdefault("UV_NO_PROGRESS", "1")
+            code = self.desktop_pip_runner(full, on_line=on_line, cancelled=job.cancel_event.is_set, env=env)
+            job.check_cancel()
+            if code != 0:
+                last = next((ln for ln in reversed(tail) if ln.strip()), "")
+                raise AppsError(
+                    f"{spec.name} did not install" + (f": {last.strip()}" if last else "."),
+                    hint="Show details has the whole installer output.",
+                    details="\n".join(tail),
+                )
+            importlib.invalidate_caches()
+            self._desktop_cache.pop(spec.id, None)
+            job.step("check", f"Checking that the {spec.name} is there…")
+            pres = self.desktop_presence(spec.id, refresh=True)
+            if not pres.get("installed"):
+                raise AppsError(
+                    f"The installer finished, but the {spec.name} is not found next to the gateway's Python.",
+                    details="\n".join(pres.get("found_by") or []) or None,
+                )
+            ver = pres.get("version") or ""
+            return {"version": ver, "location": pres.get("location"), "message": f"{spec.name} {ver} is installed.".replace("  ", " ")}
+
+        return self.jobs.start(kind="app_install", target=f"app:{spec.id}", app_id=spec.id, title=f"Install {spec.name}", work=work, run_inline=run_inline)
+
+    def launch_desktop(self, app_id: str, *, same_machine: bool) -> Dict[str, Any]:
+        """Open the desktop app on the gateway computer's screen (a person at
+        that computer only). A running Assistant is not started twice: the
+        bundle is brought to the front (`open -a`), a script-started one is
+        left as it is (its icon is in the menu bar)."""
+        from .apps_desktop import DESKTOP_BY_ID, tail_text
+
+        spec = DESKTOP_BY_ID[str(app_id)]
+        if not same_machine:
+            raise NotOnGatewayMachine(
+                f"The {spec.name} runs on the gateway's computer: open it there.",
+                hint=f"It is a desktop app for that computer's screen. On this computer, install {spec.package} and connect it to this gateway in its Settings.",
+            )
+        pres = self.desktop_presence(spec.id, refresh=True)
+        if not pres.get("installed"):
+            raise NotInstalled(f"The {spec.name} is not installed on the gateway's computer.", hint="Install it first (the Install button).")
+        log = self.app_log_path(spec.id)
+        running_argv = [str(a) for a in (pres.get("running_argv") or [])]
+        bundle = pres.get("bundle")
+        if pres.get("running"):
+            if not (bundle and running_argv and f"{bundle}/Contents/MacOS/" in running_argv[0]):
+                return {"ok": True, "app": self.desktop_row(spec.id), "already_running": True, "message": f"The {spec.name} is already running: its icon is in the menu bar."}
+            argv: List[str] = ["open", "-a", str(bundle)]
+        else:
+            argv = list(pres.get("launch") or [])
+        try:
+            proc = self.desktop_spawner(argv, env=_scrubbed_child_env(dict(os.environ)), log_path=log)
+        except OSError as exc:
+            raise LaunchFailed(f"The {spec.name} could not start: {argv[0]}: {exc}") from exc
+        code = self.desktop_wait(proc)
+        if code is not None:
+            raise LaunchFailed(f"The {spec.name} did not start (exit code {code}).", hint=f"Its log: {log}", details=tail_text(log) or None)
+        self._desktop_cache.pop(spec.id, None)
+        message = f"The {spec.name} is in front." if pres.get("running") else f"The {spec.name} is starting: its icon appears in the menu bar."
+        return {"ok": True, "app": self.desktop_row(spec.id), "already_running": bool(pres.get("running")), "message": message}
+
     # -- views ---------------------------------------------------------------------------
     def _external_row(
         self,
@@ -2826,6 +3138,7 @@ class AppsManager:
         row: Dict[str, Any] = {
             "id": spec.id,
             "name": spec.name,
+            "kind": "web",
             "description": spec.description,
             "package": spec.package,
             "installed": True,
@@ -2854,6 +3167,7 @@ class AppsManager:
             "needs_node_install": False,
             "install_available": False,
             "install_blocked_reason": None,
+            "install_parts": ["web"],
             "actions": ["open"],
             "active_job": job.to_dict() if job is not None else None,
             "log_path": None,
@@ -2914,6 +3228,7 @@ class AppsManager:
         row = {
             "id": spec.id,
             "name": spec.name,
+            "kind": "web",
             "description": spec.description,
             "package": spec.package,
             "installed": bool(installed),
@@ -2935,6 +3250,9 @@ class AppsManager:
             "needs_node_install": not bool(node.get("available")),
             "install_available": (not installed) and allowed and not registry_error,
             "install_blocked_reason": blocked,
+            # What the Install button installs (mission LL): "web", plus "tui"
+            # when the app's terminal version comes with it on this computer.
+            "install_parts": ["web", "tui"] if (not installed and self.install_includes_terminal(spec.id) is not None) else ["web"],
             "actions": actions,
             "active_job": job.to_dict() if job is not None else None,
             "log_path": str(self.app_log_path(spec.id)),
@@ -2989,6 +3307,10 @@ class AppsManager:
             )
             for spec in APPS
         ]
+        # Desktop apps (mission LL): after the five browser apps, stack order.
+        from .apps_desktop import DESKTOP_APPS
+
+        rows += [self.desktop_row(d.id, caller=caller) for d in DESKTOP_APPS]
         runtime_job = self.jobs.active_for("runtime:node")
         node_public = {k: node.get(k) for k in ("available", "version", "source", "install_available", "message", "managed_version", "problems", "path")}
         node_public["active_job"] = runtime_job.to_dict() if runtime_job else None

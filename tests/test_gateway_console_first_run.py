@@ -167,6 +167,7 @@ async function fetch(path, options = {}) {
       row("observer", "@abstractframework/observer"),
       row("continuum", "@abstractframework/continuum"),
       row("entity", "@abstractframework/entity"),
+      row("assistant", "abstractassistant", { kind: "desktop", name: "Assistant", installed: true, version: "0.5.0", status: "stopped", actions: ["open"], interfaces: [], desktop: { location: "/Applications/AbstractAssistant.app", launch_command: "open -a /Applications/AbstractAssistant.app", launch_available: true, launch_blocked: null } }),
     ] });
   }
   if (path === "/api/gateway/apps/flow/install" && method === "POST") return res(200, { ok: true, created: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "running", percent: 12, bytes_done: 0, bytes_total: null, message: "Installing Node.js", steps: [] } });
@@ -316,10 +317,14 @@ if (scenario.name === "claim") {
   for (const gone of ['data-app-action="stop"', 'data-app-action="logs"', "Show log", "npx @abstractframework/", "Version 0.4.2", "Open it with the Open button", "Also runs in your terminal", "abstractcode --gateway"]) if (apps.includes(gone)) fail("the plain view must not render " + gone + ": " + apps);
   if (!apps.includes("http://127.0.0.1:18080")) fail("apps step did not name the gateway URL");
   if (apps.includes("nodejs.org")) fail("apps step must not send people to nodejs.org");
-  for (const want of ['data-app-action="install"', "Install and open", 'data-app-action="open"', 'data-app-action="tui-open"', "Open in Terminal", "Node.js will be installed for you", "turned off for this gateway"]) if (!apps.includes(want)) fail("apps cards missing " + want + ": " + apps);
+  for (const want of ['data-app-action="install"', ">Install</button>", 'data-app-action="open"', 'data-app-action="tui-open"', "Open in Terminal", "Node.js will be installed for you", "turned off for this gateway", 'data-app-card="assistant"', 'data-app-action="desktop-open"']) if (!apps.includes(want)) fail("apps cards missing " + want + ": " + apps);
+  // Mission LL: ONE Install (it installs the terminal app too), never
+  // "Install and open", never a separate terminal install in the plain view.
+  for (const gone of ["Install and open", "Install for Terminal", 'data-app-action="tui-install"']) if (apps.includes(gone)) fail("the plain view must not render " + gone + ": " + apps);
   if (!/<button[^>]*is-primary[^>]*disabled[^>]*>Install</.test(apps)) fail("a blocked install shows a disabled Install with its reason: " + apps);
   const cards = apps.split('<article class="ui-card ui-app-card').slice(1);
-  if (cards.length !== 5) fail("five app cards expected: " + cards.length);
+  if (cards.length !== 6) fail("six app cards expected (five browser apps + the Assistant): " + cards.length);
+  if (!cards[5].includes('data-app-card="assistant"')) fail("the Assistant comes after the five browser apps: " + cards[5]);
   for (const c of cards) {
     const at = ["ui-card__head", "ui-card__blurb is-oneline", "ui-card__body", "ui-card__actions", "ui-card__tech"].map((k) => c.indexOf('class="' + k));
     if (at.some((i) => i < 0) || at.some((i, k) => k && i < at[k - 1])) fail("a card must be head / one line / body / action row / technical, in that order: " + c);
@@ -338,7 +343,7 @@ if (scenario.name === "claim") {
   if (el("first-run-apps-body").innerHTML.includes('data-app-action="stop"')) fail("switching Technical details off must remove Stop from the DOM");
   await context.appAction("install", "flow"); await settle(); await settle();
   const appPost = calls.find((c) => c.path === "/api/gateway/apps/flow/install");
-  if (!appPost || appPost.csrf !== "agcsrf_wizard" || JSON.parse(appPost.body).launch !== true) fail("app install POST wrong: " + JSON.stringify(appPost));
+  if (!appPost || appPost.csrf !== "agcsrf_wizard" || JSON.parse(appPost.body).launch !== undefined) fail("app install POST wrong (Install only installs): " + JSON.stringify(appPost));
   if (!calls.some((c) => c.path === "/api/gateway/apps/jobs/app-1")) fail("the app install job was not polled");
   if (el("first-run-apps-body").innerHTML.includes("Open it with the Open button")) fail("a finished install never leaves a box restating the pill");
 

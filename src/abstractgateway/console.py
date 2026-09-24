@@ -3324,7 +3324,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      models: ["Resources", "Host resources: loaded models, memory and GPU, session caches"],
 	      catalog: ["Models", "Browse, download and delete models that fit this machine"],
 	      engines: ["Engines", "Local engines on the gateway host: status and install"],
-	      apps: ["Apps", "Browser apps: install, start and open them, signed in"],
+	      apps: ["Apps", "Install and open the apps that work with this gateway"],
 	      network: ["Network", "Who can reach this gateway, and at which addresses"],
 	    };
 	    function setActiveTab(tab) {
@@ -11295,7 +11295,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
       engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab)." },
       model: { title: "Choose your default model", hint: "What your apps use", lede: "The recommended set is sized for this computer: set it up in one click, or pick any model that fits." },
-      apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Browser apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
+      apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and the Setup guide button (top right) reopens it." },
     };
     const FIRST_RUN_APPS = [

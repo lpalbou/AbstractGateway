@@ -24,6 +24,13 @@ listed too (`source: "external"`, `managed: false`, apps_manager
 reads the same cookies whoever started it. Stop answers 409
 `started_outside_gateway` for them.
 
+Install (mission LL): ONE job that installs the browser app AND, for an app
+with a terminal version that has a prebuilt download for this computer (Code),
+the terminal app too (the job's two `parts`); it starts nothing. The desktop
+app (the Assistant, `kind: "desktop"`, apps_desktop.py) installs into the
+gateway's own Python through the same route, and `/launch` opens it on the
+gateway computer's screen for a caller at that computer only.
+
 Terminal apps (mission Y): each app row carries `interfaces[]` (kind "web"
 and, for Code, kind "tui"). `POST /{id}/install-tui` installs a prebuilt
 terminal app (admin, same "allow engine install" rule). `POST /{id}/launch-tui`
@@ -46,6 +53,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..apps_desktop import is_desktop_app
 from ..apps_manager import (
     HANDOVER_TTL_S,
     AppsError,
@@ -81,7 +89,11 @@ class AppInstallRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: Optional[str] = Field(default=None, max_length=64, description="Exact npm version (default: latest).")
-    launch: bool = Field(default=False, description="Start the app when the install succeeds (and keep it enabled).")
+    launch: bool = Field(default=False, description="Start the app when the install succeeds (and keep it enabled). The console's Install does not: it only installs.")
+    with_terminal: bool = Field(
+        default=True,
+        description="Also install the app's terminal version, in the same job, when it has one with a prebuilt download for this computer (Code). False: the browser app only.",
+    )
 
 
 class AppUpdateRequest(BaseModel):
@@ -219,7 +231,7 @@ def apps_install(request: Request, app_id: str, payload: Optional[AppInstallRequ
     _admin(request)
     body = payload or AppInstallRequest()
     try:
-        job, created = get_apps_manager().start_install(app_id, version=body.version, launch=body.launch, same_machine=_same_machine(request))
+        job, created = get_apps_manager().start_install(app_id, version=body.version, launch=body.launch, same_machine=_same_machine(request), with_terminal=body.with_terminal)
     except AppsError as exc:
         return _error(exc)
     return _job_payload(job, created)
@@ -303,8 +315,16 @@ def apps_tui_command(request: Request, app_id: str):
 
 @router.post("/{app_id}/launch")
 async def apps_launch(request: Request, app_id: str):
+    """Start a browser app; for a desktop app (the Assistant), open it on the
+    gateway computer's screen — only for a caller at that computer (409
+    `not_on_gateway_machine` otherwise), never twice."""
     _admin(request)
     m = get_apps_manager()
+    if is_desktop_app(app_id):
+        try:
+            return await asyncio.to_thread(m.launch_desktop, str(app_id).strip().lower(), same_machine=_same_machine(request))
+        except AppsError as exc:
+            return _error(exc)
     try:
         row = await asyncio.to_thread(m.launch, app_id)
     except AppsError as exc:
@@ -358,6 +378,11 @@ def apps_open(request: Request, app_id: str, payload: Optional[AppOpenRequest] =
     one is given (same-app paths only: `handover_path`)."""
     principal = _principal(request)
     m = get_apps_manager()
+    if is_desktop_app(app_id):
+        return JSONResponse(
+            status_code=409,
+            content={"ok": False, "reason": "desktop_app", "message": "The Assistant is a desktop app, not a browser app: it opens on the gateway's computer.", "hint": f"POST /api/gateway/apps/{str(app_id).strip().lower()}/launch opens it there."},
+        )
     try:
         spec = spec_for(app_id)
         handover_path(None if payload is None else payload.path)  # 400 before anything else
