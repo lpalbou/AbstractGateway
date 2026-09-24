@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .console import gateway_console_html
 
-from .routes import entities_router, entity_replay_router, gateway_router, triage_router
+from .routes import engines_router, entities_router, entity_replay_router, gateway_router, triage_router
 from .security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_env
 
 
@@ -27,9 +27,23 @@ async def _lifespan(_app: FastAPI):
     from .service import begin_gateway_boot, reset_gateway_boot_state, stop_gateway_runner
 
     begin_gateway_boot()
+    # Browser apps marked enabled start with the gateway, as its children
+    # (never launchd/systemd), on a background thread; they stop with it.
+    try:
+        from .apps_manager import start_apps_on_boot
+
+        start_apps_on_boot()
+    except Exception:
+        pass
     try:
         yield
     finally:
+        try:
+            from .apps_manager import stop_apps_on_shutdown
+
+            stop_apps_on_shutdown()
+        except Exception:
+            pass
         stop_gateway_runner()
         reset_gateway_boot_state()
         # Desktop tray helper (2026-09-05): lifespan shutdown is the one
@@ -50,6 +64,17 @@ async def _lifespan(_app: FastAPI):
             from .users import gateway_data_dir_from_env
 
             clear_serve_record(gateway_data_dir_from_env())
+        except Exception:
+            pass
+        # The serve launch flags (`--backlog-root`, `--exec-runner`) of THIS
+        # process, same reason (mission II).
+        try:
+            import os as _os
+
+            from .runtime_config import clear_launch_settings
+            from .users import gateway_data_dir_from_env
+
+            clear_launch_settings(gateway_data_dir_from_env(), pid=_os.getpid())
         except Exception:
             pass
 
@@ -109,6 +134,23 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 # over any parametrized /gateway/... routes in the main gateway router.
 app.include_router(entities_router, prefix="/api")
 app.include_router(entity_replay_router, prefix="/api")
+# Local engines (status, user-level installs, needs_admin/needs_tools jobs,
+# start/stop): routes/engines.py, the only home of /gateway/engines/... routes.
+app.include_router(engines_router, prefix="/api")
+# Browser apps (Node runtime, npm installs, supervised app servers): literal
+# /gateway/apps/... paths, included before the parametrized gateway router.
+# The handover route lives at /apps/handover/{code}, outside /api/gateway, so
+# a plain browser navigation reaches it (its one-time code is the credential).
+from .routes.apps import handover_router as apps_handover_router  # noqa: E402
+from .routes.apps import router as apps_router  # noqa: E402
+
+app.include_router(apps_router, prefix="/api")
+app.include_router(apps_handover_router)
+# Network exposure (localhost / lan / internet) + reachable addresses:
+# routes/network.py, literal /gateway/network... paths (gateway_network_v1).
+from .routes.network import router as network_router  # noqa: E402
+
+app.include_router(network_router, prefix="/api")
 app.include_router(gateway_router, prefix="/api")
 app.include_router(triage_router, prefix="/api")
 
