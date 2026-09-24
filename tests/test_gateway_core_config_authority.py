@@ -25,6 +25,26 @@ from typing import Any, Dict
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _portable_host(monkeypatch):
+    """These tests pin the PORTABLE text recommendation (LM Studio
+    qwen/qwen3.5-9b), so AbstractCore's host probe reports a non-Apple host.
+    On a Mac the text row follows the unified-memory tiers instead
+    (tests/test_gateway_recommended_text_tiers.py)."""
+
+    from abstractcore.utils import host_profile as hp
+
+    gib = 1024**3
+    host = {
+        "schema": "host_profile_v1", "os": "linux", "arch": "x86_64", "accelerator": "cuda",
+        "gpu_name": "synthetic", "gpu_count": 1, "unified_memory": False, "ram_bytes": 64 * gib,
+        "vram_bytes": 24 * gib, "ceiling_bytes": 24 * gib, "ceiling_source": "cuda_total",
+        "free_now_bytes": 22 * gib, "disk": {}, "notes": [],
+    }
+    monkeypatch.setattr(hp, "host_profile", lambda **_k: dict(host))
+
+
 pytestmark = pytest.mark.basic
 
 

@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -41,20 +40,15 @@ MCP_SERVERS_CONFIG_FILENAME = "mcp_servers.json"
 
 
 def _repo_root_for_shelf(data_dir: Path) -> Optional[Path]:
-    """The framework checkout root the shelf lives under — same resolution
-    the triage/backlog lane uses (runtime_config stored value, then env)."""
+    """The framework checkout root the shelf lives under — THE backlog-folder
+    resolution the triage/backlog lane uses (runtime_config: launch flag >
+    stored setting > legacy env > the gateway's own folder)."""
     try:
         from .runtime_config import resolve_triage_repo_root
 
         raw = resolve_triage_repo_root(Path(data_dir))
     except Exception:
         raw = None
-    if not raw:
-        raw = (
-            os.getenv("ABSTRACT_TRIAGE_REPO_ROOT")
-            or os.getenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT")
-            or ""
-        ).strip() or None
     return Path(raw).expanduser().resolve() if raw else None
 
 

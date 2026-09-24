@@ -169,7 +169,11 @@ def test_download_job_runs_off_the_caller_and_reports_progress(monkeypatch, core
     # Only STATE lines earn an event; byte-counter ticks update `message` and
     # `percent` without growing the buffer (AbstractCore's job registry rule).
     assert job["events"] == ["pulling manifest"]
-    assert job["message"] == "pulling layer"
+    # The provider's own line is kept verbatim in `detail`; `message` is the
+    # plain-language progress sentence built from the numbers.
+    assert job["detail"] == "pulling layer"
+    assert job["message"].startswith("Downloading · 5 B of 10 B")
+    assert job["state"] == "downloading" and job["bytes_done"] == 5 and job["bytes_total"] == 10
     assert job["cli_equivalent"] == "abstractgateway models download ollama tiny:1b"
 
     released.set()
