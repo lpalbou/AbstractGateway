@@ -112,6 +112,16 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
             "/api/gateway/host/update/start",
         ),
     ),
+    # Network exposure (routes/network.py): changing who can reach this host
+    # (localhost / lan / internet) and restarting to apply it are operator
+    # acts. `GET /network` (status + addresses to copy) stays visibility; its
+    # `lookup_public=1` outbound call is admin-gated in the handler.
+    GatewayRoutePolicy(
+        resource="host",
+        reason_code="admin_required",
+        exact=("/api/gateway/network", "/api/gateway/network/restart"),
+        methods=("POST",),
+    ),
     # Marking the first-run wizard done is a host-level act (it stops the
     # wizard opening for every admin of this data dir); reading the state is
     # visibility.
@@ -144,20 +154,42 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     # Installing a local engine (Ollama, LM Studio's CLI, MLX, llama.cpp) runs
     # a vendor installer on the GATEWAY HOST -- the most privileged act in the
     # models & engines surface. Admin here, AND the runtime-config knob
-    # `allow_engine_install` in the handler (default on only for a loopback
-    # bind). Cancelling a host job stops a process tree on the host. The reads
+    # `allow_engine_install` in the handler (default on for a loopback bind
+    # and for a caller on the gateway machine itself: security/same_machine.py). Cancelling a host job stops a process tree on the host. The reads
     # (`GET /engines`, `/models/catalog`, `/models/installed`, `/jobs`,
     # `/host/profile`) stay user-level visibility, like `/host/state`.
     GatewayRoutePolicy(
         resource="engines",
         reason_code="admin_required",
-        pattern=r"^/api/gateway/engines/[^/]+/install$",
+        # install / start / stop an engine, and continue (the ONLY door to an
+        # administrator prompt) / cancel an install job.
+        pattern=r"^/api/gateway/engines/(?:[^/]+/(?:install|start|stop)|jobs/[^/]+/(?:continue|cancel))$",
         methods=("POST",),
     ),
     GatewayRoutePolicy(
         resource="host",
         reason_code="admin_required",
         pattern=r"^/api/gateway/jobs/[^/]+/cancel$",
+        methods=("POST",),
+    ),
+    # Cancelling a model download stops a transfer someone started on the
+    # shared host: the same operator class as starting it.
+    GatewayRoutePolicy(
+        resource="models",
+        reason_code="admin_required",
+        pattern=r"^/api/gateway/models/download/[^/]+/cancel$",
+        methods=("POST",),
+    ),
+    # Browser apps (apps_manager.py): installing Node.js or an app, updating,
+    # starting and stopping app processes run software on the gateway host.
+    # `POST /apps/{id}/open` stays user-level: it mints a session for the
+    # caller only (routes/apps.py). Terminal apps (mission Y): installing one
+    # writes a binary on the host, and opening one starts a terminal window on
+    # the gateway machine's screen -- both admin, like install/launch.
+    GatewayRoutePolicy(
+        resource="apps",
+        reason_code="admin_required",
+        pattern=r"^/api/gateway/apps/(?:runtime/install|[^/]+/(?:install|update|launch|stop|install-tui|launch-tui|tui-command)|jobs/[^/]+/cancel)$",
         methods=("POST",),
     ),
     # The HOST's capability-defaults store: which provider/model serves each

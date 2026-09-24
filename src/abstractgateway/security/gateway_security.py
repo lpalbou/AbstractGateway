@@ -106,19 +106,43 @@ def _is_loopback_ip(host: str) -> bool:
 
 _EPHEMERAL_TOKENS_LOCK = threading.Lock()
 _EPHEMERAL_TOKENS: Dict[str, str] = {}  # token -> label
+# token -> the principal it acts as (mission Y, 2026-09-24: a terminal app
+# opened from the console signs in as the CALLER, not as the operator). A
+# token without an entry here is the tray's: the local admin principal.
+_EPHEMERAL_PRINCIPALS: Dict[str, Any] = {}
 
 
-def register_ephemeral_loopback_token(token: str, *, label: str) -> None:
+def register_ephemeral_loopback_token(token: str, *, label: str, principal: Any = None) -> None:
     tok = str(token or "").strip()
     if len(tok) < 16:
         raise ValueError("ephemeral loopback tokens must be at least 16 characters")
     with _EPHEMERAL_TOKENS_LOCK:
         _EPHEMERAL_TOKENS[tok] = str(label or "ephemeral")
+        if principal is not None:
+            _EPHEMERAL_PRINCIPALS[tok] = principal
+        else:
+            _EPHEMERAL_PRINCIPALS.pop(tok, None)
 
 
 def revoke_ephemeral_loopback_token(token: str) -> None:
     with _EPHEMERAL_TOKENS_LOCK:
         _EPHEMERAL_TOKENS.pop(str(token or "").strip(), None)
+        _EPHEMERAL_PRINCIPALS.pop(str(token or "").strip(), None)
+
+
+def ephemeral_loopback_identity(token: str, *, peer_ip: Optional[str]) -> Optional[Tuple[str, Any]]:
+    """(label, principal or None) for a registered token presented by a
+    loopback SOCKET peer; None otherwise. Constant-time per token."""
+    if not token or not _is_loopback_ip(str(peer_ip or "")):
+        return None
+    with _EPHEMERAL_TOKENS_LOCK:
+        candidates = list(_EPHEMERAL_TOKENS.items())
+        principals = dict(_EPHEMERAL_PRINCIPALS)
+    found: Optional[Tuple[str, Any]] = None
+    for t, label in candidates:
+        if hmac.compare_digest(str(token), str(t)):
+            found = (label, principals.get(t))
+    return found
 
 
 def ephemeral_loopback_token_valid(token: str, *, peer_ip: Optional[str]) -> bool:
@@ -582,8 +606,47 @@ class GatewaySecurityMiddleware:
                     return None
         return None
 
-    def _client_ip(self, scope: dict) -> str:
+    # -- live reverse-proxy settings (mission Z) ------------------------------
+    #
+    # `allowed_origins` and `trust_proxy` are ALSO stored settings (network
+    # exposure, POST /api/gateway/network), read per request so a console or
+    # CLI change applies to the next request. The start-time policy (env or
+    # default) stays the floor: stored origins are ADDED to it, stored trust
+    # can only turn trust on, and an env value set at start overrides the
+    # stored one (network_exposure.live_reverse_proxy returns no say then).
+    # Unreadable settings: the start-time policy alone applies, logged at ERROR.
+
+    def _live_reverse_proxy(self) -> Any:
+        try:
+            from ..network_exposure import live_reverse_proxy
+
+            return live_reverse_proxy()
+        except Exception as exc:  # noqa: BLE001
+            if not getattr(self, "_live_proxy_error_logged", False):
+                self._live_proxy_error_logged = True
+                logger.error(
+                    "#FALLBACK reverse-proxy settings unreadable (%s: %s): applying only the origins and proxy "
+                    "trust this gateway was started with",
+                    type(exc).__name__,
+                    exc,
+                )
+            return None
+
+    def _effective_allowed_origins(self) -> Tuple[str, ...]:
+        base = tuple(self._policy.allowed_origins or ())
+        live = self._live_reverse_proxy()
+        if live is None or not live.extra_origins:
+            return base
+        return base + tuple(o for o in live.extra_origins if o not in base)
+
+    def _effective_trust_proxy(self) -> bool:
         if self._policy.trust_proxy:
+            return True
+        live = self._live_reverse_proxy()
+        return bool(live is not None and live.trust_proxy is True)
+
+    def _client_ip(self, scope: dict) -> str:
+        if self._effective_trust_proxy():
             xff = self._header(scope, "x-forwarded-for")
             if xff:
                 first = xff.split(",")[0].strip()
@@ -607,7 +670,7 @@ class GatewaySecurityMiddleware:
         o = str(origin or "").strip()
         if not o:
             return True
-        allowed = self._policy.allowed_origins or ()
+        allowed = self._effective_allowed_origins()
         if not allowed:
             return False
         for pattern in allowed:
@@ -672,9 +735,15 @@ class GatewaySecurityMiddleware:
         # cached — the cache is keyed on the token alone and a cached hit
         # would answer for a non-loopback peer later. Cheap (hmac compare),
         # so it also spares the PBKDF2 registry scan under user auth.
-        if peer_ip is not None and ephemeral_loopback_token_valid(token, peer_ip=peer_ip):
+        ephemeral = ephemeral_loopback_identity(token, peer_ip=peer_ip) if peer_ip is not None else None
+        if ephemeral is not None:
             import dataclasses
 
+            label, bound = ephemeral
+            if bound is not None:
+                # A terminal app opened for a signed-in caller (apps_manager
+                # launch-tui): that caller's own identity, never more.
+                return dataclasses.replace(bound, token_fingerprint=token_fingerprint(token), source=f"loopback-ephemeral:{label}")
             # Same identity as the operator (one operator, one world), but the
             # audit log must be able to tell the desktop helper from a human.
             return dataclasses.replace(
@@ -897,6 +966,15 @@ class GatewaySecurityMiddleware:
 
             if error:
                 entry["error"] = str(error)
+
+            # A route may attach what it changed (request.state.audit_detail,
+            # e.g. POST /network's setting_change {from, to} per field).
+            st = scope.get("state")
+            detail = st.get("audit_detail") if isinstance(st, dict) else None
+            if isinstance(detail, dict):
+                for k, v in detail.items():
+                    if k not in entry:
+                        entry[str(k)] = v
 
             self._audit_append(entry)
 

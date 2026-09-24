@@ -12,6 +12,16 @@ user shares, and `/visualflows/publish` could overwrite them by bundle id.
 Every test here drives the REAL app over HTTP with a REAL non-admin principal,
 because the previous version of this file asserted helper return values and
 kept passing with the fix reverted.
+
+TWO LINES OF DEFENCE (mission BB, 2026-09-24). The FIRST line now closes the
+lane at the door: with user accounts off a non-admin registry identity can no
+longer hold a session at all (security/sessions.py
+`principal_barred_from_shared_runtime`; pinned in
+test_gateway_session_user_accounts_off.py and by
+`test_the_first_line_refuses_the_non_admin_at_sign_in` below). The registry
+gate this file exists for is the SECOND, independent line; to keep proving it
+on its own, `shared_gateway` knocks the first line out — exactly the
+regression the second line is there to survive.
 """
 
 from __future__ import annotations
@@ -49,7 +59,18 @@ def shared_gateway(tmp_path, monkeypatch):
     monkeypatch.delenv("ABSTRACTGATEWAY_USER_AUTH", raising=False)
     monkeypatch.delenv("ABSTRACTGATEWAY_MULTI_USER", raising=False)
     monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_MODE", raising=False)
+    _knock_out_the_first_line(monkeypatch)
     return flows
+
+
+def _knock_out_the_first_line(monkeypatch) -> None:
+    """Simulate a regression of the sign-in rule so the registry gate is
+    tested ALONE (both import sites: the session store and the login route)."""
+    import abstractgateway.routes.gateway as g
+    import abstractgateway.security.sessions as sessions
+
+    monkeypatch.setattr(sessions, "principal_barred_from_shared_runtime", lambda *_a, **_k: False)
+    monkeypatch.setattr(g, "principal_barred_from_shared_runtime", lambda *_a, **_k: False)
 
 
 def _mint_user(tmp_path, monkeypatch, *, user_id: str, roles: list[str]) -> str:
@@ -72,10 +93,11 @@ def _headers(token: str) -> dict[str, str]:
 def _login(client, *, user_id: str, token: str) -> dict[str, str]:
     """Sign in the way the console does — a browser SESSION, not a bearer.
 
-    This is the reachable lane: with hosted user auth off the bearer path only
-    accepts the static gateway token, while `/session/login` authenticates
-    against the user registry regardless of auth mode. Writes additionally
-    carry the CSRF header the session issues.
+    This WAS the reachable lane: with hosted user auth off the bearer path only
+    accepts the static gateway token, while `/session/login` authenticated
+    against the user registry regardless of auth mode. It is reachable here
+    only because `shared_gateway` knocked the first line out. Writes
+    additionally carry the CSRF header the session issues.
     """
     from abstractgateway.security.sessions import gateway_csrf_cookie_name, gateway_csrf_header_name
 
@@ -126,6 +148,67 @@ def test_a_non_admin_cannot_overwrite_a_shared_workflow_by_upload(shared_gateway
         assert res.status_code == 403, res.text
 
     assert target.read_bytes() == original, "a non-admin substituted a shared workflow"
+
+
+def test_the_first_line_refuses_the_non_admin_at_sign_in(shared_gateway, tmp_path, monkeypatch):
+    """With the first line UP (undo the fixture's knock-out), the non-admin
+    never gets a session on a gateway with user accounts off."""
+    monkeypatch.undo()
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(shared_gateway))
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", ADMIN_TOKEN)
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.delenv("ABSTRACTGATEWAY_USER_AUTH", raising=False)
+    monkeypatch.delenv("ABSTRACTGATEWAY_MULTI_USER", raising=False)
+    monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_MODE", raising=False)
+    token = _mint_user(tmp_path, monkeypatch, user_id="mallory", roles=["user"])
+
+    from abstractgateway.app import app
+
+    with TestClient(app) as client:
+        res = client.post("/api/gateway/session/login", json={"user_id": "mallory", "token": token})
+        assert res.status_code == 401, res.text
+        assert res.json()["detail"]["reason_code"] == "user_accounts_off_admin_only"
+
+
+@pytest.mark.parametrize("action", ["deprecate", "undeprecate"])
+def test_a_non_admin_cannot_change_deprecations_in_the_shared_registry(shared_gateway, tmp_path, monkeypatch, action):
+    """The deprecation doors went through the SAME registry without the gate
+    (a missing bundle answered 404 = authorization passed). Both must refuse
+    before touching anything, and on a bundle that exists."""
+    token = _mint_user(tmp_path, monkeypatch, user_id="mallory", roles=["user"])
+
+    from abstractgateway.app import app
+
+    with TestClient(app) as client:
+        csrf = _login(client, user_id="mallory", token=token)
+        res = client.post(f"/api/gateway/bundles/shared-wf/{action}", headers=csrf, json={"reason": "mine now"})
+        assert res.status_code == 403, res.text
+        missing = client.post(f"/api/gateway/bundles/no-such-bundle/{action}", headers=csrf, json={})
+        assert missing.status_code == 403, missing.text
+        listing = client.get("/api/gateway/bundles?include_deprecated=true", headers=_headers(ADMIN_TOKEN))
+        row = [i for i in listing.json()["items"] if i["bundle_id"] == "shared-wf"]
+        assert row, listing.text
+        entrypoints = row[0]["entrypoints"]
+        assert entrypoints, listing.text
+        assert [ep["deprecated"] for ep in entrypoints] == [False] * len(entrypoints), (
+            "a non-admin deprecated a workflow shared by every user"
+        )
+
+
+def test_the_admin_can_still_deprecate_in_the_shared_registry(shared_gateway, tmp_path):
+    from abstractgateway.app import app
+
+    admin = _headers(ADMIN_TOKEN)
+    with TestClient(app) as client:
+        dep = client.post("/api/gateway/bundles/shared-wf/deprecate", headers=admin, json={"reason": "old"})
+        assert dep.status_code == 200, dep.text
+        listing = client.get("/api/gateway/bundles?include_deprecated=true", headers=admin)
+        row = [i for i in listing.json()["items"] if i["bundle_id"] == "shared-wf"]
+        assert row and all(ep["deprecated"] for ep in row[0]["entrypoints"]), listing.text
+        undep = client.post("/api/gateway/bundles/shared-wf/undeprecate", headers=admin, json={})
+        assert undep.status_code == 200, undep.text
+        assert undep.json()["removed"] is True
 
 
 def test_a_non_admin_cannot_reload_the_shared_registry(shared_gateway, tmp_path, monkeypatch):

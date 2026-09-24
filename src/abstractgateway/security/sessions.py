@@ -12,7 +12,13 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, Optional
 
-from ..users import GatewayUserRegistry, gateway_data_dir_from_env, registry_credential_fingerprint, token_fingerprint
+from ..users import (
+    GatewayUserRegistry,
+    gateway_data_dir_from_env,
+    gateway_user_auth_enabled,
+    registry_credential_fingerprint,
+    token_fingerprint,
+)
 from .principal import GatewayPrincipal
 
 _SESSION_VERSION = 1
@@ -171,6 +177,52 @@ def legacy_principal_still_valid(principal: GatewayPrincipal, *, legacy_token_fi
     return bool(fp and fp in set(legacy_token_fingerprints or ()))
 
 
+def user_accounts_off_sign_in_refusal(user_id: str) -> str:
+    """The plain words a non-admin account hears when it cannot sign in
+    because this gateway runs with user accounts off. States the situation
+    and the two ways out; never tells anyone to set an environment variable."""
+    who = f"'{user_id}'" if str(user_id or "").strip() else "this account"
+    return (
+        f"This gateway runs with user accounts off, so only admin accounts can sign in: "
+        f"{who} is not an admin, and without user accounts every signed-in person shares the "
+        "operator's own runtime and settings. Two ways out: the gateway operator turns user "
+        "accounts on (each user then gets their own runtime), or you sign in with an admin account."
+    )
+
+
+def principal_barred_from_shared_runtime(
+    principal: GatewayPrincipal, *, user_auth_enabled: Optional[bool] = None
+) -> bool:
+    """True when `principal` may NOT hold a gateway session in the current mode.
+
+    THE ISOLATION RULE (mission BB, 2026-09-24). Per-principal service
+    resolution (`service.get_gateway_service`) keys on
+    `gateway_user_auth_enabled()`: with user accounts ON every principal gets
+    its OWN runtime, so a registry user acting on "its" capability defaults,
+    endpoint profiles, bundles and runs acts on its own copy. With user
+    accounts OFF there is ONE service, the operator's — a session for a
+    NON-admin registry identity would hand it the operator's gateway-wide
+    config (that was the hole: `/session/login` authenticated any registry
+    token regardless of mode). So when user accounts are off, only admin
+    registry identities may hold a session. Non-registry sources (the
+    operator's own token, the loopback tray helper) are the operator and are
+    not affected.
+
+    The mode is read from the SAME function the service routing reads, so
+    the check and the routing can never disagree.
+    """
+    if principal.source != "user-registry":
+        return False
+    enabled = gateway_user_auth_enabled() if user_auth_enabled is None else bool(user_auth_enabled)
+    if enabled:
+        return False
+    return not principal.is_admin()
+
+
+class SessionRefusedError(ValueError):
+    """A session cannot be minted for this principal in the current mode."""
+
+
 @dataclass(frozen=True)
 class GatewaySessionRecord:
     session_id: str
@@ -319,6 +371,8 @@ class GatewaySessionStore:
             if rec is None or not rec.enabled:
                 raise ValueError("Gateway user is disabled or unavailable")
             credential_fp = registry_credential_fingerprint(rec)
+            if principal_barred_from_shared_runtime(rec.to_principal()):
+                raise SessionRefusedError(user_accounts_off_sign_in_refusal(principal.user_id))
         sid = secrets.token_urlsafe(32)
         csrf_token = "agcsrf_" + secrets.token_urlsafe(32)
         record = GatewaySessionRecord(
@@ -374,6 +428,13 @@ class GatewaySessionStore:
                     self._save_unlocked(records)
                     return None
                 principal = user.to_principal(token_fingerprint_value=rec.token_fingerprint)
+                if principal_barred_from_shared_runtime(principal):
+                    # Minted before this rule existed, or while user accounts
+                    # were on and the mode has since changed: the session
+                    # would now land on the operator's shared runtime.
+                    records.pop(sid, None)
+                    self._save_unlocked(records)
+                    return None
             elif not legacy_principal_still_valid(principal, legacy_token_fingerprints=legacy_token_fingerprints):
                 records.pop(sid, None)
                 self._save_unlocked(records)

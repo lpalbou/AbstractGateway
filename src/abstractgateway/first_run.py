@@ -71,6 +71,11 @@ _POSTURE_ENV = (
     "ABSTRACTFLOW_GATEWAY_SECURITY",
     "ABSTRACTGATEWAY_PROTECT_WRITE",
     "ABSTRACTFLOW_GATEWAY_PROTECT_WRITE",
+    # Read protection off = every anonymous READ runs as the local admin
+    # (security middleware): a posture statement too (mission AA finding,
+    # closed in mission Z).
+    "ABSTRACTGATEWAY_PROTECT_READ",
+    "ABSTRACTFLOW_GATEWAY_PROTECT_READ",
 )
 
 
@@ -177,6 +182,9 @@ def auth_mode_summary(env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]
     protect_write = _as_bool(
         env.get("ABSTRACTGATEWAY_PROTECT_WRITE") or env.get("ABSTRACTFLOW_GATEWAY_PROTECT_WRITE") or "1", True
     )
+    protect_read = _as_bool(
+        env.get("ABSTRACTGATEWAY_PROTECT_READ") or env.get("ABSTRACTFLOW_GATEWAY_PROTECT_READ") or "1", True
+    )
     token = any(_set(env, n) for n in _TOKEN_ENV)
     user_raw = env.get("ABSTRACTGATEWAY_USER_AUTH") or env.get("ABSTRACTGATEWAY_MULTI_USER") or env.get("ABSTRACTFLOW_GATEWAY_USER_AUTH")
     mode_raw = str(env.get("ABSTRACTGATEWAY_AUTH_MODE") or "").strip().lower()
@@ -202,6 +210,9 @@ def auth_mode_summary(env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]
         "user_auth_enabled": bool(users),
         "token_configured": bool(token),
         "security_enabled": bool(security_on),
+        # False = anonymous reads are answered as the local admin (the
+        # middleware's PROTECT_READ=0 branch): never acceptable off loopback.
+        "read_protected": bool(protect_read),
     }
 
 

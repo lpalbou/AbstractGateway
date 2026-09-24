@@ -59,6 +59,17 @@ PUBLIC_ROUTES: set[tuple[str, str]] = {
     # secret. The token IS the auth; bearer auth cannot ride an email link.
     ("GET", "/api/triage/action/{token}"),
     ("POST", "/api/triage/action/{token}"),
+    # Browser-app sign-in handover (routes/apps.py): a CAPABILITY URL. The
+    # {code} is minted by the authenticated `POST /api/gateway/apps/{id}/open`,
+    # works once, for 2 minutes, only on the host it was minted for, and
+    # creates a session for the principal who minted it — never another.
+    ("GET", "/apps/handover/{code}"),
+    # Terminal-app sign-in handover (routes/apps.py, mission Y): the one-time
+    # {code} in the body is minted by the ADMIN-gated
+    # `POST /api/gateway/apps/{id}/launch-tui`, works once, for 2 minutes, only
+    # from a loopback socket peer with no proxy headers, and yields a
+    # loopback-only token acting as the principal who minted it.
+    ("POST", "/apps/tui-handover"),
 }
 
 
@@ -84,19 +95,30 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # "user-level by design — every principal may read their own policy"; the
     # PUT writes that same per-user entry and nobody else's.
     ("PUT", "/api/gateway/workspace/policy/self"),
+    # Opening a RUNNING browser app mints a one-time sign-in link for the
+    # CALLER only (routes/apps.py); it starts nothing and installs nothing.
+    ("POST", "/api/gateway/apps/{app_id}/open"),
     # --- run lifecycle: per-principal service scoping ----------------------
     # `get_gateway_service()` resolves the CALLER's runtime via the principal
     # contextvar — these mutate the caller's own runs, flows, and stores,
     # never another principal's.
     #
-    # THIS JUSTIFICATION USED TO BE CONDITIONAL ("when user auth is on") and
-    # that caveat was the hole: with user auth OFF the dispatch skipped
-    # per-principal resolution entirely and handed a registry-issued non-admin
-    # the SHARED service, so these writes reached the operator's own bundles
-    # and runs. `_principal_requires_isolation` now keys the split on the
-    # identity's origin rather than a mode flag, which is what makes the
-    # sentence above true unconditionally. If that function is ever narrowed,
-    # every entry below stops being safe.
+    # THIS JUSTIFICATION IS CONDITIONAL ON THE MODE, and that is fine only
+    # because of the rule that closes the other half. With user accounts ON,
+    # `get_gateway_service()` resolves a per-principal service. With user
+    # accounts OFF it hands EVERY principal the ONE shared service, the
+    # operator's — so a non-admin registry identity reaching these routes
+    # would act on the operator's own runs, bundles and gateway-wide config
+    # (mission AA reproduced exactly that through `/session/login`, 2026-09-24).
+    # What makes the sentence above true in both modes is that such an
+    # identity can no longer be AUTHENTICATED with user accounts off: bearer
+    # auth only consults the registry when user accounts are on, and every
+    # session path (login, `create_session`, `authenticate_session`) refuses
+    # it via `security/sessions.py::principal_barred_from_shared_runtime`,
+    # which reads the same mode the service routing reads. (An earlier comment
+    # here credited a `_principal_requires_isolation` function; it never
+    # existed.) Layer 4 at the bottom of this file pins both modes; if that
+    # rule is ever narrowed, every entry below stops being safe.
     ("POST", "/api/gateway/runs/start"),
     ("POST", "/api/gateway/runs/schedule"),
     ("POST", "/api/gateway/runs/purge_drafts"),
@@ -136,7 +158,9 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/visualflows/{flow_id}/publish"),
     # --- config: per-principal data dir or in-handler scope gating ---------
     # capability-defaults write to the CALLER's service data dir (the
-    # gateway-global copy is only reachable by the admin identity).
+    # gateway-global copy is only reachable by the admin identity) — with
+    # user accounts on; with them off only an admin can be signed in at all
+    # (Layer 4).
     ("PUT", "/api/gateway/config/capability-defaults/{kind}/{modality}"),
     ("DELETE", "/api/gateway/config/capability-defaults/{kind}/{modality}"),
     ("PUT", "/api/gateway/config/capability-defaults/{kind}/{modality}/{task}"),
@@ -317,13 +341,13 @@ def test_no_policy_row_is_dead() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, user_accounts: bool = True) -> TestClient:
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")
-    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1" if user_accounts else "0")
 
     from abstractgateway.routes import (
         entities_router,
@@ -432,3 +456,160 @@ def test_served_surface_unauthenticated_requests_are_refused(
         assert response.status_code != 503, response.text
         www = response.headers.get("www-authenticate", "")
         assert "bearer" not in www.lower(), "login must not demand a bearer token"
+
+
+# ---------------------------------------------------------------------------
+# Layer 4: a NON-admin session never reaches the operator's gateway-wide
+# state, in EITHER mode (mission BB, 2026-09-24).
+#
+# User accounts OFF: one shared service, so the non-admin must not be signed
+# in at all — every write route answers 401 to a session that already exists
+# (minted before the fix), and login refuses. User accounts ON: the admin
+# families answer 403, the user-level ones act on the caller's OWN runtime,
+# and the admin's gateway-wide view is byte-identical afterwards.
+# ---------------------------------------------------------------------------
+
+#: Route families whose writes reach gateway-wide state (config, admin,
+#: the workflow registry). Enumerated from the LIVE table, never by hand.
+GATEWAY_WIDE_PREFIXES = ("/api/gateway/config/", "/api/gateway/admin/", "/api/gateway/bundles")
+
+#: The routes the brief names; the enumeration must keep finding each one,
+#: so a rename can never silently empty the families above.
+GATEWAY_WIDE_SENTINELS = {
+    ("PUT", "/api/gateway/config/capability-defaults/{kind}/{modality}"),
+    ("POST", "/api/gateway/config/provider-endpoint-profiles"),
+    ("PUT", "/api/gateway/config/provider-endpoint-profiles/{profile_id}"),
+    ("POST", "/api/gateway/admin/runtime-config"),
+    ("POST", "/api/gateway/bundles/reload"),
+    ("POST", "/api/gateway/bundles/{bundle_id}/deprecate"),
+    ("POST", "/api/gateway/bundles/{bundle_id}/undeprecate"),
+    ("POST", "/api/gateway/admin/users"),
+    ("PATCH", "/api/gateway/admin/users/{user_id}"),
+    ("DELETE", "/api/gateway/admin/users/{user_id}"),
+}
+
+_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _gateway_wide_writes() -> list[tuple[str, str]]:
+    rows = sorted(
+        (method, path)
+        for method, path in _live_route_table()
+        if method in _WRITE_METHODS and path.startswith(GATEWAY_WIDE_PREFIXES)
+    )
+    missing = GATEWAY_WIDE_SENTINELS - set(rows)
+    assert not missing, f"the gateway-wide enumeration lost named routes: {sorted(missing)}"
+    return rows
+
+
+def _mode_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, user_accounts: bool) -> TestClient:
+    # Refused sessions count as presented-invalid credentials; keep the
+    # lockout out of the way so every refusal reads as itself.
+    monkeypatch.setenv("ABSTRACTGATEWAY_LOCKOUT_AFTER", "100000")
+    return _client(tmp_path, monkeypatch, user_accounts=user_accounts)
+
+
+def _admin_gateway_view(client: TestClient) -> dict:
+    admin = {"Authorization": "Bearer admin-token"}
+    caps = client.get("/api/gateway/config/capability-defaults", headers=admin)
+    profiles = client.get("/api/gateway/config/provider-endpoint-profiles", headers=admin)
+    users = client.get("/api/gateway/admin/users", headers=admin)
+    runtime_config = client.get("/api/gateway/admin/runtime-config", headers=admin)
+    bundles = client.get("/api/gateway/bundles?include_deprecated=true", headers=admin)
+    for res in (caps, profiles, users, runtime_config, bundles):
+        assert res.status_code == 200, res.text
+    return {
+        "capability_routes": caps.json().get("routes"),
+        "profiles": sorted(str(p.get("id")) for p in profiles.json().get("profiles") or []),
+        "users": sorted((u["user_id"], tuple(u["roles"]), u["enabled"]) for u in users.json().get("users") or []),
+        "runtime_config": runtime_config.json(),
+        "bundles": bundles.json().get("items"),
+    }
+
+
+def test_user_accounts_off_a_non_admin_session_reaches_no_write_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """User accounts OFF: login refuses the non-admin, and a session that
+    already exists is refused on EVERY write route of the live table (the
+    gateway-wide families included) — authentication fails before any
+    handler, so nothing downstream can be reached."""
+    import abstractgateway.security.sessions as sessions
+    from abstractgateway.security.sessions import (
+        gateway_csrf_cookie_name,
+        gateway_csrf_header_name,
+        gateway_session_cookie_name,
+    )
+    from abstractgateway.users import GatewayUserRegistry
+
+    wide = _gateway_wide_writes()
+    with _mode_client(tmp_path, monkeypatch, user_accounts=False) as client:
+        _rec, token = GatewayUserRegistry().create_user(user_id="mallory", roles=["user"])
+        before = _admin_gateway_view(client)
+        login = client.post("/api/gateway/session/login", json={"user_id": "mallory", "token": token})
+        assert login.status_code == 401, login.text
+        assert login.json()["detail"]["reason_code"] == "user_accounts_off_admin_only"
+
+        answers: dict[str, int] = {}
+        for method, path in sorted(_live_route_table()):
+            if not path.startswith("/api/gateway") or method not in _WRITE_METHODS or (method, path) in PUBLIC_WRITES:
+                continue
+            # A fresh pre-fix session per request: the first refusal drops the
+            # record, and every route must be refused on its own merits.
+            principal = GatewayUserRegistry().get_user("mallory").to_principal()
+            with monkeypatch.context() as m:
+                m.setattr(sessions, "principal_barred_from_shared_runtime", lambda *_a, **_k: False)
+                cookie, csrf, _r = sessions.GatewaySessionStore().create_session(principal)
+            client.cookies.set(gateway_session_cookie_name(), cookie)
+            client.cookies.set(gateway_csrf_cookie_name(), csrf)
+            res = client.request(method, _concrete(path), headers={gateway_csrf_header_name(): csrf}, json={})
+            answers[f"{method} {path}"] = res.status_code
+        client.cookies.clear()
+        refused_wide = {k: v for k, v in answers.items() if tuple(k.split(" ", 1)) in set(wide)}
+        assert len(refused_wide) == len(wide), "every gateway-wide write must have been exercised"
+        not_refused = {k: v for k, v in answers.items() if v != 401}
+        assert not not_refused, f"a non-admin session got past authentication with user accounts off: {not_refused}"
+        after = _admin_gateway_view(client)
+    assert after == before
+
+
+def test_user_accounts_on_a_non_admin_session_never_writes_gateway_wide_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """User accounts ON: through a real browser session, every gateway-wide
+    write that has a policy row answers 403; every user-level one passes
+    authorization (its own runtime); and the admin's gateway-wide view is
+    unchanged afterwards."""
+    from abstractgateway.security.authorization import gateway_route_authorization_requirement
+    from abstractgateway.security.sessions import gateway_csrf_cookie_name, gateway_csrf_header_name
+    from abstractgateway.users import GatewayUserRegistry
+
+    wide = _gateway_wide_writes()
+    with _mode_client(tmp_path, monkeypatch, user_accounts=True) as client:
+        _rec, token = GatewayUserRegistry().create_user(user_id="mallory", roles=["user"])
+        before = _admin_gateway_view(client)
+        login = client.post("/api/gateway/session/login", json={"user_id": "mallory", "token": token})
+        assert login.status_code == 200, login.text
+        csrf = {gateway_csrf_header_name(): client.cookies.get(gateway_csrf_cookie_name()) or ""}
+        for method, path in wide:
+            concrete = _concrete(path)
+            res = client.request(method, concrete, headers=csrf, json={})
+            if gateway_route_authorization_requirement(concrete, method) is not None:
+                assert res.status_code == 403, f"{method} {path}: {res.status_code} {res.text}"
+            else:
+                assert res.status_code not in (401, 403), f"{method} {path}: {res.status_code} {res.text}"
+        # The substantive writes the brief names, with real bodies.
+        own = client.put(
+            "/api/gateway/config/capability-defaults/output/text",
+            headers=csrf,
+            json={"provider": "openai", "model": "gpt-mallory"},
+        )
+        assert own.status_code == 200, own.text
+        prof = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=csrf,
+            json={"id": "malprof", "display_name": "M", "provider_family": "openai-compatible", "base_url": "http://127.0.0.1:9/v1"},
+        )
+        assert prof.status_code == 200, prof.text
+        after = _admin_gateway_view(client)
+    assert after == before, "a non-admin session changed the operator's gateway-wide state"

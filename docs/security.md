@@ -97,6 +97,34 @@ X-AbstractGateway-CSRF: <csrf token>
 `POST /api/gateway/session/logout` revokes the session. Disabling, deleting, or
 rotating the Gateway user invalidates existing browser sessions for that user.
 
+**Who can sign in depends on whether user accounts are on.** With user
+accounts on, every registry account (admin or not) can sign in, and each one
+works in its own runtime (below). With user accounts off the gateway runs one
+runtime, the operator's, so every signed-in person would share the operator's
+runtime, capability defaults, endpoint profiles and workflows. In that mode
+only accounts with the `admin` role can hold a browser session:
+
+- `POST /api/gateway/session/login` answers `401` for a non-admin account, with
+  `reason_code: "user_accounts_off_admin_only"` and a message naming the two
+  ways out: the gateway operator turns user accounts on, or the person signs
+  in with an admin account.
+- A session that already exists for a non-admin account (minted by an older
+  gateway, or while user accounts were on) is refused and removed at its next
+  use. Every session path applies the same rule (`principal_barred_from_shared_runtime`
+  in `security/sessions.py`), including the browser-app sign-in handover.
+- `POST /api/gateway/admin/users` answers `409` (same `reason_code`) instead of
+  creating a non-admin account that could never sign in, and
+  `PATCH /api/gateway/admin/users/{user_id}` refuses to remove the `admin` role
+  from an admin account in this mode.
+
+Admin accounts sign in in both modes. The rule reads the same setting the
+service routing reads, so the two cannot disagree.
+
+**The last admin account is protected.** `DELETE /api/gateway/admin/users/{user_id}`,
+and a `PATCH` that disables it or removes its `admin` role, answer `409` with
+`reason_code: "last_admin"` when the target is the only enabled admin account
+left (entity principals never count). Create or enable another admin first.
+
 When user auth is active, the Gateway service composition root routes each
 principal to an isolated service/data plane under:
 
@@ -175,9 +203,13 @@ principal.
 
 One check covers every route that writes a registry — `POST /bundles/upload`,
 `DELETE /bundles/{bundle_id}`, `POST /bundles/reload`,
-`POST /bundles/{bundle_id}/deprecate` and `POST /visualflows/{flow_id}/publish`
-— so a shared workflow cannot be replaced through one route while another is
-restricted. `POST /visualflows/{flow_id}/publish` accepts a caller-supplied
+`POST /bundles/{bundle_id}/deprecate`, `POST /bundles/{bundle_id}/undeprecate`
+and `POST /visualflows/{flow_id}/publish` — so a shared workflow cannot be
+replaced through one route while another is restricted. The check runs before
+the route looks the bundle up, so a non-admin gets `403` for a bundle that
+does not exist as well. (Until 2026-09-24 the two deprecation routes skipped
+it.) Since a non-admin account cannot be signed in while user accounts are off
+(above), this check is the second, independent line of defence. `POST /visualflows/{flow_id}/publish` accepts a caller-supplied
 `bundle_id`, `bundle_version` and `overwrite`, and installs into the same
 registry as `upload`; it is gated on the same rule. Non-admin requests against
 the shared registry return `403`. Read routes are unchanged.
@@ -213,20 +245,85 @@ available at `GET /api/gateway/workflow-catalog`.
 
 ## Origin allowlist (browser/origin defense)
 
-If the request includes an `Origin` header, the middleware enforces `ABSTRACTGATEWAY_ALLOWED_ORIGINS` using glob-style patterns (fnmatch).
+If the request includes an `Origin` header, the middleware allows it only when
+it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
+`http://localhost:*` and `http://127.0.0.1:*`, the gateway's own LAN origins in
+a network mode, plus the **`allowed_origins` setting** (console: Network →
+*Advanced: reverse proxy*; TUI: Connection screen; CLI:
+`abstractgateway network set --allowed-origins https://gateway.example.com`).
+The setting is read per request: a change applies to the next request, no
+restart. Each origin is validated (`scheme://host[:port]`, no path, no trailing
+slash); `*` and wildcard patterns are accepted only as typed and are flagged.
+See [configuration.md](./configuration.md#reverse-proxy-allowed-origins-and-trust-proxy).
 
-Examples:
+A gateway started with `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in its environment
+uses that list instead (a deployment pin): every surface says "This gateway was
+started with ABSTRACTGATEWAY_ALLOWED_ORIGINS in its environment" and reports
+`overridden_by_env: true`; the saved setting applies once it starts without it.
 
-```bash
-export ABSTRACTGATEWAY_ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*"
-# or (example) an ngrok domain:
-export ABSTRACTGATEWAY_ALLOWED_ORIGINS="https://*.ngrok-free.app"
-```
-
-Evidence: `GatewayAuthPolicy.allowed_origins` and `_origin_allowed()` in `src/abstractgateway/security/gateway_security.py`.
+Evidence: `GatewayAuthPolicy.allowed_origins`, `_effective_allowed_origins()` and
+`_origin_allowed()` in `src/abstractgateway/security/gateway_security.py`;
+`live_reverse_proxy()` in `src/abstractgateway/network_exposure.py`.
 
 Important nuance:
 - FastAPI’s CORS middleware in `src/abstractgateway/app.py` is permissive, but **origin enforcement for gateway endpoints is done by this security middleware**.
+- In a network exposure mode from the settings store, `serve` adds the
+  gateway's own discovered LAN origins (IP literals and `<name>.local`). A
+  foreign origin, including a DNS-rebinding name that resolves to your LAN IP,
+  is still refused (403) unless it is in `allowed_origins`.
+
+## Network exposure
+
+The network exposure setting ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet))
+chooses `localhost`, `lan` or `internet`. What changes for someone else on
+your network:
+
+- **`localhost`** (default for a first run): the gateway listens on
+  `127.0.0.1` only. Nobody else can open a connection; every local process of
+  every local user still can, which is why user auth stays on.
+- **`lan`**: the gateway listens on every IPv4 interface. Anyone on the same
+  network (and anyone on a VPN such as Tailscale whose address is listed) can
+  reach the sign-in page and the API. The gate is authentication: `lan` is
+  refused unless user auth will be on at the next start; unauthenticated
+  requests answer 401, failed credentials are locked out per client address
+  with a growing wait, and a browser page from a foreign origin is refused
+  (403). `lan` and `internet` are also refused when the gateway was started
+  with read protection off (`ABSTRACTGATEWAY_PROTECT_READ=0`: unauthenticated
+  reads would be answered as the admin). What `lan` does NOT give you:
+  - **encryption**: it is plain HTTP. Passwords, bearer tokens and the
+    session cookie cross the network in clear; the session cookie is
+    `HttpOnly; SameSite=Lax` but not `Secure` over HTTP. Anyone who can sniff
+    the network (shared Wi-Fi, a compromised router) can capture and replay a
+    session. Use `lan` on networks you trust, or use a TLS proxy / VPN.
+  - **a smaller attack surface**: every admin route is reachable to whoever
+    holds an admin credential. Give each person their own account, keep the
+    admin token off other machines, and prefer non-admin accounts for daily use.
+  - **exposure of the browser apps**: apps started from the Apps page stay
+    bound to `127.0.0.1` (the `apps.host` setting, *Where apps listen*), and the sign-in
+    handover (`/apps/handover/{code}`) only works on the host it was minted
+    for and refuses a loopback-only app to a browser on another machine.
+  - **engine and app installs for remote admins**: `allow_engine_install`
+    defaults to off on a non-loopback bind for callers on other computers.
+    Someone at the gateway machine itself can still install: the request's
+    socket peer is loopback or one of this host's own addresses, and it
+    carries no proxy header (`Forwarded`, `X-Forwarded-For`,
+    `X-Forwarded-Host`, `X-Real-IP`). A remote computer cannot use this
+    host's own address as the source of an established TCP connection (the
+    handshake reply never reaches it, and the kernel drops outside packets
+    with a local source address); a reverse proxy on this host would make
+    every visitor look local, which is why a proxied request never counts.
+- **`internet`**: the same bind plus an explicit acknowledgement. The gateway
+  does **not** terminate TLS and does not configure your router or firewall.
+  Put a TLS reverse proxy (Caddy, nginx, Traefik) or a tunnel (Cloudflare
+  Tunnel, Tailscale Funnel, ngrok) in front and expose that; add the public
+  `https://` origin under *Reverse proxy* (`allowed_origins`), turn on *Trust
+  the proxy's client address* (`trust_proxy`) only when your own proxy is in
+  front of every request, and rate-limit at the proxy. Forwarding the raw port
+  means plain HTTP on the internet: do not.
+
+The mode is applied at the next start and `serve --host/--port` override it;
+`GET /api/gateway/network` always says what is configured, what is running,
+and why they differ.
 
 ## Workspace filesystem scope (blacklist/whitelist)
 
@@ -340,13 +437,20 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 ### Reverse proxies
 
-- `ABSTRACTGATEWAY_TRUST_PROXY=1|0`  
-  If enabled, `X-Forwarded-For` is used for IP attribution and lockout tracking.
+- The `trust_proxy` setting (console: Network → *Advanced: reverse proxy* →
+  *Trust the proxy's client address*; TUI: Connection screen checkbox; CLI:
+  `abstractgateway network set --trust-proxy on|off`). On: `X-Forwarded-For` is
+  used for IP attribution (audit log) and lockout tracking. Read per request:
+  it applies to the next request. Only when your own proxy sits in front of
+  every request; otherwise any client chooses the address the gateway sees.
+  The ephemeral tray token never honours it (raw socket peer only).
+- A gateway started with `ABSTRACTGATEWAY_TRUST_PROXY` in its environment uses
+  that value instead; the status reports `overridden_by_env: true`.
 
 ## Production checklist (minimal)
 
 - Run behind TLS (reverse proxy) and bind `--host 127.0.0.1` (proxy in front) or lock down your network if binding `0.0.0.0`.
-- Use a strong random token and set exact `ABSTRACTGATEWAY_ALLOWED_ORIGINS` (avoid public wildcards).
+- Use a strong random token and list exact origins in `allowed_origins` (avoid public wildcards).
 - Keep `ABSTRACTGATEWAY_SECURITY=1`.
 
 ## Related docs
