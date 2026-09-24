@@ -81,6 +81,10 @@ CONSOLE_UI_CSS = r"""
     .ui-btn.is-ghost:hover:not(:disabled) { background: var(--ui-surface-2); }
     .ui-btn.is-quiet { background: transparent; color: var(--info); padding-inline: 6px; min-height: 30px; }
     .ui-btn:disabled { opacity: .5; }
+    .ui-btn.is-danger { background: var(--error); color: #fff; }
+    /* The two-step cancel (mission KK): Keep first, in the Cancel button's own spot. */
+    .ui-dl-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+    .ui-dl-confirm__q { font-size: var(--font-size-sm); color: var(--text-secondary); }
     a.ui-btn { display: inline-flex; align-items: center; text-decoration: none; }
     a.ui-link { color: var(--info); font-size: var(--font-size-sm); text-decoration: none; }
     a.ui-link:hover { text-decoration: underline; }
@@ -462,6 +466,26 @@ CONSOLE_UI_JS = r"""
     function uiPill(label, tone, title) {
       return `<span class="ui-pill tone-${esc(tone || "muted")}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</span>`;
     }
+    // ---- <details> that SURVIVE a re-render (mission KK) ----
+    // A running download re-renders its card every <= 0.5 s. A plain
+    // <details> closed itself on each paint, so "Files (8 of 9 done)" snapped
+    // shut under the pointer and the "Cancel download" button right below it
+    // jumped up into the place the file list had been: the next click landed
+    // on Cancel. A keyed <details> keeps its open state across paints.
+    const uiOpenDetails = new Set();
+    function uiDetails(key, summary, inner) {
+      const open = key && uiOpenDetails.has(key);
+      return `<details class="ui-details"${key ? ` data-ui-open-key="${esc(key)}"` : ""}${open ? " open" : ""}><summary>${summary}</summary>${inner}</details>`;
+    }
+    if (typeof document !== "undefined" && document && typeof document.addEventListener === "function") {
+      // `toggle` does not bubble: listen in the capture phase.
+      document.addEventListener("toggle", (event) => {
+        const t = event && event.target;
+        const key = t && t.dataset ? t.dataset.uiOpenKey : "";
+        if (!key) return;
+        if (t.open) uiOpenDetails.add(key); else uiOpenDetails.delete(key);
+      }, true);
+    }
     // ---- Progress: one renderer for every download/install job ----
     // Reads the host_job_v1 progress contract (state, bytes_done/bytes_total,
     // bytes_per_second, eta_s, files, current_file, size_unknown, size_note,
@@ -530,7 +554,7 @@ CONSOLE_UI_JS = r"""
         + (meta.length ? `<div class="ui-progress__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</div>` : "")
         + (message ? `<div class="ui-progress__msg">${esc(message)}</div>` : "")
         + (j.size_note ? `<div class="ui-progress__msg">${esc(j.size_note)}</div>` : "")
-        + (files.length ? `<details class="ui-details"><summary>Files (${doneFiles} of ${files.length} done)</summary><ul class="ui-files">${fileRows}</ul></details>` : "")
+        + (files.length ? uiDetails(j.job_id || j.job || j.id ? `files:${j.job_id || j.job || j.id}` : "", `Files (${doneFiles} of ${files.length} done)`, `<ul class="ui-files">${fileRows}</ul>`) : "")
         + `</div>`;
     }
     // A reload must not lose a running download's bar: re-attach to every
@@ -556,7 +580,7 @@ CONSOLE_UI_JS = r"""
     // (GET /models/download/{id}, 1.5 s) runs whenever the stream is not
     // OPEN (not yet connected, reconnecting, refused, no EventSource), so a
     // dropped stream never strands a bar mid-way.
-    const dlFeed = { es: null, errors: 0, disabled: false, ids: new Set(), group: null, finished: new Set(), cancelling: new Set(), polling: new Set(), lastEventAt: 0, streamError: "" };
+    const dlFeed = { es: null, errors: 0, disabled: false, ids: new Set(), group: null, finished: new Set(), cancelling: new Set(), confirm: new Map(), polling: new Set(), lastEventAt: 0, streamError: "" };
     function dlJobId(job) { return String((job && (job.job || job.job_id)) || ""); }
     function dlActive(job) { return !!job && (job.status === "running" || job.status === "queued"); }
     function dlStreamOpen() { return !!(dlFeed.es && dlFeed.es.readyState === 1); }
@@ -607,7 +631,9 @@ CONSOLE_UI_JS = r"""
         const result = job.result || {};
         const msg = $("defaults-message");
         if (msg) {
-          msg.textContent = `${job.provider} ${job.artifact}: ${job.message || "download failed"}${result.instruction ? " — " + result.instruction : ""}`;
+          msg.textContent = job.ended_reason
+            ? `${job.artifact}: ${job.ended_reason}`
+            : `${job.provider} ${job.artifact}: ${job.message || "download failed"}${result.instruction ? " — " + result.instruction : ""}`;
           msg.className = "message error";
         }
       }
@@ -711,15 +737,63 @@ CONSOLE_UI_JS = r"""
         dlFeed.polling.delete(jobId);
       }
     }
-    async function dlCancel(jobId, button) {
+    // CANCEL IS TWO STEPS (mission KK). A download card re-renders every
+    // <= 0.5 s and its "Cancel download" button sits where "Download" was
+    // and right under the file list, so one stray or repeated click stopped
+    // a download its owner never meant to stop. The first click only ASKS
+    // ("Stop this download?" with "Keep downloading" in the very spot the
+    // Cancel button was); only "Stop download", clicked at least 0.4 s later,
+    // posts the cancel. The question goes away by itself after 8 s.
+    const DL_CONFIRM_MIN_MS = 400;
+    const DL_CONFIRM_TTL_MS = 8000;
+    function dlConfirming(jobId) {
+      const at = dlFeed.confirm.get(jobId);
+      if (at === undefined) return false;
+      if (Date.now() - at > DL_CONFIRM_TTL_MS) { dlFeed.confirm.delete(jobId); return false; }
+      return true;
+    }
+    // The cancel control for one job (or a `grp_…` parent): the button, the
+    // question, or the disabled "Cancelling..." -- the same markup in the
+    // guide's tiles, the "Download all" card and the catalog cards. `attrs`
+    // adds the host's own dispatch attributes (the catalog's data-mc-action).
+    function dlCancelMarkup(jobId, label, opts) {
+      const o = opts || {};
+      const attrs = o.attrs || "";
+      const cls = o.cls || "is-ghost";
+      const id = esc(jobId);
+      if (dlFeed.cancelling.has(jobId)) return `<button type="button" class="ui-btn ${cls} ui-dl-cancel" data-dl-cancel="${id}"${attrs} disabled>Cancelling...</button>`;
+      if (dlConfirming(jobId)) {
+        return `<span class="ui-dl-confirm" role="group" aria-label="Stop this download?">`
+          + `<button type="button" class="ui-btn ${cls} ui-dl-cancel" data-dl-cancel="${id}" data-dl-step="keep"${attrs}>Keep downloading</button>`
+          + `<span class="ui-dl-confirm__q">Stop this download?</span>`
+          + `<button type="button" class="ui-btn is-danger ui-dl-cancel" data-dl-cancel="${id}" data-dl-step="confirm"${attrs}>Stop download</button>`
+          + `</span>`;
+      }
+      return `<button type="button" class="ui-btn ${cls} ui-dl-cancel" data-dl-cancel="${id}"${attrs}>${esc(label || "Cancel download")}</button>`;
+    }
+    async function dlCancel(jobId, button, step) {
       if (!jobId) return;
+      if (step === "keep") { dlFeed.confirm.delete(jobId); dlRender(); return; }
+      if (step !== "confirm") {
+        // First click: ask. Nothing is sent.
+        dlFeed.confirm.set(jobId, Date.now());
+        setTimeout(() => { if (dlFeed.confirm.has(jobId) && !dlConfirming(jobId)) dlRender(); }, DL_CONFIRM_TTL_MS + 50);
+        dlRender();
+        return;
+      }
+      const armed = dlFeed.confirm.get(jobId);
+      if (armed === undefined || !dlConfirming(jobId)) { dlRender(); return; }  // the question expired
+      if (Date.now() - armed < DL_CONFIRM_MIN_MS) return;  // a double click is not an answer
+      dlFeed.confirm.delete(jobId);
       dlFeed.cancelling.add(jobId);
       if (button) { button.disabled = true; button.textContent = "Cancelling..."; }
       try {
         // slow: the cancel goes through the core host, one call per running
         // member of a `grp_…` group, on a host that is busy downloading; the
         // 60 s default would report a failure the gateway did not have.
-        const res = await api(`/api/gateway/models/download/${encodeURIComponent(jobId)}/cancel`, { slow: true, method: "POST", body: JSON.stringify({}) });
+        // `via: console` records that a person clicked it (the job's final
+        // state then says who cancelled it and when).
+        const res = await api(`/api/gateway/models/download/${encodeURIComponent(jobId)}/cancel`, { slow: true, method: "POST", body: JSON.stringify({ via: "console" }) });
         const ended = [];
         dlApply(res && res.job, ended);
         ended.forEach(dlFinished);
@@ -761,21 +835,21 @@ CONSOLE_UI_JS = r"""
         const size = uiNum(done) && uiNum(total) ? `${uiBytes(done)} of ${uiBytes(total)}` : (uiNum(done) && done > 0 ? uiBytes(done) : "");
         const phase = uiJobPhase(live);
         const stall = phase === "stalled" ? `<span class="ui-stall-inline">no data for ${esc(uiDuration(live.stalled_for_s) || "a while")}</span>` : "";
-        const canCancel = dlActive(live) && !dlFeed.cancelling.has(cid);
+        const canCancel = dlActive(live);
         return `<li class="ui-dl-child" data-dl-child="${esc(cid)}" data-state="${esc(phase)}">`
           + `<div class="ui-dl-child__head"><span class="ui-ellip ui-dl-child__name" title="${esc(name)}">${esc(name)}</span>${dlStatePill(live)}</div>`
           + `<div class="ui-progress__bar${pct === null && dlActive(live) ? " is-indeterminate" : ""}" role="progressbar" aria-label="${esc(name)}" aria-valuemin="0" aria-valuemax="100"${pct === null ? "" : ` aria-valuenow="${pct.toFixed(0)}"`}><span style="width:${pct === null ? 0 : pct.toFixed(1)}%"></span></div>`
           + `<div class="ui-dl-child__meta"><span>${esc(size)}</span>${stall}${pct === null ? "" : `<span>${esc(pct.toFixed(pct < 10 ? 1 : 0))}%</span>`}`
-          + (canCancel ? `<button type="button" class="ui-btn is-quiet ui-dl-cancel" data-dl-cancel="${esc(cid)}">Cancel</button>` : "")
+          + (canCancel ? dlCancelMarkup(cid, "Cancel", { cls: "is-quiet" }) : "")
           + `</div>`
-          + (live.message && !dlActive(live) && phase !== "done" ? `<div class="ui-progress__msg">${esc(live.message)}</div>` : "")
+          + ((live.ended_reason || live.message) && !dlActive(live) && phase !== "done" ? `<div class="ui-progress__msg">${esc(live.ended_reason || live.message)}</div>` : "")
           + `</li>`;
       }).join("");
       const doneCount = children.filter((c) => uiJobPhase(dlFind(dlJobId(c)) || c) === "done").length;
       const head = uiProgressMarkup(Object.assign({}, g, { files: [] }), "All models");
       const phase = uiJobPhase(g);
       const title = { done: "The recommended models are ready", failed: "Some recommended models did not download", cancelled: "Download all was cancelled" }[phase] || "Downloading the recommended models";
-      const errorBox = g.error && !active ? `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(g.error)}</pre></details>` : "";
+      const errorBox = g.error && !active ? uiDetails(`err:${id}`, "Show details", `<pre class="ui-log">${esc(g.error)}</pre>`) : "";
       return `<article class="ui-card ui-dl-group${active ? " is-busy" : (g.state === "failed" ? " is-attention" : "")}" data-dl-group="${esc(id)}">`
         + `<div class="ui-card__head"><span class="ui-mark" aria-hidden="true">&#8595;</span><div class="ui-card__titles"><div class="ui-card__title">${esc(title)}</div>`
         + `<span class="ui-card__status">${cancelling ? uiPill("Cancelling", "warn tone-busy") : dlStatePill(g)}</span></div></div>`
@@ -783,7 +857,7 @@ CONSOLE_UI_JS = r"""
         + (/\bready\b/.test(String(g.message || "")) ? "" : `<div class="ui-sub ui-dl-count">${esc(`${doneCount} of ${children.length} ready`)}</div>`)
         + (rows ? `<ul class="ui-dl-children">${rows}</ul>` : "")
         + errorBox
-        + (active ? `<div class="ui-card__actions"><button type="button" class="ui-btn is-ghost ui-dl-cancel" data-dl-cancel="${esc(id)}"${cancelling ? " disabled" : ""}>${cancelling ? "Cancelling..." : "Cancel all"}</button></div>` : "")
+        + (active ? `<div class="ui-card__actions">${dlCancelMarkup(id, "Cancel all")}</div>` : "")
         + `</article>`;
     }
     // ---- Toast + ellipsis copy ----

@@ -11553,19 +11553,24 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         let cancel = "";
         if (job && dlActive(job)) {
           const jid = dlJobId(job);
-          const cancelling = dlFeed.cancelling.has(jid);
           pill = dlStatePill(job);
           const phaseLabel = UI_PHASE_LABELS[uiJobPhase(job)] || "Downloading";
           body = uiProgressMarkup(job, job.parent_job ? `${phaseLabel} · part of Download all` : phaseLabel);
-          cancel = `<button class="ui-btn is-ghost ui-dl-cancel" data-dl-cancel="${esc(jid)}"${cancelling ? " disabled" : ""}>${cancelling ? "Cancelling..." : "Cancel download"}</button>`;
+          // Two steps (console_ui.py dlCancelMarkup): a click only asks.
+          cancel = dlCancelMarkup(jid, "Cancel download");
         } else if (job && job.status === "failed") {
+          // The plain reason first (AbstractCore's `ended_reason`: what
+          // happened, what to do); the verbatim error behind Show details.
           pill = uiPill("Download failed", "err");
-          const why = String(job.error || "").trim();
-          body = `<div class="ui-alert tone-err" role="alert"><strong>The download did not finish.</strong><span>${esc(job.message || "Try again.")}</span></div>`
-            + (why && why !== String(job.message || "").trim() ? `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(why)}</pre></details>` : "");
+          const said = String(job.ended_reason || job.message || "Try again.").trim();
+          const why = String(job.error || job.message || "").trim();
+          body = `<div class="ui-alert tone-err" role="alert"><strong>The download did not finish.</strong><span>${esc(said)}</span></div>`
+            + (why && why !== said ? uiDetails(`err:${dlJobId(job)}`, "Show details", `<pre class="ui-log">${esc(why)}</pre>`) : "");
         } else if (job && job.status === "cancelled" && r.status === "absent") {
+          // "Cancelled" only ever follows a cancel REQUEST; the job says who
+          // made it and when (`ended_reason`), so the tile does too.
           pill = uiPill("Cancelled", "muted");
-          body = `<p class="ui-card__note">Download cancelled. Download it again any time.</p>`;
+          body = `<p class="ui-card__note">${esc(job.ended_reason || "Download cancelled. Download it again any time.")}</p>`;
         } else if (job && (job.status === "completed" || job.state === "done") && r.status === "absent") {
           // The job says done before the next availability probe does: show
           // the result now (the job's own sentence), not a stale "absent".
@@ -11633,7 +11638,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       };
       if (typeof box.querySelectorAll === "function") {
         box.querySelectorAll(".ui-dl-cancel").forEach((b) => {
-          b.onclick = () => dlCancel(b.dataset.dlCancel, b);
+          b.onclick = () => dlCancel(b.dataset.dlCancel, b, b.dataset.dlStep);
         });
         box.querySelectorAll(".first-run-download").forEach((b) => {
           b.onclick = async () => {

@@ -392,7 +392,10 @@ CATALOG_JS = r"""
     function mcFitTitle(fit) {
       const f = fit || {};
       const lines = [];
-      if (uiNum(f.need_bytes) && uiNum(f.ceiling_bytes)) lines.push(`Needs about ${uiBytes(f.need_bytes)} of the ${uiBytes(f.ceiling_bytes)} this computer can give a model`);
+      // The verdict compares the need with `usable_bytes` (the ceiling minus
+      // what is kept free for the system), so that is the number said here.
+      if (uiNum(f.need_bytes) && uiNum(f.usable_bytes)) lines.push(`Needs about ${uiBytes(f.need_bytes)} of the ${uiBytes(f.usable_bytes)} this computer can give a model`);
+      else if (uiNum(f.need_bytes) && uiNum(f.ceiling_bytes)) lines.push(`Needs about ${uiBytes(f.need_bytes)}; this computer lets a model use at most ${uiBytes(f.ceiling_bytes)}, minus what the system keeps free`);
       if (uiNum(f.free_now_bytes)) lines.push(`Free right now: ${uiBytes(f.free_now_bytes)}`);
       if (f.disk_ok === false) lines.push("Not enough free disk space for the download");
       if (uiNum(f.max_context)) lines.push(`Longest context that fits: ${Number(f.max_context).toLocaleString()} tokens`);
@@ -410,8 +413,8 @@ CATALOG_JS = r"""
       const attrs = `data-provider="${esc(a.provider)}" data-artifact="${esc(a.artifact)}"`;
       if (job && dlActive(job)) {
         const jid = dlJobId(job);
-        const cancelling = dlFeed.cancelling.has(jid);
-        return `<button type="button" class="ui-btn is-ghost" data-mc-action="cancel" data-job="${esc(jid)}"${cancelling ? " disabled" : ""}>${cancelling ? "Cancelling..." : "Cancel"}</button>`;
+        // Two steps (console_ui.py dlCancelMarkup): a click only asks.
+        return dlCancelMarkup(jid, "Cancel", { attrs: ` data-mc-action="cancel" data-job="${esc(jid)}"` });
       }
       if (mcStore.busy.has(key)) return `<button type="button" class="ui-btn is-ghost" disabled aria-busy="true">Starting...</button>`;
       if (mcInstalled(a)) {
@@ -436,11 +439,12 @@ CATALOG_JS = r"""
         const phase = uiJobPhase(job);
         out += uiProgressMarkup(job, job.parent_job ? `${UI_PHASE_LABELS[phase] || "Downloading"} · part of Download all` : (UI_PHASE_LABELS[phase] || "Downloading"));
       } else if (job && job.status === "failed") {
-        const why = String(job.error || "").trim();
-        out += `<div class="ui-alert tone-err" role="alert"><strong>The download did not finish.</strong><span>${esc(job.message || "Try again.")}</span></div>`
-          + (why && why !== String(job.message || "").trim() ? `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(why)}</pre></details>` : "");
+        const said = String(job.ended_reason || job.message || "Try again.").trim();
+        const why = String(job.error || job.message || "").trim();
+        out += `<div class="ui-alert tone-err" role="alert"><strong>The download did not finish.</strong><span>${esc(said)}</span></div>`
+          + (why && why !== said ? uiDetails(`err:${dlJobId(job)}`, "Show details", `<pre class="ui-log">${esc(why)}</pre>`) : "");
       } else if (job && job.status === "cancelled" && !mcInstalled(a)) {
-        out += `<div class="mc-note">Download cancelled. Download it again any time.</div>`;
+        out += `<div class="mc-note">${esc(job.ended_reason || "Download cancelled. Download it again any time.")}</div>`;
       }
       if (notice) out += `<div class="ui-alert tone-${esc(notice.tone)}" role="status">${esc(notice.text)}</div>`;
       return out;
@@ -765,7 +769,7 @@ CATALOG_JS = r"""
       }
       if (action === "open-tab") { const f = Object.assign({}, view.filters); closeFirstRunWizard(); openCatalogTab(f); return; }
       if (action === "download") { mcDownload(view, b.dataset.provider, b.dataset.artifact); return; }
-      if (action === "cancel") { dlCancel(b.dataset.job, b); return; }
+      if (action === "cancel") { dlCancel(b.dataset.job, b, b.dataset.dlStep); return; }
       if (action === "default") { mcUseDefault(view, b.dataset.provider, b.dataset.artifact, b); }
     }
     function mountModelCatalog(key, el, opts) {
