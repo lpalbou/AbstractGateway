@@ -1251,6 +1251,7 @@ def test_models_table_defaults_to_resident_rows_with_configured_cached_toggle() 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
     harness = f"""
 {_slice_function(source, "renderModelsTable")}
+{_slice_function(source, "heldAcceleratorBytes")}
 {_slice_function(source, "renderModelsResidentCount")}
 {_slice_function(source, "renderModelsShowCachedToggle")}
 {_slice_function(source, "residencyPill")}
@@ -2168,6 +2169,7 @@ def test_models_every_resident_row_offers_a_lock_including_swept_ones() -> None:
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
     harness = f"""
 {_slice_function(source, "renderModelsTable")}
+{_slice_function(source, "heldAcceleratorBytes")}
 {_slice_function(source, "renderModelsResidentCount")}
 {_slice_function(source, "renderModelsShowCachedToggle")}
 {_slice_function(source, "residencyPill")}

@@ -101,6 +101,11 @@ class Snapshot:
     unauthorized: bool = False
     runs: tuple[RunRow, ...] = ()
     runs_error: Optional[str] = None
+    # Accelerator memory THIS gateway process pins (MLX live + cached buffers),
+    # independent of what the model list attributes. None when unknown.
+    device_held_bytes: Optional[int] = None
+    # macOS physical footprint of the gateway process (includes Metal buffers).
+    process_footprint: Optional[int] = None
 
 
 def _num(value: Any) -> Optional[float]:
@@ -399,6 +404,14 @@ class Sampler:
             used = max(0, total - available)
         pct = (100.0 * used / total) if (used is not None and total) else _num(ram.get("percent"))
         rss = _int(proc.get("rss_bytes"))
+        # What THIS gateway process pins in accelerator memory: MLX live +
+        # freed-but-cached buffers (gateway 2026-09-25+), else the live figure
+        # older gateways report. The tray shows it whenever it is known, and
+        # says so LOUDLY when the model list is empty -- "No models loaded"
+        # over 92 GB of held MLX memory is the lie this exists to end.
+        held = _int(dev.get("mlx_held_bytes"))
+        if held is None:
+            held = _int(dev.get("allocated_bytes"))
         self._state["mem"] = {
             "supported": supported and (pct is not None or used is not None),
             "reason": None if supported else str(d.get("reason") or "not available"),
@@ -407,6 +420,8 @@ class Sampler:
             "pct": pct,
             "rss": rss,
             "backend": str(dev.get("backend")) if dev.get("backend") else None,
+            "held": held,
+            "footprint": _int(proc.get("footprint_bytes")),
         }
         self._mem_hist.append(pct)
         self._rss_hist.append((100.0 * rss / total) if (rss is not None and total) else None)
@@ -588,6 +603,8 @@ class Sampler:
                 unauthorized=bool(self._unauthorized),
                 runs=tuple(s["runs"]),
                 runs_error=s["runs_error"],
+                device_held_bytes=mem.get("held"),
+                process_footprint=mem.get("footprint"),
             )
 
     def _notify(self) -> None:

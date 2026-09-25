@@ -184,8 +184,11 @@ def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Op
     header = f"{APP_NAME} — {STATE_WORDS.get(st, st.title())}"
     if st == "running":
         n = len(snap.models)
+        held = _held_bytes(snap)
         if n == 0:
-            detail = "Ready · no models loaded"
+            # Never "no models loaded" over live accelerator memory: the process
+            # may hold weights the list cannot attribute (2026-09-25: 92 GB).
+            detail = "Ready · no models loaded" + (f" · still holding {fmt_bytes(held)}" if held else "")
         else:
             total = f" · {fmt_bytes(snap.models_total_bytes)}" if snap.models_total_bytes else ""
             detail = f"Ready · {n} model{'s' if n != 1 else ''} loaded{total}"
@@ -416,6 +419,20 @@ def _free_bytes(snap: Snapshot) -> Optional[int]:
     return None
 
 
+# Below this the "gateway holds" figure is noise (Metal keeps a few MB of
+# shader/library buffers in every process); above it, it is a model or a cache.
+_HELD_NOTEWORTHY_BYTES = 256 * 1024 * 1024
+
+
+def _held_bytes(snap: Snapshot) -> Optional[int]:
+    """Accelerator memory the gateway process pins (MLX live + cached buffers)
+    when it is worth showing, else None. Older snapshots carry no figure."""
+    held = getattr(snap, "device_held_bytes", None)
+    if isinstance(held, int) and not isinstance(held, bool) and held >= _HELD_NOTEWORTHY_BYTES:
+        return held
+    return None
+
+
 def _loaded_keys(snap: Snapshot) -> Dict[str, ModelRow]:
     """provider/model → loaded row (a runtime id is not what the list shows)."""
     out: Dict[str, ModelRow] = {}
@@ -460,10 +477,22 @@ def models_section(inputs: MenuInputs, *, reachable: bool) -> Node:
     loaded = list(snap.models)
     total = snap.models_total_bytes
     free = _free_bytes(snap)
-    head = f"Loaded: {len(loaded)}" + (f" · {fmt_bytes(total)}" if total else "") + (f" · {fmt_bytes(free)} free" if free is not None else "")
+    held = _held_bytes(snap)
+    head = (
+        f"Loaded: {len(loaded)}"
+        + (f" · {fmt_bytes(total)}" if total else "")
+        + (f" · {fmt_bytes(free)} free" if free is not None else "")
+        + (f" · gateway holds {fmt_bytes(held)}" if held else "")
+    )
     items: List[Node] = [info(head)]
     if snap.models_error and not loaded:
         items.append(info(f"Loaded models unavailable: {middle_ellipsis(snap.models_error, 60)}"))
+    if held and not loaded:
+        # The process pins accelerator memory nothing in the list owns: say
+        # so, with the only two honest ways out (eject what the console lists
+        # as held, or restart). Never a silent "No models loaded".
+        items.append(info(f"Memory still held by the gateway: {fmt_bytes(held)} (no model listed)"))
+        items.append(info("Eject the held model in the Console, or restart the gateway to free it"))
     for key in mv.loading:
         items.append(info(f"Loading {short_model_name(key.split('/', 1)[-1])}…"))
     for row in loaded:

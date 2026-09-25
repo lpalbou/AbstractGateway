@@ -8759,6 +8759,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // words: exactly "all processes" or "this process only" — never "host",
     // never a whole-machine scope name of any kind, and never anything a
     // reader could take for total system usage.
+    // WHAT THIS PROCESS PINS IN ACCELERATOR MEMORY, from the host snapshot:
+    // device.mlx_held_bytes (MLX live + freed-but-cached buffers; gateway
+    // 2026-09-25+), else device.allocated_bytes (live only). 0 when unknown.
+    function heldAcceleratorBytes(data) {
+      const snap = (data && typeof data === "object") ? data : {};
+      const mem = (snap.memory && typeof snap.memory === "object") ? snap.memory : {};
+      const dev = (mem.device && typeof mem.device === "object") ? mem.device : {};
+      const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
+      const held = num(dev.mlx_held_bytes);
+      if (held !== null) return held;
+      const active = num(dev.allocated_bytes);
+      return active === null ? 0 : active;
+    }
+    function heldDetail(data) {
+      const snap = (data && typeof data === "object") ? data : {};
+      const mem = (snap.memory && typeof snap.memory === "object") ? snap.memory : {};
+      const dev = (mem.device && typeof mem.device === "object") ? mem.device : {};
+      const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
+      const parts = [];
+      const active = num(dev.mlx_active_bytes !== undefined ? dev.mlx_active_bytes : dev.allocated_bytes);
+      const cache = num(dev.mlx_cache_bytes);
+      if (active !== null) parts.push(`MLX live buffers ${_fmtBytes(active)}`);
+      if (cache !== null) parts.push(`MLX allocator cache ${_fmtBytes(cache)}`);
+      const held = (mem.held && typeof mem.held === "object") ? mem.held : null;
+      if (held && Array.isArray(held.models) && held.models.length) {
+        const names = held.models.map((m) => (Array.isArray(m.models) && m.models.length ? m.models.join(", ") : String(m.model_path || "?")) + ` × ${m.holders || 0} holder${(m.holders || 0) === 1 ? "" : "s"}`);
+        parts.push(`resident: ${names.join("; ")}`);
+      }
+      return parts.length ? parts.join(", ") : "process-local accelerator allocations";
+    }
     function deviceMeterView(dev) {
       const d = (dev && typeof dev === "object") ? dev : {};
       const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
@@ -8767,18 +8797,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const wired = num(d.wired_limit_bytes);
       const total = num(d.total_bytes);
       const free = num(d.free_bytes);
-      let procUsed = num(d.allocated_bytes);
+      let procUsed = num(d.mlx_held_bytes);
+      if (procUsed === null) procUsed = num(d.allocated_bytes);
       if (procUsed === null && total !== null && free !== null) procUsed = Math.max(0, total - free);
-      const scope = hostUsed === null ? "this process only" : "all processes";
-      const used = hostUsed === null ? procUsed : hostUsed;
+      // The ioreg "In use system memory" counter does NOT see MLX's Metal
+      // buffers on this host (measured 2026-09-25: 1.5 GB reported beside
+      // 20.7 GB of live MLX buffers in one process; 1.1 GB beside 92 GB on the
+      // operator's gateway). When this process alone exceeds the cross-process
+      // figure, the process figure is the truthful one and the scope says so.
+      const procWins = procUsed !== null && (hostUsed === null || procUsed > hostUsed);
+      const scope = procWins ? "this process only" : "all processes";
+      const used = procWins ? procUsed : hostUsed;
       const ceiling = wired === null ? total : wired;
       const label = `Accelerator heap · ${backend || "device"} (${scope})`;
       const note = "memory-mapped GGUF weights are not counted here";
       const fraction = (used !== null && ceiling !== null && ceiling > 0) ? used / ceiling : null;
       const value = used === null ? "unknown" : `${_fmtBytes(used)}${ceiling === null ? "" : ` / ${_fmtBytes(ceiling)}`}`;
       const bits = [note];
-      bits.push(hostUsed === null
-        ? "device.allocated_bytes — THIS PROCESS ONLY; this host reports no cross-process accelerator figure, so a model resident in another process is not counted here"
+      bits.push(procWins
+        ? (hostUsed === null
+            ? "device.mlx_held_bytes / allocated_bytes — THIS PROCESS ONLY; this host reports no cross-process accelerator figure, so a model resident in another process is not counted here"
+            : `device.mlx_held_bytes / allocated_bytes — THIS PROCESS ONLY (MLX live + cached buffers); the cross-process ioreg counter (${_fmtBytes(hostUsed)}) does not see MLX buffers on this host`)
         : "device.host_in_use_bytes — driver-allocated accelerator memory across every process on this machine, not just this gateway");
       if (ceiling !== null) bits.push(wired !== null ? `ceiling: wired limit ${_fmtBytes(wired)}` : `ceiling: device total ${_fmtBytes(total)}`);
       if (hostUsed !== null && procUsed !== null) bits.push(`this process: ${_fmtBytes(procUsed)}`);
@@ -9297,8 +9336,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // operator defect this fixes — default ≠ loaded.
 	      const visible = state.modelsShowCached ? residentRows.concat(cachedRows) : residentRows;
 	      if (!visible.length) {
-	        if (!rows.length) modelsEmptyRow(body, 8, "No models loaded right now.");
-	        else modelsEmptyRow(body, 8, `No models resident in memory right now — ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.`);
+	        // NEVER say "nothing loaded" over live accelerator memory. The host
+	        // snapshot carries the process's MLX allocator truth
+	        // (device.mlx_held_bytes = live + cached buffers; older gateways:
+	        // allocated_bytes = live only). 2026-09-25: a gateway said "No models
+	        // loaded" while holding 92 GB the listing could not attribute.
+	        const held = heldAcceleratorBytes(data);
+	        const heldNote = held > 0
+	          ? ` This gateway process still holds ${_fmtBytes(held)} of accelerator memory (${heldDetail(data)}); nothing in the list owns it. Eject the model(s) shown under "configured / cached", or restart the gateway to free it.`
+	          : "";
+	        if (!rows.length) modelsEmptyRow(body, 8, `No models loaded right now.${heldNote}`);
+	        else modelsEmptyRow(body, 8, `No models resident in memory right now — ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.${heldNote}`);
 	        return;
 	      }
 	      for (const row of visible) {
